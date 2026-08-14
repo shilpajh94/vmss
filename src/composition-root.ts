@@ -1,5 +1,6 @@
 import { ApiClient } from './data/api/api-client'
 import type { VisitRequestRepository } from './data/repositories/visit-request-repository'
+import type { VisitRequestSummaryRepository } from './data/repositories/visit-request-summary-repository'
 import type { VisitTrackingRepository } from './data/repositories/visit-tracking-repository'
 import type { VisitorOtpRepository } from './data/repositories/visitor-otp-repository'
 import type { StaffAuthRepository } from './data/repositories/staff-auth-repository'
@@ -9,7 +10,10 @@ import { UploadVisitorDocumentUseCase } from './data/use-cases/upload-visitor-do
 import { RequestVisitorOtpUseCase } from './data/use-cases/request-visitor-otp'
 import { VerifyVisitorOtpUseCase } from './data/use-cases/verify-visitor-otp'
 import { InitiateStaffSsoUseCase } from './data/use-cases/initiate-staff-sso'
+import { ListVisitRequestsUseCase } from './data/use-cases/list-visit-requests'
+import { GetCurrentStaffUserUseCase } from './data/use-cases/get-current-staff-user'
 import { HttpVisitRequestRepository } from './infrastructure/visit-request-repository'
+import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-request-summary-repository'
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
 import { HttpVisitorOtpRepository } from './infrastructure/visitor-otp-repository'
 import { HttpStaffAuthRepository } from './infrastructure/staff-auth-repository'
@@ -22,11 +26,14 @@ export interface AppDependencies {
   requestVisitorOtpUseCase: RequestVisitorOtpUseCase
   verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase
   initiateStaffSsoUseCase: InitiateStaffSsoUseCase
+  listVisitRequestsUseCase: ListVisitRequestsUseCase
+  getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
 }
 
 export function createApp(): AppDependencies {
   let apiClient: ApiClient | undefined
   let visitRequestRepository: VisitRequestRepository | undefined
+  let visitRequestSummaryRepository: VisitRequestSummaryRepository | undefined
   let visitTrackingRepository: VisitTrackingRepository | undefined
   let visitorOtpRepository: VisitorOtpRepository | undefined
   let staffAuthRepository: StaffAuthRepository | undefined
@@ -36,6 +43,8 @@ export function createApp(): AppDependencies {
   let requestVisitorOtpUseCase: RequestVisitorOtpUseCase | undefined
   let verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase | undefined
   let initiateStaffSsoUseCase: InitiateStaffSsoUseCase | undefined
+  let listVisitRequestsUseCase: ListVisitRequestsUseCase | undefined
+  let getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase | undefined
 
   const resolveApiClient = (): ApiClient => {
     apiClient ??= new ApiClient(import.meta.env.VITE_API_BASE_URL)
@@ -92,6 +101,21 @@ export function createApp(): AppDependencies {
     return initiateStaffSsoUseCase
   }
 
+  const resolveVisitRequestSummaryRepository = (): VisitRequestSummaryRepository => {
+    visitRequestSummaryRepository ??= new HttpVisitRequestSummaryRepository(resolveApiClient())
+    return visitRequestSummaryRepository
+  }
+
+  const resolveListVisitRequestsUseCase = (): ListVisitRequestsUseCase => {
+    listVisitRequestsUseCase ??= new ListVisitRequestsUseCase(resolveVisitRequestSummaryRepository())
+    return listVisitRequestsUseCase
+  }
+
+  const resolveGetCurrentStaffUserUseCase = (): GetCurrentStaffUserUseCase => {
+    getCurrentStaffUserUseCase ??= new GetCurrentStaffUserUseCase(resolveStaffAuthRepository())
+    return getCurrentStaffUserUseCase
+  }
+
   return {
     get apiClient() {
       return resolveApiClient()
@@ -113,6 +137,12 @@ export function createApp(): AppDependencies {
     },
     get initiateStaffSsoUseCase() {
       return resolveInitiateStaffSsoUseCase()
+    },
+    get listVisitRequestsUseCase() {
+      return resolveListVisitRequestsUseCase()
+    },
+    get getCurrentStaffUserUseCase() {
+      return resolveGetCurrentStaffUserUseCase()
     },
   }
 }

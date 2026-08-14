@@ -35,9 +35,9 @@ The system SHALL show an inline error message on the login screen if SSO initiat
 - **WHEN** the SSO initiation request fails (network error or non-success response)
 - **THEN** the system shows an inline error message on the login screen and re-enables the "Sign in with SSO" action
 
-### Requirement: Successful SSO sign-in lands on the staff dashboard placeholder
-The system SHALL render a placeholder staff dashboard at the `/staff/dashboard` route as the landing target after a successful SSO sign-in.
+### Requirement: Successful SSO sign-in lands on the staff dashboard
+The system SHALL render the full staff dashboard (the `staff-dashboard` capability) at the `/staff/dashboard` route as the landing target after a successful SSO sign-in.
 
-#### Scenario: Staff reaches the dashboard placeholder
-- **WHEN** a user navigates to `/staff/dashboard`
-- **THEN** the system renders the placeholder staff dashboard page
+#### Scenario: Staff reaches the dashboard
+- **WHEN** a user navigates to `/staff/dashboard` with a valid session
+- **THEN** the system renders the staff dashboard: sidebar, workspace header, and visit-requests kanban board
