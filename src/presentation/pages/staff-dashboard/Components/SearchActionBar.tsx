@@ -1,4 +1,4 @@
-import { FilterIcon, RefreshCcwIcon, SearchGlyphIcon } from './icons'
+import { FilterIcon, RefreshCcwIcon, SearchGlyphIcon } from '../../../components/icons'
 
 interface SearchActionBarProps {
   search: string
