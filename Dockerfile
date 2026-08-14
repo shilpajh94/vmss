@@ -64,7 +64,7 @@ RUN set -eux; \
         /etc/nginx/nginx.conf
 
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 RUN useradd --system --create-home --uid 1001 appuser \
     && chown -R appuser:appuser /usr/share/nginx/html /var/lib/nginx /var/log/nginx
