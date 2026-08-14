@@ -5,6 +5,7 @@ import { VisitorRequestPage } from './presentation/pages/visitor-request/visitor
 import { VisitorTrackPage } from './presentation/pages/visitor-track/visitor-track'
 import { StaffLoginPage } from './presentation/pages/staff-login/staff-login'
 import { StaffDashboardPage } from './presentation/pages/staff-dashboard/staff-dashboard'
+import { StaffVisitorRegistrationPage } from './presentation/pages/staff-visitor-registration/staff-visitor-registration'
 
 function RootLayout() {
   return (
@@ -15,6 +16,7 @@ function RootLayout() {
         <Route path="/visitor/track" element={<VisitorTrackPage />} />
         <Route path="/staff/login" element={<StaffLoginPage />} />
         <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
+        <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
       </Routes>
     </AppDependenciesProvider>
   )

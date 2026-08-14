@@ -1,6 +1,6 @@
 import type { VisitRequestSummary } from '../../../../domain/entities/visit-request-summary-schema'
 import { VisitRequestCard } from './VisitRequestCard'
-import { UserIcon } from './icons'
+import { UserIcon } from '../../../components/icons'
 
 const ACCENT_CLASSES = {
   requested: { border: 'border-l-info', tint: 'bg-info/8', text: 'text-info' },

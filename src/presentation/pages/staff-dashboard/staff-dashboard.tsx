@@ -1,4 +1,4 @@
-import { DashboardSidebar } from './Components/DashboardSidebar'
+import { DashboardSidebar } from '../../components/DashboardSidebar'
 import { KanbanColumn } from './Components/KanbanColumn'
 import { SearchActionBar } from './Components/SearchActionBar'
 import { WorkspaceHeader } from './Components/WorkspaceHeader'
@@ -16,7 +16,7 @@ export function StaffDashboardPage() {
 
   return (
     <div className="flex min-h-screen w-full items-stretch bg-bg">
-      <DashboardSidebar />
+      <DashboardSidebar activeItem="all-visitors" />
 
       <main className="flex flex-1 flex-col gap-6 p-8">
         <WorkspaceHeader currentUser={currentUser} onRefresh={refresh} onSignOut={signOut} />

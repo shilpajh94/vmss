@@ -1,5 +1,5 @@
 import type { VisitRequestSummary } from '../../../../domain/entities/visit-request-summary-schema'
-import { CalendarClockIcon } from './icons'
+import { CalendarClockIcon } from '../../../components/icons'
 
 const AVATAR_TINTS = ['#dbeafe', '#ffe4e6', '#d1fae5', '#fef3c7', '#f3e8ff', '#fee2e2']
 

@@ -1,5 +1,5 @@
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
-import { LogOutIcon, RefreshCcwIcon } from './icons'
+import { LogOutIcon, RefreshCcwIcon } from '../../../components/icons'
 
 interface WorkspaceHeaderProps {
   currentUser: StaffUser | undefined

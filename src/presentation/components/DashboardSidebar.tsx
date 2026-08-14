@@ -1,12 +1,27 @@
+import { useNavigate } from 'react-router'
 import { CheckIcon, ClockIcon, HelpCircleIcon, ShieldIcon, UsersIcon } from './icons'
 
+export type DashboardSidebarActiveItem = 'all-visitors' | 'my-actions' | 'audit-trail'
+
+interface DashboardSidebarProps {
+  activeItem: DashboardSidebarActiveItem
+}
+
 const NAV_ITEMS = [
-  { label: 'All visitors', icon: UsersIcon, active: true },
-  { label: 'My actions', icon: CheckIcon, active: false },
-  { label: 'Audit trail', icon: ClockIcon, active: false },
+  { key: 'all-visitors', label: 'All visitors', icon: UsersIcon },
+  { key: 'my-actions', label: 'My actions', icon: CheckIcon },
+  { key: 'audit-trail', label: 'Audit trail', icon: ClockIcon },
 ] as const
 
-export function DashboardSidebar() {
+export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
+  const navigate = useNavigate()
+
+  const handleActivate = (key: DashboardSidebarActiveItem) => {
+    if (key === 'all-visitors') navigate('/staff/dashboard')
+    if (key === 'my-actions') navigate('/staff/visitors/new')
+    // "Audit trail" has no destination yet.
+  }
+
   return (
     <aside className="flex w-[260px] shrink-0 flex-col gap-8 self-stretch bg-primary p-6">
       <div className="flex items-center gap-3">
@@ -17,12 +32,13 @@ export function DashboardSidebar() {
       </div>
 
       <nav className="flex flex-col gap-2">
-        {NAV_ITEMS.map(({ label, icon: ItemIcon, active }) => (
+        {NAV_ITEMS.map(({ key, label, icon: ItemIcon }) => (
           <button
-            key={label}
+            key={key}
             type="button"
+            onClick={() => handleActivate(key)}
             className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left font-body text-sm font-semibold ${
-              active ? 'bg-[#1e293b] text-[#f1f5f9]' : 'text-[#cbd5e1] hover:bg-[#1e293b]/60'
+              activeItem === key ? 'bg-[#1e293b] text-[#f1f5f9]' : 'text-[#cbd5e1] hover:bg-[#1e293b]/60'
             }`}
           >
             <ItemIcon className="size-[18px] shrink-0" />

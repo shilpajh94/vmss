@@ -1,9 +1,33 @@
-import type { VisitRequestFormState } from '../../types'
+import type { CarriedItemsFormState, ConsentFormState, RegistrationType, VisitInfoFormState } from '../../types'
+import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
 
 export type SubmissionStatus = 'idle' | 'submitting' | 'success' | 'error'
 
+// Self-service visitors additionally provide address/visitorCategory/profileImageFileName;
+// staff-registered visitors do not. Presence of `address` on the primary contact decides
+// which set of rows to render, so both flows share this one component.
+export interface ReviewVisitorSummary {
+  fullName: string
+  email: string
+  phone: string
+  address?: string
+  visitorCategory?: string
+  idProofType: string
+  profileImageFileName?: string
+}
+
+export interface ReviewableFormState {
+  registrationType: RegistrationType
+  primaryContact: ReviewVisitorSummary
+  additionalVisitors: ReviewVisitorSummary[]
+  visitInfo: VisitInfoFormState
+  carriedItems: CarriedItemsFormState
+  vehicles: Vehicle[]
+  consent: ConsentFormState
+}
+
 interface ReviewConfirmStepProps {
-  formState: VisitRequestFormState
+  formState: ReviewableFormState
   status: SubmissionStatus
   trackingId?: string
   errorMessage?: string
@@ -39,6 +63,7 @@ export function ReviewConfirmStep({ formState, status, trackingId, errorMessage,
   }
 
   const visitors = [formState.primaryContact, ...formState.additionalVisitors]
+  const showExtendedFields = formState.primaryContact.address !== undefined
 
   return (
     <div className="flex flex-col gap-4">
@@ -52,15 +77,17 @@ export function ReviewConfirmStep({ formState, status, trackingId, errorMessage,
 
       <SummarySection
         title={`Visitor Info (${formState.registrationType === 'group' ? `${visitors.length} visitors` : 'Individual'})`}
-        rows={visitors.flatMap((visitor, index) => [
-          [visitors.length > 1 ? `Visitor ${index + 1} Name` : 'Full Name', visitor.fullName],
-          ['Email', visitor.email],
-          ['Phone', visitor.phone],
-          ['Address', visitor.address],
-          ['Visitor Category', visitor.visitorCategory],
-          ['ID Proof', visitor.idProofType],
-          ['Profile Image', visitor.profileImageFileName ?? 'Not provided'],
-        ] as [string, string][])}
+        rows={visitors.flatMap((visitor, index) => {
+          const rows: [string, string][] = [
+            [visitors.length > 1 ? `Visitor ${index + 1} Name` : 'Full Name', visitor.fullName],
+            ['Email', visitor.email],
+            ['Phone', visitor.phone],
+          ]
+          if (showExtendedFields) rows.push(['Address', visitor.address ?? ''], ['Visitor Category', visitor.visitorCategory ?? ''])
+          rows.push(['ID Proof', visitor.idProofType])
+          if (showExtendedFields) rows.push(['Profile Image', visitor.profileImageFileName ?? 'Not provided'])
+          return rows
+        })}
       />
 
       <SummarySection
