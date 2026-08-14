@@ -29,6 +29,16 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: false,
   },
+  LIST_VISIT_REQUESTS: {
+    endpoint: "/visit-requests",
+    method: "GET",
+    hasToken: true,
+  },
+  GET_CURRENT_STAFF_USER: {
+    endpoint: "/staff-auth/me",
+    method: "GET",
+    hasToken: true,
+  },
 } as const
 
 export type ApiEndpointDefinition = (typeof API_ENDPOINTS)[keyof typeof API_ENDPOINTS]
