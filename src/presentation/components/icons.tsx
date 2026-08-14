@@ -109,3 +109,32 @@ export const UploadIcon = createIcon(
     <path d="M5 21h14" />
   </>,
 )
+
+export const ChevronDownIcon = createIcon(<path d="m6 9 6 6 6-6" />)
+
+export const ChevronLeftIcon = createIcon(<path d="m15 18-6-6 6-6" />)
+
+export const ChevronRightIcon = createIcon(<path d="m9 18 6-6-6-6" />)
+
+export const CalendarIcon = createIcon(
+  <>
+    <rect width="18" height="18" x="3" y="4" rx="2" />
+    <path d="M16 2v4" />
+    <path d="M8 2v4" />
+    <path d="M3 10h18" />
+  </>,
+)
+
+export const SlidersIcon = createIcon(
+  <>
+    <line x1="4" x2="4" y1="21" y2="14" />
+    <line x1="4" x2="4" y1="10" y2="3" />
+    <line x1="12" x2="12" y1="21" y2="12" />
+    <line x1="12" x2="12" y1="8" y2="3" />
+    <line x1="20" x2="20" y1="21" y2="16" />
+    <line x1="20" x2="20" y1="12" y2="3" />
+    <line x1="2" x2="6" y1="14" y2="14" />
+    <line x1="10" x2="14" y1="8" y2="8" />
+    <line x1="18" x2="22" y1="16" y2="16" />
+  </>,
+)

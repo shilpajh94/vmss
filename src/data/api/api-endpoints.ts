@@ -44,6 +44,11 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: true,
   },
+  LIST_AUDIT_TRAIL: {
+    endpoint: "/staff/audit-trail",
+    method: "GET",
+    hasToken: true,
+  },
 } as const
 
 export type ApiEndpointDefinition = (typeof API_ENDPOINTS)[keyof typeof API_ENDPOINTS]
