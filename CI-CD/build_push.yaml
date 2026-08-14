@@ -1,0 +1,40 @@
+trigger:
+- development
+
+variables:
+- group: VMSS-WEB
+
+pool:
+      name: 'VMSS'
+
+stages:
+- stage: Build_and_Push
+  displayName: 'Build and Push Stage'
+  jobs:
+  - job: DockerBuildAndPush
+    displayName: 'Docker Build and Push'
+    steps:
+    - task: Docker@2
+      displayName: 'Build VMMS_WEB image'
+      inputs:
+        containerRegistry: 'Docker_Reg'
+        repository: '$(dockerrepo)'
+        command: 'build'
+        Dockerfile: 'Dockerfile'
+        buildContext: '$(Build.SourcesDirectory)'
+        arguments: >
+          --build-arg VITE_API_BASE_URL=$(VITE_API_BASE_URL)
+          --build-arg VITE_ENTRA_CLIENT_ID=$(VITE_ENTRA_CLIENT_ID)
+          --build-arg VITE_ENTRA_TENANT_ID=$(VITE_ENTRA_TENANT_ID)
+          --build-arg VITE_ENTRA_REDIRECT_URI=$(VITE_ENTRA_REDIRECT_URI)
+          --build-arg VITE_DEFAULT_TENANT_SLUG=$(VITE_DEFAULT_TENANT_SLUG)
+        tags: |
+          $(Build.BuildId)
+    - task: Docker@2
+      displayName: 'Push VMMS_WEB image'
+      inputs:
+        containerRegistry: 'Docker_Reg'
+        repository: '$(dockerrepo)'
+        command: 'push'
+        tags: |
+          $(Build.BuildId)
