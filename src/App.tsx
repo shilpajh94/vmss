@@ -3,6 +3,8 @@ import { AppDependenciesProvider } from './presentation/context/app-dependencies
 import { VisitorPortalLandingPage } from './presentation/pages/visitor-portal-landing/visitor-portal-landing'
 import { VisitorRequestPage } from './presentation/pages/visitor-request/visitor-request'
 import { VisitorTrackPage } from './presentation/pages/visitor-track/visitor-track'
+import { StaffLoginPage } from './presentation/pages/staff-login/staff-login'
+import { StaffDashboardPage } from './presentation/pages/staff-dashboard/staff-dashboard'
 
 function RootLayout() {
   return (
@@ -11,6 +13,8 @@ function RootLayout() {
         <Route path="/" element={<VisitorPortalLandingPage />} />
         <Route path="/visitor/request" element={<VisitorRequestPage />} />
         <Route path="/visitor/track" element={<VisitorTrackPage />} />
+        <Route path="/staff/login" element={<StaffLoginPage />} />
+        <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
       </Routes>
     </AppDependenciesProvider>
   )

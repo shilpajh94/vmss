@@ -24,6 +24,11 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: false,
   },
+  INITIATE_STAFF_SSO: {
+    endpoint: "/staff-auth/sso/initiate",
+    method: "POST",
+    hasToken: false,
+  },
 } as const
 
 export type ApiEndpointDefinition = (typeof API_ENDPOINTS)[keyof typeof API_ENDPOINTS]
