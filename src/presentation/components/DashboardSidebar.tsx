@@ -19,7 +19,7 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
   const handleActivate = (key: DashboardSidebarActiveItem) => {
     if (key === 'all-visitors') navigate('/staff/dashboard')
     if (key === 'my-actions') navigate('/staff/visitors/new')
-    // "Audit trail" has no destination yet.
+    if (key === 'audit-trail') navigate('/staff/audit-trail')
   }
 
   return (

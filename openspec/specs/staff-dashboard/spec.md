@@ -25,11 +25,25 @@ The system SHALL render, for an authenticated session, a sidebar (brand mark, "A
 - **THEN** the sidebar, the "Visits" workspace header, the search bar, and the kanban board are all visible
 
 ### Requirement: Other sidebar navigation items are visible but not yet functional
-The system SHALL render the "My actions" and "Audit trail" sidebar items and the "Help & Support" link per the design, but SHALL NOT navigate anywhere when they are activated.
+The system SHALL render the "Help & Support" link per the design, but SHALL NOT navigate anywhere when it is activated.
 
 #### Scenario: Inert nav item activated
-- **WHEN** a staff member activates "My actions", "Audit trail", or "Help & Support"
+- **WHEN** a staff member activates "Help & Support"
 - **THEN** the current view does not change
+
+### Requirement: "Audit trail" opens the Audit Trail page
+The system SHALL, when a staff member activates "Audit trail" in the sidebar, navigate to the Audit Trail page.
+
+#### Scenario: Staff opens Audit trail
+- **WHEN** an authenticated staff member activates "Audit trail" in the sidebar
+- **THEN** the system navigates to the Audit Trail page
+
+### Requirement: "My actions" opens the Register Visitor wizard
+The system SHALL, when a staff member activates "My actions" in the sidebar, navigate to the Register Visitor wizard's first step.
+
+#### Scenario: Staff opens My actions
+- **WHEN** an authenticated staff member activates "My actions" in the sidebar
+- **THEN** the system navigates to the Register Visitor wizard, showing the Visitor Info step
 
 ### Requirement: Workspace header shows the signed-in staff member
 The system SHALL display the signed-in staff member's name and role in the workspace header, retrieved from the current-staff-user API.
