@@ -3,10 +3,23 @@ import { useAppDependencies } from '../../../context/app-dependencies-context'
 import {
   createInitialFormState,
   toVisitRequest,
+  type RegistrationType,
   type VisitorFormEntry,
   type VisitRequestFormState,
 } from '../types'
 import type { SubmissionStatus } from '../Components/steps/ReviewConfirmStep'
+
+export interface VisitorRequestWizardInitialData {
+  registrationType?: RegistrationType
+  primaryContact?: Partial<Pick<VisitorFormEntry, 'email' | 'phone'>>
+}
+
+function buildInitialFormState(initial?: VisitorRequestWizardInitialData): VisitRequestFormState {
+  const formState = createInitialFormState()
+  if (initial?.registrationType) formState.registrationType = initial.registrationType
+  if (initial?.primaryContact) formState.primaryContact = { ...formState.primaryContact, ...initial.primaryContact }
+  return formState
+}
 
 function validateVisitorContact(contact: VisitorFormEntry): Record<string, string> {
   const errors: Record<string, string> = {}
@@ -53,11 +66,11 @@ function validateStep(step: number, formState: VisitRequestFormState): Record<st
   return {}
 }
 
-export function useVisitorRequestWizard() {
+export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialData) {
   const { uploadVisitorDocumentUseCase, submitVisitRequestUseCase } = useAppDependencies()
 
   const [currentStep, setCurrentStep] = useState(0)
-  const [formState, setFormState] = useState<VisitRequestFormState>(createInitialFormState())
+  const [formState, setFormState] = useState<VisitRequestFormState>(() => buildInitialFormState(initial))
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus>('idle')
   const [trackingId, setTrackingId] = useState<string | undefined>(undefined)
