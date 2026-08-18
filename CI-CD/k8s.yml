@@ -1,3 +1,23 @@
+############################################
+# PersistentVolumeClaim
+############################################
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  namespace: $(namespace)
+  name: $(pvc_name)
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: $(storageClassName)
+  resources:
+    requests:
+      storage: $(pvc_storage)
+
+---
+############################################
+# Application Service
+############################################
 apiVersion: v1
 kind: Service
 metadata:
@@ -6,21 +26,25 @@ metadata:
   labels:
     app: $(proj_branch)
 spec:
+  selector:
+    app: $(proj_branch)
   ports:
     - name: $(proj_port)
       port: 80
       targetPort: 8000
       protocol: TCP
-  selector:
-    app: $(proj_branch)
+
 ---
+############################################
+# Application Deployment
+############################################
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: $(namespace)
+  name: $(proj_branch)
   labels:
     app: $(proj_branch)
-  name: $(proj_branch)
 spec:
   replicas: 1
   selector:
@@ -40,7 +64,145 @@ spec:
           envFrom:
             - secretRef:
                 name: $(proj_branch)-secret
+          volumeMounts:
+            - name: storage-volume
+              mountPath: /app/var/storage
+      volumes:
+        - name: storage-volume
+          persistentVolumeClaim:
+            claimName: $(pvc_name)
+
 ---
+############################################
+# Celery Worker Deployment for cron jobs
+############################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: $(namespace)
+  name: $(proj_branch)-celery-worker-cron
+  labels:
+    app: $(proj_branch)-celery-worker-cron
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: $(proj_branch)-celery-worker-cron
+  template:
+    metadata:
+      labels:
+        app: $(proj_branch)-celery-worker-cron
+    spec:
+      containers:
+        - name: celery-worker-cron
+          image: docker-registry.dev.displayme.net/$(dockerrepo)
+          imagePullPolicy: IfNotPresent
+          command: ["celery"]
+          args:
+            - "-A"
+            - "vmss_api.celery_app"
+            - "worker"
+            - "-Q"
+            - "cron_jobs"
+            - "--concurrency=2"
+            - "-l"
+            - "info"
+          env:
+            - name: CELERY_BROKER_URL
+              value: $(CELERY_BROKER_URL)
+            - name: CELERY_RESULT_BACKEND
+              value: $(CELERY_RESULT_BACKEND)
+          envFrom:
+            - secretRef:
+                name: $(proj_branch)-secret
+
+---
+############################################
+# Celery Worker Deployment for notifications
+############################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: $(namespace)
+  name: $(proj_branch)-celery-worker-notifications
+  labels:
+    app: $(proj_branch)-celery-worker-notifications
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: $(proj_branch)-celery-worker-notifications
+  template:
+    metadata:
+      labels:
+        app: $(proj_branch)-celery-worker-notifications
+    spec:
+      containers:
+        - name: celery-worker-notifications
+          image: docker-registry.dev.displayme.net/$(dockerrepo)
+          imagePullPolicy: IfNotPresent
+          command: ["celery"]
+          args:
+            - "-A"
+            - "vmss_api.celery_app"
+            - "worker"
+            - "-Q"
+            - "notifications"
+            - "--concurrency=2"
+            - "-l"
+            - "info"
+          env:
+            - name: CELERY_BROKER_URL
+              value: $(CELERY_BROKER_URL)
+            - name: CELERY_RESULT_BACKEND
+              value: $(CELERY_RESULT_BACKEND)
+          envFrom:
+            - secretRef:
+                name: $(proj_branch)-secret
+
+---
+############################################
+# Celery Beat Deployment
+############################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: $(namespace)
+  name: $(proj_branch)-celery-beat
+  labels:
+    app: $(proj_branch)-celery-beat
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: $(proj_branch)-celery-beat
+  template:
+    metadata:
+      labels:
+        app: $(proj_branch)-celery-beat
+    spec:
+      containers:
+        - name: celery-beat
+          image: docker-registry.dev.displayme.net/$(dockerrepo)
+          imagePullPolicy: IfNotPresent
+          command: ["celery"]
+          args:
+            - "-A"
+            - "vmss_api.celery_app"
+            - "beat"
+            - "-l"
+            - "INFO"
+          env:
+            - name: CELERY_BROKER_URL
+              value: $(CELERY_BROKER_URL)
+          envFrom:
+            - secretRef:
+                name: $(proj_branch)-secret
+
+---
+############################################
+# Ingress
+############################################
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -48,13 +210,13 @@ metadata:
   name: $(proj_branch)
 spec:
   rules:
-  - host: $(site_url)
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: $(proj_branch)
-            port:
-              name: $(proj_port)
+    - host: $(site_url)
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: $(proj_branch)
+                port:
+                  name: $(proj_port)
