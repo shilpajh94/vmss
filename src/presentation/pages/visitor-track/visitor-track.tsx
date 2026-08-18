@@ -1,6 +1,7 @@
 import heroImage from '../../../assets/images/lobby-hero.png'
 import { PortalFooter } from '../../components/PortalFooter'
 import { PortalHeader } from '../../components/PortalHeader'
+import { LoadingState } from '../../components/ui/LoadingState'
 import { StatusPanel } from './Components/StatusPanel'
 import { TrackingLookupCard } from './Components/TrackingLookupCard'
 import { useVisitorTrackLookup } from './hooks/use-visitor-track-lookup'
@@ -25,6 +26,7 @@ export function VisitorTrackPage() {
             loading={status === 'loading'}
             error={validationError}
           />
+          {status === 'loading' && <LoadingState label="Looking up your request…" className="w-[480px]" />}
           {status === 'success' && response && <StatusPanel response={response} />}
           {status === 'error' && (
             <div className="flex w-[480px] flex-col gap-3 rounded-2xl border border-danger bg-surface p-8">

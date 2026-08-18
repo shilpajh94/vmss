@@ -1,4 +1,5 @@
 import { DashboardSidebar } from '../../components/DashboardSidebar'
+import { LoadingState } from '../../components/ui/LoadingState'
 import { KanbanColumn } from './Components/KanbanColumn'
 import { SearchActionBar } from './Components/SearchActionBar'
 import { WorkspaceHeader } from './Components/WorkspaceHeader'
@@ -30,9 +31,7 @@ export function StaffDashboardPage() {
             </button>
           </div>
         ) : isLoading ? (
-          <div className="flex flex-1 items-center justify-center">
-            <p className="font-body text-sm text-text-muted">Loading visit requests…</p>
-          </div>
+          <LoadingState label="Loading visit requests…" className="flex-1" />
         ) : (
           <div className="flex w-full flex-1 items-start gap-4">
             {columns.map((column) => (

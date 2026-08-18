@@ -1,6 +1,7 @@
 import type { VisitRequestSummary } from '../../../../domain/entities/visit-request-summary-schema'
 import { VisitRequestCard } from './VisitRequestCard'
 import { UserIcon } from '../../../components/icons'
+import { EmptyState } from '../../../components/ui/EmptyState'
 
 const ACCENT_CLASSES = {
   requested: { border: 'border-l-info', tint: 'bg-info/8', text: 'text-info' },
@@ -27,12 +28,11 @@ export function KanbanColumn({ status, label, requests, emptyMessage }: KanbanCo
       </div>
 
       {requests.length === 0 ? (
-        <div className="flex h-40 w-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-[#cbd5e1] p-6">
-          <span className="flex size-8 items-center justify-center rounded-full bg-bg">
-            <UserIcon className="size-4 text-text-muted" />
-          </span>
-          <p className="text-center font-body text-xs font-medium text-text-muted">{emptyMessage}</p>
-        </div>
+        <EmptyState
+          message={emptyMessage}
+          icon={<UserIcon className="size-4 text-text-muted" />}
+          className="h-40 w-full rounded-xl border border-dashed border-[#cbd5e1] p-6"
+        />
       ) : (
         <div className="flex w-full flex-col gap-3">
           {requests.map((request) => (

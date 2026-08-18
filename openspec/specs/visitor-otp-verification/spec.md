@@ -38,6 +38,13 @@ The system SHALL show the same generic confirmation after a successful OTP reque
 - **WHEN** an OTP request completes successfully for any syntactically valid contact
 - **THEN** the system shows "If that contact is valid, a verification code has been sent to it." and advances to the OTP-verify screen
 
+### Requirement: OTP request failure also triggers a notification
+The system SHALL trigger an error notification when the OTP request fails to complete (network error or non-success response), separate from the generic confirmation shown on success.
+
+#### Scenario: OTP request fails
+- **WHEN** an OTP request cannot be completed
+- **THEN** the system triggers an error notification and remains on the OTP-request screen
+
 ### Requirement: OTP-verify screen requires a verification code to proceed
 The system SHALL render an OTP-verify screen after a successful OTP request, with a verification-code field and a "Verify and continue" action, and SHALL require a non-empty code before attempting verification.
 
@@ -56,12 +63,26 @@ The system SHALL, when verification succeeds, render the visitor request wizard 
 - **WHEN** the visitor's code is successfully verified
 - **THEN** the system renders the first step of the visitor request wizard with the registration type selected on the OTP-request screen and the verified contact already filled into the corresponding primary-contact field
 
+### Requirement: Successful verification also triggers a notification
+The system SHALL trigger a success notification when a submitted code is successfully verified, in addition to advancing into the visitor request wizard.
+
+#### Scenario: Code verifies successfully
+- **WHEN** the visitor's code is successfully verified
+- **THEN** the system triggers a success notification as it renders the visitor request wizard
+
 ### Requirement: Failed verification is reported without losing the OTP session
 The system SHALL, when a submitted code is invalid or expired, show an error on the OTP-verify screen and let the visitor retry without re-requesting a code.
 
 #### Scenario: Invalid or expired code
 - **WHEN** the visitor submits a code that does not verify
 - **THEN** the system shows an error message, remains on the OTP-verify screen, and lets the visitor submit another code
+
+### Requirement: Failed verification also triggers a notification
+The system SHALL, in addition to the inline error on the OTP-verify screen, trigger an error notification when a submitted code does not verify.
+
+#### Scenario: Invalid or expired code
+- **WHEN** the visitor submits a code that does not verify
+- **THEN** the system shows the inline error message and also triggers an error notification
 
 ### Requirement: Visitor can restart with a different contact
 The system SHALL let the visitor return from the OTP-verify screen to the OTP-request screen to submit a different mobile number or email.

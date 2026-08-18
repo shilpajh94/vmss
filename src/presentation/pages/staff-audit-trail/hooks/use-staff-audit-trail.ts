@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useToast } from '../../../components/toast/toast-context'
 import type { AuditLogEntry } from '../../../../domain/entities/audit-log-entry-schema'
 import type { AuditTrailStats } from '../../../../domain/entities/audit-trail-response-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
@@ -11,6 +12,7 @@ const SEARCH_DEBOUNCE_MS = 300
 export function useStaffAuditTrail() {
   const navigate = useNavigate()
   const { getAuditTrailUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
+  const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [dateRange, setDateRange] = useState(DEFAULT_DATE_RANGE)
@@ -46,10 +48,11 @@ export function useStaffAuditTrail() {
       setStats(response.stats)
     } catch {
       setErrorMessage('Something went wrong loading the audit trail. Please try again.')
+      toast.error('Something went wrong loading the audit trail. Please try again.')
     } finally {
       setIsLoading(false)
     }
-  }, [getAuditTrailUseCase, dateRange, activityType, debouncedSearch, page])
+  }, [getAuditTrailUseCase, dateRange, activityType, debouncedSearch, page, toast])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {

@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useToast } from '../../../components/toast/toast-context'
 
 export type StaffSsoStatus = 'idle' | 'initiating' | 'error'
 
 export function useStaffLoginPage() {
   const { initiateStaffSsoUseCase } = useAppDependencies()
+  const toast = useToast()
 
   const [status, setStatus] = useState<StaffSsoStatus>('idle')
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
@@ -19,6 +21,7 @@ export function useStaffLoginPage() {
     } catch {
       setErrorMessage('Something went wrong starting SSO sign-in. Please try again.')
       setStatus('error')
+      toast.error('Something went wrong starting SSO sign-in. Please try again.')
     }
   }
 

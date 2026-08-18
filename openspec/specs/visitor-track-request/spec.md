@@ -38,6 +38,13 @@ The system SHALL, when a lookup fails or no request matches the submitted tracki
 - **WHEN** the visitor looks up a tracking ID that has no matching visit request, or the lookup cannot be completed
 - **THEN** the system shows an error message and lets the visitor try again
 
+### Requirement: Lookup failure also triggers a notification
+The system SHALL, in addition to the inline error message, trigger an error notification when a tracking-ID lookup fails or no request matches.
+
+#### Scenario: No matching request or lookup error
+- **WHEN** the visitor looks up a tracking ID that has no matching visit request, or the lookup cannot be completed
+- **THEN** the system shows the inline error message and also triggers an error notification
+
 ### Requirement: Email-based lookup is presented but not yet functional
 The system SHALL display the alternate "Track via Email" option matching the approved design, but SHALL NOT perform an email-based lookup when activated.
 
