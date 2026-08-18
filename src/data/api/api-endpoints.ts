@@ -49,6 +49,81 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  GET_ORGANISATION_CONFIG: {
+    endpoint: "/organisation-config",
+    method: "GET",
+    hasToken: true,
+  },
+  UPDATE_ORGANISATION_CONFIG: {
+    endpoint: "/organisation-config",
+    method: "PUT",
+    hasToken: true,
+  },
+  UPLOAD_ORGANISATION_LOGO: {
+    endpoint: "/uploads/organisation-logo",
+    method: "POST",
+    hasToken: true,
+  },
+  LIST_BRANCHES: {
+    endpoint: "/branches",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_BRANCH: {
+    endpoint: "/branches",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_BRANCH: {
+    endpoint: "/branches",
+    method: "PUT",
+    hasToken: true,
+  },
+  DELETE_BRANCH: {
+    endpoint: "/branches",
+    method: "DELETE",
+    hasToken: true,
+  },
+  LIST_DEPARTMENTS: {
+    endpoint: "/departments",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_DEPARTMENT: {
+    endpoint: "/departments",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_DEPARTMENT: {
+    endpoint: "/departments",
+    method: "PUT",
+    hasToken: true,
+  },
+  DELETE_DEPARTMENT: {
+    endpoint: "/departments",
+    method: "DELETE",
+    hasToken: true,
+  },
+  LIST_BUILDINGS: {
+    endpoint: "/buildings",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_BUILDING: {
+    endpoint: "/buildings",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_BUILDING: {
+    endpoint: "/buildings",
+    method: "PUT",
+    hasToken: true,
+  },
+  DELETE_BUILDING: {
+    endpoint: "/buildings",
+    method: "DELETE",
+    hasToken: true,
+  },
 } as const
 
 export type ApiEndpointDefinition = (typeof API_ENDPOINTS)[keyof typeof API_ENDPOINTS]

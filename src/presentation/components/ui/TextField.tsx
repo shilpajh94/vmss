@@ -8,15 +8,17 @@ interface TextFieldProps {
   type?: string
   error?: string
   required?: boolean
+  labelClassName?: string
 }
 
-export function TextField({ label, value, onChange, placeholder, type = 'text', error, required }: TextFieldProps) {
+export function TextField({ label, value, onChange, placeholder, type = 'text', error, required, labelClassName }: TextFieldProps) {
   const inputId = useId()
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={inputId} className="text-body font-medium text-text">
+      <label htmlFor={inputId} className={labelClassName ?? 'text-body font-medium text-text'}>
         {label}
+        {required && <span className="ml-1 text-danger">*</span>}
       </label>
       <input
         id={inputId}
