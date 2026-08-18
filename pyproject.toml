@@ -1,0 +1,78 @@
+[project]
+name = "vmss-api"
+version = "0.1.0"
+description = "Visitor Management SaaS — backend API"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.1",
+    "sqlalchemy[asyncio]>=2.0.52",
+    "alembic>=1.19.1",
+    "asyncpg>=0.31.0",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.15.0",
+    "redis>=8.1.0",
+    "celery>=5.6.3",
+    "pyjwt>=2.13.0",
+    "argon2-cffi>=25.1.0",
+    "python-multipart>=0.0.32",
+    "structlog>=26.1.0",
+    "slowapi>=0.1.10",
+    "email-validator>=2.3.0",
+    "qrcode[pil]>=8.2",
+    "python-magic>=0.4.27",
+    "aiosmtplib>=5.1.2",
+    "anyio>=4.14.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "httpx>=0.28.1",
+    "ruff>=0.16.2",
+    "mypy>=2.3.0",
+    "pre-commit>=4.6.2",
+    "polyfactory>=3.3.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vmss_api"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+# Generated, reviewed-not-hand-styled — see database-architecture.md §5.
+extend-exclude = ["alembic/versions", "alembic_tenant/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# `DATABASE_URL` must be swapped to `vmss_test` before any `vmss_api` import
+# — see the module docstring/comment in conftest.py for why.
+"conftest.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.13"
+packages = ["vmss_api"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# Session-scoped, not the default per-function loop: `core/database.py`'s
+# module-level `engine` (and `tenant_session_scope`, used directly by
+# `auth/service.py`'s login flow — not just via an overridable `Depends()`)
+# is built once at import time. asyncpg connections are bound to the loop
+# they're created on, so a fresh loop per test would make that shared
+# engine's pooled connections fail on the second test with "attached to a
+# different loop". One loop for the whole session keeps it valid throughout.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests", "src"]
+python_files = ["test_*.py", "tests.py"]

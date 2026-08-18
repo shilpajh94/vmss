@@ -1,0 +1,52 @@
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from vmss_api.platform.models import SuperAdmin, TenantSchemaVersion, TenantUserIndex
+
+
+class SuperAdminRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get_by_email(self, email: str) -> SuperAdmin | None:
+        stmt = select(SuperAdmin).where(SuperAdmin.email == email)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_id(self, id_: uuid.UUID) -> SuperAdmin | None:
+        stmt = select(SuperAdmin).where(SuperAdmin.id == id_)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+
+class TenantUserIndexRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get_by_email(self, email: str) -> TenantUserIndex | None:
+        stmt = select(TenantUserIndex).where(TenantUserIndex.email == email)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def create(self, *, email: str, tenant_id: uuid.UUID, user_id: uuid.UUID) -> None:
+        self.session.add(TenantUserIndex(email=email, tenant_id=tenant_id, user_id=user_id))
+        await self.session.flush()
+
+
+class TenantSchemaVersionRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def record(self, *, tenant_id: uuid.UUID, revision: str) -> None:
+        """Upserts the bookkeeping row for `tenant_id` — provisioning and
+        every subsequent tenant-schema migration run call this.
+        """
+        stmt = (
+            insert(TenantSchemaVersion)
+            .values(tenant_id=tenant_id, revision=revision)
+            .on_conflict_do_update(
+                index_elements=[TenantSchemaVersion.tenant_id], set_={"revision": revision}
+            )
+        )
+        await self.session.execute(stmt)
+        await self.session.flush()

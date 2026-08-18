@@ -1,0 +1,62 @@
+{
+  "registration_type": "group",
+  "primary_contact": {
+    "full_name": "Priya Sharma",
+    "email": "priya.sharma@enterprise-ugo.co",
+    "phone": "+91 98765 43210",
+    "preferred_contact_method": "email",
+    "id_proof_type": "Aadhaar Card",
+    "id_proof_file": "<multipart part: primary_contact.id_proof_file>"
+  },
+  "visitors": [
+    {
+      "full_name": "Alexander Pierce",
+      "email": "alexander.p@enterprise-ugo.co",
+      "phone": null,
+      "id_proof_type": "Aadhaar Card",
+      "id_proof_file": "<multipart part: visitors[0].id_proof_file>"
+    },
+    {
+      "full_name": "Clara Oswald",
+      "email": null,
+      "phone": "+1 (555) 014-0362",
+      "id_proof_type": "Passport",
+      "id_proof_file": "<multipart part: visitors[1].id_proof_file>"
+    }
+  ],
+  "visit_details": {
+    "purpose_of_visit": "Business Meeting",
+    "host_name_or_email": "Rahul Nair",
+    "preferred_visit_date": "2026-08-15",
+    "preferred_visit_time": "14:30",
+    "expected_duration": "1-2 hours",
+    "department_to_visit": "Engineering",
+    "additional_notes": "Wheelchair access required for one visitor."
+  },
+  "carried_items": {
+    "items": [
+      "laptop_tablet",
+      "mobile_phone"
+    ],
+    "item_description": "2x company laptops, personal phones."
+  },
+  "vehicles": [
+    {
+      "vehicle_type": "4_wheeler",
+      "license_plate": "KA-01-AB-1234",
+      "make_model": "Honda City",
+      "color": "White"
+    },
+    {
+      "vehicle_type": "2_wheeler",
+      "license_plate": "KA-05-CD-5678",
+      "make_model": "Honda Activa",
+      "color": "Black"
+    }
+  ],
+  "consents": {
+    "terms_accepted": true,
+    "data_processing_accepted": true,
+    "safety_guidelines_accepted": true
+  }
+}

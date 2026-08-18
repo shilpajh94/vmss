@@ -1,0 +1,88 @@
+"""Async dispatch for `invitations` (API-11). Every task resolves its own
+tenant-bound session from a `tenant_schema` argument (`background-jobs.md`
+§4) — never the request's session, which is long closed by the time a task
+runs — and binds `request_id`/`tenant_schema` into `structlog`'s context at
+the top of the body (`logging-observability.md` §1) so a failed send is
+traceable back to the request that triggered it.
+"""
+
+import asyncio
+import uuid
+
+import structlog
+
+from vmss_api.core.celery_app import celery_app
+from vmss_api.core.database import tenant_session_scope
+from vmss_api.core.logging import logger
+from vmss_api.invitations import notifications
+from vmss_api.invitations.models import Invitation
+from vmss_api.invitations.qr import generate_qr_png
+
+_RETRY_KWARGS = {
+    "autoretry_for": (Exception,),
+    "retry_backoff": True,
+    "retry_backoff_max": 600,
+    "max_retries": 5,
+}
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_visit_confirmation(
+    self, *, request_id: str, tenant_schema: str, invitation_id: str
+) -> None:
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(_send_visit_confirmation(tenant_schema, invitation_id))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "visit_confirmation_dispatch_exhausted",
+                tenant_schema=tenant_schema,
+                invitation_id=invitation_id,
+            )
+        raise
+
+
+async def _send_visit_confirmation(tenant_schema: str, invitation_id: str) -> None:
+    async with tenant_session_scope(tenant_schema) as session:
+        invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+        # Idempotent against redelivery/retry (background-jobs.md §2): a
+        # missing invitation (the row somehow removed since the task was
+        # enqueued) has nothing left to notify about. There's no separate
+        # "already notified" flag to guard on beyond that — creation
+        # enqueues this task exactly once, atomically with the row's insert,
+        # so the only source of a duplicate send is Celery's own
+        # at-least-once redelivery, which the idempotency-key cache on the
+        # creating request already bounds (api-conventions.md §3).
+        if invitation is None:
+            return
+        subject = "Your visit is confirmed"
+        body = (
+            f"Your registration is confirmed. Tracking ID: {invitation.tracking_id}.\n"
+            "Present the attached QR code at check-in."
+        )
+        qr_png = await generate_qr_png(invitation.tracking_id)
+        await _dispatch(
+            invitation,
+            subject=subject,
+            body=body,
+            attachment=notifications.make_attachment(qr_png, "visit-qr.png", "image/png"),
+        )
+
+
+async def _dispatch(invitation: Invitation, *, subject: str, body: str, attachment=None) -> None:
+    """Routes to email or SMS per the invitation's `preferred_contact_method`
+    — never both. The `assert`s below are a data-integrity check, not
+    optional-narrowing convenience: `schemas.py`'s validators already
+    guarantee the contact info for the chosen method is present, so a
+    failure here means that guarantee was violated somewhere upstream, and
+    it's correct to let this raise loudly rather than silently no-op.
+    """
+    if invitation.primary_contact_preferred_contact_method == "email":
+        assert invitation.primary_contact_email is not None
+        await notifications.email_sender.send(
+            to=invitation.primary_contact_email, subject=subject, body=body, attachment=attachment
+        )
+    else:
+        assert invitation.primary_contact_phone is not None
+        await notifications.sms_sender.send(to=invitation.primary_contact_phone, body=body)

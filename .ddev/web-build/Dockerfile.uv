@@ -1,0 +1,5 @@
+# Installs uv, which manages the Python 3.13 interpreter and virtualenv for
+# this project — see project-rules.md §Dependency Management. Debian trixie
+# (the ddev-webserver base) already ships Python 3.13, but uv is what actually
+# creates/manages the venv from pyproject.toml + uv.lock.
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh

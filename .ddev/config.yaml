@@ -1,0 +1,32 @@
+name: vmss-new-api
+type: generic
+docroot: ""
+webserver_type: generic
+xdebug_enabled: false
+database:
+  type: postgres
+  version: "17"
+use_dns_when_possible: true
+
+# uv (installed via .ddev/web-build/Dockerfile.uv) manages the Python
+# interpreter (3.13) and the project's venv — see pyproject.toml / uv.lock.
+web_environment:
+  - PYTHONUNBUFFERED=1
+
+# Runs `uvicorn` inside the web container. `uv run` resolves/creates the venv
+# from pyproject.toml + uv.lock on first run.
+web_extra_daemons:
+  - name: "vmss-api"
+    command: "uv run uvicorn vmss_api.main:app --host 0.0.0.0 --port 8000 --reload"
+    directory: /var/www/html
+
+# Exposes the FastAPI app at https://vmss-new-api.ddev.site
+web_extra_exposed_ports:
+  - name: "vmss-api"
+    container_port: 8000
+    http_port: 8080
+    https_port: 8443
+
+hooks:
+  post-start:
+    - exec: "uv sync"

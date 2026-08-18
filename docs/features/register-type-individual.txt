@@ -1,0 +1,31 @@
+{
+  "registration_type": "individual",
+  "primary_contact": {
+    "full_name": "Meera Krishnan",
+    "email": "meera.krishnan@example.com",
+    "phone": "+91 90000 11122",
+    "preferred_contact_method": "email",
+    "id_proof_type": "Passport",
+    "id_proof_file": "<multipart part: primary_contact.id_proof_file>"
+  },
+  "visitors": [],
+  "visit_details": {
+    "purpose_of_visit": "Interview",
+    "host_name_or_email": "hr@enterprise-ugo.co",
+    "preferred_visit_date": "2026-08-12",
+    "preferred_visit_time": "10:00",
+    "expected_duration": "< 1 hour",
+    "department_to_visit": "Human Resources",
+    "additional_notes": ""
+  },
+  "carried_items": {
+    "items": [],
+    "item_description": ""
+  },
+  "vehicles": [],
+  "consents": {
+    "terms_accepted": true,
+    "data_processing_accepted": true,
+    "safety_guidelines_accepted": true
+  }
+}
