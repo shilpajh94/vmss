@@ -27,9 +27,6 @@ COPY alembic.ini ./alembic.ini
 COPY alembic_tenant/ ./alembic_tenant/
 COPY alembic_tenant.ini ./alembic_tenant.ini
 
-# Copy environment file (populated by CI replace-tokens task)
-COPY .env ./.env
-
 # Ensure the venv binaries are on PATH
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
