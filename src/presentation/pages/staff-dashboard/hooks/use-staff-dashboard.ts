@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useToast } from '../../../components/toast/toast-context'
 import type { VisitRequestSummary } from '../../../../domain/entities/visit-request-summary-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
@@ -14,6 +15,7 @@ export const DASHBOARD_STATUS_COLUMNS = [
 export function useStaffDashboard() {
   const navigate = useNavigate()
   const { listVisitRequestsUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
+  const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [visitRequests, setVisitRequests] = useState<VisitRequestSummary[]>([])
@@ -31,10 +33,11 @@ export function useStaffDashboard() {
       setVisitRequests(requests)
     } catch {
       setErrorMessage('Something went wrong loading the dashboard. Please try again.')
+      toast.error('Something went wrong loading the dashboard. Please try again.')
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listVisitRequestsUseCase])
+  }, [getCurrentStaffUserUseCase, listVisitRequestsUseCase, toast])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {

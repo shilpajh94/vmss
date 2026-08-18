@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useToast } from '../../../components/toast/toast-context'
 import type { RegistrationType } from '../types'
 
 export type OtpPhase = 'request' | 'verify'
@@ -12,6 +13,7 @@ interface UseVisitorOtpOptions {
 
 export function useVisitorOtp({ onVerified }: UseVisitorOtpOptions) {
   const { requestVisitorOtpUseCase, verifyVisitorOtpUseCase } = useAppDependencies()
+  const toast = useToast()
 
   const [phase, setPhase] = useState<OtpPhase>('request')
   const [registrationType, setRegistrationType] = useState<RegistrationType>('individual')
@@ -42,6 +44,7 @@ export function useVisitorOtp({ onVerified }: UseVisitorOtpOptions) {
     } catch {
       setRequestErrorMessage('Something went wrong requesting a code. Please try again.')
       setRequestStatus('error')
+      toast.error('Something went wrong requesting a code. Please try again.')
     }
   }
 
@@ -60,13 +63,16 @@ export function useVisitorOtp({ onVerified }: UseVisitorOtpOptions) {
       if (!response.verified) {
         setVerifyErrorMessage('That code is invalid or has expired. Please try again.')
         setVerifyStatus('error')
+        toast.error('That code is invalid or has expired. Please try again.')
         return
       }
       setVerifyStatus('idle')
+      toast.success('Contact verified.')
       onVerified(registrationType, contact.trim())
     } catch {
       setVerifyErrorMessage('Something went wrong verifying that code. Please try again.')
       setVerifyStatus('error')
+      toast.error('Something went wrong verifying that code. Please try again.')
     }
   }
 

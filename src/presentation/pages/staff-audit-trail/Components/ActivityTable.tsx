@@ -1,4 +1,5 @@
 import type { AuditLogEntry } from '../../../../domain/entities/audit-log-entry-schema'
+import { EmptyState } from '../../../components/ui/EmptyState'
 import { StatusPill } from './StatusPill'
 
 interface ActivityTableProps {
@@ -10,9 +11,10 @@ const COLUMN_LABELS = ['Timestamp', 'Activity', 'Visitor', 'Description', 'Zone'
 export function ActivityTable({ entries }: ActivityTableProps) {
   if (entries.length === 0) {
     return (
-      <div className="flex w-full flex-1 items-center justify-center rounded-xl border border-border bg-surface p-12">
-        <p className="font-body text-sm text-text-muted">No activity matches the current filters.</p>
-      </div>
+      <EmptyState
+        message="No activity matches the current filters."
+        className="w-full flex-1 rounded-xl border border-border bg-surface p-12"
+      />
     )
   }
 

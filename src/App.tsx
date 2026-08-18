@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes } from 'react-router'
 import { AppDependenciesProvider } from './presentation/context/app-dependencies-context'
+import { ToastProvider } from './presentation/components/toast/toast-context'
 import { VisitorPortalLandingPage } from './presentation/pages/visitor-portal-landing/visitor-portal-landing'
 import { VisitorRequestPage } from './presentation/pages/visitor-request/visitor-request'
 import { VisitorTrackPage } from './presentation/pages/visitor-track/visitor-track'
@@ -10,17 +11,19 @@ import { StaffAuditTrailPage } from './presentation/pages/staff-audit-trail/staf
 
 function RootLayout() {
   return (
-    <AppDependenciesProvider>
-      <Routes>
-        <Route path="/" element={<VisitorPortalLandingPage />} />
-        <Route path="/visitor/request" element={<VisitorRequestPage />} />
-        <Route path="/visitor/track" element={<VisitorTrackPage />} />
-        <Route path="/staff/login" element={<StaffLoginPage />} />
-        <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
-        <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
-        <Route path="/staff/audit-trail" element={<StaffAuditTrailPage />} />
-      </Routes>
-    </AppDependenciesProvider>
+    <ToastProvider>
+      <AppDependenciesProvider>
+        <Routes>
+          <Route path="/" element={<VisitorPortalLandingPage />} />
+          <Route path="/visitor/request" element={<VisitorRequestPage />} />
+          <Route path="/visitor/track" element={<VisitorTrackPage />} />
+          <Route path="/staff/login" element={<StaffLoginPage />} />
+          <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
+          <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
+          <Route path="/staff/audit-trail" element={<StaffAuditTrailPage />} />
+        </Routes>
+      </AppDependenciesProvider>
+    </ToastProvider>
   )
 }
 

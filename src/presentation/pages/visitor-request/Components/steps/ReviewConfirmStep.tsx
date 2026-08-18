@@ -1,5 +1,6 @@
 import type { CarriedItemsFormState, ConsentFormState, RegistrationType, VisitInfoFormState } from '../../types'
 import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
+import { Spinner } from '../../../../components/ui/LoadingState'
 
 export type SubmissionStatus = 'idle' | 'submitting' | 'success' | 'error'
 
@@ -138,8 +139,9 @@ export function ReviewConfirmStep({ formState, status, trackingId, errorMessage,
           type="button"
           onClick={onSubmit}
           disabled={status === 'submitting'}
-          className="rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white disabled:opacity-60"
+          className="flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white disabled:opacity-60"
         >
+          {status === 'submitting' && <Spinner className="size-4 border-white/40 border-t-white" />}
           {status === 'submitting' ? 'Submitting…' : 'Submit Request'}
         </button>
       </div>

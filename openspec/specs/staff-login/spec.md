@@ -35,6 +35,13 @@ The system SHALL show an inline error message on the login screen if SSO initiat
 - **WHEN** the SSO initiation request fails (network error or non-success response)
 - **THEN** the system shows an inline error message on the login screen and re-enables the "Sign in with SSO" action
 
+### Requirement: SSO initiation failure also triggers a notification
+The system SHALL, in addition to the inline error message, trigger an error notification when SSO initiation fails.
+
+#### Scenario: Initiation request fails
+- **WHEN** the SSO initiation request fails (network error or non-success response)
+- **THEN** the system shows an inline error message on the login screen and also triggers an error notification
+
 ### Requirement: Successful SSO sign-in lands on the staff dashboard
 The system SHALL render the full staff dashboard (the `staff-dashboard` capability) at the `/staff/dashboard` route as the landing target after a successful SSO sign-in.
 

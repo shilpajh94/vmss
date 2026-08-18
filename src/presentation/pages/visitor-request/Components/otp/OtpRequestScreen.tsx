@@ -1,4 +1,5 @@
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
+import { Spinner } from '../../../../components/ui/LoadingState'
 import type { RegistrationType } from '../../types'
 
 interface OtpRequestScreenProps {
@@ -63,8 +64,9 @@ export function OtpRequestScreen({
         type="button"
         onClick={onSubmit}
         disabled={loading}
-        className="rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white disabled:opacity-60"
+        className="flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white disabled:opacity-60"
       >
+        {loading && <Spinner className="size-4 border-white/40 border-t-white" />}
         {loading ? 'Requesting…' : 'Request OTP'}
       </button>
     </div>

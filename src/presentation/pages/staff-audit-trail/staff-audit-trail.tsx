@@ -1,4 +1,5 @@
 import { DashboardSidebar } from '../../components/DashboardSidebar'
+import { LoadingState } from '../../components/ui/LoadingState'
 import { ActivityTable } from './Components/ActivityTable'
 import { AuditFilterBar } from './Components/AuditFilterBar'
 import { Pagination } from './Components/Pagination'
@@ -44,9 +45,7 @@ export function StaffAuditTrailPage() {
               </button>
             </div>
           ) : isLoading ? (
-            <div className="flex flex-1 items-center justify-center">
-              <p className="font-body text-sm text-text-muted">Loading audit trail…</p>
-            </div>
+            <LoadingState label="Loading audit trail…" className="flex-1" />
           ) : (
             <>
               <div className="flex w-full items-start gap-4">

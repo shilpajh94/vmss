@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useToast } from '../../../components/toast/toast-context'
 import type { SubmissionStatus } from '../../visitor-request/Components/steps/ReviewConfirmStep'
 import {
   createInitialStaffFormState,
@@ -54,6 +55,7 @@ function validateStep(step: number, formState: StaffVisitRequestFormState): Reco
 
 export function useStaffVisitorRegistrationWizard() {
   const { uploadVisitorDocumentUseCase, submitStaffVisitRequestUseCase } = useAppDependencies()
+  const toast = useToast()
 
   const [currentStep, setCurrentStep] = useState(0)
   const [formState, setFormState] = useState<StaffVisitRequestFormState>(createInitialStaffFormState)
@@ -104,9 +106,11 @@ export function useStaffVisitorRegistrationWizard() {
       const response = await submitStaffVisitRequestUseCase.execute(toStaffVisitRequest(formState))
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')
+      toast.success('Visitor registered successfully.')
     } catch {
       setSubmissionError('Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
+      toast.error('Something went wrong submitting your request. Please try again.')
     }
   }
 

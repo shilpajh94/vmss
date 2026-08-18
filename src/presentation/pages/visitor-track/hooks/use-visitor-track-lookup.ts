@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useToast } from '../../../components/toast/toast-context'
 import type { TrackingLookupResponse } from '../../../../domain/entities/tracking-lookup-response-schema'
 
 export type LookupStatus = 'idle' | 'loading' | 'success' | 'error'
 
 export function useVisitorTrackLookup() {
   const { trackVisitRequestUseCase } = useAppDependencies()
+  const toast = useToast()
 
   const [trackingId, setTrackingId] = useState('')
   const [validationError, setValidationError] = useState<string | undefined>(undefined)
@@ -30,6 +32,7 @@ export function useVisitorTrackLookup() {
     } catch {
       setErrorMessage("We couldn't find a request with that tracking ID. Please check and try again.")
       setStatus('error')
+      toast.error("We couldn't find a request with that tracking ID. Please check and try again.")
     }
   }
 
