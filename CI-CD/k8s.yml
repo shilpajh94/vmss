@@ -66,7 +66,7 @@ spec:
                 name: $(proj_branch)-secret
           volumeMounts:
             - name: storage-volume
-              mountPath: /var/storage
+              mountPath: $(mount_path)
       volumes:
         - name: storage-volume
           persistentVolumeClaim:
