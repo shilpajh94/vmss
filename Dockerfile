@@ -6,11 +6,18 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
-# Copy dependency files first for layer caching
-COPY pyproject.toml uv.lock ./
+# Copy dependency files and README first for layer caching
+COPY pyproject.toml uv.lock README.md ./
 
-# Install production dependencies into /app/.venv
+# Install ONLY dependencies first (this caches the expensive part)
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Copy application source code so the project itself can be built
+COPY src/ ./src/
+
+# Install the project itself
 RUN uv sync --frozen --no-dev --no-editable
+
 
 # ─── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM pitsdevops.azurecr.io/pits-linux-base AS runtime
@@ -20,7 +27,8 @@ WORKDIR /app
 # Copy the virtual environment from the builder stage
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy application source
+# Copy application source and other needed files
+# (src/ is already copied in builder, but we need it in runtime too)
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./alembic.ini
