@@ -1,8 +1,8 @@
 # ─── Stage 1: Builder ────────────────────────────────────────────────────────
 FROM pitsdevops.azurecr.io/pits-linux-base AS builder
 
-# Install uv (fast Python package manager)
-RUN pip install --no-cache-dir uv
+# Copy uv binary directly from official image (bypasses pip/runc issues)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
