@@ -1,0 +1,99 @@
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router'
+import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useToast } from '../../../components/toast/toast-context'
+import type { Branch } from '../../../../domain/entities/branch-schema'
+import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+
+export type BranchCreateValues = Omit<Branch, 'id'>
+
+const EMPTY_VALUES: BranchCreateValues = {
+  name: '',
+  branchCode: '',
+  locationCity: '',
+  country: '',
+  physicalAddress: '',
+  contactPerson: '',
+  contactEmail: '',
+  contactPhone: '',
+  operatingHoursFrom: undefined,
+  operatingHoursTo: undefined,
+  notes: undefined,
+  status: 'active',
+}
+
+const REQUIRED_FIELDS: Array<{ key: keyof BranchCreateValues; message: string }> = [
+  { key: 'name', message: 'Branch name is required.' },
+  { key: 'branchCode', message: 'Branch code is required.' },
+  { key: 'locationCity', message: 'Location/city is required.' },
+  { key: 'country', message: 'Country is required.' },
+  { key: 'physicalAddress', message: 'Physical address is required.' },
+  { key: 'contactPerson', message: 'Contact person is required.' },
+  { key: 'contactEmail', message: 'Contact email is required.' },
+  { key: 'contactPhone', message: 'Contact phone is required.' },
+]
+
+export function useAdminBranchCreate() {
+  const navigate = useNavigate()
+  const { createBranchUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
+  const toast = useToast()
+
+  const [values, setValues] = useState<BranchCreateValues>(EMPTY_VALUES)
+  const [errors, setErrors] = useState<Partial<Record<keyof BranchCreateValues, string>>>({})
+  const [isSaving, setIsSaving] = useState(false)
+  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+
+  useEffect(() => {
+    if (!sessionStorage.getItem('token')) {
+      navigate('/staff/login', { replace: true })
+      return
+    }
+
+    void getCurrentStaffUserUseCase.execute().then(setCurrentUser).catch(() => undefined)
+  }, [navigate, getCurrentStaffUserUseCase])
+
+  const updateField = useCallback(<K extends keyof BranchCreateValues>(key: K, value: BranchCreateValues[K]) => {
+    setValues((current) => ({ ...current, [key]: value }))
+  }, [])
+
+  const submit = useCallback(async () => {
+    const nextErrors: Partial<Record<keyof BranchCreateValues, string>> = {}
+    for (const field of REQUIRED_FIELDS) {
+      const value = values[field.key]
+      if (!value || (typeof value === 'string' && !value.trim())) {
+        nextErrors[field.key] = field.message
+      }
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors)
+      return
+    }
+    setErrors({})
+
+    setIsSaving(true)
+    try {
+      await createBranchUseCase.execute(values)
+      navigate('/admin/branches')
+      toast.success('Branch created.')
+    } catch {
+      toast.error('Something went wrong creating the branch. Please try again.')
+    } finally {
+      setIsSaving(false)
+    }
+  }, [values, createBranchUseCase, navigate, toast])
+
+  const cancel = useCallback(() => {
+    navigate('/admin/branches')
+  }, [navigate])
+
+  return {
+    currentUser,
+    values,
+    errors,
+    isSaving,
+    updateField,
+    submit,
+    cancel,
+  }
+}

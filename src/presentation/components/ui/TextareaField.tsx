@@ -6,14 +6,15 @@ interface TextareaFieldProps {
   onChange: (value: string) => void
   placeholder?: string
   rows?: number
+  labelClassName?: string
 }
 
-export function TextareaField({ label, value, onChange, placeholder, rows = 4 }: TextareaFieldProps) {
+export function TextareaField({ label, value, onChange, placeholder, rows = 4, labelClassName }: TextareaFieldProps) {
   const textareaId = useId()
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={textareaId} className="text-body font-medium text-text">
+      <label htmlFor={textareaId} className={labelClassName ?? 'text-body font-medium text-text'}>
         {label}
       </label>
       <textarea

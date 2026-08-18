@@ -1,0 +1,92 @@
+import { useNavigate } from 'react-router'
+import { PencilIcon, TrashIcon } from '../../../components/icons'
+import type { FloorRow } from '../hooks/use-admin-floors'
+
+interface FloorsTableProps {
+  floors: FloorRow[]
+  departmentNameById: Map<string, string>
+  onDelete: (floor: FloorRow) => void
+}
+
+const COLUMN_HEADERS = ['FLOOR NAME/NUMBER', 'BUILDING', 'DEPARTMENT(S)', 'CAPACITY', 'ACCESS LEVEL']
+
+const ACCESS_LEVEL_STYLES: Record<FloorRow['accessLevel'], { label: string; bg: string; text: string; dot: string }> = {
+  public: { label: 'Public', bg: 'bg-[#dbeafe]', text: 'text-[#1e40af]', dot: 'bg-[#1e40af]' },
+  restricted: { label: 'Restricted', bg: 'bg-[#fef3c7]', text: 'text-[#92400e]', dot: 'bg-[#92400e]' },
+  secure: { label: 'Secure', bg: 'bg-[#fee2e2]', text: 'text-[#991b1b]', dot: 'bg-[#991b1b]' },
+}
+
+export function FloorsTable({ floors, departmentNameById, onDelete }: FloorsTableProps) {
+  const navigate = useNavigate()
+
+  return (
+    <div className="w-full overflow-x-auto rounded-2xl border border-border bg-surface">
+      <table className="w-full text-left">
+        <thead>
+          <tr className="bg-border-subtle">
+            {COLUMN_HEADERS.map((header) => (
+              <th key={header} className="px-6 py-3.5 font-body text-[13px] font-bold text-text-muted whitespace-nowrap">
+                {header}
+              </th>
+            ))}
+            <th className="px-6 py-3.5 font-body text-[13px] font-bold text-text-muted whitespace-nowrap">STATUS</th>
+            <th className="px-6 py-3.5 text-right font-body text-[13px] font-bold text-text-muted whitespace-nowrap">ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {floors.map((floor) => {
+            const accessLevel = ACCESS_LEVEL_STYLES[floor.accessLevel]
+            const departmentNames = floor.departmentIds.map((id) => departmentNameById.get(id)).filter(Boolean).join(', ')
+
+            return (
+              <tr key={floor.id} className="border-b border-border-subtle">
+                <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">{floor.name}</td>
+                <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{floor.buildingName}</td>
+                <td className="max-w-[175px] truncate px-6 py-4 font-body text-sm text-text-muted">{departmentNames || '—'}</td>
+                <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">
+                  {floor.capacityCount} {floor.capacityUnit}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${accessLevel.bg} ${accessLevel.text}`}>
+                    <span className={`size-1.5 rounded-full ${accessLevel.dot}`} />
+                    {accessLevel.label}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
+                      floor.status === 'active' ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
+                    }`}
+                  >
+                    <span className={`size-1.5 rounded-full ${floor.status === 'active' ? 'bg-success' : 'bg-text-faint'}`} />
+                    {floor.status === 'active' ? 'Active' : 'Inactive'}
+                  </span>
+                </td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/admin/floors/${floor.id}/edit`)}
+                      aria-label={`Edit ${floor.name}`}
+                      className="flex items-center justify-center rounded-lg bg-border-subtle p-2 text-text"
+                    >
+                      <PencilIcon className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDelete(floor)}
+                      aria-label={`Delete ${floor.name}`}
+                      className="flex items-center justify-center rounded-lg bg-danger/15 p-2 text-danger"
+                    >
+                      <TrashIcon className="size-3.5" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}

@@ -13,15 +13,17 @@ interface SelectFieldProps {
   placeholder?: string
   error?: string
   required?: boolean
+  labelClassName?: string
 }
 
-export function SelectField({ label, value, onChange, options, placeholder, error, required }: SelectFieldProps) {
+export function SelectField({ label, value, onChange, options, placeholder, error, required, labelClassName }: SelectFieldProps) {
   const selectId = useId()
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={selectId} className="text-body font-medium text-text">
+      <label htmlFor={selectId} className={labelClassName ?? 'text-body font-medium text-text'}>
         {label}
+        {required && <span className="ml-1 text-danger">*</span>}
       </label>
       <select
         id={selectId}

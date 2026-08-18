@@ -7,6 +7,7 @@ interface FileUploadFieldProps {
   helperText?: string
   allowedTypes: string[]
   fileName?: string
+  previewUrl?: string
   onUpload: (file: File) => Promise<string>
   onFileRefChange: (fileRef: string | undefined, fileName: string | undefined) => void
 }
@@ -16,6 +17,7 @@ export function FileUploadField({
   helperText,
   allowedTypes,
   fileName,
+  previewUrl,
   onUpload,
   onFileRefChange,
 }: FileUploadFieldProps) {
@@ -59,12 +61,17 @@ export function FileUploadField({
       </label>
       <label
         htmlFor={inputId}
-        className="flex cursor-pointer flex-col items-center gap-1 rounded-lg border border-dashed border-border bg-surface px-4 py-6 text-center"
+        className={`flex cursor-pointer items-center rounded-lg border border-dashed border-border bg-surface px-4 py-4 ${
+          previewUrl ? 'gap-4' : 'flex-col gap-1 text-center py-6'
+        }`}
       >
-        <span className="text-body text-text">
-          {uploading ? 'Uploading…' : fileName ? fileName : 'Click to upload or drag & drop'}
+        {previewUrl && <img src={previewUrl} alt="" className="size-12 shrink-0 rounded-lg object-cover" />}
+        <span className="flex flex-col gap-0.5">
+          <span className="text-body font-semibold text-text">
+            {uploading ? 'Uploading…' : fileName ? fileName : 'Click to upload or drag & drop'}
+          </span>
+          {helperText && <span className="text-caption text-text-muted">{helperText}</span>}
         </span>
-        {helperText && <span className="text-caption text-text-muted">{helperText}</span>}
       </label>
       <input id={inputId} type="file" className="hidden" onChange={handleChange} disabled={uploading} />
       {error && <p className="text-caption text-danger">{error}</p>}

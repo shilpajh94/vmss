@@ -1,0 +1,123 @@
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router'
+import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useToast } from '../../../components/toast/toast-context'
+import type { Branch } from '../../../../domain/entities/branch-schema'
+import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+
+export type BranchFormState = { mode: 'edit'; branch: Branch } | undefined
+
+export function useAdminBranches() {
+  const navigate = useNavigate()
+  const { getCurrentStaffUserUseCase, listBranchesUseCase, updateBranchUseCase, deleteBranchUseCase } = useAppDependencies()
+  const toast = useToast()
+
+  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const [branches, setBranches] = useState<Branch[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+
+  const [formState, setFormState] = useState<BranchFormState>(undefined)
+  const [isSaving, setIsSaving] = useState(false)
+
+  const [pendingDelete, setPendingDelete] = useState<Branch | undefined>(undefined)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const loadBranches = useCallback(async () => {
+    setIsLoading(true)
+    setErrorMessage(undefined)
+
+    try {
+      const [user, list] = await Promise.all([getCurrentStaffUserUseCase.execute(), listBranchesUseCase.execute()])
+      setCurrentUser(user)
+      setBranches(list)
+    } catch {
+      setErrorMessage('Something went wrong loading the branches. Please try again.')
+      toast.error('Something went wrong loading the branches. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [getCurrentStaffUserUseCase, listBranchesUseCase, toast])
+
+  useEffect(() => {
+    if (!sessionStorage.getItem('token')) {
+      navigate('/staff/login', { replace: true })
+      return
+    }
+
+    void loadBranches()
+  }, [navigate, loadBranches])
+
+  const retry = useCallback(() => {
+    void loadBranches()
+  }, [loadBranches])
+
+  const openEditForm = useCallback((branch: Branch) => {
+    setFormState({ mode: 'edit', branch })
+  }, [])
+
+  const closeForm = useCallback(() => {
+    setFormState(undefined)
+  }, [])
+
+  const saveBranch = useCallback(
+    async (input: Omit<Branch, 'id'>) => {
+      if (!formState) return
+
+      setIsSaving(true)
+      try {
+        const updated = await updateBranchUseCase.execute(formState.branch.id, input)
+        setBranches((current) => current.map((branch) => (branch.id === updated.id ? updated : branch)))
+        toast.success('Branch updated.')
+        setFormState(undefined)
+      } catch {
+        toast.error('Something went wrong saving the branch. Please try again.')
+      } finally {
+        setIsSaving(false)
+      }
+    },
+    [formState, updateBranchUseCase, toast],
+  )
+
+  const requestDelete = useCallback((branch: Branch) => {
+    setPendingDelete(branch)
+  }, [])
+
+  const cancelDelete = useCallback(() => {
+    setPendingDelete(undefined)
+  }, [])
+
+  const confirmDelete = useCallback(async () => {
+    if (!pendingDelete) return
+
+    setIsDeleting(true)
+    try {
+      await deleteBranchUseCase.execute(pendingDelete.id)
+      setBranches((current) => current.filter((branch) => branch.id !== pendingDelete.id))
+      toast.success('Branch deleted.')
+      setPendingDelete(undefined)
+    } catch {
+      toast.error('Something went wrong deleting the branch. Please try again.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }, [pendingDelete, deleteBranchUseCase, toast])
+
+  return {
+    currentUser,
+    branches,
+    isLoading,
+    errorMessage,
+    retry,
+    formState,
+    isSaving,
+    openEditForm,
+    closeForm,
+    saveBranch,
+    pendingDelete,
+    isDeleting,
+    requestDelete,
+    cancelDelete,
+    confirmDelete,
+  }
+}

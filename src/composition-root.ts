@@ -6,6 +6,10 @@ import type { VisitorOtpRepository } from './data/repositories/visitor-otp-repos
 import type { StaffAuthRepository } from './data/repositories/staff-auth-repository'
 import type { StaffVisitRequestRepository } from './data/repositories/staff-visit-request-repository'
 import type { AuditTrailRepository } from './data/repositories/audit-trail-repository'
+import type { OrganisationConfigRepository } from './data/repositories/organisation-config-repository'
+import type { BranchRepository } from './data/repositories/branch-repository'
+import type { DepartmentRepository } from './data/repositories/department-repository'
+import type { BuildingRepository } from './data/repositories/building-repository'
 import { SubmitVisitRequestUseCase } from './data/use-cases/submit-visit-request'
 import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-visit-request'
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
@@ -16,6 +20,21 @@ import { VerifyVisitorOtpUseCase } from './data/use-cases/verify-visitor-otp'
 import { InitiateStaffSsoUseCase } from './data/use-cases/initiate-staff-sso'
 import { ListVisitRequestsUseCase } from './data/use-cases/list-visit-requests'
 import { GetCurrentStaffUserUseCase } from './data/use-cases/get-current-staff-user'
+import { GetOrganisationConfigUseCase } from './data/use-cases/get-organisation-config'
+import { UpdateOrganisationConfigUseCase } from './data/use-cases/update-organisation-config'
+import { UploadOrganisationLogoUseCase } from './data/use-cases/upload-organisation-logo'
+import { ListBranchesUseCase } from './data/use-cases/list-branches'
+import { CreateBranchUseCase } from './data/use-cases/create-branch'
+import { UpdateBranchUseCase } from './data/use-cases/update-branch'
+import { DeleteBranchUseCase } from './data/use-cases/delete-branch'
+import { ListDepartmentsUseCase } from './data/use-cases/list-departments'
+import { CreateDepartmentUseCase } from './data/use-cases/create-department'
+import { UpdateDepartmentUseCase } from './data/use-cases/update-department'
+import { DeleteDepartmentUseCase } from './data/use-cases/delete-department'
+import { ListBuildingsUseCase } from './data/use-cases/list-buildings'
+import { CreateBuildingUseCase } from './data/use-cases/create-building'
+import { UpdateBuildingUseCase } from './data/use-cases/update-building'
+import { DeleteBuildingUseCase } from './data/use-cases/delete-building'
 import { HttpVisitRequestRepository } from './infrastructure/visit-request-repository'
 import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-request-summary-repository'
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
@@ -23,6 +42,10 @@ import { HttpVisitorOtpRepository } from './infrastructure/visitor-otp-repositor
 import { HttpStaffAuthRepository } from './infrastructure/staff-auth-repository'
 import { HttpStaffVisitRequestRepository } from './infrastructure/staff-visit-request-repository'
 import { HttpAuditTrailRepository } from './infrastructure/audit-trail-repository'
+import { HttpOrganisationConfigRepository } from './infrastructure/organisation-config-repository'
+import { HttpBranchRepository } from './infrastructure/branch-repository'
+import { HttpDepartmentRepository } from './infrastructure/department-repository'
+import { HttpBuildingRepository } from './infrastructure/building-repository'
 
 export interface AppDependencies {
   apiClient: ApiClient
@@ -36,6 +59,21 @@ export interface AppDependencies {
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
   getAuditTrailUseCase: GetAuditTrailUseCase
+  getOrganisationConfigUseCase: GetOrganisationConfigUseCase
+  updateOrganisationConfigUseCase: UpdateOrganisationConfigUseCase
+  uploadOrganisationLogoUseCase: UploadOrganisationLogoUseCase
+  listBranchesUseCase: ListBranchesUseCase
+  createBranchUseCase: CreateBranchUseCase
+  updateBranchUseCase: UpdateBranchUseCase
+  deleteBranchUseCase: DeleteBranchUseCase
+  listDepartmentsUseCase: ListDepartmentsUseCase
+  createDepartmentUseCase: CreateDepartmentUseCase
+  updateDepartmentUseCase: UpdateDepartmentUseCase
+  deleteDepartmentUseCase: DeleteDepartmentUseCase
+  listBuildingsUseCase: ListBuildingsUseCase
+  createBuildingUseCase: CreateBuildingUseCase
+  updateBuildingUseCase: UpdateBuildingUseCase
+  deleteBuildingUseCase: DeleteBuildingUseCase
 }
 
 export function createApp(): AppDependencies {
@@ -57,6 +95,25 @@ export function createApp(): AppDependencies {
   let submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase | undefined
   let auditTrailRepository: AuditTrailRepository | undefined
   let getAuditTrailUseCase: GetAuditTrailUseCase | undefined
+  let organisationConfigRepository: OrganisationConfigRepository | undefined
+  let getOrganisationConfigUseCase: GetOrganisationConfigUseCase | undefined
+  let updateOrganisationConfigUseCase: UpdateOrganisationConfigUseCase | undefined
+  let uploadOrganisationLogoUseCase: UploadOrganisationLogoUseCase | undefined
+  let branchRepository: BranchRepository | undefined
+  let listBranchesUseCase: ListBranchesUseCase | undefined
+  let createBranchUseCase: CreateBranchUseCase | undefined
+  let updateBranchUseCase: UpdateBranchUseCase | undefined
+  let deleteBranchUseCase: DeleteBranchUseCase | undefined
+  let departmentRepository: DepartmentRepository | undefined
+  let listDepartmentsUseCase: ListDepartmentsUseCase | undefined
+  let createDepartmentUseCase: CreateDepartmentUseCase | undefined
+  let updateDepartmentUseCase: UpdateDepartmentUseCase | undefined
+  let deleteDepartmentUseCase: DeleteDepartmentUseCase | undefined
+  let buildingRepository: BuildingRepository | undefined
+  let listBuildingsUseCase: ListBuildingsUseCase | undefined
+  let createBuildingUseCase: CreateBuildingUseCase | undefined
+  let updateBuildingUseCase: UpdateBuildingUseCase | undefined
+  let deleteBuildingUseCase: DeleteBuildingUseCase | undefined
 
   const resolveApiClient = (): ApiClient => {
     apiClient ??= new ApiClient(import.meta.env.VITE_API_BASE_URL)
@@ -148,6 +205,101 @@ export function createApp(): AppDependencies {
     return getAuditTrailUseCase
   }
 
+  const resolveOrganisationConfigRepository = (): OrganisationConfigRepository => {
+    organisationConfigRepository ??= new HttpOrganisationConfigRepository(resolveApiClient())
+    return organisationConfigRepository
+  }
+
+  const resolveGetOrganisationConfigUseCase = (): GetOrganisationConfigUseCase => {
+    getOrganisationConfigUseCase ??= new GetOrganisationConfigUseCase(resolveOrganisationConfigRepository())
+    return getOrganisationConfigUseCase
+  }
+
+  const resolveUpdateOrganisationConfigUseCase = (): UpdateOrganisationConfigUseCase => {
+    updateOrganisationConfigUseCase ??= new UpdateOrganisationConfigUseCase(resolveOrganisationConfigRepository())
+    return updateOrganisationConfigUseCase
+  }
+
+  const resolveUploadOrganisationLogoUseCase = (): UploadOrganisationLogoUseCase => {
+    uploadOrganisationLogoUseCase ??= new UploadOrganisationLogoUseCase(resolveOrganisationConfigRepository())
+    return uploadOrganisationLogoUseCase
+  }
+
+  const resolveBranchRepository = (): BranchRepository => {
+    branchRepository ??= new HttpBranchRepository(resolveApiClient())
+    return branchRepository
+  }
+
+  const resolveListBranchesUseCase = (): ListBranchesUseCase => {
+    listBranchesUseCase ??= new ListBranchesUseCase(resolveBranchRepository())
+    return listBranchesUseCase
+  }
+
+  const resolveCreateBranchUseCase = (): CreateBranchUseCase => {
+    createBranchUseCase ??= new CreateBranchUseCase(resolveBranchRepository())
+    return createBranchUseCase
+  }
+
+  const resolveUpdateBranchUseCase = (): UpdateBranchUseCase => {
+    updateBranchUseCase ??= new UpdateBranchUseCase(resolveBranchRepository())
+    return updateBranchUseCase
+  }
+
+  const resolveDeleteBranchUseCase = (): DeleteBranchUseCase => {
+    deleteBranchUseCase ??= new DeleteBranchUseCase(resolveBranchRepository())
+    return deleteBranchUseCase
+  }
+
+  const resolveDepartmentRepository = (): DepartmentRepository => {
+    departmentRepository ??= new HttpDepartmentRepository(resolveApiClient())
+    return departmentRepository
+  }
+
+  const resolveListDepartmentsUseCase = (): ListDepartmentsUseCase => {
+    listDepartmentsUseCase ??= new ListDepartmentsUseCase(resolveDepartmentRepository())
+    return listDepartmentsUseCase
+  }
+
+  const resolveCreateDepartmentUseCase = (): CreateDepartmentUseCase => {
+    createDepartmentUseCase ??= new CreateDepartmentUseCase(resolveDepartmentRepository())
+    return createDepartmentUseCase
+  }
+
+  const resolveUpdateDepartmentUseCase = (): UpdateDepartmentUseCase => {
+    updateDepartmentUseCase ??= new UpdateDepartmentUseCase(resolveDepartmentRepository())
+    return updateDepartmentUseCase
+  }
+
+  const resolveDeleteDepartmentUseCase = (): DeleteDepartmentUseCase => {
+    deleteDepartmentUseCase ??= new DeleteDepartmentUseCase(resolveDepartmentRepository())
+    return deleteDepartmentUseCase
+  }
+
+  const resolveBuildingRepository = (): BuildingRepository => {
+    buildingRepository ??= new HttpBuildingRepository(resolveApiClient())
+    return buildingRepository
+  }
+
+  const resolveListBuildingsUseCase = (): ListBuildingsUseCase => {
+    listBuildingsUseCase ??= new ListBuildingsUseCase(resolveBuildingRepository())
+    return listBuildingsUseCase
+  }
+
+  const resolveCreateBuildingUseCase = (): CreateBuildingUseCase => {
+    createBuildingUseCase ??= new CreateBuildingUseCase(resolveBuildingRepository())
+    return createBuildingUseCase
+  }
+
+  const resolveUpdateBuildingUseCase = (): UpdateBuildingUseCase => {
+    updateBuildingUseCase ??= new UpdateBuildingUseCase(resolveBuildingRepository())
+    return updateBuildingUseCase
+  }
+
+  const resolveDeleteBuildingUseCase = (): DeleteBuildingUseCase => {
+    deleteBuildingUseCase ??= new DeleteBuildingUseCase(resolveBuildingRepository())
+    return deleteBuildingUseCase
+  }
+
   return {
     get apiClient() {
       return resolveApiClient()
@@ -181,6 +333,51 @@ export function createApp(): AppDependencies {
     },
     get getAuditTrailUseCase() {
       return resolveGetAuditTrailUseCase()
+    },
+    get getOrganisationConfigUseCase() {
+      return resolveGetOrganisationConfigUseCase()
+    },
+    get updateOrganisationConfigUseCase() {
+      return resolveUpdateOrganisationConfigUseCase()
+    },
+    get uploadOrganisationLogoUseCase() {
+      return resolveUploadOrganisationLogoUseCase()
+    },
+    get listBranchesUseCase() {
+      return resolveListBranchesUseCase()
+    },
+    get createBranchUseCase() {
+      return resolveCreateBranchUseCase()
+    },
+    get updateBranchUseCase() {
+      return resolveUpdateBranchUseCase()
+    },
+    get deleteBranchUseCase() {
+      return resolveDeleteBranchUseCase()
+    },
+    get listDepartmentsUseCase() {
+      return resolveListDepartmentsUseCase()
+    },
+    get createDepartmentUseCase() {
+      return resolveCreateDepartmentUseCase()
+    },
+    get updateDepartmentUseCase() {
+      return resolveUpdateDepartmentUseCase()
+    },
+    get deleteDepartmentUseCase() {
+      return resolveDeleteDepartmentUseCase()
+    },
+    get listBuildingsUseCase() {
+      return resolveListBuildingsUseCase()
+    },
+    get createBuildingUseCase() {
+      return resolveCreateBuildingUseCase()
+    },
+    get updateBuildingUseCase() {
+      return resolveUpdateBuildingUseCase()
+    },
+    get deleteBuildingUseCase() {
+      return resolveDeleteBuildingUseCase()
     },
   }
 }

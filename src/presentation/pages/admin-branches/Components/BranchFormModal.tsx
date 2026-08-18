@@ -1,0 +1,177 @@
+import { useEffect, useState } from 'react'
+import { Modal } from '../../../components/ui/Modal'
+import { SelectField } from '../../../components/ui/SelectField'
+import { TextField } from '../../../components/ui/TextField'
+import { TextareaField } from '../../../components/ui/TextareaField'
+import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
+import { COUNTRY_OPTIONS, OPERATING_HOURS_OPTIONS } from '../branch-form-options'
+import type { Branch } from '../../../../domain/entities/branch-schema'
+import type { BranchFormState } from '../hooks/use-admin-branches'
+
+type BranchFormValues = Omit<Branch, 'id'>
+
+const EMPTY_VALUES: BranchFormValues = {
+  name: '',
+  locationCity: '',
+  branchCode: '',
+  country: '',
+  physicalAddress: '',
+  contactPerson: '',
+  contactEmail: '',
+  contactPhone: '',
+  operatingHoursFrom: undefined,
+  operatingHoursTo: undefined,
+  notes: undefined,
+  status: 'active',
+}
+
+const REQUIRED_FIELDS: Array<{ key: keyof BranchFormValues; message: string }> = [
+  { key: 'name', message: 'Branch name is required.' },
+  { key: 'branchCode', message: 'Branch code is required.' },
+  { key: 'locationCity', message: 'Location/city is required.' },
+  { key: 'country', message: 'Country is required.' },
+  { key: 'physicalAddress', message: 'Physical address is required.' },
+  { key: 'contactPerson', message: 'Contact person is required.' },
+  { key: 'contactEmail', message: 'Contact email is required.' },
+  { key: 'contactPhone', message: 'Contact phone is required.' },
+]
+
+interface BranchFormModalProps {
+  formState: BranchFormState
+  isSaving: boolean
+  onSubmit: (input: Omit<Branch, 'id'>) => void
+  onClose: () => void
+}
+
+export function BranchFormModal({ formState, isSaving, onSubmit, onClose }: BranchFormModalProps) {
+  const [values, setValues] = useState<BranchFormValues>(EMPTY_VALUES)
+  const [errors, setErrors] = useState<Partial<Record<keyof BranchFormValues, string>>>({})
+
+  useEffect(() => {
+    if (!formState) return
+    setValues({ ...formState.branch })
+    setErrors({})
+  }, [formState])
+
+  const updateField = <K extends keyof BranchFormValues>(key: K, value: BranchFormValues[K]) => {
+    setValues((current) => ({ ...current, [key]: value }))
+  }
+
+  const handleSubmit = () => {
+    const nextErrors: Partial<Record<keyof BranchFormValues, string>> = {}
+    for (const field of REQUIRED_FIELDS) {
+      const value = values[field.key]
+      if (!value || (typeof value === 'string' && !value.trim())) {
+        nextErrors[field.key] = field.message
+      }
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors)
+      return
+    }
+    setErrors({})
+
+    onSubmit(values)
+  }
+
+  return (
+    <Modal isOpen={formState !== undefined} onClose={onClose} title="Edit Branch">
+      <div className="flex flex-col gap-4">
+        <TextField label="Branch Name" value={values.name} onChange={(name) => updateField('name', name)} error={errors.name} required />
+        <TextField
+          label="Branch Code"
+          value={values.branchCode}
+          onChange={(branchCode) => updateField('branchCode', branchCode)}
+          error={errors.branchCode}
+          required
+        />
+        <TextField
+          label="Location / City"
+          value={values.locationCity}
+          onChange={(locationCity) => updateField('locationCity', locationCity)}
+          error={errors.locationCity}
+          required
+        />
+        <SelectField
+          label="Country"
+          value={values.country}
+          onChange={(country) => updateField('country', country)}
+          options={COUNTRY_OPTIONS}
+          error={errors.country}
+          required
+        />
+        <div className="flex flex-col gap-1.5">
+          <TextareaField
+            label="Physical Address"
+            value={values.physicalAddress}
+            onChange={(physicalAddress) => updateField('physicalAddress', physicalAddress)}
+            rows={2}
+          />
+          {errors.physicalAddress && <p className="text-caption text-danger">{errors.physicalAddress}</p>}
+        </div>
+        <TextField
+          label="Contact Person"
+          value={values.contactPerson}
+          onChange={(contactPerson) => updateField('contactPerson', contactPerson)}
+          error={errors.contactPerson}
+          required
+        />
+        <TextField
+          label="Contact Email Address"
+          type="email"
+          value={values.contactEmail}
+          onChange={(contactEmail) => updateField('contactEmail', contactEmail)}
+          error={errors.contactEmail}
+          required
+        />
+        <TextField
+          label="Contact Phone"
+          value={values.contactPhone}
+          onChange={(contactPhone) => updateField('contactPhone', contactPhone)}
+          error={errors.contactPhone}
+          required
+        />
+        <div className="flex gap-4">
+          <div className="flex-1">
+            <SelectField
+              label="Operating Hours (From)"
+              value={values.operatingHoursFrom ?? ''}
+              onChange={(operatingHoursFrom) => updateField('operatingHoursFrom', operatingHoursFrom)}
+              options={OPERATING_HOURS_OPTIONS}
+            />
+          </div>
+          <div className="flex-1">
+            <SelectField
+              label="Operating Hours (To)"
+              value={values.operatingHoursTo ?? ''}
+              onChange={(operatingHoursTo) => updateField('operatingHoursTo', operatingHoursTo)}
+              options={OPERATING_HOURS_OPTIONS}
+            />
+          </div>
+        </div>
+        <TextareaField
+          label="Internal Administration Notes / Directives"
+          value={values.notes ?? ''}
+          onChange={(notes) => updateField('notes', notes)}
+          rows={2}
+        />
+        <ToggleSwitch label="Active" checked={values.status === 'active'} onChange={(checked) => updateField('status', checked ? 'active' : 'inactive')} />
+      </div>
+
+      <div className="flex items-center justify-end gap-3 pt-2">
+        <button type="button" onClick={onClose} className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text">
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={isSaving}
+          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
+        >
+          {isSaving ? 'Saving…' : 'Save Changes'}
+        </button>
+      </div>
+    </Modal>
+  )
+}
