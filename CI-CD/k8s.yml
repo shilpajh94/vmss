@@ -140,7 +140,7 @@ spec:
           command: ["celery"]
           args:
             - "-A"
-            - "vmss_api.celery_app"
+            - "vmss_api.core.celery_app"
             - "worker"
             - "-Q"
             - "cron_jobs"
@@ -184,7 +184,7 @@ spec:
           command: ["celery"]
           args:
             - "-A"
-            - "vmss_api.celery_app"
+            - "vmss_api.core.celery_app"
             - "worker"
             - "-Q"
             - "notifications"
@@ -228,7 +228,7 @@ spec:
           command: ["celery"]
           args:
             - "-A"
-            - "vmss_api.celery_app"
+            - "vmss_api.core.celery_app"
             - "beat"
             - "-l"
             - "INFO"
