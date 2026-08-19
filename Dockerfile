@@ -32,6 +32,10 @@ RUN uv sync --frozen --no-dev --no-editable
 # ─── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM pitsdevops.azurecr.io/pits-linux-base AS runtime
 
+# Install system runtime dependencies (libmagic1 required by python-magic)
+RUN apt-get update && apt-get install -y --no-install-recommends libmagic1 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy Python installation and virtual environment from builder stage
