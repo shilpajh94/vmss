@@ -3,25 +3,17 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from dotenv import dotenv_values
-from sqlalchemy.engine import make_url
-
 os.environ.setdefault("ENVIRONMENT", "test")
 
 # Point the whole process at `vmss_test` *before* any `vmss_api` import.
 # `core/database.py` builds its module-level `engine` — and everything on
 # top of it: `get_tenant_db`, `tenant_session_scope`, used directly by
 # `auth/service.py`'s login flow, not just via an overridable `Depends()` —
-# once, at import time, from `settings.database_url`. Patching that after
-# the fact (e.g. in a fixture) can't reach the already-built engine, so this
-# has to happen first, the same way `ENVIRONMENT` is set above.
-_env_file_values = dotenv_values(".env")
-_raw_database_url = os.environ.get("DATABASE_URL") or _env_file_values.get(
-    "DATABASE_URL", "postgresql+asyncpg://db:db@db:5432/db"
-)
-_dev_url = make_url(_raw_database_url)
-_test_url = _dev_url.set(database="vmss_test")
-os.environ["DATABASE_URL"] = _test_url.render_as_string(hide_password=False)
+# once, at import time, from `settings.database_url` (a computed field built
+# from `DB_*` env vars, see `core/config.py`). Patching that after the fact
+# (e.g. in a fixture) can't reach the already-built engine, so this has to
+# happen first, the same way `ENVIRONMENT` is set above.
+os.environ["DB_NAME"] = "vmss_test"
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
