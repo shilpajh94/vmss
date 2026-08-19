@@ -1,8 +1,8 @@
 # ─── Stage 1: Builder ────────────────────────────────────────────────────────
 FROM pitsdevops.azurecr.io/pits-linux-base AS builder
 
-# Copy uv binary directly from official image (bypasses pip/runc issues)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Install uv directly via pip inside your base image (no external GHCR image needed)
+RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 
@@ -27,8 +27,7 @@ WORKDIR /app
 # Copy the virtual environment from the builder stage
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy application source and other needed files
-# (src/ is already copied in builder, but we need it in runtime too)
+# Copy application source and migration files
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./alembic.ini
