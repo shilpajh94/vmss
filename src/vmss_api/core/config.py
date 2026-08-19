@@ -16,11 +16,11 @@ class Settings(BaseSettings):
     # reserved URL character (`@`, `:`, `/`, `%`) can't corrupt the parsed
     # host/port the way it would if pasted unescaped into one connection
     # string. `URL.create` below percent-encodes each part itself.
-    db_user: str = "db"
-    db_password: str = "db"
-    db_host: str = "db"
-    db_port: int = 5432
-    db_name: str = "db"
+    db_user: str = "vms_user"
+    db_password: str = "YtHtwq@196"
+    db_host: str = "10.10.100.237"
+    db_port: int = 32735
+    db_name: str = "vms_db"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
