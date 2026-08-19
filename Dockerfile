@@ -6,6 +6,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     && curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="/bin" sh \
     && rm -rf /var/lib/apt/lists/*
 
+# uv configurations for Docker builds:
+# - UV_PYTHON_INSTALL_DIR: keeps managed Python in a fixed path to copy to runtime stage
+# - UV_LINK_MODE=copy: avoids broken symlinks across multi-stage build
+# - UV_COMPILE_BYTECODE=1: improves container startup performance
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_INSTALL_DIR=/opt/python
+
 WORKDIR /app
 
 # Copy dependency files and README first for layer caching
@@ -26,7 +34,8 @@ FROM pitsdevops.azurecr.io/pits-linux-base AS runtime
 
 WORKDIR /app
 
-# Copy the virtual environment from the builder stage
+# Copy Python installation and virtual environment from builder stage
+COPY --from=builder /opt/python /opt/python
 COPY --from=builder /app/.venv /app/.venv
 
 # Copy application source and migration files
