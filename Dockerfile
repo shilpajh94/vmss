@@ -1,8 +1,10 @@
 # ─── Stage 1: Builder ────────────────────────────────────────────────────────
 FROM pitsdevops.azurecr.io/pits-linux-base AS builder
 
-# Install uv directly via pip inside your base image (no external GHCR image needed)
-RUN pip install --no-cache-dir uv
+# Install uv via standalone installer (no pip or external GHCR image required)
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="/bin" sh \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
