@@ -28,7 +28,7 @@ stages:
       inputs:
         targetFiles: '.env'
         encoding: 'auto'
-        tokenPattern: 'rm'
+        tokenPattern: 'doubleunderscore'
 
     - task: Docker@2
       displayName: 'Build Docker Image'
