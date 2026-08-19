@@ -51,17 +51,16 @@ class BranchRollupRepository:
         return {branch_id: count for branch_id, count in (await self.session.execute(stmt)).all()}
 
     async def department_counts_by_branch(self) -> dict[uuid.UUID, int]:
+        """`Department.branch_id` is a direct column (as of
+        openspec/changes/add-role-management-and-org-field-gaps/design.md
+        Decision 4) — no join through `Floor`/`Building` needed, and this
+        counts every department regardless of whether it also has a
+        `floor_id` set.
+        """
         stmt = (
-            select(Building.branch_id, func.count())
-            .select_from(Department)
-            .join(Floor, Department.floor_id == Floor.id)
-            .join(Building, Floor.building_id == Building.id)
-            .where(
-                Department.deleted_at.is_(None),
-                Floor.deleted_at.is_(None),
-                Building.deleted_at.is_(None),
-            )
-            .group_by(Building.branch_id)
+            select(Department.branch_id, func.count())
+            .where(Department.deleted_at.is_(None))
+            .group_by(Department.branch_id)
         )
         return {branch_id: count for branch_id, count in (await self.session.execute(stmt)).all()}
 
@@ -89,20 +88,20 @@ class BranchRollupRepository:
         return {branch_id: count for branch_id, count in (await self.session.execute(stmt)).all()}
 
     async def active_employee_counts_by_branch(self) -> dict[uuid.UUID, int]:
+        """Joins straight to `Department.branch_id` — see
+        `department_counts_by_branch`'s docstring for why the `Floor`/
+        `Building` join this used to need is gone.
+        """
         stmt = (
-            select(Building.branch_id, func.count())
+            select(Department.branch_id, func.count())
             .select_from(User)
             .join(Department, User.department_id == Department.id)
-            .join(Floor, Department.floor_id == Floor.id)
-            .join(Building, Floor.building_id == Building.id)
             .where(
                 User.employee_code.is_not(None),
                 User.is_active.is_(True),
                 User.deleted_at.is_(None),
                 Department.deleted_at.is_(None),
-                Floor.deleted_at.is_(None),
-                Building.deleted_at.is_(None),
             )
-            .group_by(Building.branch_id)
+            .group_by(Department.branch_id)
         )
         return {branch_id: count for branch_id, count in (await self.session.execute(stmt)).all()}

@@ -22,7 +22,7 @@ from vmss_api.core.redis import get_redis
 from vmss_api.core.responses import error_response, success_response
 from vmss_api.core.schemas import CamelModel, Envelope
 
-configure_logging(settings.debug)
+configure_logging(settings.debug, settings.log_level)
 
 _APP_VERSION = version("vmss-api")
 
@@ -64,6 +64,16 @@ _TAGS_METADATA = [
             "public multi-step self-registration form the invited visitor "
             "completes, email/SMS + QR dispatch, and the public tracking-lookup "
             "endpoint."
+        ),
+    },
+    {
+        "name": "registrations",
+        "description": (
+            "Walk-in visitor registration: a visitor registers themselves on "
+            "arrival with no prior invitation, authenticated by a branch's "
+            "device credential (`X-Device-Key`) rather than a staff bearer "
+            "token. Reuses the same visit-record contract pre-registration "
+            "(`invitations`) does."
         ),
     },
     {

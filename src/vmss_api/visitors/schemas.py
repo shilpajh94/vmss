@@ -52,11 +52,29 @@ def _ensure_unique_field_names(
     return fields
 
 
+class NdaRequirement(StrEnum):
+    digital = "digital"
+    signed_pdf = "signed_pdf"
+    optional = "optional"
+    none = "none"
+
+
+class EscortRequirement(StrEnum):
+    self_escort = "self_escort"
+    access_logs_only = "access_logs_only"
+    always_required = "always_required"
+    gate_check_in_only = "gate_check_in_only"
+
+
 class VisitorCategoryCreate(CamelModel):
     name: str = Field(max_length=100)
     code: str = Field(max_length=50)
     description: str | None = Field(default=None, max_length=500)
     form_schema: list[FormFieldDefinition] = Field(default_factory=list)
+    badge_color: str | None = Field(default=None, max_length=30)
+    nda_requirement: NdaRequirement | None = None
+    escort_requirement: EscortRequirement | None = None
+    max_duration_minutes: int | None = Field(default=None, ge=1)
 
     @field_validator("form_schema")
     @classmethod
@@ -70,6 +88,10 @@ class VisitorCategoryUpdate(CamelModel):
     description: str | None = Field(default=None, max_length=500)
     form_schema: list[FormFieldDefinition] | None = None
     is_active: bool | None = None
+    badge_color: str | None = Field(default=None, max_length=30)
+    nda_requirement: NdaRequirement | None = None
+    escort_requirement: EscortRequirement | None = None
+    max_duration_minutes: int | None = Field(default=None, ge=1)
 
     @field_validator("form_schema")
     @classmethod
@@ -86,6 +108,10 @@ class VisitorCategoryOut(CamelModel):
     description: str | None
     form_schema: list[FormFieldDefinition]
     is_active: bool
+    badge_color: str | None
+    nda_requirement: str | None
+    escort_requirement: str | None
+    max_duration_minutes: int | None
 
 
 class ApprovalWorkflowRuleCreate(CamelModel):

@@ -48,6 +48,23 @@ soft-deleted category's name/code is freed for reuse — same fix and
 rationale as `docs/features/org_structure.md`'s "Soft-deleted rows free
 their code/number for reuse" section.
 
+### Badge, NDA, escort, and duration fields
+
+A design-vs-implementation review of the admin portal's visitor-categories
+screen (`openspec/changes/add-role-management-and-org-field-gaps/`) added
+four fields, all optional:
+
+- `badgeColor` — a free-form color value (e.g. a hex string) for the
+  category's badge swatch in the admin UI.
+- `ndaRequirement` — one of `digital`, `signed_pdf`, `optional`, `none`.
+- `escortRequirement` — one of `self_escort`, `access_logs_only`,
+  `always_required`, `gate_check_in_only`.
+- `maxDurationMinutes` — the category's maximum visit duration, in minutes.
+
+Both enum fields are validated at the API boundary (422 on an unrecognized
+value) the same way `fieldType`/`gateType` elsewhere in this codebase are —
+plain strings in the database, an `Enum` at the Pydantic layer.
+
 ## ApprovalWorkflowRule
 
 One ordered step (`stepOrder`, starting at 1) in a category's approval chain:

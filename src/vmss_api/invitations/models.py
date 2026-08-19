@@ -31,8 +31,20 @@ class Invitation(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     branch_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("branches.id"), index=True)
-    created_by_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"), index=True)
+    # Nullable: a walk-in registration (`source="visitor_walk_in"`, API-13) has
+    # no authenticated staff creator — see
+    # add-walkin-visitor-registration/design.md Decision 1. Every existing row
+    # (staff pre-registration) still has a value here.
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id"), index=True
+    )
 
+    # "staff_pre_registration" (API-09, via `POST /invitations`) or
+    # "visitor_walk_in" (API-13, via `POST /registrations/walk-in`) — see
+    # `RegistrationSource` in `schemas.py`. Both channels write the same
+    # `Invitation` row shape; this column is the only thing distinguishing
+    # them (add-walkin-visitor-registration/design.md Decision 1).
+    source: Mapped[str] = mapped_column(String(30), default="staff_pre_registration")
     registration_type: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     tracking_id: Mapped[str] = mapped_column(String(20), unique=True, index=True)

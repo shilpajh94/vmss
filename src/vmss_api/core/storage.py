@@ -1,14 +1,20 @@
 """Minimal file-storage interface (database-architecture.md §1): local disk
 in dev, an S3-compatible client behind the same two functions in prod. First
 feature to need it is `invitations` (ID-proof uploads) — see
-openspec/changes/add-pre-registration/design.md Decision 3.
+openspec/changes/add-pre-registration/design.md Decision 3. The S3-compatible
+backend (API-14) is selected by `settings.storage_backend` — see
+add-walkin-visitor-registration/design.md Decision 4; callers never branch on
+which backend is active, they only ever handle the opaque key `save` returns.
 """
 
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
+import aioboto3
 import anyio
 import magic
+from botocore.exceptions import BotoCoreError, ClientError
 
 from vmss_api.core.config import settings
 
@@ -28,6 +34,30 @@ class UnsupportedFileTypeError(ValueError):
 
 class FileTooLargeError(ValueError):
     """Raised when an upload exceeds `settings.invitation_max_upload_size_bytes`."""
+
+
+class StorageBackendError(RuntimeError):
+    """Raised when the configured storage backend can't complete an
+    operation — unreachable endpoint, missing bucket, bad credentials.
+    Surfaced as an explicit failure rather than a silently-lost upload
+    (file-storage capability spec.md "Backend unreachable or
+    misconfigured").
+    """
+
+
+_s3_session = aioboto3.Session()
+
+
+@asynccontextmanager
+async def _s3_client():
+    if not settings.storage_s3_bucket:
+        raise StorageBackendError("storage_s3_bucket is not configured")
+    async with _s3_session.client(
+        "s3",
+        region_name=settings.storage_s3_region,
+        endpoint_url=settings.storage_s3_endpoint_url,
+    ) as client:
+        yield client
 
 
 def validate_upload(content: bytes, *, max_size_bytes: int) -> str:
@@ -54,17 +84,51 @@ async def save(tenant_id: uuid.UUID, category: str, content: bytes, content_type
     """Persists `content` and returns a storage key following the
     `vmss:{tenant_id}:{feature}:{entity}:{id}` convention
     (database-architecture.md §6). The key, not a raw path, is what callers
-    store and pass to `url_for` — swapping the body of this function for an
-    S3-compatible client later doesn't change any call site.
+    store and pass to `url_for` — which physical backend actually persisted
+    it (`settings.storage_backend`) is invisible from here on.
     """
     extension = _ALLOWED_CONTENT_TYPES[content_type]
     key = f"vmss:{tenant_id}:{category}:{uuid.uuid4()}{extension}"
-    await anyio.to_thread.run_sync(_write_file, _path_for(key), content)
+    if settings.storage_backend == "s3":
+        await _s3_save(key, content, content_type)
+    else:
+        await anyio.to_thread.run_sync(_write_file, _path_for(key), content)
     return key
 
 
 async def url_for(key: str) -> str:
+    """A usable retrieval reference for `key` — a pre-signed, time-boxed URL
+    for the `s3` backend, a plain filesystem path for `local`. Either way,
+    the caller never branches on which backend produced it.
+    """
+    if settings.storage_backend == "s3":
+        return await _s3_presigned_url(key)
     return str(_path_for(key))
+
+
+async def _s3_save(key: str, content: bytes, content_type: str) -> None:
+    try:
+        async with _s3_client() as client:
+            await client.put_object(
+                Bucket=settings.storage_s3_bucket,
+                Key=key,
+                Body=content,
+                ContentType=content_type,
+            )
+    except (BotoCoreError, ClientError) as exc:
+        raise StorageBackendError(f"Failed to save {key!r} to S3: {exc}") from exc
+
+
+async def _s3_presigned_url(key: str) -> str:
+    try:
+        async with _s3_client() as client:
+            return await client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": settings.storage_s3_bucket, "Key": key},
+                ExpiresIn=settings.storage_s3_presigned_url_ttl_seconds,
+            )
+    except (BotoCoreError, ClientError) as exc:
+        raise StorageBackendError(f"Failed to generate a URL for {key!r}: {exc}") from exc
 
 
 def _path_for(key: str) -> Path:

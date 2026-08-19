@@ -78,6 +78,28 @@ async def test_create_tenant_rate_limit_trips(
     assert all(r.status_code in {409, 429} for r in responses)
 
 
+async def test_create_tenant_duplicate_slug_returns_409(
+    client: AsyncClient, superadmin: SuperAdmin, tenant: Tenant
+) -> None:
+    """Deterministic version of the slug-conflict check exercised
+    incidentally by `test_create_tenant_rate_limit_trips` above — the
+    limiter stays at its test-environment default (disabled), so this
+    isolates the 409 from the 429 path.
+    """
+    login = await client.post(
+        "/api/v1/platform/auth/login",
+        json={"email": superadmin.email, "password": "correct-password"},
+    )
+    token = login.json()["data"]["accessToken"]
+
+    response = await client.post(
+        "/api/v1/platform/tenants",
+        json={"name": "Duplicate Co", "slug": tenant.slug},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
 async def test_create_tenant_success_via_endpoint(
     client: AsyncClient, superadmin: SuperAdmin, db_session: AsyncSession
 ) -> None:

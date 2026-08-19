@@ -48,6 +48,11 @@ class Company(Base, TimestampMixin):
     address: Mapped[str | None] = mapped_column(String(500))
     logo_url: Mapped[str | None] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Tenant-wide visitor-policy defaults ("Organisation Configs" screen) —
+    # see openspec/changes/add-role-management-and-org-field-gaps/proposal.md.
+    default_timezone: Mapped[str | None] = mapped_column(String(50))
+    auto_approve_pre_registered_visitors: Mapped[bool] = mapped_column(Boolean, default=False)
+    badge_expiry_duration_minutes: Mapped[int | None] = mapped_column(Integer)
 
 
 class Branch(Base, TimestampMixin):
@@ -68,6 +73,26 @@ class Branch(Base, TimestampMixin):
     code: Mapped[str] = mapped_column(String(50))
     address: Mapped[str | None] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    city: Mapped[str | None] = mapped_column(String(100))
+    country: Mapped[str | None] = mapped_column(String(100))
+    # References `auth.models.User` by column only, no ORM `relationship` —
+    # same cross-feature-FK-without-relationship posture as
+    # `User.department_id` referencing this package (fastapi-architecture.md
+    # §6), applied in reverse here. `use_alter=True`: `users.department_id`
+    # already points at `departments`, and `departments.branch_id` points at
+    # `branches` — without `use_alter`, this back-reference completes a
+    # users<->departments<->branches cycle that `Base.metadata.create_all`
+    # (used by `conftest.py` for the test schema) cannot topologically sort,
+    # silently dropping every FK constraint in the cycle instead of erroring.
+    contact_person_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", use_alter=True, name="fk_branches_contact_person_user_id"),
+    )
+    contact_email: Mapped[str | None] = mapped_column(String(255))
+    contact_phone: Mapped[str | None] = mapped_column(String(50))
+    operating_hours_from: Mapped[str | None] = mapped_column(String(10))
+    operating_hours_to: Mapped[str | None] = mapped_column(String(10))
+    notes: Mapped[str | None] = mapped_column(String(2000))
 
 
 class Building(Base, TimestampMixin):
@@ -113,18 +138,26 @@ class Floor(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255))
     floor_number: Mapped[int] = mapped_column(Integer)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    capacity: Mapped[int | None] = mapped_column(Integer)
+    capacity_type: Mapped[str | None] = mapped_column(String(20))
+    access_level: Mapped[str | None] = mapped_column(String(20))
 
 
 class Department(Base, TimestampMixin):
-    """A department located on one `Floor` — and transitively that floor's
-    building/branch.
+    """A department at one `Branch`, optionally narrowed to one `Floor` on
+    that branch. `branch_id` is the direct scoping FK (the admin design's
+    creation flow assigns a department to a branch, with no floor step);
+    `floor_id` is an optional secondary association for a department that
+    does occupy one specific floor. See
+    openspec/changes/add-role-management-and-org-field-gaps/design.md
+    Decision 4.
     """
 
     __tablename__ = "departments"
     __table_args__ = (
         Index(
-            "uq_department_floor_code",
-            "floor_id",
+            "uq_department_branch_code",
+            "branch_id",
             "code",
             unique=True,
             postgresql_where=_NOT_DELETED,
@@ -132,16 +165,32 @@ class Department(Base, TimestampMixin):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    floor_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("floors.id"), index=True)
+    branch_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("branches.id"), index=True)
+    floor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("floors.id"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     code: Mapped[str] = mapped_column(String(50))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # `use_alter=True`: `users.department_id` already points at
+    # `departments` — without it, this back-reference is a direct
+    # departments<->users cycle `Base.metadata.create_all` can't sort. See
+    # `Branch.contact_person_user_id`'s comment for the full explanation.
+    head_of_department_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", use_alter=True, name="fk_departments_head_of_department_user_id"),
+    )
+    description: Mapped[str | None] = mapped_column(String(2000))
 
 
 class ReceptionDesk(Base, TimestampMixin):
     """A staffed reception desk on one `Floor` — where a visitor checks in.
     No hardware/badge-printer integration yet; that's `access_control`'s
     concern once built (`project-rules.md`'s directory-structure note).
+
+    `status` (`active`/`maintenance`/`inactive`) replaced the original
+    boolean `is_active` — see
+    openspec/changes/add-role-management-and-org-field-gaps/design.md
+    Decision 3. Kept as a plain string, validated at the API boundary
+    (`schemas.py::DeskStatus`), same posture as `SecurityGate.gate_type`.
     """
 
     __tablename__ = "reception_desks"
@@ -153,7 +202,19 @@ class ReceptionDesk(Base, TimestampMixin):
     floor_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("floors.id"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     code: Mapped[str] = mapped_column(String(50))
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    # `use_alter=True`: same users<->departments<->... cycle concern as
+    # `Branch.contact_person_user_id` — this table is transitively connected
+    # to `departments`/`users` via `floor_id -> floors -> buildings ->
+    # branches`.
+    assigned_receptionist_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey(
+            "users.id", use_alter=True, name="fk_reception_desks_assigned_receptionist_user_id"
+        ),
+    )
+    operating_hours_from: Mapped[str | None] = mapped_column(String(10))
+    operating_hours_to: Mapped[str | None] = mapped_column(String(10))
 
 
 class SecurityGate(Base, TimestampMixin):
@@ -179,4 +240,9 @@ class SecurityGate(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255))
     code: Mapped[str] = mapped_column(String(50))
     gate_type: Mapped[str] = mapped_column(String(20), default="both")
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # `connectivity_status` replaced the original boolean `is_active` — see
+    # openspec/changes/add-role-management-and-org-field-gaps/design.md
+    # Decision 3.
+    connectivity_status: Mapped[str] = mapped_column(String(20), default="online")
+    high_security: Mapped[bool] = mapped_column(Boolean, default=False)
+    auth_method: Mapped[str | None] = mapped_column(String(100))

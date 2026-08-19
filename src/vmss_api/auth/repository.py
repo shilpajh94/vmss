@@ -1,11 +1,11 @@
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Any
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.auth.models import Role, User
+from vmss_api.auth.models import Permission, Role, User, UserBranchRole
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import SortOrder
 from vmss_api.org_structure.models import Building, Department, Floor
@@ -62,6 +62,20 @@ class UserRepository:
             .execution_options(synchronize_session=False)
         )
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_branch_role_assignment(
+        self, user_id: uuid.UUID, assignment_id: uuid.UUID
+    ) -> UserBranchRole | None:
+        stmt = select(UserBranchRole).where(
+            UserBranchRole.id == assignment_id, UserBranchRole.user_id == user_id
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def delete_branch_role_assignment(self, assignment: UserBranchRole) -> None:
+        """Hard delete, not soft delete: a branch-role grant is disposable
+        state, same as an expired OTP code — see `auth/models.py::UserBranchRole`.
+        """
+        await self.session.delete(assignment)
 
     async def list_employees_page(
         self,
@@ -124,3 +138,34 @@ class RoleRepository(TenantScopedRepository[Role]):
     async def get_by_name(self, name: str) -> Role | None:
         stmt = select(Role).where(Role.name == name, Role.deleted_at.is_(None))
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_name_case_insensitive(self, name: str) -> Role | None:
+        """Backs the role-name "verify" availability check
+        (`auth/service.py::verify_role_name`) and create/rename uniqueness
+        checks — role names are compared case-insensitively so "Admin" and
+        "admin" are treated as the same name, matching how the design's
+        role-creation form is expected to warn on a near-duplicate.
+        """
+        stmt = select(Role).where(func.lower(Role.name) == name.lower(), Role.deleted_at.is_(None))
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def list_page(
+        self, *, page: int, page_size: int, sort_by: str, sort_order: SortOrder
+    ) -> tuple[list[Role], int]:
+        column = {"name": Role.name, "created_at": Role.created_at}[sort_by]
+        order = column.desc() if sort_order == SortOrder.desc else column.asc()
+        return await super().paginate(page=page, page_size=page_size, order_by=order)
+
+    async def get_existing_permissions(self, codes: Collection[str]) -> list[Permission]:
+        """Batch lookup for `auth/service.py::create_role`/`update_role` —
+        one `WHERE code IN (...)` for the whole requested permission set,
+        instead of one lookup per code. See query-performance.md §2.
+        """
+        if not codes:
+            return []
+        stmt = select(Permission).where(Permission.code.in_(codes))
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def has_active_grants(self, role_id: uuid.UUID) -> bool:
+        stmt = select(UserBranchRole.id).where(UserBranchRole.role_id == role_id).limit(1)
+        return (await self.session.execute(stmt)).scalar_one_or_none() is not None

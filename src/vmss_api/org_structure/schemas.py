@@ -20,6 +20,9 @@ class CompanyCreate(CamelModel):
     phone: str | None = Field(default=None, max_length=50)
     address: str | None = Field(default=None, max_length=500)
     logo_url: str | None = Field(default=None, max_length=500)
+    default_timezone: str | None = Field(default=None, max_length=50)
+    auto_approve_pre_registered_visitors: bool = False
+    badge_expiry_duration_minutes: int | None = None
 
 
 class CompanyUpdate(CamelModel):
@@ -31,6 +34,9 @@ class CompanyUpdate(CamelModel):
     address: str | None = Field(default=None, max_length=500)
     logo_url: str | None = Field(default=None, max_length=500)
     is_active: bool | None = None
+    default_timezone: str | None = Field(default=None, max_length=50)
+    auto_approve_pre_registered_visitors: bool | None = None
+    badge_expiry_duration_minutes: int | None = None
 
 
 class CompanyOut(CamelModel):
@@ -43,18 +49,38 @@ class CompanyOut(CamelModel):
     address: str | None
     logo_url: str | None
     is_active: bool
+    default_timezone: str | None
+    auto_approve_pre_registered_visitors: bool
+    badge_expiry_duration_minutes: int | None
 
 
 class BranchCreate(CamelModel):
     name: str = Field(max_length=255)
     code: str = Field(max_length=50)
     address: str | None = Field(default=None, max_length=500)
+    is_active: bool = True
+    city: str | None = Field(default=None, max_length=100)
+    country: str | None = Field(default=None, max_length=100)
+    contact_person_user_id: uuid.UUID | None = None
+    contact_email: EmailStr | None = Field(default=None, max_length=255)
+    contact_phone: str | None = Field(default=None, max_length=50)
+    operating_hours_from: str | None = Field(default=None, max_length=10)
+    operating_hours_to: str | None = Field(default=None, max_length=10)
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 class BranchUpdate(CamelModel):
     name: str | None = Field(default=None, max_length=255)
     address: str | None = Field(default=None, max_length=500)
     is_active: bool | None = None
+    city: str | None = Field(default=None, max_length=100)
+    country: str | None = Field(default=None, max_length=100)
+    contact_person_user_id: uuid.UUID | None = None
+    contact_email: EmailStr | None = Field(default=None, max_length=255)
+    contact_phone: str | None = Field(default=None, max_length=50)
+    operating_hours_from: str | None = Field(default=None, max_length=10)
+    operating_hours_to: str | None = Field(default=None, max_length=10)
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 class BranchOut(CamelModel):
@@ -63,6 +89,14 @@ class BranchOut(CamelModel):
     code: str
     address: str | None
     is_active: bool
+    city: str | None
+    country: str | None
+    contact_person_user_id: uuid.UUID | None
+    contact_email: str | None
+    contact_phone: str | None
+    operating_hours_from: str | None
+    operating_hours_to: str | None
+    notes: str | None
 
 
 class BuildingCreate(CamelModel):
@@ -70,6 +104,7 @@ class BuildingCreate(CamelModel):
     name: str = Field(max_length=255)
     code: str = Field(max_length=50)
     address: str | None = Field(default=None, max_length=500)
+    is_active: bool = True
 
 
 class BuildingUpdate(CamelModel):
@@ -88,16 +123,33 @@ class BuildingOut(CamelModel):
     is_active: bool
 
 
+class FloorCapacityType(StrEnum):
+    guests = "guests"
+    staff = "staff"
+
+
+class FloorAccessLevel(StrEnum):
+    public = "public"
+    restricted = "restricted"
+    secure = "secure"
+
+
 class FloorCreate(CamelModel):
     building_id: uuid.UUID
     name: str = Field(max_length=255)
     floor_number: int
+    capacity: int | None = None
+    capacity_type: FloorCapacityType | None = None
+    access_level: FloorAccessLevel | None = None
 
 
 class FloorUpdate(CamelModel):
     name: str | None = Field(default=None, max_length=255)
     floor_number: int | None = None
     is_active: bool | None = None
+    capacity: int | None = None
+    capacity_type: FloorCapacityType | None = None
+    access_level: FloorAccessLevel | None = None
 
 
 class FloorOut(CamelModel):
@@ -106,38 +158,63 @@ class FloorOut(CamelModel):
     name: str
     floor_number: int
     is_active: bool
+    capacity: int | None
+    capacity_type: str | None
+    access_level: str | None
 
 
 class DepartmentCreate(CamelModel):
-    floor_id: uuid.UUID
+    branch_id: uuid.UUID
+    floor_id: uuid.UUID | None = None
     name: str = Field(max_length=255)
     code: str = Field(max_length=50)
+    head_of_department_user_id: uuid.UUID | None = None
+    description: str | None = Field(default=None, max_length=2000)
 
 
 class DepartmentUpdate(CamelModel):
     name: str | None = Field(default=None, max_length=255)
     code: str | None = Field(default=None, max_length=50)
     is_active: bool | None = None
+    floor_id: uuid.UUID | None = None
+    head_of_department_user_id: uuid.UUID | None = None
+    description: str | None = Field(default=None, max_length=2000)
 
 
 class DepartmentOut(CamelModel):
     id: uuid.UUID
-    floor_id: uuid.UUID
+    branch_id: uuid.UUID
+    floor_id: uuid.UUID | None
     name: str
     code: str
     is_active: bool
+    head_of_department_user_id: uuid.UUID | None
+    description: str | None
+
+
+class DeskStatus(StrEnum):
+    active = "active"
+    maintenance = "maintenance"
+    inactive = "inactive"
 
 
 class ReceptionDeskCreate(CamelModel):
     floor_id: uuid.UUID
     name: str = Field(max_length=255)
     code: str = Field(max_length=50)
+    status: DeskStatus = DeskStatus.active
+    assigned_receptionist_user_id: uuid.UUID | None = None
+    operating_hours_from: str | None = Field(default=None, max_length=10)
+    operating_hours_to: str | None = Field(default=None, max_length=10)
 
 
 class ReceptionDeskUpdate(CamelModel):
     name: str | None = Field(default=None, max_length=255)
     code: str | None = Field(default=None, max_length=50)
-    is_active: bool | None = None
+    status: DeskStatus | None = None
+    assigned_receptionist_user_id: uuid.UUID | None = None
+    operating_hours_from: str | None = Field(default=None, max_length=10)
+    operating_hours_to: str | None = Field(default=None, max_length=10)
 
 
 class ReceptionDeskOut(CamelModel):
@@ -145,7 +222,10 @@ class ReceptionDeskOut(CamelModel):
     floor_id: uuid.UUID
     name: str
     code: str
-    is_active: bool
+    status: str
+    assigned_receptionist_user_id: uuid.UUID | None
+    operating_hours_from: str | None
+    operating_hours_to: str | None
 
 
 class GateType(StrEnum):
@@ -154,12 +234,21 @@ class GateType(StrEnum):
     both = "both"
 
 
+class GateConnectivityStatus(StrEnum):
+    online = "online"
+    maintenance = "maintenance"
+    offline = "offline"
+
+
 class SecurityGateCreate(CamelModel):
     branch_id: uuid.UUID
     building_id: uuid.UUID | None = None
     name: str = Field(max_length=255)
     code: str = Field(max_length=50)
     gate_type: GateType = GateType.both
+    connectivity_status: GateConnectivityStatus = GateConnectivityStatus.online
+    high_security: bool = False
+    auth_method: str | None = Field(default=None, max_length=100)
 
 
 class SecurityGateUpdate(CamelModel):
@@ -167,7 +256,9 @@ class SecurityGateUpdate(CamelModel):
     code: str | None = Field(default=None, max_length=50)
     building_id: uuid.UUID | None = None
     gate_type: GateType | None = None
-    is_active: bool | None = None
+    connectivity_status: GateConnectivityStatus | None = None
+    high_security: bool | None = None
+    auth_method: str | None = Field(default=None, max_length=100)
 
 
 class SecurityGateOut(CamelModel):
@@ -177,7 +268,9 @@ class SecurityGateOut(CamelModel):
     name: str
     code: str
     gate_type: str
-    is_active: bool
+    connectivity_status: str
+    high_security: bool
+    auth_method: str | None
 
 
 # --- Branch provisioning (bulk bootstrap) ---------------------------------

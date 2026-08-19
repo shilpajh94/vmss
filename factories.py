@@ -42,6 +42,7 @@ from vmss_api.org_structure.models import (
     SecurityGate,
 )
 from vmss_api.platform.models import SuperAdmin
+from vmss_api.registrations.models import RegistrationDeviceKey
 from vmss_api.tenant.models import Tenant
 from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
 
@@ -94,6 +95,10 @@ class BranchFactory(SQLAlchemyFactory[Branch]):
     __model__ = Branch
     is_active = True
     deleted_at = None
+    # Same rationale as `UserFactory.department_id = None` below: a random
+    # UUID here would violate the `users.id` FK unless a real user happens
+    # to exist with that id.
+    contact_person_user_id = None
 
 
 class BuildingFactory(SQLAlchemyFactory[Building]):
@@ -112,17 +117,22 @@ class DepartmentFactory(SQLAlchemyFactory[Department]):
     __model__ = Department
     is_active = True
     deleted_at = None
+    # Same FK-safety rationale as `BranchFactory.contact_person_user_id`.
+    head_of_department_user_id = None
 
 
 class ReceptionDeskFactory(SQLAlchemyFactory[ReceptionDesk]):
     __model__ = ReceptionDesk
-    is_active = True
+    status = "active"
     deleted_at = None
+    # Same FK-safety rationale as `BranchFactory.contact_person_user_id`.
+    assigned_receptionist_user_id = None
 
 
 class SecurityGateFactory(SQLAlchemyFactory[SecurityGate]):
     __model__ = SecurityGate
-    is_active = True
+    connectivity_status = "online"
+    high_security = False
     deleted_at = None
 
 
@@ -164,3 +174,8 @@ class InvitationVisitorFactory(SQLAlchemyFactory[InvitationVisitor]):
 class InvitationVehicleFactory(SQLAlchemyFactory[InvitationVehicle]):
     __model__ = InvitationVehicle
     deleted_at = None
+
+
+class RegistrationDeviceKeyFactory(SQLAlchemyFactory[RegistrationDeviceKey]):
+    __model__ = RegistrationDeviceKey
+    is_active = True

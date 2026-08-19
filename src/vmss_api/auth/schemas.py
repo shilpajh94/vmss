@@ -6,6 +6,7 @@ from pydantic import EmailStr, Field
 from vmss_api.core.schemas import CamelModel
 
 EmployeeSortableField = Literal["name", "created_at"]
+RoleSortableField = Literal["name", "created_at"]
 
 
 class LoginRequest(CamelModel):
@@ -20,6 +21,7 @@ class TokenResponse(CamelModel):
 
 
 class BranchRoleOut(CamelModel):
+    id: uuid.UUID
     role_name: str
     branch_id: uuid.UUID | None
 
@@ -30,6 +32,31 @@ class UserOut(CamelModel):
     full_name: str
     is_active: bool
     branch_roles: list[BranchRoleOut]
+
+
+class RoleCreateRequest(CamelModel):
+    name: str = Field(max_length=100)
+    description: str | None = Field(default=None, max_length=255)
+    permission_codes: list[str] = Field(default_factory=list)
+
+
+class RoleUpdateRequest(CamelModel):
+    name: str | None = Field(default=None, max_length=100)
+    description: str | None = Field(default=None, max_length=255)
+    permission_codes: list[str] | None = None
+
+
+class RoleOut(CamelModel):
+    id: uuid.UUID
+    name: str
+    description: str | None
+    permission_codes: list[str]
+    is_standard: bool
+
+
+class RoleVerifyResponse(CamelModel):
+    name: str
+    available: bool
 
 
 class UserCreateRequest(CamelModel):
@@ -71,3 +98,5 @@ class EmployeeOut(CamelModel):
     designation: str | None
     department_id: uuid.UUID | None
     is_active: bool
+    avatar_url: str | None
+    branch_roles: list[BranchRoleOut]

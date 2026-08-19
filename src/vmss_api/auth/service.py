@@ -5,12 +5,16 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.auth.models import Role, User, UserBranchRole
+from vmss_api.auth.models import Permission, Role, User, UserBranchRole
+from vmss_api.auth.rbac_catalog import STANDARD_ROLE_NAMES
 from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.auth.schemas import (
     EmployeeSortableField,
     EmployeeSyncItem,
     EmployeeSyncResult,
+    RoleCreateRequest,
+    RoleSortableField,
+    RoleUpdateRequest,
     TokenResponse,
     UserCreateRequest,
 )
@@ -184,6 +188,121 @@ async def assign_branch_role(
     return assignment
 
 
+async def revoke_branch_role(
+    tenant_db: AsyncSession, *, user_id: uuid.UUID, assignment_id: uuid.UUID
+) -> None:
+    repo = UserRepository(tenant_db)
+    assignment = await repo.get_branch_role_assignment(user_id, assignment_id)
+    if assignment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Branch role assignment not found")
+    await repo.delete_branch_role_assignment(assignment)
+    await tenant_db.commit()
+    logger.info(
+        "branch_role_revoked", target_user_id=str(user_id), assignment_id=str(assignment_id)
+    )
+
+
+async def _resolve_permission_codes(repo: RoleRepository, codes: list[str]) -> list[Permission]:
+    if not codes:
+        return []
+    permissions = await repo.get_existing_permissions(codes)
+    missing = set(codes) - {p.code for p in permissions}
+    if missing:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown permission code(s): {', '.join(sorted(missing))}",
+        )
+    return permissions
+
+
+async def create_role(tenant_db: AsyncSession, payload: RoleCreateRequest) -> Role:
+    repo = RoleRepository(tenant_db)
+    if await repo.get_by_name_case_insensitive(payload.name) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Role name already exists")
+    permissions = await _resolve_permission_codes(repo, payload.permission_codes)
+    role = Role(
+        id=uuid.uuid4(), name=payload.name, description=payload.description, permissions=permissions
+    )
+    tenant_db.add(role)
+    await tenant_db.commit()
+    await tenant_db.refresh(role)
+    return role
+
+
+async def list_roles(
+    tenant_db: AsyncSession,
+    *,
+    page: int,
+    page_size: int,
+    sort_by: RoleSortableField,
+    sort_order: SortOrder,
+) -> tuple[list[Role], int]:
+    return await RoleRepository(tenant_db).list_page(
+        page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+    )
+
+
+async def get_role(tenant_db: AsyncSession, role_id: uuid.UUID) -> Role:
+    role = await RoleRepository(tenant_db).get(role_id)
+    if role is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Role not found")
+    return role
+
+
+async def update_role(
+    tenant_db: AsyncSession, role_id: uuid.UUID, payload: RoleUpdateRequest
+) -> Role:
+    """Standard roles (`rbac_catalog.STANDARD_ROLE_NAMES`) may have their
+    description or permission set updated, but never renamed — see
+    `openspec/changes/add-role-management-and-org-field-gaps/design.md`
+    Decision 1. Permission-set updates are full-replace, not a merge — see
+    the same design doc's Decision 2.
+    """
+    repo = RoleRepository(tenant_db)
+    role = await get_role(tenant_db, role_id)
+    changes = payload.model_dump(exclude_unset=True)
+
+    new_name = changes.get("name")
+    if new_name is not None and new_name != role.name:
+        if role.name in STANDARD_ROLE_NAMES:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Standard roles cannot be renamed")
+        if await repo.get_by_name_case_insensitive(new_name) is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Role name already exists")
+        role.name = new_name
+
+    if "description" in changes:
+        role.description = changes["description"]
+
+    new_codes = changes.get("permission_codes")
+    if new_codes is not None:
+        role.permissions = await _resolve_permission_codes(repo, new_codes)
+
+    await tenant_db.commit()
+    await tenant_db.refresh(role)
+    return role
+
+
+async def delete_role(tenant_db: AsyncSession, role_id: uuid.UUID) -> None:
+    repo = RoleRepository(tenant_db)
+    role = await get_role(tenant_db, role_id)
+    if role.name in STANDARD_ROLE_NAMES:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Standard roles cannot be deleted")
+    if await repo.has_active_grants(role.id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Role has active branch-role assignments"
+        )
+    await repo.soft_delete(role)
+    await tenant_db.commit()
+
+
+async def verify_role_name(tenant_db: AsyncSession, name: str) -> bool:
+    """Returns whether `name` is available (case-insensitive, among
+    non-deleted roles) for the role-creation/rename "verify" pre-check.
+    """
+    existing = await RoleRepository(tenant_db).get_by_name_case_insensitive(name)
+    return existing is None
+
+
 async def sync_employee_directory(
     tenant_db: AsyncSession, *, tenant_id: uuid.UUID, items: list[EmployeeSyncItem]
 ) -> EmployeeSyncResult:
@@ -225,34 +344,38 @@ async def sync_employee_directory(
     updated: list[str] = []
     incoming_codes = [item.employee_code for item in items]
 
-    for item in items:
-        existing = existing_by_email.get(item.email)
-        if existing is None:
-            await create_user(
-                tenant_db,
-                tenant_id=tenant_id,
-                email=item.email,
-                hashed_password=hash_password(secrets.token_urlsafe(32)),
-                full_name=item.full_name,
-                employee_code=item.employee_code,
-                designation=item.designation,
-                phone_number=item.phone_number,
-                department_id=item.department_id,
-            )
-            created.append(item.email)
-        else:
-            existing.full_name = item.full_name
-            existing.employee_code = item.employee_code
-            existing.designation = item.designation
-            existing.phone_number = item.phone_number
-            existing.department_id = item.department_id
-            existing.is_active = True
-            updated.append(item.email)
-
-    await tenant_db.flush()
-    deactivated = await user_repo.deactivate_employees_not_in(incoming_codes)
-
     try:
+        for item in items:
+            existing = existing_by_email.get(item.email)
+            if existing is None:
+                # `create_user` flushes internally (to register the global
+                # tenant_user_index row against a real user id) — a
+                # duplicate employee_code/email within this batch can raise
+                # IntegrityError right here, not just at the final commit
+                # below, so the whole loop has to be inside this try.
+                await create_user(
+                    tenant_db,
+                    tenant_id=tenant_id,
+                    email=item.email,
+                    hashed_password=hash_password(secrets.token_urlsafe(32)),
+                    full_name=item.full_name,
+                    employee_code=item.employee_code,
+                    designation=item.designation,
+                    phone_number=item.phone_number,
+                    department_id=item.department_id,
+                )
+                created.append(item.email)
+            else:
+                existing.full_name = item.full_name
+                existing.employee_code = item.employee_code
+                existing.designation = item.designation
+                existing.phone_number = item.phone_number
+                existing.department_id = item.department_id
+                existing.is_active = True
+                updated.append(item.email)
+
+        await tenant_db.flush()
+        deactivated = await user_repo.deactivate_employees_not_in(incoming_codes)
         await tenant_db.commit()
     except IntegrityError as exc:
         await tenant_db.rollback()

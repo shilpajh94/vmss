@@ -19,8 +19,15 @@ is identical for every tenant.
 | GET | `/api/v1/auth/me` | Any authenticated user | — | The caller's own profile, including its branch-role grants. |
 | POST | `/api/v1/auth/users` | `users:manage` (company-wide) | — | Creates a user with no role grants; follow with the branch-roles endpoint below to give it access. |
 | POST | `/api/v1/auth/users/{id}/branch-roles` | `users:manage` (company-wide) | — | Grants a role to a user, scoped to one branch (or company-wide when `branchId` is omitted). |
+| DELETE | `/api/v1/auth/users/{id}/branch-roles/{assignmentId}` | `users:manage` (company-wide) | — | Revokes a previously granted branch-role assignment. |
 | POST | `/api/v1/auth/employees/sync` | `employees:manage` (company-wide) | — | Reconciles the employee directory against a full, authoritative batch — see below. Company-wide by design: one sync call spans every department/branch at once. |
-| GET | `/api/v1/auth/employees` | `employees:view` at `X-Branch-ID` | — | Paginated employee directory, scoped to the branch named by `X-Branch-ID` (via `department -> floor -> building`), optionally narrowed by `departmentId`. An employee with no `department_id` never appears here. |
+| GET | `/api/v1/auth/employees` | `employees:view` at `X-Branch-ID` | — | Paginated employee directory, scoped to the branch named by `X-Branch-ID` (via `department -> floor -> building`), optionally narrowed by `departmentId`. An employee with no `department_id` never appears here. Each row includes `avatarUrl` and the employee's current `branchRoles`. |
+| POST | `/api/v1/auth/roles` | `roles:manage` (company-wide) | — | Creates a tenant-defined custom role with a name, optional description, and a set of permission codes (validated against the global catalog). |
+| GET | `/api/v1/auth/roles` | `roles:view` (company-wide) | — | Paginated list of every role in the tenant — the five standard ones plus any custom roles. |
+| GET | `/api/v1/auth/roles/verify` | `roles:view` (company-wide) | — | `?name=` availability check (case-insensitive) for a role-creation/rename form, before submitting. |
+| GET | `/api/v1/auth/roles/{id}` | `roles:view` (company-wide) | — | A single role's detail. |
+| PUT | `/api/v1/auth/roles/{id}` | `roles:manage` (company-wide) | — | Updates a role's description and/or permission set (full replace, not a merge). Renaming one of the five standard roles is rejected. |
+| DELETE | `/api/v1/auth/roles/{id}` | `roles:manage` (company-wide) | — | Soft-deletes a custom role. Rejected for a standard role, or for any role with an active `UserBranchRole` grant. |
 
 ## Employee directory sync
 
@@ -121,6 +128,27 @@ Visitors never authenticate through this JWT/RBAC system at all
 (`security-architecture.md` §2): they're handled by separate, unauthenticated,
 signed-token/QR flows, not by a `User` row playing the Visitor role.
 
+### Standard vs. custom roles
+
+A tenant is no longer limited to the five seeded roles — a caller with
+`roles:manage` can define any number of additional, tenant-specific custom
+roles (`POST /auth/roles`) with their own name, description, and permission
+set. `rbac_catalog.STANDARD_ROLE_NAMES` (the five seeded names) is the single
+source of truth `auth/service.py`'s role-management functions check against
+to reject a rename or delete of a standard role — there's no separate
+`is_system` column on `Role` to keep in sync with that list (see
+`openspec/changes/add-role-management-and-org-field-gaps/design.md`
+Decision 1). A custom role can be freely renamed, have its permission set
+replaced, or be deleted, as long as no `UserBranchRole` still grants it
+(deleting one that does is rejected with 409 — revoke the grant first via
+`DELETE /auth/users/{id}/branch-roles/{assignmentId}`).
+
+`GET /auth/roles/verify?name=` backs a role-creation/rename form's
+"is this name available" check — matched case-insensitively against every
+non-deleted role (standard or custom) in the tenant, so it catches "Admin"
+colliding with "admin" the same way the create/rename endpoints themselves
+would reject it.
+
 Beyond the catalog itself, org-structure resources (Building/Floor/
 Department/ReceptionDesk/SecurityGate) and the employee directory enforce
 branch-scoping in practice, not just in the data model — see
@@ -142,8 +170,9 @@ just used to gate the route.
   `security-architecture.md` §5.
 - **Not yet built**: refresh-token endpoint (exchanging a refresh token for a
   new access token), logout/token revocation, password reset, user
-  deactivation, a role-listing endpoint (today a caller must already know a
-  role's id to grant it — see `auth/repository.py::RoleRepository`).
+  deactivation, staff SSO login (the design shows an SSO-only login screen;
+  no SAML/OIDC flow exists yet — protocol choice is an open product/infra
+  decision).
 - Superadmin login (a completely separate identity — not a member of any
   tenant's schema) lives in `platform/`, not here — see
   `docs/features/platform.md`.

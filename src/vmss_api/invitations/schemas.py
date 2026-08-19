@@ -13,6 +13,17 @@ class RegistrationType(StrEnum):
     group = "group"
 
 
+class RegistrationSource(StrEnum):
+    """Which channel created the `Invitation` row — an employee's advance
+    pre-registration (API-09) or a visitor's own walk-in registration
+    (API-13, `registrations` capability). See
+    add-walkin-visitor-registration/design.md Decision 1.
+    """
+
+    staff_pre_registration = "staff_pre_registration"
+    visitor_walk_in = "visitor_walk_in"
+
+
 class ContactMethod(StrEnum):
     email = "email"
     sms = "sms"
@@ -166,6 +177,7 @@ class InvitationOut(CamelModel):
     id: uuid.UUID
     tracking_id: str
     registration_type: RegistrationType
+    source: RegistrationSource
     status: str
     expires_at: datetime
     submitted_at: datetime | None
@@ -201,6 +213,7 @@ class InvitationTrackingOut(CamelModel):
     tracking_id: str
     status: str
     registration_type: str
+    source: str
     primary_contact_full_name: str
     purpose_of_visit: str | None
     host_name_or_email: str | None

@@ -7,8 +7,11 @@ from httpx import ASGITransport, AsyncClient
 
 import vmss_api
 from vmss_api.auth.models import User
+from vmss_api.core.config import settings
+from vmss_api.core.rate_limit import limiter
 from vmss_api.invitations.schemas import InvitationCreate
 from vmss_api.main import app, create_app
+from vmss_api.tenant.models import Tenant
 
 
 def _discover_feature_routers() -> list[tuple[str, object]]:
@@ -163,6 +166,29 @@ def test_invitation_payload_description_is_self_documenting() -> None:
 
     submissions = [InvitationCreate.model_validate_json(block) for block in blocks]
     assert {s.registration_type.value for s in submissions} == {"individual", "group"}
+
+
+async def test_rate_limit_exceeded_returns_standard_error_envelope(
+    client: AsyncClient, tenant: Tenant, monkeypatch
+) -> None:
+    """openspec/specs/rate-limiting/spec.md's "A Tripped Rate Limit Returns
+    the Standard Error Envelope" requirement — every other rate-limit test
+    in this codebase only asserts `status_code == 429`, never the body
+    shape, so a regression in `main.py`'s `_rate_limit_exceeded_handler`
+    (e.g. reverting to slowapi's raw default body) would go undetected.
+    `GET /invitations/track` has no auth to fake, matching the pattern in
+    `invitations/tests.py::test_track_rate_limit_trips`.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", tenant.slug)
+    monkeypatch.setattr(limiter, "enabled", True)
+    responses = [
+        await client.get("/api/v1/invitations/track", params={"trackingId": "INV-DEADBEEF"})
+        for _ in range(25)
+    ]
+    tripped = next(r for r in responses if r.status_code == 429)
+    body = tripped.json()
+    assert body["success"] is False
+    assert body["message"]
 
 
 async def test_authorize_flow_end_to_end(client: AsyncClient, user: User) -> None:

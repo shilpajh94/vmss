@@ -147,7 +147,7 @@ async def create_branch(tenant_db: AsyncSession, payload: BranchCreate) -> Branc
     repo = BranchRepository(tenant_db)
     if await repo.get_by_code(payload.code) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Branch code already exists")
-    branch = Branch(id=uuid.uuid4(), name=payload.name, code=payload.code, address=payload.address)
+    branch = Branch(id=uuid.uuid4(), **payload.model_dump())
     tenant_db.add(branch)
     await _commit_or_conflict(tenant_db, "Branch code already exists")
     await tenant_db.refresh(branch)
@@ -256,6 +256,10 @@ async def provision_branch(
     counts = ProvisionCounts()
     seen_building_codes: set[str] = set()
     seen_gate_codes: set[str] = set()
+    # Department uniqueness is now branch-scoped (design.md Decision 4), not
+    # per-floor, so this set is shared across every floor/building in the
+    # request rather than reset per floor.
+    seen_department_codes: set[str] = set()
 
     for building_payload in payload.buildings:
         _reject_duplicate(seen_building_codes, building_payload.code, what="building")
@@ -293,12 +297,12 @@ async def provision_branch(
             await tenant_db.flush()
             counts.floors += 1
 
-            seen_department_codes: set[str] = set()
             for department_payload in floor_payload.departments:
                 _reject_duplicate(seen_department_codes, department_payload.code, what="department")
                 tenant_db.add(
                     Department(
                         id=uuid.uuid4(),
+                        branch_id=branch.id,
                         floor_id=floor.id,
                         name=department_payload.name,
                         code=department_payload.code,
@@ -445,7 +449,12 @@ async def create_floor(
     repo = FloorRepository(tenant_db)
     if await repo.get_by_number(payload.building_id, payload.floor_number) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Floor number already exists")
-    floor = Floor(id=uuid.uuid4(), **payload.model_dump())
+    data = payload.model_dump()
+    if data.get("capacity_type") is not None:
+        data["capacity_type"] = data["capacity_type"].value
+    if data.get("access_level") is not None:
+        data["access_level"] = data["access_level"].value
+    floor = Floor(id=uuid.uuid4(), **data)
     tenant_db.add(floor)
     await _commit_or_conflict(tenant_db, "Floor number already exists")
     await tenant_db.refresh(floor)
@@ -500,6 +509,10 @@ async def update_floor(
         and await repo.get_by_number(floor.building_id, new_number) is not None
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Floor number already exists")
+    if changes.get("capacity_type") is not None:
+        changes["capacity_type"] = changes["capacity_type"].value
+    if changes.get("access_level") is not None:
+        changes["access_level"] = changes["access_level"].value
     for field, value in changes.items():
         setattr(floor, field, value)
     await _commit_or_conflict(tenant_db, "Floor number already exists")
@@ -522,11 +535,14 @@ async def delete_floor(
 async def create_department(
     tenant_db: AsyncSession, payload: DepartmentCreate, authorized_branch_id: uuid.UUID
 ) -> Department:
-    branch_id = await _resolve_floor_branch_id(tenant_db, payload.floor_id)
-    if branch_id is None or branch_id != authorized_branch_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
+    if payload.branch_id != authorized_branch_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Branch not found")
+    if payload.floor_id is not None:
+        floor_branch_id = await _resolve_floor_branch_id(tenant_db, payload.floor_id)
+        if floor_branch_id != authorized_branch_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
     repo = DepartmentRepository(tenant_db)
-    if await repo.get_by_code(payload.floor_id, payload.code) is not None:
+    if await repo.get_by_code(payload.branch_id, payload.code) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Department code already exists")
     department = Department(id=uuid.uuid4(), **payload.model_dump())
     tenant_db.add(department)
@@ -559,10 +575,7 @@ async def get_department(
     tenant_db: AsyncSession, department_id: uuid.UUID, authorized_branch_id: uuid.UUID
 ) -> Department:
     department = await DepartmentRepository(tenant_db).get(department_id)
-    if department is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Department not found")
-    branch_id = await _resolve_floor_branch_id(tenant_db, department.floor_id)
-    if branch_id != authorized_branch_id:
+    if department is None or department.branch_id != authorized_branch_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Department not found")
     return department
 
@@ -580,9 +593,14 @@ async def update_department(
     if (
         new_code is not None
         and new_code != department.code
-        and await repo.get_by_code(department.floor_id, new_code) is not None
+        and await repo.get_by_code(department.branch_id, new_code) is not None
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Department code already exists")
+    new_floor_id = changes.get("floor_id")
+    if new_floor_id is not None:
+        floor_branch_id = await _resolve_floor_branch_id(tenant_db, new_floor_id)
+        if floor_branch_id != authorized_branch_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
     for field, value in changes.items():
         setattr(department, field, value)
     await _commit_or_conflict(tenant_db, "Department code already exists")
@@ -611,7 +629,9 @@ async def create_reception_desk(
     repo = ReceptionDeskRepository(tenant_db)
     if await repo.get_by_code(payload.floor_id, payload.code) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Desk code already exists")
-    desk = ReceptionDesk(id=uuid.uuid4(), **payload.model_dump())
+    data = payload.model_dump()
+    data["status"] = data["status"].value
+    desk = ReceptionDesk(id=uuid.uuid4(), **data)
     tenant_db.add(desk)
     await _commit_or_conflict(tenant_db, "Desk code already exists")
     await tenant_db.refresh(desk)
@@ -666,6 +686,8 @@ async def update_reception_desk(
         and await repo.get_by_code(desk.floor_id, new_code) is not None
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Desk code already exists")
+    if "status" in changes and changes["status"] is not None:
+        changes["status"] = changes["status"].value
     for field, value in changes.items():
         setattr(desk, field, value)
     await _commit_or_conflict(tenant_db, "Desk code already exists")
@@ -699,6 +721,7 @@ async def create_security_gate(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Gate code already exists")
     data = payload.model_dump()
     data["gate_type"] = data["gate_type"].value
+    data["connectivity_status"] = data["connectivity_status"].value
     gate = SecurityGate(id=uuid.uuid4(), **data)
     tenant_db.add(gate)
     await _commit_or_conflict(tenant_db, "Gate code already exists")
@@ -757,6 +780,8 @@ async def update_security_gate(
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Building not found")
     if "gate_type" in changes and changes["gate_type"] is not None:
         changes["gate_type"] = changes["gate_type"].value
+    if "connectivity_status" in changes and changes["connectivity_status"] is not None:
+        changes["connectivity_status"] = changes["connectivity_status"].value
     for field, value in changes.items():
         setattr(gate, field, value)
     await _commit_or_conflict(tenant_db, "Gate code already exists")

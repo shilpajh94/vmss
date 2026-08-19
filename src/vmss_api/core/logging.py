@@ -4,8 +4,8 @@ import sys
 import structlog
 
 
-def configure_logging(debug: bool) -> None:
-    level = logging.DEBUG if debug else logging.INFO
+def configure_logging(debug: bool, log_level: str = "INFO") -> None:
+    level = logging.getLevelNamesMapping().get(log_level.upper(), logging.INFO)
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=level)
 
     structlog.configure(

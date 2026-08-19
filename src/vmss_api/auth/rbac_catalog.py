@@ -2,6 +2,11 @@
 provisioning time (`platform/service.py::create_tenant`), and reused as-is by
 `scripts/seed_dev_data.py` for local development. Single source of truth so the
 two never drift apart.
+
+The five role names below (`ROLE_PERMISSIONS`' keys) are also the canonical
+list of standard, non-deletable, non-renameable roles enforced by
+`auth/service.py`'s role-management functions — see
+`openspec/changes/add-role-management-and-org-field-gaps/design.md` Decision 1.
 """
 
 import uuid
@@ -41,6 +46,8 @@ PERMISSION_CODES = [
     "invitations:create",
     "invitations:view",
     "invitations:cancel",
+    "roles:manage",
+    "roles:view",
 ]
 
 # The five standard roles per security-architecture.md §1. Admin is granted
@@ -71,6 +78,11 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     # non-assignable to a `User` in `service.py::assign_branch_role`.
     "visitor": [],
 }
+
+# The five standard role names, exported so `auth/service.py` can reject a
+# rename/delete of any of them without duplicating this list — see the
+# module docstring above.
+STANDARD_ROLE_NAMES = frozenset(ROLE_PERMISSIONS.keys())
 
 
 async def seed_default_roles(tenant_db: AsyncSession) -> None:

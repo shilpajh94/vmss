@@ -25,15 +25,31 @@ rejecting a second creation attempt while an active one exists.
 - **THEN** it requires only a company-wide permission (`companies:manage`/
   `companies:view`), never an `X-Branch-ID` header
 
+### Requirement: Company Profile Carries Default Visitor Policy Settings
+The `Company` profile SHALL store this tenant's default timezone, whether
+pre-registered visitors are auto-approved by default, and the default badge
+expiry duration, as tenant-wide configuration available to every branch
+unless overridden elsewhere.
+
+#### Scenario: Organisation-wide defaults are set on the company profile
+- **WHEN** a caller with `companies:manage` updates the `Company` profile
+  with a `defaultTimezone`, `autoApprovePreRegisteredVisitors` flag, and
+  `badgeExpiryDurationMinutes`
+- **THEN** the values are persisted on the single `Company` row and returned
+  on subsequent reads
+
 ### Requirement: Branch, Building, Floor, and Department CRUD
 The system SHALL provide full CRUD for `Branch` (company-wide) and for
-`Building`/`Floor`/`Department` (branch-scoped, forming a strict
-Branch → Building → Floor → Department hierarchy), rejecting any request
-whose target does not actually belong to the caller's authorized branch.
-The system SHALL additionally provide a bulk provisioning operation that
-creates a new `Branch` together with as much of its
-Building → Floor → Department/ReceptionDesk chain and SecurityGates as a
-single request supplies, in one transaction.
+`Building`/`Floor`/`Department` (branch-scoped), rejecting any request whose
+target does not actually belong to the caller's authorized branch. A
+`Department` SHALL be creatable directly under a `Branch`, with an optional
+`Floor` association rather than a mandatory one — a department is not
+required to be assigned to a specific floor to exist. The system SHALL
+additionally provide a bulk provisioning operation that creates a new
+`Branch` together with as much of its Building → Floor → Department/
+ReceptionDesk chain and SecurityGates as a single request supplies, in one
+transaction. `Branch` and `Building` SHALL accept their active/inactive
+status at creation time, not only via a later update.
 
 #### Scenario: Branch-scoped entity outside the authorized branch is hidden as 404
 - **WHEN** a caller authorized at Branch A requests, updates, or deletes a
@@ -68,22 +84,54 @@ single request supplies, in one transaction.
   single-branch CRUD) but not `branches:provision`
 - **THEN** a bulk provisioning request is rejected with 403
 
+#### Scenario: A department can be created under a branch with no floor
+- **WHEN** a caller with `departments:manage` creates a `Department`
+  supplying a `branchId` and no `floorId`
+- **THEN** the department is created successfully and is listed among that
+  branch's departments regardless of any floor assignment
+
+#### Scenario: A branch is created with its operational status set explicitly
+- **WHEN** a caller with `branches:manage` creates a `Branch` supplying
+  `isActive: false`
+- **THEN** the created branch is inactive from creation, with no separate
+  update call required
+
 ### Requirement: Reception Desk and Security Gate CRUD
 The system SHALL provide full CRUD for `ReceptionDesk` (scoped to one
 `Floor`) and `SecurityGate` (scoped to one `Branch`, optionally narrowed to
 one `Building`), with the same branch-authorization and cross-branch 404
-behavior as Building/Floor/Department.
+behavior as Building/Floor/Department. Each `ReceptionDesk` SHALL carry a
+three-state operational status (`active`, `maintenance`, `inactive`) in
+place of a plain active/inactive flag. Each `SecurityGate` SHALL carry a
+three-state connectivity status (`online`, `maintenance`, `offline`)
+alongside its existing entry/exit/both gate type, and MAY be flagged as a
+high-security gate.
 
 #### Scenario: Security gate optionally narrowed to a building
 - **WHEN** a `SecurityGate` is created with a `buildingId` that does not
   belong to the gate's `branchId`
 - **THEN** the request is rejected with 404
 
+#### Scenario: A reception desk can be set to maintenance status
+- **WHEN** a caller with `desks:manage` updates a `ReceptionDesk`'s `status`
+  to `maintenance`
+- **THEN** the desk's status is stored as `maintenance`, distinct from both
+  `active` and `inactive`
+
+#### Scenario: A security gate's connectivity status is independent of its gate type
+- **WHEN** a caller with `gates:manage` creates or updates a `SecurityGate`
+  with `gateType: both` and `connectivityStatus: offline`
+- **THEN** both values are stored independently, and neither field
+  constrains the other's allowed values
+
 ### Requirement: Employee Directory Sync
 The system SHALL provide a bulk, authoritative-batch employee-directory sync
 endpoint that creates unknown employees, updates known ones, and deactivates
 (never deletes) existing employees absent from the batch, validating every
-referenced department before writing anything.
+referenced department before writing anything. The employee directory read
+endpoint SHALL expose each employee's avatar image (when set) and their
+current branch-role assignments, so a caller can render an employee's
+identity and access level without a separate lookup per employee.
 
 #### Scenario: Sync batch referencing an unknown department is rejected atomically
 - **WHEN** a sync batch includes a `departmentId` that does not exist in the
@@ -97,11 +145,17 @@ referenced department before writing anything.
 - **THEN** that employee's `User` row is deactivated (`is_active = false`),
   never soft-deleted or hard-deleted
 
+#### Scenario: Listing employees includes avatar and role assignments
+- **WHEN** a caller with `employees:view` lists employees for a branch
+- **THEN** each returned employee includes its avatar URL (null if unset)
+  and the list of its current branch-role assignments (role name and
+  branch, if any)
+
 ### Requirement: A Soft-Deleted Entity's Unique Code or Number Is Reusable
 For every entity in this capability whose uniqueness is scoped by a code or
 number (`Branch.code`, `Company.registration_number`,
 `Building(branch_id, code)`, `Floor(building_id, floor_number)`,
-`Department(floor_id, code)`, `ReceptionDesk(floor_id, code)`,
+`Department(branch_id, code)`, `ReceptionDesk(floor_id, code)`,
 `SecurityGate(branch_id, code)`), the system SHALL enforce uniqueness only
 among rows that are not soft-deleted, so that a new row may reuse the
 code/number of a previously soft-deleted row of the same type.
