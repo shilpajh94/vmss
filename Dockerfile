@@ -48,6 +48,7 @@ COPY alembic/ ./alembic/
 COPY alembic.ini ./alembic.ini
 COPY alembic_tenant/ ./alembic_tenant/
 COPY alembic_tenant.ini ./alembic_tenant.ini
+COPY scripts/ ./scripts/
 
 # Ensure the venv binaries are on PATH
 ENV PATH="/app/.venv/bin:$PATH" \
