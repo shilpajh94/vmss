@@ -24,8 +24,25 @@ from vmss_api.platform.repository import (
 from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
 
-# repo root: src/vmss_api/platform/service.py -> platform -> vmss_api -> src -> repo root
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+def _find_repo_root() -> Path:
+    """`alembic_tenant.ini`/`alembic_tenant/` aren't part of the wheel
+    (`pyproject.toml`'s wheel `packages` is `src/vmss_api` only) — they're
+    copied straight into `WORKDIR /app` by the Dockerfile. A fixed
+    `Path(__file__).resolve().parents[N]` guess breaks once the project is
+    installed `--no-editable` (the production image): `__file__` then
+    resolves under `.venv/lib/.../site-packages/vmss_api/...`, with no
+    `src/` layer above it to walk up through. The container and `ddev exec
+    uv run ...` both always run with cwd at the repo root, so anchor there
+    first and only fall back to walking up from this file for other
+    invocation styles (e.g. an editable dev install run from elsewhere).
+    """
+    for candidate in (Path.cwd(), *Path(__file__).resolve().parents):
+        if (candidate / "alembic_tenant.ini").is_file():
+            return candidate
+    return Path.cwd()
+
+
+_REPO_ROOT = _find_repo_root()
 _TENANT_ALEMBIC_INI = _REPO_ROOT / "alembic_tenant.ini"
 
 
