@@ -1,6 +1,8 @@
 from functools import lru_cache
 
+from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
@@ -10,7 +12,27 @@ class Settings(BaseSettings):
     environment: str = "local"
     debug: bool = True
 
-    database_url: str = "postgresql+asyncpg://db:db@db:5432/db"
+    # Split rather than a single DATABASE_URL so a password containing a
+    # reserved URL character (`@`, `:`, `/`, `%`) can't corrupt the parsed
+    # host/port the way it would if pasted unescaped into one connection
+    # string. `URL.create` below percent-encodes each part itself.
+    db_user: str = "db"
+    db_password: str = "db"
+    db_host: str = "db"
+    db_port: int = 5432
+    db_name: str = "db"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def database_url(self) -> str:
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.db_user,
+            password=self.db_password,
+            host=self.db_host,
+            port=self.db_port,
+            database=self.db_name,
+        ).render_as_string(hide_password=False)
 
     redis_url: str = "redis://redis:6379/0"
     celery_broker_url: str = "redis://redis:6379/1"
