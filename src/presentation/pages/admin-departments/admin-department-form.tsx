@@ -92,9 +92,17 @@ export function AdminDepartmentFormPage() {
                     </div>
                   </div>
                   <TextField
+                    label="Department Code"
+                    required
+                    value={values.code}
+                    onChange={(code) => updateField('code', code)}
+                    error={errors.code}
+                    labelClassName={fieldLabelClassName}
+                  />
+                  <TextField
                     label="Head of Department"
-                    value={values.headOfDepartment ?? ''}
-                    onChange={(headOfDepartment) => updateField('headOfDepartment', headOfDepartment)}
+                    value={values.headOfDepartmentUserId ?? ''}
+                    onChange={(headOfDepartmentUserId) => updateField('headOfDepartmentUserId', headOfDepartmentUserId)}
                     labelClassName={fieldLabelClassName}
                   />
                   <TextareaField
@@ -111,9 +119,9 @@ export function AdminDepartmentFormPage() {
                       <p className="font-body text-[13px] text-text-muted">Set whether this department is active and accessible across workspace branches</p>
                     </div>
                     <ToggleSwitch
-                      label={values.status === 'active' ? 'Active' : 'Inactive'}
-                      checked={values.status === 'active'}
-                      onChange={(checked) => updateField('status', checked ? 'active' : 'inactive')}
+                      label={values.isActive ? 'Active' : 'Inactive'}
+                      checked={values.isActive}
+                      onChange={(checked) => updateField('isActive', checked)}
                     />
                   </div>
                 </div>

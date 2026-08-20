@@ -1,6 +1,6 @@
 export const API_ENDPOINTS = {
   CREATE_VISIT_REQUEST: {
-    endpoint: "/visit-requests",
+    endpoint: "/invitations",
     method: "POST",
     hasToken: false,
   },
@@ -10,7 +10,7 @@ export const API_ENDPOINTS = {
     hasToken: false,
   },
   TRACK_VISIT_REQUEST: {
-    endpoint: "/visit-requests/track",
+    endpoint: "/invitations/track",
     method: "GET",
     hasToken: false,
   },
@@ -35,7 +35,7 @@ export const API_ENDPOINTS = {
     hasToken: true,
   },
   GET_CURRENT_STAFF_USER: {
-    endpoint: "/staff-auth/me",
+    endpoint: "/auth/me",
     method: "GET",
     hasToken: true,
   },
@@ -50,12 +50,12 @@ export const API_ENDPOINTS = {
     hasToken: true,
   },
   GET_ORGANISATION_CONFIG: {
-    endpoint: "/organisation-config",
+    endpoint: "/company",
     method: "GET",
     hasToken: true,
   },
   UPDATE_ORGANISATION_CONFIG: {
-    endpoint: "/organisation-config",
+    endpoint: "/company",
     method: "PUT",
     hasToken: true,
   },
@@ -75,12 +75,12 @@ export const API_ENDPOINTS = {
     hasToken: true,
   },
   UPDATE_BRANCH: {
-    endpoint: "/branches",
+    endpoint: "/branches/:id",
     method: "PUT",
     hasToken: true,
   },
   DELETE_BRANCH: {
-    endpoint: "/branches",
+    endpoint: "/branches/:id",
     method: "DELETE",
     hasToken: true,
   },
@@ -95,12 +95,12 @@ export const API_ENDPOINTS = {
     hasToken: true,
   },
   UPDATE_DEPARTMENT: {
-    endpoint: "/departments",
+    endpoint: "/departments/:id",
     method: "PUT",
     hasToken: true,
   },
   DELETE_DEPARTMENT: {
-    endpoint: "/departments",
+    endpoint: "/departments/:id",
     method: "DELETE",
     hasToken: true,
   },
@@ -115,12 +115,127 @@ export const API_ENDPOINTS = {
     hasToken: true,
   },
   UPDATE_BUILDING: {
-    endpoint: "/buildings",
+    endpoint: "/buildings/:id",
     method: "PUT",
     hasToken: true,
   },
   DELETE_BUILDING: {
-    endpoint: "/buildings",
+    endpoint: "/buildings/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  LIST_FLOORS: {
+    endpoint: "/floors",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_FLOOR: {
+    endpoint: "/floors",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_FLOOR: {
+    endpoint: "/floors/:id",
+    method: "PUT",
+    hasToken: true,
+  },
+  DELETE_FLOOR: {
+    endpoint: "/floors/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  GET_ADMIN_DASHBOARD_OVERVIEW: {
+    endpoint: "/admin/dashboard/overview",
+    method: "GET",
+    hasToken: true,
+  },
+  CHECK_IN_UPCOMING_VISITOR: {
+    endpoint: "/admin/dashboard/upcoming-visitors",
+    method: "PATCH",
+    hasToken: true,
+  },
+  LIST_HOST_EMPLOYEES: {
+    endpoint: "/auth/employees",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_HOST_EMPLOYEE: {
+    endpoint: "/auth/users",
+    method: "POST",
+    hasToken: true,
+  },
+  LIST_ROLES: {
+    endpoint: "/auth/roles",
+    method: "GET",
+    hasToken: true,
+  },
+  ASSIGN_HOST_EMPLOYEE_ROLE: {
+    endpoint: "/auth/users/:userId/branch-roles",
+    method: "POST",
+    hasToken: true,
+  },
+  REVOKE_HOST_EMPLOYEE_ROLE: {
+    endpoint: "/auth/users/:userId/branch-roles/:assignmentId",
+    method: "DELETE",
+    hasToken: true,
+  },
+  LIST_RECEPTION_DESKS: {
+    endpoint: "/reception-desks",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_RECEPTION_DESK: {
+    endpoint: "/reception-desks",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_RECEPTION_DESK: {
+    endpoint: "/reception-desks/:id",
+    method: "PUT",
+    hasToken: true,
+  },
+  DELETE_RECEPTION_DESK: {
+    endpoint: "/reception-desks/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  LIST_SECURITY_GATES: {
+    endpoint: "/security-gates",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_SECURITY_GATE: {
+    endpoint: "/security-gates",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_SECURITY_GATE: {
+    endpoint: "/security-gates/:id",
+    method: "PUT",
+    hasToken: true,
+  },
+  DELETE_SECURITY_GATE: {
+    endpoint: "/security-gates/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  LIST_VISITOR_CATEGORIES: {
+    endpoint: "/visitor-categories",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_VISITOR_CATEGORY: {
+    endpoint: "/visitor-categories",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_VISITOR_CATEGORY: {
+    endpoint: "/visitor-categories/:id",
+    method: "PUT",
+    hasToken: true,
+  },
+  DELETE_VISITOR_CATEGORY: {
+    endpoint: "/visitor-categories/:id",
     method: "DELETE",
     hasToken: true,
   },

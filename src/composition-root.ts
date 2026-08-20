@@ -10,6 +10,12 @@ import type { OrganisationConfigRepository } from './data/repositories/organisat
 import type { BranchRepository } from './data/repositories/branch-repository'
 import type { DepartmentRepository } from './data/repositories/department-repository'
 import type { BuildingRepository } from './data/repositories/building-repository'
+import type { FloorRepository } from './data/repositories/floor-repository'
+import type { DashboardRepository } from './data/repositories/dashboard-repository'
+import type { HostEmployeeRepository } from './data/repositories/host-employee-repository'
+import type { ReceptionDeskRepository } from './data/repositories/reception-desk-repository'
+import type { SecurityGateRepository } from './data/repositories/security-gate-repository'
+import type { VisitorCategoryRepository } from './data/repositories/visitor-category-repository'
 import { SubmitVisitRequestUseCase } from './data/use-cases/submit-visit-request'
 import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-visit-request'
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
@@ -35,6 +41,29 @@ import { ListBuildingsUseCase } from './data/use-cases/list-buildings'
 import { CreateBuildingUseCase } from './data/use-cases/create-building'
 import { UpdateBuildingUseCase } from './data/use-cases/update-building'
 import { DeleteBuildingUseCase } from './data/use-cases/delete-building'
+import { ListFloorsUseCase } from './data/use-cases/list-floors'
+import { CreateFloorUseCase } from './data/use-cases/create-floor'
+import { UpdateFloorUseCase } from './data/use-cases/update-floor'
+import { DeleteFloorUseCase } from './data/use-cases/delete-floor'
+import { GetDashboardOverviewUseCase } from './data/use-cases/get-dashboard-overview'
+import { CheckInUpcomingVisitorUseCase } from './data/use-cases/check-in-upcoming-visitor'
+import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
+import { CreateHostEmployeeUseCase } from './data/use-cases/create-host-employee'
+import { ListRolesUseCase } from './data/use-cases/list-roles'
+import { AssignHostEmployeeRoleUseCase } from './data/use-cases/assign-host-employee-role'
+import { RevokeHostEmployeeRoleUseCase } from './data/use-cases/revoke-host-employee-role'
+import { ListReceptionDesksUseCase } from './data/use-cases/list-reception-desks'
+import { CreateReceptionDeskUseCase } from './data/use-cases/create-reception-desk'
+import { UpdateReceptionDeskUseCase } from './data/use-cases/update-reception-desk'
+import { DeleteReceptionDeskUseCase } from './data/use-cases/delete-reception-desk'
+import { ListSecurityGatesUseCase } from './data/use-cases/list-security-gates'
+import { CreateSecurityGateUseCase } from './data/use-cases/create-security-gate'
+import { UpdateSecurityGateUseCase } from './data/use-cases/update-security-gate'
+import { DeleteSecurityGateUseCase } from './data/use-cases/delete-security-gate'
+import { ListVisitorCategoriesUseCase } from './data/use-cases/list-visitor-categories'
+import { CreateVisitorCategoryUseCase } from './data/use-cases/create-visitor-category'
+import { UpdateVisitorCategoryUseCase } from './data/use-cases/update-visitor-category'
+import { DeleteVisitorCategoryUseCase } from './data/use-cases/delete-visitor-category'
 import { HttpVisitRequestRepository } from './infrastructure/visit-request-repository'
 import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-request-summary-repository'
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
@@ -46,6 +75,12 @@ import { HttpOrganisationConfigRepository } from './infrastructure/organisation-
 import { HttpBranchRepository } from './infrastructure/branch-repository'
 import { HttpDepartmentRepository } from './infrastructure/department-repository'
 import { HttpBuildingRepository } from './infrastructure/building-repository'
+import { HttpFloorRepository } from './infrastructure/floor-repository'
+import { HttpDashboardRepository } from './infrastructure/dashboard-repository'
+import { HttpHostEmployeeRepository } from './infrastructure/host-employee-repository'
+import { HttpReceptionDeskRepository } from './infrastructure/reception-desk-repository'
+import { HttpSecurityGateRepository } from './infrastructure/security-gate-repository'
+import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category-repository'
 
 export interface AppDependencies {
   apiClient: ApiClient
@@ -74,6 +109,29 @@ export interface AppDependencies {
   createBuildingUseCase: CreateBuildingUseCase
   updateBuildingUseCase: UpdateBuildingUseCase
   deleteBuildingUseCase: DeleteBuildingUseCase
+  listFloorsUseCase: ListFloorsUseCase
+  createFloorUseCase: CreateFloorUseCase
+  updateFloorUseCase: UpdateFloorUseCase
+  deleteFloorUseCase: DeleteFloorUseCase
+  getDashboardOverviewUseCase: GetDashboardOverviewUseCase
+  checkInUpcomingVisitorUseCase: CheckInUpcomingVisitorUseCase
+  listHostEmployeesUseCase: ListHostEmployeesUseCase
+  createHostEmployeeUseCase: CreateHostEmployeeUseCase
+  listRolesUseCase: ListRolesUseCase
+  assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase
+  revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase
+  listReceptionDesksUseCase: ListReceptionDesksUseCase
+  createReceptionDeskUseCase: CreateReceptionDeskUseCase
+  updateReceptionDeskUseCase: UpdateReceptionDeskUseCase
+  deleteReceptionDeskUseCase: DeleteReceptionDeskUseCase
+  listSecurityGatesUseCase: ListSecurityGatesUseCase
+  createSecurityGateUseCase: CreateSecurityGateUseCase
+  updateSecurityGateUseCase: UpdateSecurityGateUseCase
+  deleteSecurityGateUseCase: DeleteSecurityGateUseCase
+  listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase
+  createVisitorCategoryUseCase: CreateVisitorCategoryUseCase
+  updateVisitorCategoryUseCase: UpdateVisitorCategoryUseCase
+  deleteVisitorCategoryUseCase: DeleteVisitorCategoryUseCase
 }
 
 export function createApp(): AppDependencies {
@@ -114,6 +172,35 @@ export function createApp(): AppDependencies {
   let createBuildingUseCase: CreateBuildingUseCase | undefined
   let updateBuildingUseCase: UpdateBuildingUseCase | undefined
   let deleteBuildingUseCase: DeleteBuildingUseCase | undefined
+  let floorRepository: FloorRepository | undefined
+  let listFloorsUseCase: ListFloorsUseCase | undefined
+  let createFloorUseCase: CreateFloorUseCase | undefined
+  let updateFloorUseCase: UpdateFloorUseCase | undefined
+  let deleteFloorUseCase: DeleteFloorUseCase | undefined
+  let dashboardRepository: DashboardRepository | undefined
+  let getDashboardOverviewUseCase: GetDashboardOverviewUseCase | undefined
+  let checkInUpcomingVisitorUseCase: CheckInUpcomingVisitorUseCase | undefined
+  let hostEmployeeRepository: HostEmployeeRepository | undefined
+  let listHostEmployeesUseCase: ListHostEmployeesUseCase | undefined
+  let createHostEmployeeUseCase: CreateHostEmployeeUseCase | undefined
+  let listRolesUseCase: ListRolesUseCase | undefined
+  let assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase | undefined
+  let revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase | undefined
+  let receptionDeskRepository: ReceptionDeskRepository | undefined
+  let listReceptionDesksUseCase: ListReceptionDesksUseCase | undefined
+  let createReceptionDeskUseCase: CreateReceptionDeskUseCase | undefined
+  let updateReceptionDeskUseCase: UpdateReceptionDeskUseCase | undefined
+  let deleteReceptionDeskUseCase: DeleteReceptionDeskUseCase | undefined
+  let securityGateRepository: SecurityGateRepository | undefined
+  let listSecurityGatesUseCase: ListSecurityGatesUseCase | undefined
+  let createSecurityGateUseCase: CreateSecurityGateUseCase | undefined
+  let updateSecurityGateUseCase: UpdateSecurityGateUseCase | undefined
+  let deleteSecurityGateUseCase: DeleteSecurityGateUseCase | undefined
+  let visitorCategoryRepository: VisitorCategoryRepository | undefined
+  let listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase | undefined
+  let createVisitorCategoryUseCase: CreateVisitorCategoryUseCase | undefined
+  let updateVisitorCategoryUseCase: UpdateVisitorCategoryUseCase | undefined
+  let deleteVisitorCategoryUseCase: DeleteVisitorCategoryUseCase | undefined
 
   const resolveApiClient = (): ApiClient => {
     apiClient ??= new ApiClient(import.meta.env.VITE_API_BASE_URL)
@@ -251,7 +338,7 @@ export function createApp(): AppDependencies {
   }
 
   const resolveDepartmentRepository = (): DepartmentRepository => {
-    departmentRepository ??= new HttpDepartmentRepository(resolveApiClient())
+    departmentRepository ??= new HttpDepartmentRepository(resolveApiClient(), resolveBranchRepository())
     return departmentRepository
   }
 
@@ -276,7 +363,7 @@ export function createApp(): AppDependencies {
   }
 
   const resolveBuildingRepository = (): BuildingRepository => {
-    buildingRepository ??= new HttpBuildingRepository(resolveApiClient())
+    buildingRepository ??= new HttpBuildingRepository(resolveApiClient(), resolveBranchRepository())
     return buildingRepository
   }
 
@@ -298,6 +385,156 @@ export function createApp(): AppDependencies {
   const resolveDeleteBuildingUseCase = (): DeleteBuildingUseCase => {
     deleteBuildingUseCase ??= new DeleteBuildingUseCase(resolveBuildingRepository())
     return deleteBuildingUseCase
+  }
+
+  const resolveFloorRepository = (): FloorRepository => {
+    floorRepository ??= new HttpFloorRepository(resolveApiClient())
+    return floorRepository
+  }
+
+  const resolveListFloorsUseCase = (): ListFloorsUseCase => {
+    listFloorsUseCase ??= new ListFloorsUseCase(resolveFloorRepository())
+    return listFloorsUseCase
+  }
+
+  const resolveCreateFloorUseCase = (): CreateFloorUseCase => {
+    createFloorUseCase ??= new CreateFloorUseCase(resolveFloorRepository())
+    return createFloorUseCase
+  }
+
+  const resolveUpdateFloorUseCase = (): UpdateFloorUseCase => {
+    updateFloorUseCase ??= new UpdateFloorUseCase(resolveFloorRepository())
+    return updateFloorUseCase
+  }
+
+  const resolveDeleteFloorUseCase = (): DeleteFloorUseCase => {
+    deleteFloorUseCase ??= new DeleteFloorUseCase(resolveFloorRepository())
+    return deleteFloorUseCase
+  }
+
+  const resolveDashboardRepository = (): DashboardRepository => {
+    dashboardRepository ??= new HttpDashboardRepository(resolveApiClient())
+    return dashboardRepository
+  }
+
+  const resolveGetDashboardOverviewUseCase = (): GetDashboardOverviewUseCase => {
+    getDashboardOverviewUseCase ??= new GetDashboardOverviewUseCase(resolveDashboardRepository())
+    return getDashboardOverviewUseCase
+  }
+
+  const resolveCheckInUpcomingVisitorUseCase = (): CheckInUpcomingVisitorUseCase => {
+    checkInUpcomingVisitorUseCase ??= new CheckInUpcomingVisitorUseCase(resolveDashboardRepository())
+    return checkInUpcomingVisitorUseCase
+  }
+
+  const resolveHostEmployeeRepository = (): HostEmployeeRepository => {
+    hostEmployeeRepository ??= new HttpHostEmployeeRepository(resolveApiClient())
+    return hostEmployeeRepository
+  }
+
+  const resolveListHostEmployeesUseCase = (): ListHostEmployeesUseCase => {
+    listHostEmployeesUseCase ??= new ListHostEmployeesUseCase(resolveHostEmployeeRepository())
+    return listHostEmployeesUseCase
+  }
+
+  const resolveCreateHostEmployeeUseCase = (): CreateHostEmployeeUseCase => {
+    createHostEmployeeUseCase ??= new CreateHostEmployeeUseCase(resolveHostEmployeeRepository())
+    return createHostEmployeeUseCase
+  }
+
+  const resolveListRolesUseCase = (): ListRolesUseCase => {
+    listRolesUseCase ??= new ListRolesUseCase(resolveHostEmployeeRepository())
+    return listRolesUseCase
+  }
+
+  const resolveAssignHostEmployeeRoleUseCase = (): AssignHostEmployeeRoleUseCase => {
+    assignHostEmployeeRoleUseCase ??= new AssignHostEmployeeRoleUseCase(resolveHostEmployeeRepository())
+    return assignHostEmployeeRoleUseCase
+  }
+
+  const resolveRevokeHostEmployeeRoleUseCase = (): RevokeHostEmployeeRoleUseCase => {
+    revokeHostEmployeeRoleUseCase ??= new RevokeHostEmployeeRoleUseCase(resolveHostEmployeeRepository())
+    return revokeHostEmployeeRoleUseCase
+  }
+
+  const resolveReceptionDeskRepository = (): ReceptionDeskRepository => {
+    receptionDeskRepository ??= new HttpReceptionDeskRepository(
+      resolveApiClient(),
+      resolveBuildingRepository(),
+      resolveFloorRepository(),
+      resolveHostEmployeeRepository(),
+    )
+    return receptionDeskRepository
+  }
+
+  const resolveListReceptionDesksUseCase = (): ListReceptionDesksUseCase => {
+    listReceptionDesksUseCase ??= new ListReceptionDesksUseCase(resolveReceptionDeskRepository())
+    return listReceptionDesksUseCase
+  }
+
+  const resolveCreateReceptionDeskUseCase = (): CreateReceptionDeskUseCase => {
+    createReceptionDeskUseCase ??= new CreateReceptionDeskUseCase(resolveReceptionDeskRepository())
+    return createReceptionDeskUseCase
+  }
+
+  const resolveUpdateReceptionDeskUseCase = (): UpdateReceptionDeskUseCase => {
+    updateReceptionDeskUseCase ??= new UpdateReceptionDeskUseCase(resolveReceptionDeskRepository())
+    return updateReceptionDeskUseCase
+  }
+
+  const resolveDeleteReceptionDeskUseCase = (): DeleteReceptionDeskUseCase => {
+    deleteReceptionDeskUseCase ??= new DeleteReceptionDeskUseCase(resolveReceptionDeskRepository())
+    return deleteReceptionDeskUseCase
+  }
+
+  const resolveSecurityGateRepository = (): SecurityGateRepository => {
+    securityGateRepository ??= new HttpSecurityGateRepository(resolveApiClient(), resolveBuildingRepository(), resolveFloorRepository())
+    return securityGateRepository
+  }
+
+  const resolveListSecurityGatesUseCase = (): ListSecurityGatesUseCase => {
+    listSecurityGatesUseCase ??= new ListSecurityGatesUseCase(resolveSecurityGateRepository())
+    return listSecurityGatesUseCase
+  }
+
+  const resolveCreateSecurityGateUseCase = (): CreateSecurityGateUseCase => {
+    createSecurityGateUseCase ??= new CreateSecurityGateUseCase(resolveSecurityGateRepository())
+    return createSecurityGateUseCase
+  }
+
+  const resolveUpdateSecurityGateUseCase = (): UpdateSecurityGateUseCase => {
+    updateSecurityGateUseCase ??= new UpdateSecurityGateUseCase(resolveSecurityGateRepository())
+    return updateSecurityGateUseCase
+  }
+
+  const resolveDeleteSecurityGateUseCase = (): DeleteSecurityGateUseCase => {
+    deleteSecurityGateUseCase ??= new DeleteSecurityGateUseCase(resolveSecurityGateRepository())
+    return deleteSecurityGateUseCase
+  }
+
+  const resolveVisitorCategoryRepository = (): VisitorCategoryRepository => {
+    visitorCategoryRepository ??= new HttpVisitorCategoryRepository(resolveApiClient())
+    return visitorCategoryRepository
+  }
+
+  const resolveListVisitorCategoriesUseCase = (): ListVisitorCategoriesUseCase => {
+    listVisitorCategoriesUseCase ??= new ListVisitorCategoriesUseCase(resolveVisitorCategoryRepository())
+    return listVisitorCategoriesUseCase
+  }
+
+  const resolveCreateVisitorCategoryUseCase = (): CreateVisitorCategoryUseCase => {
+    createVisitorCategoryUseCase ??= new CreateVisitorCategoryUseCase(resolveVisitorCategoryRepository())
+    return createVisitorCategoryUseCase
+  }
+
+  const resolveUpdateVisitorCategoryUseCase = (): UpdateVisitorCategoryUseCase => {
+    updateVisitorCategoryUseCase ??= new UpdateVisitorCategoryUseCase(resolveVisitorCategoryRepository())
+    return updateVisitorCategoryUseCase
+  }
+
+  const resolveDeleteVisitorCategoryUseCase = (): DeleteVisitorCategoryUseCase => {
+    deleteVisitorCategoryUseCase ??= new DeleteVisitorCategoryUseCase(resolveVisitorCategoryRepository())
+    return deleteVisitorCategoryUseCase
   }
 
   return {
@@ -378,6 +615,75 @@ export function createApp(): AppDependencies {
     },
     get deleteBuildingUseCase() {
       return resolveDeleteBuildingUseCase()
+    },
+    get listFloorsUseCase() {
+      return resolveListFloorsUseCase()
+    },
+    get createFloorUseCase() {
+      return resolveCreateFloorUseCase()
+    },
+    get updateFloorUseCase() {
+      return resolveUpdateFloorUseCase()
+    },
+    get deleteFloorUseCase() {
+      return resolveDeleteFloorUseCase()
+    },
+    get getDashboardOverviewUseCase() {
+      return resolveGetDashboardOverviewUseCase()
+    },
+    get checkInUpcomingVisitorUseCase() {
+      return resolveCheckInUpcomingVisitorUseCase()
+    },
+    get listHostEmployeesUseCase() {
+      return resolveListHostEmployeesUseCase()
+    },
+    get createHostEmployeeUseCase() {
+      return resolveCreateHostEmployeeUseCase()
+    },
+    get listRolesUseCase() {
+      return resolveListRolesUseCase()
+    },
+    get assignHostEmployeeRoleUseCase() {
+      return resolveAssignHostEmployeeRoleUseCase()
+    },
+    get revokeHostEmployeeRoleUseCase() {
+      return resolveRevokeHostEmployeeRoleUseCase()
+    },
+    get listReceptionDesksUseCase() {
+      return resolveListReceptionDesksUseCase()
+    },
+    get createReceptionDeskUseCase() {
+      return resolveCreateReceptionDeskUseCase()
+    },
+    get updateReceptionDeskUseCase() {
+      return resolveUpdateReceptionDeskUseCase()
+    },
+    get deleteReceptionDeskUseCase() {
+      return resolveDeleteReceptionDeskUseCase()
+    },
+    get listSecurityGatesUseCase() {
+      return resolveListSecurityGatesUseCase()
+    },
+    get createSecurityGateUseCase() {
+      return resolveCreateSecurityGateUseCase()
+    },
+    get updateSecurityGateUseCase() {
+      return resolveUpdateSecurityGateUseCase()
+    },
+    get deleteSecurityGateUseCase() {
+      return resolveDeleteSecurityGateUseCase()
+    },
+    get listVisitorCategoriesUseCase() {
+      return resolveListVisitorCategoriesUseCase()
+    },
+    get createVisitorCategoryUseCase() {
+      return resolveCreateVisitorCategoryUseCase()
+    },
+    get updateVisitorCategoryUseCase() {
+      return resolveUpdateVisitorCategoryUseCase()
+    },
+    get deleteVisitorCategoryUseCase() {
+      return resolveDeleteVisitorCategoryUseCase()
     },
   }
 }

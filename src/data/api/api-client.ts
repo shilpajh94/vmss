@@ -15,6 +15,7 @@ interface MakeRequestOptions<T> {
   endpointConfig: ApiEndpointDefinition
   body?: unknown
   queryParams?: QueryParams
+  pathParams?: Record<string, string>
   parserSchema: ZodType<T>
 }
 
@@ -31,6 +32,13 @@ export class ApiClient {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
   }
 
+  private buildPath(endpoint: string, pathParams?: Record<string, string>): string {
+    if (!pathParams) return endpoint
+    return endpoint.replace(/:([a-zA-Z]+)/g, (match, key: string) =>
+      key in pathParams ? encodeURIComponent(pathParams[key]) : match,
+    )
+  }
+
   private buildQueryString(queryParams?: QueryParams): string {
     if (!queryParams) return ''
 
@@ -43,9 +51,9 @@ export class ApiClient {
     return query ? `?${query}` : ''
   }
 
-  async makeRequest<T>({ endpointConfig, body, queryParams, parserSchema }: MakeRequestOptions<T>): Promise<T> {
+  async makeRequest<T>({ endpointConfig, body, queryParams, pathParams, parserSchema }: MakeRequestOptions<T>): Promise<T> {
     const { endpoint, method, hasToken } = endpointConfig as EndpointConfigShape
-    const url = `${this.baseUrl}${endpoint}${this.buildQueryString(queryParams)}`
+    const url = `${this.baseUrl}${this.buildPath(endpoint, pathParams)}${this.buildQueryString(queryParams)}`
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -64,6 +72,10 @@ export class ApiClient {
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
+
+    if (response.status === 204) {
+      return parserSchema.parse(undefined)
+    }
 
     return parserSchema.parse(await response.json())
   }

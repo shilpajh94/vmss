@@ -7,7 +7,7 @@ interface DepartmentsTableProps {
   onDelete: (department: Department) => void
 }
 
-const COLUMN_HEADERS = ['DEPARTMENT NAME', 'BRANCH', 'HEAD OF DEPARTMENT', 'EMPLOYEE COUNT', 'STATUS']
+const COLUMN_HEADERS = ['DEPARTMENT NAME', 'CODE', 'BRANCH', 'HEAD OF DEPARTMENT', 'STATUS']
 
 export function DepartmentsTable({ departments, onDelete }: DepartmentsTableProps) {
   const navigate = useNavigate()
@@ -29,17 +29,17 @@ export function DepartmentsTable({ departments, onDelete }: DepartmentsTableProp
           {departments.map((department) => (
             <tr key={department.id} className="border-b border-border-subtle">
               <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">{department.name}</td>
+              <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{department.code}</td>
               <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{department.branchName}</td>
-              <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{department.headOfDepartment ?? '—'}</td>
-              <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{department.employeeCount} Employees</td>
+              <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{department.headOfDepartmentUserId ?? '—'}</td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <span
                   className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                    department.status === 'active' ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
+                    department.isActive ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
                   }`}
                 >
-                  <span className={`size-1.5 rounded-full ${department.status === 'active' ? 'bg-success' : 'bg-text-faint'}`} />
-                  {department.status === 'active' ? 'Active' : 'Inactive'}
+                  <span className={`size-1.5 rounded-full ${department.isActive ? 'bg-success' : 'bg-text-faint'}`} />
+                  {department.isActive ? 'Active' : 'Inactive'}
                 </span>
               </td>
               <td className="px-6 py-4">

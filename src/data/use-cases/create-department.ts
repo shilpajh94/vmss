@@ -1,5 +1,5 @@
 import type { DepartmentRepository } from '../repositories/department-repository'
-import type { Department, DepartmentInput } from '../../domain/entities/department-schema'
+import type { Department } from '../../domain/entities/department-schema'
 
 export class CreateDepartmentUseCase {
   private readonly departmentRepository: DepartmentRepository
@@ -8,7 +8,7 @@ export class CreateDepartmentUseCase {
     this.departmentRepository = departmentRepository
   }
 
-  async execute(input: DepartmentInput): Promise<Department> {
+  async execute(input: Omit<Department, 'id' | 'branchName'>): Promise<Department> {
     return this.departmentRepository.create(input)
   }
 }

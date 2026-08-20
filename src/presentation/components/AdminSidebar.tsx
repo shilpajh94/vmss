@@ -45,11 +45,16 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
   const navigate = useNavigate()
 
   const handleActivate = (key: AdminSidebarActiveItem) => {
+    if (key === 'dashboard') navigate('/admin/dashboard')
     if (key === 'organisation-configs') navigate('/admin/organisation-configs')
     if (key === 'branches') navigate('/admin/branches')
     if (key === 'departments') navigate('/admin/departments')
     if (key === 'buildings') navigate('/admin/buildings')
     if (key === 'floors') navigate('/admin/floors')
+    if (key === 'host-employees') navigate('/admin/host-employees')
+    if (key === 'reception-desks') navigate('/admin/reception-desks')
+    if (key === 'security-gates') navigate('/admin/security-gates')
+    if (key === 'visitor-categories') navigate('/admin/visitor-categories')
   }
 
   return (

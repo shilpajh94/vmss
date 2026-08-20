@@ -9,26 +9,26 @@ export type BranchCreateValues = Omit<Branch, 'id'>
 
 const EMPTY_VALUES: BranchCreateValues = {
   name: '',
-  branchCode: '',
-  locationCity: '',
+  code: '',
+  city: '',
   country: '',
-  physicalAddress: '',
-  contactPerson: '',
+  address: '',
+  contactPersonUserId: '',
   contactEmail: '',
   contactPhone: '',
   operatingHoursFrom: undefined,
   operatingHoursTo: undefined,
   notes: undefined,
-  status: 'active',
+  isActive: true,
 }
 
 const REQUIRED_FIELDS: Array<{ key: keyof BranchCreateValues; message: string }> = [
   { key: 'name', message: 'Branch name is required.' },
-  { key: 'branchCode', message: 'Branch code is required.' },
-  { key: 'locationCity', message: 'Location/city is required.' },
+  { key: 'code', message: 'Branch code is required.' },
+  { key: 'city', message: 'Location/city is required.' },
   { key: 'country', message: 'Country is required.' },
-  { key: 'physicalAddress', message: 'Physical address is required.' },
-  { key: 'contactPerson', message: 'Contact person is required.' },
+  { key: 'address', message: 'Physical address is required.' },
+  { key: 'contactPersonUserId', message: 'Contact person is required.' },
   { key: 'contactEmail', message: 'Contact email is required.' },
   { key: 'contactPhone', message: 'Contact phone is required.' },
 ]

@@ -3,14 +3,12 @@ import { Modal } from '../../../components/ui/Modal'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
-import { DepartmentMultiSelect } from '../../../components/ui/DepartmentMultiSelect'
-import type { Floor } from '../../../../domain/entities/building-schema'
-import type { Department } from '../../../../domain/entities/department-schema'
+import type { Floor } from '../../../../domain/entities/floor-schema'
 import type { FloorDetailsInput } from '../hooks/use-admin-building-form'
 
-const CAPACITY_UNIT_OPTIONS = [
-  { value: 'Guests', label: 'Guests' },
-  { value: 'Staff', label: 'Staff' },
+const CAPACITY_TYPE_OPTIONS = [
+  { value: 'guests', label: 'Guests' },
+  { value: 'staff', label: 'Staff' },
 ]
 
 const ACCESS_LEVEL_OPTIONS = [
@@ -21,22 +19,22 @@ const ACCESS_LEVEL_OPTIONS = [
 
 const EMPTY_DETAILS: FloorDetailsInput = {
   name: '',
-  capacityCount: 0,
-  capacityUnit: 'Guests',
+  floorNumber: 0,
+  capacity: 0,
+  capacityType: 'guests',
   accessLevel: 'public',
-  departmentIds: [],
-  status: 'active',
+  isActive: true,
 }
 
 interface FloorModalProps {
   isOpen: boolean
   initialFloor?: Floor
-  departments: Department[]
+  isSaving: boolean
   onSave: (details: FloorDetailsInput) => void
   onClose: () => void
 }
 
-export function FloorModal({ isOpen, initialFloor, departments, onSave, onClose }: FloorModalProps) {
+export function FloorModal({ isOpen, initialFloor, isSaving, onSave, onClose }: FloorModalProps) {
   const [details, setDetails] = useState<FloorDetailsInput>(EMPTY_DETAILS)
   const [error, setError] = useState<string | undefined>(undefined)
   const isEditMode = initialFloor !== undefined
@@ -63,21 +61,27 @@ export function FloorModal({ isOpen, initialFloor, departments, onSave, onClose 
     <Modal isOpen={isOpen} onClose={onClose} title={isEditMode ? 'Edit Floor' : 'Add Floor'}>
       <div className="flex flex-col gap-4">
         <TextField label="Floor Name" required value={details.name} onChange={(name) => updateField('name', name)} error={error} />
+        <TextField
+          label="Floor Number"
+          type="number"
+          value={String(details.floorNumber)}
+          onChange={(value) => updateField('floorNumber', Number(value) || 0)}
+        />
         <div className="flex gap-4">
           <div className="flex-1">
             <TextField
               label="Capacity"
               type="number"
-              value={String(details.capacityCount)}
-              onChange={(value) => updateField('capacityCount', Number(value) || 0)}
+              value={String(details.capacity)}
+              onChange={(value) => updateField('capacity', Number(value) || 0)}
             />
           </div>
           <div className="flex-1">
             <SelectField
               label="Unit"
-              value={details.capacityUnit}
-              onChange={(capacityUnit) => updateField('capacityUnit', capacityUnit as FloorDetailsInput['capacityUnit'])}
-              options={CAPACITY_UNIT_OPTIONS}
+              value={details.capacityType}
+              onChange={(capacityType) => updateField('capacityType', capacityType as FloorDetailsInput['capacityType'])}
+              options={CAPACITY_TYPE_OPTIONS}
             />
           </div>
         </div>
@@ -87,15 +91,10 @@ export function FloorModal({ isOpen, initialFloor, departments, onSave, onClose 
           onChange={(accessLevel) => updateField('accessLevel', accessLevel as FloorDetailsInput['accessLevel'])}
           options={ACCESS_LEVEL_OPTIONS}
         />
-        <DepartmentMultiSelect
-          departments={departments}
-          selectedIds={details.departmentIds}
-          onChange={(departmentIds) => updateField('departmentIds', departmentIds)}
-        />
         <ToggleSwitch
-          label={details.status === 'active' ? 'Active' : 'Inactive'}
-          checked={details.status === 'active'}
-          onChange={(checked) => updateField('status', checked ? 'active' : 'inactive')}
+          label={details.isActive ? 'Active' : 'Inactive'}
+          checked={details.isActive}
+          onChange={(checked) => updateField('isActive', checked)}
         />
       </div>
 
@@ -106,9 +105,10 @@ export function FloorModal({ isOpen, initialFloor, departments, onSave, onClose 
         <button
           type="button"
           onClick={handleSave}
-          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white"
+          disabled={isSaving}
+          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
         >
-          {isEditMode ? 'Save Changes' : 'Add Floor'}
+          {isSaving ? 'Saving…' : isEditMode ? 'Save Changes' : 'Add Floor'}
         </button>
       </div>
     </Modal>

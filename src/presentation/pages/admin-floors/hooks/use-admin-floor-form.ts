@@ -2,20 +2,18 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import type { Building, Floor } from '../../../../domain/entities/building-schema'
-import type { Department } from '../../../../domain/entities/department-schema'
+import type { Building } from '../../../../domain/entities/building-schema'
+import type { FloorInput } from '../../../../domain/entities/floor-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
-type FloorFormValues = Omit<Floor, 'id' | 'checkpoints'> & { buildingId: string }
-
-const EMPTY_VALUES: FloorFormValues = {
-  name: '',
+const EMPTY_VALUES: FloorInput = {
   buildingId: '',
-  capacityCount: 0,
-  capacityUnit: 'Guests',
+  name: '',
+  floorNumber: 0,
+  capacity: 0,
+  capacityType: 'guests',
   accessLevel: 'public',
-  departmentIds: [],
-  status: 'active',
+  isActive: true,
 }
 
 export function useAdminFloorForm() {
@@ -23,17 +21,16 @@ export function useAdminFloorForm() {
   const { id } = useParams<{ id: string }>()
   const isEditMode = id !== undefined
 
-  const { getCurrentStaffUserUseCase, listBuildingsUseCase, listDepartmentsUseCase, updateBuildingUseCase } = useAppDependencies()
+  const { getCurrentStaffUserUseCase, listBuildingsUseCase, listFloorsUseCase, createFloorUseCase, updateFloorUseCase } =
+    useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [buildings, setBuildings] = useState<Building[]>([])
-  const [departments, setDepartments] = useState<Department[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
-  const [values, setValues] = useState<FloorFormValues>(EMPTY_VALUES)
-  const [originalBuildingId, setOriginalBuildingId] = useState<string | undefined>(undefined)
+  const [values, setValues] = useState<FloorInput>(EMPTY_VALUES)
   const [errors, setErrors] = useState<Partial<Record<'name' | 'buildingId', string>>>({})
   const [isSaving, setIsSaving] = useState(false)
 
@@ -42,35 +39,28 @@ export function useAdminFloorForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, buildingList, departmentList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listBuildingsUseCase.execute(),
-        listDepartmentsUseCase.execute(),
-      ])
+      const [user, buildingList] = await Promise.all([getCurrentStaffUserUseCase.execute(), listBuildingsUseCase.execute()])
       setCurrentUser(user)
       setBuildings(buildingList)
-      setDepartments(departmentList)
 
       if (isEditMode) {
-        const building = buildingList.find((candidate) => candidate.floors.some((floor) => floor.id === id))
-        const floor = building?.floors.find((candidate) => candidate.id === id)
-        if (!building || !floor) {
+        const floors = await listFloorsUseCase.execute()
+        const floor = floors.find((candidate) => candidate.id === id)
+        if (!floor) {
           setErrorMessage('That floor could not be found.')
           return
         }
         setValues({
+          buildingId: floor.buildingId,
           name: floor.name,
-          buildingId: building.id,
-          capacityCount: floor.capacityCount,
-          capacityUnit: floor.capacityUnit,
+          floorNumber: floor.floorNumber,
+          capacity: floor.capacity,
+          capacityType: floor.capacityType,
           accessLevel: floor.accessLevel,
-          departmentIds: floor.departmentIds,
-          status: floor.status,
+          isActive: floor.isActive,
         })
-        setOriginalBuildingId(building.id)
       } else {
         setValues(EMPTY_VALUES)
-        setOriginalBuildingId(undefined)
       }
     } catch {
       setErrorMessage('Something went wrong loading this page. Please try again.')
@@ -78,7 +68,7 @@ export function useAdminFloorForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listBuildingsUseCase, listDepartmentsUseCase, isEditMode, id, toast])
+  }, [getCurrentStaffUserUseCase, listBuildingsUseCase, listFloorsUseCase, isEditMode, id, toast])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -93,7 +83,7 @@ export function useAdminFloorForm() {
     void load()
   }, [load])
 
-  const updateField = useCallback(<K extends keyof FloorFormValues>(key: K, value: FloorFormValues[K]) => {
+  const updateField = useCallback(<K extends keyof FloorInput>(key: K, value: FloorInput[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
   }, [])
 
@@ -108,67 +98,13 @@ export function useAdminFloorForm() {
     }
     setErrors({})
 
-    const floorDetails: Omit<Floor, 'id' | 'checkpoints'> = {
-      name: values.name,
-      capacityCount: values.capacityCount,
-      capacityUnit: values.capacityUnit,
-      accessLevel: values.accessLevel,
-      departmentIds: values.departmentIds,
-      status: values.status,
-    }
-
     setIsSaving(true)
     try {
-      if (isEditMode && originalBuildingId) {
-        const originalBuilding = buildings.find((candidate) => candidate.id === originalBuildingId)
-        if (!originalBuilding) throw new Error('Original building not found')
-        const existingFloor = originalBuilding.floors.find((floor) => floor.id === id)
-        if (!existingFloor) throw new Error('Floor not found')
-
-        if (values.buildingId === originalBuildingId) {
-          const nextFloors = originalBuilding.floors.map((floor) => (floor.id === id ? { ...floor, ...floorDetails } : floor))
-          await updateBuildingUseCase.execute(originalBuilding.id, {
-            name: originalBuilding.name,
-            branchId: originalBuilding.branchId,
-            streetAddress: originalBuilding.streetAddress,
-            status: originalBuilding.status,
-            floors: nextFloors,
-          })
-        } else {
-          const newBuilding = buildings.find((candidate) => candidate.id === values.buildingId)
-          if (!newBuilding) throw new Error('Target building not found')
-
-          const remainingFloors = originalBuilding.floors.filter((floor) => floor.id !== id)
-          await updateBuildingUseCase.execute(originalBuilding.id, {
-            name: originalBuilding.name,
-            branchId: originalBuilding.branchId,
-            streetAddress: originalBuilding.streetAddress,
-            status: originalBuilding.status,
-            floors: remainingFloors,
-          })
-
-          const movedFloor: Floor = { ...existingFloor, ...floorDetails }
-          await updateBuildingUseCase.execute(newBuilding.id, {
-            name: newBuilding.name,
-            branchId: newBuilding.branchId,
-            streetAddress: newBuilding.streetAddress,
-            status: newBuilding.status,
-            floors: [...newBuilding.floors, movedFloor],
-          })
-        }
+      if (isEditMode) {
+        await updateFloorUseCase.execute(id, values)
         toast.success('Floor updated.')
       } else {
-        const targetBuilding = buildings.find((candidate) => candidate.id === values.buildingId)
-        if (!targetBuilding) throw new Error('Building not found')
-
-        const newFloor: Floor = { id: crypto.randomUUID(), checkpoints: [], ...floorDetails }
-        await updateBuildingUseCase.execute(targetBuilding.id, {
-          name: targetBuilding.name,
-          branchId: targetBuilding.branchId,
-          streetAddress: targetBuilding.streetAddress,
-          status: targetBuilding.status,
-          floors: [...targetBuilding.floors, newFloor],
-        })
+        await createFloorUseCase.execute(values)
         toast.success('Floor created.')
       }
       navigate('/admin/floors')
@@ -177,7 +113,7 @@ export function useAdminFloorForm() {
     } finally {
       setIsSaving(false)
     }
-  }, [values, isEditMode, originalBuildingId, buildings, id, updateBuildingUseCase, navigate, toast])
+  }, [values, isEditMode, id, createFloorUseCase, updateFloorUseCase, navigate, toast])
 
   const cancel = useCallback(() => {
     navigate('/admin/floors')
@@ -187,7 +123,6 @@ export function useAdminFloorForm() {
     isEditMode,
     currentUser,
     buildings,
-    departments,
     isLoading,
     errorMessage,
     retry,

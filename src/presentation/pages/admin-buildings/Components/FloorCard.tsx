@@ -1,27 +1,17 @@
-import { ChevronDownIcon, PencilIcon, PlusIcon, TrashIcon } from '../../../components/icons'
-import type { Checkpoint, Floor } from '../../../../domain/entities/building-schema'
+import { ChevronDownIcon, PencilIcon, TrashIcon } from '../../../components/icons'
+import type { Floor } from '../../../../domain/entities/floor-schema'
+import type { Department } from '../../../../domain/entities/department-schema'
 
 interface FloorCardProps {
   floor: Floor
+  departments: Department[]
   isExpanded: boolean
   onToggleExpand: () => void
   onEdit: () => void
   onDelete: () => void
-  onAddCheckpoint: () => void
-  onEditCheckpoint: (checkpoint: Checkpoint) => void
-  onDeleteCheckpoint: (checkpoint: Checkpoint) => void
 }
 
-export function FloorCard({
-  floor,
-  isExpanded,
-  onToggleExpand,
-  onEdit,
-  onDelete,
-  onAddCheckpoint,
-  onEditCheckpoint,
-  onDeleteCheckpoint,
-}: FloorCardProps) {
+export function FloorCard({ floor, departments, isExpanded, onToggleExpand, onEdit, onDelete }: FloorCardProps) {
   return (
     <div
       className={`flex w-full flex-col gap-3 rounded-2xl border p-4 ${
@@ -55,45 +45,20 @@ export function FloorCard({
 
       {isExpanded && (
         <div className="flex flex-col gap-3 pl-4">
-          <div className="flex w-full items-center justify-between">
-            <p className="font-body text-sm font-semibold text-text-muted">Security Checkpoints</p>
-            <button
-              type="button"
-              onClick={onAddCheckpoint}
-              className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-2 font-body text-[13px] font-semibold text-admin-accent"
-            >
-              <PlusIcon className="size-4" />
-              Add Checkpoint
-            </button>
+          <div className="flex flex-wrap gap-4 font-body text-xs text-text-muted">
+            <span>Floor {floor.floorNumber}</span>
+            <span>
+              Capacity: {floor.capacity} {floor.capacityType}
+            </span>
+            <span>Access: {floor.accessLevel}</span>
+            <span>{floor.isActive ? 'Active' : 'Inactive'}</span>
           </div>
 
-          <div className="flex flex-col gap-2">
-            {floor.checkpoints.map((checkpoint) => (
-              <div key={checkpoint.id} className="flex w-full items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2.5">
-                <div className="flex flex-1 flex-col gap-0.5">
-                  <p className="font-body text-sm font-semibold text-text">{checkpoint.name}</p>
-                  <p className="font-body text-xs text-text-faint">Security checkpoint</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onEditCheckpoint(checkpoint)}
-                    aria-label={`Edit ${checkpoint.name}`}
-                    className="flex size-8 items-center justify-center rounded-lg border border-border bg-surface"
-                  >
-                    <PencilIcon className="size-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDeleteCheckpoint(checkpoint)}
-                    aria-label={`Delete ${checkpoint.name}`}
-                    className="flex size-8 items-center justify-center rounded-lg border border-border bg-surface"
-                  >
-                    <TrashIcon className="size-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
+          <div className="flex flex-col gap-1">
+            <p className="font-body text-sm font-semibold text-text-muted">Departments</p>
+            <p className="font-body text-sm text-text-faint">
+              {departments.length > 0 ? departments.map((department) => department.name).join(', ') : 'No departments assigned to this floor.'}
+            </p>
           </div>
         </div>
       )}
