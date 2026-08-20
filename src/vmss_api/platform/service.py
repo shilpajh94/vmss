@@ -24,8 +24,25 @@ from vmss_api.platform.repository import (
 from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
 
-# repo root: src/vmss_api/platform/service.py -> platform -> vmss_api -> src -> repo root
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+def _find_repo_root() -> Path:
+    """`alembic_tenant.ini`/`alembic_tenant/` aren't part of the wheel
+    (`pyproject.toml`'s wheel `packages` is `src/vmss_api` only) — they're
+    copied straight into `WORKDIR /app` by the Dockerfile. A fixed
+    `Path(__file__).resolve().parents[N]` guess breaks once the project is
+    installed `--no-editable` (the production image): `__file__` then
+    resolves under `.venv/lib/.../site-packages/vmss_api/...`, with no
+    `src/` layer above it to walk up through. The container and `ddev exec
+    uv run ...` both always run with cwd at the repo root, so anchor there
+    first and only fall back to walking up from this file for other
+    invocation styles (e.g. an editable dev install run from elsewhere).
+    """
+    for candidate in (Path.cwd(), *Path(__file__).resolve().parents):
+        if (candidate / "alembic_tenant.ini").is_file():
+            return candidate
+    return Path.cwd()
+
+
+_REPO_ROOT = _find_repo_root()
 _TENANT_ALEMBIC_INI = _REPO_ROOT / "alembic_tenant.ini"
 
 
@@ -42,13 +59,19 @@ async def _create_schema(schema_name: str) -> None:
     await admin_engine.dispose()
 
 
-def _run_tenant_migrations_sync(schema_name: str, database_url: str) -> str:
+def _run_tenant_migrations_sync(schema_name: str) -> str:
     """Runs the tenant Alembic environment (`alembic_tenant/`) against
     exactly `schema_name`. Alembic's command API is sync — called via
     `anyio.to_thread.run_sync` per database-architecture.md §7.
+
+    The database URL isn't passed through `Config` — `alembic_tenant/env.py`
+    builds its engine from `settings.database_url` directly, not from
+    `sqlalchemy.url` in the ini. Passing it here would just be dead
+    configuration, and `Config.set_main_option` chokes on a literal `%`
+    (e.g. a URL-encoded `@` in the password) since `ConfigParser` treats `%`
+    as its own interpolation syntax.
     """
     cfg = Config(str(_TENANT_ALEMBIC_INI))
-    cfg.set_main_option("sqlalchemy.url", database_url)
     cfg.attributes["tenant_schema"] = schema_name
     command.upgrade(cfg, "head")
     return ScriptDirectory.from_config(cfg).get_current_head() or "unknown"
@@ -71,9 +94,7 @@ async def create_tenant(db: AsyncSession, *, name: str, slug: str) -> Tenant:
 
     schema_name = f"{settings.tenant_schema_prefix}{slug}"
     await _create_schema(schema_name)
-    revision = await anyio.to_thread.run_sync(
-        _run_tenant_migrations_sync, schema_name, settings.database_url
-    )
+    revision = await anyio.to_thread.run_sync(_run_tenant_migrations_sync, schema_name)
 
     async with tenant_session_scope(schema_name) as tenant_db:
         await seed_default_roles(tenant_db)

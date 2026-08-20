@@ -3,44 +3,17 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from dotenv import dotenv_values
-from sqlalchemy.engine import make_url
-
-os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("ENVIRONMENT", "test")
 
 # Point the whole process at `vmss_test` *before* any `vmss_api` import.
 # `core/database.py` builds its module-level `engine` — and everything on
 # top of it: `get_tenant_db`, `tenant_session_scope`, used directly by
 # `auth/service.py`'s login flow, not just via an overridable `Depends()` —
-# once, at import time, from `settings.database_url`. Patching that after
-# the fact (e.g. in a fixture) can't reach the already-built engine, so this
-# has to happen first, the same way `APP_ENV` is set above. This also rules
-# out importing `vmss_api.core.config` here to reuse its URL-assembly logic:
-# that module builds its own module-level `settings` singleton at import
-# time (`@lru_cache`-wrapped `get_settings()`), so importing it before the
-# swap below would bake in the pre-swap (dev) database.
-_env_file_values = dotenv_values(".env")
-
-
-def _env(key: str) -> str | None:
-    return os.environ.get(key) or _env_file_values.get(key) or None
-
-
-_raw_database_url = _env("DATABASE_URL")
-if _raw_database_url:
-    _dev_url = make_url(_raw_database_url)
-    _test_url = _dev_url.set(database="vmss_test")
-    os.environ["DATABASE_URL"] = _test_url.render_as_string(hide_password=False)
-else:
-    # Mirrors `core/config.py::Settings.database_url`'s component assembly —
-    # duplicated (not imported) for the reason above.
-    _db_driver = {"pgsql": "postgresql+asyncpg"}[_env("DB_CONNECTION") or "pgsql"]
-    _dev_url = make_url(
-        f"{_db_driver}://{_env('DB_USERNAME')}:{_env('DB_PASSWORD')}"
-        f"@{_env('DB_HOST')}:{_env('DB_PORT') or '5432'}/{_env('DB_DATABASE')}"
-    )
-    _test_url = _dev_url.set(database="vmss_test")
-    os.environ["DB_DATABASE"] = "vmss_test"
+# once, at import time, from `settings.database_url` (a computed field built
+# from `DB_*` env vars, see `core/config.py`). Patching that after the fact
+# (e.g. in a fixture) can't reach the already-built engine, so this has to
+# happen first, the same way `ENVIRONMENT` is set above.
+os.environ["DB_NAME"] = "vmss_test"
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -50,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from factories import (
     BranchFactory,
     PermissionFactory,
-    RegistrationDeviceKeyFactory,
     RoleFactory,
     SuperAdminFactory,
     TenantFactory,
@@ -212,8 +184,6 @@ ADMIN_PERMISSION_CODES = [
     "invitations:create",
     "invitations:view",
     "invitations:cancel",
-    "roles:manage",
-    "roles:view",
 ]
 
 
@@ -261,28 +231,6 @@ async def user_without_permissions(db_session: AsyncSession, tenant: Tenant) -> 
     )
     await db_session.commit()
     return test_user
-
-
-@pytest_asyncio.fixture
-async def registration_device_raw_key(
-    db_session: AsyncSession, tenant: Tenant, branch: Branch
-) -> str:
-    """Provisions a `RegistrationDeviceKey` for the default test tenant's
-    branch and returns the *raw* key value — the only place it's ever
-    visible, matching `scripts/provision_registration_device.py`'s "shown
-    once" contract. Tests send this back as the `X-Device-Key` header.
-    """
-    raw_key = f"test-device-key-{uuid.uuid4().hex}"
-    device_key = RegistrationDeviceKeyFactory.build(
-        id=uuid.uuid4(),
-        tenant_id=tenant.id,
-        branch_id=branch.id,
-        key_hash=hash_password(raw_key),
-        label="Test kiosk",
-    )
-    db_session.add(device_key)
-    await db_session.commit()
-    return raw_key
 
 
 @pytest_asyncio.fixture

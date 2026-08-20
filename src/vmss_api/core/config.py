@@ -1,150 +1,74 @@
 from functools import lru_cache
-from typing import Literal
 
-from pydantic import Field
+from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-# `DB_CONNECTION` mirrors the Laravel-style env var convention this project's
-# `.env` layout follows; the mapping has exactly one entry today because this
-# project is Postgres-only (project-rules.md) — it exists for naming
-# consistency, not to imply multi-driver support.
-_DB_DRIVERS: dict[str, str] = {"pgsql": "postgresql+asyncpg"}
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "VMSS API"
-    environment: str = Field(default="local", alias="APP_ENV")
-    debug: bool = Field(default=True, alias="APP_DEBUG")
+    environment: str = "local"
+    debug: bool = True
+    log_level: str = "INFO"
 
-    # `core/logging.py` — minimum level to emit; production-safe default so
-    # verbosity is raised per-environment without a code change
-    # (logging-observability.md §3).
-    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    # Split rather than a single DATABASE_URL so a password containing a
+    # reserved URL character (`@`, `:`, `/`, `%`) can't corrupt the parsed
+    # host/port the way it would if pasted unescaped into one connection
+    # string. `URL.create` below percent-encodes each part itself.
+    db_user: str = "vms_user"
+    db_password: str = "YtHtwq@196"
+    db_host: str = "10.10.100.237"
+    db_port: int = 32735
+    db_name: str = "vms_db"
 
-    # Database — component vars are assembled into the SQLAlchemy async DSN
-    # `database_url` below. No component defaults to a value that resolves
-    # to a real target (`None`, not a hardcoded host) — so an environment
-    # that sets neither the components nor `DATABASE_URL` fails at
-    # `database_url` access time with a clear missing-setting error, instead
-    # of silently reaching a hardcoded host. If `DATABASE_URL` is set (e.g. a
-    # PaaS that injects one connection string at deploy time), it wins
-    # outright and none of the components need to be set at all.
-    db_connection: Literal["pgsql"] = Field(default="pgsql", alias="DB_CONNECTION")
-    db_host: str | None = Field(default=None, alias="DB_HOST")
-    db_port: int = Field(default=5432, alias="DB_PORT")
-    db_database: str | None = Field(default=None, alias="DB_DATABASE")
-    db_username: str | None = Field(default=None, alias="DB_USERNAME")
-    db_password: str | None = Field(default=None, alias="DB_PASSWORD")
-    database_url_override: str | None = Field(default=None, alias="DATABASE_URL")
-
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def database_url(self) -> str:
-        if self.database_url_override:
-            return self.database_url_override
-        missing = [
-            name
-            for name, value in (
-                ("DB_HOST", self.db_host),
-                ("DB_DATABASE", self.db_database),
-                ("DB_USERNAME", self.db_username),
-                ("DB_PASSWORD", self.db_password),
-            )
-            if not value
-        ]
-        if missing:
-            raise ValueError(
-                f"Database is not configured: set DATABASE_URL, or all of {', '.join(missing)}."
-            )
-        driver = _DB_DRIVERS[self.db_connection]
-        return (
-            f"{driver}://{self.db_username}:{self.db_password}"
-            f"@{self.db_host}:{self.db_port}/{self.db_database}"
-        )
+        return URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.db_user,
+            password=self.db_password,
+            host=self.db_host,
+            port=self.db_port,
+            database=self.db_name,
+        ).render_as_string(hide_password=False)
 
-    # Redis — one instance, one logical DB index per purpose (cache, Celery
-    # broker, Celery result backend), same override-if-set precedence as the
-    # database above. `redis_host` defaults to `None` for the same
-    # no-hardcoded-connection-target reason as `db_host`.
-    redis_host: str | None = Field(default=None, alias="REDIS_HOST")
-    redis_port: int = Field(default=6379, alias="REDIS_PORT")
-    redis_password: str | None = Field(default=None, alias="REDIS_PASSWORD")
-    redis_cache_db: int = Field(default=0, alias="REDIS_CACHE_DB")
-    redis_celery_broker_db: int = Field(default=1, alias="REDIS_CELERY_BROKER_DB")
-    redis_celery_result_db: int = Field(default=2, alias="REDIS_CELERY_RESULT_DB")
-    redis_url_override: str | None = Field(default=None, alias="REDIS_URL")
-    celery_broker_url_override: str | None = Field(default=None, alias="CELERY_BROKER_URL")
-    celery_result_backend_override: str | None = Field(default=None, alias="CELERY_RESULT_BACKEND")
-
-    def _redis_url(self, override: str | None, db_index: int) -> str:
-        if override:
-            return override
-        if not self.redis_host:
-            raise ValueError(
-                "Redis is not configured: set REDIS_HOST (plus REDIS_PORT/"
-                "REDIS_PASSWORD as needed), or the specific *_URL override."
-            )
-        auth = f":{self.redis_password}@" if self.redis_password else ""
-        return f"redis://{auth}{self.redis_host}:{self.redis_port}/{db_index}"
-
-    @property
-    def redis_url(self) -> str:
-        return self._redis_url(self.redis_url_override, self.redis_cache_db)
-
-    @property
-    def celery_broker_url(self) -> str:
-        return self._redis_url(self.celery_broker_url_override, self.redis_celery_broker_db)
-
-    @property
-    def celery_result_backend(self) -> str:
-        return self._redis_url(self.celery_result_backend_override, self.redis_celery_result_db)
+    redis_url: str = "redis://redis:6379/0"
+    celery_broker_url: str = "redis://redis:6379/1"
+    celery_result_backend: str = "redis://redis:6379/2"
 
     jwt_secret_key: str = "change-me-in-env"
-    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
-    access_token_expire_minutes: int = Field(default=30, alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
-    refresh_token_expire_minutes: int = Field(
-        default=60 * 24 * 7, alias="JWT_REFRESH_TOKEN_EXPIRE_MINUTES"
-    )
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_minutes: int = 60 * 24 * 7
 
     cors_allowed_origins: list[str] = ["http://localhost:3000"]
+
+    default_tenant_slug: str = "default"
 
     # The Postgres schema holding cross-tenant registry tables (tenants,
     # superadmins, the auth index, ...). Every tenant gets its own
     # `{tenant_schema_prefix}{slug}` schema — see database-architecture.md §2.
-    default_tenant_slug: str = Field(default="default", alias="TENANT_DEFAULT_SLUG")
-    global_schema_name: str = Field(default="global", alias="TENANT_GLOBAL_SCHEMA_NAME")
+    global_schema_name: str = "global"
     tenant_schema_prefix: str = "tenant_"
 
     # `core/storage.py` — local-disk-backed in dev, per database-architecture.md
-    # §1. `storage_backend` selects the implementation behind the same
-    # `save`/`url_for` interface (API-14,
-    # add-walkin-visitor-registration/design.md Decision 4) — switching it is
-    # a config change, never a call-site change. `AWS_ACCESS_KEY_ID`/
-    # `AWS_SECRET_ACCESS_KEY` are not Settings fields: boto3's default
-    # credential provider chain reads them directly from the process
-    # environment (see `.env.example`).
+    # §1; swapping to S3-compatible object storage in prod is a config change
+    # behind the same interface, not a call-site change.
     storage_root: str = "./var/storage"
-    storage_backend: Literal["local", "s3"] = "local"
-    storage_s3_bucket: str | None = Field(default=None, alias="AWS_BUCKET")
-    storage_s3_region: str | None = Field(default=None, alias="AWS_DEFAULT_REGION")
-    # Only needed for a non-AWS S3-compatible provider (e.g. MinIO); leave
-    # unset to use AWS's default endpoint resolution.
-    storage_s3_endpoint_url: str | None = Field(default=None, alias="AWS_ENDPOINT_URL")
-    # How long a `url_for` pre-signed URL stays valid when `storage_backend`
-    # is "s3" — irrelevant for "local", which returns a plain path.
-    storage_s3_presigned_url_ttl_seconds: int = 300
 
-    # Mail settings for `invitations/notifications.py`'s `SmtpEmailSender` —
+    # SMTP settings for `invitations/notifications.py`'s `SmtpEmailSender` —
     # see add-pre-registration/design.md Decision 4. Defaults point at a local
     # dev mail-catcher (e.g. mailhog/mailpit) so a fresh checkout doesn't need
     # a real mail server to send/queue without erroring.
-    smtp_host: str = Field(default="localhost", alias="MAIL_HOST")
-    smtp_port: int = Field(default=1025, alias="MAIL_PORT")
-    smtp_username: str | None = Field(default=None, alias="MAIL_USERNAME")
-    smtp_password: str | None = Field(default=None, alias="MAIL_PASSWORD")
-    smtp_use_tls: bool = Field(default=False, alias="MAIL_USE_TLS")
-    smtp_from_address: str = Field(default="no-reply@vmss.local", alias="MAIL_FROM_ADDRESS")
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = False
+    smtp_from_address: str = "no-reply@vmss.local"
 
     # SMS gateway — no vendor chosen yet (design.md Open Questions); these are
     # placeholders the `SmsSender` adapter reads once one is picked. Left
