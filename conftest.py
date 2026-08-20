@@ -18,6 +18,7 @@ os.environ["DB_NAME"] = "vmss_test"
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from factories import (
@@ -37,6 +38,14 @@ from vmss_api.main import app
 from vmss_api.org_structure.models import Branch
 from vmss_api.platform.models import SuperAdmin, TenantUserIndex
 from vmss_api.tenant.models import Tenant
+
+# `settings.database_url` already resolves to `vmss_test` (the `DB_NAME`
+# override above takes effect before `Settings()` is ever constructed).
+# `_dev_url` targets Postgres's always-present `postgres` maintenance
+# database instead — needed to run `CREATE DATABASE vmss_test` itself, since
+# you can't connect to a database that doesn't exist yet to create it.
+_test_url = make_url(settings.database_url)
+_dev_url = _test_url.set(database="postgres")
 
 _TENANT_SCHEMA = "tenant_acme_test"
 

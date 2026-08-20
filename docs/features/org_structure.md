@@ -99,10 +99,20 @@ future multi-tenant readiness. See `docs/features/auth.md`'s
 
 Company and Branch CRUD are company-wide only — you can't be "scoped to a
 branch" to create the branches themselves. Every Building/Floor/Department/
-ReceptionDesk/SecurityGate endpoint is branch-scoped: it requires an
-`X-Branch-ID` header (422 if missing) and rejects, as a 404, any request
-whose target doesn't actually belong to that branch — see "Branch context"
-below.
+ReceptionDesk/SecurityGate endpoint is branch-scoped, but **`X-Branch-ID` is
+optional** on all of them (`make-branch-header-optional-and-fix-roles-lookup`
+— see "Branch context" below for exactly what happens when it's omitted):
+
+- **Creating** a Building/Department/SecurityGate resolves the branch from
+  the body's `branchId`; creating a Floor/ReceptionDesk resolves it
+  transitively from `buildingId`/`floorId`. The header is never read here —
+  sending it is harmless but has no effect.
+- **Listing** without the header returns rows from every branch the caller
+  is authorized for (every branch, for a company-wide grant); sending the
+  header still narrows to just that one branch.
+- **Get/update/delete by id** without the header authorizes against the
+  target's own (real) branch, resolved by looking it up — a caller with no
+  access there gets 404, indistinguishable from the resource not existing.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -113,25 +123,25 @@ below.
 | POST | `/api/v1/branches` | `branches:manage` (company-wide) | Create a branch. |
 | POST | `/api/v1/branches/provision` | `branches:provision` (company-wide) | Bulk-bootstrap a branch plus its Building → Floor → Department/ReceptionDesk chain and SecurityGates in one transaction. |
 | GET | `/api/v1/branches` | `branches:view` (company-wide) | Paginated, sortable list of branches. |
-| GET | `/api/v1/branches/current` | `branches:view` at the resolved branch | Resolves the branch named by `X-Branch-ID`; confirms the caller has access. |
+| GET | `/api/v1/branches/current` | `branches:view` at the resolved branch | Resolves the branch named by `X-Branch-ID` (still required here — there's no id/body field to resolve one from); confirms the caller has access. |
 | GET | `/api/v1/branches/{id}` | `branches:view` (company-wide) | Fetch one branch. |
 | PUT | `/api/v1/branches/{id}` | `branches:manage` (company-wide) | Update a branch. |
 | DELETE | `/api/v1/branches/{id}` | `branches:manage` (company-wide) | Soft-delete a branch. |
-| POST | `/api/v1/buildings` | `buildings:manage` at `X-Branch-ID` | Create a building; `branchId` in the body must match `X-Branch-ID`. |
-| GET | `/api/v1/buildings` | `buildings:view` at `X-Branch-ID` | Paginated list, always scoped to `X-Branch-ID`. |
-| GET/PUT/DELETE | `/api/v1/buildings/{id}` | `buildings:view`/`buildings:manage` at `X-Branch-ID` | Fetch/update/soft-delete; 404 if the building isn't in that branch. |
-| POST | `/api/v1/floors` | `floors:manage` at `X-Branch-ID` | Create a floor; the target building must belong to `X-Branch-ID`. |
-| GET | `/api/v1/floors` | `floors:view` at `X-Branch-ID` | Paginated list, scoped to `X-Branch-ID`, optionally narrowed by `buildingId`. |
-| GET/PUT/DELETE | `/api/v1/floors/{id}` | `floors:view`/`floors:manage` at `X-Branch-ID` | Fetch/update/soft-delete; 404 if the floor's building isn't in that branch. |
-| POST | `/api/v1/departments` | `departments:manage` at `X-Branch-ID` | Create a department; `branchId` in the body must match `X-Branch-ID`. `floorId` is optional — if given, it must also resolve to `X-Branch-ID`. |
-| GET | `/api/v1/departments` | `departments:view` at `X-Branch-ID` | Paginated list, scoped to `X-Branch-ID` directly (`Department.branch_id`), optionally narrowed by `floorId`. |
-| GET/PUT/DELETE | `/api/v1/departments/{id}` | `departments:view`/`departments:manage` at `X-Branch-ID` | Fetch/update/soft-delete; 404 if outside that branch. |
-| POST | `/api/v1/reception-desks` | `desks:manage` at `X-Branch-ID` | Create a reception desk; the target floor must resolve to `X-Branch-ID`. |
-| GET | `/api/v1/reception-desks` | `desks:view` at `X-Branch-ID` | Paginated list, scoped to `X-Branch-ID`, optionally narrowed by `floorId`. |
-| GET/PUT/DELETE | `/api/v1/reception-desks/{id}` | `desks:view`/`desks:manage` at `X-Branch-ID` | Fetch/update/soft-delete; 404 if outside that branch. |
-| POST | `/api/v1/security-gates` | `gates:manage` at `X-Branch-ID` | Create a security gate; `branchId` in the body must match `X-Branch-ID` (and `buildingId`, if given). |
-| GET | `/api/v1/security-gates` | `gates:view` at `X-Branch-ID` | Paginated list, always scoped to `X-Branch-ID`, optionally narrowed by `buildingId`. |
-| GET/PUT/DELETE | `/api/v1/security-gates/{id}` | `gates:view`/`gates:manage` at `X-Branch-ID` | Fetch/update/soft-delete; 404 if outside that branch. |
+| POST | `/api/v1/buildings` | `buildings:manage` at `branchId` (body) | Create a building. |
+| GET | `/api/v1/buildings` | `buildings:view` | Paginated list; scoped to `X-Branch-ID` if sent, else every authorized branch. |
+| GET/PUT/DELETE | `/api/v1/buildings/{id}` | `buildings:view`/`buildings:manage` at the building's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
+| POST | `/api/v1/floors` | `floors:manage` at the branch resolved from `buildingId` | Create a floor. |
+| GET | `/api/v1/floors` | `floors:view` | Paginated list; scoped to `X-Branch-ID` if sent, else every authorized branch; optionally narrowed by `buildingId`. |
+| GET/PUT/DELETE | `/api/v1/floors/{id}` | `floors:view`/`floors:manage` at the floor's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
+| POST | `/api/v1/departments` | `departments:manage` at `branchId` (body) | Create a department. `floorId` is optional — if given, it must resolve to the same branch. |
+| GET | `/api/v1/departments` | `departments:view` | Paginated list; scoped to `X-Branch-ID` if sent, else every authorized branch (`Department.branch_id` directly); optionally narrowed by `floorId`. |
+| GET/PUT/DELETE | `/api/v1/departments/{id}` | `departments:view`/`departments:manage` at the department's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
+| POST | `/api/v1/reception-desks` | `desks:manage` at the branch resolved from `floorId` | Create a reception desk. |
+| GET | `/api/v1/reception-desks` | `desks:view` | Paginated list; scoped to `X-Branch-ID` if sent, else every authorized branch; optionally narrowed by `floorId`. |
+| GET/PUT/DELETE | `/api/v1/reception-desks/{id}` | `desks:view`/`desks:manage` at the desk's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
+| POST | `/api/v1/security-gates` | `gates:manage` at `branchId` (body) | Create a security gate; `buildingId`, if given, must belong to that same branch. |
+| GET | `/api/v1/security-gates` | `gates:view` | Paginated list; scoped to `X-Branch-ID` if sent, else every authorized branch; optionally narrowed by `buildingId`. |
+| GET/PUT/DELETE | `/api/v1/security-gates/{id}` | `gates:view`/`gates:manage` at the gate's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
 
 Every list endpoint follows `api-conventions.md` §1: `page`/`pageSize` query
 params (`core/deps.py::get_pagination`), a `{data, pagination}` response
@@ -139,8 +149,8 @@ envelope (`core/responses.py::paginated_response`), and an explicit
 `sortBy`/`sortOrder` whitelist (`name`/`created_at` — every entity here has
 both columns) rather than a raw client-supplied sort string. There's no
 `branchId` query param on the Building/SecurityGate lists — it would be
-redundant with (and a way to bypass) `X-Branch-ID`, which already pins the
-branch for the whole request.
+redundant with (and a way to bypass) `X-Branch-ID`, which still pins the
+branch for the whole request when sent.
 
 Every create/update/delete above queues an `AuditLog` write
 (`auth/audit.py::record_audit_log`) as a `BackgroundTasks` task, per
@@ -172,44 +182,50 @@ other feature here still uses) would work too, but splitting by entity kept
 each block — and its permission dependencies — easy to scan on its own
 once the feature grew past one entity.
 
-## Branch context: the `X-Branch-ID` header
+## Branch context: the `X-Branch-ID` header is optional
 
-Every branch/location-scoped request carries an `X-Branch-ID` header naming
-which branch it operates against — not a JWT claim. A user who works across
-branches in one login session (a roaming Security guard, an Admin) switches
-branch per request instead of re-authenticating; see
-`security-architecture.md` §1.
+`X-Branch-ID` still exists — a client may send it to pin a request to one
+branch — but it is not required on any branch/location-scoped endpoint
+(`make-branch-header-optional-and-fix-roles-lookup`). Which of three
+resolution paths applies depends on the kind of request:
 
-`org_structure/deps.py::get_branch_context` resolves and authorizes it:
-loads the `Branch` the header names, 404s if it doesn't exist (or is
-inactive) in this tenant, and 403s if the caller has no role grant there
-(`auth/models.py::User.has_branch_access`). It also binds `branch_id` into
-`structlog`'s contextvars, so every log line for the rest of the request
-carries it alongside `request_id`/`tenant_id`/`user_id`
-(`logging-observability.md` §2).
+- **List** (`GET` with no id): `org_structure/deps.py::require_branch_scope(code)`
+  reads the header if present (same 404/403 checks as before, narrowed to
+  that one branch) or, if absent, calls
+  `auth/models.py::User.authorized_branch_ids(code)` — "every branch" for a
+  company-wide grant, otherwise the specific set of branches the caller
+  holds `code` at (empty → 403). Either way the result is a `BranchScope`
+  (`core/schemas.py`) the repository filters by — `column IN (...)`, or no
+  filter at all for "every branch."
+- **Get/update/delete by id**: no branch dependency at all. The route
+  depends on plain `get_current_user`; the service function fetches the
+  entity first, then checks `user.has_permission(code,
+  branch_id=<the entity's real branch>)` itself, 404-ing (not 403) on
+  failure — so a caller can't distinguish "doesn't exist" from "exists, but
+  not in a branch you can access." This is a deliberate simplification over
+  the old two-step (resolve header's branch, then separately verify the
+  target actually belongs there): the id already pins the branch, so
+  there's nothing left for a header to resolve or contradict.
+- **Create**: also no header. `org_structure/deps.py::authorize_branch_id`
+  runs the same 404 (branch missing/inactive) / 403 (no grant) checks as
+  the list path's header-present branch, but takes an already-known branch
+  id instead of reading one from a header — `payload.branch_id` directly
+  for Building/Department/SecurityGate, or resolved transitively via
+  `resolve_building_branch_id`/`resolve_floor_branch_id` for Floor/
+  ReceptionDesk.
 
-`require_branch_permission(code)` builds on it — the branch-scoped
-counterpart to `core.deps.require_permission(code)` — granting when the
-caller holds `code` either company-wide or specifically at that branch (see
-`auth/models.py::User.has_permission`). Any future branch-scoped feature
-(check-in, visitor management, ...) depends on `org_structure.deps`, not
-`core.deps`, for this — see the note in `fastapi-architecture.md` §6 on why
-`core` doesn't import feature packages other than `auth`/`tenant`.
+`org_structure/deps.py::get_branch_context`/`require_branch_permission`
+(header required, unchanged) still exist for the one endpoint with no other
+way to resolve a branch: `POST /invitations` (`docs/features/invitations.md`)
+and `GET /branches/current`, which exists specifically to answer "what
+branch does this header currently resolve to."
 
-A resolved `X-Branch-ID` only proves the caller may act *at that branch* —
-it says nothing about whether the specific building/floor/department/desk/
-gate a request targets actually belongs there. `require_branch_permission`
-alone would let a Reception user authorized at Branch A reach into Branch
-B's resources just by naming Branch A's header while pointing the request
-body/path at a Branch B id. Every mutating and read endpoint in
-`org_structure/service.py` closes that gap itself: it resolves the target's
-*real* branch (`Building.branch_id` directly; `Floor`/`Department`/
-`ReceptionDesk` by walking `building_id`/`floor_id` up to the owning
-`Building`) and 404s — not 403 — on a mismatch, so a branch-scoped caller
-can't distinguish "doesn't exist" from "exists, but not in your branch."
-List endpoints get the same treatment via a repository-level join back to
-`Building` (`org_structure/repository.py`), so a branch-scoped list never
-returns another branch's rows regardless of query filters.
+`structlog`'s contextvars still get `branch_id` bound wherever a branch is
+actually resolved (header-present list requests, and creates), so log lines
+for the rest of that request carry it alongside
+`request_id`/`tenant_id`/`user_id` (`logging-observability.md` §2) — a
+header-omitted list request scoped to "every branch" has no single
+`branch_id` to bind, by design.
 
 ## Why this isn't in `core`
 

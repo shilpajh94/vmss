@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
 from vmss_api.core.database import TenantScopedRepository
-from vmss_api.core.schemas import SortOrder
+from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.org_structure.models import Building, Department, Floor
 
 
@@ -80,7 +80,7 @@ class UserRepository:
     async def list_employees_page(
         self,
         *,
-        authorized_branch_id: uuid.UUID,
+        branch_scope: BranchScope,
         department_id: uuid.UUID | None,
         page: int,
         page_size: int,
@@ -89,19 +89,17 @@ class UserRepository:
     ) -> tuple[list[User], int]:
         """Branch-scoped: joins `Department -> Floor -> Building` to filter
         to employees whose department resolves to the caller's authorized
-        branch (`org_structure/deps.py::require_branch_permission`).
-        Employees with no `department_id` aren't resolvable to any branch and
-        so never appear in a branch-scoped list — see
-        `org_structure/router.py`'s module docstring for the equivalent
-        pattern applied to Building/Floor/Department/Desk/Gate.
+        scope (`org_structure/deps.py::require_branch_scope`). Employees with
+        no `department_id` aren't resolvable to any branch and so never
+        appear in a branch-scoped list — see `org_structure/router.py`'s
+        module docstring for the equivalent pattern applied to
+        Building/Floor/Department/Desk/Gate.
         """
         column: Any = {"name": User.full_name, "created_at": User.created_at}[sort_by]
         order = column.desc() if sort_order == SortOrder.desc else column.asc()
-        conditions: list[Any] = [
-            User.employee_code.is_not(None),
-            User.deleted_at.is_(None),
-            Building.branch_id == authorized_branch_id,
-        ]
+        conditions: list[Any] = [User.employee_code.is_not(None), User.deleted_at.is_(None)]
+        if branch_scope != "all":
+            conditions.append(Building.branch_id.in_(branch_scope))
         if department_id is not None:
             conditions.append(User.department_id == department_id)
 
@@ -130,6 +128,20 @@ class UserRepository:
         )
         items = list((await self.session.execute(stmt)).scalars().all())
         return items, total
+
+
+class PermissionRepository:
+    """Not a `TenantScopedRepository` — `Permission` is the global catalog
+    table (`database-architecture.md` §2: identical across tenants), queried
+    through a plain `get_db` session, same as `TenantRepository`.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list_all(self) -> list[Permission]:
+        stmt = select(Permission).order_by(Permission.code)
+        return list((await self.session.execute(stmt)).scalars().all())
 
 
 class RoleRepository(TenantScopedRepository[Role]):

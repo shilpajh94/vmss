@@ -4,7 +4,8 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.core.schemas import SortOrder
+from vmss_api.auth.models import User
+from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.org_structure.models import (
     Branch,
     Building,
@@ -44,14 +45,18 @@ from vmss_api.org_structure.schemas import (
 # --- Branch-resolution helpers -------------------------------------------
 #
 # Floor/Department/ReceptionDesk carry no `branch_id` column of their own —
-# only Building and SecurityGate do. Every create/get/update/delete below for
-# a branch-scoped entity resolves the entity's *real* branch (walking
-# building_id -> Building, or floor_id -> Floor -> Building) and compares it
-# against `authorized_branch_id` (the caller's `X-Branch-ID`-resolved,
-# permission-checked branch from `org_structure/deps.py::require_branch_permission`)
-# — a mismatch is a 404, not a 403, so a branch-scoped caller can't tell
-# "doesn't exist" apart from "exists, but in a branch you can't see", same
-# tenant-isolation posture used elsewhere in this codebase.
+# only Building and SecurityGate do. `resolve_building_branch_id`/
+# `resolve_floor_branch_id` walk building_id -> Building, or floor_id ->
+# Floor -> Building, and are used two ways:
+#   - by `router.py`'s creation endpoints, to resolve a branch id from the
+#     payload for `org_structure/deps.py::authorize_branch_id`, since
+#     `X-Branch-ID` is no longer read there;
+#   - by the get/update/delete functions below, which fetch the entity and
+#     check `user.has_permission(code, branch_id=<the entity's real branch>)`
+#     directly — a caller with no access is met with 404, not 403, so a
+#     branch-scoped caller can't tell "doesn't exist" apart from "exists,
+#     but in a branch you can't see", same tenant-isolation posture used
+#     elsewhere in this codebase.
 
 
 async def _commit_or_conflict(tenant_db: AsyncSession, conflict_detail: str) -> None:
@@ -69,20 +74,18 @@ async def _commit_or_conflict(tenant_db: AsyncSession, conflict_detail: str) -> 
         raise HTTPException(status.HTTP_409_CONFLICT, detail=conflict_detail) from exc
 
 
-async def _resolve_building_branch_id(
+async def resolve_building_branch_id(
     tenant_db: AsyncSession, building_id: uuid.UUID
 ) -> uuid.UUID | None:
     building = await BuildingRepository(tenant_db).get(building_id)
     return building.branch_id if building is not None else None
 
 
-async def _resolve_floor_branch_id(
-    tenant_db: AsyncSession, floor_id: uuid.UUID
-) -> uuid.UUID | None:
+async def resolve_floor_branch_id(tenant_db: AsyncSession, floor_id: uuid.UUID) -> uuid.UUID | None:
     floor = await FloorRepository(tenant_db).get(floor_id)
     if floor is None:
         return None
-    return await _resolve_building_branch_id(tenant_db, floor.building_id)
+    return await resolve_building_branch_id(tenant_db, floor.building_id)
 
 
 # --- Company (singleton) -----------------------------------------------
@@ -358,16 +361,13 @@ async def provision_branch(
 
 # --- Building --------------------------------------------------------------
 #
-# Branch-scoped: every call below takes `authorized_branch_id`, the caller's
-# `X-Branch-ID`-resolved branch (`org_structure/router.py` via
-# `require_branch_permission`).
+# Branch-scoped: creation resolves its branch from `payload.branch_id`
+# (`org_structure/router.py` via `org_structure/deps.py::authorize_branch_id`
+# — `X-Branch-ID` is not read here). Get/update/delete authorize against the
+# fetched entity's own `branch_id` instead of a header-resolved one.
 
 
-async def create_building(
-    tenant_db: AsyncSession, payload: BuildingCreate, authorized_branch_id: uuid.UUID
-) -> Building:
-    if payload.branch_id != authorized_branch_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Branch not found")
+async def create_building(tenant_db: AsyncSession, payload: BuildingCreate) -> Building:
     repo = BuildingRepository(tenant_db)
     if await repo.get_by_code(payload.branch_id, payload.code) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Building code already exists")
@@ -381,14 +381,14 @@ async def create_building(
 async def list_buildings_page(
     tenant_db: AsyncSession,
     *,
-    authorized_branch_id: uuid.UUID,
+    branch_scope: BranchScope,
     page: int,
     page_size: int,
     sort_by: str,
     sort_order: SortOrder,
 ) -> tuple[list[Building], int]:
     return await BuildingRepository(tenant_db).list_page(
-        branch_id=authorized_branch_id,
+        branch_scope=branch_scope,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -397,10 +397,10 @@ async def list_buildings_page(
 
 
 async def get_building(
-    tenant_db: AsyncSession, building_id: uuid.UUID, authorized_branch_id: uuid.UUID
+    tenant_db: AsyncSession, building_id: uuid.UUID, user: User, permission_code: str
 ) -> Building:
     building = await BuildingRepository(tenant_db).get(building_id)
-    if building is None or building.branch_id != authorized_branch_id:
+    if building is None or not user.has_permission(permission_code, branch_id=building.branch_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Building not found")
     return building
 
@@ -409,10 +409,10 @@ async def update_building(
     tenant_db: AsyncSession,
     building_id: uuid.UUID,
     payload: BuildingUpdate,
-    authorized_branch_id: uuid.UUID,
+    user: User,
 ) -> Building:
     repo = BuildingRepository(tenant_db)
-    building = await get_building(tenant_db, building_id, authorized_branch_id)
+    building = await get_building(tenant_db, building_id, user, "buildings:manage")
     changes = payload.model_dump(exclude_unset=True)
     new_code = changes.get("code")
     if (
@@ -428,11 +428,9 @@ async def update_building(
     return building
 
 
-async def delete_building(
-    tenant_db: AsyncSession, building_id: uuid.UUID, authorized_branch_id: uuid.UUID
-) -> None:
+async def delete_building(tenant_db: AsyncSession, building_id: uuid.UUID, user: User) -> None:
     repo = BuildingRepository(tenant_db)
-    building = await get_building(tenant_db, building_id, authorized_branch_id)
+    building = await get_building(tenant_db, building_id, user, "buildings:manage")
     await repo.soft_delete(building)
     await tenant_db.commit()
 
@@ -443,7 +441,7 @@ async def delete_building(
 async def create_floor(
     tenant_db: AsyncSession, payload: FloorCreate, authorized_branch_id: uuid.UUID
 ) -> Floor:
-    branch_id = await _resolve_building_branch_id(tenant_db, payload.building_id)
+    branch_id = await resolve_building_branch_id(tenant_db, payload.building_id)
     if branch_id is None or branch_id != authorized_branch_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Building not found")
     repo = FloorRepository(tenant_db)
@@ -464,7 +462,7 @@ async def create_floor(
 async def list_floors_page(
     tenant_db: AsyncSession,
     *,
-    authorized_branch_id: uuid.UUID,
+    branch_scope: BranchScope,
     building_id: uuid.UUID | None,
     page: int,
     page_size: int,
@@ -472,7 +470,7 @@ async def list_floors_page(
     sort_order: SortOrder,
 ) -> tuple[list[Floor], int]:
     return await FloorRepository(tenant_db).list_page(
-        branch_id=authorized_branch_id,
+        branch_scope=branch_scope,
         building_id=building_id,
         page=page,
         page_size=page_size,
@@ -482,13 +480,13 @@ async def list_floors_page(
 
 
 async def get_floor(
-    tenant_db: AsyncSession, floor_id: uuid.UUID, authorized_branch_id: uuid.UUID
+    tenant_db: AsyncSession, floor_id: uuid.UUID, user: User, permission_code: str
 ) -> Floor:
     floor = await FloorRepository(tenant_db).get(floor_id)
     if floor is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
-    branch_id = await _resolve_building_branch_id(tenant_db, floor.building_id)
-    if branch_id != authorized_branch_id:
+    branch_id = await resolve_building_branch_id(tenant_db, floor.building_id)
+    if branch_id is None or not user.has_permission(permission_code, branch_id=branch_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
     return floor
 
@@ -497,10 +495,10 @@ async def update_floor(
     tenant_db: AsyncSession,
     floor_id: uuid.UUID,
     payload: FloorUpdate,
-    authorized_branch_id: uuid.UUID,
+    user: User,
 ) -> Floor:
     repo = FloorRepository(tenant_db)
-    floor = await get_floor(tenant_db, floor_id, authorized_branch_id)
+    floor = await get_floor(tenant_db, floor_id, user, "floors:manage")
     changes = payload.model_dump(exclude_unset=True)
     new_number = changes.get("floor_number")
     if (
@@ -520,11 +518,9 @@ async def update_floor(
     return floor
 
 
-async def delete_floor(
-    tenant_db: AsyncSession, floor_id: uuid.UUID, authorized_branch_id: uuid.UUID
-) -> None:
+async def delete_floor(tenant_db: AsyncSession, floor_id: uuid.UUID, user: User) -> None:
     repo = FloorRepository(tenant_db)
-    floor = await get_floor(tenant_db, floor_id, authorized_branch_id)
+    floor = await get_floor(tenant_db, floor_id, user, "floors:manage")
     await repo.soft_delete(floor)
     await tenant_db.commit()
 
@@ -532,14 +528,10 @@ async def delete_floor(
 # --- Department --------------------------------------------------------------
 
 
-async def create_department(
-    tenant_db: AsyncSession, payload: DepartmentCreate, authorized_branch_id: uuid.UUID
-) -> Department:
-    if payload.branch_id != authorized_branch_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Branch not found")
+async def create_department(tenant_db: AsyncSession, payload: DepartmentCreate) -> Department:
     if payload.floor_id is not None:
-        floor_branch_id = await _resolve_floor_branch_id(tenant_db, payload.floor_id)
-        if floor_branch_id != authorized_branch_id:
+        floor_branch_id = await resolve_floor_branch_id(tenant_db, payload.floor_id)
+        if floor_branch_id != payload.branch_id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
     repo = DepartmentRepository(tenant_db)
     if await repo.get_by_code(payload.branch_id, payload.code) is not None:
@@ -554,7 +546,7 @@ async def create_department(
 async def list_departments_page(
     tenant_db: AsyncSession,
     *,
-    authorized_branch_id: uuid.UUID,
+    branch_scope: BranchScope,
     floor_id: uuid.UUID | None,
     page: int,
     page_size: int,
@@ -562,7 +554,7 @@ async def list_departments_page(
     sort_order: SortOrder,
 ) -> tuple[list[Department], int]:
     return await DepartmentRepository(tenant_db).list_page(
-        branch_id=authorized_branch_id,
+        branch_scope=branch_scope,
         floor_id=floor_id,
         page=page,
         page_size=page_size,
@@ -572,10 +564,12 @@ async def list_departments_page(
 
 
 async def get_department(
-    tenant_db: AsyncSession, department_id: uuid.UUID, authorized_branch_id: uuid.UUID
+    tenant_db: AsyncSession, department_id: uuid.UUID, user: User, permission_code: str
 ) -> Department:
     department = await DepartmentRepository(tenant_db).get(department_id)
-    if department is None or department.branch_id != authorized_branch_id:
+    if department is None or not user.has_permission(
+        permission_code, branch_id=department.branch_id
+    ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Department not found")
     return department
 
@@ -584,10 +578,10 @@ async def update_department(
     tenant_db: AsyncSession,
     department_id: uuid.UUID,
     payload: DepartmentUpdate,
-    authorized_branch_id: uuid.UUID,
+    user: User,
 ) -> Department:
     repo = DepartmentRepository(tenant_db)
-    department = await get_department(tenant_db, department_id, authorized_branch_id)
+    department = await get_department(tenant_db, department_id, user, "departments:manage")
     changes = payload.model_dump(exclude_unset=True)
     new_code = changes.get("code")
     if (
@@ -598,8 +592,8 @@ async def update_department(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Department code already exists")
     new_floor_id = changes.get("floor_id")
     if new_floor_id is not None:
-        floor_branch_id = await _resolve_floor_branch_id(tenant_db, new_floor_id)
-        if floor_branch_id != authorized_branch_id:
+        floor_branch_id = await resolve_floor_branch_id(tenant_db, new_floor_id)
+        if floor_branch_id != department.branch_id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
     for field, value in changes.items():
         setattr(department, field, value)
@@ -608,11 +602,9 @@ async def update_department(
     return department
 
 
-async def delete_department(
-    tenant_db: AsyncSession, department_id: uuid.UUID, authorized_branch_id: uuid.UUID
-) -> None:
+async def delete_department(tenant_db: AsyncSession, department_id: uuid.UUID, user: User) -> None:
     repo = DepartmentRepository(tenant_db)
-    department = await get_department(tenant_db, department_id, authorized_branch_id)
+    department = await get_department(tenant_db, department_id, user, "departments:manage")
     await repo.soft_delete(department)
     await tenant_db.commit()
 
@@ -623,7 +615,7 @@ async def delete_department(
 async def create_reception_desk(
     tenant_db: AsyncSession, payload: ReceptionDeskCreate, authorized_branch_id: uuid.UUID
 ) -> ReceptionDesk:
-    branch_id = await _resolve_floor_branch_id(tenant_db, payload.floor_id)
+    branch_id = await resolve_floor_branch_id(tenant_db, payload.floor_id)
     if branch_id is None or branch_id != authorized_branch_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
     repo = ReceptionDeskRepository(tenant_db)
@@ -641,7 +633,7 @@ async def create_reception_desk(
 async def list_reception_desks_page(
     tenant_db: AsyncSession,
     *,
-    authorized_branch_id: uuid.UUID,
+    branch_scope: BranchScope,
     floor_id: uuid.UUID | None,
     page: int,
     page_size: int,
@@ -649,7 +641,7 @@ async def list_reception_desks_page(
     sort_order: SortOrder,
 ) -> tuple[list[ReceptionDesk], int]:
     return await ReceptionDeskRepository(tenant_db).list_page(
-        branch_id=authorized_branch_id,
+        branch_scope=branch_scope,
         floor_id=floor_id,
         page=page,
         page_size=page_size,
@@ -659,13 +651,13 @@ async def list_reception_desks_page(
 
 
 async def get_reception_desk(
-    tenant_db: AsyncSession, desk_id: uuid.UUID, authorized_branch_id: uuid.UUID
+    tenant_db: AsyncSession, desk_id: uuid.UUID, user: User, permission_code: str
 ) -> ReceptionDesk:
     desk = await ReceptionDeskRepository(tenant_db).get(desk_id)
     if desk is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Desk not found")
-    branch_id = await _resolve_floor_branch_id(tenant_db, desk.floor_id)
-    if branch_id != authorized_branch_id:
+    branch_id = await resolve_floor_branch_id(tenant_db, desk.floor_id)
+    if branch_id is None or not user.has_permission(permission_code, branch_id=branch_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Desk not found")
     return desk
 
@@ -674,10 +666,10 @@ async def update_reception_desk(
     tenant_db: AsyncSession,
     desk_id: uuid.UUID,
     payload: ReceptionDeskUpdate,
-    authorized_branch_id: uuid.UUID,
+    user: User,
 ) -> ReceptionDesk:
     repo = ReceptionDeskRepository(tenant_db)
-    desk = await get_reception_desk(tenant_db, desk_id, authorized_branch_id)
+    desk = await get_reception_desk(tenant_db, desk_id, user, "desks:manage")
     changes = payload.model_dump(exclude_unset=True)
     new_code = changes.get("code")
     if (
@@ -695,11 +687,9 @@ async def update_reception_desk(
     return desk
 
 
-async def delete_reception_desk(
-    tenant_db: AsyncSession, desk_id: uuid.UUID, authorized_branch_id: uuid.UUID
-) -> None:
+async def delete_reception_desk(tenant_db: AsyncSession, desk_id: uuid.UUID, user: User) -> None:
     repo = ReceptionDeskRepository(tenant_db)
-    desk = await get_reception_desk(tenant_db, desk_id, authorized_branch_id)
+    desk = await get_reception_desk(tenant_db, desk_id, user, "desks:manage")
     await repo.soft_delete(desk)
     await tenant_db.commit()
 
@@ -708,13 +698,11 @@ async def delete_reception_desk(
 
 
 async def create_security_gate(
-    tenant_db: AsyncSession, payload: SecurityGateCreate, authorized_branch_id: uuid.UUID
+    tenant_db: AsyncSession, payload: SecurityGateCreate
 ) -> SecurityGate:
-    if payload.branch_id != authorized_branch_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Branch not found")
     if payload.building_id is not None:
-        building_branch_id = await _resolve_building_branch_id(tenant_db, payload.building_id)
-        if building_branch_id != authorized_branch_id:
+        building_branch_id = await resolve_building_branch_id(tenant_db, payload.building_id)
+        if building_branch_id != payload.branch_id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Building not found")
     repo = SecurityGateRepository(tenant_db)
     if await repo.get_by_code(payload.branch_id, payload.code) is not None:
@@ -732,7 +720,7 @@ async def create_security_gate(
 async def list_security_gates_page(
     tenant_db: AsyncSession,
     *,
-    authorized_branch_id: uuid.UUID,
+    branch_scope: BranchScope,
     building_id: uuid.UUID | None,
     page: int,
     page_size: int,
@@ -740,7 +728,7 @@ async def list_security_gates_page(
     sort_order: SortOrder,
 ) -> tuple[list[SecurityGate], int]:
     return await SecurityGateRepository(tenant_db).list_page(
-        branch_id=authorized_branch_id,
+        branch_scope=branch_scope,
         building_id=building_id,
         page=page,
         page_size=page_size,
@@ -750,10 +738,10 @@ async def list_security_gates_page(
 
 
 async def get_security_gate(
-    tenant_db: AsyncSession, gate_id: uuid.UUID, authorized_branch_id: uuid.UUID
+    tenant_db: AsyncSession, gate_id: uuid.UUID, user: User, permission_code: str
 ) -> SecurityGate:
     gate = await SecurityGateRepository(tenant_db).get(gate_id)
-    if gate is None or gate.branch_id != authorized_branch_id:
+    if gate is None or not user.has_permission(permission_code, branch_id=gate.branch_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Gate not found")
     return gate
 
@@ -762,10 +750,10 @@ async def update_security_gate(
     tenant_db: AsyncSession,
     gate_id: uuid.UUID,
     payload: SecurityGateUpdate,
-    authorized_branch_id: uuid.UUID,
+    user: User,
 ) -> SecurityGate:
     repo = SecurityGateRepository(tenant_db)
-    gate = await get_security_gate(tenant_db, gate_id, authorized_branch_id)
+    gate = await get_security_gate(tenant_db, gate_id, user, "gates:manage")
     changes = payload.model_dump(exclude_unset=True)
     new_code = changes.get("code")
     if (
@@ -775,8 +763,8 @@ async def update_security_gate(
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Gate code already exists")
     if changes.get("building_id") is not None:
-        building_branch_id = await _resolve_building_branch_id(tenant_db, changes["building_id"])
-        if building_branch_id != authorized_branch_id:
+        building_branch_id = await resolve_building_branch_id(tenant_db, changes["building_id"])
+        if building_branch_id != gate.branch_id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Building not found")
     if "gate_type" in changes and changes["gate_type"] is not None:
         changes["gate_type"] = changes["gate_type"].value
@@ -789,10 +777,8 @@ async def update_security_gate(
     return gate
 
 
-async def delete_security_gate(
-    tenant_db: AsyncSession, gate_id: uuid.UUID, authorized_branch_id: uuid.UUID
-) -> None:
+async def delete_security_gate(tenant_db: AsyncSession, gate_id: uuid.UUID, user: User) -> None:
     repo = SecurityGateRepository(tenant_db)
-    gate = await get_security_gate(tenant_db, gate_id, authorized_branch_id)
+    gate = await get_security_gate(tenant_db, gate_id, user, "gates:manage")
     await repo.soft_delete(gate)
     await tenant_db.commit()

@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,9 +15,13 @@ from vmss_api.core.deps import (
     require_permission,
 )
 from vmss_api.core.responses import paginated_response, success_response
-from vmss_api.core.schemas import Envelope, PaginatedEnvelope, SortOrder
+from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.org_structure import service
-from vmss_api.org_structure.deps import require_branch_permission
+from vmss_api.org_structure.deps import (
+    authorize_branch_id,
+    require_branch_permission,
+    require_branch_scope,
+)
 from vmss_api.org_structure.models import Branch
 from vmss_api.org_structure.schemas import (
     BranchCreate,
@@ -345,21 +349,23 @@ async def delete_branch(
 
 # --- Building --------------------------------------------------------------
 #
-# Branch-scoped: `X-Branch-ID` required (`require_branch_permission`); the
-# service layer rejects (404) any building not actually belonging to that
-# branch. See org_structure/service.py's module docstring.
+# Branch-scoped: `X-Branch-ID` is optional everywhere. Creation resolves its
+# branch from `payload.branchId`; list scopes to every branch the caller is
+# authorized for when the header is omitted; get/update/delete authorize
+# against the target building's own branch. See
+# org_structure/service.py's module docstring.
 
 
 @building_router.post("", response_model=Envelope[BuildingOut], status_code=status.HTTP_201_CREATED)
 async def create_building(
     payload: BuildingCreate,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("buildings:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    building = await service.create_building(tenant_db, payload, branch.id)
+    await authorize_branch_id(tenant_db, user, "buildings:manage", payload.branch_id)
+    building = await service.create_building(tenant_db, payload)
     _queue_audit(
         background_tasks,
         tenant,
@@ -375,7 +381,7 @@ async def create_building(
 
 @building_router.get("", response_model=PaginatedEnvelope[BuildingOut])
 async def list_buildings(
-    branch: Annotated[Branch, Depends(require_branch_permission("buildings:view"))],
+    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("buildings:view"))],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
@@ -384,7 +390,7 @@ async def list_buildings(
     page, page_size = pagination
     buildings, total = await service.list_buildings_page(
         tenant_db,
-        authorized_branch_id=branch.id,
+        branch_scope=branch_scope,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -401,10 +407,10 @@ async def list_buildings(
 @building_router.get("/{building_id}", response_model=Envelope[BuildingOut])
 async def get_building(
     building_id: uuid.UUID,
-    branch: Annotated[Branch, Depends(require_branch_permission("buildings:view"))],
+    user: Annotated[User, Depends(get_current_user)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
 ) -> JSONResponse:
-    building = await service.get_building(tenant_db, building_id, branch.id)
+    building = await service.get_building(tenant_db, building_id, user, "buildings:view")
     return success_response(data=BuildingOut.model_validate(building))
 
 
@@ -413,12 +419,11 @@ async def update_building(
     building_id: uuid.UUID,
     payload: BuildingUpdate,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("buildings:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    building = await service.update_building(tenant_db, building_id, payload, branch.id)
+    building = await service.update_building(tenant_db, building_id, payload, user)
     _queue_audit(
         background_tasks,
         tenant,
@@ -434,12 +439,11 @@ async def update_building(
 async def delete_building(
     building_id: uuid.UUID,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("buildings:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    await service.delete_building(tenant_db, building_id, branch.id)
+    await service.delete_building(tenant_db, building_id, user)
     _queue_audit(
         background_tasks,
         tenant,
@@ -459,12 +463,15 @@ async def delete_building(
 async def create_floor(
     payload: FloorCreate,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("floors:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    floor = await service.create_floor(tenant_db, payload, branch.id)
+    branch_id = await service.resolve_building_branch_id(tenant_db, payload.building_id)
+    if branch_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Building not found")
+    await authorize_branch_id(tenant_db, user, "floors:manage", branch_id)
+    floor = await service.create_floor(tenant_db, payload, branch_id)
     _queue_audit(
         background_tasks,
         tenant,
@@ -480,7 +487,7 @@ async def create_floor(
 
 @floor_router.get("", response_model=PaginatedEnvelope[FloorOut])
 async def list_floors(
-    branch: Annotated[Branch, Depends(require_branch_permission("floors:view"))],
+    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("floors:view"))],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     building_id: Annotated[uuid.UUID | None, Query(alias="buildingId")] = None,
@@ -490,7 +497,7 @@ async def list_floors(
     page, page_size = pagination
     floors, total = await service.list_floors_page(
         tenant_db,
-        authorized_branch_id=branch.id,
+        branch_scope=branch_scope,
         building_id=building_id,
         page=page,
         page_size=page_size,
@@ -508,10 +515,10 @@ async def list_floors(
 @floor_router.get("/{floor_id}", response_model=Envelope[FloorOut])
 async def get_floor(
     floor_id: uuid.UUID,
-    branch: Annotated[Branch, Depends(require_branch_permission("floors:view"))],
+    user: Annotated[User, Depends(get_current_user)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
 ) -> JSONResponse:
-    floor = await service.get_floor(tenant_db, floor_id, branch.id)
+    floor = await service.get_floor(tenant_db, floor_id, user, "floors:view")
     return success_response(data=FloorOut.model_validate(floor))
 
 
@@ -520,12 +527,11 @@ async def update_floor(
     floor_id: uuid.UUID,
     payload: FloorUpdate,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("floors:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    floor = await service.update_floor(tenant_db, floor_id, payload, branch.id)
+    floor = await service.update_floor(tenant_db, floor_id, payload, user)
     _queue_audit(
         background_tasks,
         tenant,
@@ -541,12 +547,11 @@ async def update_floor(
 async def delete_floor(
     floor_id: uuid.UUID,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("floors:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    await service.delete_floor(tenant_db, floor_id, branch.id)
+    await service.delete_floor(tenant_db, floor_id, user)
     _queue_audit(
         background_tasks,
         tenant,
@@ -568,12 +573,12 @@ async def delete_floor(
 async def create_department(
     payload: DepartmentCreate,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("departments:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    department = await service.create_department(tenant_db, payload, branch.id)
+    await authorize_branch_id(tenant_db, user, "departments:manage", payload.branch_id)
+    department = await service.create_department(tenant_db, payload)
     _queue_audit(
         background_tasks,
         tenant,
@@ -589,7 +594,7 @@ async def create_department(
 
 @department_router.get("", response_model=PaginatedEnvelope[DepartmentOut])
 async def list_departments(
-    branch: Annotated[Branch, Depends(require_branch_permission("departments:view"))],
+    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("departments:view"))],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     floor_id: Annotated[uuid.UUID | None, Query(alias="floorId")] = None,
@@ -599,7 +604,7 @@ async def list_departments(
     page, page_size = pagination
     departments, total = await service.list_departments_page(
         tenant_db,
-        authorized_branch_id=branch.id,
+        branch_scope=branch_scope,
         floor_id=floor_id,
         page=page,
         page_size=page_size,
@@ -617,10 +622,10 @@ async def list_departments(
 @department_router.get("/{department_id}", response_model=Envelope[DepartmentOut])
 async def get_department(
     department_id: uuid.UUID,
-    branch: Annotated[Branch, Depends(require_branch_permission("departments:view"))],
+    user: Annotated[User, Depends(get_current_user)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
 ) -> JSONResponse:
-    department = await service.get_department(tenant_db, department_id, branch.id)
+    department = await service.get_department(tenant_db, department_id, user, "departments:view")
     return success_response(data=DepartmentOut.model_validate(department))
 
 
@@ -629,12 +634,11 @@ async def update_department(
     department_id: uuid.UUID,
     payload: DepartmentUpdate,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("departments:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    department = await service.update_department(tenant_db, department_id, payload, branch.id)
+    department = await service.update_department(tenant_db, department_id, payload, user)
     _queue_audit(
         background_tasks,
         tenant,
@@ -650,12 +654,11 @@ async def update_department(
 async def delete_department(
     department_id: uuid.UUID,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("departments:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    await service.delete_department(tenant_db, department_id, branch.id)
+    await service.delete_department(tenant_db, department_id, user)
     _queue_audit(
         background_tasks,
         tenant,
@@ -677,12 +680,15 @@ async def delete_department(
 async def create_reception_desk(
     payload: ReceptionDeskCreate,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("desks:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    desk = await service.create_reception_desk(tenant_db, payload, branch.id)
+    branch_id = await service.resolve_floor_branch_id(tenant_db, payload.floor_id)
+    if branch_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
+    await authorize_branch_id(tenant_db, user, "desks:manage", branch_id)
+    desk = await service.create_reception_desk(tenant_db, payload, branch_id)
     _queue_audit(
         background_tasks,
         tenant,
@@ -698,7 +704,7 @@ async def create_reception_desk(
 
 @desk_router.get("", response_model=PaginatedEnvelope[ReceptionDeskOut])
 async def list_reception_desks(
-    branch: Annotated[Branch, Depends(require_branch_permission("desks:view"))],
+    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("desks:view"))],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     floor_id: Annotated[uuid.UUID | None, Query(alias="floorId")] = None,
@@ -708,7 +714,7 @@ async def list_reception_desks(
     page, page_size = pagination
     desks, total = await service.list_reception_desks_page(
         tenant_db,
-        authorized_branch_id=branch.id,
+        branch_scope=branch_scope,
         floor_id=floor_id,
         page=page,
         page_size=page_size,
@@ -726,10 +732,10 @@ async def list_reception_desks(
 @desk_router.get("/{desk_id}", response_model=Envelope[ReceptionDeskOut])
 async def get_reception_desk(
     desk_id: uuid.UUID,
-    branch: Annotated[Branch, Depends(require_branch_permission("desks:view"))],
+    user: Annotated[User, Depends(get_current_user)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
 ) -> JSONResponse:
-    desk = await service.get_reception_desk(tenant_db, desk_id, branch.id)
+    desk = await service.get_reception_desk(tenant_db, desk_id, user, "desks:view")
     return success_response(data=ReceptionDeskOut.model_validate(desk))
 
 
@@ -738,12 +744,11 @@ async def update_reception_desk(
     desk_id: uuid.UUID,
     payload: ReceptionDeskUpdate,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("desks:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    desk = await service.update_reception_desk(tenant_db, desk_id, payload, branch.id)
+    desk = await service.update_reception_desk(tenant_db, desk_id, payload, user)
     _queue_audit(
         background_tasks,
         tenant,
@@ -759,12 +764,11 @@ async def update_reception_desk(
 async def delete_reception_desk(
     desk_id: uuid.UUID,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("desks:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    await service.delete_reception_desk(tenant_db, desk_id, branch.id)
+    await service.delete_reception_desk(tenant_db, desk_id, user)
     _queue_audit(
         background_tasks,
         tenant,
@@ -784,12 +788,12 @@ async def delete_reception_desk(
 async def create_security_gate(
     payload: SecurityGateCreate,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("gates:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    gate = await service.create_security_gate(tenant_db, payload, branch.id)
+    await authorize_branch_id(tenant_db, user, "gates:manage", payload.branch_id)
+    gate = await service.create_security_gate(tenant_db, payload)
     _queue_audit(
         background_tasks,
         tenant,
@@ -805,7 +809,7 @@ async def create_security_gate(
 
 @gate_router.get("", response_model=PaginatedEnvelope[SecurityGateOut])
 async def list_security_gates(
-    branch: Annotated[Branch, Depends(require_branch_permission("gates:view"))],
+    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("gates:view"))],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     building_id: Annotated[uuid.UUID | None, Query(alias="buildingId")] = None,
@@ -815,7 +819,7 @@ async def list_security_gates(
     page, page_size = pagination
     gates, total = await service.list_security_gates_page(
         tenant_db,
-        authorized_branch_id=branch.id,
+        branch_scope=branch_scope,
         building_id=building_id,
         page=page,
         page_size=page_size,
@@ -833,10 +837,10 @@ async def list_security_gates(
 @gate_router.get("/{gate_id}", response_model=Envelope[SecurityGateOut])
 async def get_security_gate(
     gate_id: uuid.UUID,
-    branch: Annotated[Branch, Depends(require_branch_permission("gates:view"))],
+    user: Annotated[User, Depends(get_current_user)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
 ) -> JSONResponse:
-    gate = await service.get_security_gate(tenant_db, gate_id, branch.id)
+    gate = await service.get_security_gate(tenant_db, gate_id, user, "gates:view")
     return success_response(data=SecurityGateOut.model_validate(gate))
 
 
@@ -845,12 +849,11 @@ async def update_security_gate(
     gate_id: uuid.UUID,
     payload: SecurityGateUpdate,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("gates:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    gate = await service.update_security_gate(tenant_db, gate_id, payload, branch.id)
+    gate = await service.update_security_gate(tenant_db, gate_id, payload, user)
     _queue_audit(
         background_tasks,
         tenant,
@@ -866,12 +869,11 @@ async def update_security_gate(
 async def delete_security_gate(
     gate_id: uuid.UUID,
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("gates:manage"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    await service.delete_security_gate(tenant_db, gate_id, branch.id)
+    await service.delete_security_gate(tenant_db, gate_id, user)
     _queue_audit(
         background_tasks,
         tenant,

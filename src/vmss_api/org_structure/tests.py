@@ -636,16 +636,21 @@ async def test_create_building_requires_permission(
     assert response.status_code == 403
 
 
-async def test_create_building_requires_branch_header(
+async def test_create_building_succeeds_without_branch_header(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
+    """`X-Branch-ID` is optional on creation endpoints — the branch resolves
+    from `branchId` in the body instead (auth spec's optional-header
+    requirement).
+    """
     token = await _login(client, user.email)
     response = await client.post(
         "/api/v1/buildings",
         json={"branchId": str(branch.id), "name": "Tower B", "code": "TWR-B"},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 422
+    assert response.status_code == 201
+    assert response.json()["data"]["branchId"] == str(branch.id)
 
 
 async def test_create_building_denied_for_user_scoped_elsewhere(
@@ -695,6 +700,43 @@ async def test_list_buildings_excludes_other_branch(
     assert building.code in {b["code"] for b in response.json()["data"]}
 
 
+async def test_list_buildings_without_branch_header_returns_every_authorized_branch(
+    client: AsyncClient, user: User, building: Building
+) -> None:
+    """`user` is a company-wide Admin — omitting `X-Branch-ID` on a list
+    request now scopes to every branch it's authorized for, not just one.
+    """
+    token = await _login(client, user.email)
+    response = await client.get("/api/v1/buildings", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert building.code in {b["code"] for b in response.json()["data"]}
+
+
+async def test_list_buildings_without_branch_header_excludes_other_branches(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_scoped_to_branch: User,
+    building: Building,
+) -> None:
+    """A caller scoped to only one branch, with no `X-Branch-ID` header,
+    must never see another branch's buildings — the tenant/branch-isolation
+    case testing-standards.md §2 requires for this change.
+    """
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-BLD")
+    db_session.add(other_branch)
+    await db_session.flush()
+    other_building = BuildingFactory.build(id=uuid.uuid4(), branch_id=other_branch.id, code="OTH-A")
+    db_session.add(other_building)
+    await db_session.commit()
+
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get("/api/v1/buildings", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    codes = {b["code"] for b in response.json()["data"]}
+    assert building.code in codes
+    assert other_building.code not in codes
+
+
 async def test_get_building_success(client: AsyncClient, user: User, building: Building) -> None:
     token = await _login(client, user.email)
     response = await client.get(
@@ -715,6 +757,31 @@ async def test_get_building_not_found_for_other_branch(
             "Authorization": f"Bearer {token}",
             "X-Branch-ID": str(user_scoped_to_other_branch.branch_roles[0].branch_id),
         },
+    )
+    assert response.status_code == 404
+
+
+async def test_get_building_without_branch_header_resolves_from_the_building_itself(
+    client: AsyncClient, user_scoped_to_branch: User, building: Building
+) -> None:
+    """No `X-Branch-ID` header at all — authorization comes from the
+    building's own (real) branch, looked up by id, per the auth spec's
+    by-id optional-header requirement.
+    """
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get(
+        f"/api/v1/buildings/{building.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["id"] == str(building.id)
+
+
+async def test_get_building_without_branch_header_denied_for_user_scoped_elsewhere(
+    client: AsyncClient, building: Building, user_scoped_to_other_branch: User
+) -> None:
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.get(
+        f"/api/v1/buildings/{building.id}", headers={"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 404
 
@@ -814,16 +881,17 @@ async def test_create_floor_requires_permission(
 async def test_create_floor_denied_for_user_scoped_elsewhere(
     client: AsyncClient, building: Building, user_scoped_to_other_branch: User
 ) -> None:
+    """The branch resolves transitively from `buildingId` in the body, not
+    `X-Branch-ID` — a caller with no grant at that building's real branch is
+    rejected with 403, regardless of what header they send (or omit).
+    """
     token = await _login(client, user_scoped_to_other_branch.email)
     response = await client.post(
         "/api/v1/floors",
         json={"buildingId": str(building.id), "name": "First Floor", "floorNumber": 1},
-        headers={
-            "Authorization": f"Bearer {token}",
-            "X-Branch-ID": str(user_scoped_to_other_branch.branch_roles[0].branch_id),
-        },
+        headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 404
+    assert response.status_code == 403
 
 
 async def test_list_floors_success(
@@ -949,6 +1017,10 @@ async def test_create_department_requires_permission(
 async def test_create_department_denied_for_user_scoped_elsewhere(
     client: AsyncClient, floor: Floor, building: Building, user_scoped_to_other_branch: User
 ) -> None:
+    """The branch resolves from `branchId` in the body, not `X-Branch-ID` —
+    a caller with no grant at that branch is rejected with 403, regardless
+    of what header they send (or omit).
+    """
     token = await _login(client, user_scoped_to_other_branch.email)
     response = await client.post(
         "/api/v1/departments",
@@ -958,12 +1030,9 @@ async def test_create_department_denied_for_user_scoped_elsewhere(
             "name": "Human Resources",
             "code": "HR",
         },
-        headers={
-            "Authorization": f"Bearer {token}",
-            "X-Branch-ID": str(user_scoped_to_other_branch.branch_roles[0].branch_id),
-        },
+        headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 404
+    assert response.status_code == 403
 
 
 async def test_list_departments_success(
@@ -1106,16 +1175,17 @@ async def test_create_reception_desk_requires_permission(
 async def test_create_reception_desk_denied_for_user_scoped_elsewhere(
     client: AsyncClient, floor: Floor, user_scoped_to_other_branch: User
 ) -> None:
+    """The branch resolves transitively from `floorId` in the body, not
+    `X-Branch-ID` — a caller with no grant at that floor's real branch is
+    rejected with 403, regardless of what header they send (or omit).
+    """
     token = await _login(client, user_scoped_to_other_branch.email)
     response = await client.post(
         "/api/v1/reception-desks",
         json={"floorId": str(floor.id), "name": "Front Desk", "code": "DESK-1"},
-        headers={
-            "Authorization": f"Bearer {token}",
-            "X-Branch-ID": str(user_scoped_to_other_branch.branch_roles[0].branch_id),
-        },
+        headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 404
+    assert response.status_code == 403
 
 
 async def test_list_reception_desks_success(
@@ -1294,22 +1364,19 @@ async def test_create_security_gate_requires_permission(
 async def test_create_security_gate_denied_for_user_scoped_elsewhere(
     client: AsyncClient, branch: Branch, user_scoped_to_other_branch: User
 ) -> None:
-    """`branch` (in the payload) belongs to a different branch than the one
-    `user_scoped_to_other_branch` is authorized for (via the header) — the
-    request passes the branch-permission check itself but is rejected by the
-    service-layer payload/header mismatch guard, hiding the other branch's
-    gate namespace as a 404 rather than confirming it exists via a 403.
+    """`branch` (in the payload) belongs to a different branch than
+    `user_scoped_to_other_branch` is authorized for — the branch resolves
+    from `branchId` in the body, not `X-Branch-ID`, so a caller with no
+    grant there is rejected with 403, regardless of what header they send
+    (or omit).
     """
     token = await _login(client, user_scoped_to_other_branch.email)
     response = await client.post(
         "/api/v1/security-gates",
         json={"branchId": str(branch.id), "name": "Main Gate", "code": "GATE-1"},
-        headers={
-            "Authorization": f"Bearer {token}",
-            "X-Branch-ID": str(user_scoped_to_other_branch.branch_roles[0].branch_id),
-        },
+        headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 404
+    assert response.status_code == 403
 
 
 async def test_list_security_gates_success(

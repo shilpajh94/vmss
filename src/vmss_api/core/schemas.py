@@ -1,7 +1,18 @@
+import uuid
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
+
+type BranchScope = Literal["all"] | frozenset[uuid.UUID]
+"""Which branches a caller's request is scoped to, once `X-Branch-ID` is
+optional (api-conventions.md-adjacent RBAC concern, not a request schema) —
+`"all"` for a company-wide grant, otherwise the specific branch ids the
+caller holds a given permission at (a single-id request still yields a
+one-element `frozenset`). See `org_structure/deps.py::require_branch_scope`
+and `auth/models.py::User.authorized_branch_ids`.
+"""
 
 
 class SortOrder(StrEnum):

@@ -117,7 +117,17 @@ async def create_walk_in_registration(
         ),
     ],
     visitor_id_proof_files: list[UploadFile] = _NO_VISITOR_FILES,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            description=(
+                "Optional. Omitting it simply forgoes retry-dedup safety — a "
+                "retried request with no key may create a second "
+                "registration. See api-conventions.md §3."
+            ),
+        ),
+    ] = None,
 ) -> JSONResponse:
     """A visitor registers themselves on arrival, with no staff bearer token
     and no prior invitation — authenticated instead by the device credential
