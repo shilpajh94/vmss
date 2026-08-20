@@ -18,6 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from vmss_api.core.config import settings
 from vmss_api.core.database import Base, GlobalBase, TimestampMixin
+from vmss_api.core.schemas import BranchScope
 
 role_permissions = Table(
     "role_permissions",
@@ -111,6 +112,22 @@ class User(Base, TimestampMixin):
 
     def has_branch_access(self, branch_id: uuid.UUID) -> bool:
         return any(a.branch_id is None or a.branch_id == branch_id for a in self.branch_roles)
+
+    def authorized_branch_ids(self, code: str) -> BranchScope:
+        """Every branch this user holds `code` at, for a request that omits
+        `X-Branch-ID` and must fall back to "every branch I'm authorized
+        for" instead of one named branch — see
+        `org_structure/deps.py::require_branch_scope`. `"all"` means a
+        company-wide grant; an empty `frozenset` means no access at all.
+        """
+        if self.has_permission(code, branch_id=None):
+            return "all"
+        return frozenset(
+            assignment.branch_id
+            for assignment in self.branch_roles
+            if assignment.branch_id is not None
+            and any(p.code == code for p in assignment.role.permissions)
+        )
 
 
 class UserBranchRole(Base):

@@ -18,6 +18,16 @@ change that collapsed it into the single-call contract described below.
 | Method | Path | Auth | Rate limit | Description |
 |---|---|---|---|---|
 | POST | `/api/v1/invitations` | `invitations:create` at `X-Branch-ID` | — | An employee creates a fully completed single or group invitation in one call: primary contact, co-visitors, visit details, carried items, vehicles, and consent, each visitor (including the primary contact) with their own ID-proof upload. Multipart: a JSON `payload` part (camelCased fields, matching `InvitationCreate`) plus `primary_contact_id_proof_file`/`visitor_id_proof_files` file parts — multipart field *names* are the literal Python parameter names, not camelCased, since they aren't part of a JSON body. Returns a tracking ID with the invitation already `status: submitted` — there is no follow-up step. Accepts an optional `Idempotency-Key` header (`api-conventions.md` §3) — a retried request with the same key and tenant returns the original response instead of creating a second invitation. See "Finding the payload shape in Swagger" below for where to actually see the `individual`/`group` JSON examples in `/docs`. |
+
+`X-Branch-ID` is declared as an optional header (not a hard-required
+FastAPI parameter), unlike every other creation endpoint in this codebase
+it is still, in practice, the only way to tell the system which branch an
+invitation belongs to — nothing in `InvitationCreate`'s payload identifies
+one. Omitting it is rejected with a handled `400` ("branch could not be
+determined") rather than FastAPI's generic required-header `422`
+(`make-branch-header-optional-and-fix-roles-lookup`). Contrast with
+`docs/features/org_structure.md`'s creation endpoints, which resolve their
+branch from the request body and never read the header at all.
 | GET | `/api/v1/invitations/track?trackingId=` | None (public) | 20/minute per IP | Full status/visit-summary lookup by the human-readable tracking ID — returns `InvitationTrackingOut`, including every visit-detail and carried-item field captured at creation. |
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
 

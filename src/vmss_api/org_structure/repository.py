@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from vmss_api.core.database import TenantScopedRepository
-from vmss_api.core.schemas import SortOrder
+from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.org_structure.models import (
     Branch,
     Building,
@@ -15,6 +15,16 @@ from vmss_api.org_structure.models import (
     ReceptionDesk,
     SecurityGate,
 )
+
+
+def _branch_filter(column: Any, branch_scope: BranchScope) -> Any | None:
+    """Translates a resolved `BranchScope` into a filter clause: `None` (no
+    filter at all) for a company-wide "all" scope, otherwise `column IN
+    (...)` — a single-branch scope is just a one-element set, so there's no
+    separate equality-filter path to maintain. See
+    `org_structure/deps.py::require_branch_scope`.
+    """
+    return None if branch_scope == "all" else column.in_(branch_scope)
 
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
@@ -63,24 +73,26 @@ class BuildingRepository(TenantScopedRepository[Building]):
     async def list_page(
         self,
         *,
-        branch_id: uuid.UUID,
+        branch_scope: BranchScope,
         page: int,
         page_size: int,
         sort_by: str,
         sort_order: SortOrder,
     ) -> tuple[list[Building], int]:
-        """`branch_id` is always the caller's `X-Branch-ID`-authorized branch
-        (`org_structure/deps.py::require_branch_permission`), not a
-        client-chosen filter — see `database-architecture.md`/security notes
-        in `router.py` on why a branch-scoped user must never see another
+        """`branch_scope` is always the caller's authorized scope
+        (`org_structure/deps.py::require_branch_scope`), not a client-chosen
+        filter — see `database-architecture.md`/security notes in
+        `router.py` on why a branch-scoped user must never see another
         branch's buildings.
         """
         column = {"name": Building.name, "created_at": Building.created_at}[sort_by]
+        branch_filter = _branch_filter(Building.branch_id, branch_scope)
+        filters: list[Any] = [branch_filter] if branch_filter is not None else []
         return await super().paginate(
             page=page,
             page_size=page_size,
             order_by=_order_clause(column, sort_order),
-            filters=[Building.branch_id == branch_id],
+            filters=filters,
         )
 
 
@@ -98,20 +110,23 @@ class FloorRepository(TenantScopedRepository[Floor]):
     async def list_page(
         self,
         *,
-        branch_id: uuid.UUID,
+        branch_scope: BranchScope,
         building_id: uuid.UUID | None,
         page: int,
         page_size: int,
         sort_by: str,
         sort_order: SortOrder,
     ) -> tuple[list[Floor], int]:
-        """Joins back to `Building` to filter by `branch_id` (`Floor` has no
-        `branch_id` column of its own) — the caller's authorized branch, not
+        """Joins back to `Building` to filter by branch (`Floor` has no
+        `branch_id` column of its own) — the caller's authorized scope, not
         a client-chosen filter. `TenantScopedRepository.paginate` can't
         express a join, so this bypasses it with the same count+page shape.
         """
         column = {"name": Floor.name, "created_at": Floor.created_at}[sort_by]
-        conditions: list[Any] = [Floor.deleted_at.is_(None), Building.branch_id == branch_id]
+        conditions: list[Any] = [Floor.deleted_at.is_(None)]
+        branch_filter = _branch_filter(Building.branch_id, branch_scope)
+        if branch_filter is not None:
+            conditions.append(branch_filter)
         if building_id is not None:
             conditions.append(Floor.building_id == building_id)
 
@@ -165,7 +180,7 @@ class DepartmentRepository(TenantScopedRepository[Department]):
     async def list_page(
         self,
         *,
-        branch_id: uuid.UUID,
+        branch_scope: BranchScope,
         floor_id: uuid.UUID | None,
         page: int,
         page_size: int,
@@ -177,7 +192,8 @@ class DepartmentRepository(TenantScopedRepository[Department]):
         (now optional) floor.
         """
         column = {"name": Department.name, "created_at": Department.created_at}[sort_by]
-        filters: list[Any] = [Department.branch_id == branch_id]
+        branch_filter = _branch_filter(Department.branch_id, branch_scope)
+        filters: list[Any] = [branch_filter] if branch_filter is not None else []
         if floor_id is not None:
             filters.append(Department.floor_id == floor_id)
         return await super().paginate(
@@ -202,7 +218,7 @@ class ReceptionDeskRepository(TenantScopedRepository[ReceptionDesk]):
     async def list_page(
         self,
         *,
-        branch_id: uuid.UUID,
+        branch_scope: BranchScope,
         floor_id: uuid.UUID | None,
         page: int,
         page_size: int,
@@ -210,13 +226,13 @@ class ReceptionDeskRepository(TenantScopedRepository[ReceptionDesk]):
         sort_order: SortOrder,
     ) -> tuple[list[ReceptionDesk], int]:
         """Joins through `Floor` → `Building` to filter by the caller's
-        authorized branch — see `FloorRepository.list_page`.
+        authorized scope — see `FloorRepository.list_page`.
         """
         column = {"name": ReceptionDesk.name, "created_at": ReceptionDesk.created_at}[sort_by]
-        conditions: list[Any] = [
-            ReceptionDesk.deleted_at.is_(None),
-            Building.branch_id == branch_id,
-        ]
+        conditions: list[Any] = [ReceptionDesk.deleted_at.is_(None)]
+        branch_filter = _branch_filter(Building.branch_id, branch_scope)
+        if branch_filter is not None:
+            conditions.append(branch_filter)
         if floor_id is not None:
             conditions.append(ReceptionDesk.floor_id == floor_id)
 
@@ -256,18 +272,19 @@ class SecurityGateRepository(TenantScopedRepository[SecurityGate]):
     async def list_page(
         self,
         *,
-        branch_id: uuid.UUID,
+        branch_scope: BranchScope,
         building_id: uuid.UUID | None,
         page: int,
         page_size: int,
         sort_by: str,
         sort_order: SortOrder,
     ) -> tuple[list[SecurityGate], int]:
-        """`branch_id` is always the caller's authorized branch — see
+        """`branch_scope` is always the caller's authorized scope — see
         `BuildingRepository.list_page`.
         """
         column = {"name": SecurityGate.name, "created_at": SecurityGate.created_at}[sort_by]
-        filters: list[Any] = [SecurityGate.branch_id == branch_id]
+        branch_filter = _branch_filter(SecurityGate.branch_id, branch_scope)
+        filters: list[Any] = [branch_filter] if branch_filter is not None else []
         if building_id is not None:
             filters.append(SecurityGate.building_id == building_id)
         return await super().paginate(

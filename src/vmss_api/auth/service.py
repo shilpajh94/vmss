@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
 from vmss_api.auth.rbac_catalog import STANDARD_ROLE_NAMES
-from vmss_api.auth.repository import RoleRepository, UserRepository
+from vmss_api.auth.repository import PermissionRepository, RoleRepository, UserRepository
 from vmss_api.auth.schemas import (
     EmployeeSortableField,
     EmployeeSyncItem,
@@ -20,7 +20,7 @@ from vmss_api.auth.schemas import (
 )
 from vmss_api.core.database import tenant_session_scope
 from vmss_api.core.logging import logger
-from vmss_api.core.schemas import SortOrder
+from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.security import (
     create_access_token,
     create_refresh_token,
@@ -200,6 +200,15 @@ async def revoke_branch_role(
     logger.info(
         "branch_role_revoked", target_user_id=str(user_id), assignment_id=str(assignment_id)
     )
+
+
+async def list_permissions(db: AsyncSession) -> list[Permission]:
+    """The tenant-independent permission catalog (global schema) — lets a
+    role-creation/update form populate its permission-code choices instead
+    of guessing. See `Requirement: Role Permission Codes Must Exist in the
+    Catalog` (openspec/specs/auth/spec.md).
+    """
+    return await PermissionRepository(db).list_all()
 
 
 async def _resolve_permission_codes(repo: RoleRepository, codes: list[str]) -> list[Permission]:
@@ -395,7 +404,7 @@ async def sync_employee_directory(
 async def list_employees(
     tenant_db: AsyncSession,
     *,
-    authorized_branch_id: uuid.UUID,
+    branch_scope: BranchScope,
     department_id: uuid.UUID | None,
     page: int,
     page_size: int,
@@ -403,7 +412,7 @@ async def list_employees(
     sort_order: SortOrder,
 ) -> tuple[list[User], int]:
     return await UserRepository(tenant_db).list_employees_page(
-        authorized_branch_id=authorized_branch_id,
+        branch_scope=branch_scope,
         department_id=department_id,
         page=page,
         page_size=page_size,

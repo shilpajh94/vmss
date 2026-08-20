@@ -4,11 +4,14 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from factories import BuildingFactory, DepartmentFactory, FloorFactory, RoleFactory
+from factories import BuildingFactory, DepartmentFactory, FloorFactory, RoleFactory, UserFactory
 from vmss_api.auth.models import Permission, User, UserBranchRole
 from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core.rate_limit import limiter
+from vmss_api.core.security import hash_password
 from vmss_api.org_structure.models import Branch, Department
+from vmss_api.platform.models import TenantUserIndex
+from vmss_api.tenant.models import Tenant
 
 
 async def _login(client: AsyncClient, email: str, password: str = "correct-password") -> str:
@@ -411,12 +414,116 @@ async def test_list_employees_success(
     assert body["data"][0]["email"] == "erin@acme-test.example"
 
 
-async def test_list_employees_requires_branch_header(client: AsyncClient, user: User) -> None:
-    token = await _login(client, user.email)
-    response = await client.get(
-        "/api/v1/auth/employees", headers={"Authorization": f"Bearer {token}"}
+async def _branch_scoped_employee_viewer(
+    db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
+) -> User:
+    # `Permission.code` is global-schema and unique — the `user` fixture
+    # (a session-scoped company-wide Admin) already seeded "employees:view",
+    # so reuse it instead of inserting a duplicate.
+    existing = (
+        await db_session.execute(select(Permission).where(Permission.code == "employees:view"))
+    ).scalar_one()
+    role = RoleFactory.build(id=uuid.uuid4(), name="employee-viewer", permissions=[existing])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"viewer-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Employee Viewer",
+        branch_roles=[branch_role],
     )
-    assert response.status_code == 422
+    db_session.add_all([role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+async def test_list_employees_without_branch_header_scopes_to_every_authorized_branch(
+    client: AsyncClient, db_session: AsyncSession, user: User, branch: Branch
+) -> None:
+    """`user` is a company-wide Admin (branch_id=None grant) — omitting
+    `X-Branch-ID` on a list request now scopes to every branch it's
+    authorized for, per the auth spec's optional-header requirement.
+    """
+    department = await _make_department(db_session, branch)
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    await client.post(
+        "/api/v1/auth/employees/sync",
+        json={
+            "employees": [
+                {
+                    "email": "erin@acme-test.example",
+                    "fullName": "Erin Employee",
+                    "employeeCode": "EMP-005",
+                    "departmentId": str(department.id),
+                }
+            ]
+        },
+        headers=headers,
+    )
+
+    response = await client.get("/api/v1/auth/employees", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"][0]["email"] == "erin@acme-test.example"
+
+
+async def test_list_employees_without_branch_header_excludes_other_branches(
+    client: AsyncClient, db_session: AsyncSession, user: User, tenant: Tenant, branch: Branch
+) -> None:
+    """A caller scoped to only one branch, with no `X-Branch-ID` header,
+    must never see another branch's employees — the tenant/branch-isolation
+    case testing-standards.md §2 requires for this change.
+    """
+    department = await _make_department(db_session, branch)
+    admin_token = await _login(client, user.email)
+    await client.post(
+        "/api/v1/auth/employees/sync",
+        json={
+            "employees": [
+                {
+                    "email": "own-branch@acme-test.example",
+                    "fullName": "Own Branch Employee",
+                    "employeeCode": "EMP-006",
+                    "departmentId": str(department.id),
+                }
+            ]
+        },
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-EMP")
+    db_session.add(other_branch)
+    await db_session.flush()
+    await db_session.commit()
+    other_department = await _make_department(db_session, other_branch)
+    await client.post(
+        "/api/v1/auth/employees/sync",
+        json={
+            "employees": [
+                {
+                    "email": "other-branch@acme-test.example",
+                    "fullName": "Other Branch Employee",
+                    "employeeCode": "EMP-007",
+                    "departmentId": str(other_department.id),
+                }
+            ]
+        },
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    viewer = await _branch_scoped_employee_viewer(db_session, tenant, branch.id)
+    viewer_token = await _login(client, viewer.email)
+    response = await client.get(
+        "/api/v1/auth/employees", headers={"Authorization": f"Bearer {viewer_token}"}
+    )
+    assert response.status_code == 200
+    emails = {row["email"] for row in response.json()["data"]}
+    assert emails == {"own-branch@acme-test.example"}
 
 
 async def test_list_employees_requires_permission(
@@ -426,6 +533,68 @@ async def test_list_employees_requires_permission(
     response = await client.get(
         "/api/v1/auth/employees",
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 403
+
+
+async def test_list_employees_without_branch_header_requires_permission(
+    client: AsyncClient, user_without_permissions: User
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.get(
+        "/api/v1/auth/employees", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 403
+
+
+# --- Permission catalog ------------------------------------------------------
+
+
+async def _company_wide_user(db_session: AsyncSession, tenant: Tenant, *, codes: list[str]) -> User:
+    """A fresh company-wide user granted exactly `codes` — used instead of
+    the shared `user` fixture where the test needs a permission (e.g.
+    `roles:view`) that fixture's `ADMIN_PERMISSION_CODES` doesn't include.
+    """
+    permissions = [Permission(id=uuid.uuid4(), code=code, description=code) for code in codes]
+    role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"role-{uuid.uuid4().hex[:8]}", permissions=permissions
+    )
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=None)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"perm-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Permission Test User",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([*permissions, role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+async def test_list_permissions_success(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant
+) -> None:
+    viewer = await _company_wide_user(db_session, tenant, codes=["roles:view"])
+    token = await _login(client, viewer.email)
+    response = await client.get(
+        "/api/v1/auth/permissions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    codes = {row["code"] for row in response.json()["data"]}
+    assert "roles:view" in codes
+
+
+async def test_list_permissions_requires_permission(
+    client: AsyncClient, user_without_permissions: User
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.get(
+        "/api/v1/auth/permissions", headers={"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 403
 

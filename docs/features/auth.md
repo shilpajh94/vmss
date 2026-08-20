@@ -21,8 +21,9 @@ is identical for every tenant.
 | POST | `/api/v1/auth/users/{id}/branch-roles` | `users:manage` (company-wide) | — | Grants a role to a user, scoped to one branch (or company-wide when `branchId` is omitted). |
 | DELETE | `/api/v1/auth/users/{id}/branch-roles/{assignmentId}` | `users:manage` (company-wide) | — | Revokes a previously granted branch-role assignment. |
 | POST | `/api/v1/auth/employees/sync` | `employees:manage` (company-wide) | — | Reconciles the employee directory against a full, authoritative batch — see below. Company-wide by design: one sync call spans every department/branch at once. |
-| GET | `/api/v1/auth/employees` | `employees:view` at `X-Branch-ID` | — | Paginated employee directory, scoped to the branch named by `X-Branch-ID` (via `department -> floor -> building`), optionally narrowed by `departmentId`. An employee with no `department_id` never appears here. Each row includes `avatarUrl` and the employee's current `branchRoles`. |
-| POST | `/api/v1/auth/roles` | `roles:manage` (company-wide) | — | Creates a tenant-defined custom role with a name, optional description, and a set of permission codes (validated against the global catalog). |
+| GET | `/api/v1/auth/employees` | `employees:view` | — | Paginated employee directory (via `department -> floor -> building`), optionally narrowed by `departmentId`. `X-Branch-ID` is optional: scopes to that branch if sent, else every branch the caller holds `employees:view` at. An employee with no `department_id` never appears here. Each row includes `avatarUrl` and the employee's current `branchRoles`. |
+| GET | `/api/v1/auth/permissions` | `roles:view` (company-wide) | — | The tenant's full permission-code catalog (`{code, description}`), so a role-creation/update form can populate its permission-code choices instead of guessing. |
+| POST | `/api/v1/auth/roles` | `roles:manage` (company-wide) | — | Creates a tenant-defined custom role with a name, optional description, and a set of permission codes (validated against the global catalog — see `GET /auth/permissions` above for discovering valid ones). |
 | GET | `/api/v1/auth/roles` | `roles:view` (company-wide) | — | Paginated list of every role in the tenant — the five standard ones plus any custom roles. |
 | GET | `/api/v1/auth/roles/verify` | `roles:view` (company-wide) | — | `?name=` availability check (case-insensitive) for a role-creation/rename form, before submitting. |
 | GET | `/api/v1/auth/roles/{id}` | `roles:view` (company-wide) | — | A single role's detail. |
@@ -103,13 +104,24 @@ because there's nothing for one to disambiguate.
 applies to every branch in the company (used for company-wide roles like
 Admin) and a concrete id scopes it to that one branch/location — see
 `org_structure/deps.py` for how a request resolves *which* branch it's
-operating against (the `X-Branch-ID` header, not a JWT claim).
+operating against. `X-Branch-ID` (not a JWT claim) is one way to name it
+explicitly, but it's optional everywhere now
+(`make-branch-header-optional-and-fix-roles-lookup`) — see
+`docs/features/org_structure.md`'s "Branch context" section for the three
+resolution paths (list/by-id/create) that apply when it's omitted.
 
-`User.has_permission(code, branch_id=None)` is the single check both
+`User.has_permission(code, branch_id=None)` is the single check
 `core.deps.require_permission` (branch_id left at its default `None` —
-matches only a company-wide grant) and
-`org_structure.deps.require_branch_permission` (passes the resolved branch's
-id — matches a company-wide grant *or* one at that specific branch) build on.
+matches only a company-wide grant),
+`org_structure.deps.require_branch_permission`/`authorize_branch_id` (passes
+a specific branch id — matches a company-wide grant *or* one at that branch),
+and by-id routes' own post-fetch check (`user.has_permission(code,
+branch_id=<the fetched entity's branch>)`) all build on.
+`User.authorized_branch_ids(code)` is the one addition on top: for a list
+request with no `X-Branch-ID`, it returns `"all"` (company-wide grant) or the
+explicit set of branch ids the caller holds `code` at, so
+`org_structure.deps.require_branch_scope` has something other than a single
+header value to filter a list query by (`core/schemas.py::BranchScope`).
 
 The five standard roles per `security-architecture.md` §1 — Admin,
 Reception, Security, Host, Visitor — live in `auth/rbac_catalog.py`
@@ -153,8 +165,20 @@ Beyond the catalog itself, org-structure resources (Building/Floor/
 Department/ReceptionDesk/SecurityGate) and the employee directory enforce
 branch-scoping in practice, not just in the data model — see
 `docs/features/org_structure.md`'s "Branch context" section for how a
-resolved `X-Branch-ID` is checked against a resource's *actual* branch, not
-just used to gate the route.
+by-id request is checked against a resource's *actual* branch, not just
+whatever `X-Branch-ID` (if any) was sent.
+
+### Discovering valid permission codes
+
+`GET /auth/permissions` (`roles:view`) returns every permission code in the
+catalog, `{code, description}` per entry — built for a role-creation/update
+form's permission-code picker, so a client isn't guessing at valid values
+(or submitting Swagger's literal `"string"` placeholder, which is what
+`Unknown permission code(s): string` reports were actually a symptom of).
+`RoleCreateRequest`/`RoleUpdateRequest.permissionCodes` also carry an
+`examples` hint now for the same reason. The validation itself is
+unchanged: `POST`/`PUT /auth/roles` still reject with 404 if any submitted
+code isn't in the catalog (`auth/service.py::_resolve_permission_codes`).
 
 ## What's here vs. what's still missing
 

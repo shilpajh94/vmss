@@ -37,13 +37,17 @@ class UserOut(CamelModel):
 class RoleCreateRequest(CamelModel):
     name: str = Field(max_length=100)
     description: str | None = Field(default=None, max_length=255)
-    permission_codes: list[str] = Field(default_factory=list)
+    permission_codes: list[str] = Field(
+        default_factory=list, examples=[["visitors:checkin", "invitations:create"]]
+    )
 
 
 class RoleUpdateRequest(CamelModel):
     name: str | None = Field(default=None, max_length=100)
     description: str | None = Field(default=None, max_length=255)
-    permission_codes: list[str] | None = None
+    permission_codes: list[str] | None = Field(
+        default=None, examples=[["visitors:checkin", "invitations:create"]]
+    )
 
 
 class RoleOut(CamelModel):
@@ -52,6 +56,18 @@ class RoleOut(CamelModel):
     description: str | None
     permission_codes: list[str]
     is_standard: bool
+
+
+class PermissionOut(CamelModel):
+    """`GET /auth/permissions`'s catalog entry — see
+    `Requirement: Role Permission Codes Must Exist in the Catalog` in
+    openspec/specs/auth/spec.md. Lets a role-creation/update form populate
+    its permission-code choices instead of guessing, which is what today's
+    `Unknown permission code(s): string` reports actually stem from.
+    """
+
+    code: str
+    description: str
 
 
 class RoleVerifyResponse(CamelModel):

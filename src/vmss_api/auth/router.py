@@ -17,6 +17,7 @@ from vmss_api.auth.schemas import (
     EmployeeSyncRequest,
     EmployeeSyncResult,
     LoginRequest,
+    PermissionOut,
     RoleCreateRequest,
     RoleOut,
     RoleSortableField,
@@ -36,9 +37,8 @@ from vmss_api.core.deps import (
 )
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
-from vmss_api.core.schemas import Envelope, PaginatedEnvelope, SortOrder
-from vmss_api.org_structure.deps import require_branch_permission
-from vmss_api.org_structure.models import Branch
+from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
+from vmss_api.org_structure.deps import require_branch_scope
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -228,22 +228,23 @@ async def sync_employee_directory(
     response_model=PaginatedEnvelope[EmployeeOut],
 )
 async def list_employees(
-    branch: Annotated[Branch, Depends(require_branch_permission("employees:view"))],
+    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("employees:view"))],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     department_id: Annotated[uuid.UUID | None, Query(alias="departmentId")] = None,
     sort_by: Annotated[EmployeeSortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
-    """Branch-scoped: `X-Branch-ID` required. Employees are matched to a
-    branch via `department_id -> Department -> Floor -> Building`; an
-    employee with no department assigned is not visible here — see
-    `auth/repository.py::UserRepository.list_employees_page`.
+    """`X-Branch-ID` is optional: scopes to that one branch when supplied,
+    otherwise to every branch the caller holds `employees:view` at.
+    Employees are matched to a branch via `department_id -> Department ->
+    Floor -> Building`; an employee with no department assigned is not
+    visible here — see `auth/repository.py::UserRepository.list_employees_page`.
     """
     page, page_size = pagination
     employees, total = await service.list_employees(
         tenant_db,
-        authorized_branch_id=branch.id,
+        branch_scope=branch_scope,
         department_id=department_id,
         page=page,
         page_size=page_size,
@@ -262,6 +263,22 @@ def _to_role_out(role: Role) -> RoleOut:
         description=role.description,
         permission_codes=sorted(p.code for p in role.permissions),
         is_standard=role.name in STANDARD_ROLE_NAMES,
+    )
+
+
+@router.get(
+    "/permissions",
+    response_model=Envelope[list[PermissionOut]],
+    dependencies=[Depends(require_permission("roles:view"))],
+)
+async def list_permissions(db: Annotated[AsyncSession, Depends(get_db)]) -> JSONResponse:
+    """The tenant-independent permission catalog, so a role-creation/update
+    form can populate its permission-code choices instead of guessing —
+    see `Requirement: Role Permission Codes Must Exist in the Catalog`.
+    """
+    permissions = await service.list_permissions(db)
+    return success_response(
+        data=[PermissionOut(code=p.code, description=p.description) for p in permissions]
     )
 
 

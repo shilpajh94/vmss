@@ -43,8 +43,7 @@ from vmss_api.invitations.schemas import (
     VisitDetailsSubmit,
     VisitorSubmit,
 )
-from vmss_api.org_structure.deps import require_branch_permission
-from vmss_api.org_structure.models import Branch
+from vmss_api.org_structure.deps import authorize_branch_id
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/invitations", tags=["invitations"])
@@ -332,7 +331,6 @@ async def _cache_response(
 )
 async def create_invitation(
     background_tasks: BackgroundTasks,
-    branch: Annotated[Branch, Depends(require_branch_permission("invitations:create"))],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
@@ -348,15 +346,44 @@ async def create_invitation(
         ),
     ],
     visitor_id_proof_files: list[UploadFile] = _NO_VISITOR_FILES,
-    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            description=(
+                "Optional. Omitting it simply forgoes retry-dedup safety — a "
+                "retried request with no key may create a second invitation. "
+                "See api-conventions.md §3."
+            ),
+        ),
+    ] = None,
+    x_branch_id: Annotated[
+        uuid.UUID | None,
+        Header(
+            alias="X-Branch-ID",
+            description=(
+                "Which branch this invitation belongs to. Optional at the "
+                "framework level, but there is currently no other field in "
+                "the payload that identifies a branch, so omitting it is "
+                "rejected with 400."
+            ),
+        ),
+    ] = None,
 ) -> JSONResponse:
-    """A single authenticated, branch-scoped call creates a fully completed
-    invitation — primary contact, co-visitors, visit details, carried items,
-    vehicles, and consent, each with their own ID-proof upload — and
-    immediately returns a tracking ID (design.md Decisions 1 and 2). A
-    retried request reuses the same `Idempotency-Key` semantics
-    (`api-conventions.md` §3) so it can't create a second invitation.
+    """A single authenticated call creates a fully completed invitation —
+    primary contact, co-visitors, visit details, carried items, vehicles,
+    and consent, each with their own ID-proof upload — and immediately
+    returns a tracking ID (design.md Decisions 1 and 2). A retried request
+    reuses the same `Idempotency-Key` semantics (`api-conventions.md` §3) so
+    it can't create a second invitation.
     """
+    if x_branch_id is None:
+        return error_response(
+            message="X-Branch-ID is required to determine which branch this invitation belongs to",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    branch = await authorize_branch_id(tenant_db, user, "invitations:create", x_branch_id)
+
     cached = await _cached_response(tenant.id, idempotency_key)
     if cached is not None:
         return cached
