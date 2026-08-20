@@ -41,9 +41,10 @@ def require_branch_permission(permission_code: str):
     if the caller has `permission_code` either company-wide (a branch-less
     role assignment) or specifically at the resolved branch.
 
-    `X-Branch-ID` is required here (unlike `require_branch_scope` below) —
-    kept verbatim for `POST /invitations`, the one endpoint whose payload
-    carries no branch-identifying field of its own to fall back on.
+    `X-Branch-ID` is required here (unlike `require_branch_scope` below).
+    `POST /invitations` no longer uses this dependency — its payload now
+    carries its own `branchId` fallback, resolved via `authorize_branch_id`
+    directly in `invitations/router.py`.
     """
 
     def _check(

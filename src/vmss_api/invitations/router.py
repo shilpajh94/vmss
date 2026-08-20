@@ -362,10 +362,9 @@ async def create_invitation(
         Header(
             alias="X-Branch-ID",
             description=(
-                "Which branch this invitation belongs to. Optional at the "
-                "framework level, but there is currently no other field in "
-                "the payload that identifies a branch, so omitting it is "
-                "rejected with 400."
+                "Which branch this invitation belongs to. Optional — falls "
+                "back to `branchId` in the payload when omitted; one of the "
+                "two is required."
             ),
         ),
     ] = None,
@@ -377,13 +376,6 @@ async def create_invitation(
     reuses the same `Idempotency-Key` semantics (`api-conventions.md` §3) so
     it can't create a second invitation.
     """
-    if x_branch_id is None:
-        return error_response(
-            message="X-Branch-ID is required to determine which branch this invitation belongs to",
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-    branch = await authorize_branch_id(tenant_db, user, "invitations:create", x_branch_id)
-
     cached = await _cached_response(tenant.id, idempotency_key)
     if cached is not None:
         return cached
@@ -392,6 +384,17 @@ async def create_invitation(
         create_payload = InvitationCreate.model_validate_json(payload)
     except ValidationError as exc:
         return error_response(message=str(exc), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+    branch_id = x_branch_id if x_branch_id is not None else create_payload.branch_id
+    if branch_id is None:
+        return error_response(
+            message=(
+                "branchId in the payload (or the X-Branch-ID header) is "
+                "required to determine which branch this invitation belongs to"
+            ),
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    branch = await authorize_branch_id(tenant_db, user, "invitations:create", branch_id)
 
     primary_content = await primary_contact_id_proof_file.read()
     visitor_contents = [await f.read() for f in visitor_id_proof_files]

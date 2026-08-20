@@ -156,6 +156,14 @@ class InvitationCreate(CamelModel):
     """
 
     registration_type: RegistrationType
+    branch_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "Which branch this invitation belongs to. Falls back to the "
+            "`X-Branch-ID` header when omitted here; one of the two is "
+            "required."
+        ),
+    )
     primary_contact: InvitationPrimaryContactCreate
     visitors: list[VisitorSubmit] = Field(default_factory=list)
     visit_details: VisitDetailsSubmit

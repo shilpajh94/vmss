@@ -228,13 +228,12 @@ async def test_create_invitation_requires_permission(
     assert response.status_code == 403
 
 
-async def test_create_invitation_without_branch_header_rejected(
+async def test_create_invitation_without_branch_header_or_payload_rejected(
     client: AsyncClient, user: User
 ) -> None:
-    """`InvitationCreate` carries no branch-identifying field of its own, so
-    unlike other creation endpoints, `X-Branch-ID` is still the only signal
-    that can resolve one — omitting it is a handled 400, not FastAPI's
-    generic required-header 422.
+    """Neither the `X-Branch-ID` header nor `branchId` in the payload is
+    supplied — omitting both is a handled 400, not FastAPI's generic
+    required-header 422.
     """
     token = await _login(client, user.email)
     response = await client.post(
@@ -244,6 +243,24 @@ async def test_create_invitation_without_branch_header_rejected(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 400
+
+
+async def test_create_invitation_branch_id_in_payload_used_when_header_omitted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """`branchId` in the payload resolves the branch when `X-Branch-ID` is
+    omitted entirely — the header is not the only way to identify one.
+    """
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["branchId"] = str(branch.id)
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))],
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
 
 
 async def test_create_invitation_requires_reachable_contact_for_method(
