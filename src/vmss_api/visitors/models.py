@@ -39,6 +39,10 @@ class VisitorCategory(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(String(500))
     form_schema: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    badge_color: Mapped[str | None] = mapped_column(String(30))
+    nda_requirement: Mapped[str | None] = mapped_column(String(20))
+    escort_requirement: Mapped[str | None] = mapped_column(String(20))
+    max_duration_minutes: Mapped[int | None] = mapped_column(Integer)
 
 
 class ApprovalWorkflowRule(Base, TimestampMixin):

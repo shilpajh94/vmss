@@ -12,7 +12,7 @@ from vmss_api.core.storage import save as storage_save
 from vmss_api.invitations import tasks
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
 from vmss_api.invitations.repository import InvitationRepository
-from vmss_api.invitations.schemas import InvitationCreate
+from vmss_api.invitations.schemas import InvitationCreate, RegistrationSource
 from vmss_api.tenant.models import Tenant
 
 
@@ -33,12 +33,16 @@ def _current_request_id() -> str:
     return structlog.contextvars.get_contextvars().get("request_id", "")
 
 
-async def _validate_and_store(tenant_id: uuid.UUID, content: bytes, max_size: int) -> str:
+def _validate_id_proof(content: bytes, max_size: int) -> str:
+    """Returns the sniffed content type. No storage I/O — call this for
+    every visitor's file before persisting any of them, so a submission
+    rejected because one visitor's file is invalid never leaves an earlier
+    visitor's file written to storage.
+    """
     try:
-        content_type = validate_upload(content, max_size_bytes=max_size)
+        return validate_upload(content, max_size_bytes=max_size)
     except (UnsupportedFileTypeError, FileTooLargeError) as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
-    return await storage_save(tenant_id, "invitations/id-proof", content, content_type)
 
 
 async def create_invitation(
@@ -46,18 +50,23 @@ async def create_invitation(
     payload: InvitationCreate,
     *,
     branch_id: uuid.UUID,
-    created_by_user_id: uuid.UUID,
+    created_by_user_id: uuid.UUID | None,
     tenant: Tenant,
     primary_contact_id_proof_content: bytes,
     visitor_id_proof_contents: list[bytes],
+    source: RegistrationSource = RegistrationSource.staff_pre_registration,
 ) -> Invitation:
-    """API-09. Creates a fully populated, immediately-`submitted` invitation
-    in a single call — the validation, ID-proof storage, and child-row
-    construction that used to happen in a separate self-registration step
-    (API-10, now removed) happen here instead (design.md Decisions 1 and 2).
-    Generates the human-readable expiry-bound tracking ID and enqueues the
-    visit-confirmation dispatch (API-11) — never sent inline
-    (`background-jobs.md` §5).
+    """API-09 (and, via `source=visitor_walk_in`, API-13). Creates a fully
+    populated, immediately-`submitted` invitation in a single call — the
+    validation, ID-proof storage, and child-row construction that used to
+    happen in a separate self-registration step (API-10, now removed) happen
+    here instead (design.md Decisions 1 and 2). Generates the human-readable
+    expiry-bound tracking ID and enqueues the visit-confirmation dispatch
+    (API-11) — never sent inline (`background-jobs.md` §5).
+
+    `created_by_user_id` is `None` for a walk-in registration — there is no
+    authenticated staff creator to record
+    (add-walkin-visitor-registration/design.md Decision 1).
     """
     if len(payload.visitors) > settings.invitation_max_group_visitors:
         raise HTTPException(
@@ -77,12 +86,24 @@ async def create_invitation(
     expires_at = now + timedelta(hours=settings.invitation_token_ttl_hours)
     max_size = settings.invitation_max_upload_size_bytes
 
-    primary_key = await _validate_and_store(tenant.id, primary_contact_id_proof_content, max_size)
+    # Validate every file before persisting any of them (spec.md "Each Visitor
+    # Has at Least One Reachable Contact and an ID Proof") — otherwise a later
+    # visitor's invalid file would abort the request after an earlier
+    # visitor's file was already written to storage.
+    primary_content_type = _validate_id_proof(primary_contact_id_proof_content, max_size)
+    visitor_content_types = [
+        _validate_id_proof(content, max_size) for content in visitor_id_proof_contents
+    ]
+
+    primary_key = await storage_save(
+        tenant.id, "invitations/id-proof", primary_contact_id_proof_content, primary_content_type
+    )
 
     invitation = Invitation(
         id=uuid.uuid4(),
         branch_id=branch_id,
         created_by_user_id=created_by_user_id,
+        source=source.value,
         registration_type=payload.registration_type.value,
         status="submitted",
         tracking_id=tracking_id,
@@ -120,9 +141,13 @@ async def create_invitation(
             email=visitor.email,
             phone=visitor.phone,
             id_proof_type=visitor.id_proof_type.value,
-            id_proof_storage_key=await _validate_and_store(tenant.id, content, max_size),
+            id_proof_storage_key=await storage_save(
+                tenant.id, "invitations/id-proof", content, content_type
+            ),
         )
-        for visitor, content in zip(payload.visitors, visitor_id_proof_contents, strict=True)
+        for visitor, content, content_type in zip(
+            payload.visitors, visitor_id_proof_contents, visitor_content_types, strict=True
+        )
     ]
     vehicle_rows = [
         InvitationVehicle(

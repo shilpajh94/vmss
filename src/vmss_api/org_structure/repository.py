@@ -138,9 +138,14 @@ class FloorRepository(TenantScopedRepository[Floor]):
 class DepartmentRepository(TenantScopedRepository[Department]):
     model = Department
 
-    async def get_by_code(self, floor_id: uuid.UUID, code: str) -> Department | None:
+    async def get_by_code(self, branch_id: uuid.UUID, code: str) -> Department | None:
+        """Uniqueness is scoped by `branch_id` directly (a real column on
+        `Department` as of
+        openspec/changes/add-role-management-and-org-field-gaps/design.md
+        Decision 4), not by `floor_id`/a join.
+        """
         stmt = select(Department).where(
-            Department.floor_id == floor_id,
+            Department.branch_id == branch_id,
             Department.code == code,
             Department.deleted_at.is_(None),
         )
@@ -167,34 +172,20 @@ class DepartmentRepository(TenantScopedRepository[Department]):
         sort_by: str,
         sort_order: SortOrder,
     ) -> tuple[list[Department], int]:
-        """Joins through `Floor` → `Building` to filter by the caller's
-        authorized branch — see `FloorRepository.list_page`.
+        """Filters directly on `Department.branch_id` — no join needed now
+        that a department is scoped to a branch directly, not only via its
+        (now optional) floor.
         """
         column = {"name": Department.name, "created_at": Department.created_at}[sort_by]
-        conditions: list[Any] = [Department.deleted_at.is_(None), Building.branch_id == branch_id]
+        filters: list[Any] = [Department.branch_id == branch_id]
         if floor_id is not None:
-            conditions.append(Department.floor_id == floor_id)
-
-        count_stmt = (
-            select(func.count())
-            .select_from(Department)
-            .join(Floor, Department.floor_id == Floor.id)
-            .join(Building, Floor.building_id == Building.id)
-            .where(*conditions)
+            filters.append(Department.floor_id == floor_id)
+        return await super().paginate(
+            page=page,
+            page_size=page_size,
+            order_by=_order_clause(column, sort_order),
+            filters=filters,
         )
-        total = (await self.session.execute(count_stmt)).scalar_one()
-
-        stmt = (
-            select(Department)
-            .join(Floor, Department.floor_id == Floor.id)
-            .join(Building, Floor.building_id == Building.id)
-            .where(*conditions)
-            .order_by(_order_clause(column, sort_order))
-            .limit(page_size)
-            .offset((page - 1) * page_size)
-        )
-        items = list((await self.session.execute(stmt)).scalars().all())
-        return items, total
 
 
 class ReceptionDeskRepository(TenantScopedRepository[ReceptionDesk]):

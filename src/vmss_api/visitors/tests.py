@@ -135,6 +135,27 @@ async def test_create_visitor_category_requires_permission(
     assert response.status_code == 403
 
 
+async def test_list_visitor_categories_requires_permission(
+    client: AsyncClient, user_without_permissions: User
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.get(
+        "/api/v1/visitor-categories", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 403
+
+
+async def test_get_visitor_category_requires_permission(
+    client: AsyncClient, user_without_permissions: User, visitor_category: VisitorCategory
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.get(
+        f"/api/v1/visitor-categories/{visitor_category.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
 async def test_list_visitor_categories_success(
     client: AsyncClient, user: User, visitor_category: VisitorCategory
 ) -> None:
@@ -188,6 +209,17 @@ async def test_update_visitor_category_requires_permission(
     response = await client.put(
         f"/api/v1/visitor-categories/{visitor_category.id}",
         json={"description": "Nope"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+async def test_delete_visitor_category_requires_permission(
+    client: AsyncClient, user_without_permissions: User, visitor_category: VisitorCategory
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.delete(
+        f"/api/v1/visitor-categories/{visitor_category.id}",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
@@ -279,6 +311,57 @@ async def test_visitor_category_repository_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         found = await VisitorCategoryRepository(other_session).get(visitor_category.id)
         assert found is None
+
+
+async def test_create_visitor_category_with_badge_and_policy_fields(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/visitor-categories",
+        json={
+            "name": "Contractor",
+            "code": "CONTRACTOR",
+            "badgeColor": "#FF8800",
+            "ndaRequirement": "signed_pdf",
+            "escortRequirement": "always_required",
+            "maxDurationMinutes": 480,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["badgeColor"] == "#FF8800"
+    assert body["ndaRequirement"] == "signed_pdf"
+    assert body["escortRequirement"] == "always_required"
+    assert body["maxDurationMinutes"] == 480
+
+
+async def test_update_visitor_category_policy_fields(
+    client: AsyncClient, user: User, visitor_category: VisitorCategory
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.put(
+        f"/api/v1/visitor-categories/{visitor_category.id}",
+        json={"ndaRequirement": "optional", "escortRequirement": "gate_check_in_only"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["ndaRequirement"] == "optional"
+    assert body["escortRequirement"] == "gate_check_in_only"
+
+
+async def test_create_visitor_category_invalid_nda_requirement_rejected(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/visitor-categories",
+        json={"name": "Bad Policy", "code": "BADPOLICY", "ndaRequirement": "not-a-real-option"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
 
 
 # --- Approval Workflow Rule -------------------------------------------------
@@ -374,6 +457,33 @@ async def test_create_approval_workflow_rule_requires_permission(
     assert response.status_code == 403
 
 
+async def test_list_approval_workflow_rules_requires_permission(
+    client: AsyncClient,
+    user_without_permissions: User,
+    approval_workflow_rule: ApprovalWorkflowRule,
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.get(
+        "/api/v1/approval-workflow-rules",
+        params={"visitorCategoryId": str(approval_workflow_rule.visitor_category_id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+async def test_get_approval_workflow_rule_requires_permission(
+    client: AsyncClient,
+    user_without_permissions: User,
+    approval_workflow_rule: ApprovalWorkflowRule,
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.get(
+        f"/api/v1/approval-workflow-rules/{approval_workflow_rule.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
 async def test_list_approval_workflow_rules_filtered_by_category(
     client: AsyncClient, user: User, approval_workflow_rule: ApprovalWorkflowRule
 ) -> None:
@@ -412,6 +522,19 @@ async def test_update_approval_workflow_rule_success(
     )
     assert response.status_code == 200
     assert response.json()["data"]["isMandatory"] is False
+
+
+async def test_delete_approval_workflow_rule_requires_permission(
+    client: AsyncClient,
+    user_without_permissions: User,
+    approval_workflow_rule: ApprovalWorkflowRule,
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.delete(
+        f"/api/v1/approval-workflow-rules/{approval_workflow_rule.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
 
 
 async def test_delete_approval_workflow_rule_success(

@@ -1,13 +1,14 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth import service
 from vmss_api.auth.audit import record_audit_log
-from vmss_api.auth.models import User
+from vmss_api.auth.models import Role, User
+from vmss_api.auth.rbac_catalog import STANDARD_ROLE_NAMES
 from vmss_api.auth.schemas import (
     BranchRoleAssignRequest,
     BranchRoleOut,
@@ -16,6 +17,11 @@ from vmss_api.auth.schemas import (
     EmployeeSyncRequest,
     EmployeeSyncResult,
     LoginRequest,
+    RoleCreateRequest,
+    RoleOut,
+    RoleSortableField,
+    RoleUpdateRequest,
+    RoleVerifyResponse,
     TokenResponse,
     UserCreateRequest,
     UserOut,
@@ -69,7 +75,8 @@ def _to_user_out(user: User) -> UserOut:
         full_name=user.full_name,
         is_active=user.is_active,
         branch_roles=[
-            BranchRoleOut(role_name=a.role.name, branch_id=a.branch_id) for a in user.branch_roles
+            BranchRoleOut(id=a.id, role_name=a.role.name, branch_id=a.branch_id)
+            for a in user.branch_roles
         ],
     )
 
@@ -131,8 +138,35 @@ async def assign_branch_role(
         diff={"role_id": str(payload.role_id), "branch_id": str(payload.branch_id or "")},
     )
     return success_response(
-        data=BranchRoleOut(role_name=assignment.role.name, branch_id=assignment.branch_id),
+        data=BranchRoleOut(
+            id=assignment.id, role_name=assignment.role.name, branch_id=assignment.branch_id
+        ),
         status_code=201,
+    )
+
+
+@router.delete(
+    "/users/{user_id}/branch-roles/{assignment_id}",
+    dependencies=[Depends(require_permission("users:manage"))],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def revoke_branch_role(
+    user_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor: Annotated[User, Depends(get_current_user)],
+) -> None:
+    await service.revoke_branch_role(tenant_db, user_id=user_id, assignment_id=assignment_id)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=actor.id,
+        action="branch_role_revoked",
+        entity_type="User",
+        entity_id=user_id,
+        diff={"assignment_id": str(assignment_id)},
     )
 
 
@@ -146,6 +180,11 @@ def _to_employee_out(user: User) -> EmployeeOut:
         designation=user.designation,
         department_id=user.department_id,
         is_active=user.is_active,
+        avatar_url=user.avatar_url,
+        branch_roles=[
+            BranchRoleOut(id=a.id, role_name=a.role.name, branch_id=a.branch_id)
+            for a in user.branch_roles
+        ],
     )
 
 
@@ -213,4 +252,134 @@ async def list_employees(
     )
     return paginated_response(
         data=[_to_employee_out(e) for e in employees], page=page, page_size=page_size, total=total
+    )
+
+
+def _to_role_out(role: Role) -> RoleOut:
+    return RoleOut(
+        id=role.id,
+        name=role.name,
+        description=role.description,
+        permission_codes=sorted(p.code for p in role.permissions),
+        is_standard=role.name in STANDARD_ROLE_NAMES,
+    )
+
+
+@router.post(
+    "/roles",
+    response_model=Envelope[RoleOut],
+    dependencies=[Depends(require_permission("roles:manage"))],
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_role(
+    payload: RoleCreateRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    role = await service.create_role(tenant_db, payload)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=actor.id,
+        action="role_created",
+        entity_type="Role",
+        entity_id=role.id,
+        diff={"name": role.name, "permission_codes": [p.code for p in role.permissions]},
+    )
+    return success_response(data=_to_role_out(role), status_code=201)
+
+
+@router.get(
+    "/roles",
+    response_model=PaginatedEnvelope[RoleOut],
+    dependencies=[Depends(require_permission("roles:view"))],
+)
+async def list_roles(
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    sort_by: Annotated[RoleSortableField, Query(alias="sortBy")] = "name",
+    sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
+) -> JSONResponse:
+    page, page_size = pagination
+    roles, total = await service.list_roles(
+        tenant_db, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+    )
+    return paginated_response(
+        data=[_to_role_out(r) for r in roles], page=page, page_size=page_size, total=total
+    )
+
+
+@router.get(
+    "/roles/verify",
+    response_model=Envelope[RoleVerifyResponse],
+    dependencies=[Depends(require_permission("roles:view"))],
+)
+async def verify_role_name(
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    name: Annotated[str, Query(max_length=100)],
+) -> JSONResponse:
+    available = await service.verify_role_name(tenant_db, name)
+    return success_response(data=RoleVerifyResponse(name=name, available=available))
+
+
+@router.get(
+    "/roles/{role_id}",
+    response_model=Envelope[RoleOut],
+    dependencies=[Depends(require_permission("roles:view"))],
+)
+async def get_role(
+    role_id: uuid.UUID, tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)]
+) -> JSONResponse:
+    role = await service.get_role(tenant_db, role_id)
+    return success_response(data=_to_role_out(role))
+
+
+@router.put(
+    "/roles/{role_id}",
+    response_model=Envelope[RoleOut],
+    dependencies=[Depends(require_permission("roles:manage"))],
+)
+async def update_role(
+    role_id: uuid.UUID,
+    payload: RoleUpdateRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    role = await service.update_role(tenant_db, role_id, payload)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=actor.id,
+        action="role_updated",
+        entity_type="Role",
+        entity_id=role.id,
+        diff=payload.model_dump(exclude_unset=True, mode="json"),
+    )
+    return success_response(data=_to_role_out(role))
+
+
+@router.delete(
+    "/roles/{role_id}",
+    dependencies=[Depends(require_permission("roles:manage"))],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_role(
+    role_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor: Annotated[User, Depends(get_current_user)],
+) -> None:
+    await service.delete_role(tenant_db, role_id)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=actor.id,
+        action="role_deleted",
+        entity_type="Role",
+        entity_id=role_id,
     )

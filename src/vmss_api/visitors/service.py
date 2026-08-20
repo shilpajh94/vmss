@@ -48,6 +48,12 @@ async def create_visitor_category(
         code=payload.code,
         description=payload.description,
         form_schema=[f.model_dump(mode="json") for f in payload.form_schema],
+        badge_color=payload.badge_color,
+        nda_requirement=payload.nda_requirement.value if payload.nda_requirement else None,
+        escort_requirement=(
+            payload.escort_requirement.value if payload.escort_requirement else None
+        ),
+        max_duration_minutes=payload.max_duration_minutes,
     )
     tenant_db.add(category)
     await _commit_or_conflict(tenant_db, "Category name or code already exists")

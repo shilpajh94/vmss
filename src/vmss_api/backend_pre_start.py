@@ -38,5 +38,5 @@ async def wait_for_db() -> None:
 
 
 if __name__ == "__main__":
-    configure_logging(settings.debug)
+    configure_logging(settings.debug, settings.log_level)
     asyncio.run(wait_for_db())

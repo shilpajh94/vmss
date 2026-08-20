@@ -6,19 +6,49 @@ directory-structure note. The chart is a strict hierarchy, a project
 decision made up front rather than left implicit:
 
 ```
-Company (singleton) → Branch → Building → Floor → Department
+Company (singleton) → Branch → Building → Floor → Department (optional)
+                              → Department (direct, floor optional)
                               → SecurityGate (branch, optionally narrowed to one building)
                                 Floor → ReceptionDesk
 ```
 
+`Department` is scoped directly to a `Branch` (`branch_id`, required), with
+an *optional* secondary `Floor` association (`floor_id`, nullable) — see
+"Department is branch-scoped, not floor-scoped" below.
+
 Every table here is tenant-scoped by schema (`Base`, not `GlobalBase`), same
 as `Role`/`User` — see `database-architecture.md` §2.
+
+## Field additions from the admin-portal design review
+
+A design-vs-implementation review of the admin portal
+(`openspec/changes/add-role-management-and-org-field-gaps/`) added:
+
+- **`Branch`**: `city`, `country`, `contactPersonUserId`, `contactEmail`,
+  `contactPhone`, `operatingHoursFrom`/`operatingHoursTo`, `notes`. `isActive`
+  is now settable at creation, not only via a later update.
+- **`Floor`**: `capacity` (int), `capacityType` (`guests`/`staff`),
+  `accessLevel` (`public`/`restricted`/`secure`).
+- **`ReceptionDesk`**: `status` (`active`/`maintenance`/`inactive`) replaced
+  the boolean `isActive` — a maintenance desk isn't representable as a
+  boolean. Also `assignedReceptionistUserId`,
+  `operatingHoursFrom`/`operatingHoursTo`.
+- **`SecurityGate`**: `connectivityStatus` (`online`/`maintenance`/`offline`)
+  replaced the boolean `isActive`, for the same reason. Also `highSecurity`
+  (bool, independent of `gateType`) and `authMethod` (free-form string for
+  now — the design's compound values like "Biometric/RFID Card" aren't yet
+  split into a clean enum; see the change's design doc Open Questions).
+- **`Company`**: `defaultTimezone`, `autoApprovePreRegisteredVisitors`,
+  `badgeExpiryDurationMinutes` — the "Organisation Configs" screen's
+  tenant-wide visitor-policy defaults. Stored, not yet *read* by any other
+  feature (e.g. the not-yet-built `checkin`/`approvals` features would be the
+  ones to actually apply them).
 
 ## Soft-deleted rows free their code/number for reuse
 
 `Branch.code`, `Company.registration_number`,
 `Building(branch_id, code)`, `Floor(building_id, floor_number)`,
-`Department(floor_id, code)`, `ReceptionDesk(floor_id, code)`, and
+`Department(branch_id, code)`, `ReceptionDesk(floor_id, code)`, and
 `SecurityGate(branch_id, code)` are each backed by a **partial** unique
 index scoped to `deleted_at IS NULL` (`models.py`'s `_NOT_DELETED`), not an
 unconditional one — so once a row is soft-deleted, a new row of the same
@@ -32,6 +62,21 @@ forever, so the very next attempt to reuse it failed with an unhandled
 create/update path also wraps its `commit()` in an `IntegrityError` → 409
 catch (`_commit_or_conflict`) as defense-in-depth against the residual
 check-then-insert race between two concurrent requests.
+
+## Department is branch-scoped, not floor-scoped
+
+Originally `Department` was keyed to `floor_id` only. The admin portal's
+department-creation design assigns a department directly to a `Branch` (a
+Branch dropdown, no Floor step), so `Department.branch_id` is now a direct,
+required FK, and `floor_id` is optional — a department can exist with no
+floor at all. Uniqueness moved with it: `(branch_id, code)`, not
+`(floor_id, code)`. See
+`openspec/changes/add-role-management-and-org-field-gaps/design.md`
+Decision 4 for the migration/backfill details (existing departments had
+their `branch_id` backfilled from `floor -> building -> branch`).
+`reports/repository.py`'s per-branch department/employee counts query
+`Department.branch_id` directly for the same reason — a join through `Floor`
+would silently miss any department with no `floor_id` set.
 
 ## Company is not `tenant.models.Tenant`
 
@@ -78,8 +123,8 @@ below.
 | POST | `/api/v1/floors` | `floors:manage` at `X-Branch-ID` | Create a floor; the target building must belong to `X-Branch-ID`. |
 | GET | `/api/v1/floors` | `floors:view` at `X-Branch-ID` | Paginated list, scoped to `X-Branch-ID`, optionally narrowed by `buildingId`. |
 | GET/PUT/DELETE | `/api/v1/floors/{id}` | `floors:view`/`floors:manage` at `X-Branch-ID` | Fetch/update/soft-delete; 404 if the floor's building isn't in that branch. |
-| POST | `/api/v1/departments` | `departments:manage` at `X-Branch-ID` | Create a department; the target floor must resolve to `X-Branch-ID`. |
-| GET | `/api/v1/departments` | `departments:view` at `X-Branch-ID` | Paginated list, scoped to `X-Branch-ID`, optionally narrowed by `floorId`. |
+| POST | `/api/v1/departments` | `departments:manage` at `X-Branch-ID` | Create a department; `branchId` in the body must match `X-Branch-ID`. `floorId` is optional — if given, it must also resolve to `X-Branch-ID`. |
+| GET | `/api/v1/departments` | `departments:view` at `X-Branch-ID` | Paginated list, scoped to `X-Branch-ID` directly (`Department.branch_id`), optionally narrowed by `floorId`. |
 | GET/PUT/DELETE | `/api/v1/departments/{id}` | `departments:view`/`departments:manage` at `X-Branch-ID` | Fetch/update/soft-delete; 404 if outside that branch. |
 | POST | `/api/v1/reception-desks` | `desks:manage` at `X-Branch-ID` | Create a reception desk; the target floor must resolve to `X-Branch-ID`. |
 | GET | `/api/v1/reception-desks` | `desks:view` at `X-Branch-ID` | Paginated list, scoped to `X-Branch-ID`, optionally narrowed by `floorId`. |

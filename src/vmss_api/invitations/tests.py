@@ -15,6 +15,7 @@ from vmss_api.auth.models import User
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.invitations import notifications, tasks
+from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.org_structure.models import Branch
 from vmss_api.tenant.models import Tenant
@@ -180,6 +181,11 @@ async def test_create_individual_invitation_success(
     assert data["status"] == "submitted"
     assert data["trackingId"].startswith("INV-")
     assert data["submittedAt"] is not None
+    # Regression check (add-walkin-visitor-registration): the existing
+    # staff-created flow is unaffected by the new `source` column — it
+    # still defaults to "staff_pre_registration" without the caller having
+    # to pass anything new.
+    assert data["source"] == "staff_pre_registration"
 
 
 async def test_create_group_invitation_success_with_visitors_and_vehicles(
@@ -273,6 +279,42 @@ async def test_create_invitation_oversized_file_rejected(
     token = await _login(client, user.email)
     response = await _create_invitation(client, token, branch, payload=_individual_payload())
     assert response.status_code == 422
+
+
+async def test_create_group_invitation_earlier_visitor_file_not_stored_when_later_invalid(
+    client: AsyncClient, user: User, branch: Branch, monkeypatch
+) -> None:
+    """Regression test for the validate-before-persist fix
+    (specs/invitations/spec.md "Earlier visitor's file not persisted when a
+    later visitor's file is rejected"): a group submission rejected because
+    one visitor's file is invalid must not have written any other visitor's
+    (or the primary contact's) file to storage first.
+    """
+    storage_calls: list[str] = []
+    original_save = invitations_service.storage_save
+
+    async def _spy_save(tenant_id, category, content, content_type):
+        storage_calls.append(content_type)
+        return await original_save(tenant_id, category, content, content_type)
+
+    monkeypatch.setattr(invitations_service, "storage_save", _spy_save)
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    files = [
+        ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("visitor_id_proof_files", ("v0.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("visitor_id_proof_files", ("v1.txt", b"not actually an image", "image/jpeg")),
+    ]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(_group_payload())},
+        files=files,
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+    assert storage_calls == []
 
 
 async def test_create_invitation_idempotency_key_replay(

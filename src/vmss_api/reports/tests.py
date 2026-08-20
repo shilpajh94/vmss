@@ -9,6 +9,7 @@ from factories import (
     DepartmentFactory,
     FloorFactory,
     ReceptionDeskFactory,
+    SecurityGateFactory,
     UserFactory,
 )
 from vmss_api.auth.models import User
@@ -39,12 +40,19 @@ async def branch_with_org_chart(
     db_session.add(floor)
     await db_session.flush()
 
-    department = DepartmentFactory.build(id=uuid.uuid4(), floor_id=floor.id, code="ROLLUP-DEPT")
+    department = DepartmentFactory.build(
+        id=uuid.uuid4(), branch_id=branch.id, floor_id=floor.id, code="ROLLUP-DEPT"
+    )
     db_session.add(department)
     await db_session.flush()
 
     desk = ReceptionDeskFactory.build(id=uuid.uuid4(), floor_id=floor.id, code="ROLLUP-DESK")
     db_session.add(desk)
+
+    gate = SecurityGateFactory.build(
+        id=uuid.uuid4(), branch_id=branch.id, building_id=None, code="ROLLUP-GATE"
+    )
+    db_session.add(gate)
 
     employee = UserFactory.build(
         id=uuid.uuid4(),
@@ -90,14 +98,17 @@ async def test_branches_rollup_success(
     assert rows_by_code[branch.code]["floorCount"] == 1
     assert rows_by_code[branch.code]["departmentCount"] == 1
     assert rows_by_code[branch.code]["receptionDeskCount"] == 1
+    assert rows_by_code[branch.code]["securityGateCount"] == 1
     assert rows_by_code[branch.code]["activeEmployeeCount"] == 1
 
     assert rows_by_code["EMPTY"]["buildingCount"] == 0
     assert rows_by_code["EMPTY"]["floorCount"] == 0
+    assert rows_by_code["EMPTY"]["securityGateCount"] == 0
     assert rows_by_code["EMPTY"]["activeEmployeeCount"] == 0
 
     assert body["totalBranches"] == 2
     assert body["totalBuildings"] == 1
+    assert body["totalSecurityGates"] == 1
     assert body["totalActiveEmployees"] == 1
 
 

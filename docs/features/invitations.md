@@ -112,8 +112,11 @@ bytes via `python-magic` against an image/PDF allow-list and enforces
 `settings.invitation_max_upload_size_bytes` — never by the client-declared
 `Content-Type` header or filename extension (`file-upload-handling.md` §2).
 Accepted uploads are saved through `core/storage.py`'s minimal
-save/`url_for` interface, local-disk-backed in dev; swapping to S3-compatible
-object storage in prod is a new implementation behind the same two functions.
+save/`url_for` interface, local-disk-backed by default
+(`settings.storage_backend = "local"`); an S3-compatible backend (API-14) is
+implemented behind the same two functions and selected by setting
+`storage_backend` to `"s3"` — see `docs/features/registrations.md`'s config
+table for the S3 connection settings.
 
 ## Config knobs
 
@@ -123,7 +126,7 @@ object storage in prod is a new implementation behind the same two functions.
 | `INVITATION_MAX_UPLOAD_SIZE_BYTES` | `5242880` (5 MB) | Max ID-proof file size. |
 | `INVITATION_MAX_GROUP_VISITORS` | `20` | Cap on co-visitors in one group submission. |
 | `STORAGE_ROOT` | `./var/storage` | Local-disk root for uploaded files in dev. |
-| `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME`/`SMTP_PASSWORD`/`SMTP_USE_TLS`/`SMTP_FROM_ADDRESS` | local dev mail-catcher | Outbound email for visit confirmations. |
+| `MAIL_HOST`/`MAIL_PORT`/`MAIL_USERNAME`/`MAIL_PASSWORD`/`MAIL_USE_TLS`/`MAIL_FROM_ADDRESS` | local dev mail-catcher | Outbound email for visit confirmations. See `docs/features/configuration.md`. |
 | `SMS_GATEWAY_BASE_URL`/`SMS_GATEWAY_API_KEY`/`SMS_FROM_NUMBER` | unset | Placeholders — no SMS gateway has been chosen yet. |
 
 ## Not yet built (flagged, not silently dropped)
@@ -138,6 +141,12 @@ object storage in prod is a new implementation behind the same two functions.
   `submitted`; nothing here evaluates `ApprovalWorkflowRule`s against it —
   that's the not-yet-built `approvals` feature's job.
 - **SMS gateway integration.** See the config table above.
-- **Visitor-authored consent/self-service upload.** Removed along with API-10;
-  a future requirement for the visitor to supply their own ID proof remotely
-  is a new change, not a variant of this one.
+
+**Visitor-authored registration** — removed along with API-10 as a *remote*
+self-service flow, but reintroduced as an *on-site* one: a visitor arriving
+without a prior invitation now registers themselves via `POST
+/registrations/walk-in` (API-13, `docs/features/registrations.md`),
+authenticated by a branch's device credential rather than a staff bearer
+token. It reuses this feature's exact `InvitationCreate` contract and writes
+to the same `Invitation` table, tagged `source: "visitor_walk_in"` instead of
+`"staff_pre_registration"`.

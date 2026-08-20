@@ -55,8 +55,10 @@ async def floor(db_session: AsyncSession, building: Building) -> Floor:
 
 
 @pytest_asyncio.fixture
-async def department(db_session: AsyncSession, floor: Floor) -> Department:
-    department = DepartmentFactory.build(id=uuid.uuid4(), floor_id=floor.id, code="HR")
+async def department(db_session: AsyncSession, floor: Floor, building: Building) -> Department:
+    department = DepartmentFactory.build(
+        id=uuid.uuid4(), branch_id=building.branch_id, floor_id=floor.id, code="HR"
+    )
     db_session.add(department)
     await db_session.commit()
     return department
@@ -420,12 +422,12 @@ async def test_provision_branch_duplicate_branch_code_conflict(
 async def test_provision_branch_duplicate_department_code_in_request_conflict(
     client: AsyncClient, user: User
 ) -> None:
-    """Two departments *on the same floor* reusing the same code can't be
-    caught by a `SELECT` against existing rows — neither has hit the
-    database yet — so `service.py::provision_branch` tracks codes seen
-    within the request itself. (Department codes are only unique per floor,
-    not per branch — `uq_department_floor_code` — so this has to duplicate
-    within one floor's list, not just reuse a code across two floors.)
+    """Two departments *anywhere in the same branch* reusing the same code
+    can't be caught by a `SELECT` against existing rows — neither has hit
+    the database yet — so `service.py::provision_branch` tracks codes seen
+    within the request itself. Department codes are unique per branch
+    (`uq_department_branch_code`), so this duplicates within one floor's
+    list, which is also a same-branch collision.
     """
     token = await _login(client, user.email)
     payload = _provision_payload()
@@ -915,7 +917,12 @@ async def test_create_department_success(
     token = await _login(client, user.email)
     response = await client.post(
         "/api/v1/departments",
-        json={"floorId": str(floor.id), "name": "Human Resources", "code": "HR"},
+        json={
+            "branchId": str(building.branch_id),
+            "floorId": str(floor.id),
+            "name": "Human Resources",
+            "code": "HR",
+        },
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
     )
     assert response.status_code == 201
@@ -928,19 +935,29 @@ async def test_create_department_requires_permission(
     token = await _login(client, user_without_permissions.email)
     response = await client.post(
         "/api/v1/departments",
-        json={"floorId": str(floor.id), "name": "Human Resources", "code": "HR"},
+        json={
+            "branchId": str(building.branch_id),
+            "floorId": str(floor.id),
+            "name": "Human Resources",
+            "code": "HR",
+        },
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
     )
     assert response.status_code == 403
 
 
 async def test_create_department_denied_for_user_scoped_elsewhere(
-    client: AsyncClient, floor: Floor, user_scoped_to_other_branch: User
+    client: AsyncClient, floor: Floor, building: Building, user_scoped_to_other_branch: User
 ) -> None:
     token = await _login(client, user_scoped_to_other_branch.email)
     response = await client.post(
         "/api/v1/departments",
-        json={"floorId": str(floor.id), "name": "Human Resources", "code": "HR"},
+        json={
+            "branchId": str(building.branch_id),
+            "floorId": str(floor.id),
+            "name": "Human Resources",
+            "code": "HR",
+        },
         headers={
             "Authorization": f"Bearer {token}",
             "X-Branch-ID": str(user_scoped_to_other_branch.branch_roles[0].branch_id),
@@ -1010,7 +1027,12 @@ async def test_create_department_after_soft_delete_reuses_code(
 
     recreate_response = await client.post(
         "/api/v1/departments",
-        json={"floorId": str(department.floor_id), "name": "New HR", "code": department.code},
+        json={
+            "branchId": str(department.branch_id),
+            "floorId": str(department.floor_id),
+            "name": "New HR",
+            "code": department.code,
+        },
         headers=headers,
     )
     assert recreate_response.status_code == 201
@@ -1025,6 +1047,32 @@ async def test_department_repository_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         found = await DepartmentRepository(other_session).get(department.id)
         assert found is None
+
+
+async def test_create_department_without_floor_succeeds(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A department is scoped directly to a branch — the floor step is
+    optional. See
+    openspec/changes/add-role-management-and-org-field-gaps/design.md
+    Decision 4.
+    """
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/departments",
+        json={"branchId": str(branch.id), "name": "Legal", "code": "LEGAL"},
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["floorId"] is None
+    assert body["branchId"] == str(branch.id)
+
+    list_response = await client.get(
+        "/api/v1/departments",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert "LEGAL" in {d["code"] for d in list_response.json()["data"]}
 
 
 # --- Reception Desk --------------------------------------------------------------
@@ -1152,6 +1200,42 @@ async def test_reception_desk_repository_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         found = await ReceptionDeskRepository(other_session).get(reception_desk.id)
         assert found is None
+
+
+async def test_create_reception_desk_with_maintenance_status(
+    client: AsyncClient, user: User, floor: Floor, building: Building
+) -> None:
+    """`status` is a three-state field (`active`/`maintenance`/`inactive`),
+    not a boolean — see
+    openspec/changes/add-role-management-and-org-field-gaps/design.md
+    Decision 3.
+    """
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/reception-desks",
+        json={
+            "floorId": str(floor.id),
+            "name": "Maintenance Desk",
+            "code": "DESK-M",
+            "status": "maintenance",
+        },
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
+    )
+    assert response.status_code == 201
+    assert response.json()["data"]["status"] == "maintenance"
+
+
+async def test_update_reception_desk_status_to_inactive(
+    client: AsyncClient, user: User, reception_desk: ReceptionDesk, building: Building
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.put(
+        f"/api/v1/reception-desks/{reception_desk.id}",
+        json={"status": "inactive"},
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "inactive"
 
 
 # --- Security Gate --------------------------------------------------------------
@@ -1306,3 +1390,45 @@ async def test_security_gate_repository_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         found = await SecurityGateRepository(other_session).get(security_gate.id)
         assert found is None
+
+
+async def test_create_security_gate_with_offline_connectivity(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """`connectivityStatus` is independent of `gateType` and `highSecurity`
+    — see
+    openspec/changes/add-role-management-and-org-field-gaps/design.md
+    Decision 3.
+    """
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/security-gates",
+        json={
+            "branchId": str(branch.id),
+            "name": "Offline Gate",
+            "code": "GATE-OFF",
+            "gateType": "both",
+            "connectivityStatus": "offline",
+            "highSecurity": True,
+            "authMethod": "Biometric/RFID Card",
+        },
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["connectivityStatus"] == "offline"
+    assert body["highSecurity"] is True
+    assert body["gateType"] == "both"
+
+
+async def test_update_security_gate_connectivity_status(
+    client: AsyncClient, user: User, security_gate: SecurityGate, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.put(
+        f"/api/v1/security-gates/{security_gate.id}",
+        json={"connectivityStatus": "maintenance"},
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["connectivityStatus"] == "maintenance"

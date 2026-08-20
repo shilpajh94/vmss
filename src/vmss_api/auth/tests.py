@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import BuildingFactory, DepartmentFactory, FloorFactory, RoleFactory
 from vmss_api.auth.models import Permission, User, UserBranchRole
-from vmss_api.auth.repository import UserRepository
+from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core.rate_limit import limiter
 from vmss_api.org_structure.models import Branch, Department
 
@@ -80,7 +80,7 @@ async def test_get_my_profile(client: AsyncClient, user: User) -> None:
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["email"] == user.email
-    assert {"roleName": "admin", "branchId": None} in body["branchRoles"]
+    assert any(r["roleName"] == "admin" and r["branchId"] is None for r in body["branchRoles"])
 
 
 async def test_get_my_profile_requires_auth(client: AsyncClient) -> None:
@@ -249,7 +249,9 @@ async def _make_department(db_session: AsyncSession, branch: Branch) -> Departme
     floor = FloorFactory.build(id=uuid.uuid4(), building_id=building.id, floor_number=0)
     db_session.add(floor)
     await db_session.flush()
-    department = DepartmentFactory.build(id=uuid.uuid4(), floor_id=floor.id, code="ENG")
+    department = DepartmentFactory.build(
+        id=uuid.uuid4(), branch_id=branch.id, floor_id=floor.id, code="ENG"
+    )
     db_session.add(department)
     await db_session.commit()
     return department
@@ -336,6 +338,32 @@ async def test_sync_employee_directory_unknown_department_not_found(
     assert response.status_code == 404
 
 
+async def test_sync_employee_directory_duplicate_employee_code_in_batch_conflict(
+    client: AsyncClient, user: User
+) -> None:
+    """Two new employees in the same batch sharing an `employeeCode` violate
+    the column's unique constraint on commit — `auth/service.py`'s
+    `IntegrityError` handling must translate that into a 409, not a raw
+    500 (`auth/service.py:376-380`).
+    """
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/employees/sync",
+        json={
+            "employees": [
+                {"email": "erin@acme-test.example", "fullName": "Erin", "employeeCode": "EMP-DUP"},
+                {
+                    "email": "frank@acme-test.example",
+                    "fullName": "Frank",
+                    "employeeCode": "EMP-DUP",
+                },
+            ]
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
 async def test_sync_employee_directory_requires_permission(
     client: AsyncClient, user_without_permissions: User
 ) -> None:
@@ -398,5 +426,252 @@ async def test_list_employees_requires_permission(
     response = await client.get(
         "/api/v1/auth/employees",
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 403
+
+
+# --- Role CRUD --------------------------------------------------------------
+
+
+async def test_create_role_success(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/roles",
+        json={
+            "name": "Security Admin",
+            "description": "Manages security gates",
+            "permissionCodes": ["branches:view"],
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["name"] == "Security Admin"
+    assert body["permissionCodes"] == ["branches:view"]
+    assert body["isStandard"] is False
+
+
+async def test_create_role_requires_permission(
+    client: AsyncClient, user_without_permissions: User
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.post(
+        "/api/v1/auth/roles",
+        json={"name": "Security Admin", "permissionCodes": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+async def test_create_role_duplicate_name_conflict(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    await client.post(
+        "/api/v1/auth/roles", json={"name": "Ops Lead", "permissionCodes": []}, headers=headers
+    )
+    response = await client.post(
+        "/api/v1/auth/roles", json={"name": "ops lead", "permissionCodes": []}, headers=headers
+    )
+    assert response.status_code == 409
+
+
+async def test_create_role_unknown_permission_code_not_found(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/roles",
+        json={"name": "Bogus Role", "permissionCodes": ["not-a-real-code"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
+async def test_list_roles_includes_standard_and_custom(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    await client.post(
+        "/api/v1/auth/roles", json={"name": "Custom Role", "permissionCodes": []}, headers=headers
+    )
+    response = await client.get("/api/v1/auth/roles?pageSize=100", headers=headers)
+    assert response.status_code == 200
+    names = {r["name"] for r in response.json()["data"]}
+    assert "admin" in names
+    assert "Custom Role" in names
+
+
+async def test_get_role_success(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/auth/roles", json={"name": "Getter Role", "permissionCodes": []}, headers=headers
+    )
+    role_id = created.json()["data"]["id"]
+    response = await client.get(f"/api/v1/auth/roles/{role_id}", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["data"]["name"] == "Getter Role"
+
+
+async def test_update_role_success(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/auth/roles",
+        json={"name": "Updatable Role", "permissionCodes": ["branches:view"]},
+        headers=headers,
+    )
+    role_id = created.json()["data"]["id"]
+    response = await client.put(
+        f"/api/v1/auth/roles/{role_id}",
+        json={"description": "Updated description", "permissionCodes": []},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()["data"]
+    assert body["description"] == "Updated description"
+    assert body["permissionCodes"] == []
+
+
+async def test_delete_role_success(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/auth/roles",
+        json={"name": "Deletable Role", "permissionCodes": []},
+        headers=headers,
+    )
+    role_id = created.json()["data"]["id"]
+    response = await client.delete(f"/api/v1/auth/roles/{role_id}", headers=headers)
+    assert response.status_code == 204
+    get_response = await client.get(f"/api/v1/auth/roles/{role_id}", headers=headers)
+    assert get_response.status_code == 404
+
+
+async def test_verify_role_name_availability(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    available = await client.get("/api/v1/auth/roles/verify?name=Brand New Role", headers=headers)
+    assert available.status_code == 200
+    assert available.json()["data"]["available"] is True
+
+    await client.post(
+        "/api/v1/auth/roles", json={"name": "Taken Role", "permissionCodes": []}, headers=headers
+    )
+    taken = await client.get("/api/v1/auth/roles/verify?name=taken role", headers=headers)
+    assert taken.status_code == 200
+    assert taken.json()["data"]["available"] is False
+
+
+async def test_rename_standard_role_rejected(client: AsyncClient, user: User) -> None:
+    """The `user` fixture seeds a role literally named "admin" — standing in
+    for one of the five seeded standard roles (`rbac_catalog.STANDARD_ROLE_NAMES`)
+    without needing the full provisioning-time seed to run.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    list_response = await client.get("/api/v1/auth/roles?pageSize=100", headers=headers)
+    admin_role = next(r for r in list_response.json()["data"] if r["name"] == "admin")
+    response = await client.put(
+        f"/api/v1/auth/roles/{admin_role['id']}",
+        json={"name": "renamed-admin"},
+        headers=headers,
+    )
+    assert response.status_code == 409
+
+
+async def test_delete_standard_role_rejected(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    list_response = await client.get("/api/v1/auth/roles?pageSize=100", headers=headers)
+    admin_role = next(r for r in list_response.json()["data"] if r["name"] == "admin")
+    response = await client.delete(f"/api/v1/auth/roles/{admin_role['id']}", headers=headers)
+    assert response.status_code == 409
+
+
+async def test_delete_role_with_active_grant_conflict(
+    client: AsyncClient, user: User, user_without_permissions: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/auth/roles",
+        json={"name": "Grantable Role", "permissionCodes": []},
+        headers=headers,
+    )
+    role_id = created.json()["data"]["id"]
+    assign_response = await client.post(
+        f"/api/v1/auth/users/{user_without_permissions.id}/branch-roles",
+        json={"roleId": role_id, "branchId": str(branch.id)},
+        headers=headers,
+    )
+    assert assign_response.status_code == 201
+
+    response = await client.delete(f"/api/v1/auth/roles/{role_id}", headers=headers)
+    assert response.status_code == 409
+
+
+async def test_role_repository_tenant_schema_isolation(
+    make_tenant_schema, open_tenant_session, db_session: AsyncSession
+) -> None:
+    role = RoleFactory.build(id=uuid.uuid4(), name="isolated-role", permissions=[])
+    db_session.add(role)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_role"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        found = await RoleRepository(other_session).get(role.id)
+        assert found is None
+
+
+# --- Branch-role revocation ---------------------------------------------
+
+
+async def test_revoke_branch_role_removes_access(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    user_without_permissions: User,
+    branch: Branch,
+) -> None:
+    existing = (
+        await db_session.execute(select(Permission).where(Permission.code == "branches:view"))
+    ).scalar_one()
+    role = RoleFactory.build(id=uuid.uuid4(), name="reception-revoke", permissions=[existing])
+    db_session.add(role)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    assign_response = await client.post(
+        f"/api/v1/auth/users/{user_without_permissions.id}/branch-roles",
+        json={"roleId": str(role.id), "branchId": str(branch.id)},
+        headers=headers,
+    )
+    assignment_id = assign_response.json()["data"]["id"]
+
+    revoke_response = await client.delete(
+        f"/api/v1/auth/users/{user_without_permissions.id}/branch-roles/{assignment_id}",
+        headers=headers,
+    )
+    assert revoke_response.status_code == 204
+
+    db_session.expire(user_without_permissions, ["branch_roles"])
+    granted_token = await _login(client, user_without_permissions.email)
+    current = await client.get(
+        "/api/v1/branches/current",
+        headers={"Authorization": f"Bearer {granted_token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert current.status_code == 403
+
+
+async def test_revoke_branch_role_requires_permission(
+    client: AsyncClient, user_without_permissions: User
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.delete(
+        f"/api/v1/auth/users/{user_without_permissions.id}/branch-roles/{uuid.uuid4()}",
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403

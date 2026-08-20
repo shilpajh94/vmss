@@ -89,6 +89,7 @@ class User(Base, TimestampMixin):
     department_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("departments.id"), index=True
     )
+    avatar_url: Mapped[str | None] = mapped_column(String(500))
 
     branch_roles: Mapped[list["UserBranchRole"]] = relationship(lazy="selectin")
 

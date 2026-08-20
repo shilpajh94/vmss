@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     app_name: str = "VMSS API"
     environment: str = "local"
     debug: bool = True
+    log_level: str = "INFO"
 
     # Split rather than a single DATABASE_URL so a password containing a
     # reserved URL character (`@`, `:`, `/`, `%`) can't corrupt the parsed
