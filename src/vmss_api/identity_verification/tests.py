@@ -198,6 +198,41 @@ async def test_request_otp_twilio_failure_returns_503_without_leaking_detail(
     assert attempts["n"] == 2
 
 
+async def test_request_otp_smtp_failure_returns_503_without_leaking_detail(
+    client: AsyncClient, tenant: Tenant, monkeypatch
+) -> None:
+    class _FailingEmailSender:
+        async def send(self, **kwargs) -> None:
+            raise senders.EmailDispatchError("Email dispatch failed")
+
+    monkeypatch.setattr(senders, "email_sender", _FailingEmailSender())
+
+    idempotency_key = str(uuid.uuid4())
+    identifier = _unique_email()
+    payload = {"identifier": identifier, "channel": "email"}
+
+    first = await client.post(
+        "/api/v1/identity-verification/otp/request",
+        json=payload,
+        headers={"Idempotency-Key": idempotency_key},
+    )
+    assert first.status_code == 503
+
+    # Deliberately NOT cached, same as the Twilio-failure case — a retry
+    # with the same key re-attempts dispatch instead of replaying the same
+    # SMTP-side failure forever.
+    recorder = _RecordingSender()
+    monkeypatch.setattr(senders, "email_sender", recorder)
+
+    second = await client.post(
+        "/api/v1/identity-verification/otp/request",
+        json=payload,
+        headers={"Idempotency-Key": idempotency_key},
+    )
+    assert second.status_code == 200
+    assert len(recorder.calls) == 1
+
+
 async def test_request_otp_gateway_not_configured_response_is_cached(
     client: AsyncClient, tenant: Tenant, monkeypatch
 ) -> None:

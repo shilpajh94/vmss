@@ -47,6 +47,13 @@ class SmsDispatchError(RuntimeError):
     """
 
 
+class EmailDispatchError(RuntimeError):
+    """Same category as `SmsDispatchError`, for the SMTP channel — a
+    configured mail server that's unreachable or rejected the message,
+    not a missing-configuration case.
+    """
+
+
 class SmtpEmailSender:
     """Same `aiosmtplib`/`settings.smtp_*` approach as
     `invitations/notifications.py::SmtpEmailSender`.
@@ -66,14 +73,22 @@ class SmtpEmailSender:
         # same fix as `invitations/notifications.py::SmtpEmailSender.send`.
         username = settings.smtp_username or None
         password = settings.smtp_password or None
-        await aiosmtplib.send(
-            message,
-            hostname=settings.smtp_host,
-            port=settings.smtp_port,
-            username=username,
-            password=password,
-            start_tls=settings.smtp_use_tls,
-        )
+        try:
+            await aiosmtplib.send(
+                message,
+                hostname=settings.smtp_host,
+                port=settings.smtp_port,
+                username=username,
+                password=password,
+                start_tls=settings.smtp_use_tls,
+            )
+        except aiosmtplib.SMTPException as exc:
+            logger.warning(
+                "smtp_email_dispatch_failed",
+                identifier=mask_identifier(to),
+                error=str(exc),
+            )
+            raise EmailDispatchError("Email dispatch failed") from exc
 
 
 class UnconfiguredSmsSender:
