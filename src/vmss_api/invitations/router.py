@@ -20,19 +20,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.auth.models import User
-from vmss_api.core.deps import get_current_user, get_tenant, get_tenant_db
+from vmss_api.core.deps import get_current_user, get_pagination, get_tenant, get_tenant_db
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.redis import get_redis
-from vmss_api.core.responses import error_response, success_response
-from vmss_api.core.schemas import Envelope
+from vmss_api.core.responses import error_response, paginated_response, success_response
+from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.invitations import service
 from vmss_api.invitations.deps import track_default_tenant_db
 from vmss_api.invitations.schemas import (
     CarriedItemsSubmit,
     ConsentsSubmit,
     InvitationCreate,
+    InvitationListItemOut,
     InvitationOut,
     InvitationPrimaryContactCreate,
+    InvitationSortableField,
     InvitationTrackingOut,
     InvitationTrackingSummaryOut,
     InvitationVehicleOut,
@@ -43,7 +45,7 @@ from vmss_api.invitations.schemas import (
     VisitDetailsSubmit,
     VisitorSubmit,
 )
-from vmss_api.org_structure.deps import authorize_branch_id
+from vmss_api.org_structure.deps import authorize_branch_id, require_branch_scope
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/invitations", tags=["invitations"])
@@ -244,6 +246,20 @@ def _to_invitation_out(invitation) -> InvitationOut:
     )
 
 
+def _to_list_item_out(invitation) -> InvitationListItemOut:
+    return InvitationListItemOut(
+        id=invitation.id,
+        tracking_id=invitation.tracking_id,
+        registration_type=RegistrationType(invitation.registration_type),
+        source=RegistrationSource(invitation.source),
+        status=invitation.status,
+        primary_contact_full_name=invitation.primary_contact_full_name,
+        purpose_of_visit=invitation.purpose_of_visit,
+        expires_at=invitation.expires_at,
+        submitted_at=invitation.submitted_at,
+    )
+
+
 def _to_tracking_out(invitation) -> InvitationTrackingOut:
     return InvitationTrackingOut(
         tracking_id=invitation.tracking_id,
@@ -422,6 +438,43 @@ async def create_invitation(
     )
     await _cache_response(tenant.id, idempotency_key, response)
     return response
+
+
+# --- Employee listing ---------------------------------------------------------
+
+
+@router.get(
+    "",
+    response_model=PaginatedEnvelope[InvitationListItemOut],
+)
+async def list_invitations(
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("invitations:view"))],
+    pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    sort_by: Annotated[InvitationSortableField, Query(alias="sortBy")] = "submitted_at",
+    sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.desc,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    registration_type: Annotated[RegistrationType | None, Query(alias="registrationType")] = None,
+    source: Annotated[RegistrationSource | None, Query(alias="source")] = None,
+) -> JSONResponse:
+    page, page_size = pagination
+    invitations, total = await service.list_invitations_page(
+        tenant_db,
+        branch_scope=branch_scope,
+        status=status_filter,
+        registration_type=registration_type.value if registration_type is not None else None,
+        source=source.value if source is not None else None,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return paginated_response(
+        data=[_to_list_item_out(invitation) for invitation in invitations],
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
 
 
 # --- API-12: public tracking lookup ------------------------------------------

@@ -19,6 +19,15 @@ web_extra_daemons:
   - name: "vmss-api"
     command: "uv run uvicorn vmss_api.main:app --host 0.0.0.0 --port 8000 --reload"
     directory: /var/www/html
+  # Without this, tasks dispatched via `.delay()` (e.g.
+  # `invitations/tasks.py::send_visit_confirmation`) queue in Redis forever
+  # with nothing consuming them — the confirmation email never actually
+  # sends. `-A vmss_api.core.celery_app:celery_app` must name the Celery
+  # instance explicitly; it isn't named `app`, Celery's convention-based
+  # default for bare `-A <module>`.
+  - name: "vmss-api-celery-worker"
+    command: "uv run celery -A vmss_api.core.celery_app:celery_app worker --loglevel=info"
+    directory: /var/www/html
 
 # Exposes the FastAPI app at https://vmss-new-api.ddev.site
 web_extra_exposed_ports:

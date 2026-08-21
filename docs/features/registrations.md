@@ -62,8 +62,11 @@ this yet — direct DB update, or a future management endpoint).
   feature's job, the same way it is for a staff pre-registration once the
   invited visitor actually arrives.
 - **No OTP verification.** The Figma wizard shows "OTP will be sent to your
-  email" on this step, but no OTP mechanism exists anywhere in this codebase
-  yet — tracked as a follow-up, not silently skipped.
+  email" on this step. The OTP mechanism itself now exists — see
+  `docs/features/identity_verification.md` (API-15) — but this endpoint
+  does not call it: creating a walk-in registration does not require or
+  check a verified-contact proof. Wiring that gate in is a separate,
+  later change, tracked there, not silently skipped.
   `security-architecture.md` §2 already lists OTP handling as a requirement
   for visitor-facing public endpoints generally.
 - **No approval-workflow evaluation.** Same posture `invitations` has today —
@@ -80,10 +83,10 @@ local-disk one, selected by configuration:
 | Setting | Default | Purpose |
 |---|---|---|
 | `STORAGE_BACKEND` | `local` | `local` (disk) or `s3`. |
-| `AWS_BUCKET` | unset | Required when `STORAGE_BACKEND=s3`. |
-| `AWS_DEFAULT_REGION` | unset | AWS region, or the equivalent for an S3-compatible provider. |
-| `AWS_ENDPOINT_URL` | unset | Only for a non-AWS S3-compatible provider (e.g. MinIO). Leave unset for AWS. |
-| `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` | unset | Required when `STORAGE_BACKEND=s3`. Read directly by boto3, not by `Settings` — see `docs/features/configuration.md`. |
+| `STORAGE_S3_BUCKET` | unset | Required when `STORAGE_BACKEND=s3`. Read by `Settings`, not boto3 — boto3 has no env var of its own for a bucket name. |
+| `STORAGE_S3_REGION` | unset | Region to pass to the S3 client explicitly. Leave unset to fall back to boto3's own `AWS_DEFAULT_REGION` resolution. |
+| `STORAGE_S3_ENDPOINT_URL` | unset | Only for a non-AWS S3-compatible provider (e.g. MinIO). Leave unset for AWS's default endpoint resolution. |
+| `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_DEFAULT_REGION` | unset | Required when `STORAGE_BACKEND=s3`. Read directly by boto3's default credential provider chain, not by `Settings` — see `docs/features/configuration.md`. |
 | `STORAGE_S3_PRESIGNED_URL_TTL_SECONDS` | `300` | How long a `url_for` pre-signed URL stays valid when the backend is `s3`. |
 
 Switching backends is a config change only — no call site in `invitations`
@@ -95,5 +98,5 @@ the opaque storage key `save` returns.
 - **Device key management endpoint/UI.** Provisioning is CLI-only today
   (`scripts/provision_registration_device.py`); rotation is a direct DB
   update to `is_active`/`key_hash`.
-- **OTP verification**, **check-in**, **approval-workflow evaluation** — see
-  above.
+- **Wiring OTP verification into this endpoint**, **check-in**,
+  **approval-workflow evaluation** — see above.

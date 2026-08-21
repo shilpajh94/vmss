@@ -1,7 +1,9 @@
 import io
 import json
+import uuid
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient, Response
 from PIL import Image
 from sqlalchemy import update
@@ -9,9 +11,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
+from vmss_api.core.security import hash_password
 from vmss_api.invitations import tasks
 from vmss_api.invitations.repository import InvitationRepository
+from vmss_api.org_structure.models import Branch
 from vmss_api.registrations.models import RegistrationDeviceKey
+from vmss_api.tenant.models import Tenant
+
+
+@pytest_asyncio.fixture
+async def registration_device_raw_key(
+    db_session: AsyncSession, tenant: Tenant, branch: Branch
+) -> str:
+    """A provisioned walk-in kiosk credential for `branch` (API-13). Only the
+    raw key is ever handed back — same "shown once, never stored" pattern as
+    a real device provisioning flow (`registrations/models.py::RegistrationDeviceKey`).
+    """
+    raw_key = "test-device-raw-key-" + uuid.uuid4().hex
+    db_session.add(
+        RegistrationDeviceKey(
+            id=uuid.uuid4(),
+            tenant_id=tenant.id,
+            branch_id=branch.id,
+            key_hash=hash_password(raw_key),
+            label="Test Kiosk",
+            is_active=True,
+        )
+    )
+    await db_session.commit()
+    return raw_key
 
 
 def _jpeg_bytes() -> bytes:

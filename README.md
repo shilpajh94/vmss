@@ -21,14 +21,31 @@ Requires [DDEV](https://ddev.com/) and Docker.
 ddev start                              # builds the web image (installs uv), starts web/db/redis
 cp .env.example .env                    # then replace every __PLACEHOLDER__ with a real value —
                                          # each line's comment gives the DDEV-default to paste in
-ddev restart                             # picks up .env
+ddev restart                             # picks up .env — also (re)starts the vmss-api and
+                                          # vmss-api-celery-worker daemons; without the latter,
+                                          # anything dispatched via Celery (e.g. invitation
+                                          # confirmation emails) silently queues and never sends
 ddev exec uv run alembic upgrade head    # global schema (tenants, superadmins, ...)
 ddev exec uv run python scripts/seed_dev_data.py   # provisions the default tenant's own schema +
                                                     # creates admin@example.com / admin12345 in it
 ```
 
+Pulled new commits? Re-run `ddev exec uv run alembic upgrade head` (global
+schema) and `ddev exec uv run python scripts/seed_dev_data.py` (re-applies
+any new tenant migrations and RBAC-catalog permission additions to your
+existing default tenant — both steps are safe to re-run, idempotent against
+an already-current schema/role).
+
 The API is then live at `https://vmss-new-api.ddev.site:8443` (health check at
-`/health`, OpenAPI docs at `/docs`).
+`/health`, OpenAPI docs at `/docs`). DDEV ships a built-in Mailpit at
+`https://vmss-new-api.ddev.site:8026` — every email this API sends in dev
+(OTP codes, invitation confirmations) lands there, not a real inbox.
+
+To generate real, visible activity (invitations, OTP requests, a walk-in
+registration) against the actually-running server — real emails you can see
+in Mailpit, real rows you can browse in the dev database — run
+`ddev exec uv run python scripts/seed_demo_workflow.py` (repeatable; each
+run adds a fresh, tagged batch rather than becoming a no-op).
 
 To browse the database from Chrome (or any browser): `ddev add-on get
 ddev/ddev-adminer` once, then `ddev restart`. Adminer comes up at the URL
