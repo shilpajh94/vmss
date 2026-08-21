@@ -3,6 +3,7 @@ import io
 import json
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -11,13 +12,17 @@ from PIL import Image
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.auth.models import User
+from factories import InvitationFactory, PermissionFactory, RoleFactory, UserFactory
+from vmss_api.auth.models import User, UserBranchRole
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
+from vmss_api.core.schemas import SortOrder
+from vmss_api.core.security import hash_password
 from vmss_api.invitations import notifications, tasks
 from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.org_structure.models import Branch
+from vmss_api.platform.models import TenantUserIndex
 from vmss_api.tenant.models import Tenant
 
 
@@ -651,6 +656,252 @@ async def test_track_rate_limit_trips(client: AsyncClient, tenant: Tenant, monke
         for _ in range(25)
     ]
     assert any(r.status_code == 429 for r in responses)
+
+
+# --- Employee listing (GET /invitations) -------------------------------------
+
+
+async def _branch_scoped_invitation_viewer(
+    db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
+) -> User:
+    """A caller whose only role grant is `invitations:view` at `branch_id` —
+    the branch-scoping counterpart of `org_structure/tests.py`'s
+    `_branch_scoped_user`, applied to this feature's own permission.
+    """
+    permission = PermissionFactory.build(
+        id=uuid.uuid4(), code="invitations:view", description="invitations:view"
+    )
+    role = RoleFactory.build(id=uuid.uuid4(), name="invitations-viewer", permissions=[permission])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"viewer-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Invitation Viewer",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([permission, role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+def _build_invitation(
+    db_session: AsyncSession,
+    branch_id: uuid.UUID,
+    **overrides,
+):
+    """Builds (but does not add/commit) an `Invitation` row via the shared
+    `InvitationFactory` (testing-standards.md §1) rather than a hand-built
+    dict — callers add and commit once, per query-performance.md §3's
+    "commit once, not once per row" habit, applied here to test setup.
+    `created_by_user_id` is forced to `None`: it's a real FK to `users`, and
+    polyfactory's auto-generated UUID for it never matches an actual row.
+    `registration_type`/`source` default to a valid enum value each, since
+    the router maps the plain string columns back through
+    `RegistrationType`/`RegistrationSource` when serializing a list row.
+    """
+    overrides.setdefault("created_by_user_id", None)
+    overrides.setdefault("registration_type", "individual")
+    overrides.setdefault("source", "staff_pre_registration")
+    return InvitationFactory.build(id=uuid.uuid4(), branch_id=branch_id, **overrides)
+
+
+async def test_list_invitations_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get("/api/v1/invitations", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pagination"]["total"] >= 1
+    tracking_ids = {row["trackingId"] for row in body["data"]}
+    assert invitation.tracking_id in tracking_ids
+    row = next(r for r in body["data"] if r["trackingId"] == invitation.tracking_id)
+    assert set(row.keys()) == {
+        "id",
+        "trackingId",
+        "registrationType",
+        "source",
+        "status",
+        "primaryContactFullName",
+        "purposeOfVisit",
+        "expiresAt",
+        "submittedAt",
+    }
+
+
+async def test_list_invitations_requires_permission(
+    client: AsyncClient, user_without_permissions: User
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.get("/api/v1/invitations", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
+
+
+async def test_list_invitations_branch_header_narrows_to_one_branch(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, branch: Branch
+) -> None:
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-INV")
+    db_session.add(other_branch)
+    await db_session.flush()
+
+    in_scope = _build_invitation(db_session, branch.id)
+    other_branch_invitation = _build_invitation(db_session, other_branch.id)
+    db_session.add_all([in_scope, other_branch_invitation])
+    await db_session.commit()
+
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    token = await _login(client, viewer.email)
+    response = await client.get(
+        "/api/v1/invitations",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 200
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert in_scope.tracking_id in tracking_ids
+    assert other_branch_invitation.tracking_id not in tracking_ids
+
+
+async def test_list_invitations_unauthorized_branch_id_rejected(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, branch: Branch
+) -> None:
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-INV-2")
+    db_session.add(other_branch)
+    await db_session.commit()
+
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    token = await _login(client, viewer.email)
+    response = await client.get(
+        "/api/v1/invitations",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(other_branch.id)},
+    )
+    assert response.status_code == 403
+
+
+async def test_list_invitations_without_branch_header_returns_every_authorized_branch(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, branch: Branch
+) -> None:
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-INV-3")
+    db_session.add(other_branch)
+    await db_session.flush()
+
+    invitation = _build_invitation(db_session, branch.id)
+    other_branch_invitation = _build_invitation(db_session, other_branch.id)
+    db_session.add_all([invitation, other_branch_invitation])
+    await db_session.commit()
+
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    token = await _login(client, viewer.email)
+    response = await client.get("/api/v1/invitations", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id in tracking_ids
+    assert other_branch_invitation.tracking_id not in tracking_ids
+
+
+async def test_list_invitations_filters_by_status_registration_type_and_source(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    matching = _build_invitation(
+        db_session,
+        branch.id,
+        status="submitted",
+        registration_type="group",
+        source="visitor_walk_in",
+    )
+    non_matching = _build_invitation(
+        db_session,
+        branch.id,
+        status="cancelled",
+        registration_type="individual",
+        source="staff_pre_registration",
+    )
+    db_session.add_all([matching, non_matching])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={
+            "status": "submitted",
+            "registrationType": "group",
+            "source": "visitor_walk_in",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert matching.tracking_id in tracking_ids
+    assert non_matching.tracking_id not in tracking_ids
+
+
+async def test_list_invitations_sort_order(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC)
+    older = _build_invitation(db_session, branch.id, submitted_at=now - timedelta(hours=1))
+    newer = _build_invitation(db_session, branch.id, submitted_at=now)
+    db_session.add_all([older, newer])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    default_order = await client.get("/api/v1/invitations", headers=headers)
+    default_ids = [row["trackingId"] for row in default_order.json()["data"]]
+    assert default_ids.index(newer.tracking_id) < default_ids.index(older.tracking_id)
+
+    asc_order = await client.get(
+        "/api/v1/invitations", params={"sortOrder": "asc"}, headers=headers
+    )
+    asc_ids = [row["trackingId"] for row in asc_order.json()["data"]]
+    assert asc_ids.index(older.tracking_id) < asc_ids.index(newer.tracking_id)
+
+
+async def test_list_invitations_invalid_sort_by_rejected(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"sortBy": "not_a_real_field"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
+async def test_invitation_list_page_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    invitation = _build_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_listing"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        rows, total = await InvitationRepository(other_session).list_page(
+            branch_scope="all",
+            status=None,
+            registration_type=None,
+            source=None,
+            page=1,
+            page_size=20,
+            sort_by="submitted_at",
+            sort_order=SortOrder.desc,
+        )
+        assert rows == []
+        assert total == 0
 
 
 # --- Tenant isolation ---------------------------------------------------------

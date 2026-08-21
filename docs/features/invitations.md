@@ -26,6 +26,7 @@ handled `400` ("branch could not be determined") rather than FastAPI's
 generic required-header `422`. This now matches
 `docs/features/org_structure.md`'s creation endpoints, which resolve their
 branch from the request body via the same `authorize_branch_id` helper.
+| GET | `/api/v1/invitations` | `invitations:view`, branch-scoped | — | Paginated listing of invitations for triage/browsing — see "Listing invitations" below. |
 | GET | `/api/v1/invitations/track?trackingId=` | None (public) | 20/minute per IP | Full status/visit-summary lookup by the human-readable tracking ID — returns `InvitationTrackingOut`, including every visit-detail and carried-item field captured at creation. |
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
 
@@ -62,6 +63,36 @@ affirms consent on the visitor's behalf; see
 Decision 5 for why this trade-off was accepted. A created invitation is
 always immediately in its final, fully detailed state — there is no
 transient `pending`/shell state for a caller to observe.
+
+## Listing invitations
+
+`GET /invitations` gives an authenticated, `invitations:view`-gated caller a
+paginated, filterable, sortable view of invitations — for browsing/triage
+(e.g. "who's expected today at my branch"), not for looking up one
+invitation's full detail (that's still `GET /invitations/track`'s job).
+Branch scoping matches every other branch-scoped list endpoint
+(`docs/features/org_structure.md`'s `GET /buildings`/`GET /floors`): supply
+`X-Branch-ID` to narrow to one branch (rejected with 404/403 the same way an
+unknown/unauthorized branch id is anywhere else), or omit it to list across
+every branch the caller holds `invitations:view` at.
+
+Query params:
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `page` / `pageSize` | int | `1` / `20` (max `100`) | Standard pagination (`api-conventions.md` §1). |
+| `sortBy` | `submitted_at` \| `created_at` | `submitted_at` | Whitelisted — any other value is rejected with a validation error rather than passed to the database. |
+| `sortOrder` | `asc` \| `desc` | `desc` | |
+| `status` | string | unset | Exact match against the invitation's `status` column. |
+| `registrationType` | `individual` \| `group` | unset | |
+| `source` | `staff_pre_registration` \| `visitor_walk_in` | unset | |
+
+Each row is an `InvitationListItemOut` — tracking ID, registration type,
+source, status, primary contact name, purpose of visit, and expiry/submission
+timestamps — deliberately narrower than `InvitationTrackingOut`: it carries
+no per-visitor/vehicle detail, so the underlying query never needs to
+eager-load either child collection for a list view that doesn't render them
+(`query-performance.md` §1).
 
 ## The tracking ID is a plain, human-readable identifier
 

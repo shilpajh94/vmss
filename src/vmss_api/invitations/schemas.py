@@ -1,11 +1,16 @@
 import uuid
 from datetime import date, datetime, time
 from enum import StrEnum
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import EmailStr, Field, model_validator
 
 from vmss_api.core.schemas import CamelModel
+
+InvitationSortableField = Literal["submitted_at", "created_at"]
+"""Whitelisted `sortBy` values for `GET /invitations` (api-conventions.md
+§1) — mirrors `org_structure/schemas.py`'s `SortableField` pattern.
+"""
 
 
 class RegistrationType(StrEnum):
@@ -187,6 +192,27 @@ class InvitationOut(CamelModel):
     registration_type: RegistrationType
     source: RegistrationSource
     status: str
+    expires_at: datetime
+    submitted_at: datetime | None
+
+
+# --- Employee listing --------------------------------------------------------
+
+
+class InvitationListItemOut(CamelModel):
+    """One row of `GET /invitations` — enough to identify and triage an
+    invitation without the per-visitor/vehicle detail
+    `InvitationTrackingOut` carries (design.md Decision 2), so a paginated
+    list doesn't need to eager-load either child collection.
+    """
+
+    id: uuid.UUID
+    tracking_id: str
+    registration_type: RegistrationType
+    source: RegistrationSource
+    status: str
+    primary_contact_full_name: str
+    purpose_of_visit: str | None
     expires_at: datetime
     submitted_at: datetime | None
 

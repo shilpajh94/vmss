@@ -1,10 +1,24 @@
 import uuid
+from typing import Any
 
 from sqlalchemy import Select, select
 from sqlalchemy.orm import selectinload
 
 from vmss_api.core.database import TenantScopedRepository
+from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
+
+
+def _branch_filter(branch_scope: BranchScope) -> Any | None:
+    """Same `BranchScope` -> filter-clause translation as
+    `org_structure/repository.py::_branch_filter`: `None` (no filter) for a
+    company-wide "all" scope, otherwise `Invitation.branch_id IN (...)`.
+    """
+    return None if branch_scope == "all" else Invitation.branch_id.in_(branch_scope)
+
+
+def _order_clause(column: Any, sort_order: SortOrder) -> Any:
+    return column.desc() if sort_order == SortOrder.desc else column.asc()
 
 
 class InvitationRepository(TenantScopedRepository[Invitation]):
@@ -40,6 +54,40 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             Invitation.primary_contact_email == email, Invitation.deleted_at.is_(None)
         )
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_page(
+        self,
+        *,
+        branch_scope: BranchScope,
+        status: str | None,
+        registration_type: str | None,
+        source: str | None,
+        page: int,
+        page_size: int,
+        sort_by: str,
+        sort_order: SortOrder,
+    ) -> tuple[list[Invitation], int]:
+        """Backs `GET /invitations` (design.md Decision 2) — deliberately no
+        `selectinload` of visitors/vehicles here (unlike `_with_children`
+        above), since `InvitationListItemOut` doesn't serialize either.
+        """
+        column = {"submitted_at": Invitation.submitted_at, "created_at": Invitation.created_at}[
+            sort_by
+        ]
+        branch_filter = _branch_filter(branch_scope)
+        filters: list[Any] = [f for f in [branch_filter] if f is not None]
+        if status is not None:
+            filters.append(Invitation.status == status)
+        if registration_type is not None:
+            filters.append(Invitation.registration_type == registration_type)
+        if source is not None:
+            filters.append(Invitation.source == source)
+        return await super().paginate(
+            page=page,
+            page_size=page_size,
+            order_by=_order_clause(column, sort_order),
+            filters=filters,
+        )
 
     def add_visitors(self, visitors: list[InvitationVisitor]) -> None:
         """One `session.add_all` for every co-visitor row from a single
