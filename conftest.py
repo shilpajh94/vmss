@@ -3,7 +3,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("APP_ENV", "test")
 
 # Point the whole process at `vmss_test` *before* any `vmss_api` import.
 # `core/database.py` builds its module-level `engine` — and everything on

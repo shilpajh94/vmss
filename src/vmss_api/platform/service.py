@@ -24,6 +24,7 @@ from vmss_api.platform.repository import (
 from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
 
+
 def _find_repo_root() -> Path:
     """`alembic_tenant.ini`/`alembic_tenant/` aren't part of the wheel
     (`pyproject.toml`'s wheel `packages` is `src/vmss_api` only) — they're
