@@ -5,7 +5,6 @@ import { LoadingState } from '../../components/ui/LoadingState'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
-import { CheckpointModal } from './Components/CheckpointModal'
 import { FloorCard } from './Components/FloorCard'
 import { FloorModal } from './Components/FloorModal'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
@@ -25,6 +24,7 @@ export function AdminBuildingFormPage() {
     expandedFloorIds,
     errors,
     isSaving,
+    isSavingFloor,
     updateField,
     openAddFloorModal,
     openEditFloorModal,
@@ -35,16 +35,8 @@ export function AdminBuildingFormPage() {
     cancelDeleteFloor,
     confirmDeleteFloor,
     pendingDeleteFloor,
+    isDeletingFloor,
     toggleFloorExpanded,
-    openAddCheckpointModal,
-    openEditCheckpointModal,
-    closeCheckpointModal,
-    checkpointModal,
-    saveCheckpoint,
-    requestDeleteCheckpoint,
-    cancelDeleteCheckpoint,
-    confirmDeleteCheckpoint,
-    pendingDeleteCheckpoint,
     submit,
     cancel,
   } = useAdminBuildingForm()
@@ -111,21 +103,34 @@ export function AdminBuildingFormPage() {
                       />
                     </div>
                   </div>
-                  <TextField
-                    label="Street Address"
-                    value={details.streetAddress ?? ''}
-                    onChange={(streetAddress) => updateField('streetAddress', streetAddress)}
-                    labelClassName={fieldLabelClassName}
-                  />
+                  <div className="flex gap-6">
+                    <div className="flex-1">
+                      <TextField
+                        label="Building Code"
+                        value={details.code}
+                        onChange={(code) => updateField('code', code)}
+                        error={errors.code}
+                        labelClassName={fieldLabelClassName}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <TextField
+                        label="Street Address"
+                        value={details.address}
+                        onChange={(address) => updateField('address', address)}
+                        labelClassName={fieldLabelClassName}
+                      />
+                    </div>
+                  </div>
                   <div className="flex items-center justify-between py-2">
                     <div className="flex flex-col gap-1">
                       <p className="font-body text-sm font-semibold text-text-muted">Building Status</p>
                       <p className="font-body text-xs text-text-faint">Set active state to allow access allocation and visitor intake checks</p>
                     </div>
                     <ToggleSwitch
-                      label={details.status === 'active' ? 'Active' : 'Inactive'}
-                      checked={details.status === 'active'}
-                      onChange={(checked) => updateField('status', checked ? 'active' : 'inactive')}
+                      label={details.isActive ? 'Active' : 'Inactive'}
+                      checked={details.isActive}
+                      onChange={(checked) => updateField('isActive', checked)}
                     />
                   </div>
                 </div>
@@ -135,31 +140,35 @@ export function AdminBuildingFormPage() {
                 <div className="flex flex-col gap-4">
                   <div className="flex w-full items-center justify-between">
                     <p className="font-body text-sm font-semibold text-text-muted">Floors</p>
-                    <button
-                      type="button"
-                      onClick={openAddFloorModal}
-                      className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
-                    >
-                      <PlusIcon className="size-4" />
-                      Add Floor
-                    </button>
+                    {isEditMode && (
+                      <button
+                        type="button"
+                        onClick={openAddFloorModal}
+                        className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
+                      >
+                        <PlusIcon className="size-4" />
+                        Add Floor
+                      </button>
+                    )}
                   </div>
 
-                  <div className="flex flex-col gap-3">
-                    {floors.map((floor) => (
-                      <FloorCard
-                        key={floor.id}
-                        floor={floor}
-                        isExpanded={expandedFloorIds.has(floor.id)}
-                        onToggleExpand={() => toggleFloorExpanded(floor.id)}
-                        onEdit={() => openEditFloorModal(floor)}
-                        onDelete={() => requestDeleteFloor(floor)}
-                        onAddCheckpoint={() => openAddCheckpointModal(floor.id)}
-                        onEditCheckpoint={(checkpoint) => openEditCheckpointModal(floor.id, checkpoint)}
-                        onDeleteCheckpoint={(checkpoint) => requestDeleteCheckpoint(floor.id, checkpoint)}
-                      />
-                    ))}
-                  </div>
+                  {isEditMode ? (
+                    <div className="flex flex-col gap-3">
+                      {floors.map((floor) => (
+                        <FloorCard
+                          key={floor.id}
+                          floor={floor}
+                          departments={departments.filter((department) => department.floorId === floor.id)}
+                          isExpanded={expandedFloorIds.has(floor.id)}
+                          onToggleExpand={() => toggleFloorExpanded(floor.id)}
+                          onEdit={() => openEditFloorModal(floor)}
+                          onDelete={() => requestDeleteFloor(floor)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="font-body text-sm text-text-faint">Save this building first to start adding floors.</p>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
@@ -184,34 +193,18 @@ export function AdminBuildingFormPage() {
       <FloorModal
         isOpen={floorModal !== undefined}
         initialFloor={floorModal?.mode === 'edit' ? floorModal.floor : undefined}
-        departments={departments}
-        onSave={saveFloor}
+        isSaving={isSavingFloor}
+        onSave={(details) => void saveFloor(details)}
         onClose={closeFloorModal}
-      />
-
-      <CheckpointModal
-        isOpen={checkpointModal !== undefined}
-        initialName={checkpointModal?.mode === 'edit' ? checkpointModal.checkpoint.name : undefined}
-        onSave={saveCheckpoint}
-        onClose={closeCheckpointModal}
       />
 
       <ConfirmDialog
         isOpen={pendingDeleteFloor !== undefined}
         title="Delete Floor"
-        message={`Are you sure you want to delete "${pendingDeleteFloor?.name}"? Its checkpoints will be removed too.`}
-        confirmLabel="Delete"
-        onConfirm={confirmDeleteFloor}
+        message={`Are you sure you want to delete "${pendingDeleteFloor?.name}"? This cannot be undone.`}
+        confirmLabel={isDeletingFloor ? 'Deleting…' : 'Delete'}
+        onConfirm={() => void confirmDeleteFloor()}
         onCancel={cancelDeleteFloor}
-      />
-
-      <ConfirmDialog
-        isOpen={pendingDeleteCheckpoint !== undefined}
-        title="Delete Checkpoint"
-        message={`Are you sure you want to delete "${pendingDeleteCheckpoint?.checkpoint.name}"?`}
-        confirmLabel="Delete"
-        onConfirm={confirmDeleteCheckpoint}
-        onCancel={cancelDeleteCheckpoint}
       />
     </div>
   )

@@ -2,21 +2,23 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import type { Building, Floor } from '../../../../domain/entities/building-schema'
+import type { Floor } from '../../../../domain/entities/floor-schema'
+import type { Building } from '../../../../domain/entities/building-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
 export interface FloorRow extends Floor {
-  buildingId: string
   buildingName: string
 }
 
 export function useAdminFloors() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listBuildingsUseCase, updateBuildingUseCase, listDepartmentsUseCase } = useAppDependencies()
+  const { getCurrentStaffUserUseCase, listFloorsUseCase, listBuildingsUseCase, listDepartmentsUseCase, deleteFloorUseCase } =
+    useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const [floorList, setFloorList] = useState<Floor[]>([])
   const [buildings, setBuildings] = useState<Building[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -30,12 +32,14 @@ export function useAdminFloors() {
     setErrorMessage(undefined)
 
     try {
-      const [user, buildingList, departmentList] = await Promise.all([
+      const [user, floorResult, buildingList, departmentList] = await Promise.all([
         getCurrentStaffUserUseCase.execute(),
+        listFloorsUseCase.execute(),
         listBuildingsUseCase.execute(),
         listDepartmentsUseCase.execute(),
       ])
       setCurrentUser(user)
+      setFloorList(floorResult)
       setBuildings(buildingList)
       setDepartments(departmentList)
     } catch {
@@ -44,7 +48,7 @@ export function useAdminFloors() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listBuildingsUseCase, listDepartmentsUseCase, toast])
+  }, [getCurrentStaffUserUseCase, listFloorsUseCase, listBuildingsUseCase, listDepartmentsUseCase, toast])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -59,12 +63,23 @@ export function useAdminFloors() {
     void loadFloors()
   }, [loadFloors])
 
+  const buildingNameById = useMemo(() => new Map(buildings.map((building) => [building.id, building.name])), [buildings])
+
   const floors: FloorRow[] = useMemo(
-    () => buildings.flatMap((building) => building.floors.map((floor) => ({ ...floor, buildingId: building.id, buildingName: building.name }))),
-    [buildings],
+    () => floorList.map((floor) => ({ ...floor, buildingName: buildingNameById.get(floor.buildingId) ?? '' })),
+    [floorList, buildingNameById],
   )
 
-  const departmentNameById = useMemo(() => new Map(departments.map((department) => [department.id, department.name])), [departments])
+  const departmentNamesByFloorId = useMemo(() => {
+    const map = new Map<string, string[]>()
+    for (const department of departments) {
+      if (!department.floorId) continue
+      const names = map.get(department.floorId) ?? []
+      names.push(department.name)
+      map.set(department.floorId, names)
+    }
+    return map
+  }, [departments])
 
   const requestDelete = useCallback((floor: FloorRow) => setPendingDelete(floor), [])
   const cancelDelete = useCallback(() => setPendingDelete(undefined), [])
@@ -74,21 +89,8 @@ export function useAdminFloors() {
 
     setIsDeleting(true)
     try {
-      const building = buildings.find((candidate) => candidate.id === pendingDelete.buildingId)
-      if (!building) throw new Error('Building not found')
-
-      const nextFloors = building.floors.filter((floor) => floor.id !== pendingDelete.id)
-      await updateBuildingUseCase.execute(building.id, {
-        name: building.name,
-        branchId: building.branchId,
-        streetAddress: building.streetAddress,
-        status: building.status,
-        floors: nextFloors,
-      })
-
-      setBuildings((current) =>
-        current.map((candidate) => (candidate.id === building.id ? { ...candidate, floors: nextFloors } : candidate)),
-      )
+      await deleteFloorUseCase.execute(pendingDelete.id)
+      setFloorList((current) => current.filter((floor) => floor.id !== pendingDelete.id))
       toast.success('Floor deleted.')
       setPendingDelete(undefined)
     } catch {
@@ -96,12 +98,12 @@ export function useAdminFloors() {
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, buildings, updateBuildingUseCase, toast])
+  }, [pendingDelete, deleteFloorUseCase, toast])
 
   return {
     currentUser,
     floors,
-    departmentNameById,
+    departmentNamesByFloorId,
     isLoading,
     errorMessage,
     retry,

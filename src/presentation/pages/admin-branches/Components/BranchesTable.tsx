@@ -27,17 +27,17 @@ export function BranchesTable({ branches, onEdit, onDelete }: BranchesTableProps
           {branches.map((branch) => (
             <tr key={branch.id} className="border-b border-border-subtle">
               <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">{branch.name}</td>
-              <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{branch.locationCity}</td>
-              <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{branch.branchCode}</td>
-              <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{branch.contactPerson}</td>
+              <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{branch.city}</td>
+              <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{branch.code}</td>
+              <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{branch.contactPersonUserId}</td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <span
                   className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                    branch.status === 'active' ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
+                    branch.isActive ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
                   }`}
                 >
-                  <span className={`size-1.5 rounded-full ${branch.status === 'active' ? 'bg-success' : 'bg-text-faint'}`} />
-                  {branch.status === 'active' ? 'Active' : 'Inactive'}
+                  <span className={`size-1.5 rounded-full ${branch.isActive ? 'bg-success' : 'bg-text-faint'}`} />
+                  {branch.isActive ? 'Active' : 'Inactive'}
                 </span>
               </td>
               <td className="px-6 py-4">

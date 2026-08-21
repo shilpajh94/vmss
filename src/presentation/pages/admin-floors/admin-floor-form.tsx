@@ -1,16 +1,15 @@
 import { AdminSidebar } from '../../components/AdminSidebar'
 import { AdminTopBar } from '../../components/AdminTopBar'
 import { ChevronLeftIcon } from '../../components/icons'
-import { DepartmentMultiSelect } from '../../components/ui/DepartmentMultiSelect'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
 import { useAdminFloorForm } from './hooks/use-admin-floor-form'
 
-const CAPACITY_UNIT_OPTIONS = [
-  { value: 'Guests', label: 'Guests' },
-  { value: 'Staff', label: 'Staff' },
+const CAPACITY_TYPE_OPTIONS = [
+  { value: 'guests', label: 'Guests' },
+  { value: 'staff', label: 'Staff' },
 ]
 
 const ACCESS_LEVEL_OPTIONS = [
@@ -24,7 +23,6 @@ export function AdminFloorFormPage() {
     isEditMode,
     currentUser,
     buildings,
-    departments,
     isLoading,
     errorMessage,
     retry,
@@ -92,18 +90,26 @@ export function AdminFloorFormPage() {
                 <div className="flex gap-6">
                   <div className="flex-1">
                     <TextField
+                      label="Floor Number"
+                      type="number"
+                      value={String(values.floorNumber)}
+                      onChange={(value) => updateField('floorNumber', Number(value) || 0)}
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <TextField
                       label="Capacity"
                       type="number"
-                      value={String(values.capacityCount)}
-                      onChange={(value) => updateField('capacityCount', Number(value) || 0)}
+                      value={String(values.capacity)}
+                      onChange={(value) => updateField('capacity', Number(value) || 0)}
                     />
                   </div>
                   <div className="flex-1">
                     <SelectField
                       label="Unit"
-                      value={values.capacityUnit}
-                      onChange={(capacityUnit) => updateField('capacityUnit', capacityUnit as typeof values.capacityUnit)}
-                      options={CAPACITY_UNIT_OPTIONS}
+                      value={values.capacityType}
+                      onChange={(capacityType) => updateField('capacityType', capacityType as typeof values.capacityType)}
+                      options={CAPACITY_TYPE_OPTIONS}
                     />
                   </div>
                 </div>
@@ -113,15 +119,10 @@ export function AdminFloorFormPage() {
                   onChange={(accessLevel) => updateField('accessLevel', accessLevel as typeof values.accessLevel)}
                   options={ACCESS_LEVEL_OPTIONS}
                 />
-                <DepartmentMultiSelect
-                  departments={departments}
-                  selectedIds={values.departmentIds}
-                  onChange={(departmentIds) => updateField('departmentIds', departmentIds)}
-                />
                 <ToggleSwitch
-                  label={values.status === 'active' ? 'Active' : 'Inactive'}
-                  checked={values.status === 'active'}
-                  onChange={(checked) => updateField('status', checked ? 'active' : 'inactive')}
+                  label={values.isActive ? 'Active' : 'Inactive'}
+                  checked={values.isActive}
+                  onChange={(checked) => updateField('isActive', checked)}
                 />
 
                 <div className="flex items-center justify-end gap-3 border-t border-border pt-4">

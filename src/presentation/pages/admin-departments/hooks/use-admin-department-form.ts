@@ -3,15 +3,19 @@ import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { Branch } from '../../../../domain/entities/branch-schema'
-import type { DepartmentInput } from '../../../../domain/entities/department-schema'
+import type { Department } from '../../../../domain/entities/department-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+
+type DepartmentInput = Omit<Department, 'id' | 'branchName'>
 
 const EMPTY_VALUES: DepartmentInput = {
   name: '',
+  code: '',
   branchId: '',
-  headOfDepartment: undefined,
+  floorId: undefined,
+  headOfDepartmentUserId: undefined,
   description: undefined,
-  status: 'active',
+  isActive: true,
 }
 
 export function useAdminDepartmentForm() {
@@ -50,10 +54,12 @@ export function useAdminDepartmentForm() {
         }
         setValues({
           name: department.name,
+          code: department.code,
           branchId: department.branchId,
-          headOfDepartment: department.headOfDepartment,
+          floorId: department.floorId,
+          headOfDepartmentUserId: department.headOfDepartmentUserId,
           description: department.description,
-          status: department.status,
+          isActive: department.isActive,
         })
       } else {
         setValues(EMPTY_VALUES)
@@ -86,6 +92,7 @@ export function useAdminDepartmentForm() {
   const submit = useCallback(async () => {
     const nextErrors: Partial<Record<keyof DepartmentInput, string>> = {}
     if (!values.name.trim()) nextErrors.name = 'Department name is required.'
+    if (!values.code.trim()) nextErrors.code = 'Department code is required.'
     if (!values.branchId.trim()) nextErrors.branchId = 'Branch is required.'
 
     if (Object.keys(nextErrors).length > 0) {

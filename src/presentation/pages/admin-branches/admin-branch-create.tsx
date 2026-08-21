@@ -38,9 +38,9 @@ export function AdminBranchCreatePage() {
                   <TextField
                     label="Branch Code"
                     required
-                    value={values.branchCode}
-                    onChange={(branchCode) => updateField('branchCode', branchCode)}
-                    error={errors.branchCode}
+                    value={values.code}
+                    onChange={(code) => updateField('code', code)}
+                    error={errors.code}
                   />
                 </div>
               </div>
@@ -49,9 +49,9 @@ export function AdminBranchCreatePage() {
                   <TextField
                     label="Location / City"
                     required
-                    value={values.locationCity}
-                    onChange={(locationCity) => updateField('locationCity', locationCity)}
-                    error={errors.locationCity}
+                    value={values.city}
+                    onChange={(city) => updateField('city', city)}
+                    error={errors.city}
                   />
                 </div>
                 <div className="flex-1">
@@ -68,12 +68,12 @@ export function AdminBranchCreatePage() {
               <div className="flex flex-col gap-1.5">
                 <TextareaField
                   label="Physical Address"
-                  value={values.physicalAddress}
-                  onChange={(physicalAddress) => updateField('physicalAddress', physicalAddress)}
+                  value={values.address}
+                  onChange={(address) => updateField('address', address)}
                   placeholder="Enter complete postal street address, landmarks, and area code..."
                   rows={2}
                 />
-                {errors.physicalAddress && <p className="text-caption text-danger">{errors.physicalAddress}</p>}
+                {errors.address && <p className="text-caption text-danger">{errors.address}</p>}
               </div>
             </div>
 
@@ -86,9 +86,9 @@ export function AdminBranchCreatePage() {
                   <TextField
                     label="Contact Person (Regional Admin)"
                     required
-                    value={values.contactPerson}
-                    onChange={(contactPerson) => updateField('contactPerson', contactPerson)}
-                    error={errors.contactPerson}
+                    value={values.contactPersonUserId}
+                    onChange={(contactPersonUserId) => updateField('contactPersonUserId', contactPersonUserId)}
+                    error={errors.contactPersonUserId}
                   />
                 </div>
                 <div className="flex-1">
@@ -135,10 +135,10 @@ export function AdminBranchCreatePage() {
                 <div className="flex w-[240px] flex-col gap-3">
                   <ToggleSwitch
                     label="Operational Status"
-                    checked={values.status === 'active'}
-                    onChange={(checked) => updateField('status', checked ? 'active' : 'inactive')}
+                    checked={values.isActive}
+                    onChange={(checked) => updateField('isActive', checked)}
                   />
-                  <p className="font-body text-sm font-semibold text-text">{values.status === 'active' ? 'Active / Open' : 'Inactive / Closed'}</p>
+                  <p className="font-body text-sm font-semibold text-text">{values.isActive ? 'Active / Open' : 'Inactive / Closed'}</p>
                 </div>
                 <div className="flex-1">
                   <TextareaField

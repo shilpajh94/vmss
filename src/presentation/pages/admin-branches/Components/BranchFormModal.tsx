@@ -12,26 +12,26 @@ type BranchFormValues = Omit<Branch, 'id'>
 
 const EMPTY_VALUES: BranchFormValues = {
   name: '',
-  locationCity: '',
-  branchCode: '',
+  city: '',
+  code: '',
   country: '',
-  physicalAddress: '',
-  contactPerson: '',
+  address: '',
+  contactPersonUserId: '',
   contactEmail: '',
   contactPhone: '',
   operatingHoursFrom: undefined,
   operatingHoursTo: undefined,
   notes: undefined,
-  status: 'active',
+  isActive: true,
 }
 
 const REQUIRED_FIELDS: Array<{ key: keyof BranchFormValues; message: string }> = [
   { key: 'name', message: 'Branch name is required.' },
-  { key: 'branchCode', message: 'Branch code is required.' },
-  { key: 'locationCity', message: 'Location/city is required.' },
+  { key: 'code', message: 'Branch code is required.' },
+  { key: 'city', message: 'Location/city is required.' },
   { key: 'country', message: 'Country is required.' },
-  { key: 'physicalAddress', message: 'Physical address is required.' },
-  { key: 'contactPerson', message: 'Contact person is required.' },
+  { key: 'address', message: 'Physical address is required.' },
+  { key: 'contactPersonUserId', message: 'Contact person is required.' },
   { key: 'contactEmail', message: 'Contact email is required.' },
   { key: 'contactPhone', message: 'Contact phone is required.' },
 ]
@@ -81,16 +81,16 @@ export function BranchFormModal({ formState, isSaving, onSubmit, onClose }: Bran
         <TextField label="Branch Name" value={values.name} onChange={(name) => updateField('name', name)} error={errors.name} required />
         <TextField
           label="Branch Code"
-          value={values.branchCode}
-          onChange={(branchCode) => updateField('branchCode', branchCode)}
-          error={errors.branchCode}
+          value={values.code}
+          onChange={(code) => updateField('code', code)}
+          error={errors.code}
           required
         />
         <TextField
           label="Location / City"
-          value={values.locationCity}
-          onChange={(locationCity) => updateField('locationCity', locationCity)}
-          error={errors.locationCity}
+          value={values.city}
+          onChange={(city) => updateField('city', city)}
+          error={errors.city}
           required
         />
         <SelectField
@@ -104,17 +104,17 @@ export function BranchFormModal({ formState, isSaving, onSubmit, onClose }: Bran
         <div className="flex flex-col gap-1.5">
           <TextareaField
             label="Physical Address"
-            value={values.physicalAddress}
-            onChange={(physicalAddress) => updateField('physicalAddress', physicalAddress)}
+            value={values.address}
+            onChange={(address) => updateField('address', address)}
             rows={2}
           />
-          {errors.physicalAddress && <p className="text-caption text-danger">{errors.physicalAddress}</p>}
+          {errors.address && <p className="text-caption text-danger">{errors.address}</p>}
         </div>
         <TextField
           label="Contact Person"
-          value={values.contactPerson}
-          onChange={(contactPerson) => updateField('contactPerson', contactPerson)}
-          error={errors.contactPerson}
+          value={values.contactPersonUserId}
+          onChange={(contactPersonUserId) => updateField('contactPersonUserId', contactPersonUserId)}
+          error={errors.contactPersonUserId}
           required
         />
         <TextField
@@ -156,7 +156,7 @@ export function BranchFormModal({ formState, isSaving, onSubmit, onClose }: Bran
           onChange={(notes) => updateField('notes', notes)}
           rows={2}
         />
-        <ToggleSwitch label="Active" checked={values.status === 'active'} onChange={(checked) => updateField('status', checked ? 'active' : 'inactive')} />
+        <ToggleSwitch label="Active" checked={values.isActive} onChange={(checked) => updateField('isActive', checked)} />
       </div>
 
       <div className="flex items-center justify-end gap-3 pt-2">

@@ -4,7 +4,7 @@ import type { FloorRow } from '../hooks/use-admin-floors'
 
 interface FloorsTableProps {
   floors: FloorRow[]
-  departmentNameById: Map<string, string>
+  departmentNamesByFloorId: Map<string, string[]>
   onDelete: (floor: FloorRow) => void
 }
 
@@ -16,7 +16,7 @@ const ACCESS_LEVEL_STYLES: Record<FloorRow['accessLevel'], { label: string; bg: 
   secure: { label: 'Secure', bg: 'bg-[#fee2e2]', text: 'text-[#991b1b]', dot: 'bg-[#991b1b]' },
 }
 
-export function FloorsTable({ floors, departmentNameById, onDelete }: FloorsTableProps) {
+export function FloorsTable({ floors, departmentNamesByFloorId, onDelete }: FloorsTableProps) {
   const navigate = useNavigate()
 
   return (
@@ -36,15 +36,17 @@ export function FloorsTable({ floors, departmentNameById, onDelete }: FloorsTabl
         <tbody>
           {floors.map((floor) => {
             const accessLevel = ACCESS_LEVEL_STYLES[floor.accessLevel]
-            const departmentNames = floor.departmentIds.map((id) => departmentNameById.get(id)).filter(Boolean).join(', ')
+            const departmentNames = (departmentNamesByFloorId.get(floor.id) ?? []).join(', ')
 
             return (
               <tr key={floor.id} className="border-b border-border-subtle">
-                <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">{floor.name}</td>
+                <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">
+                  {floor.name} <span className="text-text-faint">(#{floor.floorNumber})</span>
+                </td>
                 <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{floor.buildingName}</td>
                 <td className="max-w-[175px] truncate px-6 py-4 font-body text-sm text-text-muted">{departmentNames || '—'}</td>
                 <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">
-                  {floor.capacityCount} {floor.capacityUnit}
+                  {floor.capacity} {floor.capacityType}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${accessLevel.bg} ${accessLevel.text}`}>
@@ -55,11 +57,11 @@ export function FloorsTable({ floors, departmentNameById, onDelete }: FloorsTabl
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                      floor.status === 'active' ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
+                      floor.isActive ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
                     }`}
                   >
-                    <span className={`size-1.5 rounded-full ${floor.status === 'active' ? 'bg-success' : 'bg-text-faint'}`} />
-                    {floor.status === 'active' ? 'Active' : 'Inactive'}
+                    <span className={`size-1.5 rounded-full ${floor.isActive ? 'bg-success' : 'bg-text-faint'}`} />
+                    {floor.isActive ? 'Active' : 'Inactive'}
                   </span>
                 </td>
                 <td className="px-6 py-4">

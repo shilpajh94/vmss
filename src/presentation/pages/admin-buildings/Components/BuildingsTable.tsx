@@ -7,7 +7,7 @@ interface BuildingsTableProps {
   onDelete: (building: Building) => void
 }
 
-const COLUMN_HEADERS = ['BUILDING NAME', 'BRANCH', 'ADDRESS', 'TOTAL FLOORS', 'RECEPTION DESKS', 'STATUS']
+const COLUMN_HEADERS = ['BUILDING NAME', 'BRANCH', 'CODE', 'ADDRESS', 'STATUS']
 
 export function BuildingsTable({ buildings, onDelete }: BuildingsTableProps) {
   const navigate = useNavigate()
@@ -30,17 +30,16 @@ export function BuildingsTable({ buildings, onDelete }: BuildingsTableProps) {
             <tr key={building.id} className="border-b border-border-subtle">
               <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">{building.name}</td>
               <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{building.branchName}</td>
-              <td className="max-w-[175px] truncate px-6 py-4 font-body text-sm text-text-faint">{building.streetAddress ?? '—'}</td>
-              <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{building.floors.length} Floors</td>
-              <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{building.receptionDesks ?? '—'}</td>
+              <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{building.code}</td>
+              <td className="max-w-[175px] truncate px-6 py-4 font-body text-sm text-text-faint">{building.address || '—'}</td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <span
                   className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                    building.status === 'active' ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
+                    building.isActive ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
                   }`}
                 >
-                  <span className={`size-1.5 rounded-full ${building.status === 'active' ? 'bg-success' : 'bg-text-faint'}`} />
-                  {building.status === 'active' ? 'Active' : 'Inactive'}
+                  <span className={`size-1.5 rounded-full ${building.isActive ? 'bg-success' : 'bg-text-faint'}`} />
+                  {building.isActive ? 'Active' : 'Inactive'}
                 </span>
               </td>
               <td className="px-6 py-4">

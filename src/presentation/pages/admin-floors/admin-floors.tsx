@@ -13,7 +13,7 @@ export function AdminFloorsPage() {
   const {
     currentUser,
     floors,
-    departmentNameById,
+    departmentNamesByFloorId,
     isLoading,
     errorMessage,
     retry,
@@ -72,7 +72,7 @@ export function AdminFloorsPage() {
               <EmptyState message="No floors yet." action={{ label: 'Add Floor', onClick: goToAddFloor }} />
             </div>
           ) : (
-            <FloorsTable floors={floors} departmentNameById={departmentNameById} onDelete={requestDelete} />
+            <FloorsTable floors={floors} departmentNamesByFloorId={departmentNamesByFloorId} onDelete={requestDelete} />
           )}
         </main>
       </div>
