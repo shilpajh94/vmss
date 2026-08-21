@@ -132,7 +132,15 @@ export function useAdminHostEmployeeForm() {
 
     setIsSaving(true)
     try {
-      await createHostEmployeeUseCase.execute(createValues)
+      // Validation above checks trimmed length/presence; submit the same
+      // trimmed values so a stray space (easy via copy-paste) can't make the
+      // stored credential silently differ from what the employee types back in.
+      await createHostEmployeeUseCase.execute({
+        ...createValues,
+        fullName: createValues.fullName.trim(),
+        email: createValues.email.trim(),
+        password: createValues.password.trim(),
+      })
       toast.success('Host employee created.')
       navigate('/admin/host-employees')
     } catch {

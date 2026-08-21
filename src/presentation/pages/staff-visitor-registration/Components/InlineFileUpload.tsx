@@ -9,9 +9,10 @@ interface InlineFileUploadProps {
   fileName?: string
   onUpload: (file: File) => Promise<string>
   onFileRefChange: (fileRef: string | undefined, fileName: string | undefined) => void
+  error?: string
 }
 
-export function InlineFileUpload({ label, allowedTypes, fileName, onUpload, onFileRefChange }: InlineFileUploadProps) {
+export function InlineFileUpload({ label, allowedTypes, fileName, onUpload, onFileRefChange, error: externalError }: InlineFileUploadProps) {
   const inputId = useId()
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -55,7 +56,7 @@ export function InlineFileUpload({ label, allowedTypes, fileName, onUpload, onFi
         {uploading ? 'Uploading…' : (fileName ?? label)}
       </label>
       <input id={inputId} type="file" className="hidden" onChange={handleChange} disabled={uploading} />
-      {error && <p className="text-caption text-danger">{error}</p>}
+      {(error ?? externalError) && <p className="text-caption text-danger">{error ?? externalError}</p>}
     </div>
   )
 }

@@ -62,19 +62,37 @@ function toStaffVisitor(entry: StaffVisitorFormEntry) {
     phone: entry.phone,
     preferredContactMethod: entry.preferredContactMethod,
     idProofType: entry.idProofType,
-    idProofFileRef: entry.idProofFileRef,
   }
 }
 
+// Maps wizard form state onto the `payload` wire contract for POST /invitations
+// (identical contract to POST /registrations/walk-in, see visitor-request/types.ts).
+// `location`/`building` aren't part of that contract and are dropped here;
+// ID-proof files travel separately, see use-staff-visitor-registration-wizard.
 export function toStaffVisitRequest(formState: StaffVisitRequestFormState): StaffVisitRequest {
   return {
     registrationType: formState.registrationType,
     primaryContact: toStaffVisitor(formState.primaryContact),
-    additionalVisitors: formState.additionalVisitors.map(toStaffVisitor),
-    visitInfo: formState.visitInfo,
-    carriedItems: formState.carriedItems,
+    visitors: formState.additionalVisitors.map(toStaffVisitor),
+    visitDetails: {
+      purposeOfVisit: formState.visitInfo.purpose,
+      hostNameOrEmail: formState.visitInfo.hostNameOrEmail,
+      preferredVisitDate: formState.visitInfo.preferredDate,
+      preferredVisitTime: formState.visitInfo.preferredTime,
+      expectedDuration: formState.visitInfo.expectedDuration,
+      departmentToVisit: formState.visitInfo.department,
+      additionalNotes: formState.visitInfo.notes,
+    },
+    carriedItems: {
+      items: formState.carriedItems.categories,
+      itemDescription: formState.carriedItems.description,
+    },
     vehicles: formState.vehicles,
-    consent: formState.consent,
+    consents: {
+      termsAccepted: formState.consent.agreedTerms,
+      dataProcessingAccepted: formState.consent.agreedDataUse,
+      safetyGuidelinesAccepted: formState.consent.agreedSafety,
+    },
   }
 }
 

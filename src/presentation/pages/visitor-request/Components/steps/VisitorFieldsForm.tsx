@@ -14,13 +14,13 @@ const VISITOR_CATEGORY_OPTIONS = [
   { value: 'other', label: 'Other' },
 ]
 
+// Values must match the backend's `idProofType` enum for
+// POST /registrations/walk-in exactly (validated server-side against these 4 strings).
 const ID_PROOF_OPTIONS = [
-  { value: 'aadhaar-card', label: 'Aadhaar Card' },
-  { value: 'passport', label: 'Passport' },
-  { value: 'driving-license', label: 'Driving License' },
-  { value: 'pan-card', label: 'PAN Card' },
-  { value: 'voter-id', label: 'Voter ID' },
-  { value: 'other', label: 'Other' },
+  { value: 'Aadhaar Card', label: 'Aadhaar Card' },
+  { value: 'Passport', label: 'Passport' },
+  { value: 'Driving License', label: 'Driving License' },
+  { value: 'Other', label: 'Other' },
 ]
 
 const ID_PROOF_ALLOWED_TYPES = ['image/png', 'image/jpeg', 'application/pdf']
@@ -110,6 +110,7 @@ export function VisitorFieldsForm({ value, onChange, showContactMethod, uploadFi
         fileName={value.idProofFileName}
         onUpload={uploadFile}
         onFileRefChange={(idProofFileRef, idProofFileName) => onChange({ ...value, idProofFileRef, idProofFileName })}
+        error={errors?.idProofFileRef}
       />
       <FileUploadField
         label="Profile Image"

@@ -1,6 +1,10 @@
 import { SelectField } from '../../../../components/ui/SelectField'
 import { TextField } from '../../../../components/ui/TextField'
 import { TextareaField } from '../../../../components/ui/TextareaField'
+import type { Branch } from '../../../../../domain/entities/branch-schema'
+import type { Building } from '../../../../../domain/entities/building-schema'
+import type { Department } from '../../../../../domain/entities/department-schema'
+import type { HostEmployee } from '../../../../../domain/entities/host-employee-schema'
 import type { VisitInfoFormState } from '../../types'
 
 const PURPOSE_OPTIONS = [
@@ -25,9 +29,25 @@ interface VisitInfoStepProps {
   value: VisitInfoFormState
   onChange: (value: VisitInfoFormState) => void
   errors: Record<string, string>
+  hostEmployees?: HostEmployee[]
+  branches?: Branch[]
+  buildings?: Building[]
+  departments?: Department[]
 }
 
-export function VisitInfoStep({ value, onChange, errors }: VisitInfoStepProps) {
+export function VisitInfoStep({ value, onChange, errors, hostEmployees, branches, buildings, departments }: VisitInfoStepProps) {
+  const selectedBranch = branches?.find((branch) => branch.name === value.location)
+  const buildingOptions = (selectedBranch ? buildings?.filter((building) => building.branchId === selectedBranch.id) : buildings)?.map(
+    (building) => ({ value: building.name, label: building.name }),
+  )
+  const departmentOptions = (
+    selectedBranch ? departments?.filter((department) => department.branchId === selectedBranch.id) : departments
+  )?.map((department) => ({ value: department.name, label: department.name }))
+
+  const handleLocationChange = (location: string) => {
+    onChange({ ...value, location, building: '', department: '' })
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <h3 className="text-h3 text-text">Visit Details</h3>
@@ -41,14 +61,26 @@ export function VisitInfoStep({ value, onChange, errors }: VisitInfoStepProps) {
           error={errors.purpose}
           required
         />
-        <TextField
-          label="Host Name or Email"
-          placeholder="Enter host name or email"
-          value={value.hostNameOrEmail}
-          onChange={(hostNameOrEmail) => onChange({ ...value, hostNameOrEmail })}
-          error={errors.hostNameOrEmail}
-          required
-        />
+        {hostEmployees ? (
+          <SelectField
+            label="Host Name or Email"
+            placeholder="Select host"
+            options={hostEmployees.map((employee) => ({ value: employee.email, label: `${employee.fullName} (${employee.email})` }))}
+            value={value.hostNameOrEmail}
+            onChange={(hostNameOrEmail) => onChange({ ...value, hostNameOrEmail })}
+            error={errors.hostNameOrEmail}
+            required
+          />
+        ) : (
+          <TextField
+            label="Host Name or Email"
+            placeholder="Enter host name or email"
+            value={value.hostNameOrEmail}
+            onChange={(hostNameOrEmail) => onChange({ ...value, hostNameOrEmail })}
+            error={errors.hostNameOrEmail}
+            required
+          />
+        )}
         <TextField
           label="Preferred Visit Date"
           type="date"
@@ -74,30 +106,66 @@ export function VisitInfoStep({ value, onChange, errors }: VisitInfoStepProps) {
           error={errors.expectedDuration}
           required
         />
-        <TextField
-          label="Location"
-          placeholder="Enter site/location"
-          value={value.location}
-          onChange={(location) => onChange({ ...value, location })}
-          error={errors.location}
-          required
-        />
-        <TextField
-          label="Building"
-          placeholder="Enter building"
-          value={value.building}
-          onChange={(building) => onChange({ ...value, building })}
-          error={errors.building}
-          required
-        />
-        <TextField
-          label="Department to Visit"
-          placeholder="Enter department name"
-          value={value.department}
-          onChange={(department) => onChange({ ...value, department })}
-          error={errors.department}
-          required
-        />
+        {branches ? (
+          <SelectField
+            label="Location"
+            placeholder="Select location"
+            options={branches.map((branch) => ({ value: branch.name, label: branch.name }))}
+            value={value.location}
+            onChange={handleLocationChange}
+            error={errors.location}
+            required
+          />
+        ) : (
+          <TextField
+            label="Location"
+            placeholder="Enter site/location"
+            value={value.location}
+            onChange={(location) => onChange({ ...value, location })}
+            error={errors.location}
+            required
+          />
+        )}
+        {buildingOptions ? (
+          <SelectField
+            label="Building"
+            placeholder="Select building"
+            options={buildingOptions}
+            value={value.building}
+            onChange={(building) => onChange({ ...value, building })}
+            error={errors.building}
+            required
+          />
+        ) : (
+          <TextField
+            label="Building"
+            placeholder="Enter building"
+            value={value.building}
+            onChange={(building) => onChange({ ...value, building })}
+            error={errors.building}
+            required
+          />
+        )}
+        {departmentOptions ? (
+          <SelectField
+            label="Department to Visit"
+            placeholder="Select department"
+            options={departmentOptions}
+            value={value.department}
+            onChange={(department) => onChange({ ...value, department })}
+            error={errors.department}
+            required
+          />
+        ) : (
+          <TextField
+            label="Department to Visit"
+            placeholder="Enter department name"
+            value={value.department}
+            onChange={(department) => onChange({ ...value, department })}
+            error={errors.department}
+            required
+          />
+        )}
       </div>
       <TextareaField
         label="Additional Notes / Special Requirements"

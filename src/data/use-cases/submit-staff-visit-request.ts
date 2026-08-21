@@ -1,4 +1,5 @@
 import type { StaffVisitRequestRepository } from '../repositories/staff-visit-request-repository'
+import type { InvitationSubmissionFiles } from '../repositories/visit-request-repository'
 import type { StaffVisitRequest } from '../../domain/entities/staff-visit-request-schema'
 import type { VisitRequestResponse } from '../../domain/entities/visit-request-schema'
 
@@ -9,7 +10,7 @@ export class SubmitStaffVisitRequestUseCase {
     this.staffVisitRequestRepository = staffVisitRequestRepository
   }
 
-  async execute(request: StaffVisitRequest): Promise<VisitRequestResponse> {
-    return this.staffVisitRequestRepository.submit(request)
+  async execute(request: StaffVisitRequest, files: InvitationSubmissionFiles, branchId: string): Promise<VisitRequestResponse> {
+    return this.staffVisitRequestRepository.submit(request, files, branchId)
   }
 }

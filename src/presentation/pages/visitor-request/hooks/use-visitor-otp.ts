@@ -59,20 +59,14 @@ export function useVisitorOtp({ onVerified }: UseVisitorOtpOptions) {
     setVerifyErrorMessage(undefined)
 
     try {
-      const response = await verifyVisitorOtpUseCase.execute({ contact: contact.trim(), code: code.trim() })
-      if (!response.verified) {
-        setVerifyErrorMessage('That code is invalid or has expired. Please try again.')
-        setVerifyStatus('error')
-        toast.error('That code is invalid or has expired. Please try again.')
-        return
-      }
+      await verifyVisitorOtpUseCase.execute({ contact: contact.trim(), code: code.trim() })
       setVerifyStatus('idle')
       toast.success('Contact verified.')
       onVerified(registrationType, contact.trim())
     } catch {
-      setVerifyErrorMessage('Something went wrong verifying that code. Please try again.')
+      setVerifyErrorMessage('That code is invalid or has expired. Please try again.')
       setVerifyStatus('error')
-      toast.error('Something went wrong verifying that code. Please try again.')
+      toast.error('That code is invalid or has expired. Please try again.')
     }
   }
 

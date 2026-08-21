@@ -20,10 +20,9 @@ import { SubmitVisitRequestUseCase } from './data/use-cases/submit-visit-request
 import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-visit-request'
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
 import { TrackVisitRequestUseCase } from './data/use-cases/track-visit-request'
-import { UploadVisitorDocumentUseCase } from './data/use-cases/upload-visitor-document'
 import { RequestVisitorOtpUseCase } from './data/use-cases/request-visitor-otp'
 import { VerifyVisitorOtpUseCase } from './data/use-cases/verify-visitor-otp'
-import { InitiateStaffSsoUseCase } from './data/use-cases/initiate-staff-sso'
+import { LoginStaffUseCase } from './data/use-cases/login-staff'
 import { ListVisitRequestsUseCase } from './data/use-cases/list-visit-requests'
 import { GetCurrentStaffUserUseCase } from './data/use-cases/get-current-staff-user'
 import { GetOrganisationConfigUseCase } from './data/use-cases/get-organisation-config'
@@ -85,11 +84,10 @@ import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category
 export interface AppDependencies {
   apiClient: ApiClient
   submitVisitRequestUseCase: SubmitVisitRequestUseCase
-  uploadVisitorDocumentUseCase: UploadVisitorDocumentUseCase
   trackVisitRequestUseCase: TrackVisitRequestUseCase
   requestVisitorOtpUseCase: RequestVisitorOtpUseCase
   verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase
-  initiateStaffSsoUseCase: InitiateStaffSsoUseCase
+  loginStaffUseCase: LoginStaffUseCase
   listVisitRequestsUseCase: ListVisitRequestsUseCase
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
@@ -142,11 +140,10 @@ export function createApp(): AppDependencies {
   let visitorOtpRepository: VisitorOtpRepository | undefined
   let staffAuthRepository: StaffAuthRepository | undefined
   let submitVisitRequestUseCase: SubmitVisitRequestUseCase | undefined
-  let uploadVisitorDocumentUseCase: UploadVisitorDocumentUseCase | undefined
   let trackVisitRequestUseCase: TrackVisitRequestUseCase | undefined
   let requestVisitorOtpUseCase: RequestVisitorOtpUseCase | undefined
   let verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase | undefined
-  let initiateStaffSsoUseCase: InitiateStaffSsoUseCase | undefined
+  let loginStaffUseCase: LoginStaffUseCase | undefined
   let listVisitRequestsUseCase: ListVisitRequestsUseCase | undefined
   let getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase | undefined
   let staffVisitRequestRepository: StaffVisitRequestRepository | undefined
@@ -222,11 +219,6 @@ export function createApp(): AppDependencies {
     return submitVisitRequestUseCase
   }
 
-  const resolveUploadVisitorDocumentUseCase = (): UploadVisitorDocumentUseCase => {
-    uploadVisitorDocumentUseCase ??= new UploadVisitorDocumentUseCase(resolveVisitRequestRepository())
-    return uploadVisitorDocumentUseCase
-  }
-
   const resolveTrackVisitRequestUseCase = (): TrackVisitRequestUseCase => {
     trackVisitRequestUseCase ??= new TrackVisitRequestUseCase(resolveVisitTrackingRepository())
     return trackVisitRequestUseCase
@@ -252,9 +244,9 @@ export function createApp(): AppDependencies {
     return staffAuthRepository
   }
 
-  const resolveInitiateStaffSsoUseCase = (): InitiateStaffSsoUseCase => {
-    initiateStaffSsoUseCase ??= new InitiateStaffSsoUseCase(resolveStaffAuthRepository())
-    return initiateStaffSsoUseCase
+  const resolveLoginStaffUseCase = (): LoginStaffUseCase => {
+    loginStaffUseCase ??= new LoginStaffUseCase(resolveStaffAuthRepository())
+    return loginStaffUseCase
   }
 
   const resolveVisitRequestSummaryRepository = (): VisitRequestSummaryRepository => {
@@ -544,9 +536,6 @@ export function createApp(): AppDependencies {
     get submitVisitRequestUseCase() {
       return resolveSubmitVisitRequestUseCase()
     },
-    get uploadVisitorDocumentUseCase() {
-      return resolveUploadVisitorDocumentUseCase()
-    },
     get trackVisitRequestUseCase() {
       return resolveTrackVisitRequestUseCase()
     },
@@ -556,8 +545,8 @@ export function createApp(): AppDependencies {
     get verifyVisitorOtpUseCase() {
       return resolveVerifyVisitorOtpUseCase()
     },
-    get initiateStaffSsoUseCase() {
-      return resolveInitiateStaffSsoUseCase()
+    get loginStaffUseCase() {
+      return resolveLoginStaffUseCase()
     },
     get listVisitRequestsUseCase() {
       return resolveListVisitRequestsUseCase()

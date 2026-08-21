@@ -2,6 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { DashboardSidebar } from '../../components/DashboardSidebar'
 import { useAppDependencies } from '../../context/app-dependencies-context'
+import type { Branch } from '../../../domain/entities/branch-schema'
+import type { Building } from '../../../domain/entities/building-schema'
+import type { Department } from '../../../domain/entities/department-schema'
+import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
 import type { StaffUser } from '../../../domain/entities/staff-user-schema'
 import { CarriedItemsStep } from '../visitor-request/Components/steps/CarriedItemsStep'
 import { ConsentStep } from '../visitor-request/Components/steps/ConsentStep'
@@ -16,8 +20,13 @@ import { STAFF_WIZARD_STEPS } from './types'
 
 export function StaffVisitorRegistrationPage() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase } = useAppDependencies()
+  const { getCurrentStaffUserUseCase, listHostEmployeesUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase } =
+    useAppDependencies()
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const [hostEmployees, setHostEmployees] = useState<HostEmployee[] | undefined>(undefined)
+  const [branches, setBranches] = useState<Branch[] | undefined>(undefined)
+  const [buildings, setBuildings] = useState<Building[] | undefined>(undefined)
+  const [departments, setDepartments] = useState<Department[] | undefined>(undefined)
 
   const {
     currentStep,
@@ -32,7 +41,7 @@ export function StaffVisitorRegistrationPage() {
     submissionError,
     submit,
     reset,
-  } = useStaffVisitorRegistrationWizard()
+  } = useStaffVisitorRegistrationWizard(branches)
 
   const loadCurrentUser = useCallback(async () => {
     try {
@@ -42,13 +51,31 @@ export function StaffVisitorRegistrationPage() {
     }
   }, [getCurrentStaffUserUseCase])
 
+  const loadVisitInfoMasterData = useCallback(async () => {
+    try {
+      const [employees, branchList, buildingList, departmentList] = await Promise.all([
+        listHostEmployeesUseCase.execute(),
+        listBranchesUseCase.execute(),
+        listBuildingsUseCase.execute(),
+        listDepartmentsUseCase.execute(),
+      ])
+      setHostEmployees(employees)
+      setBranches(branchList)
+      setBuildings(buildingList)
+      setDepartments(departmentList)
+    } catch {
+      // Visit Info step falls back to free-text fields if master data can't be loaded.
+    }
+  }, [listHostEmployeesUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase])
+
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
       navigate('/staff/login', { replace: true })
       return
     }
     void loadCurrentUser()
-  }, [navigate, loadCurrentUser])
+    void loadVisitInfoMasterData()
+  }, [navigate, loadCurrentUser, loadVisitInfoMasterData])
 
   const signOut = () => {
     sessionStorage.removeItem('token')
@@ -84,7 +111,15 @@ export function StaffVisitorRegistrationPage() {
               />
             )}
             {currentStep === 1 && (
-              <VisitInfoStep value={formState.visitInfo} onChange={(visitInfo) => setFormState({ ...formState, visitInfo })} errors={errors} />
+              <VisitInfoStep
+                value={formState.visitInfo}
+                onChange={(visitInfo) => setFormState({ ...formState, visitInfo })}
+                errors={errors}
+                hostEmployees={hostEmployees}
+                branches={branches}
+                buildings={buildings}
+                departments={departments}
+              />
             )}
             {currentStep === 2 && (
               <CarriedItemsStep value={formState.carriedItems} onChange={(carriedItems) => setFormState({ ...formState, carriedItems })} />

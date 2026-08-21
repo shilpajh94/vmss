@@ -4,13 +4,13 @@ import { TextField } from '../../../../components/ui/TextField'
 import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
 
 const VEHICLE_TYPE_OPTIONS = [
-  { value: '2-wheeler', label: '2 Wheeler' },
-  { value: '4-wheeler', label: '4 Wheeler' },
+  { value: '2_wheeler', label: '2 Wheeler' },
+  { value: '4_wheeler', label: '4 Wheeler' },
   { value: 'heavy', label: 'Heavy' },
 ]
 
 function createEmptyVehicle(): Vehicle {
-  return { vehicleType: '2-wheeler', licensePlate: '', makeModel: '', color: '' }
+  return { vehicleType: '2_wheeler', licensePlate: '', makeModel: '', color: '' }
 }
 
 interface VehicleInfoStepProps {

@@ -79,6 +79,7 @@ export function PrimaryContactCard({ value, onChange, uploadFile, errors }: Prim
             fileName={value.idProofFileName}
             onUpload={uploadFile}
             onFileRefChange={(idProofFileRef, idProofFileName) => onChange({ ...value, idProofFileRef, idProofFileName })}
+            error={errors.idProofFileRef}
           />
         </div>
       </div>

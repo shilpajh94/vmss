@@ -2,13 +2,15 @@ import { Checkbox } from '../../../../components/ui/Checkbox'
 import { TextareaField } from '../../../../components/ui/TextareaField'
 import type { CarriedItemsFormState } from '../../types'
 
+// Values must match the backend's `carriedItems.items` enum for
+// POST /registrations/walk-in exactly (validated server-side against these strings).
 const ITEM_CATEGORIES = [
-  { value: 'laptop-tablet', label: 'Laptop / Tablet' },
-  { value: 'mobile-phone', label: 'Mobile Phone' },
-  { value: 'camera-recording-device', label: 'Camera / Recording Device' },
-  { value: 'usb-external-storage', label: 'USB Drive / External Storage' },
-  { value: 'tools-equipment', label: 'Tools / Equipment' },
-  { value: 'food-beverages', label: 'Food / Beverages' },
+  { value: 'laptop_tablet', label: 'Laptop / Tablet' },
+  { value: 'mobile_phone', label: 'Mobile Phone' },
+  { value: 'camera_recording_device', label: 'Camera / Recording Device' },
+  { value: 'usb_drive_storage', label: 'USB Drive / External Storage' },
+  { value: 'tools_equipment', label: 'Tools / Equipment' },
+  { value: 'food_beverages', label: 'Food / Beverages' },
   { value: 'other', label: 'Other' },
 ]
 

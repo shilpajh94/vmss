@@ -1,7 +1,7 @@
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
 import type { StaffAuthRepository } from '../data/repositories/staff-auth-repository'
-import { StaffSsoInitiateResponseSchema, type StaffSsoInitiateResponse } from '../domain/entities/staff-sso-initiate-schema'
+import { StaffLoginResponseSchema, type StaffLoginResponse, type StaffLoginResult } from '../domain/entities/staff-login-schema'
 import { UserOutResponseSchema } from '../domain/entities/user-out-schema'
 import type { StaffUser } from '../domain/entities/staff-user-schema'
 
@@ -12,11 +12,14 @@ export class HttpStaffAuthRepository implements StaffAuthRepository {
     this.apiClient = apiClient
   }
 
-  async initiateSso(): Promise<StaffSsoInitiateResponse> {
-    return this.apiClient.makeRequest<StaffSsoInitiateResponse>({
-      endpointConfig: API_ENDPOINTS.INITIATE_STAFF_SSO,
-      parserSchema: StaffSsoInitiateResponseSchema,
+  async login(email: string, password: string): Promise<StaffLoginResult> {
+    const response = await this.apiClient.makeRequest<StaffLoginResponse>({
+      endpointConfig: API_ENDPOINTS.STAFF_LOGIN,
+      body: { email, password },
+      parserSchema: StaffLoginResponseSchema,
     })
+
+    return { token: response.data.accessToken }
   }
 
   async getCurrentUser(): Promise<StaffUser> {

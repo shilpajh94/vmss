@@ -25,6 +25,13 @@ interface UploadFileOptions<T> {
   parserSchema: ZodType<T>
 }
 
+interface MultipartRequestOptions<T> {
+  endpointConfig: ApiEndpointDefinition
+  formData: FormData
+  headers?: Record<string, string>
+  parserSchema: ZodType<T>
+}
+
 export class ApiClient {
   private readonly baseUrl: string
 
@@ -96,6 +103,31 @@ export class ApiClient {
 
     const formData = new FormData()
     formData.append('file', file)
+
+    const response = await fetch(url, {
+      method,
+      headers,
+      body: formData,
+    })
+
+    return parserSchema.parse(await response.json())
+  }
+
+  // For endpoints that mix a JSON-encoded field with raw file uploads in one
+  // multipart/form-data body (e.g. a `payload` field alongside ID-proof files).
+  async makeMultipartRequest<T>({ endpointConfig, formData, headers: extraHeaders, parserSchema }: MultipartRequestOptions<T>): Promise<T> {
+    const { endpoint, method, hasToken } = endpointConfig as EndpointConfigShape
+    const url = `${this.baseUrl}${endpoint}`
+
+    const headers: Record<string, string> = { ...extraHeaders }
+
+    if (hasToken) {
+      const token = sessionStorage.getItem('token')
+      if (!token) {
+        throw new Error(`Missing auth token for endpoint: ${endpoint}`)
+      }
+      headers.Authorization = `Bearer ${token}`
+    }
 
     const response = await fetch(url, {
       method,
