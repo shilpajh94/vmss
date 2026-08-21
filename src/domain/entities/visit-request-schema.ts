@@ -2,30 +2,30 @@ import z from "zod"
 import { VehicleSchema } from "./vehicle-schema"
 import { VisitorSchema } from "./visitor-schema"
 
+// Wire shape of the JSON-encoded `payload` field for
+// POST /registrations/walk-in (identical contract to POST /invitations).
 export const VisitRequestSchema = z.object({
   registrationType: z.enum(["individual", "group"]),
   primaryContact: VisitorSchema,
-  additionalVisitors: z.array(VisitorSchema),
-  visitInfo: z.object({
-    purpose: z.string().min(1),
+  visitors: z.array(VisitorSchema),
+  visitDetails: z.object({
+    purposeOfVisit: z.string().min(1),
     hostNameOrEmail: z.string().min(1),
-    preferredDate: z.string().min(1),
-    preferredTime: z.string().min(1),
+    preferredVisitDate: z.string().min(1),
+    preferredVisitTime: z.string().min(1),
     expectedDuration: z.string().min(1),
-    location: z.string().min(1),
-    building: z.string().min(1),
-    department: z.string().min(1),
-    notes: z.string().optional(),
+    departmentToVisit: z.string().min(1),
+    additionalNotes: z.string().optional(),
   }),
   carriedItems: z.object({
-    categories: z.array(z.string()),
-    description: z.string().optional(),
+    items: z.array(z.string()),
+    itemDescription: z.string().optional(),
   }),
   vehicles: z.array(VehicleSchema),
-  consent: z.object({
-    agreedTerms: z.boolean(),
-    agreedDataUse: z.boolean(),
-    agreedSafety: z.boolean(),
+  consents: z.object({
+    termsAccepted: z.boolean(),
+    dataProcessingAccepted: z.boolean(),
+    safetyGuidelinesAccepted: z.boolean(),
   }),
 })
 
@@ -38,3 +38,20 @@ export const VisitRequestResponseSchema = z.object({
 })
 
 export type VisitRequestResponse = z.infer<typeof VisitRequestResponseSchema>
+
+// `InvitationOut`, wrapped in the standard `Envelope[...]` response shape.
+export const InvitationOutSchema = z.object({
+  id: z.string().min(1),
+  trackingId: z.string().min(1),
+  registrationType: z.enum(["individual", "group"]),
+  source: z.string().min(1),
+  status: z.string().min(1),
+  expiresAt: z.string().min(1),
+  submittedAt: z.string().min(1).nullable(),
+})
+
+export const InvitationEnvelopeSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: InvitationOutSchema,
+})

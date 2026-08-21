@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { SubmissionStatus } from '../../visitor-request/Components/steps/ReviewConfirmStep'
 import {
   createInitialStaffFormState,
@@ -16,6 +17,7 @@ function validateStaffVisitorContact(contact: StaffVisitorFormEntry): Record<str
   if (!contact.phone) errors.phone = 'Phone number is required.'
   if (!contact.preferredContactMethod) errors.preferredContactMethod = 'Preferred contact method is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
+  if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
   return errors
 }
 
@@ -53,8 +55,8 @@ function validateStep(step: number, formState: StaffVisitRequestFormState): Reco
   return {}
 }
 
-export function useStaffVisitorRegistrationWizard() {
-  const { uploadVisitorDocumentUseCase, submitStaffVisitRequestUseCase } = useAppDependencies()
+export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
+  const { submitStaffVisitRequestUseCase } = useAppDependencies()
   const toast = useToast()
 
   const [currentStep, setCurrentStep] = useState(0)
@@ -64,9 +66,16 @@ export function useStaffVisitorRegistrationWizard() {
   const [trackingId, setTrackingId] = useState<string | undefined>(undefined)
   const [submissionError, setSubmissionError] = useState<string | undefined>(undefined)
 
+  // POST /invitations wants ID-proof files travelling inline in the final
+  // multipart submission, not pre-uploaded. `uploadFile` here just hands the
+  // file a local ref so InlineFileUpload can track/display it; the real File
+  // objects are recovered by that ref at submit time below.
+  const fileRegistry = useRef(new Map<string, File>())
+
   const uploadFile = async (file: File): Promise<string> => {
-    const response = await uploadVisitorDocumentUseCase.execute(file)
-    return response.fileRef
+    const fileRef = crypto.randomUUID()
+    fileRegistry.current.set(fileRef, file)
+    return fileRef
   }
 
   const updateFormState = (next: StaffVisitRequestFormState) => {
@@ -100,10 +109,29 @@ export function useStaffVisitorRegistrationWizard() {
   }
 
   const submit = async () => {
+    const primaryContactIdProofFile = formState.primaryContact.idProofFileRef
+      ? fileRegistry.current.get(formState.primaryContact.idProofFileRef)
+      : undefined
+    const branchId = branches?.find((branch) => branch.name === formState.visitInfo.location)?.id
+    if (!primaryContactIdProofFile || !branchId) {
+      setSubmissionError('Something went wrong submitting your request. Please try again.')
+      setSubmissionStatus('error')
+      toast.error('Something went wrong submitting your request. Please try again.')
+      return
+    }
+
+    const visitorIdProofFiles = formState.additionalVisitors
+      .map((visitor) => (visitor.idProofFileRef ? fileRegistry.current.get(visitor.idProofFileRef) : undefined))
+      .filter((file): file is File => file !== undefined)
+
     setSubmissionStatus('submitting')
     setSubmissionError(undefined)
     try {
-      const response = await submitStaffVisitRequestUseCase.execute(toStaffVisitRequest(formState))
+      const response = await submitStaffVisitRequestUseCase.execute(
+        toStaffVisitRequest(formState),
+        { primaryContactIdProofFile, visitorIdProofFiles },
+        branchId,
+      )
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')
       toast.success('Visitor registered successfully.')

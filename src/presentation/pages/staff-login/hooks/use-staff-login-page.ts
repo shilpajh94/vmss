@@ -1,33 +1,58 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 
-export type StaffSsoStatus = 'idle' | 'initiating' | 'error'
+export type StaffLoginStatus = 'idle' | 'submitting' | 'error'
 
 export function useStaffLoginPage() {
-  const { initiateStaffSsoUseCase } = useAppDependencies()
+  const { loginStaffUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
   const toast = useToast()
+  const navigate = useNavigate()
 
-  const [status, setStatus] = useState<StaffSsoStatus>('idle')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [status, setStatus] = useState<StaffLoginStatus>('idle')
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const [emailError, setEmailError] = useState<string | undefined>(undefined)
+  const [passwordError, setPasswordError] = useState<string | undefined>(undefined)
 
-  const signInWithSso = async () => {
-    setStatus('initiating')
+  const submitLogin = async () => {
+    const trimmedEmail = email.trim()
+    const trimmedPassword = password.trim()
+
+    setEmailError(trimmedEmail ? undefined : 'Email is required')
+    setPasswordError(trimmedPassword ? undefined : 'Password is required')
+
+    if (!trimmedEmail || !trimmedPassword) {
+      return
+    }
+
+    setStatus('submitting')
     setErrorMessage(undefined)
 
     try {
-      const { redirectUrl } = await initiateStaffSsoUseCase.execute()
-      window.location.assign(redirectUrl)
+      const { token } = await loginStaffUseCase.execute(trimmedEmail, trimmedPassword)
+      sessionStorage.setItem('token', token)
+
+      const user = await getCurrentStaffUserUseCase.execute()
+      navigate(user.isAdmin ? '/admin/dashboard' : '/staff/dashboard')
     } catch {
-      setErrorMessage('Something went wrong starting SSO sign-in. Please try again.')
+      setErrorMessage('Invalid email or password. Please try again.')
       setStatus('error')
-      toast.error('Something went wrong starting SSO sign-in. Please try again.')
+      toast.error('Invalid email or password. Please try again.')
     }
   }
 
   return {
+    email,
+    password,
+    setEmail,
+    setPassword,
     status,
     errorMessage,
-    signInWithSso,
+    emailError,
+    passwordError,
+    submitLogin,
   }
 }

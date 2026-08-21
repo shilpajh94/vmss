@@ -1,12 +1,36 @@
-interface SsoSignInCardProps {
+import { TextField } from '../../../components/ui/TextField'
+
+interface LoginFormCardProps {
+  email: string
+  password: string
+  onEmailChange: (value: string) => void
+  onPasswordChange: (value: string) => void
+  onSubmit: () => void
   loading: boolean
   errorMessage?: string
-  onSignIn: () => void
+  emailError?: string
+  passwordError?: string
 }
 
-export function SsoSignInCard({ loading, errorMessage, onSignIn }: SsoSignInCardProps) {
+export function LoginFormCard({
+  email,
+  password,
+  onEmailChange,
+  onPasswordChange,
+  onSubmit,
+  loading,
+  errorMessage,
+  emailError,
+  passwordError,
+}: LoginFormCardProps) {
   return (
-    <div className="flex w-[460px] flex-col gap-8 rounded-2xl border border-border bg-surface p-12 drop-shadow-[0_16px_16px_rgba(15,23,42,0.05)]">
+    <form
+      onSubmit={(event) => {
+        event.preventDefault()
+        onSubmit()
+      }}
+      className="flex w-[460px] flex-col gap-8 rounded-2xl border border-border bg-surface p-12 drop-shadow-[0_16px_16px_rgba(15,23,42,0.05)]"
+    >
       <div className="flex flex-col items-center gap-4">
         <span className="rounded-full bg-[#ecfeff] px-3 py-1 font-body text-[12px] font-bold tracking-[1px] text-secondary-accent uppercase">
           Staff Portal
@@ -17,24 +41,32 @@ export function SsoSignInCard({ loading, errorMessage, onSignIn }: SsoSignInCard
         </div>
       </div>
 
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-4">
+        <TextField
+          label="Email"
+          type="email"
+          value={email}
+          onChange={onEmailChange}
+          placeholder="Enter your email"
+          required
+          error={emailError}
+        />
+        <TextField
+          label="Password"
+          type="password"
+          value={password}
+          onChange={onPasswordChange}
+          placeholder="Enter your password"
+          required
+          error={passwordError}
+        />
+
         <button
-          type="button"
-          onClick={onSignIn}
+          type="submit"
           disabled={loading}
           className="flex w-full items-center justify-center gap-2.5 rounded-lg bg-secondary-accent px-6 py-3.5 font-body text-[15px] font-semibold text-white drop-shadow-[0_4px_6px_rgba(6,182,212,0.15)] disabled:opacity-60"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-            <path
-              d="M15.5 7.5a4 4 0 1 0-3.98 4.9 4 4 0 0 0 3.42-1.94l.36-.56H21v3h-2v2h-2v2h-3v-2.14l-1.7-1.7a4 4 0 0 0-.8-.66"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <circle cx="8" cy="10" r="1.5" fill="currentColor" />
-          </svg>
-          {loading ? 'Redirecting…' : 'Sign in with SSO'}
+          {loading ? 'Signing in…' : 'Sign In'}
         </button>
         {errorMessage && <p className="font-body text-[13px] text-danger">{errorMessage}</p>}
       </div>
@@ -49,8 +81,8 @@ export function SsoSignInCard({ loading, errorMessage, onSignIn }: SsoSignInCard
             strokeLinejoin="round"
           />
         </svg>
-        <p className="text-center font-body text-[12px] text-text-faint">Secured by corporate multi-factor authentication</p>
+        <p className="text-center font-body text-[12px] text-text-faint">Secured by corporate authentication</p>
       </div>
-    </div>
+    </form>
   )
 }

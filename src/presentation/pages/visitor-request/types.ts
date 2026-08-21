@@ -89,24 +89,39 @@ export function toVisitor(entry: VisitorFormEntry): Visitor {
     fullName: entry.fullName,
     email: entry.email,
     phone: entry.phone,
-    address: entry.address,
-    visitorCategory: entry.visitorCategory,
     preferredContactMethod: entry.preferredContactMethod,
     idProofType: entry.idProofType,
-    idProofFileRef: entry.idProofFileRef,
-    profileImageFileRef: entry.profileImageFileRef,
   }
 }
 
+// Maps wizard form state onto the `payload` wire contract for
+// POST /registrations/walk-in. `location`/`building`/address/visitorCategory/
+// profile image aren't part of that contract (yet) and are dropped here; ID-proof
+// files travel separately as multipart file fields, see use-visitor-request-wizard.
 export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
   return {
     registrationType: formState.registrationType,
     primaryContact: toVisitor(formState.primaryContact),
-    additionalVisitors: formState.additionalVisitors.map(toVisitor),
-    visitInfo: formState.visitInfo,
-    carriedItems: formState.carriedItems,
+    visitors: formState.additionalVisitors.map(toVisitor),
+    visitDetails: {
+      purposeOfVisit: formState.visitInfo.purpose,
+      hostNameOrEmail: formState.visitInfo.hostNameOrEmail,
+      preferredVisitDate: formState.visitInfo.preferredDate,
+      preferredVisitTime: formState.visitInfo.preferredTime,
+      expectedDuration: formState.visitInfo.expectedDuration,
+      departmentToVisit: formState.visitInfo.department,
+      additionalNotes: formState.visitInfo.notes,
+    },
+    carriedItems: {
+      items: formState.carriedItems.categories,
+      itemDescription: formState.carriedItems.description,
+    },
     vehicles: formState.vehicles,
-    consent: formState.consent,
+    consents: {
+      termsAccepted: formState.consent.agreedTerms,
+      dataProcessingAccepted: formState.consent.agreedDataUse,
+      safetyGuidelinesAccepted: formState.consent.agreedSafety,
+    },
   }
 }
 

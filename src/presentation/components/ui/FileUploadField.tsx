@@ -10,6 +10,7 @@ interface FileUploadFieldProps {
   previewUrl?: string
   onUpload: (file: File) => Promise<string>
   onFileRefChange: (fileRef: string | undefined, fileName: string | undefined) => void
+  error?: string
 }
 
 export function FileUploadField({
@@ -20,6 +21,7 @@ export function FileUploadField({
   previewUrl,
   onUpload,
   onFileRefChange,
+  error: externalError,
 }: FileUploadFieldProps) {
   const inputId = useId()
   const [uploading, setUploading] = useState(false)
@@ -74,7 +76,7 @@ export function FileUploadField({
         </span>
       </label>
       <input id={inputId} type="file" className="hidden" onChange={handleChange} disabled={uploading} />
-      {error && <p className="text-caption text-danger">{error}</p>}
+      {(error ?? externalError) && <p className="text-caption text-danger">{error ?? externalError}</p>}
     </div>
   )
 }

@@ -1,14 +1,14 @@
 import type { StaffAuthRepository } from '../repositories/staff-auth-repository'
-import type { StaffSsoInitiateResponse } from '../../domain/entities/staff-sso-initiate-schema'
+import type { StaffLoginResult } from '../../domain/entities/staff-login-schema'
 
-export class InitiateStaffSsoUseCase {
+export class LoginStaffUseCase {
   private readonly staffAuthRepository: StaffAuthRepository
 
   constructor(staffAuthRepository: StaffAuthRepository) {
     this.staffAuthRepository = staffAuthRepository
   }
 
-  async execute(): Promise<StaffSsoInitiateResponse> {
-    return this.staffAuthRepository.initiateSso()
+  async execute(email: string, password: string): Promise<StaffLoginResult> {
+    return this.staffAuthRepository.login(email, password)
   }
 }

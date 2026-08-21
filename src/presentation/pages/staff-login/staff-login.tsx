@@ -1,11 +1,21 @@
 import heroImage from '../../../assets/images/lobby-hero.png'
-import { SsoSignInCard } from './Components/SsoSignInCard'
+import { LoginFormCard } from './Components/LoginFormCard'
 import { StaffGatewayHeader } from './Components/StaffGatewayHeader'
 import { StaffLoginFooter } from './Components/StaffLoginFooter'
 import { useStaffLoginPage } from './hooks/use-staff-login-page'
 
 export function StaffLoginPage() {
-  const { status, errorMessage, signInWithSso } = useStaffLoginPage()
+  const {
+    email,
+    password,
+    setEmail,
+    setPassword,
+    status,
+    errorMessage,
+    emailError,
+    passwordError,
+    submitLogin,
+  } = useStaffLoginPage()
 
   return (
     <div className="relative flex min-h-screen w-full flex-col">
@@ -17,7 +27,17 @@ export function StaffLoginPage() {
       <StaffGatewayHeader />
 
       <main className="relative flex flex-1 flex-col items-center justify-center gap-8 px-12 py-[120px]">
-        <SsoSignInCard loading={status === 'initiating'} errorMessage={errorMessage} onSignIn={signInWithSso} />
+        <LoginFormCard
+          email={email}
+          password={password}
+          onEmailChange={setEmail}
+          onPasswordChange={setPassword}
+          onSubmit={submitLogin}
+          loading={status === 'submitting'}
+          errorMessage={errorMessage}
+          emailError={emailError}
+          passwordError={passwordError}
+        />
         <div className="flex items-center gap-4 font-body text-[13px]">
           <span className="font-medium text-[#cbd5e1]">Need help?</span>
           <a href="#" className="font-semibold text-secondary-accent underline">

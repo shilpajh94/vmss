@@ -1,11 +1,6 @@
 export const API_ENDPOINTS = {
   CREATE_VISIT_REQUEST: {
-    endpoint: "/invitations",
-    method: "POST",
-    hasToken: false,
-  },
-  UPLOAD_VISITOR_DOCUMENT: {
-    endpoint: "/uploads/visitor-documents",
+    endpoint: "/registrations/walk-in",
     method: "POST",
     hasToken: false,
   },
@@ -15,22 +10,22 @@ export const API_ENDPOINTS = {
     hasToken: false,
   },
   REQUEST_VISITOR_OTP: {
-    endpoint: "/visitor-otp/request",
+    endpoint: "/identity-verification/otp/request",
     method: "POST",
     hasToken: false,
   },
   VERIFY_VISITOR_OTP: {
-    endpoint: "/visitor-otp/verify",
+    endpoint: "/identity-verification/otp/verify",
     method: "POST",
     hasToken: false,
   },
-  INITIATE_STAFF_SSO: {
-    endpoint: "/staff-auth/sso/initiate",
+  STAFF_LOGIN: {
+    endpoint: "/auth/login",
     method: "POST",
     hasToken: false,
   },
   LIST_VISIT_REQUESTS: {
-    endpoint: "/visit-requests",
+    endpoint: "/invitations",
     method: "GET",
     hasToken: true,
   },
@@ -40,7 +35,7 @@ export const API_ENDPOINTS = {
     hasToken: true,
   },
   STAFF_CREATE_VISIT_REQUEST: {
-    endpoint: "/staff/visit-requests",
+    endpoint: "/invitations",
     method: "POST",
     hasToken: true,
   },

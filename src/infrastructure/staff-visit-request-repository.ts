@@ -1,8 +1,9 @@
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
+import type { InvitationSubmissionFiles } from '../data/repositories/visit-request-repository'
 import type { StaffVisitRequestRepository } from '../data/repositories/staff-visit-request-repository'
 import type { StaffVisitRequest } from '../domain/entities/staff-visit-request-schema'
-import { VisitRequestResponseSchema, type VisitRequestResponse } from '../domain/entities/visit-request-schema'
+import { InvitationEnvelopeSchema, type VisitRequestResponse } from '../domain/entities/visit-request-schema'
 
 export class HttpStaffVisitRequestRepository implements StaffVisitRequestRepository {
   private readonly apiClient: ApiClient
@@ -11,11 +12,25 @@ export class HttpStaffVisitRequestRepository implements StaffVisitRequestReposit
     this.apiClient = apiClient
   }
 
-  async submit(request: StaffVisitRequest): Promise<VisitRequestResponse> {
-    return this.apiClient.makeRequest<VisitRequestResponse>({
+  async submit(request: StaffVisitRequest, files: InvitationSubmissionFiles, branchId: string): Promise<VisitRequestResponse> {
+    const formData = new FormData()
+    formData.append('payload', JSON.stringify(request))
+    formData.append('primary_contact_id_proof_file', files.primaryContactIdProofFile)
+    for (const file of files.visitorIdProofFiles) {
+      formData.append('visitor_id_proof_files', file)
+    }
+
+    const envelope = await this.apiClient.makeMultipartRequest({
       endpointConfig: API_ENDPOINTS.STAFF_CREATE_VISIT_REQUEST,
-      body: request,
-      parserSchema: VisitRequestResponseSchema,
+      formData,
+      headers: { 'X-Branch-ID': branchId },
+      parserSchema: InvitationEnvelopeSchema,
     })
+
+    return {
+      trackingId: envelope.data.trackingId,
+      status: envelope.data.status,
+      submittedAt: envelope.data.submittedAt ?? envelope.data.expiresAt,
+    }
   }
 }

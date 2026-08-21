@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import {
   createInitialFormState,
@@ -29,6 +29,7 @@ function validateVisitorContact(contact: VisitorFormEntry): Record<string, strin
   if (!contact.address) errors.address = 'Address is required.'
   if (!contact.visitorCategory) errors.visitorCategory = 'Visitor category is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
+  if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
   return errors
 }
 
@@ -67,7 +68,7 @@ function validateStep(step: number, formState: VisitRequestFormState): Record<st
 }
 
 export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialData) {
-  const { uploadVisitorDocumentUseCase, submitVisitRequestUseCase } = useAppDependencies()
+  const { submitVisitRequestUseCase } = useAppDependencies()
 
   const [currentStep, setCurrentStep] = useState(0)
   const [formState, setFormState] = useState<VisitRequestFormState>(() => buildInitialFormState(initial))
@@ -76,9 +77,16 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
   const [trackingId, setTrackingId] = useState<string | undefined>(undefined)
   const [submissionError, setSubmissionError] = useState<string | undefined>(undefined)
 
+  // POST /registrations/walk-in wants ID-proof files travelling inline in the
+  // final multipart submission, not pre-uploaded. `uploadFile` here just hands
+  // the file a local ref so FileUploadField can track/display it; the real
+  // File objects are recovered by that ref at submit time below.
+  const fileRegistry = useRef(new Map<string, File>())
+
   const uploadFile = async (file: File): Promise<string> => {
-    const response = await uploadVisitorDocumentUseCase.execute(file)
-    return response.fileRef
+    const fileRef = crypto.randomUUID()
+    fileRegistry.current.set(fileRef, file)
+    return fileRef
   }
 
   const updateFormState = (next: VisitRequestFormState) => {
@@ -103,10 +111,26 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
   }
 
   const submit = async () => {
+    const primaryContactIdProofFile = formState.primaryContact.idProofFileRef
+      ? fileRegistry.current.get(formState.primaryContact.idProofFileRef)
+      : undefined
+    if (!primaryContactIdProofFile) {
+      setSubmissionError('Something went wrong submitting your request. Please try again.')
+      setSubmissionStatus('error')
+      return
+    }
+
+    const visitorIdProofFiles = formState.additionalVisitors
+      .map((visitor) => (visitor.idProofFileRef ? fileRegistry.current.get(visitor.idProofFileRef) : undefined))
+      .filter((file): file is File => file !== undefined)
+
     setSubmissionStatus('submitting')
     setSubmissionError(undefined)
     try {
-      const response = await submitVisitRequestUseCase.execute(toVisitRequest(formState))
+      const response = await submitVisitRequestUseCase.execute(toVisitRequest(formState), {
+        primaryContactIdProofFile,
+        visitorIdProofFiles,
+      })
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')
     } catch {
