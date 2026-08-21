@@ -83,10 +83,10 @@ local-disk one, selected by configuration:
 | Setting | Default | Purpose |
 |---|---|---|
 | `STORAGE_BACKEND` | `local` | `local` (disk) or `s3`. |
-| `AWS_BUCKET` | unset | Required when `STORAGE_BACKEND=s3`. |
-| `AWS_DEFAULT_REGION` | unset | AWS region, or the equivalent for an S3-compatible provider. |
-| `AWS_ENDPOINT_URL` | unset | Only for a non-AWS S3-compatible provider (e.g. MinIO). Leave unset for AWS. |
-| `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` | unset | Required when `STORAGE_BACKEND=s3`. Read directly by boto3, not by `Settings` — see `docs/features/configuration.md`. |
+| `STORAGE_S3_BUCKET` | unset | Required when `STORAGE_BACKEND=s3`. Read by `Settings`, not boto3 — boto3 has no env var of its own for a bucket name. |
+| `STORAGE_S3_REGION` | unset | Region to pass to the S3 client explicitly. Leave unset to fall back to boto3's own `AWS_DEFAULT_REGION` resolution. |
+| `STORAGE_S3_ENDPOINT_URL` | unset | Only for a non-AWS S3-compatible provider (e.g. MinIO). Leave unset for AWS's default endpoint resolution. |
+| `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_DEFAULT_REGION` | unset | Required when `STORAGE_BACKEND=s3`. Read directly by boto3's default credential provider chain, not by `Settings` — see `docs/features/configuration.md`. |
 | `STORAGE_S3_PRESIGNED_URL_TTL_SECONDS` | `300` | How long a `url_for` pre-signed URL stays valid when the backend is `s3`. |
 
 Switching backends is a config change only — no call site in `invitations`

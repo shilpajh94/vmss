@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     # behind the same interface, not a call-site change.
     storage_root: str = "./var/storage"
 
+    # "local" (default, disk-backed) or "s3" (API-14) — selects which branch
+    # of `core/storage.py` handles save/url_for. The three `storage_s3_*`
+    # fields below are only read on the "s3" branch; AWS credentials
+    # themselves are read by boto3's own default credential provider chain
+    # (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`), not through `Settings`.
+    storage_backend: str = "local"
+    storage_s3_bucket: str | None = None
+    storage_s3_region: str | None = None
+    storage_s3_endpoint_url: str | None = None
+    storage_s3_presigned_url_ttl_seconds: int = 300
+
     # SMTP settings for `invitations/notifications.py`'s `SmtpEmailSender` —
     # see add-pre-registration/design.md Decision 4. Defaults point at a local
     # dev mail-catcher (e.g. mailhog/mailpit) so a fresh checkout doesn't need

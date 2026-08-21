@@ -214,6 +214,27 @@ async def test_assign_branch_role_unknown_role_not_found(
     assert response.status_code == 404
 
 
+async def test_assign_branch_role_unknown_branch_not_found(
+    client: AsyncClient, db_session: AsyncSession, user: User, user_without_permissions: User
+) -> None:
+    existing = (
+        await db_session.execute(select(Permission).where(Permission.code == "branches:view"))
+    ).scalar_one()
+    role = RoleFactory.build(
+        id=uuid.uuid4(), name="reception-unknown-branch", permissions=[existing]
+    )
+    db_session.add(role)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/auth/users/{user_without_permissions.id}/branch-roles",
+        json={"roleId": str(role.id), "branchId": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
 async def test_assign_visitor_role_to_user_rejected(
     client: AsyncClient, db_session: AsyncSession, user: User, user_without_permissions: User
 ) -> None:
@@ -669,6 +690,41 @@ async def test_list_roles_includes_standard_and_custom(client: AsyncClient, user
     assert "Custom Role" in names
 
 
+async def test_list_roles_pagination(client: AsyncClient, user: User) -> None:
+    """Exercises actual page slicing and the envelope's pagination metadata
+    (api-conventions.md §1) — `test_list_roles_includes_standard_and_custom`
+    above only checks that a large `pageSize` returns everything, not that
+    paging itself works.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    for name in ("Pager Role A", "Pager Role B", "Pager Role C"):
+        await client.post(
+            "/api/v1/auth/roles", json={"name": name, "permissionCodes": []}, headers=headers
+        )
+
+    first_page = await client.get("/api/v1/auth/roles?page=1&pageSize=2", headers=headers)
+    assert first_page.status_code == 200
+    first_body = first_page.json()
+    pagination = first_body["pagination"]
+    assert pagination["page"] == 1
+    assert pagination["pageSize"] == 2
+    # "admin" (seeded by the `user` fixture) plus the three roles just created.
+    assert pagination["total"] >= 4
+    assert pagination["totalPages"] >= 2
+    assert len(first_body["data"]) == 2
+
+    second_page = await client.get("/api/v1/auth/roles?page=2&pageSize=2", headers=headers)
+    assert second_page.status_code == 200
+    second_body = second_page.json()
+    assert second_body["pagination"]["page"] == 2
+    assert len(second_body["data"]) >= 1
+
+    first_ids = {r["id"] for r in first_body["data"]}
+    second_ids = {r["id"] for r in second_body["data"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
 async def test_get_role_success(client: AsyncClient, user: User) -> None:
     token = await _login(client, user.email)
     headers = {"Authorization": f"Bearer {token}"}
@@ -679,6 +735,14 @@ async def test_get_role_success(client: AsyncClient, user: User) -> None:
     response = await client.get(f"/api/v1/auth/roles/{role_id}", headers=headers)
     assert response.status_code == 200
     assert response.json()["data"]["name"] == "Getter Role"
+
+
+async def test_get_role_not_found(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    response = await client.get(
+        f"/api/v1/auth/roles/{uuid.uuid4()}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 404
 
 
 async def test_update_role_success(client: AsyncClient, user: User) -> None:
@@ -701,6 +765,16 @@ async def test_update_role_success(client: AsyncClient, user: User) -> None:
     assert body["permissionCodes"] == []
 
 
+async def test_update_role_not_found(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    response = await client.put(
+        f"/api/v1/auth/roles/{uuid.uuid4()}",
+        json={"description": "Doesn't matter"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
 async def test_delete_role_success(client: AsyncClient, user: User) -> None:
     token = await _login(client, user.email)
     headers = {"Authorization": f"Bearer {token}"}
@@ -714,6 +788,14 @@ async def test_delete_role_success(client: AsyncClient, user: User) -> None:
     assert response.status_code == 204
     get_response = await client.get(f"/api/v1/auth/roles/{role_id}", headers=headers)
     assert get_response.status_code == 404
+
+
+async def test_delete_role_not_found(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    response = await client.delete(
+        f"/api/v1/auth/roles/{uuid.uuid4()}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 404
 
 
 async def test_verify_role_name_availability(client: AsyncClient, user: User) -> None:
@@ -844,3 +926,14 @@ async def test_revoke_branch_role_requires_permission(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
+
+
+async def test_revoke_branch_role_not_found(
+    client: AsyncClient, user: User, user_without_permissions: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.delete(
+        f"/api/v1/auth/users/{user_without_permissions.id}/branch-roles/{uuid.uuid4()}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404

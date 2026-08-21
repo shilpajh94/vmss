@@ -524,6 +524,20 @@ async def test_update_approval_workflow_rule_success(
     assert response.json()["data"]["isMandatory"] is False
 
 
+async def test_update_approval_workflow_rule_requires_permission(
+    client: AsyncClient,
+    user_without_permissions: User,
+    approval_workflow_rule: ApprovalWorkflowRule,
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.put(
+        f"/api/v1/approval-workflow-rules/{approval_workflow_rule.id}",
+        json={"isMandatory": False},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
 async def test_delete_approval_workflow_rule_requires_permission(
     client: AsyncClient,
     user_without_permissions: User,

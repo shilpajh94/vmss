@@ -193,6 +193,8 @@ ADMIN_PERMISSION_CODES = [
     "invitations:create",
     "invitations:view",
     "invitations:cancel",
+    "roles:view",
+    "roles:manage",
 ]
 
 

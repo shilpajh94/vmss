@@ -94,20 +94,31 @@ async def test_branches_rollup_success(
     body = response.json()["data"]
 
     rows_by_code = {row["branchCode"]: row for row in body["branches"]}
-    assert rows_by_code[branch.code]["buildingCount"] == 1
-    assert rows_by_code[branch.code]["floorCount"] == 1
-    assert rows_by_code[branch.code]["departmentCount"] == 1
-    assert rows_by_code[branch.code]["receptionDeskCount"] == 1
-    assert rows_by_code[branch.code]["securityGateCount"] == 1
-    assert rows_by_code[branch.code]["activeEmployeeCount"] == 1
+    populated = rows_by_code[branch.code]
+    assert populated["branchId"] == str(branch.id)
+    assert populated["branchName"] == branch.name
+    assert populated["buildingCount"] == 1
+    assert populated["floorCount"] == 1
+    assert populated["departmentCount"] == 1
+    assert populated["receptionDeskCount"] == 1
+    assert populated["securityGateCount"] == 1
+    assert populated["activeEmployeeCount"] == 1
 
-    assert rows_by_code["EMPTY"]["buildingCount"] == 0
-    assert rows_by_code["EMPTY"]["floorCount"] == 0
-    assert rows_by_code["EMPTY"]["securityGateCount"] == 0
-    assert rows_by_code["EMPTY"]["activeEmployeeCount"] == 0
+    empty = rows_by_code["EMPTY"]
+    assert empty["branchId"] == str(empty_branch.id)
+    assert empty["branchName"] == "Empty Branch"
+    assert empty["buildingCount"] == 0
+    assert empty["floorCount"] == 0
+    assert empty["departmentCount"] == 0
+    assert empty["receptionDeskCount"] == 0
+    assert empty["securityGateCount"] == 0
+    assert empty["activeEmployeeCount"] == 0
 
     assert body["totalBranches"] == 2
     assert body["totalBuildings"] == 1
+    assert body["totalFloors"] == 1
+    assert body["totalDepartments"] == 1
+    assert body["totalReceptionDesks"] == 1
     assert body["totalSecurityGates"] == 1
     assert body["totalActiveEmployees"] == 1
 
