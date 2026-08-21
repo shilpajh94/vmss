@@ -62,8 +62,11 @@ this yet — direct DB update, or a future management endpoint).
   feature's job, the same way it is for a staff pre-registration once the
   invited visitor actually arrives.
 - **No OTP verification.** The Figma wizard shows "OTP will be sent to your
-  email" on this step, but no OTP mechanism exists anywhere in this codebase
-  yet — tracked as a follow-up, not silently skipped.
+  email" on this step. The OTP mechanism itself now exists — see
+  `docs/features/identity_verification.md` (API-15) — but this endpoint
+  does not call it: creating a walk-in registration does not require or
+  check a verified-contact proof. Wiring that gate in is a separate,
+  later change, tracked there, not silently skipped.
   `security-architecture.md` §2 already lists OTP handling as a requirement
   for visitor-facing public endpoints generally.
 - **No approval-workflow evaluation.** Same posture `invitations` has today —
@@ -95,5 +98,5 @@ the opaque storage key `save` returns.
 - **Device key management endpoint/UI.** Provisioning is CLI-only today
   (`scripts/provision_registration_device.py`); rotation is a direct DB
   update to `is_active`/`key_hash`.
-- **OTP verification**, **check-in**, **approval-workflow evaluation** — see
-  above.
+- **Wiring OTP verification into this endpoint**, **check-in**,
+  **approval-workflow evaluation** — see above.

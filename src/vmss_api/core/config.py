@@ -83,6 +83,28 @@ class Settings(BaseSettings):
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
     invitation_max_group_visitors: int = 20
 
+    # `identity_verification` feature config (API-15, add-identity-verification-otp).
+    otp_ttl_seconds: int = 300
+    otp_length: int = 6
+    otp_max_attempts: int = 5
+    otp_rate_limit_per_identifier: int = 5
+    otp_rate_limit_window_seconds: int = 3600
+
+    # Twilio — the chosen SMS provider for `identity_verification`, distinct
+    # from the still-unconfigured `sms_gateway_*` placeholders above (those
+    # belong to `invitations`' unbuilt SMS path). Left unset by default;
+    # `identity_verification/senders.py` falls back to an unconfigured
+    # sender when any of the three is missing, rather than constructing a
+    # Twilio client with empty credentials.
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_sms_from_number: str | None = None
+
+    # WhatsApp gateway — no vendor chosen yet, same posture `sms_gateway_*`
+    # had before Twilio was picked for SMS.
+    whatsapp_gateway_base_url: str | None = None
+    whatsapp_gateway_api_key: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:
