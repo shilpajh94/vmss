@@ -219,6 +219,55 @@ async def test_list_branches_success(client: AsyncClient, user: User, branch: Br
     assert branch.code in codes
 
 
+async def test_list_branches_scoped_to_authorized_branch_only(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_scoped_to_branch: User,
+    branch: Branch,
+) -> None:
+    """`branches:view` used to be checked company-wide only, 403-ing every
+    branch-scoped role even though it holds the permission at its own
+    branch (see `router.py::list_branches`'s switch to
+    `require_branch_scope`). A branch-scoped caller must see its own branch
+    and not an unrelated one it holds no grant at — same pattern as
+    `test_list_buildings_without_branch_header_excludes_other_branches`.
+    """
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-LIST")
+    db_session.add(other_branch)
+    await db_session.commit()
+
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get("/api/v1/branches", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    codes = {b["code"] for b in response.json()["data"]}
+    assert branch.code in codes
+    assert other_branch.code not in codes
+
+
+async def test_get_branch_success_for_branch_scoped_user(
+    client: AsyncClient, user_scoped_to_branch: User, branch: Branch
+) -> None:
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["code"] == branch.code
+
+
+async def test_get_branch_denied_for_user_scoped_elsewhere(
+    client: AsyncClient, user_scoped_to_other_branch: User, branch: Branch
+) -> None:
+    """The branch-level counterpart of `test_get_building_not_found_for_other_branch`
+    — a role grant scoped to a different branch must not resolve this one.
+    """
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.get(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 404
+
+
 async def test_get_current_branch_with_access(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
