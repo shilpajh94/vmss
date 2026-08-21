@@ -42,6 +42,37 @@ which tenant schema to open has to be known before anything tenant-scoped —
 here, the branch itself — can be checked. `RegistrationDeviceKey` lives in
 the global schema for the same reason.
 
+### Fallback when no `X-Device-Key` is sent at all
+
+`X-Device-Key` is optional, not required: a request with no header at all
+falls back to `registrations/deps.py::_resolve_default_device_context`
+instead of the 401 it used to get unconditionally. This exists for the
+public web portal, which — unlike the Flutter kiosk app — has nowhere safe
+to hold a provisioned device secret. The fallback resolves tenant/branch
+from server-side config only, never from anything the caller supplies (the
+same tenant-trust-boundary rule `security-architecture.md` states for
+`tenant_id`, extended to branch):
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `default_tenant_slug` (`configuration.md`) | — | Which tenant's schema the fallback opens. |
+| `REGISTRATION_DEFAULT_BRANCH_CODE` | `MAIN` | Which branch, within that tenant, a header-less walk-in is attributed to. |
+
+If either lookup fails (no such tenant, tenant inactive, no branch with
+that code, branch inactive), the fallback still 401s with the same
+`_INVALID_DEVICE_KEY_DETAIL` an invalid key gets — it never falls through to
+an unscoped or partially-resolved registration.
+
+**Known trade-off, not a full fix**: this path has no credential at all —
+it trades the device key's authentication away for availability, leaving
+this fallback an unauthenticated write (and file-upload) call against one
+fixed branch, protected only by the route's rate limit. Every use is logged
+at `WARNING` (`registration_device_key_absent`) so it's visible/auditable
+rather than silently normalized. Tracked as a follow-up to bind this path
+to the visitor's OTP-verified `identity_verification` proof token instead of
+leaving it credential-less — see `security-architecture.md` §2's
+"fake-entry prevention" open item.
+
 ### Provisioning a device key
 
 No management endpoint exists yet — issue one via:

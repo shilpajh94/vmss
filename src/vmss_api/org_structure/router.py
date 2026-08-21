@@ -211,17 +211,30 @@ async def create_branch(
 @branch_router.get(
     "",
     response_model=PaginatedEnvelope[BranchOut],
-    dependencies=[Depends(require_permission("branches:view"))],
 )
 async def list_branches(
+    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("branches:view"))],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
+    """`branches:view` used to be checked company-wide only
+    (`require_permission`), which 403'd every branch-scoped role (Reception/
+    Security/Host are assigned per branch, not company-wide — see
+    `auth/rbac_catalog.py`) even though they hold `branches:view` at their
+    own branch. `require_branch_scope` is the same fix already applied to
+    buildings/departments/desks/gates/employees — scope to every branch the
+    caller is authorized for, 403 only if that's empty.
+    """
     page, page_size = pagination
     branches, total = await service.list_branches_page(
-        tenant_db, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+        tenant_db,
+        branch_scope=branch_scope,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     return paginated_response(
         data=[BranchOut.model_validate(b) for b in branches],
@@ -290,12 +303,13 @@ async def get_current_branch(
 @branch_router.get(
     "/{branch_id}",
     response_model=Envelope[BranchOut],
-    dependencies=[Depends(require_permission("branches:view"))],
 )
 async def get_branch(
-    branch_id: uuid.UUID, tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)]
+    branch_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
 ) -> JSONResponse:
-    branch = await service.get_branch(tenant_db, branch_id)
+    branch = await service.get_branch(tenant_db, branch_id, user, "branches:view")
     return success_response(data=BranchOut.model_validate(branch))
 
 
