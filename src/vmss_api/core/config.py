@@ -143,10 +143,13 @@ class Settings(BaseSettings):
     # is "s3" — irrelevant for "local", which returns a plain path.
     storage_s3_presigned_url_ttl_seconds: int = 300
 
-    # Mail settings for `invitations/notifications.py`'s `SmtpEmailSender` —
-    # see add-pre-registration/design.md Decision 4. Defaults point at a local
-    # dev mail-catcher (e.g. mailhog/mailpit) so a fresh checkout doesn't need
-    # a real mail server to send/queue without erroring.
+    # Mail settings for `core/emailing.py`'s `SmtpEmailSender` — shared by
+    # `invitations/notifications.py` and `reports/tasks.py` (see
+    # add-pre-registration/design.md Decision 4 and
+    # add-background-jobs-and-integration-tests/design.md Decision 4).
+    # Defaults point at a local dev mail-catcher (e.g. mailhog/mailpit) so a
+    # fresh checkout doesn't need a real mail server to send/queue without
+    # erroring.
     smtp_host: str = Field(default="localhost", alias="MAIL_HOST")
     smtp_port: int = Field(default=1025, alias="MAIL_PORT")
     smtp_username: str | None = Field(default=None, alias="MAIL_USERNAME")
