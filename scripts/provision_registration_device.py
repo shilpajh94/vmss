@@ -16,10 +16,34 @@ import asyncio
 import secrets
 import uuid
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from vmss_api.core.database import AsyncSessionLocal
 from vmss_api.core.security import hash_password
 from vmss_api.registrations.models import RegistrationDeviceKey
 from vmss_api.tenant.repository import TenantRepository
+
+
+async def provision_device_key(
+    db: AsyncSession, *, tenant_id: uuid.UUID, branch_id: uuid.UUID, label: str
+) -> str:
+    """Creates a device key row and returns its raw value — the only moment
+    it's ever available; only an Argon2 hash is persisted (module docstring
+    above). Shared with `scripts/seed_demo_workflow.py` so the walk-in-
+    registration demo path doesn't duplicate this logic.
+    """
+    raw_key = secrets.token_urlsafe(32)
+    db.add(
+        RegistrationDeviceKey(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            branch_id=branch_id,
+            key_hash=hash_password(raw_key),
+            label=label,
+        )
+    )
+    await db.flush()
+    return raw_key
 
 
 async def _run(tenant_slug: str, branch_id: uuid.UUID, label: str) -> None:
@@ -28,18 +52,12 @@ async def _run(tenant_slug: str, branch_id: uuid.UUID, label: str) -> None:
         if tenant is None:
             raise SystemExit(f"No tenant with slug {tenant_slug!r}")
 
-        raw_key = secrets.token_urlsafe(32)
-        device_key = RegistrationDeviceKey(
-            id=uuid.uuid4(),
-            tenant_id=tenant.id,
-            branch_id=branch_id,
-            key_hash=hash_password(raw_key),
-            label=label,
+        raw_key = await provision_device_key(
+            db, tenant_id=tenant.id, branch_id=branch_id, label=label
         )
-        db.add(device_key)
         await db.commit()
 
-    print(f"Provisioned device key {device_key.id} for tenant {tenant_slug!r}, branch {branch_id}")
+    print(f"Provisioned a device key for tenant {tenant_slug!r}, branch {branch_id}")
     print(f"X-Device-Key: {raw_key}")
     print("Store this value now — it cannot be recovered later.")
 
