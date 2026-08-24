@@ -91,6 +91,15 @@ _TAGS_METADATA = [
             "wired into invitation or walk-in registration creation."
         ),
     },
+    {
+        "name": "sso",
+        "description": (
+            "Staff OIDC single sign-on: per-tenant provider configuration, "
+            "IdP-group-to-role mapping, the login-initiate/callback/exchange "
+            "flow, and just-in-time account provisioning. Visitor login is "
+            "unaffected."
+        ),
+    },
 ]
 
 

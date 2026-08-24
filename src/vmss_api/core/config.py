@@ -199,6 +199,31 @@ class Settings(BaseSettings):
     whatsapp_gateway_base_url: str | None = None
     whatsapp_gateway_api_key: str | None = None
 
+    # `sso` feature config (API-19, add-sso-oidc-login). `sso_encryption_key`
+    # is the Fernet key `core/encryption.py` uses to encrypt/decrypt every
+    # tenant's OIDC client secret at rest — left unset by default so a
+    # deployment that never configured it fails loudly the first time
+    # `core/encryption.py` is actually used, rather than silently no-op'ing.
+    # Generate one with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    sso_encryption_key: str | None = Field(default=None, alias="SSO_ENCRYPTION_KEY")
+    # The exact `redirect_uri` this app is registered with at every tenant's
+    # IdP (e.g. `https://api.example.com/api/v1/auth/sso/callback`). Most
+    # OIDC providers, including Microsoft Entra ID, require an exact,
+    # pre-registered match — it can't be derived from the inbound request's
+    # `Host` header, which is client-controlled and untrusted for this
+    # purpose. One fixed value works for every tenant since the callback
+    # route itself is tenant-agnostic (the tenant is carried in `state`,
+    # not the URL) — see sso/service.py::handle_callback.
+    sso_redirect_uri: str | None = Field(default=None, alias="SSO_REDIRECT_URI")
+    # Where the callback redirects the browser with a short-lived exchange
+    # code (design.md's "Exchange code, not tokens-in-a-redirect" decision) —
+    # one global setting, not per-tenant, since only one React portal
+    # deployment exists today.
+    sso_frontend_callback_url: str | None = Field(default=None, alias="SSO_FRONTEND_CALLBACK_URL")
+    sso_exchange_code_ttl_seconds: int = Field(default=60, alias="SSO_EXCHANGE_CODE_TTL_SECONDS")
+    sso_state_ttl_seconds: int = Field(default=600, alias="SSO_STATE_TTL_SECONDS")
+
 
 @lru_cache
 def get_settings() -> Settings:

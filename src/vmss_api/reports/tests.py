@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Callable
 
 import pytest_asyncio
 from httpx import AsyncClient
@@ -124,9 +125,9 @@ async def test_branches_rollup_success(
 
 
 async def test_branches_rollup_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.get(
         "/api/v1/reports/branches/rollup", headers={"Authorization": f"Bearer {token}"}
     )

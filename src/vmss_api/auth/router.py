@@ -45,15 +45,17 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=Envelope[TokenResponse])
-@limiter.limit("5/minute")
+@limiter.limit("3/minute")
 async def login(
     request: Request,
     payload: LoginRequest,
     background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> JSONResponse:
-    """Rate-limited (5/min per IP) — this is a public, unauthenticated endpoint.
-    See security-architecture.md §2.
+    """Rate-limited (3/min per IP) — this is a public, unauthenticated endpoint.
+    Tightened from 5/min now that SSO (API-19) makes this the break-glass
+    path and the higher-value brute-force target once SSO is the default
+    way in. See security-architecture.md §2.
     """
     user, tenant = await service.authenticate_user(db, payload.email, payload.password)
     tokens = service.issue_tokens(user, tenant.id)
@@ -66,6 +68,29 @@ async def login(
         entity_id=user.id,
     )
     return success_response(data=tokens)
+
+
+@router.post("/logout", response_model=Envelope[None])
+async def logout(
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    actor: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Records the logout audit event (docx acceptance checklist: "every
+    SSO login, logout... shows up in the audit log") — this app issues
+    stateless JWTs with no revocation list, so this does not invalidate the
+    caller's still-valid access token; see
+    `openspec/changes/add-sso-oidc-login/design.md`'s Non-Goals.
+    """
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=actor.id,
+        action="logout",
+        entity_type="User",
+        entity_id=actor.id,
+    )
+    return success_response(data=None)
 
 
 def _to_user_out(user: User) -> UserOut:

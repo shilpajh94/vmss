@@ -43,6 +43,7 @@ from vmss_api.org_structure.models import (
 )
 from vmss_api.platform.models import SuperAdmin
 from vmss_api.registrations.models import RegistrationDeviceKey
+from vmss_api.sso.models import SsoProvider, SsoRoleMapping
 from vmss_api.tenant.models import Tenant
 from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
 
@@ -179,3 +180,14 @@ class InvitationVehicleFactory(SQLAlchemyFactory[InvitationVehicle]):
 class RegistrationDeviceKeyFactory(SQLAlchemyFactory[RegistrationDeviceKey]):
     __model__ = RegistrationDeviceKey
     is_active = True
+
+
+class SsoProviderFactory(SQLAlchemyFactory[SsoProvider]):
+    __model__ = SsoProvider
+    is_enabled = True
+    deleted_at = None
+
+
+class SsoRoleMappingFactory(SQLAlchemyFactory[SsoRoleMapping]):
+    __model__ = SsoRoleMapping
+    deleted_at = None

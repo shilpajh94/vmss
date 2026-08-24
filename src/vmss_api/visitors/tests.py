@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Callable
 
 import pytest_asyncio
 from httpx import AsyncClient
@@ -124,9 +125,9 @@ async def test_create_visitor_category_duplicate_form_field_names_rejected(
 
 
 async def test_create_visitor_category_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/visitor-categories",
         json={"name": "Vendor", "code": "VENDOR"},
@@ -136,9 +137,9 @@ async def test_create_visitor_category_requires_permission(
 
 
 async def test_list_visitor_categories_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.get(
         "/api/v1/visitor-categories", headers={"Authorization": f"Bearer {token}"}
     )
@@ -146,9 +147,12 @@ async def test_list_visitor_categories_requires_permission(
 
 
 async def test_get_visitor_category_requires_permission(
-    client: AsyncClient, user_without_permissions: User, visitor_category: VisitorCategory
+    client: AsyncClient,
+    user_without_permissions: User,
+    visitor_category: VisitorCategory,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.get(
         f"/api/v1/visitor-categories/{visitor_category.id}",
         headers={"Authorization": f"Bearer {token}"},
@@ -203,9 +207,12 @@ async def test_update_visitor_category_success(
 
 
 async def test_update_visitor_category_requires_permission(
-    client: AsyncClient, user_without_permissions: User, visitor_category: VisitorCategory
+    client: AsyncClient,
+    user_without_permissions: User,
+    visitor_category: VisitorCategory,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.put(
         f"/api/v1/visitor-categories/{visitor_category.id}",
         json={"description": "Nope"},
@@ -215,9 +222,12 @@ async def test_update_visitor_category_requires_permission(
 
 
 async def test_delete_visitor_category_requires_permission(
-    client: AsyncClient, user_without_permissions: User, visitor_category: VisitorCategory
+    client: AsyncClient,
+    user_without_permissions: User,
+    visitor_category: VisitorCategory,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.delete(
         f"/api/v1/visitor-categories/{visitor_category.id}",
         headers={"Authorization": f"Bearer {token}"},
@@ -443,8 +453,9 @@ async def test_create_approval_workflow_rule_requires_permission(
     user_without_permissions: User,
     visitor_category: VisitorCategory,
     approver_role: Role,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/approval-workflow-rules",
         json={
@@ -461,8 +472,9 @@ async def test_list_approval_workflow_rules_requires_permission(
     client: AsyncClient,
     user_without_permissions: User,
     approval_workflow_rule: ApprovalWorkflowRule,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.get(
         "/api/v1/approval-workflow-rules",
         params={"visitorCategoryId": str(approval_workflow_rule.visitor_category_id)},
@@ -475,8 +487,9 @@ async def test_get_approval_workflow_rule_requires_permission(
     client: AsyncClient,
     user_without_permissions: User,
     approval_workflow_rule: ApprovalWorkflowRule,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.get(
         f"/api/v1/approval-workflow-rules/{approval_workflow_rule.id}",
         headers={"Authorization": f"Bearer {token}"},
@@ -528,8 +541,9 @@ async def test_update_approval_workflow_rule_requires_permission(
     client: AsyncClient,
     user_without_permissions: User,
     approval_workflow_rule: ApprovalWorkflowRule,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.put(
         f"/api/v1/approval-workflow-rules/{approval_workflow_rule.id}",
         json={"isMandatory": False},
@@ -542,8 +556,9 @@ async def test_delete_approval_workflow_rule_requires_permission(
     client: AsyncClient,
     user_without_permissions: User,
     approval_workflow_rule: ApprovalWorkflowRule,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.delete(
         f"/api/v1/approval-workflow-rules/{approval_workflow_rule.id}",
         headers={"Authorization": f"Bearer {token}"},

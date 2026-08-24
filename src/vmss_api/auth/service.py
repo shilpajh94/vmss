@@ -33,6 +33,16 @@ from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
 
 
+def has_admin_role(user: User) -> bool:
+    """Whether `user` holds the Admin role via any (company-wide or
+    branch-scoped) `UserBranchRole` grant. Used to gate which login method
+    an account may use — `POST /auth/login` (this module) requires it,
+    `sso-authentication`'s callback requires its absence — see
+    `openspec/changes/separate-admin-staff-login/design.md`.
+    """
+    return any(assignment.role.name == "admin" for assignment in user.branch_roles)
+
+
 async def authenticate_user(db: AsyncSession, email: str, password: str) -> tuple[User, Tenant]:
     """Login's two-hop lookup under schema-per-tenant: the global
     `tenant_user_index` says *which* tenant this email belongs to; only then
@@ -66,6 +76,12 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> tupl
     if not verify_password(password, user.hashed_password):
         logger.warning("login_failed", email=email, reason="invalid_password", user_id=str(user.id))
         raise invalid_credentials
+    if not has_admin_role(user):
+        logger.warning("login_rejected_non_admin", email=email, user_id=str(user.id))
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account must sign in via your organization's SSO login",
+        )
     return user, tenant
 
 

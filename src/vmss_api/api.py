@@ -7,6 +7,7 @@ from vmss_api.org_structure.router import router as org_structure_router
 from vmss_api.platform.router import router as platform_router
 from vmss_api.registrations.router import router as registrations_router
 from vmss_api.reports.router import router as reports_router
+from vmss_api.sso.router import router as sso_router
 from vmss_api.tenant.router import router as tenant_router
 from vmss_api.visitors.router import router as visitors_router
 
@@ -20,3 +21,4 @@ api_router.include_router(invitations_router)
 api_router.include_router(registrations_router)
 api_router.include_router(reports_router)
 api_router.include_router(identity_verification_router)
+api_router.include_router(sso_router)

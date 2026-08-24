@@ -82,6 +82,24 @@ def create_identity_verified_token(identifier: str, channel: str, tenant_id: uui
     )
 
 
+def create_sso_exchange_token(user_id: uuid.UUID, tenant_id: uuid.UUID) -> str:
+    """A short-lived, single-use proof handed to the browser at the end of
+    the SSO callback instead of the real access/refresh token pair
+    (`sso` feature, API-19) — see design.md's "Exchange code, not
+    tokens-in-a-redirect" decision. The `jti` claim is what
+    `sso/service.py::redeem_exchange_code` claims in Redis (`SETNX`) to
+    enforce single use; `decode_token` alone can't detect a replay since a
+    JWT is otherwise valid until it expires.
+    """
+    return _create_token(
+        user_id,
+        tenant_id,
+        timedelta(seconds=settings.sso_exchange_code_ttl_seconds),
+        "sso_exchange",
+        extra_claims={"jti": uuid.uuid4().hex},
+    )
+
+
 def decode_token(token: str) -> dict[str, Any]:
     try:
         return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
