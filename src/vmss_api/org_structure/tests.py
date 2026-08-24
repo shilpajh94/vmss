@@ -1167,6 +1167,42 @@ async def test_create_floor_after_soft_delete_reuses_number(
     assert recreate_response.status_code == 201
 
 
+async def test_update_floor_succeeds_after_parent_building_soft_deleted(
+    client: AsyncClient, db_session: AsyncSession, user: User, floor: Floor, building: Building
+) -> None:
+    """A floor whose building was soft-deleted out from under it (nothing
+    cascades or blocks that today) must not turn into a permanent 404 the
+    moment that happens — the floor row itself was never deleted, so its own
+    get/update/delete must keep resolving a branch via the building
+    regardless of the building's own `deleted_at`. Regression test for the
+    bug where `resolve_building_branch_id`'s `deleted_at IS NULL` filter made
+    such a floor unmanageable (though still visible in `GET /floors`) as soon
+    as its building was deleted.
+    """
+    await BuildingRepository(db_session).soft_delete(building)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)}
+    response = await client.put(
+        f"/api/v1/floors/{floor.id}", json={"name": "Renamed Floor"}, headers=headers
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["name"] == "Renamed Floor"
+
+
+async def test_delete_floor_succeeds_after_parent_building_soft_deleted(
+    client: AsyncClient, db_session: AsyncSession, user: User, floor: Floor, building: Building
+) -> None:
+    await BuildingRepository(db_session).soft_delete(building)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)}
+    response = await client.delete(f"/api/v1/floors/{floor.id}", headers=headers)
+    assert response.status_code == 204
+
+
 async def test_floor_repository_tenant_schema_isolation(
     make_tenant_schema, open_tenant_session, floor: Floor
 ) -> None:
@@ -1567,6 +1603,28 @@ async def test_delete_reception_desk_success(
         f"/api/v1/reception-desks/{reception_desk.id}",
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
     )
+    assert response.status_code == 204
+
+
+async def test_delete_reception_desk_succeeds_after_parent_floor_soft_deleted(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    reception_desk: ReceptionDesk,
+    floor: Floor,
+    building: Building,
+) -> None:
+    """Same bug as
+    `test_delete_floor_succeeds_after_parent_building_soft_deleted`, one
+    level down: a desk's floor being soft-deleted must not make the desk
+    itself permanently unmanageable.
+    """
+    await FloorRepository(db_session).soft_delete(floor)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)}
+    response = await client.delete(f"/api/v1/reception-desks/{reception_desk.id}", headers=headers)
     assert response.status_code == 204
 
 
