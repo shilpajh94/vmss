@@ -33,7 +33,7 @@ export function LoginFormCard({
     >
       <div className="flex flex-col items-center gap-4">
         <span className="rounded-full bg-[#ecfeff] px-3 py-1 font-body text-[12px] font-bold tracking-[1px] text-secondary-accent uppercase">
-          Staff Portal
+          Admin Portal
         </span>
         <div className="flex flex-col items-center gap-2 text-center">
           <h1 className="font-display text-[28px] font-bold text-text">Enterprise Sign In</h1>

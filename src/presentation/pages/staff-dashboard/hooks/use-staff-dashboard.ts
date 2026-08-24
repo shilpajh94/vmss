@@ -41,7 +41,7 @@ export function useStaffDashboard() {
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
-      navigate('/staff/login', { replace: true })
+      navigate('/admin/login', { replace: true })
       return
     }
 
@@ -54,7 +54,7 @@ export function useStaffDashboard() {
 
   const signOut = useCallback(() => {
     sessionStorage.removeItem('token')
-    navigate('/staff/login')
+    navigate('/admin/login')
   }, [navigate])
 
   const filteredRequests = useMemo(() => {

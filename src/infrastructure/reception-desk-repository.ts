@@ -10,11 +10,12 @@ import {
   ReceptionDeskResponseSchema,
   type ReceptionDeskOut,
 } from '../domain/entities/reception-desk-out-schema'
+import type { Floor } from '../domain/entities/floor-schema'
 import type { ReceptionDesk, ReceptionDeskInput } from '../domain/entities/reception-desk-schema'
 
 interface NameLookups {
   buildingNameById: Map<string, string>
-  floorNameById: Map<string, string>
+  floorById: Map<string, Floor>
   receptionistNameById: Map<string, string>
 }
 
@@ -45,22 +46,23 @@ export class HttpReceptionDeskRepository implements ReceptionDeskRepository {
 
     return {
       buildingNameById: new Map(buildings.map((building) => [building.id, building.name])),
-      floorNameById: new Map(floors.map((floor) => [floor.id, floor.name])),
+      floorById: new Map(floors.map((floor) => [floor.id, floor])),
       receptionistNameById: new Map(hostEmployees.map((employee) => [employee.id, employee.fullName])),
     }
   }
 
   private toReceptionDesk(receptionDeskOut: ReceptionDeskOut, lookups: NameLookups): ReceptionDesk {
-    const floorId = receptionDeskOut.floorId ?? undefined
-    const receptionistUserId = receptionDeskOut.receptionistUserId ?? undefined
+    const floor = lookups.floorById.get(receptionDeskOut.floorId)
+    const receptionistUserId = receptionDeskOut.assignedReceptionistUserId ?? undefined
 
     return {
       id: receptionDeskOut.id,
-      buildingId: receptionDeskOut.buildingId,
-      buildingName: lookups.buildingNameById.get(receptionDeskOut.buildingId) ?? '',
-      floorId,
-      floorName: floorId ? lookups.floorNameById.get(floorId) : undefined,
+      buildingId: floor?.buildingId ?? '',
+      buildingName: floor ? lookups.buildingNameById.get(floor.buildingId) ?? '' : '',
+      floorId: receptionDeskOut.floorId,
+      floorName: floor?.name,
       name: receptionDeskOut.name,
+      code: receptionDeskOut.code,
       receptionistUserId,
       receptionistName: receptionistUserId ? lookups.receptionistNameById.get(receptionistUserId) : undefined,
       operatingHoursFrom: receptionDeskOut.operatingHoursFrom ?? undefined,
@@ -87,13 +89,13 @@ export class HttpReceptionDeskRepository implements ReceptionDeskRepository {
       this.apiClient.makeRequest({
         endpointConfig: API_ENDPOINTS.CREATE_RECEPTION_DESK,
         body: {
-          buildingId: input.buildingId,
-          floorId: input.floorId ?? null,
+          floorId: input.floorId,
           name: input.name,
-          receptionistUserId: input.receptionistUserId ?? null,
+          code: input.code,
+          status: input.status,
+          assignedReceptionistUserId: input.receptionistUserId ?? null,
           operatingHoursFrom: input.operatingHoursFrom ?? null,
           operatingHoursTo: input.operatingHoursTo ?? null,
-          status: input.status,
         },
         parserSchema: ReceptionDeskResponseSchema,
       }),
@@ -104,17 +106,17 @@ export class HttpReceptionDeskRepository implements ReceptionDeskRepository {
   }
 
   async update(id: string, input: ReceptionDeskInput): Promise<ReceptionDesk> {
+    // The backend's update contract has no floorId field — a desk's floor can't be changed after creation.
     const [response, lookups] = await Promise.all([
       this.apiClient.makeRequest({
         endpointConfig: API_ENDPOINTS.UPDATE_RECEPTION_DESK,
         body: {
-          buildingId: input.buildingId,
-          floorId: input.floorId ?? null,
           name: input.name,
-          receptionistUserId: input.receptionistUserId ?? null,
+          code: input.code,
+          status: input.status,
+          assignedReceptionistUserId: input.receptionistUserId ?? null,
           operatingHoursFrom: input.operatingHoursFrom ?? null,
           operatingHoursTo: input.operatingHoursTo ?? null,
-          status: input.status,
         },
         pathParams: { id },
         parserSchema: ReceptionDeskResponseSchema,

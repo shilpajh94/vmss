@@ -7,7 +7,7 @@ interface ReceptionDesksTableProps {
   onDelete: (receptionDesk: ReceptionDesk) => void
 }
 
-const COLUMN_HEADERS = ['DESK NAME', 'BUILDING', 'FLOOR', 'ASSIGNED RECEPTIONIST', 'OPERATING HOURS']
+const COLUMN_HEADERS = ['DESK NAME', 'CODE', 'BUILDING', 'FLOOR', 'ASSIGNED RECEPTIONIST', 'OPERATING HOURS']
 
 const STATUS_BADGE: Record<ReceptionDesk['status'], { label: string; badgeClassName: string; dotClassName: string }> = {
   active: { label: 'Active', badgeClassName: 'bg-success/15 text-success', dotClassName: 'bg-success' },
@@ -44,6 +44,7 @@ export function ReceptionDesksTable({ receptionDesks, onDelete }: ReceptionDesks
             return (
               <tr key={receptionDesk.id} className="border-b border-border-subtle">
                 <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">{receptionDesk.name}</td>
+                <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{receptionDesk.code}</td>
                 <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{receptionDesk.buildingName}</td>
                 <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{receptionDesk.floorName ?? '—'}</td>
                 <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{receptionDesk.receptionistName ?? 'Unassigned'}</td>

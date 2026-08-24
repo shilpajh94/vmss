@@ -7,11 +7,12 @@ import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
 const EMPTY_VALUES: VisitorCategoryInput = {
   name: '',
+  code: '',
   description: undefined,
   badgeColor: 'blue',
-  ndaRequired: undefined,
-  escortRequired: undefined,
-  maxDuration: undefined,
+  ndaRequirement: undefined,
+  escortRequirement: undefined,
+  maxDurationMinutes: undefined,
 }
 
 export function useAdminVisitorCategoryForm() {
@@ -48,11 +49,12 @@ export function useAdminVisitorCategoryForm() {
         }
         setValues({
           name: visitorCategory.name,
+          code: visitorCategory.code,
           description: visitorCategory.description,
           badgeColor: visitorCategory.badgeColor,
-          ndaRequired: visitorCategory.ndaRequired,
-          escortRequired: visitorCategory.escortRequired,
-          maxDuration: visitorCategory.maxDuration,
+          ndaRequirement: visitorCategory.ndaRequirement,
+          escortRequirement: visitorCategory.escortRequirement,
+          maxDurationMinutes: visitorCategory.maxDurationMinutes,
         })
       } else {
         setValues(EMPTY_VALUES)
@@ -67,7 +69,7 @@ export function useAdminVisitorCategoryForm() {
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
-      navigate('/staff/login', { replace: true })
+      navigate('/admin/login', { replace: true })
       return
     }
 
@@ -85,6 +87,7 @@ export function useAdminVisitorCategoryForm() {
   const submit = useCallback(async () => {
     const nextErrors: Partial<Record<keyof VisitorCategoryInput, string>> = {}
     if (!values.name.trim()) nextErrors.name = 'Category name is required.'
+    if (!values.code.trim()) nextErrors.code = 'Category code is required.'
 
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors)

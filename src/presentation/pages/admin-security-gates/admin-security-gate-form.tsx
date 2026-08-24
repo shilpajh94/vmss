@@ -4,13 +4,13 @@ import { ChevronLeftIcon } from '../../components/icons'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
+import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
 import { useAdminSecurityGateForm } from './hooks/use-admin-security-gate-form'
 
 const GATE_TYPE_OPTIONS = [
-  { value: 'bidirectional', label: 'Bidirectional' },
-  { value: 'entry_only', label: 'Entry Only' },
-  { value: 'exit_only', label: 'Exit Only' },
-  { value: 'high_security', label: 'High Security' },
+  { value: 'both', label: 'Entry & Exit' },
+  { value: 'entry', label: 'Entry Only' },
+  { value: 'exit', label: 'Exit Only' },
 ]
 
 const CONNECTIVITY_OPTIONS = [
@@ -24,7 +24,6 @@ export function AdminSecurityGateFormPage() {
     isEditMode,
     currentUser,
     buildings,
-    floors,
     isLoading,
     errorMessage,
     retry,
@@ -37,7 +36,6 @@ export function AdminSecurityGateFormPage() {
   } = useAdminSecurityGateForm()
 
   const buildingOptions = buildings.map((building) => ({ value: building.id, label: building.name }))
-  const floorOptions = floors.map((floor) => ({ value: floor.id, label: floor.name }))
   const fieldLabelClassName = 'text-[13px] font-bold uppercase text-[#475569]'
 
   return (
@@ -93,6 +91,18 @@ export function AdminSecurityGateFormPage() {
                       />
                     </div>
                     <div className="flex-1">
+                      <TextField
+                        label="Gate Code"
+                        required
+                        value={values.code}
+                        onChange={(code) => updateField('code', code)}
+                        error={errors.code}
+                        labelClassName={fieldLabelClassName}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-6">
+                    <div className="flex-1">
                       <SelectField
                         label="Building"
                         required
@@ -101,18 +111,6 @@ export function AdminSecurityGateFormPage() {
                         options={buildingOptions}
                         placeholder="Select building..."
                         error={errors.buildingId}
-                        labelClassName={fieldLabelClassName}
-                      />
-                    </div>
-                  </div>
-                  <div className="flex gap-6">
-                    <div className="flex-1">
-                      <SelectField
-                        label="Floor"
-                        value={values.floorId ?? ''}
-                        onChange={(floorId) => updateField('floorId', floorId || undefined)}
-                        options={floorOptions}
-                        placeholder="Select floor..."
                         labelClassName={fieldLabelClassName}
                       />
                     </div>
@@ -148,6 +146,11 @@ export function AdminSecurityGateFormPage() {
                       />
                     </div>
                   </div>
+                  <ToggleSwitch
+                    label="High Security"
+                    checked={values.highSecurity}
+                    onChange={(highSecurity) => updateField('highSecurity', highSecurity)}
+                  />
                 </div>
 
                 <div className="flex items-center justify-end gap-3 border-t border-border pt-4">

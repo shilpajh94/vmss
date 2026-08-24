@@ -11,14 +11,12 @@ import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 const EMPTY_CREATE_VALUES: HostEmployeeCreateInput = {
   fullName: '',
   email: '',
-  password: '',
+  employeeCode: '',
+  phoneNumber: undefined,
+  designation: undefined,
+  departmentId: undefined,
   roleId: undefined,
   branchId: undefined,
-}
-
-function generatePassword(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(9))
-  return btoa(String.fromCharCode(...bytes)).replace(/[+/=]/g, '').slice(0, 12)
 }
 
 export function useAdminHostEmployeeForm() {
@@ -92,7 +90,7 @@ export function useAdminHostEmployeeForm() {
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
-      navigate('/staff/login', { replace: true })
+      navigate('/admin/login', { replace: true })
       return
     }
 
@@ -114,15 +112,11 @@ export function useAdminHostEmployeeForm() {
     setCreateValues((current) => ({ ...current, [key]: value }))
   }, [])
 
-  const regeneratePassword = useCallback(() => {
-    updateCreateField('password', generatePassword())
-  }, [updateCreateField])
-
   const submitCreate = useCallback(async () => {
     const nextErrors: Partial<Record<keyof HostEmployeeCreateInput, string>> = {}
     if (!createValues.fullName.trim()) nextErrors.fullName = 'Employee name is required.'
     if (!createValues.email.trim()) nextErrors.email = 'Email address is required.'
-    if (createValues.password.trim().length < 8) nextErrors.password = 'Password must be at least 8 characters.'
+    if (!createValues.employeeCode.trim()) nextErrors.employeeCode = 'Employee code is required.'
 
     if (Object.keys(nextErrors).length > 0) {
       setCreateErrors(nextErrors)
@@ -132,14 +126,11 @@ export function useAdminHostEmployeeForm() {
 
     setIsSaving(true)
     try {
-      // Validation above checks trimmed length/presence; submit the same
-      // trimmed values so a stray space (easy via copy-paste) can't make the
-      // stored credential silently differ from what the employee types back in.
       await createHostEmployeeUseCase.execute({
         ...createValues,
         fullName: createValues.fullName.trim(),
         email: createValues.email.trim(),
-        password: createValues.password.trim(),
+        employeeCode: createValues.employeeCode.trim(),
       })
       toast.success('Host employee created.')
       navigate('/admin/host-employees')
@@ -205,12 +196,12 @@ export function useAdminHostEmployeeForm() {
     retry,
     roles,
     branches,
+    departments,
     // create mode
     createValues,
     createErrors,
     isSaving,
     updateCreateField,
-    regeneratePassword,
     submitCreate,
     // edit mode
     employee,

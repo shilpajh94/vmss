@@ -2,12 +2,14 @@ import z from "zod"
 
 export const SecurityGateOutSchema = z.object({
   id: z.string(),
-  buildingId: z.string(),
-  floorId: z.string().nullable(),
+  branchId: z.string(),
+  buildingId: z.string().nullable(),
   name: z.string(),
-  gateType: z.enum(["bidirectional", "entry_only", "exit_only", "high_security"]),
-  authMethod: z.string().nullable(),
+  code: z.string(),
+  gateType: z.enum(["entry", "exit", "both"]),
   connectivityStatus: z.enum(["online", "maintenance", "offline"]),
+  highSecurity: z.boolean(),
+  authMethod: z.string().nullable(),
 })
 
 export type SecurityGateOut = z.infer<typeof SecurityGateOutSchema>

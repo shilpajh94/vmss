@@ -13,11 +13,12 @@ function toVisitorCategory(visitorCategoryOut: VisitorCategoryOut): VisitorCateg
   return {
     id: visitorCategoryOut.id,
     name: visitorCategoryOut.name,
+    code: visitorCategoryOut.code,
     description: visitorCategoryOut.description ?? undefined,
     badgeColor: visitorCategoryOut.badgeColor,
-    ndaRequired: visitorCategoryOut.ndaRequired ?? undefined,
-    escortRequired: visitorCategoryOut.escortRequired ?? undefined,
-    maxDuration: visitorCategoryOut.maxDuration ?? undefined,
+    ndaRequirement: visitorCategoryOut.ndaRequirement ?? undefined,
+    escortRequirement: visitorCategoryOut.escortRequirement ?? undefined,
+    maxDurationMinutes: visitorCategoryOut.maxDurationMinutes ?? undefined,
   }
 }
 
@@ -43,11 +44,12 @@ export class HttpVisitorCategoryRepository implements VisitorCategoryRepository 
       endpointConfig: API_ENDPOINTS.CREATE_VISITOR_CATEGORY,
       body: {
         name: input.name,
+        code: input.code,
         description: input.description ?? null,
         badgeColor: input.badgeColor,
-        ndaRequired: input.ndaRequired ?? null,
-        escortRequired: input.escortRequired ?? null,
-        maxDuration: input.maxDuration ?? null,
+        ndaRequirement: input.ndaRequirement ?? null,
+        escortRequirement: input.escortRequirement ?? null,
+        maxDurationMinutes: input.maxDurationMinutes ?? null,
       },
       parserSchema: VisitorCategoryResponseSchema,
     })
@@ -60,11 +62,12 @@ export class HttpVisitorCategoryRepository implements VisitorCategoryRepository 
       endpointConfig: API_ENDPOINTS.UPDATE_VISITOR_CATEGORY,
       body: {
         name: input.name,
+        code: input.code,
         description: input.description ?? null,
         badgeColor: input.badgeColor,
-        ndaRequired: input.ndaRequired ?? null,
-        escortRequired: input.escortRequired ?? null,
-        maxDuration: input.maxDuration ?? null,
+        ndaRequirement: input.ndaRequirement ?? null,
+        escortRequirement: input.escortRequirement ?? null,
+        maxDurationMinutes: input.maxDurationMinutes ?? null,
       },
       pathParams: { id },
       parserSchema: VisitorCategoryResponseSchema,

@@ -14,15 +14,28 @@ const TIMEZONE_OPTIONS = [
   { value: 'GMT+08:00', label: 'GMT+08:00 (Singapore, Hong Kong)' },
 ]
 
-interface GeneralInformationCardProps {
-  form: OrganisationConfig
-  onNameChange: (organisationName: string) => void
-  onTimezoneChange: (defaultTimezone: string) => void
-  onUploadLogo: (file: File) => Promise<string>
-  onLogoChange: (logoUrl: string | undefined) => void
+interface LogoPreview {
+  url: string
+  fileName: string
 }
 
-export function GeneralInformationCard({ form, onNameChange, onTimezoneChange, onUploadLogo, onLogoChange }: GeneralInformationCardProps) {
+interface GeneralInformationCardProps {
+  form: OrganisationConfig
+  logoPreview: LogoPreview | undefined
+  onNameChange: (organisationName: string) => void
+  onTimezoneChange: (defaultTimezone: string) => void
+  onPreviewLogo: (file: File) => Promise<string>
+  onLogoPreviewChange: (fileRef: string | undefined, fileName: string | undefined) => void
+}
+
+export function GeneralInformationCard({
+  form,
+  logoPreview,
+  onNameChange,
+  onTimezoneChange,
+  onPreviewLogo,
+  onLogoPreviewChange,
+}: GeneralInformationCardProps) {
   return (
     <section className="flex flex-1 flex-col gap-5 rounded-2xl border border-border bg-surface p-6">
       <h2 className="font-display text-lg font-bold text-text">General Information</h2>
@@ -31,11 +44,12 @@ export function GeneralInformationCard({ form, onNameChange, onTimezoneChange, o
 
       <FileUploadField
         label="Organisation Logo"
-        helperText="PNG, JPG up to 5MB (Recommended 512x512)"
+        helperText="PNG, JPG up to 5MB (Recommended 512x512) — preview only; logo upload isn't saved until the backend adds file storage support"
         allowedTypes={LOGO_ALLOWED_TYPES}
-        previewUrl={form.logoUrl}
-        onUpload={onUploadLogo}
-        onFileRefChange={(logoUrl) => onLogoChange(logoUrl)}
+        fileName={logoPreview?.fileName}
+        previewUrl={logoPreview?.url ?? form.logoUrl}
+        onUpload={onPreviewLogo}
+        onFileRefChange={onLogoPreviewChange}
       />
 
       <SelectField

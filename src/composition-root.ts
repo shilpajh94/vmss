@@ -27,7 +27,6 @@ import { ListVisitRequestsUseCase } from './data/use-cases/list-visit-requests'
 import { GetCurrentStaffUserUseCase } from './data/use-cases/get-current-staff-user'
 import { GetOrganisationConfigUseCase } from './data/use-cases/get-organisation-config'
 import { UpdateOrganisationConfigUseCase } from './data/use-cases/update-organisation-config'
-import { UploadOrganisationLogoUseCase } from './data/use-cases/upload-organisation-logo'
 import { ListBranchesUseCase } from './data/use-cases/list-branches'
 import { CreateBranchUseCase } from './data/use-cases/create-branch'
 import { UpdateBranchUseCase } from './data/use-cases/update-branch'
@@ -94,7 +93,6 @@ export interface AppDependencies {
   getAuditTrailUseCase: GetAuditTrailUseCase
   getOrganisationConfigUseCase: GetOrganisationConfigUseCase
   updateOrganisationConfigUseCase: UpdateOrganisationConfigUseCase
-  uploadOrganisationLogoUseCase: UploadOrganisationLogoUseCase
   listBranchesUseCase: ListBranchesUseCase
   createBranchUseCase: CreateBranchUseCase
   updateBranchUseCase: UpdateBranchUseCase
@@ -153,7 +151,6 @@ export function createApp(): AppDependencies {
   let organisationConfigRepository: OrganisationConfigRepository | undefined
   let getOrganisationConfigUseCase: GetOrganisationConfigUseCase | undefined
   let updateOrganisationConfigUseCase: UpdateOrganisationConfigUseCase | undefined
-  let uploadOrganisationLogoUseCase: UploadOrganisationLogoUseCase | undefined
   let branchRepository: BranchRepository | undefined
   let listBranchesUseCase: ListBranchesUseCase | undefined
   let createBranchUseCase: CreateBranchUseCase | undefined
@@ -299,10 +296,6 @@ export function createApp(): AppDependencies {
     return updateOrganisationConfigUseCase
   }
 
-  const resolveUploadOrganisationLogoUseCase = (): UploadOrganisationLogoUseCase => {
-    uploadOrganisationLogoUseCase ??= new UploadOrganisationLogoUseCase(resolveOrganisationConfigRepository())
-    return uploadOrganisationLogoUseCase
-  }
 
   const resolveBranchRepository = (): BranchRepository => {
     branchRepository ??= new HttpBranchRepository(resolveApiClient())
@@ -480,7 +473,7 @@ export function createApp(): AppDependencies {
   }
 
   const resolveSecurityGateRepository = (): SecurityGateRepository => {
-    securityGateRepository ??= new HttpSecurityGateRepository(resolveApiClient(), resolveBuildingRepository(), resolveFloorRepository())
+    securityGateRepository ??= new HttpSecurityGateRepository(resolveApiClient(), resolveBuildingRepository())
     return securityGateRepository
   }
 
@@ -565,9 +558,6 @@ export function createApp(): AppDependencies {
     },
     get updateOrganisationConfigUseCase() {
       return resolveUpdateOrganisationConfigUseCase()
-    },
-    get uploadOrganisationLogoUseCase() {
-      return resolveUploadOrganisationLogoUseCase()
     },
     get listBranchesUseCase() {
       return resolveListBranchesUseCase()

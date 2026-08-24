@@ -7,13 +7,12 @@ interface SecurityGatesTableProps {
   onDelete: (securityGate: SecurityGate) => void
 }
 
-const COLUMN_HEADERS = ['GATE NAME/ID', 'BUILDING', 'FLOOR', 'GATE TYPE', 'AUTH METHOD']
+const COLUMN_HEADERS = ['GATE NAME/ID', 'CODE', 'BUILDING', 'GATE TYPE', 'AUTH METHOD']
 
 const GATE_TYPE_BADGE: Record<SecurityGate['gateType'], { label: string; className: string }> = {
-  bidirectional: { label: 'Bidirectional', className: 'bg-info/15 text-info' },
-  entry_only: { label: 'Entry Only', className: 'bg-success/15 text-success' },
-  exit_only: { label: 'Exit Only', className: 'bg-danger/15 text-danger' },
-  high_security: { label: 'High Security', className: 'bg-warning/15 text-warning' },
+  both: { label: 'Entry & Exit', className: 'bg-info/15 text-info' },
+  entry: { label: 'Entry Only', className: 'bg-success/15 text-success' },
+  exit: { label: 'Exit Only', className: 'bg-danger/15 text-danger' },
 }
 
 const CONNECTIVITY_BADGE: Record<SecurityGate['connectivityStatus'], { label: string; badgeClassName: string; dotClassName: string }> = {
@@ -47,12 +46,19 @@ export function SecurityGatesTable({ securityGates, onDelete }: SecurityGatesTab
             return (
               <tr key={securityGate.id} className="border-b border-border-subtle">
                 <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">{securityGate.name}</td>
+                <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{securityGate.code}</td>
                 <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{securityGate.buildingName}</td>
-                <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{securityGate.floorName ?? '—'}</td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex items-center rounded px-2.5 py-1 font-body text-[11px] font-bold ${gateTypeBadge.className}`}>
-                    {gateTypeBadge.label}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`inline-flex items-center rounded px-2.5 py-1 font-body text-[11px] font-bold ${gateTypeBadge.className}`}>
+                      {gateTypeBadge.label}
+                    </span>
+                    {securityGate.highSecurity && (
+                      <span className="inline-flex items-center rounded px-2.5 py-1 font-body text-[11px] font-bold bg-warning/15 text-warning">
+                        High Security
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{securityGate.authMethod ?? '—'}</td>
                 <td className="px-6 py-4 whitespace-nowrap">

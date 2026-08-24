@@ -70,7 +70,7 @@ export function StaffVisitorRegistrationPage() {
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
-      navigate('/staff/login', { replace: true })
+      navigate('/admin/login', { replace: true })
       return
     }
     void loadCurrentUser()
@@ -79,7 +79,7 @@ export function StaffVisitorRegistrationPage() {
 
   const signOut = () => {
     sessionStorage.removeItem('token')
-    navigate('/staff/login')
+    navigate('/admin/login')
   }
 
   const cancelRegistration = () => {

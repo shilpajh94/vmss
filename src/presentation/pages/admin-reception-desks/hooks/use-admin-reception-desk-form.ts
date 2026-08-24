@@ -10,8 +10,9 @@ import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
 const EMPTY_VALUES: ReceptionDeskInput = {
   name: '',
+  code: '',
   buildingId: '',
-  floorId: undefined,
+  floorId: '',
   receptionistUserId: undefined,
   operatingHoursFrom: undefined,
   operatingHoursTo: undefined,
@@ -70,6 +71,7 @@ export function useAdminReceptionDeskForm() {
         }
         setValues({
           name: receptionDesk.name,
+          code: receptionDesk.code,
           buildingId: receptionDesk.buildingId,
           floorId: receptionDesk.floorId,
           receptionistUserId: receptionDesk.receptionistUserId,
@@ -99,7 +101,7 @@ export function useAdminReceptionDeskForm() {
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
-      navigate('/staff/login', { replace: true })
+      navigate('/admin/login', { replace: true })
       return
     }
 
@@ -118,7 +120,7 @@ export function useAdminReceptionDeskForm() {
   const updateField = useCallback(<K extends keyof ReceptionDeskInput>(key: K, value: ReceptionDeskInput[K]) => {
     setValues((current) => {
       if (key === 'buildingId' && current.buildingId !== value) {
-        return { ...current, buildingId: value as ReceptionDeskInput['buildingId'], floorId: undefined }
+        return { ...current, buildingId: value as ReceptionDeskInput['buildingId'], floorId: '' }
       }
       return { ...current, [key]: value }
     })
@@ -127,7 +129,9 @@ export function useAdminReceptionDeskForm() {
   const submit = useCallback(async () => {
     const nextErrors: Partial<Record<keyof ReceptionDeskInput, string>> = {}
     if (!values.name.trim()) nextErrors.name = 'Desk name is required.'
+    if (!values.code.trim()) nextErrors.code = 'Desk code is required.'
     if (!values.buildingId.trim()) nextErrors.buildingId = 'Building is required.'
+    if (!values.floorId.trim()) nextErrors.floorId = 'Floor is required.'
 
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors)

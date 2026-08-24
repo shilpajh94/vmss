@@ -2,10 +2,25 @@ import { AdminSidebar } from '../../components/AdminSidebar'
 import { AdminTopBar } from '../../components/AdminTopBar'
 import { ChevronLeftIcon } from '../../components/icons'
 import { LoadingState } from '../../components/ui/LoadingState'
+import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { TextareaField } from '../../components/ui/TextareaField'
 import { BadgeColorField } from './Components/BadgeColorField'
 import { useAdminVisitorCategoryForm } from './hooks/use-admin-visitor-category-form'
+
+const NDA_REQUIREMENT_OPTIONS = [
+  { value: 'digital', label: 'Yes (Digital)' },
+  { value: 'signed_pdf', label: 'Yes (Signed PDF)' },
+  { value: 'optional', label: 'Optional' },
+  { value: 'none', label: 'Not Required' },
+]
+
+const ESCORT_REQUIREMENT_OPTIONS = [
+  { value: 'self_escort', label: 'Self-Escort' },
+  { value: 'access_logs_only', label: 'Access Logs Only' },
+  { value: 'always_required', label: 'Always Required' },
+  { value: 'gate_check_in_only', label: 'Gate Check-in Only' },
+]
 
 export function AdminVisitorCategoryFormPage() {
   const { isEditMode, currentUser, isLoading, errorMessage, retry, values, errors, isSaving, updateField, submit, cancel } =
@@ -54,14 +69,28 @@ export function AdminVisitorCategoryFormPage() {
             ) : (
               <div className="flex w-full flex-col gap-8 rounded-2xl border border-border bg-surface p-10">
                 <div className="flex flex-col gap-6">
-                  <TextField
-                    label="Category Name"
-                    required
-                    value={values.name}
-                    onChange={(name) => updateField('name', name)}
-                    error={errors.name}
-                    labelClassName={fieldLabelClassName}
-                  />
+                  <div className="flex gap-6">
+                    <div className="flex-1">
+                      <TextField
+                        label="Category Name"
+                        required
+                        value={values.name}
+                        onChange={(name) => updateField('name', name)}
+                        error={errors.name}
+                        labelClassName={fieldLabelClassName}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <TextField
+                        label="Category Code"
+                        required
+                        value={values.code}
+                        onChange={(code) => updateField('code', code)}
+                        error={errors.code}
+                        labelClassName={fieldLabelClassName}
+                      />
+                    </div>
+                  </div>
                   <TextareaField
                     label="Description"
                     value={values.description ?? ''}
@@ -77,29 +106,34 @@ export function AdminVisitorCategoryFormPage() {
                   />
                   <div className="flex gap-6">
                     <div className="flex-1">
-                      <TextField
+                      <SelectField
                         label="NDA Required"
-                        value={values.ndaRequired ?? ''}
-                        onChange={(ndaRequired) => updateField('ndaRequired', ndaRequired || undefined)}
-                        placeholder="e.g. Yes (Digital)"
+                        value={values.ndaRequirement ?? ''}
+                        onChange={(ndaRequirement) => updateField('ndaRequirement', (ndaRequirement || undefined) as typeof values.ndaRequirement)}
+                        options={NDA_REQUIREMENT_OPTIONS}
+                        placeholder="Select NDA requirement..."
                         labelClassName={fieldLabelClassName}
                       />
                     </div>
                     <div className="flex-1">
-                      <TextField
+                      <SelectField
                         label="Escort Required"
-                        value={values.escortRequired ?? ''}
-                        onChange={(escortRequired) => updateField('escortRequired', escortRequired || undefined)}
-                        placeholder="e.g. Required (Always)"
+                        value={values.escortRequirement ?? ''}
+                        onChange={(escortRequirement) =>
+                          updateField('escortRequirement', (escortRequirement || undefined) as typeof values.escortRequirement)
+                        }
+                        options={ESCORT_REQUIREMENT_OPTIONS}
+                        placeholder="Select escort requirement..."
                         labelClassName={fieldLabelClassName}
                       />
                     </div>
                   </div>
                   <TextField
-                    label="Max Duration"
-                    value={values.maxDuration ?? ''}
-                    onChange={(maxDuration) => updateField('maxDuration', maxDuration || undefined)}
-                    placeholder="e.g. 8 Hours"
+                    label="Max Duration (minutes)"
+                    type="number"
+                    value={values.maxDurationMinutes !== undefined ? String(values.maxDurationMinutes) : ''}
+                    onChange={(value) => updateField('maxDurationMinutes', value ? Number(value) : undefined)}
+                    placeholder="e.g. 480"
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
