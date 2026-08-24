@@ -40,22 +40,24 @@ unless overridden elsewhere.
 
 ### Requirement: Branch, Building, Floor, and Department CRUD
 The system SHALL provide full CRUD for `Branch` (company-wide) and for
-`Building`/`Floor`/`Department` (branch-scoped), rejecting any request whose
-target does not actually belong to a branch the caller is authorized for. A
-`Department` SHALL be creatable directly under a `Branch`, with an optional
-`Floor` association rather than a mandatory one — a department is not
-required to be assigned to a specific floor to exist. The system SHALL
-additionally provide a bulk provisioning operation that creates a new
-`Branch` together with as much of its Building → Floor → Department/
-ReceptionDesk chain and SecurityGates as a single request supplies, in one
-transaction. `Branch` and `Building` SHALL accept their active/inactive
-status at creation time, not only via a later update. `X-Branch-ID` SHALL be
-optional on every Building/Floor/Department endpoint: list endpoints scope
-to every branch the caller is authorized for when it is omitted; get/update/
-delete-by-id endpoints resolve authorization from the target resource's own
-branch; creating a `Building`/`Department` resolves the branch from the
-body's `branchId`, and creating a `Floor` resolves it transitively from the
-body's `buildingId`.
+`Building`/`Floor`/`Department` (branch-scoped), rejecting any authenticated
+get-by-id/update/delete request whose target does not actually belong to a
+branch the caller is authorized for. A `Department` SHALL be creatable
+directly under a `Branch`, with an optional `Floor` association rather than
+a mandatory one — a department is not required to be assigned to a specific
+floor to exist. The system SHALL additionally provide a bulk provisioning
+operation that creates a new `Branch` together with as much of its Building
+→ Floor → Department/ReceptionDesk chain and SecurityGates as a single
+request supplies, in one transaction. `Branch` and `Building` SHALL accept
+their active/inactive status at creation time, not only via a later update.
+Listing `Branch`/`Building`/`Floor`/`Department` is public (see "Master-Data
+Listing Endpoints Are Public" below); `X-Branch-ID` on those list endpoints
+narrows results to one branch when supplied, or otherwise every branch's
+rows for the tenant is returned. `X-Branch-ID` on get/update/delete-by-id
+endpoints continues to resolve authorization from the target resource's own
+branch, unchanged; creating a `Building`/`Department` still resolves the
+branch from the body's `branchId`, and creating a `Floor` still resolves it
+transitively from the body's `buildingId`.
 
 #### Scenario: Branch-scoped entity outside the authorized branch is hidden as 404
 - **WHEN** a caller authorized at Branch A requests, updates, or deletes a
@@ -103,14 +105,17 @@ body's `buildingId`.
   update call required
 
 #### Scenario: Listing buildings without a branch header returns every authorized branch's rows
-- **WHEN** a caller with `buildings:view` company-wide sends
-  `GET /buildings` with no `X-Branch-ID` header
-- **THEN** the response includes buildings from every branch in the tenant
+- **WHEN** a client sends `GET /buildings` with no `X-Branch-ID` header
+- **THEN** the response includes buildings from every branch in the
+  tenant — listing requires no permission check, so every branch is, by
+  definition, within scope, regardless of any token presented or omitted
 
 #### Scenario: Listing buildings without a branch header, for a branch-restricted caller, is scoped to their branches
-- **WHEN** a caller with `buildings:view` granted only at specific branches
-  sends `GET /buildings` with no `X-Branch-ID` header
-- **THEN** the response includes buildings from only those branches
+- **WHEN** a client sends `GET /buildings` with an `X-Branch-ID` header
+  naming one existing, active branch instead of omitting it
+- **THEN** the response is restricted to that one branch's rows — the only
+  way to narrow this now-public listing to fewer than every branch,
+  regardless of any token presented or omitted
 
 #### Scenario: Getting a building by id without a branch header resolves from the building itself
 - **WHEN** a caller with `buildings:view` at the building's actual branch
@@ -137,18 +142,18 @@ body's `buildingId`.
 The system SHALL provide full CRUD for `ReceptionDesk` (scoped to one
 `Floor`) and `SecurityGate` (scoped to one `Branch`, optionally narrowed to
 one `Building`), with the same branch-authorization and cross-branch 404
-behavior as Building/Floor/Department. Each `ReceptionDesk` SHALL carry a
-three-state operational status (`active`, `maintenance`, `inactive`) in
-place of a plain active/inactive flag. Each `SecurityGate` SHALL carry a
-three-state connectivity status (`online`, `maintenance`, `offline`)
-alongside its existing entry/exit/both gate type, and MAY be flagged as a
-high-security gate. `X-Branch-ID` SHALL be optional on every ReceptionDesk/
-SecurityGate endpoint, following the same rules as Building/Floor/
-Department: list endpoints scope to every authorized branch when it is
-omitted, get/update/delete-by-id endpoints resolve authorization from the
-target resource's own branch, creating a `SecurityGate` resolves the branch
-from the body's `branchId`, and creating a `ReceptionDesk` resolves it
-transitively from the body's `floorId`.
+behavior as Building/Floor/Department for every get-by-id/update/delete
+request. Each `ReceptionDesk` SHALL carry a three-state operational status
+(`active`, `maintenance`, `inactive`) in place of a plain active/inactive
+flag. Each `SecurityGate` SHALL carry a three-state connectivity status
+(`online`, `maintenance`, `offline`) alongside its existing entry/exit/both
+gate type, and MAY be flagged as a high-security gate. `X-Branch-ID` SHALL
+be optional on every ReceptionDesk/SecurityGate endpoint. Listing
+`ReceptionDesk`/`SecurityGate` is public (see "Master-Data Listing Endpoints
+Are Public" below); get/update/delete-by-id endpoints continue to resolve
+authorization from the target resource's own branch, creating a
+`SecurityGate` resolves the branch from the body's `branchId`, and creating
+a `ReceptionDesk` resolves it transitively from the body's `floorId`.
 
 #### Scenario: Security gate optionally narrowed to a building
 - **WHEN** a `SecurityGate` is created with a `buildingId` that does not
@@ -249,3 +254,70 @@ boundary, consistent with every other email field in this system.
 - **WHEN** a caller submits a `Company` create or update request with an
   `email` value that is not a well-formed email address
 - **THEN** the request is rejected with 422 before any database write
+
+### Requirement: Master-Data Listing Endpoints Are Public
+Listing `Branch`, `Building`, `Floor`, `Department`, `ReceptionDesk`, and
+`SecurityGate` SHALL require no bearer token and no permission check — a
+web/mobile client SHALL be able to fetch these lists (e.g. to populate a
+branch or department picker) before a visitor has authenticated. When the
+request carries a valid access token, these endpoints SHALL resolve the
+tenant from that token's `tenant_id` claim, the same tenant an authenticated
+request would resolve to — so an already-logged-in caller keeps listing its
+own tenant's data. When no token is presented, or the presented token does
+not resolve to a real, active tenant, these endpoints SHALL instead resolve
+the deployment's configured default tenant; either way, no permission
+check applies. An optional `X-Branch-ID` header SHALL narrow results to
+that one branch (404 if it does not exist or is inactive); omitting it
+SHALL return every branch's rows for the resolved tenant, with no notion of
+a caller's authorized branches. Get-by-id, create, update, and delete
+endpoints for these six entities are unaffected and remain authenticated
+and permissioned as before. These endpoints SHALL remain rate-limited by
+client IP per the posture `security-architecture.md` §2 requires for
+unauthenticated endpoints.
+
+#### Scenario: Listing master data requires no Authorization header
+- **WHEN** a client calls a branch/building/floor/department/reception-desk/
+  security-gate list endpoint with no `Authorization` header at all
+- **THEN** the request succeeds, resolving the deployment's default tenant,
+  rather than failing with 401
+
+#### Scenario: An expired or invalid token no longer blocks listing
+- **WHEN** a client calls one of these list endpoints while presenting an
+  expired, malformed, or otherwise invalid bearer token
+- **THEN** the request still succeeds, falling back to the deployment's
+  default tenant exactly as if no token had been presented
+
+#### Scenario: A valid token's own tenant takes precedence over the default tenant
+- **WHEN** an authenticated caller whose access token belongs to a tenant
+  other than the deployment's configured default calls one of these list
+  endpoints
+- **THEN** the response reflects that caller's own tenant, not the default
+  tenant — an authenticated admin of a second tenant lists its own branches,
+  never the default tenant's
+
+#### Scenario: Listing without X-Branch-ID returns every branch's rows for the tenant
+- **WHEN** a client calls one of these list endpoints with no `X-Branch-ID`
+  header
+- **THEN** the response includes matching rows from every branch in the
+  tenant, regardless of any token presented
+
+#### Scenario: Listing with X-Branch-ID narrows to one branch
+- **WHEN** a client calls one of these list endpoints with an `X-Branch-ID`
+  header naming an existing, active branch
+- **THEN** the response includes only rows belonging to that branch
+
+#### Scenario: Listing with an unknown or inactive X-Branch-ID is rejected
+- **WHEN** a client calls one of these list endpoints with an `X-Branch-ID`
+  header naming a branch that does not exist, or is inactive, in the
+  resolved tenant
+- **THEN** the request is rejected with 404
+
+#### Scenario: Public listing never crosses tenant boundaries
+- **WHEN** a client calls one of these list endpoints
+- **THEN** the response includes only rows from the single tenant the
+  request resolves to, never rows from any other tenant's schema
+
+#### Scenario: Excessive listing requests are rate-limited
+- **WHEN** a client exceeds the configured rate limit for one of these list
+  endpoints from a single IP
+- **THEN** further requests are rejected with 429 until the window resets

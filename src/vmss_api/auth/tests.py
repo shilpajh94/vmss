@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import BuildingFactory, DepartmentFactory, FloorFactory, RoleFactory, UserFactory
 from vmss_api.auth.models import Permission, User, UserBranchRole
+from vmss_api.auth.rbac_catalog import seed_default_roles
 from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.security import hash_password
@@ -402,6 +403,192 @@ async def test_sync_employee_directory_requires_permission(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
+
+
+async def test_create_employee_success(
+    client: AsyncClient, db_session: AsyncSession, user: User, branch: Branch
+) -> None:
+    department = await _make_department(db_session, branch)
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/employees",
+        json={
+            "email": "grace@acme-test.example",
+            "fullName": "Grace Employee",
+            "employeeCode": "EMP-010",
+            "departmentId": str(department.id),
+            "phoneNumber": "+1-555-0100",
+            "designation": "Engineer",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["email"] == "grace@acme-test.example"
+    assert body["employeeCode"] == "EMP-010"
+    assert body["departmentId"] == str(department.id)
+    assert body["phoneNumber"] == "+1-555-0100"
+    assert body["designation"] == "Engineer"
+    assert body["isActive"] is True
+
+
+async def test_create_employee_visible_in_listing_without_sync(
+    client: AsyncClient, db_session: AsyncSession, user: User, branch: Branch
+) -> None:
+    """Regression test: creating an employee via `POST /auth/employees` must
+    make it show up in `GET /auth/employees` right away, with no
+    `/auth/employees/sync` call in between — this is the bug the frontend
+    team reported.
+    """
+    department = await _make_department(db_session, branch)
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    create_response = await client.post(
+        "/api/v1/auth/employees",
+        json={
+            "email": "henry@acme-test.example",
+            "fullName": "Henry Employee",
+            "employeeCode": "EMP-011",
+            "departmentId": str(department.id),
+        },
+        headers=headers,
+    )
+    assert create_response.status_code == 201
+
+    list_response = await client.get(
+        f"/api/v1/auth/employees?departmentId={department.id}",
+        headers={**headers, "X-Branch-ID": str(branch.id)},
+    )
+    assert list_response.status_code == 200
+    body = list_response.json()
+    assert body["pagination"]["total"] == 1
+    assert body["data"][0]["email"] == "henry@acme-test.example"
+
+
+async def test_create_employee_does_not_deactivate_others(
+    client: AsyncClient, db_session: AsyncSession, user: User, branch: Branch
+) -> None:
+    department = await _make_department(db_session, branch)
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    await client.post(
+        "/api/v1/auth/employees/sync",
+        json={
+            "employees": [
+                {
+                    "email": "ida@acme-test.example",
+                    "fullName": "Ida Employee",
+                    "employeeCode": "EMP-012",
+                    "departmentId": str(department.id),
+                }
+            ]
+        },
+        headers=headers,
+    )
+
+    response = await client.post(
+        "/api/v1/auth/employees",
+        json={
+            "email": "jack@acme-test.example",
+            "fullName": "Jack Employee",
+            "employeeCode": "EMP-013",
+            "departmentId": str(department.id),
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201
+
+    ida = await UserRepository(db_session).get_by_email("ida@acme-test.example")
+    assert ida is not None
+    assert ida.is_active is True
+
+
+async def test_create_employee_duplicate_email_conflict(
+    client: AsyncClient, db_session: AsyncSession, user: User, branch: Branch
+) -> None:
+    department = await _make_department(db_session, branch)
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/employees",
+        json={
+            "email": user.email,
+            "fullName": "Duplicate",
+            "employeeCode": "EMP-014",
+            "departmentId": str(department.id),
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+    assert await UserRepository(db_session).get_by_employee_code("EMP-014") is None
+
+
+async def test_create_employee_unknown_department_not_found(
+    client: AsyncClient, db_session: AsyncSession, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/employees",
+        json={
+            "email": "kelly@acme-test.example",
+            "fullName": "Kelly Employee",
+            "employeeCode": "EMP-015",
+            "departmentId": str(uuid.uuid4()),
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+    assert await UserRepository(db_session).get_by_email("kelly@acme-test.example") is None
+
+
+async def test_create_employee_requires_permission(
+    client: AsyncClient, user_without_permissions: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    department = await _make_department(db_session, branch)
+    token = await _login(client, user_without_permissions.email)
+    response = await client.post(
+        "/api/v1/auth/employees",
+        json={
+            "email": "liam@acme-test.example",
+            "fullName": "Liam Employee",
+            "employeeCode": "EMP-016",
+            "departmentId": str(department.id),
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert await UserRepository(db_session).get_by_email("liam@acme-test.example") is None
+
+
+async def test_create_employee_tenant_schema_isolation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    branch: Branch,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """Same tenant-isolation case as `test_tenant_schema_isolation` above,
+    applied to the new endpoint — see testing-standards.md §2.
+    """
+    department = await _make_department(db_session, branch)
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/employees",
+        json={
+            "email": "mia@acme-test.example",
+            "fullName": "Mia Employee",
+            "employeeCode": "EMP-017",
+            "departmentId": str(department.id),
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
+
+    other_schema = "tenant_other_employee_test"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        found = await UserRepository(other_session).get_by_email("mia@acme-test.example")
+        assert found is None
 
 
 async def test_list_employees_success(
@@ -859,6 +1046,99 @@ async def test_delete_role_with_active_grant_conflict(
 
     response = await client.delete(f"/api/v1/auth/roles/{role_id}", headers=headers)
     assert response.status_code == 409
+
+
+# --- Resync standard roles against the catalog (add-invitation-approval-flow-and-role-resync) ---
+
+
+async def test_resync_role_permissions_backfills_stale_role(
+    client: AsyncClient, user: User, db_session: AsyncSession
+) -> None:
+    """Simulates the exact bug `rbac_catalog.py::seed_default_roles`'s own
+    docstring describes: a role seeded before a permission existed in the
+    catalog. `invitations:view` is stripped from `reception` after an
+    initial seeding to stand in for that stale state.
+    """
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    reception = await RoleRepository(db_session).get_by_name("reception")
+    assert reception is not None
+    reception.permissions = [p for p in reception.permissions if p.code != "invitations:view"]
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/roles/resync-permissions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    granted = {
+        entry["roleName"]: entry["grantedPermissionCodes"] for entry in response.json()["data"]
+    }
+    assert "invitations:view" in granted["reception"]
+
+    await db_session.refresh(reception)
+    assert "invitations:view" in {p.code for p in reception.permissions}
+
+
+async def test_resync_role_permissions_is_idempotent(
+    client: AsyncClient, user: User, db_session: AsyncSession
+) -> None:
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    first = await client.post("/api/v1/auth/roles/resync-permissions", headers=headers)
+    assert first.status_code == 200
+
+    second = await client.post("/api/v1/auth/roles/resync-permissions", headers=headers)
+    assert second.status_code == 200
+    for entry in second.json()["data"]:
+        assert entry["grantedPermissionCodes"] == []
+
+
+async def test_resync_role_permissions_preserves_custom_grant(
+    client: AsyncClient, user: User, db_session: AsyncSession
+) -> None:
+    """A permission a standard role holds outside its catalog-default set
+    (granted by hand, e.g. via `PUT /auth/roles/{id}`) must survive the
+    resync — it's additive-only, never a revoke.
+    """
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    security = await RoleRepository(db_session).get_by_name("security")
+    assert security is not None
+    # `seed_default_roles` already inserted every catalog permission into
+    # `global.permissions` (granted to some role or none) — fetch the
+    # existing row for "security"'s extra grant rather than inserting a
+    # second one with the same code.
+    extra = (
+        await db_session.execute(select(Permission).where(Permission.code == "invitations:approve"))
+    ).scalar_one()
+    if extra.code not in {p.code for p in security.permissions}:
+        security.permissions.append(extra)
+        await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/roles/resync-permissions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+
+    await db_session.refresh(security)
+    assert "invitations:approve" in {p.code for p in security.permissions}
+
+
+async def test_resync_role_permissions_requires_permission(
+    client: AsyncClient, user_without_permissions: User
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.post(
+        "/api/v1/auth/roles/resync-permissions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 403
 
 
 async def test_role_repository_tenant_schema_isolation(

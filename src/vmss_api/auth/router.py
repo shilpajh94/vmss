@@ -12,6 +12,7 @@ from vmss_api.auth.rbac_catalog import STANDARD_ROLE_NAMES
 from vmss_api.auth.schemas import (
     BranchRoleAssignRequest,
     BranchRoleOut,
+    EmployeeCreateRequest,
     EmployeeOut,
     EmployeeSortableField,
     EmployeeSyncRequest,
@@ -20,6 +21,7 @@ from vmss_api.auth.schemas import (
     PermissionOut,
     RoleCreateRequest,
     RoleOut,
+    RolePermissionResyncEntryOut,
     RoleSortableField,
     RoleUpdateRequest,
     RoleVerifyResponse,
@@ -223,6 +225,35 @@ async def sync_employee_directory(
     return success_response(data=result)
 
 
+@router.post(
+    "/employees",
+    response_model=Envelope[EmployeeOut],
+    dependencies=[Depends(require_permission("employees:manage"))],
+    status_code=201,
+)
+async def create_employee(
+    payload: EmployeeCreateRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Creates one employee, immediately visible in `GET /employees` — unlike
+    `sync_employee_directory` above, this never deactivates any other
+    employee. See `auth/service.py::create_employee`.
+    """
+    new_employee = await service.create_employee(tenant_db, tenant_id=tenant.id, payload=payload)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=actor.id,
+        action="employee_created",
+        entity_type="User",
+        entity_id=new_employee.id,
+    )
+    return success_response(data=_to_employee_out(new_employee), status_code=201)
+
+
 @router.get(
     "/employees",
     response_model=PaginatedEnvelope[EmployeeOut],
@@ -399,4 +430,39 @@ async def delete_role(
         action="role_deleted",
         entity_type="Role",
         entity_id=role_id,
+    )
+
+
+@router.post(
+    "/roles/resync-permissions",
+    response_model=Envelope[list[RolePermissionResyncEntryOut]],
+    dependencies=[Depends(require_permission("roles:manage"))],
+)
+async def resync_role_permissions(
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Backfills any catalog-defined permission a standard role is
+    currently missing (`add-invitation-approval-flow-and-role-resync/
+    design.md` Decision 5) — fixes a tenant whose roles predate a
+    permission being added to `rbac_catalog.py`, without a manual database
+    edit. Additive only; never revokes a permission.
+    """
+    granted = await service.resync_role_permissions(tenant_db)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=actor.id,
+        action="role_permissions_resynced",
+        entity_type="Role",
+        entity_id=None,
+        diff=granted,
+    )
+    return success_response(
+        data=[
+            RolePermissionResyncEntryOut(role_name=name, granted_permission_codes=codes)
+            for name, codes in sorted(granted.items())
+        ]
     )

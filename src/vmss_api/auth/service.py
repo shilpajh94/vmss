@@ -6,9 +6,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
-from vmss_api.auth.rbac_catalog import STANDARD_ROLE_NAMES
+from vmss_api.auth.rbac_catalog import STANDARD_ROLE_NAMES, seed_default_roles
 from vmss_api.auth.repository import PermissionRepository, RoleRepository, UserRepository
 from vmss_api.auth.schemas import (
+    EmployeeCreateRequest,
     EmployeeSortableField,
     EmployeeSyncItem,
     EmployeeSyncResult,
@@ -312,6 +313,42 @@ async def verify_role_name(tenant_db: AsyncSession, name: str) -> bool:
     return existing is None
 
 
+# Visitor is intentionally always granted nothing (`rbac_catalog.py`'s own
+# comment on `ROLE_PERMISSIONS["visitor"]`) — excluded here since resyncing
+# it can never do anything (`add-invitation-approval-flow-and-role-resync/
+# design.md`'s Non-Goals).
+_RESYNCABLE_ROLE_NAMES = STANDARD_ROLE_NAMES - {"visitor"}
+
+
+async def resync_role_permissions(tenant_db: AsyncSession) -> dict[str, list[str]]:
+    """Backfills any catalog-defined permission a standard role is
+    currently missing, by re-running `seed_default_roles`'s union-merge
+    against an already-provisioned tenant instead of only at provisioning
+    time (design.md Decision 5) — fixes a tenant whose roles predate a
+    permission being added to the catalog (`rbac_catalog.py`'s own
+    docstring on this exact failure mode). Additive only: never removes a
+    permission, including one a role holds outside its catalog default.
+    Returns each resynced role's newly granted permission codes (empty
+    list if it already had everything the catalog currently grants it).
+    """
+    repo = RoleRepository(tenant_db)
+    roles_by_name: dict[str, Role] = {}
+    before_codes: dict[str, set[str]] = {}
+    for name in _RESYNCABLE_ROLE_NAMES:
+        role = await repo.get_by_name(name)
+        if role is not None:
+            roles_by_name[name] = role
+            before_codes[name] = {p.code for p in role.permissions}
+
+    await seed_default_roles(tenant_db)
+    await tenant_db.commit()
+
+    return {
+        name: sorted({p.code for p in role.permissions} - before_codes[name])
+        for name, role in roles_by_name.items()
+    }
+
+
 async def sync_employee_directory(
     tenant_db: AsyncSession, *, tenant_id: uuid.UUID, items: list[EmployeeSyncItem]
 ) -> EmployeeSyncResult:
@@ -399,6 +436,37 @@ async def sync_employee_directory(
         deactivated_count=len(deactivated),
     )
     return EmployeeSyncResult(created=created, updated=updated, deactivated=deactivated)
+
+
+async def create_employee(
+    tenant_db: AsyncSession, *, tenant_id: uuid.UUID, payload: EmployeeCreateRequest
+) -> User:
+    """Creates one employee directly, unlike `sync_employee_directory` this
+    never touches any other existing employee's `is_active` status — see
+    `Requirement: Single Employee Creation Without a Full Directory Sync` in
+    openspec/specs/auth/spec.md.
+    """
+    if await UserRepository(tenant_db).get_by_email(payload.email) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Email already registered")
+    existing_department_ids = await DepartmentRepository(tenant_db).get_existing_ids(
+        {payload.department_id}
+    )
+    if payload.department_id not in existing_department_ids:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Department not found")
+
+    user = await create_user(
+        tenant_db,
+        tenant_id=tenant_id,
+        email=payload.email,
+        hashed_password=hash_password(secrets.token_urlsafe(32)),
+        full_name=payload.full_name,
+        employee_code=payload.employee_code,
+        designation=payload.designation,
+        phone_number=payload.phone_number,
+        department_id=payload.department_id,
+    )
+    await tenant_db.commit()
+    return user
 
 
 async def list_employees(

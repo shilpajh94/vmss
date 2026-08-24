@@ -58,6 +58,16 @@ class RoleOut(CamelModel):
     is_standard: bool
 
 
+class RolePermissionResyncEntryOut(CamelModel):
+    """One standard role's result from `POST /auth/roles/resync-permissions`
+    — empty `grantedPermissionCodes` means that role already had everything
+    the current catalog grants it.
+    """
+
+    role_name: str
+    granted_permission_codes: list[str]
+
+
 class PermissionOut(CamelModel):
     """`GET /auth/permissions`'s catalog entry — see
     `Requirement: Role Permission Codes Must Exist in the Catalog` in
@@ -97,6 +107,15 @@ class EmployeeSyncItem(CamelModel):
 
 class EmployeeSyncRequest(CamelModel):
     employees: list[EmployeeSyncItem] = Field(min_length=1, max_length=1000)
+
+
+class EmployeeCreateRequest(CamelModel):
+    email: EmailStr
+    full_name: str = Field(max_length=255)
+    employee_code: str = Field(max_length=50)
+    department_id: uuid.UUID
+    phone_number: str | None = Field(default=None, max_length=50)
+    designation: str | None = Field(default=None, max_length=100)
 
 
 class EmployeeSyncResult(CamelModel):
