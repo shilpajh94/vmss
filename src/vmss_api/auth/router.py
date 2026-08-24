@@ -13,6 +13,7 @@ from vmss_api.auth.schemas import (
     BranchRoleAssignRequest,
     BranchRoleOut,
     EmployeeCreateRequest,
+    EmployeeDirectoryOut,
     EmployeeOut,
     EmployeeSortableField,
     EmployeeSyncRequest,
@@ -40,7 +41,7 @@ from vmss_api.core.deps import (
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
-from vmss_api.org_structure.deps import require_branch_scope
+from vmss_api.org_structure.deps import public_tenant_db, require_branch_scope
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -284,6 +285,49 @@ async def list_employees(
     )
     return paginated_response(
         data=[_to_employee_out(e) for e in employees], page=page, page_size=page_size, total=total
+    )
+
+
+def _to_employee_directory_out(user: User) -> EmployeeDirectoryOut:
+    return EmployeeDirectoryOut(
+        id=user.id,
+        full_name=user.full_name,
+        designation=user.designation,
+        department_id=user.department_id,
+    )
+
+
+@router.get(
+    "/employees/directory",
+    response_model=PaginatedEnvelope[EmployeeDirectoryOut],
+)
+@limiter.limit("60/minute")
+async def list_employee_directory(
+    request: Request,
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
+    pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+) -> JSONResponse:
+    """Public — no bearer token, no permission check
+    (security-architecture.md §2's public-endpoint posture, same rationale
+    as `org_structure/router.py::list_branches`): the pre-registration form
+    needs a "who are you visiting" picker before a visitor authenticates.
+
+    Deliberately a separate route and schema from `GET /employees` rather
+    than an unauthenticated mode of it: `EmployeeDirectoryOut` omits
+    email/phone/employee_code, which `EmployeeOut` exposes to authenticated,
+    permission-checked callers only. Every active `host`-role user, not
+    branch/department scoped — see
+    `auth/repository.py::UserRepository.list_hosts_page`.
+    """
+    page, page_size = pagination
+    employees, total = await service.list_employee_directory(
+        tenant_db, page=page, page_size=page_size
+    )
+    return paginated_response(
+        data=[_to_employee_directory_out(e) for e in employees],
+        page=page,
+        page_size=page_size,
+        total=total,
     )
 
 

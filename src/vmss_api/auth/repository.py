@@ -87,17 +87,22 @@ class UserRepository:
         sort_by: str,
         sort_order: SortOrder,
     ) -> tuple[list[User], int]:
-        """Branch-scoped: joins `Department -> Floor -> Building` to filter
-        to employees whose department resolves to the caller's authorized
-        scope (`org_structure/deps.py::require_branch_scope`). Employees with
-        no `department_id` aren't resolvable to any branch and so never
-        appear in a branch-scoped list — see `org_structure/router.py`'s
-        module docstring for the equivalent pattern applied to
-        Building/Floor/Department/Desk/Gate.
+        """Every non-deleted user in the tenant, not just ones reconciled
+        through `sync_employee_directory`/`create_employee` — an Admin,
+        Security, or Reception account created directly (no
+        `employee_code`) is still a real person who belongs in this
+        directory. Left-joins `Department -> Floor -> Building` to resolve
+        each user's branch for scoping
+        (`org_structure/deps.py::require_branch_scope`) — an outer join,
+        not inner: a user with no `department_id` set still appears in an
+        unscoped ("all branches") listing. They only drop out of a
+        *branch-scoped* view (`branch_scope != "all"`), since there's no
+        department/floor/building chain to resolve them to that specific
+        branch.
         """
         column: Any = {"name": User.full_name, "created_at": User.created_at}[sort_by]
         order = column.desc() if sort_order == SortOrder.desc else column.asc()
-        conditions: list[Any] = [User.employee_code.is_not(None), User.deleted_at.is_(None)]
+        conditions: list[Any] = [User.deleted_at.is_(None)]
         if branch_scope != "all":
             conditions.append(Building.branch_id.in_(branch_scope))
         if department_id is not None:
@@ -105,17 +110,17 @@ class UserRepository:
 
         joined_from = (
             select(User)
-            .join(Department, User.department_id == Department.id)
-            .join(Floor, Department.floor_id == Floor.id)
-            .join(Building, Floor.building_id == Building.id)
+            .outerjoin(Department, User.department_id == Department.id)
+            .outerjoin(Floor, Department.floor_id == Floor.id)
+            .outerjoin(Building, Floor.building_id == Building.id)
         )
 
         count_stmt = (
             select(func.count())
             .select_from(User)
-            .join(Department, User.department_id == Department.id)
-            .join(Floor, Department.floor_id == Floor.id)
-            .join(Building, Floor.building_id == Building.id)
+            .outerjoin(Department, User.department_id == Department.id)
+            .outerjoin(Floor, Department.floor_id == Floor.id)
+            .outerjoin(Building, Floor.building_id == Building.id)
             .where(*conditions)
         )
         total = (await self.session.execute(count_stmt)).scalar_one()
@@ -123,6 +128,39 @@ class UserRepository:
         stmt = (
             joined_from.where(*conditions)
             .order_by(order)
+            .limit(page_size)
+            .offset((page - 1) * page_size)
+        )
+        items = list((await self.session.execute(stmt)).scalars().all())
+        return items, total
+
+    async def list_hosts_page(self, *, page: int, page_size: int) -> tuple[list[User], int]:
+        """Backs the public host-directory listing
+        (`router.py::list_employee_directory`) — every active user holding
+        the `host` role, full stop. Deliberately not branch/department
+        scoped like `list_employees_page`: a visitor's "who are you
+        visiting" picker shouldn't hide a host just because they have no
+        `department_id` set (unlike the employee-directory sync flow, a
+        `host` account isn't necessarily reconciled through
+        `sync_employee_directory`, so `employee_code`/`department_id` are
+        often unset here).
+        """
+        conditions: list[Any] = [
+            User.deleted_at.is_(None),
+            User.is_active.is_(True),
+            select(UserBranchRole.id)
+            .join(Role, UserBranchRole.role_id == Role.id)
+            .where(UserBranchRole.user_id == User.id, Role.name == "host")
+            .exists(),
+        ]
+
+        count_stmt = select(func.count()).select_from(User).where(*conditions)
+        total = (await self.session.execute(count_stmt)).scalar_one()
+
+        stmt = (
+            select(User)
+            .where(*conditions)
+            .order_by(User.full_name.asc())
             .limit(page_size)
             .offset((page - 1) * page_size)
         )
