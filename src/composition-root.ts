@@ -13,6 +13,7 @@ import type { BuildingRepository } from './data/repositories/building-repository
 import type { FloorRepository } from './data/repositories/floor-repository'
 import type { DashboardRepository } from './data/repositories/dashboard-repository'
 import type { HostEmployeeRepository } from './data/repositories/host-employee-repository'
+import type { EmployeeDirectoryRepository } from './data/repositories/employee-directory-repository'
 import type { ReceptionDeskRepository } from './data/repositories/reception-desk-repository'
 import type { SecurityGateRepository } from './data/repositories/security-gate-repository'
 import type { VisitorCategoryRepository } from './data/repositories/visitor-category-repository'
@@ -46,6 +47,7 @@ import { DeleteFloorUseCase } from './data/use-cases/delete-floor'
 import { GetDashboardOverviewUseCase } from './data/use-cases/get-dashboard-overview'
 import { CheckInUpcomingVisitorUseCase } from './data/use-cases/check-in-upcoming-visitor'
 import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
+import { ListEmployeeDirectoryUseCase } from './data/use-cases/list-employee-directory'
 import { CreateHostEmployeeUseCase } from './data/use-cases/create-host-employee'
 import { ListRolesUseCase } from './data/use-cases/list-roles'
 import { AssignHostEmployeeRoleUseCase } from './data/use-cases/assign-host-employee-role'
@@ -76,6 +78,7 @@ import { HttpBuildingRepository } from './infrastructure/building-repository'
 import { HttpFloorRepository } from './infrastructure/floor-repository'
 import { HttpDashboardRepository } from './infrastructure/dashboard-repository'
 import { HttpHostEmployeeRepository } from './infrastructure/host-employee-repository'
+import { HttpEmployeeDirectoryRepository } from './infrastructure/employee-directory-repository'
 import { HttpReceptionDeskRepository } from './infrastructure/reception-desk-repository'
 import { HttpSecurityGateRepository } from './infrastructure/security-gate-repository'
 import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category-repository'
@@ -112,6 +115,7 @@ export interface AppDependencies {
   getDashboardOverviewUseCase: GetDashboardOverviewUseCase
   checkInUpcomingVisitorUseCase: CheckInUpcomingVisitorUseCase
   listHostEmployeesUseCase: ListHostEmployeesUseCase
+  listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase
   createHostEmployeeUseCase: CreateHostEmployeeUseCase
   listRolesUseCase: ListRolesUseCase
   assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase
@@ -176,6 +180,8 @@ export function createApp(): AppDependencies {
   let checkInUpcomingVisitorUseCase: CheckInUpcomingVisitorUseCase | undefined
   let hostEmployeeRepository: HostEmployeeRepository | undefined
   let listHostEmployeesUseCase: ListHostEmployeesUseCase | undefined
+  let employeeDirectoryRepository: EmployeeDirectoryRepository | undefined
+  let listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase | undefined
   let createHostEmployeeUseCase: CreateHostEmployeeUseCase | undefined
   let listRolesUseCase: ListRolesUseCase | undefined
   let assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase | undefined
@@ -422,6 +428,16 @@ export function createApp(): AppDependencies {
     return listHostEmployeesUseCase
   }
 
+  const resolveEmployeeDirectoryRepository = (): EmployeeDirectoryRepository => {
+    employeeDirectoryRepository ??= new HttpEmployeeDirectoryRepository(resolveApiClient())
+    return employeeDirectoryRepository
+  }
+
+  const resolveListEmployeeDirectoryUseCase = (): ListEmployeeDirectoryUseCase => {
+    listEmployeeDirectoryUseCase ??= new ListEmployeeDirectoryUseCase(resolveEmployeeDirectoryRepository())
+    return listEmployeeDirectoryUseCase
+  }
+
   const resolveCreateHostEmployeeUseCase = (): CreateHostEmployeeUseCase => {
     createHostEmployeeUseCase ??= new CreateHostEmployeeUseCase(resolveHostEmployeeRepository())
     return createHostEmployeeUseCase
@@ -615,6 +631,9 @@ export function createApp(): AppDependencies {
     },
     get listHostEmployeesUseCase() {
       return resolveListHostEmployeesUseCase()
+    },
+    get listEmployeeDirectoryUseCase() {
+      return resolveListEmployeeDirectoryUseCase()
     },
     get createHostEmployeeUseCase() {
       return resolveCreateHostEmployeeUseCase()
