@@ -13,6 +13,7 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from vmss_api.auth.models import Permission, Role
 
@@ -59,14 +60,27 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     "admin": PERMISSION_CODES,
     "reception": [
         "branches:view",
+        "buildings:view",
+        "departments:view",
+        "employees:view",
         "desks:view",
         "visitor-categories:view",
         "invitations:create",
         "invitations:view",
     ],
-    "security": ["branches:view", "gates:view", "invitations:view"],
+    "security": [
+        "branches:view",
+        "buildings:view",
+        "departments:view",
+        "employees:view",
+        "gates:view",
+        "invitations:view",
+    ],
     "host": [
         "branches:view",
+        "buildings:view",
+        "departments:view",
+        "employees:view",
         "visitor-categories:view",
         "invitations:create",
         "invitations:view",
@@ -90,6 +104,17 @@ async def seed_default_roles(tenant_db: AsyncSession) -> None:
     (check-before-insert on both permission code and role name), matching
     `create_tenant`'s existing "a retry can finish partial provisioning"
     posture (`platform/service.py`).
+
+    Also backfills any permission code added to `PERMISSION_CODES`/
+    `ROLE_PERMISSIONS` *after* a standard role was first seeded onto an
+    existing tenant schema — without this, a tenant provisioned before, say,
+    `invitations:create` existed would have its "admin" role permanently
+    stuck missing it forever, since nothing else ever re-syncs an existing
+    role's permission set against the current catalog (confirmed directly:
+    this is exactly what made the local dev tenant's seeded admin unable to
+    create an invitation). This is a union merge — it only ever adds a
+    catalog-defined permission the role is missing, never removes one, so a
+    deliberate custom grant beyond the standard catalog survives.
     """
     permission_stmt = select(Permission).where(Permission.code.in_(PERMISSION_CODES))
     existing_permissions = (await tenant_db.execute(permission_stmt)).scalars().all()
@@ -103,8 +128,14 @@ async def seed_default_roles(tenant_db: AsyncSession) -> None:
     await tenant_db.flush()
     permissions_by_code = {p.code: p for p in [*existing_permissions, *new_permissions]}
 
-    role_stmt = select(Role).where(Role.name.in_(ROLE_PERMISSIONS.keys()))
-    existing_role_names = {r.name for r in (await tenant_db.execute(role_stmt)).scalars().all()}
+    role_stmt = (
+        select(Role)
+        .where(Role.name.in_(ROLE_PERMISSIONS.keys()))
+        .options(selectinload(Role.permissions))
+    )
+    existing_roles_by_name = {
+        r.name: r for r in (await tenant_db.execute(role_stmt)).scalars().all()
+    }
     new_roles = [
         Role(
             id=uuid.uuid4(),
@@ -112,7 +143,17 @@ async def seed_default_roles(tenant_db: AsyncSession) -> None:
             permissions=[permissions_by_code[code] for code in codes],
         )
         for name, codes in ROLE_PERMISSIONS.items()
-        if name not in existing_role_names
+        if name not in existing_roles_by_name
     ]
     tenant_db.add_all(new_roles)
+
+    for name, codes in ROLE_PERMISSIONS.items():
+        role = existing_roles_by_name.get(name)
+        if role is None:
+            continue
+        current_codes = {p.code for p in role.permissions}
+        role.permissions.extend(
+            permissions_by_code[code] for code in codes if code not in current_codes
+        )
+
     await tenant_db.flush()

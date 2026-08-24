@@ -133,6 +133,15 @@ the same catalog (calling `seed_default_roles` again is a no-op if it's
 already seeded) and only adds the dev-only parts: a default branch, an admin
 user, and that admin's company-wide grant.
 
+Reception/Security/Host's default grants also include `buildings:view`,
+`departments:view`, and `employees:view` (Reception additionally already had
+`desks:view`; Security additionally `gates:view`) — added because their own
+portal screens need to browse those lists (e.g. an invitation form's
+building/floor picker, `docs/features/invitations.md`'s "Finding the
+payload shape" section) and previously had no grant for them at all, not
+even at their own branch, so those screens 403'd outright rather than
+resolving to an empty/scoped list the way `branches:view` does.
+
 "Visitor" exists in the catalog only to satisfy the five-role requirement
 literally — it grants zero permissions, and `assign_branch_role`
 (`auth/service.py`) rejects with 409 any attempt to grant it to a `User`.

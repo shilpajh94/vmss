@@ -24,7 +24,11 @@ def verify_password(raw_password: str, hashed_password: str) -> bool:
 
 
 def _create_token(
-    subject: uuid.UUID, tenant_id: uuid.UUID | None, expires_delta: timedelta, token_type: str
+    subject: uuid.UUID | str,
+    tenant_id: uuid.UUID | None,
+    expires_delta: timedelta,
+    token_type: str,
+    extra_claims: dict[str, Any] | None = None,
 ) -> str:
     now = datetime.now(UTC)
     payload: dict[str, Any] = {
@@ -35,6 +39,8 @@ def _create_token(
     }
     if tenant_id is not None:
         payload["tenant_id"] = str(tenant_id)
+    if extra_claims:
+        payload.update(extra_claims)
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
@@ -55,6 +61,24 @@ def create_platform_access_token(subject: uuid.UUID) -> str:
     """
     return _create_token(
         subject, None, timedelta(minutes=settings.access_token_expire_minutes), "platform_access"
+    )
+
+
+def create_identity_verified_token(identifier: str, channel: str, tenant_id: uuid.UUID) -> str:
+    """A short-lived proof that `identifier` was verified via OTP over
+    `channel` (`identity_verification`, API-15) — produced here, not yet
+    consumed by any caller in this codebase (see
+    `add-identity-verification-otp/design.md`'s "Verified-contact proof
+    token" decision). `sub` is the identifier itself, not a UUID, so an
+    access/refresh-token consumer expecting a UUID `sub` fails to parse it
+    rather than mistaking this for a session token.
+    """
+    return _create_token(
+        identifier,
+        tenant_id,
+        timedelta(minutes=15),
+        "identity_verified",
+        extra_claims={"channel": channel},
     )
 
 

@@ -1,7 +1,9 @@
 import io
 import json
+import uuid
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient, Response
 from PIL import Image
 from sqlalchemy import update
@@ -9,9 +11,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
+from vmss_api.core.security import hash_password
 from vmss_api.invitations import tasks
 from vmss_api.invitations.repository import InvitationRepository
+from vmss_api.org_structure.models import Branch
 from vmss_api.registrations.models import RegistrationDeviceKey
+from vmss_api.tenant.models import Tenant
+
+
+@pytest_asyncio.fixture
+async def registration_device_raw_key(
+    db_session: AsyncSession, tenant: Tenant, branch: Branch
+) -> str:
+    """A provisioned walk-in kiosk credential for `branch` (API-13). Only the
+    raw key is ever handed back — same "shown once, never stored" pattern as
+    a real device provisioning flow (`registrations/models.py::RegistrationDeviceKey`).
+    """
+    raw_key = "test-device-raw-key-" + uuid.uuid4().hex
+    db_session.add(
+        RegistrationDeviceKey(
+            id=uuid.uuid4(),
+            tenant_id=tenant.id,
+            branch_id=branch.id,
+            key_hash=hash_password(raw_key),
+            label="Test Kiosk",
+            is_active=True,
+        )
+    )
+    await db_session.commit()
+    return raw_key
 
 
 def _jpeg_bytes() -> bytes:
@@ -202,7 +230,45 @@ async def test_walk_in_registration_oversized_file_rejected(
 # --- Device-auth-denied (testing-standards.md §2's permission-denied case) ---
 
 
-async def test_walk_in_registration_missing_device_key_rejected(client: AsyncClient) -> None:
+async def test_walk_in_registration_missing_device_key_falls_back_to_default_tenant_success(
+    client: AsyncClient, tenant: Tenant, branch: Branch, monkeypatch
+) -> None:
+    """`X-Device-Key` is optional (`registrations/deps.py::_resolve_default_device_context`)
+    — omitting it resolves tenant/branch from server config instead of
+    rejecting outright, the same `default_tenant_slug` pattern
+    `identity_verification`/`invitations.track` already use for their public
+    endpoints.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", "acme-test")
+    monkeypatch.setattr(settings, "registration_default_branch_code", branch.code)
+
+    data = await _create_walk_in_success(client, None, payload=_individual_payload())
+    assert data["source"] == "visitor_walk_in"
+    assert data["status"] == "submitted"
+
+
+async def test_walk_in_registration_missing_device_key_no_default_tenant_rejected(
+    client: AsyncClient,
+) -> None:
+    """No `X-Device-Key` and no `default_tenant_slug` match in this schema
+    (the test tenant's slug is `acme-test`, not `settings.default_tenant_slug`'s
+    unmodified default) — the fallback must still reject rather than resolve
+    to nothing.
+    """
+    response = await _create_walk_in(client, None, payload=_individual_payload())
+    assert response.status_code == 401
+
+
+async def test_walk_in_registration_missing_device_key_no_default_branch_rejected(
+    client: AsyncClient, tenant: Tenant, branch: Branch, monkeypatch
+) -> None:
+    """The default tenant resolves, but no branch matches
+    `registration_default_branch_code` — must still reject, not fall through
+    to an unscoped branch.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", "acme-test")
+    monkeypatch.setattr(settings, "registration_default_branch_code", "NO-SUCH-BRANCH")
+
     response = await _create_walk_in(client, None, payload=_individual_payload())
     assert response.status_code == 401
 

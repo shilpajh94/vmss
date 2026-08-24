@@ -7,12 +7,17 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.core.config import settings
+from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.storage import FileTooLargeError, UnsupportedFileTypeError, validate_upload
 from vmss_api.core.storage import save as storage_save
 from vmss_api.invitations import tasks
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
 from vmss_api.invitations.repository import InvitationRepository
-from vmss_api.invitations.schemas import InvitationCreate, RegistrationSource
+from vmss_api.invitations.schemas import (
+    InvitationCreate,
+    InvitationSortableField,
+    RegistrationSource,
+)
 from vmss_api.tenant.models import Tenant
 
 
@@ -190,3 +195,27 @@ async def track_by_email(tenant_db: AsyncSession, email: str) -> list[Invitation
     minimal-disclosure requirement.
     """
     return await InvitationRepository(tenant_db).list_by_primary_contact_email(email)
+
+
+async def list_invitations_page(
+    tenant_db: AsyncSession,
+    *,
+    branch_scope: BranchScope,
+    status: str | None,
+    registration_type: str | None,
+    source: str | None,
+    page: int,
+    page_size: int,
+    sort_by: InvitationSortableField,
+    sort_order: SortOrder,
+) -> tuple[list[Invitation], int]:
+    return await InvitationRepository(tenant_db).list_page(
+        branch_scope=branch_scope,
+        status=status,
+        registration_type=registration_type,
+        source=source,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )

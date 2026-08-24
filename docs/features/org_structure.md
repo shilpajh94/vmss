@@ -97,11 +97,27 @@ future multi-tenant readiness. See `docs/features/auth.md`'s
 
 ## Endpoints
 
-Company and Branch CRUD are company-wide only — you can't be "scoped to a
-branch" to create the branches themselves. Every Building/Floor/Department/
-ReceptionDesk/SecurityGate endpoint is branch-scoped, but **`X-Branch-ID` is
-optional** on all of them (`make-branch-header-optional-and-fix-roles-lookup`
-— see "Branch context" below for exactly what happens when it's omitted):
+Company CRUD and Branch create/update/delete/provision are company-wide
+only — you can't be "scoped to a branch" to create the branches themselves,
+or to manage the company profile. `GET /branches` and `GET /branches/{id}`
+are **not** part of that exception: they follow the same branch-scoped
+pattern as every other list/get-by-id endpoint below. They used to depend
+on the same company-wide-only `require_permission("branches:view")` as
+create/update/delete, which meant a branch-scoped role (Reception/Security/
+Host — assigned per branch, not company-wide, per
+`security-architecture.md` §1) got 403'd on both, even though it holds
+`branches:view` at its own branch. `list_branches` now depends on
+`require_branch_scope("branches:view")` (same as Building/Department/...
+below); `get_branch` now takes the caller and re-checks
+`user.has_permission("branches:view", branch_id=branch.id)` after fetching
+the row, 404-ing on failure — the same by-id pattern "Branch context" below
+describes for every other entity.
+
+Every Building/Floor/Department/ReceptionDesk/SecurityGate endpoint is
+branch-scoped, and **`X-Branch-ID` is optional** on all of them (including
+`GET /branches`/`GET /branches/{id}` now)
+(`make-branch-header-optional-and-fix-roles-lookup` — see "Branch context"
+below for exactly what happens when it's omitted):
 
 - **Creating** a Building/Department/SecurityGate resolves the branch from
   the body's `branchId`; creating a Floor/ReceptionDesk resolves it
@@ -122,9 +138,9 @@ optional** on all of them (`make-branch-header-optional-and-fix-roles-lookup`
 | DELETE | `/api/v1/company` | `companies:manage` (company-wide) | Soft-delete the company profile. |
 | POST | `/api/v1/branches` | `branches:manage` (company-wide) | Create a branch. |
 | POST | `/api/v1/branches/provision` | `branches:provision` (company-wide) | Bulk-bootstrap a branch plus its Building → Floor → Department/ReceptionDesk chain and SecurityGates in one transaction. |
-| GET | `/api/v1/branches` | `branches:view` (company-wide) | Paginated, sortable list of branches. |
+| GET | `/api/v1/branches` | `branches:view` | Paginated, sortable list; scoped to `X-Branch-ID` if sent, else every authorized branch. |
 | GET | `/api/v1/branches/current` | `branches:view` at the resolved branch | Resolves the branch named by `X-Branch-ID` (still required here — there's no id/body field to resolve one from); confirms the caller has access. |
-| GET | `/api/v1/branches/{id}` | `branches:view` (company-wide) | Fetch one branch. |
+| GET | `/api/v1/branches/{id}` | `branches:view` at the branch's own id | Fetch one branch; 404 if the caller has no access to it. |
 | PUT | `/api/v1/branches/{id}` | `branches:manage` (company-wide) | Update a branch. |
 | DELETE | `/api/v1/branches/{id}` | `branches:manage` (company-wide) | Soft-delete a branch. |
 | POST | `/api/v1/buildings` | `buildings:manage` at `branchId` (body) | Create a building. |

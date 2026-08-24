@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from vmss_api.auth.router import router as auth_router
+from vmss_api.identity_verification.router import router as identity_verification_router
 from vmss_api.invitations.router import router as invitations_router
 from vmss_api.org_structure.router import router as org_structure_router
 from vmss_api.platform.router import router as platform_router
@@ -18,3 +19,4 @@ api_router.include_router(visitors_router)
 api_router.include_router(invitations_router)
 api_router.include_router(registrations_router)
 api_router.include_router(reports_router)
+api_router.include_router(identity_verification_router)

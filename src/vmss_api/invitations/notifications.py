@@ -63,12 +63,19 @@ class SmtpEmailSender:
                 subtype=subtype,
                 filename=attachment.filename,
             )
+        # aiosmtplib attempts an AUTH login the moment `username` is a
+        # non-None value, including an empty string — which an env var set
+        # to `SMTP_USERNAME=` (present-but-blank, not absent) produces. The
+        # local dev mail-catcher (mailhog/mailpit) doesn't support AUTH, so
+        # an empty-but-set credential must be treated the same as unset.
+        username = settings.smtp_username or None
+        password = settings.smtp_password or None
         await aiosmtplib.send(
             message,
             hostname=settings.smtp_host,
             port=settings.smtp_port,
-            username=settings.smtp_username,
-            password=settings.smtp_password,
+            username=username,
+            password=password,
             start_tls=settings.smtp_use_tls,
         )
 

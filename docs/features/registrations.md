@@ -42,6 +42,37 @@ which tenant schema to open has to be known before anything tenant-scoped —
 here, the branch itself — can be checked. `RegistrationDeviceKey` lives in
 the global schema for the same reason.
 
+### Fallback when no `X-Device-Key` is sent at all
+
+`X-Device-Key` is optional, not required: a request with no header at all
+falls back to `registrations/deps.py::_resolve_default_device_context`
+instead of the 401 it used to get unconditionally. This exists for the
+public web portal, which — unlike the Flutter kiosk app — has nowhere safe
+to hold a provisioned device secret. The fallback resolves tenant/branch
+from server-side config only, never from anything the caller supplies (the
+same tenant-trust-boundary rule `security-architecture.md` states for
+`tenant_id`, extended to branch):
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `default_tenant_slug` (`configuration.md`) | — | Which tenant's schema the fallback opens. |
+| `REGISTRATION_DEFAULT_BRANCH_CODE` | `MAIN` | Which branch, within that tenant, a header-less walk-in is attributed to. |
+
+If either lookup fails (no such tenant, tenant inactive, no branch with
+that code, branch inactive), the fallback still 401s with the same
+`_INVALID_DEVICE_KEY_DETAIL` an invalid key gets — it never falls through to
+an unscoped or partially-resolved registration.
+
+**Known trade-off, not a full fix**: this path has no credential at all —
+it trades the device key's authentication away for availability, leaving
+this fallback an unauthenticated write (and file-upload) call against one
+fixed branch, protected only by the route's rate limit. Every use is logged
+at `WARNING` (`registration_device_key_absent`) so it's visible/auditable
+rather than silently normalized. Tracked as a follow-up to bind this path
+to the visitor's OTP-verified `identity_verification` proof token instead of
+leaving it credential-less — see `security-architecture.md` §2's
+"fake-entry prevention" open item.
+
 ### Provisioning a device key
 
 No management endpoint exists yet — issue one via:
@@ -62,8 +93,11 @@ this yet — direct DB update, or a future management endpoint).
   feature's job, the same way it is for a staff pre-registration once the
   invited visitor actually arrives.
 - **No OTP verification.** The Figma wizard shows "OTP will be sent to your
-  email" on this step, but no OTP mechanism exists anywhere in this codebase
-  yet — tracked as a follow-up, not silently skipped.
+  email" on this step. The OTP mechanism itself now exists — see
+  `docs/features/identity_verification.md` (API-15) — but this endpoint
+  does not call it: creating a walk-in registration does not require or
+  check a verified-contact proof. Wiring that gate in is a separate,
+  later change, tracked there, not silently skipped.
   `security-architecture.md` §2 already lists OTP handling as a requirement
   for visitor-facing public endpoints generally.
 - **No approval-workflow evaluation.** Same posture `invitations` has today —
@@ -80,10 +114,10 @@ local-disk one, selected by configuration:
 | Setting | Default | Purpose |
 |---|---|---|
 | `STORAGE_BACKEND` | `local` | `local` (disk) or `s3`. |
-| `AWS_BUCKET` | unset | Required when `STORAGE_BACKEND=s3`. |
-| `AWS_DEFAULT_REGION` | unset | AWS region, or the equivalent for an S3-compatible provider. |
-| `AWS_ENDPOINT_URL` | unset | Only for a non-AWS S3-compatible provider (e.g. MinIO). Leave unset for AWS. |
-| `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` | unset | Required when `STORAGE_BACKEND=s3`. Read directly by boto3, not by `Settings` — see `docs/features/configuration.md`. |
+| `STORAGE_S3_BUCKET` | unset | Required when `STORAGE_BACKEND=s3`. Read by `Settings`, not boto3 — boto3 has no env var of its own for a bucket name. |
+| `STORAGE_S3_REGION` | unset | Region to pass to the S3 client explicitly. Leave unset to fall back to boto3's own `AWS_DEFAULT_REGION` resolution. |
+| `STORAGE_S3_ENDPOINT_URL` | unset | Only for a non-AWS S3-compatible provider (e.g. MinIO). Leave unset for AWS's default endpoint resolution. |
+| `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_DEFAULT_REGION` | unset | Required when `STORAGE_BACKEND=s3`. Read directly by boto3's default credential provider chain, not by `Settings` — see `docs/features/configuration.md`. |
 | `STORAGE_S3_PRESIGNED_URL_TTL_SECONDS` | `300` | How long a `url_for` pre-signed URL stays valid when the backend is `s3`. |
 
 Switching backends is a config change only — no call site in `invitations`
@@ -95,5 +129,5 @@ the opaque storage key `save` returns.
 - **Device key management endpoint/UI.** Provisioning is CLI-only today
   (`scripts/provision_registration_device.py`); rotation is a direct DB
   update to `is_active`/`key_hash`.
-- **OTP verification**, **check-in**, **approval-workflow evaluation** — see
-  above.
+- **Wiring OTP verification into this endpoint**, **check-in**,
+  **approval-workflow evaluation** — see above.

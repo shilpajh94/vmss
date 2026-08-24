@@ -2,6 +2,7 @@ import uuid
 
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import (
@@ -216,6 +217,55 @@ async def test_list_branches_success(client: AsyncClient, user: User, branch: Br
     assert response.status_code == 200
     codes = {b["code"] for b in response.json()["data"]}
     assert branch.code in codes
+
+
+async def test_list_branches_scoped_to_authorized_branch_only(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_scoped_to_branch: User,
+    branch: Branch,
+) -> None:
+    """`branches:view` used to be checked company-wide only, 403-ing every
+    branch-scoped role even though it holds the permission at its own
+    branch (see `router.py::list_branches`'s switch to
+    `require_branch_scope`). A branch-scoped caller must see its own branch
+    and not an unrelated one it holds no grant at — same pattern as
+    `test_list_buildings_without_branch_header_excludes_other_branches`.
+    """
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-LIST")
+    db_session.add(other_branch)
+    await db_session.commit()
+
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get("/api/v1/branches", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    codes = {b["code"] for b in response.json()["data"]}
+    assert branch.code in codes
+    assert other_branch.code not in codes
+
+
+async def test_get_branch_success_for_branch_scoped_user(
+    client: AsyncClient, user_scoped_to_branch: User, branch: Branch
+) -> None:
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["code"] == branch.code
+
+
+async def test_get_branch_denied_for_user_scoped_elsewhere(
+    client: AsyncClient, user_scoped_to_other_branch: User, branch: Branch
+) -> None:
+    """The branch-level counterpart of `test_get_building_not_found_for_other_branch`
+    — a role grant scoped to a different branch must not resolve this one.
+    """
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.get(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 404
 
 
 async def test_get_current_branch_with_access(
@@ -462,6 +512,45 @@ async def test_provision_branch_rolls_back_nothing_committed_on_conflict(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert retry_response.status_code == 201
+
+
+async def test_provision_branch_rolls_back_partial_tree_on_mid_transaction_conflict(
+    client: AsyncClient, user: User, db_session: AsyncSession
+) -> None:
+    """The duplicate-department conflict below fires only after `Branch`,
+    `Building`, and both `Floor` rows have already been `flush()`-ed to the
+    database within the same transaction (`service.py::provision_branch`)
+    — a materially stronger case than
+    `test_provision_branch_rolls_back_nothing_committed_on_conflict` above,
+    which fails on the very first check, before anything has been added to
+    the session at all.
+
+    In production, `get_tenant_db` (`core/tenancy.py`) hands each request a
+    session opened inside its own `async with AsyncSession(...)` block
+    (`core/database.py::tenant_session_scope`), so an unhandled exception
+    exits that block and the session's `close()` implicitly rolls back
+    anything flushed-but-uncommitted. The test client's dependency override
+    (`conftest.py::client`) instead hands every request the same bare
+    `db_session` for the whole test, with no such `async with` around it,
+    so it doesn't replicate that automatic rollback-on-exit. The explicit
+    `db_session.rollback()` below stands in for what that exit would have
+    done in production; the row counts afterward then prove
+    `provision_branch` really left nothing behind for it to roll back.
+    """
+    token = await _login(client, user.email)
+    payload = _provision_payload()
+    payload["buildings"][0]["floors"][0]["departments"].append(
+        {"name": "Duplicate HR", "code": "HR"}
+    )
+    response = await client.post(
+        "/api/v1/branches/provision", json=payload, headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 409
+
+    await db_session.rollback()
+    for model in (Branch, Building, Floor, Department, ReceptionDesk, SecurityGate):
+        count = await db_session.scalar(select(func.count()).select_from(model))
+        assert count == 0, f"{model.__name__} row(s) leaked from a rolled-back provision"
 
 
 # --- Company (singleton) -----------------------------------------------
@@ -797,6 +886,22 @@ async def test_update_building_success(client: AsyncClient, user: User, building
     assert response.json()["data"]["name"] == "Renamed Tower"
 
 
+async def test_update_building_not_found_for_other_branch(
+    client: AsyncClient, building: Building, user_scoped_to_other_branch: User
+) -> None:
+    """`building` belongs to `branch`; a role grant scoped to a different
+    branch must not be able to rename it, even by id — the update-endpoint
+    counterpart of the get-by-id guard above.
+    """
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.put(
+        f"/api/v1/buildings/{building.id}",
+        json={"name": "Hijacked Tower"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
 async def test_delete_building_success(client: AsyncClient, user: User, building: Building) -> None:
     token = await _login(client, user.email)
     response = await client.delete(
@@ -804,6 +909,30 @@ async def test_delete_building_success(client: AsyncClient, user: User, building
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
     )
     assert response.status_code == 204
+
+
+async def test_delete_building_not_found_for_other_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    building: Building,
+    user_scoped_to_other_branch: User,
+) -> None:
+    """A role grant scoped to a different branch must not be able to delete
+    `building`, and the building must genuinely survive the attempt (not
+    just return the right status code). Verified straight through the
+    repository rather than a second HTTP call as a company-wide admin,
+    since the `user`/`user_scoped_to_*` role fixtures all insert
+    `Permission` rows under the same codes — combining any two of them in
+    one test collides on `global.permissions`' unique `code` index.
+    """
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.delete(
+        f"/api/v1/buildings/{building.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 404
+
+    survivor = await BuildingRepository(db_session).get(building.id)
+    assert survivor is not None
 
 
 async def test_create_building_after_soft_delete_reuses_code(
@@ -906,6 +1035,38 @@ async def test_list_floors_success(
     assert floor.floor_number in {f["floorNumber"] for f in response.json()["data"]}
 
 
+async def test_list_floors_excludes_other_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_scoped_to_branch: User,
+    floor: Floor,
+    building: Building,
+) -> None:
+    """`floor` belongs to `building`, which belongs to `branch`; a floor
+    provisioned under a completely different branch's building must never
+    show up in the branch-scoped caller's list — the list-endpoint
+    counterpart of `test_create_floor_denied_for_user_scoped_elsewhere`.
+    """
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-FLR")
+    db_session.add(other_branch)
+    await db_session.flush()
+    other_building = BuildingFactory.build(
+        id=uuid.uuid4(), branch_id=other_branch.id, code="OTH-FLR-BLD"
+    )
+    db_session.add(other_building)
+    await db_session.flush()
+    other_floor = FloorFactory.build(id=uuid.uuid4(), building_id=other_building.id, floor_number=9)
+    db_session.add(other_floor)
+    await db_session.commit()
+
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get("/api/v1/floors", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    ids = {f["id"] for f in response.json()["data"]}
+    assert str(floor.id) in ids
+    assert str(other_floor.id) not in ids
+
+
 async def test_get_floor_success(
     client: AsyncClient, user: User, floor: Floor, building: Building
 ) -> None:
@@ -916,6 +1077,16 @@ async def test_get_floor_success(
     )
     assert response.status_code == 200
     assert response.json()["data"]["id"] == str(floor.id)
+
+
+async def test_get_floor_not_found_for_other_branch(
+    client: AsyncClient, floor: Floor, user_scoped_to_other_branch: User
+) -> None:
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.get(
+        f"/api/v1/floors/{floor.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 404
 
 
 async def test_update_floor_success(
@@ -931,6 +1102,18 @@ async def test_update_floor_success(
     assert response.json()["data"]["name"] == "Renamed Floor"
 
 
+async def test_update_floor_not_found_for_other_branch(
+    client: AsyncClient, floor: Floor, user_scoped_to_other_branch: User
+) -> None:
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.put(
+        f"/api/v1/floors/{floor.id}",
+        json={"name": "Hijacked Floor"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
 async def test_delete_floor_success(
     client: AsyncClient, user: User, floor: Floor, building: Building
 ) -> None:
@@ -940,6 +1123,25 @@ async def test_delete_floor_success(
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
     )
     assert response.status_code == 204
+
+
+async def test_delete_floor_not_found_for_other_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    floor: Floor,
+    user_scoped_to_other_branch: User,
+) -> None:
+    """See `test_delete_building_not_found_for_other_branch` for why
+    survival is checked via the repository rather than a second HTTP call.
+    """
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.delete(
+        f"/api/v1/floors/{floor.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 404
+
+    survivor = await FloorRepository(db_session).get(floor.id)
+    assert survivor is not None
 
 
 async def test_create_floor_after_soft_delete_reuses_number(
@@ -1047,6 +1249,35 @@ async def test_list_departments_success(
     assert department.code in {d["code"] for d in response.json()["data"]}
 
 
+async def test_list_departments_excludes_other_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_scoped_to_branch: User,
+    department: Department,
+    building: Building,
+) -> None:
+    """`department` belongs to `branch`; a department created directly under
+    a different branch must never show up in the branch-scoped caller's
+    list — the list-endpoint counterpart of
+    `test_create_department_denied_for_user_scoped_elsewhere`.
+    """
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-DEPT")
+    db_session.add(other_branch)
+    await db_session.flush()
+    other_department = DepartmentFactory.build(
+        id=uuid.uuid4(), branch_id=other_branch.id, floor_id=None, code="OTH-DEPT"
+    )
+    db_session.add(other_department)
+    await db_session.commit()
+
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get("/api/v1/departments", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    codes = {d["code"] for d in response.json()["data"]}
+    assert department.code in codes
+    assert other_department.code not in codes
+
+
 async def test_get_department_success(
     client: AsyncClient, user: User, department: Department, building: Building
 ) -> None:
@@ -1057,6 +1288,16 @@ async def test_get_department_success(
     )
     assert response.status_code == 200
     assert response.json()["data"]["id"] == str(department.id)
+
+
+async def test_get_department_not_found_for_other_branch(
+    client: AsyncClient, department: Department, user_scoped_to_other_branch: User
+) -> None:
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.get(
+        f"/api/v1/departments/{department.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 404
 
 
 async def test_update_department_success(
@@ -1072,6 +1313,18 @@ async def test_update_department_success(
     assert response.json()["data"]["name"] == "Renamed Department"
 
 
+async def test_update_department_not_found_for_other_branch(
+    client: AsyncClient, department: Department, user_scoped_to_other_branch: User
+) -> None:
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.put(
+        f"/api/v1/departments/{department.id}",
+        json={"name": "Hijacked Department"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
 async def test_delete_department_success(
     client: AsyncClient, user: User, department: Department, building: Building
 ) -> None:
@@ -1081,6 +1334,25 @@ async def test_delete_department_success(
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
     )
     assert response.status_code == 204
+
+
+async def test_delete_department_not_found_for_other_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    department: Department,
+    user_scoped_to_other_branch: User,
+) -> None:
+    """See `test_delete_building_not_found_for_other_branch` for why
+    survival is checked via the repository rather than a second HTTP call.
+    """
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.delete(
+        f"/api/v1/departments/{department.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 404
+
+    survivor = await DepartmentRepository(db_session).get(department.id)
+    assert survivor is not None
 
 
 async def test_create_department_after_soft_delete_reuses_code(
@@ -1200,6 +1472,45 @@ async def test_list_reception_desks_success(
     assert reception_desk.code in {d["code"] for d in response.json()["data"]}
 
 
+async def test_list_reception_desks_excludes_other_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_scoped_to_branch: User,
+    reception_desk: ReceptionDesk,
+    building: Building,
+) -> None:
+    """`reception_desk` sits on `floor`, under `building`, under `branch`; a
+    desk on a floor belonging to a different branch entirely must never
+    show up in the branch-scoped caller's list — the list-endpoint
+    counterpart of `test_create_reception_desk_denied_for_user_scoped_elsewhere`.
+    """
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-DESK")
+    db_session.add(other_branch)
+    await db_session.flush()
+    other_building = BuildingFactory.build(
+        id=uuid.uuid4(), branch_id=other_branch.id, code="OTH-DESK-BLD"
+    )
+    db_session.add(other_building)
+    await db_session.flush()
+    other_floor = FloorFactory.build(id=uuid.uuid4(), building_id=other_building.id, floor_number=9)
+    db_session.add(other_floor)
+    await db_session.flush()
+    other_desk = ReceptionDeskFactory.build(
+        id=uuid.uuid4(), floor_id=other_floor.id, code="OTH-DESK"
+    )
+    db_session.add(other_desk)
+    await db_session.commit()
+
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get(
+        "/api/v1/reception-desks", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    codes = {d["code"] for d in response.json()["data"]}
+    assert reception_desk.code in codes
+    assert other_desk.code not in codes
+
+
 async def test_get_reception_desk_success(
     client: AsyncClient, user: User, reception_desk: ReceptionDesk, building: Building
 ) -> None:
@@ -1210,6 +1521,17 @@ async def test_get_reception_desk_success(
     )
     assert response.status_code == 200
     assert response.json()["data"]["id"] == str(reception_desk.id)
+
+
+async def test_get_reception_desk_not_found_for_other_branch(
+    client: AsyncClient, reception_desk: ReceptionDesk, user_scoped_to_other_branch: User
+) -> None:
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.get(
+        f"/api/v1/reception-desks/{reception_desk.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
 
 
 async def test_update_reception_desk_success(
@@ -1225,6 +1547,18 @@ async def test_update_reception_desk_success(
     assert response.json()["data"]["name"] == "Renamed Desk"
 
 
+async def test_update_reception_desk_not_found_for_other_branch(
+    client: AsyncClient, reception_desk: ReceptionDesk, user_scoped_to_other_branch: User
+) -> None:
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.put(
+        f"/api/v1/reception-desks/{reception_desk.id}",
+        json={"name": "Hijacked Desk"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
 async def test_delete_reception_desk_success(
     client: AsyncClient, user: User, reception_desk: ReceptionDesk, building: Building
 ) -> None:
@@ -1234,6 +1568,26 @@ async def test_delete_reception_desk_success(
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
     )
     assert response.status_code == 204
+
+
+async def test_delete_reception_desk_not_found_for_other_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    reception_desk: ReceptionDesk,
+    user_scoped_to_other_branch: User,
+) -> None:
+    """See `test_delete_building_not_found_for_other_branch` for why
+    survival is checked via the repository rather than a second HTTP call.
+    """
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.delete(
+        f"/api/v1/reception-desks/{reception_desk.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+    survivor = await ReceptionDeskRepository(db_session).get(reception_desk.id)
+    assert survivor is not None
 
 
 async def test_create_reception_desk_after_soft_delete_reuses_code(
@@ -1391,6 +1745,41 @@ async def test_list_security_gates_success(
     assert security_gate.code in {g["code"] for g in response.json()["data"]}
 
 
+async def test_list_security_gates_excludes_other_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_scoped_to_branch: User,
+    security_gate: SecurityGate,
+    branch: Branch,
+) -> None:
+    """`security_gate` belongs to `branch`; a gate created directly under a
+    different branch must never show up in the branch-scoped caller's list
+    — the list-endpoint counterpart of
+    `test_create_security_gate_denied_for_user_scoped_elsewhere`.
+    """
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-GATE")
+    db_session.add(other_branch)
+    await db_session.flush()
+    other_gate = SecurityGateFactory.build(
+        id=uuid.uuid4(),
+        branch_id=other_branch.id,
+        building_id=None,
+        code="OTH-GATE",
+        gate_type="entry",
+    )
+    db_session.add(other_gate)
+    await db_session.commit()
+
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get(
+        "/api/v1/security-gates", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    codes = {g["code"] for g in response.json()["data"]}
+    assert security_gate.code in codes
+    assert other_gate.code not in codes
+
+
 async def test_get_security_gate_success(
     client: AsyncClient, user: User, security_gate: SecurityGate, branch: Branch
 ) -> None:
@@ -1401,6 +1790,16 @@ async def test_get_security_gate_success(
     )
     assert response.status_code == 200
     assert response.json()["data"]["id"] == str(security_gate.id)
+
+
+async def test_get_security_gate_not_found_for_other_branch(
+    client: AsyncClient, security_gate: SecurityGate, user_scoped_to_other_branch: User
+) -> None:
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.get(
+        f"/api/v1/security-gates/{security_gate.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 404
 
 
 async def test_update_security_gate_success(
@@ -1416,6 +1815,18 @@ async def test_update_security_gate_success(
     assert response.json()["data"]["name"] == "Renamed Gate"
 
 
+async def test_update_security_gate_not_found_for_other_branch(
+    client: AsyncClient, security_gate: SecurityGate, user_scoped_to_other_branch: User
+) -> None:
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.put(
+        f"/api/v1/security-gates/{security_gate.id}",
+        json={"name": "Hijacked Gate"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
 async def test_delete_security_gate_success(
     client: AsyncClient, user: User, security_gate: SecurityGate, branch: Branch
 ) -> None:
@@ -1425,6 +1836,26 @@ async def test_delete_security_gate_success(
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
     )
     assert response.status_code == 204
+
+
+async def test_delete_security_gate_not_found_for_other_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    security_gate: SecurityGate,
+    user_scoped_to_other_branch: User,
+) -> None:
+    """See `test_delete_building_not_found_for_other_branch` for why
+    survival is checked via the repository rather than a second HTTP call.
+    """
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.delete(
+        f"/api/v1/security-gates/{security_gate.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+    survivor = await SecurityGateRepository(db_session).get(security_gate.id)
+    assert survivor is not None
 
 
 async def test_create_security_gate_after_soft_delete_reuses_code(

@@ -53,11 +53,27 @@ class BranchRepository(TenantScopedRepository[Branch]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def list_page(
-        self, *, page: int, page_size: int, sort_by: str, sort_order: SortOrder
+        self,
+        *,
+        branch_scope: BranchScope,
+        page: int,
+        page_size: int,
+        sort_by: str,
+        sort_order: SortOrder,
     ) -> tuple[list[Branch], int]:
+        """`branch_scope` mirrors `BuildingRepository.list_page` — the
+        caller's authorized scope (`org_structure/deps.py::require_branch_scope`),
+        filtered on `Branch.id` itself rather than a `branch_id` column,
+        since a branch *is* the entity here.
+        """
         column = {"name": Branch.name, "created_at": Branch.created_at}[sort_by]
+        branch_filter = _branch_filter(Branch.id, branch_scope)
+        filters: list[Any] = [branch_filter] if branch_filter is not None else []
         return await super().paginate(
-            page=page, page_size=page_size, order_by=_order_clause(column, sort_order)
+            page=page,
+            page_size=page_size,
+            order_by=_order_clause(column, sort_order),
+            filters=filters,
         )
 
 

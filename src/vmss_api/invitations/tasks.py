@@ -12,7 +12,7 @@ import uuid
 import structlog
 
 from vmss_api.core.celery_app import celery_app
-from vmss_api.core.database import tenant_session_scope
+from vmss_api.core.database import engine, tenant_session_scope
 from vmss_api.core.logging import logger
 from vmss_api.invitations import notifications
 from vmss_api.invitations.models import Invitation
@@ -44,30 +44,43 @@ def send_visit_confirmation(
 
 
 async def _send_visit_confirmation(tenant_schema: str, invitation_id: str) -> None:
-    async with tenant_session_scope(tenant_schema) as session:
-        invitation = await session.get(Invitation, uuid.UUID(invitation_id))
-        # Idempotent against redelivery/retry (background-jobs.md §2): a
-        # missing invitation (the row somehow removed since the task was
-        # enqueued) has nothing left to notify about. There's no separate
-        # "already notified" flag to guard on beyond that — creation
-        # enqueues this task exactly once, atomically with the row's insert,
-        # so the only source of a duplicate send is Celery's own
-        # at-least-once redelivery, which the idempotency-key cache on the
-        # creating request already bounds (api-conventions.md §3).
-        if invitation is None:
-            return
-        subject = "Your visit is confirmed"
-        body = (
-            f"Your registration is confirmed. Tracking ID: {invitation.tracking_id}.\n"
-            "Present the attached QR code at check-in."
-        )
-        qr_png = await generate_qr_png(invitation.tracking_id)
-        await _dispatch(
-            invitation,
-            subject=subject,
-            body=body,
-            attachment=notifications.make_attachment(qr_png, "visit-qr.png", "image/png"),
-        )
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            # Idempotent against redelivery/retry (background-jobs.md §2): a
+            # missing invitation (the row somehow removed since the task was
+            # enqueued) has nothing left to notify about. There's no separate
+            # "already notified" flag to guard on beyond that — creation
+            # enqueues this task exactly once, atomically with the row's insert,
+            # so the only source of a duplicate send is Celery's own
+            # at-least-once redelivery, which the idempotency-key cache on the
+            # creating request already bounds (api-conventions.md §3).
+            if invitation is None:
+                return
+            subject = "Your visit is confirmed"
+            body = (
+                f"Your registration is confirmed. Tracking ID: {invitation.tracking_id}.\n"
+                "Present the attached QR code at check-in."
+            )
+            qr_png = await generate_qr_png(invitation.tracking_id)
+            await _dispatch(
+                invitation,
+                subject=subject,
+                body=body,
+                attachment=notifications.make_attachment(qr_png, "visit-qr.png", "image/png"),
+            )
+    finally:
+        # `send_visit_confirmation` below runs this coroutine via a fresh
+        # `asyncio.run()` call per task, but `core/database.py::engine` is a
+        # single, process-wide `AsyncEngine` built once at import — its
+        # pooled asyncpg connections are bound to whichever loop first used
+        # them. A worker process handling a second task on a new loop would
+        # otherwise reuse a connection tied to this (about-to-close) loop and
+        # fail with "got Future ... attached to a different loop"
+        # (reproduced directly once a real worker processed more than one
+        # task — see SQLAlchemy's asyncio docs on disposing an engine before
+        # switching event loops).
+        await engine.dispose()
 
 
 async def _dispatch(invitation: Invitation, *, subject: str, body: str, attachment=None) -> None:

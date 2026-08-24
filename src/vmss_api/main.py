@@ -83,6 +83,14 @@ _TAGS_METADATA = [
             "headcount aggregated across every branch in the tenant."
         ),
     },
+    {
+        "name": "identity-verification",
+        "description": (
+            "OTP generation and verification for an email or phone identifier, "
+            "over email/SMS/WhatsApp — public, unauthenticated, and not yet "
+            "wired into invitation or walk-in registration creation."
+        ),
+    },
 ]
 
 

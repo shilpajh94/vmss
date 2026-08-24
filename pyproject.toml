@@ -25,6 +25,7 @@ dependencies = [
     "aiosmtplib>=5.1.2",
     "anyio>=4.14.2",
     "aioboto3>=15.5.0",
+    "twilio>=9.11.0",
 ]
 
 [dependency-groups]
