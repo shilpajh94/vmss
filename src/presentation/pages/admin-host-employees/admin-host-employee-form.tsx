@@ -17,11 +17,11 @@ export function AdminHostEmployeeFormPage() {
     retry,
     roles,
     branches,
+    departments,
     createValues,
     createErrors,
     isSaving,
     updateCreateField,
-    regeneratePassword,
     submitCreate,
     employee,
     departmentName,
@@ -39,6 +39,7 @@ export function AdminHostEmployeeFormPage() {
   const roleOptions = roles.map((role) => ({ value: role.id, label: role.name }))
   const branchOptions = branches.map((branch) => ({ value: branch.id, label: branch.name }))
   const branchNameById = new Map(branches.map((branch) => [branch.id, branch.name]))
+  const departmentOptions = departments.map((department) => ({ value: department.id, label: department.name }))
 
   return (
     <div className="flex min-h-screen w-full items-stretch bg-bg">
@@ -200,21 +201,46 @@ export function AdminHostEmployeeFormPage() {
                     error={createErrors.email}
                     labelClassName={fieldLabelClassName}
                   />
-                  <div className="flex flex-col gap-1.5">
-                    <TextField
-                      label="Temporary Password"
-                      required
-                      value={createValues.password}
-                      onChange={(password) => updateCreateField('password', password)}
-                      error={createErrors.password}
-                      placeholder="At least 8 characters"
-                      labelClassName={fieldLabelClassName}
-                    />
-                    <div className="flex items-center justify-between">
-                      <p className="font-body text-[12px] text-text-muted">Share this with the employee — it won't be shown again.</p>
-                      <button type="button" onClick={regeneratePassword} className="font-body text-xs font-semibold text-admin-accent">
-                        Generate
-                      </button>
+                  <div className="flex gap-6">
+                    <div className="flex-1">
+                      <TextField
+                        label="Employee Code"
+                        required
+                        value={createValues.employeeCode}
+                        onChange={(employeeCode) => updateCreateField('employeeCode', employeeCode)}
+                        error={createErrors.employeeCode}
+                        labelClassName={fieldLabelClassName}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <TextField
+                        label="Designation"
+                        value={createValues.designation ?? ''}
+                        onChange={(designation) => updateCreateField('designation', designation || undefined)}
+                        placeholder="e.g. Facilities Manager"
+                        labelClassName={fieldLabelClassName}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-6">
+                    <div className="flex-1">
+                      <TextField
+                        label="Phone Number"
+                        value={createValues.phoneNumber ?? ''}
+                        onChange={(phoneNumber) => updateCreateField('phoneNumber', phoneNumber || undefined)}
+                        placeholder="e.g. +1 555 000 1234"
+                        labelClassName={fieldLabelClassName}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <SelectField
+                        label="Department"
+                        value={createValues.departmentId ?? ''}
+                        onChange={(departmentId) => updateCreateField('departmentId', departmentId || undefined)}
+                        options={departmentOptions}
+                        placeholder="Select department (optional)..."
+                        labelClassName={fieldLabelClassName}
+                      />
                     </div>
                   </div>
                   <div className="flex gap-6">
@@ -239,9 +265,6 @@ export function AdminHostEmployeeFormPage() {
                       />
                     </div>
                   </div>
-                  <p className="font-body text-[12px] text-text-muted">
-                    Department assignment isn't supported by the backend yet — it can't be set here.
-                  </p>
                 </div>
 
                 <div className="flex items-center justify-end gap-3 border-t border-border pt-4">

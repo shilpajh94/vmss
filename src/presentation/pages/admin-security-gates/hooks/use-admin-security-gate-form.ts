@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { Building } from '../../../../domain/entities/building-schema'
-import type { Floor } from '../../../../domain/entities/floor-schema'
 import type { SecurityGateInput } from '../../../../domain/entities/security-gate-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
 const EMPTY_VALUES: SecurityGateInput = {
   name: '',
+  code: '',
   buildingId: '',
-  floorId: undefined,
-  gateType: 'bidirectional',
+  gateType: 'both',
+  highSecurity: false,
   authMethod: undefined,
   connectivityStatus: 'online',
 }
@@ -24,7 +24,6 @@ export function useAdminSecurityGateForm() {
   const {
     getCurrentStaffUserUseCase,
     listBuildingsUseCase,
-    listFloorsUseCase,
     listSecurityGatesUseCase,
     createSecurityGateUseCase,
     updateSecurityGateUseCase,
@@ -33,7 +32,6 @@ export function useAdminSecurityGateForm() {
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [buildings, setBuildings] = useState<Building[]>([])
-  const [floors, setFloors] = useState<Floor[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
@@ -46,14 +44,9 @@ export function useAdminSecurityGateForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, buildingList, floorList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listBuildingsUseCase.execute(),
-        listFloorsUseCase.execute(),
-      ])
+      const [user, buildingList] = await Promise.all([getCurrentStaffUserUseCase.execute(), listBuildingsUseCase.execute()])
       setCurrentUser(user)
       setBuildings(buildingList)
-      setFloors(floorList)
 
       if (isEditMode) {
         const securityGates = await listSecurityGatesUseCase.execute()
@@ -64,9 +57,10 @@ export function useAdminSecurityGateForm() {
         }
         setValues({
           name: securityGate.name,
+          code: securityGate.code,
           buildingId: securityGate.buildingId,
-          floorId: securityGate.floorId,
           gateType: securityGate.gateType,
+          highSecurity: securityGate.highSecurity,
           authMethod: securityGate.authMethod,
           connectivityStatus: securityGate.connectivityStatus,
         })
@@ -79,11 +73,11 @@ export function useAdminSecurityGateForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listBuildingsUseCase, listFloorsUseCase, listSecurityGatesUseCase, isEditMode, id, toast])
+  }, [getCurrentStaffUserUseCase, listBuildingsUseCase, listSecurityGatesUseCase, isEditMode, id, toast])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
-      navigate('/staff/login', { replace: true })
+      navigate('/admin/login', { replace: true })
       return
     }
 
@@ -94,23 +88,14 @@ export function useAdminSecurityGateForm() {
     void load()
   }, [load])
 
-  const floorsForSelectedBuilding = useMemo(
-    () => floors.filter((floor) => floor.buildingId === values.buildingId),
-    [floors, values.buildingId],
-  )
-
   const updateField = useCallback(<K extends keyof SecurityGateInput>(key: K, value: SecurityGateInput[K]) => {
-    setValues((current) => {
-      if (key === 'buildingId' && current.buildingId !== value) {
-        return { ...current, buildingId: value as SecurityGateInput['buildingId'], floorId: undefined }
-      }
-      return { ...current, [key]: value }
-    })
+    setValues((current) => ({ ...current, [key]: value }))
   }, [])
 
   const submit = useCallback(async () => {
     const nextErrors: Partial<Record<keyof SecurityGateInput, string>> = {}
     if (!values.name.trim()) nextErrors.name = 'Gate name/ID is required.'
+    if (!values.code.trim()) nextErrors.code = 'Gate code is required.'
     if (!values.buildingId.trim()) nextErrors.buildingId = 'Building is required.'
 
     if (Object.keys(nextErrors).length > 0) {
@@ -144,7 +129,6 @@ export function useAdminSecurityGateForm() {
     isEditMode,
     currentUser,
     buildings,
-    floors: floorsForSelectedBuilding,
     isLoading,
     errorMessage,
     retry,

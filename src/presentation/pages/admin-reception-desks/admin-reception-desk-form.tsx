@@ -91,6 +91,18 @@ export function AdminReceptionDeskFormPage() {
                       />
                     </div>
                     <div className="flex-1">
+                      <TextField
+                        label="Desk Code"
+                        required
+                        value={values.code}
+                        onChange={(code) => updateField('code', code)}
+                        error={errors.code}
+                        labelClassName={fieldLabelClassName}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-6">
+                    <div className="flex-1">
                       <SelectField
                         label="Building"
                         required
@@ -99,21 +111,25 @@ export function AdminReceptionDeskFormPage() {
                         options={buildingOptions}
                         placeholder="Select building..."
                         error={errors.buildingId}
+                        disabled={isEditMode}
+                        labelClassName={fieldLabelClassName}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <SelectField
+                        label="Floor"
+                        required
+                        value={values.floorId}
+                        onChange={(floorId) => updateField('floorId', floorId)}
+                        options={floorOptions}
+                        placeholder="Select floor..."
+                        error={errors.floorId}
+                        disabled={isEditMode}
                         labelClassName={fieldLabelClassName}
                       />
                     </div>
                   </div>
                   <div className="flex gap-6">
-                    <div className="flex-1">
-                      <SelectField
-                        label="Floor"
-                        value={values.floorId ?? ''}
-                        onChange={(floorId) => updateField('floorId', floorId || undefined)}
-                        options={floorOptions}
-                        placeholder="Select floor..."
-                        labelClassName={fieldLabelClassName}
-                      />
-                    </div>
                     <div className="flex-1">
                       <SelectField
                         label="Assigned Receptionist"

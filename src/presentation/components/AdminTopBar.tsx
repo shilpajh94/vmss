@@ -1,4 +1,5 @@
-import { BellIcon, SearchGlyphIcon } from './icons'
+import { useNavigate } from 'react-router'
+import { BellIcon, LogOutIcon, SearchGlyphIcon } from './icons'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
 
 interface AdminTopBarBreadcrumbItem {
@@ -13,6 +14,13 @@ interface AdminTopBarProps {
 }
 
 export function AdminTopBar({ description, breadcrumb, currentUser }: AdminTopBarProps) {
+  const navigate = useNavigate()
+
+  const signOut = () => {
+    sessionStorage.removeItem('token')
+    navigate('/admin/login')
+  }
+
   return (
     <header className="flex h-[70px] w-full shrink-0 items-center justify-between border-b border-border bg-surface px-8">
       {breadcrumb ? (
@@ -49,6 +57,18 @@ export function AdminTopBar({ description, breadcrumb, currentUser }: AdminTopBa
             <p className="font-body text-[11px] text-text-faint">{currentUser?.role ?? ''}</p>
           </div>
         </div>
+
+        <div className="h-6 w-px bg-border" />
+
+        <button
+          type="button"
+          onClick={signOut}
+          aria-label="Sign out"
+          className="flex items-center gap-1.5 rounded-lg px-3 py-2 font-body text-[13px] font-semibold text-text-muted"
+        >
+          <LogOutIcon className="size-3.5" />
+          Sign out
+        </button>
       </div>
     </header>
   )

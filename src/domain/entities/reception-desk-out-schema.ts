@@ -2,13 +2,13 @@ import z from "zod"
 
 export const ReceptionDeskOutSchema = z.object({
   id: z.string(),
-  buildingId: z.string(),
-  floorId: z.string().nullable(),
+  floorId: z.string(),
   name: z.string(),
-  receptionistUserId: z.string().nullable(),
+  code: z.string(),
+  status: z.enum(["active", "maintenance", "inactive"]),
+  assignedReceptionistUserId: z.string().nullable(),
   operatingHoursFrom: z.string().nullable(),
   operatingHoursTo: z.string().nullable(),
-  status: z.enum(["active", "maintenance", "inactive"]),
 })
 
 export type ReceptionDeskOut = z.infer<typeof ReceptionDeskOutSchema>

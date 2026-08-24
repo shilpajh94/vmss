@@ -13,10 +13,11 @@ interface SelectFieldProps {
   placeholder?: string
   error?: string
   required?: boolean
+  disabled?: boolean
   labelClassName?: string
 }
 
-export function SelectField({ label, value, onChange, options, placeholder, error, required, labelClassName }: SelectFieldProps) {
+export function SelectField({ label, value, onChange, options, placeholder, error, required, disabled, labelClassName }: SelectFieldProps) {
   const selectId = useId()
 
   return (
@@ -30,7 +31,8 @@ export function SelectField({ label, value, onChange, options, placeholder, erro
         value={value}
         onChange={(event) => onChange(event.target.value)}
         aria-required={required}
-        className={`rounded-lg border bg-surface px-3 py-2 text-body text-text focus:outline-none focus:ring-2 focus:ring-secondary-accent ${
+        disabled={disabled}
+        className={`rounded-lg border bg-surface px-3 py-2 text-body text-text focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60 ${
           error ? 'border-danger' : 'border-border'
         }`}
       >

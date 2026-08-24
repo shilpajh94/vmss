@@ -7,7 +7,7 @@ import { VisitorPolicyCard } from './Components/VisitorPolicyCard'
 import { useAdminOrganisationConfigs } from './hooks/use-admin-organisation-configs'
 
 export function AdminOrganisationConfigsPage() {
-  const { currentUser, form, isLoading, isSaving, errorMessage, retry, updateField, uploadLogo, setLogo, cancel, save } =
+  const { currentUser, form, isLoading, isSaving, errorMessage, logoPreview, retry, updateField, previewLogo, setLogoPreview, cancel, save } =
     useAdminOrganisationConfigs()
 
   return (
@@ -46,10 +46,11 @@ export function AdminOrganisationConfigsPage() {
               <div className="flex w-full items-start gap-6">
                 <GeneralInformationCard
                   form={form}
+                  logoPreview={logoPreview}
                   onNameChange={(organisationName) => updateField('organisationName', organisationName)}
                   onTimezoneChange={(defaultTimezone) => updateField('defaultTimezone', defaultTimezone)}
-                  onUploadLogo={uploadLogo}
-                  onLogoChange={setLogo}
+                  onPreviewLogo={previewLogo}
+                  onLogoPreviewChange={setLogoPreview}
                 />
                 <VisitorPolicyCard
                   form={form}

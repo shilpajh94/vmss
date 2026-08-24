@@ -7,7 +7,7 @@ interface VisitorCategoriesTableProps {
   onDelete: (visitorCategory: VisitorCategory) => void
 }
 
-const COLUMN_HEADERS = ['CATEGORY NAME', 'DESCRIPTION', 'BADGE COLOR', 'NDA REQUIRED', 'ESCORT REQUIRED', 'MAX DURATION']
+const COLUMN_HEADERS = ['CATEGORY NAME', 'CODE', 'DESCRIPTION', 'BADGE COLOR', 'NDA REQUIRED', 'ESCORT REQUIRED', 'MAX DURATION']
 
 const BADGE_COLOR: Record<VisitorCategory['badgeColor'], { label: string; swatchClassName: string }> = {
   blue: { label: 'Blue', swatchClassName: 'bg-info' },
@@ -16,8 +16,24 @@ const BADGE_COLOR: Record<VisitorCategory['badgeColor'], { label: string; swatch
   grey: { label: 'Grey', swatchClassName: 'bg-text-muted' },
 }
 
-function isEscortAlwaysRequired(escortRequired: string | undefined): boolean {
-  return escortRequired ? escortRequired.trim().toLowerCase().startsWith('required') : false
+const NDA_REQUIREMENT_LABEL: Record<NonNullable<VisitorCategory['ndaRequirement']>, string> = {
+  digital: 'Yes (Digital)',
+  signed_pdf: 'Yes (Signed PDF)',
+  optional: 'Optional',
+  none: 'Not Required',
+}
+
+const ESCORT_REQUIREMENT_LABEL: Record<NonNullable<VisitorCategory['escortRequirement']>, string> = {
+  self_escort: 'Self-Escort',
+  access_logs_only: 'Access Logs Only',
+  always_required: 'Always Required',
+  gate_check_in_only: 'Gate Check-in Only',
+}
+
+function formatMaxDuration(maxDurationMinutes: number | undefined): string {
+  if (maxDurationMinutes === undefined) return '—'
+  if (maxDurationMinutes % 60 === 0) return `${maxDurationMinutes / 60} hr`
+  return `${maxDurationMinutes} min`
 }
 
 export function VisitorCategoriesTable({ visitorCategories, onDelete }: VisitorCategoriesTableProps) {
@@ -39,11 +55,12 @@ export function VisitorCategoriesTable({ visitorCategories, onDelete }: VisitorC
         <tbody>
           {visitorCategories.map((visitorCategory) => {
             const badgeColor = BADGE_COLOR[visitorCategory.badgeColor]
-            const escortEmphasized = isEscortAlwaysRequired(visitorCategory.escortRequired)
+            const escortEmphasized = visitorCategory.escortRequirement === 'always_required'
 
             return (
               <tr key={visitorCategory.id} className="border-b border-border-subtle">
                 <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">{visitorCategory.name}</td>
+                <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{visitorCategory.code}</td>
                 <td className="max-w-[175px] truncate px-6 py-4 font-body text-sm text-text-muted">{visitorCategory.description ?? '—'}</td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div className="flex items-center gap-2">
@@ -51,15 +68,19 @@ export function VisitorCategoriesTable({ visitorCategories, onDelete }: VisitorC
                     <span className="font-body text-[13px] text-text-muted">{badgeColor.label}</span>
                   </div>
                 </td>
-                <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{visitorCategory.ndaRequired ?? '—'}</td>
+                <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">
+                  {visitorCategory.ndaRequirement ? NDA_REQUIREMENT_LABEL[visitorCategory.ndaRequirement] : '—'}
+                </td>
                 <td
                   className={`px-6 py-4 font-body text-sm whitespace-nowrap ${
                     escortEmphasized ? 'font-semibold text-danger' : 'text-text-muted'
                   }`}
                 >
-                  {visitorCategory.escortRequired ?? '—'}
+                  {visitorCategory.escortRequirement ? ESCORT_REQUIREMENT_LABEL[visitorCategory.escortRequirement] : '—'}
                 </td>
-                <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{visitorCategory.maxDuration ?? '—'}</td>
+                <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">
+                  {formatMaxDuration(visitorCategory.maxDurationMinutes)}
+                </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center justify-end gap-2">
                     <button

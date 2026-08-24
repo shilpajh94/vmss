@@ -54,11 +54,6 @@ export const API_ENDPOINTS = {
     method: "PUT",
     hasToken: true,
   },
-  UPLOAD_ORGANISATION_LOGO: {
-    endpoint: "/uploads/organisation-logo",
-    method: "POST",
-    hasToken: true,
-  },
   LIST_BRANCHES: {
     endpoint: "/branches",
     method: "GET",
@@ -154,8 +149,8 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
-  CREATE_HOST_EMPLOYEE: {
-    endpoint: "/auth/users",
+  SYNC_EMPLOYEES: {
+    endpoint: "/auth/employees/sync",
     method: "POST",
     hasToken: true,
   },

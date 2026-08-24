@@ -35,7 +35,7 @@ function RootLayout() {
           <Route path="/" element={<VisitorPortalLandingPage />} />
           <Route path="/visitor/request" element={<VisitorRequestPage />} />
           <Route path="/visitor/track" element={<VisitorTrackPage />} />
-          <Route path="/staff/login" element={<StaffLoginPage />} />
+          <Route path="/admin/login" element={<StaffLoginPage />} />
           <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
           <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
           <Route path="/staff/audit-trail" element={<StaffAuditTrailPage />} />

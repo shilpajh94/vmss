@@ -4,7 +4,7 @@ export function StaffGatewayHeader() {
       <div className="flex items-center gap-3">
         <span className="font-display text-2xl font-extrabold text-white">VisitorPass</span>
         <span className="rounded-md border border-[#334155] bg-[#1e293b] px-2.5 py-1 font-body text-[11px] font-bold tracking-[1px] text-secondary-accent">
-          STAFF GATEWAY
+          ADMIN GATEWAY
         </span>
       </div>
       <div className="flex items-center gap-1.5">

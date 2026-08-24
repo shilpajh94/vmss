@@ -7,8 +7,7 @@ import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
 export function useAdminOrganisationConfigs() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, getOrganisationConfigUseCase, updateOrganisationConfigUseCase, uploadOrganisationLogoUseCase } =
-    useAppDependencies()
+  const { getCurrentStaffUserUseCase, getOrganisationConfigUseCase, updateOrganisationConfigUseCase } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
@@ -17,6 +16,9 @@ export function useAdminOrganisationConfigs() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  // The backend has no endpoint to store an uploaded logo file (only a logoUrl
+  // string on /company), so a picked file is a local, unsaved preview only.
+  const [logoPreview, setLogoPreviewState] = useState<{ url: string; fileName: string } | undefined>(undefined)
 
   const loadConfig = useCallback(async () => {
     setIsLoading(true)
@@ -37,7 +39,7 @@ export function useAdminOrganisationConfigs() {
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
-      navigate('/staff/login', { replace: true })
+      navigate('/admin/login', { replace: true })
       return
     }
 
@@ -52,21 +54,19 @@ export function useAdminOrganisationConfigs() {
     setForm((current) => (current ? { ...current, [key]: value } : current))
   }, [])
 
-  const uploadLogo = useCallback(
-    async (file: File) => {
-      const { fileRef } = await uploadOrganisationLogoUseCase.execute(file)
-      return fileRef
-    },
-    [uploadOrganisationLogoUseCase],
-  )
+  const previewLogo = useCallback(async (file: File) => URL.createObjectURL(file), [])
 
-  const setLogo = useCallback((logoUrl: string | undefined) => {
-    setForm((current) => (current ? { ...current, logoUrl } : current))
+  const setLogoPreview = useCallback((fileRef: string | undefined, fileName: string | undefined) => {
+    setLogoPreviewState((current) => {
+      if (current) URL.revokeObjectURL(current.url)
+      return fileRef && fileName ? { url: fileRef, fileName } : undefined
+    })
   }, [])
 
   const cancel = useCallback(() => {
     setForm(savedConfig)
-  }, [savedConfig])
+    setLogoPreview(undefined, undefined)
+  }, [savedConfig, setLogoPreview])
 
   const save = useCallback(async () => {
     if (!form) return
@@ -90,10 +90,11 @@ export function useAdminOrganisationConfigs() {
     isLoading,
     isSaving,
     errorMessage,
+    logoPreview,
     retry,
     updateField,
-    uploadLogo,
-    setLogo,
+    previewLogo,
+    setLogoPreview,
     cancel,
     save,
   }

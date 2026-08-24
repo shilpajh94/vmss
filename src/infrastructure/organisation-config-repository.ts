@@ -3,7 +3,6 @@ import type { ApiClient } from '../data/api/api-client'
 import type { OrganisationConfigRepository } from '../data/repositories/organisation-config-repository'
 import { CompanyResponseSchema, type Company } from '../domain/entities/company-schema'
 import type { OrganisationConfig } from '../domain/entities/organisation-config-schema'
-import { UploadResponseSchema, type UploadResponse } from '../domain/entities/upload-response-schema'
 
 const BADGE_EXPIRY_MINUTES_BY_DURATION: Record<string, number> = {
   '4h': 240,
@@ -60,13 +59,5 @@ export class HttpOrganisationConfigRepository implements OrganisationConfigRepos
     })
 
     return toOrganisationConfig(response.data)
-  }
-
-  async uploadLogo(file: File): Promise<UploadResponse> {
-    return this.apiClient.uploadFile<UploadResponse>({
-      endpointConfig: API_ENDPOINTS.UPLOAD_ORGANISATION_LOGO,
-      file,
-      parserSchema: UploadResponseSchema,
-    })
   }
 }
