@@ -91,6 +91,15 @@ _TAGS_METADATA = [
             "wired into invitation or walk-in registration creation."
         ),
     },
+    {
+        "name": "visit-info",
+        "description": (
+            "Public, kiosk-facing lookups backing the walk-in registration "
+            "wizard's Visit Info step: host search, branch-scoped department "
+            "listing, and configured purpose/duration options. Resolves "
+            "tenant/branch the same way `POST /registrations/walk-in` does."
+        ),
+    },
 ]
 
 

@@ -2,7 +2,7 @@ import uuid
 from collections.abc import Collection, Sequence
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
@@ -60,6 +60,38 @@ class UserRepository:
             .values(is_active=False)
             .returning(User.email)
             .execution_options(synchronize_session=False)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_active(self, id_: uuid.UUID) -> User | None:
+        """Used to validate `hostId` on invitation/walk-in creation — an id
+        must resolve to an *active* employee, not merely a non-deleted one
+        (visit-info-lookup-api spec.md "Unknown or cross-tenant id is
+        rejected").
+        """
+        stmt = select(User).where(
+            User.id == id_, User.is_active.is_(True), User.deleted_at.is_(None)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def search_active_by_name_or_email(self, query: str, *, limit: int) -> list[User]:
+        """Backs `GET /hosts/search` (visit-info-lookup-api): active
+        employees whose name or email contains `query`, case-insensitively.
+        No `employee_code` requirement — that field is optional directory
+        metadata, not a gate on being a valid visit host (design.md
+        Decisions). Deactivated employees are excluded via `is_active`, same
+        posture as `list_employees_page`.
+        """
+        pattern = f"%{query}%"
+        stmt = (
+            select(User)
+            .where(
+                User.is_active.is_(True),
+                User.deleted_at.is_(None),
+                or_(User.full_name.ilike(pattern), User.email.ilike(pattern)),
+            )
+            .order_by(User.full_name.asc())
+            .limit(limit)
         )
         return list((await self.session.execute(stmt)).scalars().all())
 

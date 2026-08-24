@@ -64,6 +64,25 @@ Decision 5 for why this trade-off was accepted. A created invitation is
 always immediately in its final, fully detailed state — there is no
 transient `pending`/shell state for a caller to observe.
 
+### Optional catalog ids on visit details
+
+`visitDetails` accepts four new *optional* fields alongside its existing
+free-text ones: `purposeId`, `hostId`, `durationId`, `departmentId` — see
+`docs/features/visit_info.md` for where those ids come from
+(`GET /hosts/search`, `GET /visit-info/departments`,
+`GET /visit-info/options`). When one is supplied, the service resolves it
+against the corresponding catalog/`Department`/`User` row (rejecting the
+request with `422` if it doesn't resolve to an existing, active row in this
+tenant's schema) and overwrites the paired free-text field
+(`purposeOfVisit`/`hostNameOrEmail`/`expectedDuration`/`departmentToVisit`)
+with that row's canonical display value before persisting — the
+client-supplied free-text value for that field, if any, is discarded in favor
+of it. Omitting all four ids leaves every free-text field stored exactly as
+submitted, byte-for-byte the pre-existing behavior — this was an additive
+change, not a breaking one. `POST /registrations/walk-in` inherits the same
+behavior automatically, since it submits the identical `VisitDetailsSubmit`
+shape.
+
 ## Listing invitations
 
 `GET /invitations` gives an authenticated, `invitations:view`-gated caller a

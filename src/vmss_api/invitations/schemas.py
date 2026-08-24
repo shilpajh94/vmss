@@ -106,6 +106,16 @@ class VisitDetailsSubmit(CamelModel):
     expected_duration: str = Field(max_length=50)
     department_to_visit: str = Field(max_length=255)
     additional_notes: str | None = Field(default=None, max_length=2000)
+    # Optional catalog ids (visit-info-lookup-api) — when supplied, the
+    # service layer validates each against its catalog/`Department`/`User`
+    # and overwrites the paired free-text field above with that row's
+    # canonical display value before persisting. Omitted entirely, behavior
+    # is unchanged: the free-text fields above are stored exactly as
+    # submitted. See openspec/changes/visit-info-lookup-api/design.md.
+    purpose_id: uuid.UUID | None = None
+    host_id: uuid.UUID | None = None
+    duration_id: uuid.UUID | None = None
+    department_id: uuid.UUID | None = None
 
 
 class CarriedItemsSubmit(CamelModel):

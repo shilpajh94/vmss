@@ -244,6 +244,48 @@ class DepartmentRepository(TenantScopedRepository[Department]):
             filters=filters,
         )
 
+    async def get_active(self, id_: uuid.UUID) -> Department | None:
+        """Used to validate `departmentId` on invitation/walk-in creation —
+        an id must resolve to an *active* row, not merely a non-deleted one
+        (visit-info-lookup-api spec.md "Unknown or cross-tenant id is
+        rejected").
+        """
+        stmt = select(Department).where(
+            Department.id == id_,
+            Department.is_active.is_(True),
+            Department.deleted_at.is_(None),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def list_active_for_branch(self, branch_id: uuid.UUID) -> list[Department]:
+        """Backs `GET /visit-info/departments` (visit-info-lookup-api): the
+        active, non-deleted departments of one branch, unpaginated — the
+        kiosk dropdown needs the full set, not a page of it.
+        """
+        stmt = (
+            select(Department)
+            .where(
+                Department.branch_id == branch_id,
+                Department.is_active.is_(True),
+                Department.deleted_at.is_(None),
+            )
+            .order_by(Department.name.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_names_by_ids(self, ids: Collection[uuid.UUID]) -> dict[uuid.UUID, str]:
+        """Batch id->name lookup for `visit_info/service.py::search_hosts` —
+        one query for every host result's `department_id`, not one query per
+        host (query-performance.md §2).
+        """
+        if not ids:
+            return {}
+        stmt = select(Department.id, Department.name).where(
+            Department.id.in_(ids), Department.deleted_at.is_(None)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        return {row[0]: row[1] for row in rows}
+
 
 class ReceptionDeskRepository(TenantScopedRepository[ReceptionDesk]):
     model = ReceptionDesk
