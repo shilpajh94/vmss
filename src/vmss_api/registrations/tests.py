@@ -114,7 +114,7 @@ async def _create_walk_in(
 
 async def _create_walk_in_success(
     client: AsyncClient,
-    device_key: str,
+    device_key: str | None,
     *,
     payload: dict,
     visitor_file_count: int = 0,
@@ -179,6 +179,7 @@ async def test_walk_in_registration_response_has_no_check_in_state(
         "status",
         "expiresAt",
         "submittedAt",
+        "approvedAt",
     }
 
 
@@ -319,7 +320,9 @@ async def test_walk_in_registration_idempotency_key_replay(
     client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession, monkeypatch
 ) -> None:
     calls: list[dict] = []
-    monkeypatch.setattr(tasks.send_visit_confirmation, "delay", lambda **kw: calls.append(kw))
+    # No `Company` profile is configured for this test tenant, so creation
+    # resolves to `submitted` (awaiting approval), not `approved`.
+    monkeypatch.setattr(tasks.send_tracking_notification, "delay", lambda **kw: calls.append(kw))
 
     idempotency_key = "walk-in-retry-key-1"
     first = await _create_walk_in_success(

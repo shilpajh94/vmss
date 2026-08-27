@@ -86,6 +86,9 @@ class SmtpEmailSender:
             logger.warning(
                 "smtp_email_dispatch_failed",
                 identifier=mask_identifier(to),
+                smtp_host=settings.smtp_host,
+                smtp_port=settings.smtp_port,
+                exception_type=type(exc).__name__,
                 error=str(exc),
             )
             raise EmailDispatchError("Email dispatch failed") from exc

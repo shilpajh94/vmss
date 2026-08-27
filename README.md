@@ -21,10 +21,13 @@ Requires [DDEV](https://ddev.com/) and Docker.
 ddev start                              # builds the web image (installs uv), starts web/db/redis
 cp .env.example .env                    # then replace every __PLACEHOLDER__ with a real value —
                                          # each line's comment gives the DDEV-default to paste in
-ddev restart                             # picks up .env — also (re)starts the vmss-api and
-                                          # vmss-api-celery-worker daemons; without the latter,
-                                          # anything dispatched via Celery (e.g. invitation
-                                          # confirmation emails) silently queues and never sends
+ddev restart                             # picks up .env — also (re)starts the vmss-api,
+                                          # vmss-api-celery-worker, and vmss-api-celery-beat
+                                          # daemons; without the worker, anything dispatched via
+                                          # Celery (e.g. invitation confirmation emails) silently
+                                          # queues and never sends; without beat, no scheduled
+                                          # task (e.g. the daily reports rollup snapshot) ever
+                                          # gets enqueued in the first place
 ddev exec uv run alembic upgrade head    # global schema (tenants, superadmins, ...)
 ddev exec uv run python scripts/seed_dev_data.py   # provisions the default tenant's own schema +
                                                     # creates admin@example.com / admin12345 in it

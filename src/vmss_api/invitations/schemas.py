@@ -204,6 +204,7 @@ class InvitationOut(CamelModel):
     status: str
     expires_at: datetime
     submitted_at: datetime | None
+    approved_at: datetime | None
 
 
 # --- Employee listing --------------------------------------------------------
@@ -225,6 +226,7 @@ class InvitationListItemOut(CamelModel):
     purpose_of_visit: str | None
     expires_at: datetime
     submitted_at: datetime | None
+    approved_at: datetime | None
 
 
 # --- API-12: public tracking lookup -----------------------------------------
@@ -270,6 +272,7 @@ class InvitationTrackingOut(CamelModel):
     carried_items_description: str | None
     expires_at: datetime
     submitted_at: datetime | None
+    approved_at: datetime | None
     visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 

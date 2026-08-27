@@ -56,6 +56,7 @@ def _to_walk_in_registration_out(invitation) -> WalkInRegistrationOut:
         status=invitation.status,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
+        approved_at=invitation.approved_at,
     )
 
 

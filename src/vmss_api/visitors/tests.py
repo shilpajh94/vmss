@@ -6,11 +6,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import ApprovalWorkflowRuleFactory, RoleFactory, VisitorCategoryFactory
 from vmss_api.auth.models import Role, User
+from vmss_api.core.config import settings
+from vmss_api.tenant.models import Tenant
 from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
 from vmss_api.visitors.repository import (
     ApprovalWorkflowRuleRepository,
     VisitorCategoryRepository,
 )
+
+
+@pytest_asyncio.fixture(autouse=True)
+def _default_tenant_slug_matches_test_tenant(monkeypatch):
+    """`GET /visitor-categories` is public and resolves
+    `settings.default_tenant_slug` (no JWT to read a tenant from) — mirrors
+    `org_structure/tests.py`'s fixture of the same name.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", "acme-test")
 
 
 @pytest_asyncio.fixture
@@ -135,14 +146,29 @@ async def test_create_visitor_category_requires_permission(
     assert response.status_code == 403
 
 
-async def test_list_visitor_categories_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+async def test_list_visitor_categories_no_auth_header_succeeds(
+    client: AsyncClient, tenant: Tenant, visitor_category: VisitorCategory
+) -> None:
+    """Listing is public, same rationale as
+    `org_structure/router.py::list_branches` — the pre-registration form
+    needs a category picker before a visitor authenticates.
+    """
+    response = await client.get("/api/v1/visitor-categories")
+    assert response.status_code == 200
+    codes = {c["code"] for c in response.json()["data"]}
+    assert visitor_category.code in codes
+
+
+async def test_list_visitor_categories_no_permission_still_succeeds(
+    client: AsyncClient, user_without_permissions: User, visitor_category: VisitorCategory
 ) -> None:
     token = await _login(client, user_without_permissions.email)
     response = await client.get(
         "/api/v1/visitor-categories", headers={"Authorization": f"Bearer {token}"}
     )
-    assert response.status_code == 403
+    assert response.status_code == 200
+    codes = {c["code"] for c in response.json()["data"]}
+    assert visitor_category.code in codes
 
 
 async def test_get_visitor_category_requires_permission(

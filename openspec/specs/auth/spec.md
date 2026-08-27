@@ -232,3 +232,91 @@ separate, unauthenticated, signed-token flows.
   to a `User` via the branch-role assignment endpoint
 - **THEN** the request is rejected with a 4xx error and no `UserBranchRole`
   row is created
+
+### Requirement: Standard Roles Can Be Resynced Against the Current Permission Catalog
+A caller holding `roles:manage` SHALL be able to trigger an idempotent
+resync of the tenant's standard roles (Admin, Reception, Security, Host)
+against the current permission catalog, granting each standard role any
+catalog-defined permission it is currently missing — the same union-merge
+`seed_default_roles` already applies at provisioning time — without
+removing any permission a role holds that is not part of that role's
+catalog-defined default set. The response SHALL report which permissions
+were newly granted to which roles.
+
+#### Scenario: A stale standard role is backfilled
+- **WHEN** a tenant's Reception role was seeded before a permission (e.g.
+  `invitations:view`) existed in the catalog, and a caller with
+  `roles:manage` triggers the resync
+- **THEN** Reception's permission set includes that permission afterward,
+  with no direct database edit required
+
+#### Scenario: Resync is idempotent
+- **WHEN** a caller triggers the resync twice in a row with no catalog
+  change in between
+- **THEN** the second call reports no newly granted permissions and no
+  role's permission set changes
+
+#### Scenario: A custom grant beyond the catalog default survives
+- **WHEN** a standard role holds a permission an admin granted manually
+  that is not part of that role's catalog-defined default set, and the
+  resync runs
+- **THEN** that permission remains granted on the role afterward
+
+#### Scenario: Caller lacks roles:manage
+- **WHEN** a caller without `roles:manage` attempts to trigger the resync
+- **THEN** the request is rejected with 403 and no role's permissions
+  change
+
+### Requirement: Single Employee Creation Without a Full Directory Sync
+
+The system SHALL allow a caller holding the `employees:manage` permission to
+create one employee directly, setting its `employee_code`, `department_id`,
+`phone_number`, and `designation` on creation, without submitting a full
+employee directory sync batch.
+
+A single employee created this way SHALL be immediately visible in
+`GET /auth/employees` (subject to that endpoint's existing branch-scope and
+department-assignment rules), with no follow-up call to the directory sync
+endpoint required.
+
+Creating a single employee this way SHALL NOT affect any other existing
+employee's `is_active` status — unlike a directory sync batch, it never
+deactivates employees omitted from it, since it only ever concerns the one
+employee being created.
+
+#### Scenario: Newly created employee appears in the listing right away
+
+- **WHEN** a caller with `employees:manage` creates an employee with a valid
+  `department_id` via the single-employee create endpoint
+- **THEN** the response returns the created employee with its
+  `employee_code`, `department_id`, `phone_number`, and `designation` set
+- **AND** a subsequent `GET /auth/employees` call (scoped to that
+  employee's branch) includes the new employee without any directory sync
+  call in between
+
+#### Scenario: Creating one employee does not deactivate others
+
+- **WHEN** a caller creates a new employee via the single-employee create
+  endpoint while other active employees already exist
+- **THEN** none of the other existing employees' `is_active` status changes
+
+#### Scenario: Duplicate email is rejected
+
+- **WHEN** a caller attempts to create an employee whose email is already
+  registered in the tenant
+- **THEN** the system SHALL reject the request with `409 Conflict` and SHALL
+  NOT create a new user row
+
+#### Scenario: Referencing a nonexistent department is rejected
+
+- **WHEN** a caller supplies a `department_id` that does not exist in the
+  tenant
+- **THEN** the system SHALL reject the request with `404 Not Found` and
+  SHALL NOT create a new user row
+
+#### Scenario: Caller without permission is denied
+
+- **WHEN** a caller lacking the `employees:manage` permission calls the
+  single-employee create endpoint
+- **THEN** the system SHALL reject the request with `403 Forbidden` and
+  SHALL NOT create a new user row

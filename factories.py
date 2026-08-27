@@ -162,6 +162,7 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     __model__ = Invitation
     deleted_at = None
     status = "submitted"
+    approved_at = None
     carried_items: list[str] = []
     visitors: list[InvitationVisitor] = []
     vehicles: list[InvitationVehicle] = []
