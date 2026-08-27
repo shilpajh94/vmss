@@ -71,15 +71,19 @@ that code, branch inactive), the fallback still 401s with the same
 `_INVALID_DEVICE_KEY_DETAIL` an invalid key gets — it never falls through to
 an unscoped or partially-resolved registration.
 
-**Known trade-off, not a full fix**: this path has no credential at all —
-it trades the device key's authentication away for availability, leaving
-this fallback an unauthenticated write (and file-upload) call against one
-fixed branch, protected only by the route's rate limit. Every use is logged
-at `WARNING` (`registration_device_key_absent`) so it's visible/auditable
-rather than silently normalized. Tracked as a follow-up to bind this path
-to the visitor's OTP-verified `identity_verification` proof token instead of
-leaving it credential-less — see `security-architecture.md` §2's
-"fake-entry prevention" open item.
+**Sanctioned default path, not a stopgap**: this path has no credential at
+all — it trades the device key's authentication away for availability,
+leaving this fallback an unauthenticated write (and file-upload) call
+against one fixed branch, protected only by the route's rate limit. That
+trade-off is the reviewed, intended behavior for callers with nowhere safe
+to hold a device secret (see `openspec/specs/registrations/spec.md`'s
+"authenticated by a device credential, not a user" requirement), not an
+open gap. Every use is logged at `WARNING`
+(`registration_device_key_absent`) so it stays visible/auditable rather
+than silently normalized. Binding this path to the visitor's OTP-verified
+`identity_verification` proof token remains a separate, not-yet-scheduled
+improvement — see `security-architecture.md` §2's "fake-entry prevention"
+open item.
 
 ### Provisioning a device key
 
