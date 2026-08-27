@@ -1,7 +1,13 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { PortalFooter } from '../../components/PortalFooter'
 import { PortalHeader } from '../../components/PortalHeader'
+import { useAppDependencies } from '../../context/app-dependencies-context'
+import type { Branch } from '../../../domain/entities/branch-schema'
+import type { Building } from '../../../domain/entities/building-schema'
+import type { Department } from '../../../domain/entities/department-schema'
+import type { EmployeeDirectoryEntry } from '../../../domain/entities/employee-directory-schema'
+import type { VisitorCategory } from '../../../domain/entities/visitor-category-schema'
 import { OtpRequestScreen } from './Components/otp/OtpRequestScreen'
 import { OtpScreenLayout } from './Components/otp/OtpScreenLayout'
 import { OtpVerifyScreen } from './Components/otp/OtpVerifyScreen'
@@ -19,6 +25,58 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
   const { currentStep, formState, setFormState, errors, goNext, goBack, uploadFile, submissionStatus, trackingId, submissionError, submit } =
     useVisitorRequestWizard(initial)
 
+  const { listVisitorCategoriesUseCase, listEmployeeDirectoryUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase } =
+    useAppDependencies()
+  const [visitorCategories, setVisitorCategories] = useState<VisitorCategory[] | undefined>(undefined)
+  const [hostEmployees, setHostEmployees] = useState<EmployeeDirectoryEntry[] | undefined>(undefined)
+  const [branches, setBranches] = useState<Branch[] | undefined>(undefined)
+  const [buildings, setBuildings] = useState<Building[] | undefined>(undefined)
+  const [departments, setDepartments] = useState<Department[] | undefined>(undefined)
+
+  const loadVisitorCategories = useCallback(async () => {
+    try {
+      setVisitorCategories(await listVisitorCategoriesUseCase.execute())
+    } catch {
+      // Anonymous visitors have no staff session token, so this master-data
+      // call 401s for them; the Visitor Category field falls back to its
+      // hardcoded options in that case.
+    }
+  }, [listVisitorCategoriesUseCase])
+
+  // Each call is caught independently — a Promise.all would let one rejection
+  // block every field's data.
+  const loadVisitInfoMasterData = useCallback(() => {
+    listEmployeeDirectoryUseCase
+      .execute()
+      .then(setHostEmployees)
+      .catch(() => {
+        // Falls back to a free-text Host Name or Email field.
+      })
+    listBranchesUseCase
+      .execute()
+      .then(setBranches)
+      .catch(() => {
+        // Falls back to a free-text Location field.
+      })
+    listBuildingsUseCase
+      .execute()
+      .then(setBuildings)
+      .catch(() => {
+        // Falls back to a free-text Building field.
+      })
+    listDepartmentsUseCase
+      .execute()
+      .then(setDepartments)
+      .catch(() => {
+        // Falls back to a free-text Department to Visit field.
+      })
+  }, [listEmployeeDirectoryUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase])
+
+  useEffect(() => {
+    void loadVisitorCategories()
+    loadVisitInfoMasterData()
+  }, [loadVisitorCategories, loadVisitInfoMasterData])
+
   return (
     <div className="flex w-full flex-1 gap-8 px-12 py-10">
       <StepSidebar currentStep={currentStep} />
@@ -33,10 +91,19 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             onAdditionalVisitorsChange={(additionalVisitors) => setFormState({ ...formState, additionalVisitors })}
             uploadFile={uploadFile}
             errors={errors}
+            visitorCategories={visitorCategories}
           />
         )}
         {currentStep === 1 && (
-          <VisitInfoStep value={formState.visitInfo} onChange={(visitInfo) => setFormState({ ...formState, visitInfo })} errors={errors} />
+          <VisitInfoStep
+            value={formState.visitInfo}
+            onChange={(visitInfo) => setFormState({ ...formState, visitInfo })}
+            errors={errors}
+            hostEmployees={hostEmployees}
+            branches={branches}
+            buildings={buildings}
+            departments={departments}
+          />
         )}
         {currentStep === 2 && (
           <CarriedItemsStep value={formState.carriedItems} onChange={(carriedItems) => setFormState({ ...formState, carriedItems })} />

@@ -2,8 +2,11 @@ import { FileUploadField } from '../../../../components/ui/FileUploadField'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
 import { SelectField } from '../../../../components/ui/SelectField'
 import { TextField } from '../../../../components/ui/TextField'
+import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
 import type { VisitorFormEntry } from '../../types'
 
+// Fallback when the visitor-categories master data can't be loaded (e.g. no
+// staff session token available for an anonymous public visitor).
 const VISITOR_CATEGORY_OPTIONS = [
   { value: 'general-visitor', label: 'General Visitor' },
   { value: 'contractor', label: 'Contractor' },
@@ -32,9 +35,14 @@ interface VisitorFieldsFormProps {
   showContactMethod: boolean
   uploadFile: (file: File) => Promise<string>
   errors?: Record<string, string>
+  visitorCategories?: VisitorCategory[]
 }
 
-export function VisitorFieldsForm({ value, onChange, showContactMethod, uploadFile, errors }: VisitorFieldsFormProps) {
+export function VisitorFieldsForm({ value, onChange, showContactMethod, uploadFile, errors, visitorCategories }: VisitorFieldsFormProps) {
+  const visitorCategoryOptions = visitorCategories?.length
+    ? visitorCategories.map((category) => ({ value: category.code, label: category.name }))
+    : VISITOR_CATEGORY_OPTIONS
+
   return (
     <div className="grid grid-cols-2 gap-4">
       <TextField
@@ -73,7 +81,7 @@ export function VisitorFieldsForm({ value, onChange, showContactMethod, uploadFi
       <SelectField
         label="Visitor Category"
         placeholder="Select category"
-        options={VISITOR_CATEGORY_OPTIONS}
+        options={visitorCategoryOptions}
         value={value.visitorCategory}
         onChange={(visitorCategory) => onChange({ ...value, visitorCategory })}
         error={errors?.visitorCategory}

@@ -149,6 +149,13 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  // Public host-picker for the pre-authentication visitor portal — a
+  // PII-trimmed projection (no email/phone/employeeCode) of LIST_HOST_EMPLOYEES.
+  LIST_EMPLOYEE_DIRECTORY: {
+    endpoint: "/auth/employees/directory",
+    method: "GET",
+    hasToken: false,
+  },
   SYNC_EMPLOYEES: {
     endpoint: "/auth/employees/sync",
     method: "POST",

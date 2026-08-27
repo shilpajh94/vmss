@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
+import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
 import { createEmptyVisitorFormEntry, type RegistrationType, type VisitorFormEntry } from '../../types'
 import { VisitorFieldsForm } from './VisitorFieldsForm'
 
@@ -12,6 +13,7 @@ interface VisitorInfoStepProps {
   onAdditionalVisitorsChange: (visitors: VisitorFormEntry[]) => void
   uploadFile: (file: File) => Promise<string>
   errors: Record<string, string>
+  visitorCategories?: VisitorCategory[]
 }
 
 export function VisitorInfoStep({
@@ -23,6 +25,7 @@ export function VisitorInfoStep({
   onAdditionalVisitorsChange,
   uploadFile,
   errors,
+  visitorCategories,
 }: VisitorInfoStepProps) {
   const [draftVisitor, setDraftVisitor] = useState<VisitorFormEntry | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
@@ -79,6 +82,7 @@ export function VisitorInfoStep({
           showContactMethod
           uploadFile={uploadFile}
           errors={errors}
+          visitorCategories={visitorCategories}
         />
       </div>
 
@@ -134,7 +138,13 @@ export function VisitorInfoStep({
           {draftVisitor && (
             <div className="flex flex-col gap-4 rounded-lg border border-border-subtle bg-surface p-4">
               <h4 className="text-body font-semibold text-text">Add New Visitor</h4>
-              <VisitorFieldsForm value={draftVisitor} onChange={setDraftVisitor} showContactMethod={false} uploadFile={uploadFile} />
+              <VisitorFieldsForm
+                value={draftVisitor}
+                onChange={setDraftVisitor}
+                showContactMethod={false}
+                uploadFile={uploadFile}
+                visitorCategories={visitorCategories}
+              />
               <div className="flex gap-3">
                 <button type="button" onClick={commitDraft} className="rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white">
                   Add to List

@@ -4,8 +4,15 @@ import { TextareaField } from '../../../../components/ui/TextareaField'
 import type { Branch } from '../../../../../domain/entities/branch-schema'
 import type { Building } from '../../../../../domain/entities/building-schema'
 import type { Department } from '../../../../../domain/entities/department-schema'
-import type { HostEmployee } from '../../../../../domain/entities/host-employee-schema'
 import type { VisitInfoFormState } from '../../types'
+
+// Accepts either the staff-only HostEmployee (with email) or the public,
+// PII-trimmed EmployeeDirectoryEntry (fullName only) — whichever master-data
+// source the caller has access to.
+interface HostOption {
+  fullName: string
+  email?: string
+}
 
 const PURPOSE_OPTIONS = [
   { value: 'business-meeting', label: 'Business Meeting' },
@@ -29,7 +36,7 @@ interface VisitInfoStepProps {
   value: VisitInfoFormState
   onChange: (value: VisitInfoFormState) => void
   errors: Record<string, string>
-  hostEmployees?: HostEmployee[]
+  hostEmployees?: HostOption[]
   branches?: Branch[]
   buildings?: Building[]
   departments?: Department[]
@@ -65,7 +72,10 @@ export function VisitInfoStep({ value, onChange, errors, hostEmployees, branches
           <SelectField
             label="Host Name or Email"
             placeholder="Select host"
-            options={hostEmployees.map((employee) => ({ value: employee.email, label: `${employee.fullName} (${employee.email})` }))}
+            options={hostEmployees.map((employee) => ({
+              value: employee.email ?? employee.fullName,
+              label: employee.email ? `${employee.fullName} (${employee.email})` : employee.fullName,
+            }))}
             value={value.hostNameOrEmail}
             onChange={(hostNameOrEmail) => onChange({ ...value, hostNameOrEmail })}
             error={errors.hostNameOrEmail}
