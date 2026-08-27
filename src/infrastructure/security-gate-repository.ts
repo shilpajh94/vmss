@@ -43,8 +43,6 @@ export class HttpSecurityGateRepository implements SecurityGateRepository {
       code: securityGateOut.code,
       gateType: securityGateOut.gateType,
       highSecurity: securityGateOut.highSecurity,
-      authMethod: securityGateOut.authMethod ?? undefined,
-      connectivityStatus: securityGateOut.connectivityStatus,
     }
   }
 
@@ -74,9 +72,7 @@ export class HttpSecurityGateRepository implements SecurityGateRepository {
         name: input.name,
         code: input.code,
         gateType: input.gateType,
-        connectivityStatus: input.connectivityStatus,
         highSecurity: input.highSecurity,
-        authMethod: input.authMethod ?? null,
       },
       parserSchema: SecurityGateResponseSchema,
     })
@@ -94,9 +90,7 @@ export class HttpSecurityGateRepository implements SecurityGateRepository {
           name: input.name,
           code: input.code,
           gateType: input.gateType,
-          connectivityStatus: input.connectivityStatus,
           highSecurity: input.highSecurity,
-          authMethod: input.authMethod ?? null,
         },
         pathParams: { id },
         parserSchema: SecurityGateResponseSchema,

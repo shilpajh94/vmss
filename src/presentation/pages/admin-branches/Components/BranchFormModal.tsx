@@ -6,6 +6,7 @@ import { TextareaField } from '../../../components/ui/TextareaField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
 import { COUNTRY_OPTIONS, OPERATING_HOURS_OPTIONS } from '../branch-form-options'
 import type { Branch } from '../../../../domain/entities/branch-schema'
+import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import type { BranchFormState } from '../hooks/use-admin-branches'
 
 type BranchFormValues = Omit<Branch, 'id'>
@@ -38,14 +39,16 @@ const REQUIRED_FIELDS: Array<{ key: keyof BranchFormValues; message: string }> =
 
 interface BranchFormModalProps {
   formState: BranchFormState
+  employees: HostEmployee[]
   isSaving: boolean
   onSubmit: (input: Omit<Branch, 'id'>) => void
   onClose: () => void
 }
 
-export function BranchFormModal({ formState, isSaving, onSubmit, onClose }: BranchFormModalProps) {
+export function BranchFormModal({ formState, employees, isSaving, onSubmit, onClose }: BranchFormModalProps) {
   const [values, setValues] = useState<BranchFormValues>(EMPTY_VALUES)
   const [errors, setErrors] = useState<Partial<Record<keyof BranchFormValues, string>>>({})
+  const employeeOptions = employees.map((employee) => ({ value: employee.id, label: employee.fullName }))
 
   useEffect(() => {
     if (!formState) return
@@ -110,10 +113,12 @@ export function BranchFormModal({ formState, isSaving, onSubmit, onClose }: Bran
           />
           {errors.address && <p className="text-caption text-danger">{errors.address}</p>}
         </div>
-        <TextField
+        <SelectField
           label="Contact Person"
           value={values.contactPersonUserId}
           onChange={(contactPersonUserId) => updateField('contactPersonUserId', contactPersonUserId)}
+          options={employeeOptions}
+          placeholder="Select employee..."
           error={errors.contactPersonUserId}
           required
         />

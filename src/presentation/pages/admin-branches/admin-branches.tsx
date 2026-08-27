@@ -14,6 +14,7 @@ export function AdminBranchesPage() {
   const {
     currentUser,
     branches,
+    employees,
     isLoading,
     errorMessage,
     retry,
@@ -79,7 +80,13 @@ export function AdminBranchesPage() {
         </main>
       </div>
 
-      <BranchFormModal formState={formState} isSaving={isSaving} onSubmit={(input) => void saveBranch(input)} onClose={closeForm} />
+      <BranchFormModal
+        formState={formState}
+        employees={employees}
+        isSaving={isSaving}
+        onSubmit={(input) => void saveBranch(input)}
+        onClose={closeForm}
+      />
 
       <ConfirmDialog
         isOpen={pendingDelete !== undefined}

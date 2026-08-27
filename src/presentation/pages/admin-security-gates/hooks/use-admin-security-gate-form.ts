@@ -12,8 +12,6 @@ const EMPTY_VALUES: SecurityGateInput = {
   buildingId: '',
   gateType: 'both',
   highSecurity: false,
-  authMethod: undefined,
-  connectivityStatus: 'online',
 }
 
 export function useAdminSecurityGateForm() {
@@ -61,8 +59,6 @@ export function useAdminSecurityGateForm() {
           buildingId: securityGate.buildingId,
           gateType: securityGate.gateType,
           highSecurity: securityGate.highSecurity,
-          authMethod: securityGate.authMethod,
-          connectivityStatus: securityGate.connectivityStatus,
         })
       } else {
         setValues(EMPTY_VALUES)

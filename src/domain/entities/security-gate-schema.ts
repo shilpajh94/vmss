@@ -8,8 +8,6 @@ export const SecurityGateSchema = z.object({
   code: z.string().min(1),
   gateType: z.enum(["entry", "exit", "both"]).default("both"),
   highSecurity: z.boolean().default(false),
-  authMethod: z.string().optional(),
-  connectivityStatus: z.enum(["online", "maintenance", "offline"]).default("online"),
 })
 
 export type SecurityGate = z.infer<typeof SecurityGateSchema>

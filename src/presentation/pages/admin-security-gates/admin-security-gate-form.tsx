@@ -13,12 +13,6 @@ const GATE_TYPE_OPTIONS = [
   { value: 'exit', label: 'Exit Only' },
 ]
 
-const CONNECTIVITY_OPTIONS = [
-  { value: 'online', label: 'Online' },
-  { value: 'maintenance', label: 'Maintenance' },
-  { value: 'offline', label: 'Offline' },
-]
-
 export function AdminSecurityGateFormPage() {
   const {
     isEditMode,
@@ -44,7 +38,7 @@ export function AdminSecurityGateFormPage() {
 
       <div className="flex flex-1 flex-col">
         <AdminTopBar
-          description="Configure hardware gates, turnstiles, authentication protocols and connectivity status"
+          description="Configure hardware gates and turnstiles"
           currentUser={currentUser}
         />
 
@@ -121,27 +115,6 @@ export function AdminSecurityGateFormPage() {
                         value={values.gateType}
                         onChange={(gateType) => updateField('gateType', gateType as typeof values.gateType)}
                         options={GATE_TYPE_OPTIONS}
-                        labelClassName={fieldLabelClassName}
-                      />
-                    </div>
-                  </div>
-                  <div className="flex gap-6">
-                    <div className="flex-1">
-                      <TextField
-                        label="Auth Method"
-                        value={values.authMethod ?? ''}
-                        onChange={(authMethod) => updateField('authMethod', authMethod || undefined)}
-                        placeholder="e.g. Biometric / RFID Card"
-                        labelClassName={fieldLabelClassName}
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <SelectField
-                        label="Connectivity Status"
-                        required
-                        value={values.connectivityStatus}
-                        onChange={(connectivityStatus) => updateField('connectivityStatus', connectivityStatus as typeof values.connectivityStatus)}
-                        options={CONNECTIVITY_OPTIONS}
                         labelClassName={fieldLabelClassName}
                       />
                     </div>

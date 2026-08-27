@@ -13,6 +13,7 @@ export function AdminDepartmentFormPage() {
     isEditMode,
     currentUser,
     branches,
+    employees,
     isLoading,
     errorMessage,
     retry,
@@ -25,6 +26,7 @@ export function AdminDepartmentFormPage() {
   } = useAdminDepartmentForm()
 
   const branchOptions = branches.map((branch) => ({ value: branch.id, label: branch.name }))
+  const employeeOptions = employees.map((employee) => ({ value: employee.id, label: employee.fullName }))
   const fieldLabelClassName = 'text-[13px] font-bold uppercase text-[#475569]'
 
   return (
@@ -99,10 +101,12 @@ export function AdminDepartmentFormPage() {
                     error={errors.code}
                     labelClassName={fieldLabelClassName}
                   />
-                  <TextField
+                  <SelectField
                     label="Head of Department"
                     value={values.headOfDepartmentUserId ?? ''}
                     onChange={(headOfDepartmentUserId) => updateField('headOfDepartmentUserId', headOfDepartmentUserId)}
+                    options={employeeOptions}
+                    placeholder="Select employee..."
                     labelClassName={fieldLabelClassName}
                   />
                   <TextareaField

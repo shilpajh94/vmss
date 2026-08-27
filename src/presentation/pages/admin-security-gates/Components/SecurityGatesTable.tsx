@@ -7,18 +7,12 @@ interface SecurityGatesTableProps {
   onDelete: (securityGate: SecurityGate) => void
 }
 
-const COLUMN_HEADERS = ['GATE NAME/ID', 'CODE', 'BUILDING', 'GATE TYPE', 'AUTH METHOD']
+const COLUMN_HEADERS = ['GATE NAME/ID', 'CODE', 'BUILDING', 'GATE TYPE']
 
 const GATE_TYPE_BADGE: Record<SecurityGate['gateType'], { label: string; className: string }> = {
   both: { label: 'Entry & Exit', className: 'bg-info/15 text-info' },
   entry: { label: 'Entry Only', className: 'bg-success/15 text-success' },
   exit: { label: 'Exit Only', className: 'bg-danger/15 text-danger' },
-}
-
-const CONNECTIVITY_BADGE: Record<SecurityGate['connectivityStatus'], { label: string; badgeClassName: string; dotClassName: string }> = {
-  online: { label: 'Online', badgeClassName: 'bg-success/15 text-success', dotClassName: 'bg-success' },
-  maintenance: { label: 'Maintenance', badgeClassName: 'bg-warning/15 text-warning', dotClassName: 'bg-warning' },
-  offline: { label: 'Offline', badgeClassName: 'bg-border-subtle text-text-muted', dotClassName: 'bg-text-faint' },
 }
 
 export function SecurityGatesTable({ securityGates, onDelete }: SecurityGatesTableProps) {
@@ -34,14 +28,12 @@ export function SecurityGatesTable({ securityGates, onDelete }: SecurityGatesTab
                 {header}
               </th>
             ))}
-            <th className="px-6 py-3.5 font-body text-[13px] font-bold text-text-muted whitespace-nowrap">CONNECTIVITY</th>
             <th className="px-6 py-3.5 text-right font-body text-[13px] font-bold text-text-muted whitespace-nowrap">ACTIONS</th>
           </tr>
         </thead>
         <tbody>
           {securityGates.map((securityGate) => {
             const gateTypeBadge = GATE_TYPE_BADGE[securityGate.gateType]
-            const connectivityBadge = CONNECTIVITY_BADGE[securityGate.connectivityStatus]
 
             return (
               <tr key={securityGate.id} className="border-b border-border-subtle">
@@ -59,15 +51,6 @@ export function SecurityGatesTable({ securityGates, onDelete }: SecurityGatesTab
                       </span>
                     )}
                   </div>
-                </td>
-                <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{securityGate.authMethod ?? '—'}</td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${connectivityBadge.badgeClassName}`}
-                  >
-                    <span className={`size-1.5 rounded-full ${connectivityBadge.dotClassName}`} />
-                    {connectivityBadge.label}
-                  </span>
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center justify-end gap-2">

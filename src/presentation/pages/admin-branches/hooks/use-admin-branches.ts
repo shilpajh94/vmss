@@ -4,16 +4,19 @@ import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 
 export type BranchFormState = { mode: 'edit'; branch: Branch } | undefined
 
 export function useAdminBranches() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listBranchesUseCase, updateBranchUseCase, deleteBranchUseCase } = useAppDependencies()
+  const { getCurrentStaffUserUseCase, listBranchesUseCase, listHostEmployeesUseCase, updateBranchUseCase, deleteBranchUseCase } =
+    useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [branches, setBranches] = useState<Branch[]>([])
+  const [employees, setEmployees] = useState<HostEmployee[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
@@ -28,16 +31,21 @@ export function useAdminBranches() {
     setErrorMessage(undefined)
 
     try {
-      const [user, list] = await Promise.all([getCurrentStaffUserUseCase.execute(), listBranchesUseCase.execute()])
+      const [user, list, employeeList] = await Promise.all([
+        getCurrentStaffUserUseCase.execute(),
+        listBranchesUseCase.execute(),
+        listHostEmployeesUseCase.execute(),
+      ])
       setCurrentUser(user)
       setBranches(list)
+      setEmployees(employeeList)
     } catch {
       setErrorMessage('Something went wrong loading the branches. Please try again.')
       toast.error('Something went wrong loading the branches. Please try again.')
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listBranchesUseCase, toast])
+  }, [getCurrentStaffUserUseCase, listBranchesUseCase, listHostEmployeesUseCase, toast])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -106,6 +114,7 @@ export function useAdminBranches() {
   return {
     currentUser,
     branches,
+    employees,
     isLoading,
     errorMessage,
     retry,
