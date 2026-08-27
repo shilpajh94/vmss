@@ -99,6 +99,7 @@ export function VisitorFieldsForm({ value, onChange, showContactMethod, uploadFi
             onChange={(preferredContactMethod) =>
               onChange({ ...value, preferredContactMethod: preferredContactMethod as 'email' | 'sms' })
             }
+            variant="divided"
           />
         </div>
       )}

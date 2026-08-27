@@ -2,12 +2,29 @@ import z from "zod"
 
 export const VisitRequestSummarySchema = z.object({
   id: z.string().min(1),
-  reqId: z.string().min(1),
-  visitorName: z.string().min(1),
-  visitorInitials: z.string().min(1),
-  hostName: z.string().min(1),
-  scheduledAt: z.string().min(1),
-  status: z.enum(["requested", "approved", "checked_in", "denied"]),
+  trackingId: z.string().min(1),
+  primaryContactFullName: z.string().min(1),
+  purposeOfVisit: z.string().min(1),
+  registrationType: z.enum(["individual", "group"]),
+  source: z.string().min(1),
+  status: z.string().min(1),
+  submittedAt: z.string().min(1),
+  approvedAt: z.string().nullable(),
+  expiresAt: z.string().min(1),
 })
 
 export type VisitRequestSummary = z.infer<typeof VisitRequestSummarySchema>
+
+export const VisitRequestSummaryListResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.array(VisitRequestSummarySchema),
+  pagination: z.object({
+    page: z.number(),
+    pageSize: z.number(),
+    total: z.number(),
+    totalPages: z.number(),
+  }),
+})
+
+export type VisitRequestSummaryListResponse = z.infer<typeof VisitRequestSummaryListResponseSchema>

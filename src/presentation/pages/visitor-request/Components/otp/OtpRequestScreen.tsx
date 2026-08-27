@@ -38,6 +38,7 @@ export function OtpRequestScreen({
           ]}
           value={registrationType}
           onChange={(value) => onRegistrationTypeChange(value as RegistrationType)}
+          variant="pill"
         />
       </div>
 

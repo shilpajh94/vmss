@@ -121,6 +121,7 @@ export function VehicleInfoStep({ vehicles, onChange, errors }: VehicleInfoStepP
               options={VEHICLE_TYPE_OPTIONS}
               value={draftVehicle.vehicleType}
               onChange={(vehicleType) => setDraftVehicle({ ...draftVehicle, vehicleType: vehicleType as Vehicle['vehicleType'] })}
+              variant="pill"
             />
           </div>
           <div className="grid grid-cols-3 gap-4">
