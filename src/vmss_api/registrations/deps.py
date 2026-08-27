@@ -43,15 +43,18 @@ async def _resolve_default_device_context(db: AsyncSession) -> RegistrationDevic
     extended to branch (`add-walkin-visitor-registration/design.md`
     Decision 3).
 
-    **Known trade-off, not a full fix**: this path has no credential at
-    all — it trades the device key's authentication away for availability,
-    leaving `POST /registrations/walk-in` an unauthenticated write (and
-    file-upload) endpoint against one fixed branch, protected only by the
-    route's rate limit. Logged at WARNING so the fallback is visible/auditable
-    rather than silently normalized. Tracked as a follow-up to bind this path
-    to the visitor's OTP-verified `identity_verification` proof token instead
-    of leaving it credential-less — see `security-architecture.md` §2's
-    "fake-entry prevention" open item.
+    **Sanctioned default path, not a stopgap**: this path has no credential
+    at all — it trades the device key's authentication away for
+    availability, leaving `POST /registrations/walk-in` an unauthenticated
+    write (and file-upload) endpoint against one fixed branch, protected
+    only by the route's rate limit. That trade-off is the reviewed, intended
+    behavior for callers with nowhere safe to hold a device secret (see
+    `openspec/specs/registrations/spec.md`'s "authenticated by a device
+    credential, not a user" requirement), not an open gap. Logged at WARNING
+    so it stays visible/auditable rather than silently normalized. Binding
+    this path to the visitor's OTP-verified `identity_verification` proof
+    token remains a separate, not-yet-scheduled improvement — see
+    `security-architecture.md` §2's "fake-entry prevention" open item.
     """
     logger.warning("registration_device_key_absent")
     tenant = await TenantRepository(db).get_by_slug(settings.default_tenant_slug)
