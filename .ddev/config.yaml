@@ -28,6 +28,14 @@ web_extra_daemons:
   - name: "vmss-api-celery-worker"
     command: "uv run celery -A vmss_api.core.celery_app:celery_app worker --loglevel=info"
     directory: /var/www/html
+  # Beat only enqueues scheduled tasks (e.g. `reports/tasks.py`'s daily
+  # rollup-snapshot dispatch, `core/celery_app.py`'s `beat_schedule`) — the
+  # worker daemon above still does the actual execution. Without this
+  # daemon, `beat_schedule` entries are configured but nothing ever
+  # triggers them.
+  - name: "vmss-api-celery-beat"
+    command: "uv run celery -A vmss_api.core.celery_app:celery_app beat --loglevel=info"
+    directory: /var/www/html
 
 # Exposes the FastAPI app at https://vmss-new-api.ddev.site
 web_extra_exposed_ports:
