@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 from fastapi.responses import JSONResponse
+from pydantic import EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth import service
@@ -12,6 +13,8 @@ from vmss_api.auth.rbac_catalog import STANDARD_ROLE_NAMES
 from vmss_api.auth.schemas import (
     BranchRoleAssignRequest,
     BranchRoleOut,
+    EmployeeCreateRequest,
+    EmployeeDirectoryOut,
     EmployeeOut,
     EmployeeSortableField,
     EmployeeSyncRequest,
@@ -20,6 +23,7 @@ from vmss_api.auth.schemas import (
     PermissionOut,
     RoleCreateRequest,
     RoleOut,
+    RolePermissionResyncEntryOut,
     RoleSortableField,
     RoleUpdateRequest,
     RoleVerifyResponse,
@@ -38,7 +42,7 @@ from vmss_api.core.deps import (
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
-from vmss_api.org_structure.deps import require_branch_scope
+from vmss_api.org_structure.deps import public_branch_scope, public_tenant_db
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -248,29 +252,70 @@ async def sync_employee_directory(
     return success_response(data=result)
 
 
+@router.post(
+    "/employees",
+    response_model=Envelope[EmployeeOut],
+    dependencies=[Depends(require_permission("employees:manage"))],
+    status_code=201,
+)
+async def create_employee(
+    payload: EmployeeCreateRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Creates one employee, immediately visible in `GET /employees` — unlike
+    `sync_employee_directory` above, this never deactivates any other
+    employee. See `auth/service.py::create_employee`.
+    """
+    new_employee = await service.create_employee(tenant_db, tenant_id=tenant.id, payload=payload)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=actor.id,
+        action="employee_created",
+        entity_type="User",
+        entity_id=new_employee.id,
+    )
+    return success_response(data=_to_employee_out(new_employee), status_code=201)
+
+
 @router.get(
     "/employees",
     response_model=PaginatedEnvelope[EmployeeOut],
 )
+@limiter.limit("60/minute")
 async def list_employees(
-    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("employees:view"))],
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    request: Request,
+    branch_scope: Annotated[BranchScope, Depends(public_branch_scope)],
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     department_id: Annotated[uuid.UUID | None, Query(alias="departmentId")] = None,
+    email: Annotated[EmailStr | None, Query()] = None,
+    role: Annotated[str | None, Query(max_length=100)] = None,
     sort_by: Annotated[EmployeeSortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
-    """`X-Branch-ID` is optional: scopes to that one branch when supplied,
-    otherwise to every branch the caller holds `employees:view` at.
-    Employees are matched to a branch via `department_id -> Department ->
-    Floor -> Building`; an employee with no department assigned is not
-    visible here — see `auth/repository.py::UserRepository.list_employees_page`.
+    """No bearer token or permission required: tenant resolves from a
+    presented access token when valid, otherwise `settings.default_tenant_slug`
+    (`org_structure/deps.py::public_tenant_db`/`public_branch_scope`, the
+    same mechanism already used by the public org-structure listing
+    endpoints). Rate-limited by client IP (60/minute), consistent with
+    every other unauthenticated endpoint (`security-architecture.md` §2).
+    `X-Branch-ID` is optional: scopes to that one branch when supplied,
+    otherwise every branch in the resolved tenant. Employees are matched to
+    a branch via `department_id -> Department -> Floor -> Building`; an
+    employee with no department assigned is not visible here — see
+    `auth/repository.py::UserRepository.list_employees_page`.
     """
     page, page_size = pagination
     employees, total = await service.list_employees(
         tenant_db,
         branch_scope=branch_scope,
         department_id=department_id,
+        email=email,
+        role=role,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -278,6 +323,49 @@ async def list_employees(
     )
     return paginated_response(
         data=[_to_employee_out(e) for e in employees], page=page, page_size=page_size, total=total
+    )
+
+
+def _to_employee_directory_out(user: User) -> EmployeeDirectoryOut:
+    return EmployeeDirectoryOut(
+        id=user.id,
+        full_name=user.full_name,
+        designation=user.designation,
+        department_id=user.department_id,
+    )
+
+
+@router.get(
+    "/employees/directory",
+    response_model=PaginatedEnvelope[EmployeeDirectoryOut],
+)
+@limiter.limit("60/minute")
+async def list_employee_directory(
+    request: Request,
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
+    pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+) -> JSONResponse:
+    """Public — no bearer token, no permission check
+    (security-architecture.md §2's public-endpoint posture, same rationale
+    as `org_structure/router.py::list_branches`): the pre-registration form
+    needs a "who are you visiting" picker before a visitor authenticates.
+
+    Deliberately a separate route and schema from `GET /employees` rather
+    than an unauthenticated mode of it: `EmployeeDirectoryOut` omits
+    email/phone/employee_code, which `EmployeeOut` exposes to authenticated,
+    permission-checked callers only. Every active `host`-role user, not
+    branch/department scoped — see
+    `auth/repository.py::UserRepository.list_hosts_page`.
+    """
+    page, page_size = pagination
+    employees, total = await service.list_employee_directory(
+        tenant_db, page=page, page_size=page_size
+    )
+    return paginated_response(
+        data=[_to_employee_directory_out(e) for e in employees],
+        page=page,
+        page_size=page_size,
+        total=total,
     )
 
 
@@ -424,4 +512,39 @@ async def delete_role(
         action="role_deleted",
         entity_type="Role",
         entity_id=role_id,
+    )
+
+
+@router.post(
+    "/roles/resync-permissions",
+    response_model=Envelope[list[RolePermissionResyncEntryOut]],
+    dependencies=[Depends(require_permission("roles:manage"))],
+)
+async def resync_role_permissions(
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Backfills any catalog-defined permission a standard role is
+    currently missing (`add-invitation-approval-flow-and-role-resync/
+    design.md` Decision 5) — fixes a tenant whose roles predate a
+    permission being added to `rbac_catalog.py`, without a manual database
+    edit. Additive only; never revokes a permission.
+    """
+    granted = await service.resync_role_permissions(tenant_db)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=actor.id,
+        action="role_permissions_resynced",
+        entity_type="Role",
+        entity_id=None,
+        diff=granted,
+    )
+    return success_response(
+        data=[
+            RolePermissionResyncEntryOut(role_name=name, granted_permission_codes=codes)
+            for name, codes in sorted(granted.items())
+        ]
     )

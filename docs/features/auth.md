@@ -21,8 +21,9 @@ is identical for every tenant.
 | POST | `/api/v1/auth/users` | `users:manage` (company-wide) | — | Creates a user with no role grants; follow with the branch-roles endpoint below to give it access. |
 | POST | `/api/v1/auth/users/{id}/branch-roles` | `users:manage` (company-wide) | — | Grants a role to a user, scoped to one branch (or company-wide when `branchId` is omitted). |
 | DELETE | `/api/v1/auth/users/{id}/branch-roles/{assignmentId}` | `users:manage` (company-wide) | — | Revokes a previously granted branch-role assignment. |
+| POST | `/api/v1/auth/employees` | `employees:manage` (company-wide) | — | Creates a single employee, setting `employeeCode`/`departmentId` (required) and optional `phoneNumber`/`designation` directly — immediately visible via `GET /auth/employees` below, with no sync call needed. Never affects any other employee. |
 | POST | `/api/v1/auth/employees/sync` | `employees:manage` (company-wide) | — | Reconciles the employee directory against a full, authoritative batch — see below. Company-wide by design: one sync call spans every department/branch at once. |
-| GET | `/api/v1/auth/employees` | `employees:view` | — | Paginated employee directory (via `department -> floor -> building`), optionally narrowed by `departmentId`. `X-Branch-ID` is optional: scopes to that branch if sent, else every branch the caller holds `employees:view` at. An employee with no `department_id` never appears here. Each row includes `avatarUrl` and the employee's current `branchRoles`. |
+| GET | `/api/v1/auth/employees` | None (public) | — | Paginated employee directory (via `department -> floor -> building`) of every non-deleted user in the tenant, not just ones reconciled through the employee-sync flow — an Admin/Security/Reception account with no `employeeCode` still appears. Optionally narrowed by `departmentId`, `email` (exact match), and/or `role` (role name, matched via any branch-role assignment). No bearer token or permission required: tenant resolves from a presented access token when valid, otherwise the deployment's default tenant. `X-Branch-ID` is optional: scopes to that branch if sent, else every branch in the resolved tenant. An employee with no `department_id` still appears in an unscoped ("all branches") listing — it only drops out of a specific branch/`departmentId`-narrowed view, since there's no department chain to resolve it against. Each row includes `avatarUrl` and the employee's current `branchRoles`. |
 | GET | `/api/v1/auth/permissions` | `roles:view` (company-wide) | — | The tenant's full permission-code catalog (`{code, description}`), so a role-creation/update form can populate its permission-code choices instead of guessing. |
 | POST | `/api/v1/auth/roles` | `roles:manage` (company-wide) | — | Creates a tenant-defined custom role with a name, optional description, and a set of permission codes (validated against the global catalog — see `GET /auth/permissions` above for discovering valid ones). |
 | GET | `/api/v1/auth/roles` | `roles:view` (company-wide) | — | Paginated list of every role in the tenant — the five standard ones plus any custom roles. |
@@ -30,6 +31,27 @@ is identical for every tenant.
 | GET | `/api/v1/auth/roles/{id}` | `roles:view` (company-wide) | — | A single role's detail. |
 | PUT | `/api/v1/auth/roles/{id}` | `roles:manage` (company-wide) | — | Updates a role's description and/or permission set (full replace, not a merge). Renaming one of the five standard roles is rejected. |
 | DELETE | `/api/v1/auth/roles/{id}` | `roles:manage` (company-wide) | — | Soft-deletes a custom role. Rejected for a standard role, or for any role with an active `UserBranchRole` grant. |
+| POST | `/api/v1/auth/roles/resync-permissions` | `roles:manage` (company-wide) | — | Backfills any catalog permission a standard role (Admin/Reception/Security/Host) is currently missing — see "Resyncing stale roles against the catalog" below. Returns each resynced role's newly granted codes (empty list if it already had everything). |
+
+## Creating a single employee
+
+`POST /auth/employees` (`auth/service.py::create_employee`) is the
+single-employee counterpart to the bulk sync endpoint below: it validates the
+email isn't already registered and that `departmentId` exists, then creates
+the `User` row with `employeeCode`/`departmentId`/`phoneNumber`/`designation`
+set directly (same `create_user` helper sync uses), with an unusable random
+password like sync. Unlike sync, it never touches any other employee's
+`is_active` status — it's scoped to exactly the one row being created.
+`departmentId` is required here (sync's equivalent field is optional) because
+`GET /auth/employees` inner-joins `department -> floor -> building`; an
+employee created without one would never show up in the listing this
+endpoint exists to populate.
+
+Before this endpoint existed, the only way to add an employee that would
+appear in `GET /auth/employees` was to call the sync endpoint — which treats
+its payload as the *entire* directory and deactivates every existing
+employee omitted from the batch. Using it to add one employee is exactly the
+kind of accidental-mass-deactivation risk this endpoint avoids.
 
 ## Employee directory sync
 
@@ -37,8 +59,8 @@ is identical for every tenant.
 `designation`, `phone_number`, `department_id` — the last a cross-package FK
 into `org_structure`'s tenant-scoped `departments` table, same pattern as
 `UserBranchRole.branch_id`). A plain company-wide Admin/Security account
-created via `POST /auth/users` has none of them set; only a user reconciled
-through the sync endpoint does.
+created via `POST /auth/users` has none of them set; a user created via
+`POST /auth/employees` or reconciled through the sync endpoint does.
 
 `sync_employee_directory` (`auth/service.py`) treats the posted batch as the
 **full, authoritative** employee list, not a delta — this was a deliberate
@@ -172,11 +194,39 @@ colliding with "admin" the same way the create/rename endpoints themselves
 would reject it.
 
 Beyond the catalog itself, org-structure resources (Building/Floor/
-Department/ReceptionDesk/SecurityGate) and the employee directory enforce
-branch-scoping in practice, not just in the data model — see
-`docs/features/org_structure.md`'s "Branch context" section for how a
-by-id request is checked against a resource's *actual* branch, not just
-whatever `X-Branch-ID` (if any) was sent.
+Department/ReceptionDesk/SecurityGate) enforce branch-scoping in practice,
+not just in the data model — see `docs/features/org_structure.md`'s "Branch
+context" section for how a by-id request is checked against a resource's
+*actual* branch, not just whatever `X-Branch-ID` (if any) was sent. The
+employee directory listing (`GET /auth/employees`) is the one exception: it
+is a public endpoint (see `org_structure.md`'s "Listing endpoints require no
+token" section — the same mechanism, reused from `auth/router.py`), so
+`X-Branch-ID` there is a plain filter, not an authorization boundary.
+
+### Resyncing stale roles against the catalog
+
+`seed_default_roles` only ever ran automatically once, at
+`platform/service.py::create_tenant`'s provisioning time — so a tenant
+provisioned before a permission was added to `PERMISSION_CODES`/
+`ROLE_PERMISSIONS` had its standard roles permanently missing that grant,
+with no way to fix it short of a manual database edit. This already
+happened once for real: an early tenant's seeded roles predated
+`invitations:create`, so its own admin couldn't create an invitation until
+that was noticed and fixed by hand (see `rbac_catalog.py`'s own docstring
+on `seed_default_roles`).
+
+`POST /auth/roles/resync-permissions` (`roles:manage`,
+`add-invitation-approval-flow-and-role-resync`) fixes this on demand: it
+re-runs `seed_default_roles`'s union-merge against the *current* tenant's
+already-existing Admin/Reception/Security/Host roles, granting each one any
+catalog permission it's currently missing, and reports which codes were
+newly granted to which role (an empty list means that role already had
+everything). It never removes a permission — not even one a role holds
+outside its catalog-default set (a deliberate custom grant survives, the
+same trade-off `seed_default_roles` already accepts at provisioning time).
+Run it once after adding a new permission to the catalog if existing
+tenants need it backfilled, rather than only new tenants getting it from
+provisioning onward.
 
 ### Discovering valid permission codes
 

@@ -88,6 +88,29 @@ async def resolve_floor_branch_id(tenant_db: AsyncSession, floor_id: uuid.UUID) 
     return await resolve_building_branch_id(tenant_db, floor.building_id)
 
 
+async def _resolve_building_branch_id_tolerant(
+    tenant_db: AsyncSession, building_id: uuid.UUID
+) -> uuid.UUID | None:
+    """Same as `resolve_building_branch_id`, but tolerates the building
+    itself having been soft-deleted — for resolving the branch of an
+    *existing* Floor/desk whose own row was never deleted, so it doesn't
+    become a permanent 404 the moment an ancestor is removed. Never use this
+    for create-time validation, where a soft-deleted parent must still be
+    treated as absent.
+    """
+    building = await BuildingRepository(tenant_db).get_including_deleted(building_id)
+    return building.branch_id if building is not None else None
+
+
+async def _resolve_floor_branch_id_tolerant(
+    tenant_db: AsyncSession, floor_id: uuid.UUID
+) -> uuid.UUID | None:
+    floor = await FloorRepository(tenant_db).get_including_deleted(floor_id)
+    if floor is None:
+        return None
+    return await _resolve_building_branch_id_tolerant(tenant_db, floor.building_id)
+
+
 # --- Company (singleton) -----------------------------------------------
 
 
@@ -510,7 +533,7 @@ async def get_floor(
     floor = await FloorRepository(tenant_db).get(floor_id)
     if floor is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
-    branch_id = await resolve_building_branch_id(tenant_db, floor.building_id)
+    branch_id = await _resolve_building_branch_id_tolerant(tenant_db, floor.building_id)
     if branch_id is None or not user.has_permission(permission_code, branch_id=branch_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
     return floor
@@ -681,7 +704,7 @@ async def get_reception_desk(
     desk = await ReceptionDeskRepository(tenant_db).get(desk_id)
     if desk is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Desk not found")
-    branch_id = await resolve_floor_branch_id(tenant_db, desk.floor_id)
+    branch_id = await _resolve_floor_branch_id_tolerant(tenant_db, desk.floor_id)
     if branch_id is None or not user.has_permission(permission_code, branch_id=branch_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Desk not found")
     return desk
@@ -734,7 +757,6 @@ async def create_security_gate(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Gate code already exists")
     data = payload.model_dump()
     data["gate_type"] = data["gate_type"].value
-    data["connectivity_status"] = data["connectivity_status"].value
     gate = SecurityGate(id=uuid.uuid4(), **data)
     tenant_db.add(gate)
     await _commit_or_conflict(tenant_db, "Gate code already exists")
@@ -793,8 +815,6 @@ async def update_security_gate(
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Building not found")
     if "gate_type" in changes and changes["gate_type"] is not None:
         changes["gate_type"] = changes["gate_type"].value
-    if "connectivity_status" in changes and changes["connectivity_status"] is not None:
-        changes["connectivity_status"] = changes["connectivity_status"].value
     for field, value in changes.items():
         setattr(gate, field, value)
     await _commit_or_conflict(tenant_db, "Gate code already exists")

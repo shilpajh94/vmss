@@ -6,14 +6,25 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
+import aiosmtplib
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, Response
 from PIL import Image
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from structlog.testing import capture_logs
 
-from factories import InvitationFactory, PermissionFactory, RoleFactory, UserFactory
+from factories import (
+    CompanyFactory,
+    DepartmentFactory,
+    InvitationFactory,
+    PermissionFactory,
+    RoleFactory,
+    UserFactory,
+    VisitDurationFactory,
+    VisitPurposeFactory,
+)
 from vmss_api.auth.models import User, UserBranchRole
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
@@ -22,9 +33,10 @@ from vmss_api.core.security import hash_password
 from vmss_api.invitations import notifications, tasks
 from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.repository import InvitationRepository
-from vmss_api.org_structure.models import Branch
+from vmss_api.org_structure.models import Branch, Department
 from vmss_api.platform.models import TenantUserIndex
 from vmss_api.tenant.models import Tenant
+from vmss_api.visit_info.models import VisitDuration, VisitPurpose
 
 
 def _jpeg_bytes() -> bytes:
@@ -211,6 +223,80 @@ async def test_create_group_invitation_success_with_visitors_and_vehicles(
     assert invitation.terms_accepted is True
 
 
+# --- Auto-approve driven status/notification (add-invitation-approval-flow-and-role-resync) ---
+
+
+async def test_create_invitation_auto_approve_enabled_is_approved_immediately(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), auto_approve_pre_registered_visitors=True))
+    await db_session.commit()
+
+    approval_calls: list[dict] = []
+    tracking_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_approval_notification, "delay", lambda **kw: approval_calls.append(kw)
+    )
+    monkeypatch.setattr(
+        tasks.send_tracking_notification, "delay", lambda **kw: tracking_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    data = await _create_invitation_success(client, token, branch, payload=_individual_payload())
+
+    assert data["status"] == "approved"
+    assert data["approvedAt"] is not None
+    assert len(approval_calls) == 1  # the QR-bearing notification, not the tracking-only one
+    assert tracking_calls == []
+
+
+async def test_create_invitation_auto_approve_disabled_is_awaiting_approval(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    db_session.add(
+        CompanyFactory.build(id=uuid.uuid4(), auto_approve_pre_registered_visitors=False)
+    )
+    await db_session.commit()
+
+    approval_calls: list[dict] = []
+    tracking_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_approval_notification, "delay", lambda **kw: approval_calls.append(kw)
+    )
+    monkeypatch.setattr(
+        tasks.send_tracking_notification, "delay", lambda **kw: tracking_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    data = await _create_invitation_success(client, token, branch, payload=_individual_payload())
+
+    assert data["status"] == "submitted"
+    assert data["approvedAt"] is None
+    assert len(tracking_calls) == 1  # tracking-only — no QR code yet
+    assert approval_calls == []
+
+
+async def test_create_invitation_no_company_profile_defaults_to_awaiting_approval(
+    client: AsyncClient, user: User, branch: Branch, monkeypatch
+) -> None:
+    """No `Company` profile at all (not even a disabled one) — the more
+    conservative "awaiting approval" path, matching the column's own
+    default (spec.md "No configured company profile defaults to awaiting
+    approval").
+    """
+    tracking_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_tracking_notification, "delay", lambda **kw: tracking_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    data = await _create_invitation_success(client, token, branch, payload=_individual_payload())
+
+    assert data["status"] == "submitted"
+    assert data["approvedAt"] is None
+    assert len(tracking_calls) == 1
+
+
 @pytest.mark.parametrize(
     ("payload_factory", "visitor_file_count"),
     [(_individual_payload, 0), (_group_payload, 2)],
@@ -363,7 +449,10 @@ async def test_create_invitation_idempotency_key_replay(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
 ) -> None:
     calls: list[dict] = []
-    monkeypatch.setattr(tasks.send_visit_confirmation, "delay", lambda **kw: calls.append(kw))
+    # No `Company` profile is configured for this test tenant, so creation
+    # resolves to `submitted` (awaiting approval) — see
+    # `test_create_invitation_auto_approve_*` below for the `approved` path.
+    monkeypatch.setattr(tasks.send_tracking_notification, "delay", lambda **kw: calls.append(kw))
 
     token = await _login(client, user.email)
     idempotency_key = str(uuid.uuid4())
@@ -737,6 +826,7 @@ async def test_list_invitations_success(
         "purposeOfVisit",
         "expiresAt",
         "submittedAt",
+        "approvedAt",
     }
 
 
@@ -982,7 +1072,7 @@ def _fake_tenant_session_scope(invitation):
     return _scope
 
 
-async def test_send_visit_confirmation_skips_when_invitation_missing(monkeypatch) -> None:
+async def test_send_approval_notification_skips_when_invitation_missing(monkeypatch) -> None:
     sent = []
 
     class _RecordingEmailSender:
@@ -993,7 +1083,7 @@ async def test_send_visit_confirmation_skips_when_invitation_missing(monkeypatch
     monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(None))
 
     result = await asyncio.to_thread(
-        tasks.send_visit_confirmation.apply,
+        tasks.send_approval_notification.apply,
         kwargs={
             "request_id": "test",
             "tenant_schema": "tenant_acme_test",
@@ -1004,14 +1094,14 @@ async def test_send_visit_confirmation_skips_when_invitation_missing(monkeypatch
     assert sent == []  # invitation no longer exists — nothing to notify about
 
 
-async def test_send_visit_confirmation_exhausted_retries_logs_error(monkeypatch) -> None:
+async def test_send_approval_notification_exhausted_retries_logs_error(monkeypatch) -> None:
     class _FailingEmailSender:
         async def send(self, **kwargs):
             raise RuntimeError("SMTP is down")
 
     monkeypatch.setattr(notifications, "email_sender", _FailingEmailSender())
     fake_invitation = _FakeInvitation(
-        status="submitted",
+        status="approved",
         tracking_id="INV-TEST0001",
         primary_contact_preferred_contact_method="email",
         primary_contact_email="visitor@example.com",
@@ -1023,10 +1113,10 @@ async def test_send_visit_confirmation_exhausted_retries_logs_error(monkeypatch)
     # `max_retries=0` means the very first failure is already "exhausted", so
     # `.apply()` hits the exhaustion branch immediately instead of actually
     # sleeping through `retry_backoff`'s delay for real retries.
-    monkeypatch.setattr(tasks.send_visit_confirmation, "max_retries", 0)
+    monkeypatch.setattr(tasks.send_approval_notification, "max_retries", 0)
 
     result = await asyncio.to_thread(
-        tasks.send_visit_confirmation.apply,
+        tasks.send_approval_notification.apply,
         kwargs={
             "request_id": "test",
             "tenant_schema": "tenant_acme_test",
@@ -1034,7 +1124,38 @@ async def test_send_visit_confirmation_exhausted_retries_logs_error(monkeypatch)
         },
     )
     assert result.failed()
-    assert logged and logged[0][0] == "visit_confirmation_dispatch_exhausted"
+    assert logged and logged[0][0] == "approval_notification_dispatch_exhausted"
+
+
+async def test_smtp_dispatch_failure_logs_host_port_and_exception_type(monkeypatch) -> None:
+    """`fix-email-dispatch-diagnosability/design.md` — a dispatch failure now
+    logs enough detail (SMTP host/port, the underlying exception's type) to
+    root-cause a dev-server-only failure without reproducing it locally,
+    mirroring `identity_verification/senders.py`'s existing coverage of the
+    same behavior. No recipient address is logged (invitations/tasks.py
+    already binds tenant/invitation context for locating the record).
+    """
+
+    async def _raise(*args, **kwargs) -> None:
+        raise aiosmtplib.SMTPConnectError("Connection refused")
+
+    monkeypatch.setattr(aiosmtplib, "send", _raise)
+    monkeypatch.setattr(settings, "smtp_username", "should-never-appear")
+    monkeypatch.setattr(settings, "smtp_password", "super-secret-password")  # noqa: S105
+
+    sender = notifications.SmtpEmailSender()
+    with capture_logs() as captured, pytest.raises(aiosmtplib.SMTPConnectError):
+        await sender.send(to="visitor@example.com", subject="Your visit confirmation", body="body")
+
+    [entry] = [e for e in captured if e["event"] == "smtp_email_dispatch_failed"]
+    assert entry["smtp_host"] == settings.smtp_host
+    assert entry["smtp_port"] == settings.smtp_port
+    assert entry["exception_type"] == "SMTPConnectError"
+
+    log_text = str(captured)
+    assert "should-never-appear" not in log_text
+    assert "super-secret-password" not in log_text
+    assert "visitor@example.com" not in log_text
 
 
 # --- Real dispatch verification (against DDEV's Mailpit, not a fake sender) ---
@@ -1053,11 +1174,11 @@ _MAILPIT_BASE_URL = "http://localhost:8025/api/v1"
 _MAILPIT_API_URL = f"{_MAILPIT_BASE_URL}/messages"
 
 
-async def test_send_visit_confirmation_delivers_email_with_qr_via_mailpit(monkeypatch) -> None:
+async def test_send_approval_notification_delivers_email_with_qr_via_mailpit(monkeypatch) -> None:
     tracking_id = f"INV-{uuid.uuid4().hex[:8].upper()}"
     recipient = f"mailpit-check-{uuid.uuid4().hex[:8]}@example.com"
     fake_invitation = _FakeInvitation(
-        status="submitted",
+        status="approved",
         tracking_id=tracking_id,
         primary_contact_preferred_contact_method="email",
         primary_contact_email=recipient,
@@ -1069,7 +1190,7 @@ async def test_send_visit_confirmation_delivers_email_with_qr_via_mailpit(monkey
     monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
 
     result = await asyncio.to_thread(
-        tasks.send_visit_confirmation.apply,
+        tasks.send_approval_notification.apply,
         kwargs={
             "request_id": "test",
             "tenant_schema": "tenant_acme_test",
@@ -1110,3 +1231,311 @@ async def test_send_visit_confirmation_delivers_email_with_qr_via_mailpit(monkey
     # Deliberately not deleted from Mailpit afterward — left for a human to
     # inspect via the Mailpit web UI (task 5.4), and harmless to accumulate
     # since each run uses a fresh, unique tracking_id/recipient.
+
+
+# --- visit-info-lookup-api: optional purposeId/hostId/durationId/departmentId -
+
+
+@pytest_asyncio.fixture
+async def visit_department(db_session: AsyncSession, branch: Branch) -> Department:
+    department = DepartmentFactory.build(
+        id=uuid.uuid4(), branch_id=branch.id, floor_id=None, code="ENG-VI"
+    )
+    db_session.add(department)
+    await db_session.commit()
+    return department
+
+
+@pytest_asyncio.fixture
+async def visit_purpose(db_session: AsyncSession) -> VisitPurpose:
+    purpose = VisitPurposeFactory.build(id=uuid.uuid4(), name="Business Meeting")
+    db_session.add(purpose)
+    await db_session.commit()
+    return purpose
+
+
+@pytest_asyncio.fixture
+async def visit_duration(db_session: AsyncSession) -> VisitDuration:
+    duration = VisitDurationFactory.build(id=uuid.uuid4(), name="1 hour", minutes=60)
+    db_session.add(duration)
+    await db_session.commit()
+    return duration
+
+
+@pytest_asyncio.fixture
+async def visit_host(db_session: AsyncSession) -> User:
+    host = UserFactory.build(
+        id=uuid.uuid4(), full_name="Rahul Nair", email="rahul.nair@acme-test.example"
+    )
+    db_session.add(host)
+    await db_session.commit()
+    return host
+
+
+async def test_create_invitation_with_no_ids_behaves_exactly_as_before(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """spec.md "Submission with no ids behaves exactly as before"."""
+    data = await _create_invitation_success(
+        client, await _login(client, user.email), branch, payload=_individual_payload()
+    )
+    assert data["registrationType"] == "individual"
+
+
+async def test_create_invitation_with_ids_overwrites_free_text_with_canonical_value(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    visit_purpose: VisitPurpose,
+    visit_host: User,
+    visit_duration: VisitDuration,
+    visit_department: Department,
+) -> None:
+    """spec.md "Submission with an id overwrites free text with the catalog
+    value" — a mismatched free-text string is discarded in favor of the
+    referenced row's canonical name.
+    """
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "does not match the catalog row"
+    payload["visitDetails"]["hostNameOrEmail"] = "does not match either"
+    payload["visitDetails"]["expectedDuration"] = "nor this"
+    payload["visitDetails"]["departmentToVisit"] = "nor this either"
+    payload["visitDetails"]["purposeId"] = str(visit_purpose.id)
+    payload["visitDetails"]["hostId"] = str(visit_host.id)
+    payload["visitDetails"]["durationId"] = str(visit_duration.id)
+    payload["visitDetails"]["departmentId"] = str(visit_department.id)
+
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.purpose_of_visit == visit_purpose.name
+    assert invitation.host_name_or_email == visit_host.full_name
+    assert invitation.expected_duration == visit_duration.name
+    assert invitation.department_to_visit == visit_department.name
+    assert invitation.purpose_id == visit_purpose.id
+    assert invitation.host_id == visit_host.id
+    assert invitation.duration_id == visit_duration.id
+    assert invitation.department_id == visit_department.id
+
+
+async def test_create_invitation_unknown_purpose_id_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Unknown or cross-tenant id is rejected"."""
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeId"] = str(uuid.uuid4())
+
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+    invitations = await InvitationRepository(db_session).list()
+    assert invitations == []
+
+
+async def test_create_invitation_inactive_department_id_rejected(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    visit_department: Department,
+) -> None:
+    visit_department.is_active = False
+    db_session.add(visit_department)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["departmentId"] = str(visit_department.id)
+
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_cross_tenant_purpose_id_rejected(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """testing-standards.md §2's tenant-isolation case: a `purposeId` valid
+    in a different tenant's schema must not resolve here.
+    """
+    other_schema = "tenant_other_test_visit_info"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_purpose = VisitPurposeFactory.build(id=uuid.uuid4(), name="Other Tenant Purpose")
+        other_session.add(other_purpose)
+        await other_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeId"] = str(other_purpose.id)
+
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_walk_in_registration_visit_details_submit_exposes_id_fields() -> None:
+    """spec.md "Walk-in registration inherits the same optional fields" —
+    guards against a future refactor breaking `registrations.schemas`'s
+    re-export of the shared `VisitDetailsSubmit` class (task 6.3).
+    """
+    from vmss_api.registrations.schemas import VisitDetailsSubmit as WalkInVisitDetailsSubmit
+
+    assert set(WalkInVisitDetailsSubmit.model_fields) >= {
+        "purpose_id",
+        "host_id",
+        "duration_id",
+        "department_id",
+    }
+
+
+# --- Manual approval (POST /invitations/{id}/approve) ------------------------
+
+
+async def _branch_scoped_invitation_approver(
+    db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
+) -> User:
+    """A caller whose only role grant is `invitations:approve` at
+    `branch_id` — the approve-permission counterpart of
+    `_branch_scoped_invitation_viewer` above.
+    """
+    permission = PermissionFactory.build(
+        id=uuid.uuid4(), code="invitations:approve", description="invitations:approve"
+    )
+    role = RoleFactory.build(id=uuid.uuid4(), name="invitations-approver", permissions=[permission])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"approver-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Invitation Approver",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([permission, role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+async def test_approve_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted", approved_at=None)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    approval_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_approval_notification, "delay", lambda **kw: approval_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "approved"
+    assert data["approvedAt"] is not None
+    assert len(approval_calls) == 1
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+    assert invitation.approved_at is not None
+
+
+async def test_approve_invitation_already_approved_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    original_approved_at = invitation.approved_at
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+    assert invitation.approved_at == original_approved_at
+
+
+async def test_approve_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    monkeypatch,
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(db_session, branch.id, status="submitted", approved_at=None)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    approval_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_approval_notification, "delay", lambda **kw: approval_calls.append(kw)
+    )
+
+    token = await _login(client, viewer.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+    assert approval_calls == []
+
+
+async def test_approve_invitation_unknown_id_not_found(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{uuid.uuid4()}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
+async def test_approve_invitation_denied_for_approver_scoped_elsewhere(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, branch: Branch
+) -> None:
+    """An `invitations:approve` grant at a different branch gets 403, not
+    404 — `authorize_branch_id` (the same dependency `POST /invitations`
+    uses to resolve a branch id) 403s on no-branch-access, and only 404s
+    when the branch itself doesn't exist.
+    """
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-APPROVE")
+    db_session.add(other_branch)
+    await db_session.flush()
+    approver = await _branch_scoped_invitation_approver(db_session, tenant, other_branch.id)
+    invitation = _build_invitation(db_session, branch.id, status="submitted", approved_at=None)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, approver.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"

@@ -9,6 +9,7 @@ from vmss_api.registrations.router import router as registrations_router
 from vmss_api.reports.router import router as reports_router
 from vmss_api.sso.router import router as sso_router
 from vmss_api.tenant.router import router as tenant_router
+from vmss_api.visit_info.router import router as visit_info_router
 from vmss_api.visitors.router import router as visitors_router
 
 api_router = APIRouter()
@@ -22,3 +23,4 @@ api_router.include_router(registrations_router)
 api_router.include_router(reports_router)
 api_router.include_router(identity_verification_router)
 api_router.include_router(sso_router)
+api_router.include_router(visit_info_router)

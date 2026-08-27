@@ -17,7 +17,8 @@ change that collapsed it into the single-call contract described below.
 
 | Method | Path | Auth | Rate limit | Description |
 |---|---|---|---|---|
-| POST | `/api/v1/invitations` | `invitations:create` at the resolved branch | — | An employee creates a fully completed single or group invitation in one call: primary contact, co-visitors, visit details, carried items, vehicles, and consent, each visitor (including the primary contact) with their own ID-proof upload. Multipart: a JSON `payload` part (camelCased fields, matching `InvitationCreate`) plus `primary_contact_id_proof_file`/`visitor_id_proof_files` file parts — multipart field *names* are the literal Python parameter names, not camelCased, since they aren't part of a JSON body. Returns a tracking ID with the invitation already `status: submitted` — there is no follow-up step. Accepts an optional `Idempotency-Key` header (`api-conventions.md` §3) — a retried request with the same key and tenant returns the original response instead of creating a second invitation. See "Finding the payload shape in Swagger" below for where to actually see the `individual`/`group` JSON examples in `/docs`. |
+| POST | `/api/v1/invitations` | `invitations:create` at the resolved branch | — | An employee creates a fully completed single or group invitation in one call: primary contact, co-visitors, visit details, carried items, vehicles, and consent, each visitor (including the primary contact) with their own ID-proof upload. Multipart: a JSON `payload` part (camelCased fields, matching `InvitationCreate`) plus `primary_contact_id_proof_file`/`visitor_id_proof_files` file parts — multipart field *names* are the literal Python parameter names, not camelCased, since they aren't part of a JSON body. Returns a tracking ID with the invitation's status resolved from `Company.autoApprovePreRegisteredVisitors` — `approved` immediately, or `submitted` (awaiting approval) — see "Auto-approve vs. manual approval" below. Accepts an optional `Idempotency-Key` header (`api-conventions.md` §3) — a retried request with the same key and tenant returns the original response instead of creating a second invitation. See "Finding the payload shape in Swagger" below for where to actually see the `individual`/`group` JSON examples in `/docs`. |
+| POST | `/api/v1/invitations/{id}/approve` | `invitations:approve` at the invitation's branch | — | Transitions a `submitted` invitation to `approved` and dispatches the QR-bearing approval notification at that point. 409 if the invitation isn't currently `submitted`; 404 for an unknown id; 403 (not 404) if the caller lacks branch access to an invitation that does exist — see "Auto-approve vs. manual approval" below. |
 
 The branch an invitation belongs to comes from either the optional
 `X-Branch-ID` header or `branchId` in the `payload` JSON body — the header
@@ -63,6 +64,51 @@ affirms consent on the visitor's behalf; see
 Decision 5 for why this trade-off was accepted. A created invitation is
 always immediately in its final, fully detailed state — there is no
 transient `pending`/shell state for a caller to observe.
+
+### Optional catalog ids on visit details
+
+`visitDetails` accepts four new *optional* fields alongside its existing
+free-text ones: `purposeId`, `hostId`, `durationId`, `departmentId` — see
+`docs/features/visit_info.md` for where those ids come from
+(`GET /hosts/search`, `GET /visit-info/departments`,
+`GET /visit-info/options`). When one is supplied, the service resolves it
+against the corresponding catalog/`Department`/`User` row (rejecting the
+request with `422` if it doesn't resolve to an existing, active row in this
+tenant's schema) and overwrites the paired free-text field
+(`purposeOfVisit`/`hostNameOrEmail`/`expectedDuration`/`departmentToVisit`)
+with that row's canonical display value before persisting — the
+client-supplied free-text value for that field, if any, is discarded in favor
+of it. Omitting all four ids leaves every free-text field stored exactly as
+submitted, byte-for-byte the pre-existing behavior — this was an additive
+change, not a breaking one. `POST /registrations/walk-in` inherits the same
+behavior automatically, since it submits the identical `VisitDetailsSubmit`
+shape.
+
+## Auto-approve vs. manual approval
+
+`Company.autoApprovePreRegisteredVisitors` (`org_structure/`'s tenant-wide
+config) decides an invitation's fate at creation time
+(`add-invitation-approval-flow-and-role-resync`):
+
+- **Enabled**: the invitation is `approved` immediately (`approvedAt` set),
+  and the primary contact gets the approval notification — tracking ID
+  **and** a QR code.
+- **Disabled**, or no `Company` profile configured yet for the tenant (the
+  more conservative default): the invitation is `submitted` (awaiting
+  approval), and the primary contact gets a tracking-only notification —
+  **no QR code**. A caller holding the new `invitations:approve`
+  permission (granted by default to `admin`/`reception`/`host`, not
+  `security`) can later call `POST /invitations/{id}/approve`, which
+  transitions it to `approved` and dispatches the QR-bearing notification
+  at that point — the same content the auto-approved path sends
+  immediately.
+
+This is resolved once, at creation (or at manual approval), never
+recomputed — flipping the Company setting later doesn't retroactively
+change an already-created invitation's status. Only the per-visitor-category
+`ApprovalWorkflowRule` multi-step engine (`visitors/` — config CRUD only,
+no runtime evaluation yet) is unaffected; this flow uses only the
+company-wide flag.
 
 ## Listing invitations
 
@@ -118,21 +164,25 @@ via the other lookup form.
 
 ## Async dispatch, not inline
 
-Invitation creation dispatches a single visit-confirmation notification
-(email/SMS + QR code) via Celery (`invitations/tasks.py::send_visit_confirmation`),
-never inline in the request path (`background-jobs.md` §5). The task
-resolves its own tenant-bound session from a `tenant_schema` argument, skips
-if the invitation row is no longer found (redelivery after removal), and
-declares `autoretry_for`/`retry_backoff`/`max_retries`, logging at `ERROR`
-with full context if retries are exhausted. Email goes out over SMTP
+Invitation creation (and manual approval) dispatches exactly one of two
+notifications via Celery, never inline in the request path
+(`background-jobs.md` §5): `invitations/tasks.py::send_approval_notification`
+(tracking ID + QR code — sent for an `approved` invitation) or
+`send_tracking_notification` (tracking ID only, no QR — sent for a
+`submitted` one). See "Auto-approve vs. manual approval" above for which
+one a given creation/approval triggers. Both tasks resolve their own
+tenant-bound session from a `tenant_schema` argument, skip if the
+invitation row is no longer found (redelivery after removal), and declare
+`autoretry_for`/`retry_backoff`/`max_retries`, logging at `ERROR` with full
+context if retries are exhausted. Email goes out over SMTP
 (`invitations/notifications.py::SmtpEmailSender`); SMS has no gateway wired up
 yet (`UnconfiguredSmsSender` raises loudly rather than pretending to send —
 this is a known open item, not an oversight).
 
 **No Celery worker runs by default in this DDEV dev environment** — a
-created invitation's confirmation task will sit queued in Redis until
+created invitation's notification task will sit queued in Redis until
 something consumes it. To manually verify dispatch outside the automated
-test suite (`invitations/tests.py::test_send_visit_confirmation_delivers_email_with_qr_via_mailpit`
+test suite (`invitations/tests.py::test_send_approval_notification_delivers_email_with_qr_via_mailpit`
 already does this for you, against real SMTP), start one:
 
 ```
@@ -176,9 +226,15 @@ table for the S3 connection settings.
   doesn't exist yet. `invitations:cancel` is already seeded into the
   permission catalog for when that lands.
 - **Recurring invitations.** One-off single/group invitations only.
-- **Approval workflow evaluation.** A submitted invitation is stored as
-  `submitted`; nothing here evaluates `ApprovalWorkflowRule`s against it —
-  that's the not-yet-built `approvals` feature's job.
+- **Reject/decline a submitted invitation.** `POST /invitations/{id}/approve`
+  exists; there is no corresponding reject action yet — explicitly out of
+  scope for `add-invitation-approval-flow-and-role-resync`.
+- **Per-visitor-category, multi-step approval workflow evaluation.**
+  `ApprovalWorkflowRule` (`visitors/`) is still config CRUD only — nothing
+  evaluates it against an invitation. The auto-approve/manual-approve flow
+  above uses only the tenant-wide `Company.autoApprovePreRegisteredVisitors`
+  flag, not this per-category rule chain; wiring the two together is a
+  separate, larger effort.
 - **SMS gateway integration.** See the config table above.
 
 **Visitor-authored registration** — removed along with API-10 as a *remote*

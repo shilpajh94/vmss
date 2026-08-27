@@ -10,15 +10,20 @@ from vmss_api.core.database import Base, TimestampMixin
 
 class Invitation(Base, TimestampMixin):
     """One employee-created invitation (API-09) — created already fully
-    populated and `status="submitted"` in a single call
+    populated in a single call
     (`merge-invitation-registration-into-creation/design.md` Decision 2).
 
     Every column below is set at creation time now; there is no more
     intermediate `pending` shell state between "invitation exists" and
     "visit record complete" (that two-phase split, and the separate public
-    self-registration endpoint it required, has been removed). `status`
-    stays a plain string column for future values (`cancelled`/`expired`),
-    but `pending` is no longer produced by any code path.
+    self-registration endpoint it required, has been removed). `status` is
+    `approved` or `submitted` (awaiting approval) depending on the tenant's
+    Company auto-approve setting at creation time, and may become
+    `approved` later via `POST /invitations/{id}/approve` if it started
+    `submitted` (`add-invitation-approval-flow-and-role-resync/design.md`
+    Decision 1). It stays a plain string column for future values
+    (`cancelled`/`expired`), but `pending` is no longer produced by any
+    code path.
 
     No tracking-token column here: the QR payload handed back at
     confirmation is the plain, human-readable `tracking_id` below
@@ -50,6 +55,10 @@ class Invitation(Base, TimestampMixin):
     tracking_id: Mapped[str] = mapped_column(String(20), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set when `status` transitions to "approved" — either resolved
+    # immediately at creation (Company.auto_approve_pre_registered_visitors)
+    # or later via `POST /invitations/{id}/approve`. NULL until then.
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # --- Primary contact ---------------------------------------------------
     # Set (partially) at creation; fully overwritten by self-registration —
@@ -69,6 +78,24 @@ class Invitation(Base, TimestampMixin):
     expected_duration: Mapped[str | None] = mapped_column(String(50))
     department_to_visit: Mapped[str | None] = mapped_column(String(255))
     additional_notes: Mapped[str | None] = mapped_column(String(2000))
+
+    # --- Visit details: optional catalog ids (visit-info-lookup-api) -------
+    # Nullable and purely additive: when a caller supplies one of these, the
+    # paired free-text column above is server-side overwritten with the
+    # referenced row's canonical name/full_name before persisting (never
+    # trusts client-supplied text once an id is given) — see
+    # openspec/changes/visit-info-lookup-api/design.md. Omitted entirely,
+    # behavior is unchanged from before this feature existed.
+    purpose_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("visit_purposes.id"), index=True
+    )
+    host_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"), index=True)
+    duration_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("visit_durations.id"), index=True
+    )
+    department_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("departments.id"), index=True
+    )
 
     # --- Carried items -------------------------------------------------------
     # JSONB list, not a child table: items have no independent identity or

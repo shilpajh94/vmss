@@ -194,6 +194,7 @@ ADMIN_PERMISSION_CODES = [
     "invitations:create",
     "invitations:view",
     "invitations:cancel",
+    "invitations:approve",
     "roles:view",
     "roles:manage",
     "sso-config:view",

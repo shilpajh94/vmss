@@ -73,6 +73,19 @@ Twilio-side error while properly configured) is deliberately **not**
 cached, so a retry with the same key re-attempts dispatch instead of
 replaying the same transient failure forever.
 
+## Dispatch failure diagnostics
+
+`senders.py::SmtpEmailSender.send` logs `smtp_email_dispatch_failed` at
+`WARNING` when the configured SMTP gateway rejects or fails to send an OTP
+email (`fix-public-org-listings-and-email-diagnostics`). Alongside the
+existing masked `identifier` and `error` fields, the log line now also
+carries `smtp_host`, `smtp_port`, and `exception_type` — enough to
+root-cause a deployment-specific failure (e.g. "works against the local
+Mailpit catcher but fails on a given server") from logs alone, without
+reproducing it locally. Never logged: SMTP credentials, or the OTP code
+itself. The client-facing response is unchanged — still a generic 503
+`"This delivery channel is temporarily unavailable"`, no gateway detail.
+
 ## Tenant resolution
 
 Like `GET /invitations/track`, these endpoints carry no bearer token and

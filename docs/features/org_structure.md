@@ -33,11 +33,11 @@ A design-vs-implementation review of the admin portal
   the boolean `isActive` — a maintenance desk isn't representable as a
   boolean. Also `assignedReceptionistUserId`,
   `operatingHoursFrom`/`operatingHoursTo`.
-- **`SecurityGate`**: `connectivityStatus` (`online`/`maintenance`/`offline`)
-  replaced the boolean `isActive`, for the same reason. Also `highSecurity`
-  (bool, independent of `gateType`) and `authMethod` (free-form string for
-  now — the design's compound values like "Biometric/RFID Card" aren't yet
-  split into a clean enum; see the change's design doc Open Questions).
+- **`SecurityGate`**: `highSecurity` (bool, independent of `gateType`).
+  `connectivityStatus` and `authMethod` (both added when the boolean
+  `isActive` was replaced) were later removed
+  (`update-employee-list-and-gate-crud`) — a create/update request that still
+  sends either is accepted and the field is simply ignored, not rejected.
 - **`Company`**: `defaultTimezone`, `autoApprovePreRegisteredVisitors`,
   `badgeExpiryDurationMinutes` — the "Organisation Configs" screen's
   tenant-wide visitor-policy defaults. Stored, not yet *read* by any other
@@ -123,9 +123,9 @@ below for exactly what happens when it's omitted):
   the body's `branchId`; creating a Floor/ReceptionDesk resolves it
   transitively from `buildingId`/`floorId`. The header is never read here —
   sending it is harmless but has no effect.
-- **Listing** without the header returns rows from every branch the caller
-  is authorized for (every branch, for a company-wide grant); sending the
-  header still narrows to just that one branch.
+- **Listing** is public — see "Listing endpoints require no token" below.
+  Without the header, listing returns every branch's rows for the resolved
+  tenant; sending the header still narrows to just that one branch.
 - **Get/update/delete by id** without the header authorizes against the
   target's own (real) branch, resolved by looking it up — a caller with no
   access there gets 404, indistinguishable from the resource not existing.
@@ -138,25 +138,25 @@ below for exactly what happens when it's omitted):
 | DELETE | `/api/v1/company` | `companies:manage` (company-wide) | Soft-delete the company profile. |
 | POST | `/api/v1/branches` | `branches:manage` (company-wide) | Create a branch. |
 | POST | `/api/v1/branches/provision` | `branches:provision` (company-wide) | Bulk-bootstrap a branch plus its Building → Floor → Department/ReceptionDesk chain and SecurityGates in one transaction. |
-| GET | `/api/v1/branches` | `branches:view` | Paginated, sortable list; scoped to `X-Branch-ID` if sent, else every authorized branch. |
+| GET | `/api/v1/branches` | Public (no token) | Paginated, sortable list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant. |
 | GET | `/api/v1/branches/current` | `branches:view` at the resolved branch | Resolves the branch named by `X-Branch-ID` (still required here — there's no id/body field to resolve one from); confirms the caller has access. |
 | GET | `/api/v1/branches/{id}` | `branches:view` at the branch's own id | Fetch one branch; 404 if the caller has no access to it. |
 | PUT | `/api/v1/branches/{id}` | `branches:manage` (company-wide) | Update a branch. |
 | DELETE | `/api/v1/branches/{id}` | `branches:manage` (company-wide) | Soft-delete a branch. |
 | POST | `/api/v1/buildings` | `buildings:manage` at `branchId` (body) | Create a building. |
-| GET | `/api/v1/buildings` | `buildings:view` | Paginated list; scoped to `X-Branch-ID` if sent, else every authorized branch. |
+| GET | `/api/v1/buildings` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant. |
 | GET/PUT/DELETE | `/api/v1/buildings/{id}` | `buildings:view`/`buildings:manage` at the building's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
 | POST | `/api/v1/floors` | `floors:manage` at the branch resolved from `buildingId` | Create a floor. |
-| GET | `/api/v1/floors` | `floors:view` | Paginated list; scoped to `X-Branch-ID` if sent, else every authorized branch; optionally narrowed by `buildingId`. |
+| GET | `/api/v1/floors` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant; optionally narrowed by `buildingId`. |
 | GET/PUT/DELETE | `/api/v1/floors/{id}` | `floors:view`/`floors:manage` at the floor's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
 | POST | `/api/v1/departments` | `departments:manage` at `branchId` (body) | Create a department. `floorId` is optional — if given, it must resolve to the same branch. |
-| GET | `/api/v1/departments` | `departments:view` | Paginated list; scoped to `X-Branch-ID` if sent, else every authorized branch (`Department.branch_id` directly); optionally narrowed by `floorId`. |
+| GET | `/api/v1/departments` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant (`Department.branch_id` directly); optionally narrowed by `floorId`. |
 | GET/PUT/DELETE | `/api/v1/departments/{id}` | `departments:view`/`departments:manage` at the department's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
 | POST | `/api/v1/reception-desks` | `desks:manage` at the branch resolved from `floorId` | Create a reception desk. |
-| GET | `/api/v1/reception-desks` | `desks:view` | Paginated list; scoped to `X-Branch-ID` if sent, else every authorized branch; optionally narrowed by `floorId`. |
+| GET | `/api/v1/reception-desks` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant; optionally narrowed by `floorId`. |
 | GET/PUT/DELETE | `/api/v1/reception-desks/{id}` | `desks:view`/`desks:manage` at the desk's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
 | POST | `/api/v1/security-gates` | `gates:manage` at `branchId` (body) | Create a security gate; `buildingId`, if given, must belong to that same branch. |
-| GET | `/api/v1/security-gates` | `gates:view` | Paginated list; scoped to `X-Branch-ID` if sent, else every authorized branch; optionally narrowed by `buildingId`. |
+| GET | `/api/v1/security-gates` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant; optionally narrowed by `buildingId`. |
 | GET/PUT/DELETE | `/api/v1/security-gates/{id}` | `gates:view`/`gates:manage` at the gate's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
 
 Every list endpoint follows `api-conventions.md` §1: `page`/`pageSize` query
@@ -242,6 +242,43 @@ for the rest of that request carry it alongside
 `request_id`/`tenant_id`/`user_id` (`logging-observability.md` §2) — a
 header-omitted list request scoped to "every branch" has no single
 `branch_id` to bind, by design.
+
+## Listing endpoints require no token
+
+`GET /branches`, `/buildings`, `/floors`, `/departments`, `/reception-desks`,
+and `/security-gates` (`fix-public-org-listings-and-email-diagnostics`) no
+longer require a bearer token or any permission check — the web/mobile
+clients need to render these lists (e.g. a branch/department picker) before
+a visitor has authenticated, and were hitting "Invalid or expired token"
+trying to. Get-by-id, create, update, delete, and `/branches/provision` are
+unaffected — still authenticated and permissioned exactly as before.
+
+`GET /auth/employees` (`docs/features/auth.md`) reuses this exact same
+mechanism (`update-employee-list-and-gate-crud`) even though it's served by
+`auth/router.py`, not this feature's router — `auth/router.py` depends on
+`public_tenant_db`/`public_branch_scope` directly rather than duplicating
+the tenant-fallback logic.
+
+`org_structure/deps.py::public_tenant_db` resolves which tenant a listing
+request sees:
+
+- If the request carries a valid access token, its `tenant_id` claim wins —
+  an already-authenticated caller keeps listing its own tenant's data, not
+  the deployment's default one.
+- Otherwise (no token, or one that's expired/malformed/doesn't resolve to a
+  real, active tenant) it falls back to the deployment's configured default
+  tenant (`settings.default_tenant_slug`), the same single-tenant-today
+  posture `invitations/deps.py::track_default_tenant_db` and
+  `identity_verification/deps.py::default_tenant_id` already use for their
+  own public endpoints.
+
+`org_structure/deps.py::public_branch_scope` replaces
+`require_branch_scope` on these six endpoints: `X-Branch-ID`, if present,
+still narrows to that one branch (404 if it doesn't exist or is inactive);
+if absent, every branch in the resolved tenant is in scope — there's no
+caller to compute an authorized subset for. All six remain rate-limited by
+client IP (`core/rate_limit.py::limiter`, 60/minute), consistent with every
+other unauthenticated endpoint in this API.
 
 ## Why this isn't in `core`
 

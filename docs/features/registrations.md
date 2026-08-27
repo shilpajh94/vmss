@@ -25,6 +25,14 @@ No separate tracking-lookup endpoint here — a walk-in registration's tracking
 ID works with the existing `GET /invitations/track` (both lookup forms),
 since it's stored in the same table.
 
+Since `POST /registrations/walk-in` submits the identical `VisitDetailsSubmit`
+shape `POST /invitations` does, it also inherits that schema's optional
+`purposeId`/`hostId`/`durationId`/`departmentId` catalog-id fields — see
+`docs/features/invitations.md`'s "Optional catalog ids on visit details" and
+`docs/features/visit_info.md` for where those ids come from
+(`GET /hosts/search`, `GET /visit-info/departments`,
+`GET /visit-info/options`).
+
 ## Device credential authentication
 
 Unlike every other tenant-scoped endpoint in this API, `POST
@@ -59,19 +67,31 @@ same tenant-trust-boundary rule `security-architecture.md` states for
 | `REGISTRATION_DEFAULT_BRANCH_CODE` | `MAIN` | Which branch, within that tenant, a header-less walk-in is attributed to. |
 
 If either lookup fails (no such tenant, tenant inactive, no branch with
-that code, branch inactive), the fallback still 401s with the same
-`_INVALID_DEVICE_KEY_DETAIL` an invalid key gets — it never falls through to
-an unscoped or partially-resolved registration.
+that code, branch inactive), the fallback still 401s — it never falls
+through to an unscoped or partially-resolved registration — but with a
+message and log level distinct from an invalid device key. This is a
+server-side configuration gap (nothing the caller sent was wrong), so it
+gets `_DEFAULT_TENANT_UNCONFIGURED_DETAIL` ("Registration service is not
+configured for this environment") and is logged at `ERROR`
+(`registration_default_tenant_unconfigured` /
+`registration_default_branch_unconfigured`) instead of the `WARNING` an
+actually-invalid key produces — per `logging-observability.md` §3, a
+missing default tenant/branch needs a human to look, not a log line nobody
+alerts on.
 
-**Known trade-off, not a full fix**: this path has no credential at all —
-it trades the device key's authentication away for availability, leaving
-this fallback an unauthenticated write (and file-upload) call against one
-fixed branch, protected only by the route's rate limit. Every use is logged
-at `WARNING` (`registration_device_key_absent`) so it's visible/auditable
-rather than silently normalized. Tracked as a follow-up to bind this path
-to the visitor's OTP-verified `identity_verification` proof token instead of
-leaving it credential-less — see `security-architecture.md` §2's
-"fake-entry prevention" open item.
+**Sanctioned default path, not a stopgap**: this path has no credential at
+all — it trades the device key's authentication away for availability,
+leaving this fallback an unauthenticated write (and file-upload) call
+against one fixed branch, protected only by the route's rate limit. That
+trade-off is the reviewed, intended behavior for callers with nowhere safe
+to hold a device secret (see `openspec/specs/registrations/spec.md`'s
+"authenticated by a device credential, not a user" requirement), not an
+open gap. Every use is logged at `WARNING`
+(`registration_device_key_absent`) so it stays visible/auditable rather
+than silently normalized. Binding this path to the visitor's OTP-verified
+`identity_verification` proof token remains a separate, not-yet-scheduled
+improvement — see `security-architecture.md` §2's "fake-entry prevention"
+open item.
 
 ### Provisioning a device key
 

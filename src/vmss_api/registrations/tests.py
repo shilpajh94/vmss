@@ -6,9 +6,11 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient, Response
 from PIL import Image
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from structlog.testing import capture_logs
 
+from vmss_api.auth.models import AuditLog
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.security import hash_password
@@ -114,7 +116,7 @@ async def _create_walk_in(
 
 async def _create_walk_in_success(
     client: AsyncClient,
-    device_key: str,
+    device_key: str | None,
     *,
     payload: dict,
     visitor_file_count: int = 0,
@@ -164,6 +166,30 @@ async def test_create_group_walk_in_registration_success(
     assert invitation.source == "visitor_walk_in"
 
 
+async def test_walk_in_registration_writes_audit_log_with_no_actor(
+    client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession
+) -> None:
+    """spec.md "Walk-in registration is audited" / "Audit entry recorded
+    with no actor" — no test previously asserted this, even though the
+    write itself (`record_audit_log`, dispatched via `BackgroundTasks` in
+    `router.py`) is real and already runs on every walk-in creation.
+    """
+    data = await _create_walk_in_success(
+        client, registration_device_raw_key, payload=_individual_payload()
+    )
+
+    entry = (
+        await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "walk_in_registration_created",
+                AuditLog.entity_id == uuid.UUID(data["id"]),
+            )
+        )
+    ).scalar_one()
+    assert entry.actor_user_id is None
+    assert entry.entity_type == "Invitation"
+
+
 async def test_walk_in_registration_response_has_no_check_in_state(
     client: AsyncClient, registration_device_raw_key: str
 ) -> None:
@@ -179,6 +205,7 @@ async def test_walk_in_registration_response_has_no_check_in_state(
         "status",
         "expiresAt",
         "submittedAt",
+        "approvedAt",
     }
 
 
@@ -253,10 +280,46 @@ async def test_walk_in_registration_missing_device_key_no_default_tenant_rejecte
     """No `X-Device-Key` and no `default_tenant_slug` match in this schema
     (the test tenant's slug is `acme-test`, not `settings.default_tenant_slug`'s
     unmodified default) — the fallback must still reject rather than resolve
-    to nothing.
+    to nothing. This is a server misconfiguration (no client credential was
+    even sent), distinct from a bad device key, so it gets its own message
+    and is logged at ERROR, not WARNING.
     """
-    response = await _create_walk_in(client, None, payload=_individual_payload())
+    with capture_logs() as captured:
+        response = await _create_walk_in(client, None, payload=_individual_payload())
+
     assert response.status_code == 401
+    assert (
+        response.json()["message"] == "Registration service is not configured for this environment"
+    )
+
+    [entry] = [e for e in captured if e["event"] == "registration_default_tenant_unconfigured"]
+    assert entry["log_level"] == "error"
+    assert entry["reason"] == "not_found"
+
+
+async def test_walk_in_registration_missing_device_key_default_tenant_inactive_rejected(
+    client: AsyncClient, tenant: Tenant, db_session: AsyncSession, monkeypatch
+) -> None:
+    """The default tenant slug matches, but the tenant row is inactive — a
+    distinct cause from "no such tenant" (spec.md's misconfiguration
+    scenario), so it must be logged with `reason="inactive"` while keeping
+    the same client-facing 401 message and ERROR log level.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", tenant.slug)
+    await db_session.execute(update(Tenant).where(Tenant.id == tenant.id).values(is_active=False))
+    await db_session.commit()
+
+    with capture_logs() as captured:
+        response = await _create_walk_in(client, None, payload=_individual_payload())
+
+    assert response.status_code == 401
+    assert (
+        response.json()["message"] == "Registration service is not configured for this environment"
+    )
+
+    [entry] = [e for e in captured if e["event"] == "registration_default_tenant_unconfigured"]
+    assert entry["log_level"] == "error"
+    assert entry["reason"] == "inactive"
 
 
 async def test_walk_in_registration_missing_device_key_no_default_branch_rejected(
@@ -264,22 +327,73 @@ async def test_walk_in_registration_missing_device_key_no_default_branch_rejecte
 ) -> None:
     """The default tenant resolves, but no branch matches
     `registration_default_branch_code` — must still reject, not fall through
-    to an unscoped branch.
+    to an unscoped branch. Same server-misconfiguration message/log level as
+    the no-default-tenant case above.
     """
     monkeypatch.setattr(settings, "default_tenant_slug", "acme-test")
     monkeypatch.setattr(settings, "registration_default_branch_code", "NO-SUCH-BRANCH")
 
-    response = await _create_walk_in(client, None, payload=_individual_payload())
+    with capture_logs() as captured:
+        response = await _create_walk_in(client, None, payload=_individual_payload())
+
     assert response.status_code == 401
+    assert (
+        response.json()["message"] == "Registration service is not configured for this environment"
+    )
+
+    [entry] = [e for e in captured if e["event"] == "registration_default_branch_unconfigured"]
+    assert entry["log_level"] == "error"
+    assert entry["branch_code"] == "NO-SUCH-BRANCH"
+    assert entry["reason"] == "not_found"
+
+
+async def test_walk_in_registration_missing_device_key_default_branch_inactive_rejected(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    """The default tenant and default branch code both resolve, but the
+    branch row is inactive — a distinct cause from "no such branch", so it
+    must be logged with `reason="inactive"` while keeping the same
+    client-facing 401 message and ERROR log level.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", tenant.slug)
+    monkeypatch.setattr(settings, "registration_default_branch_code", branch.code)
+    await db_session.execute(update(Branch).where(Branch.id == branch.id).values(is_active=False))
+    await db_session.commit()
+
+    with capture_logs() as captured:
+        response = await _create_walk_in(client, None, payload=_individual_payload())
+
+    assert response.status_code == 401
+    assert (
+        response.json()["message"] == "Registration service is not configured for this environment"
+    )
+
+    [entry] = [e for e in captured if e["event"] == "registration_default_branch_unconfigured"]
+    assert entry["log_level"] == "error"
+    assert entry["reason"] == "inactive"
 
 
 async def test_walk_in_registration_invalid_device_key_rejected(
     client: AsyncClient, registration_device_raw_key: str
 ) -> None:
-    response = await _create_walk_in(
-        client, "definitely-not-a-provisioned-key", payload=_individual_payload()
-    )
+    """spec.md "Invalid device credential is reported and logged as a
+    client-side anomaly" — distinct message/log level from the
+    unconfigured-default-tenant/branch case above.
+    """
+    with capture_logs() as captured:
+        response = await _create_walk_in(
+            client, "definitely-not-a-provisioned-key", payload=_individual_payload()
+        )
+
     assert response.status_code == 401
+    assert response.json()["message"] == "Invalid device credential"
+
+    [entry] = [e for e in captured if e["event"] == "registration_device_key_invalid"]
+    assert entry["log_level"] == "warning"
 
 
 async def test_walk_in_registration_inactive_device_key_rejected(
@@ -319,7 +433,9 @@ async def test_walk_in_registration_idempotency_key_replay(
     client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession, monkeypatch
 ) -> None:
     calls: list[dict] = []
-    monkeypatch.setattr(tasks.send_visit_confirmation, "delay", lambda **kw: calls.append(kw))
+    # No `Company` profile is configured for this test tenant, so creation
+    # resolves to `submitted` (awaiting approval), not `approved`.
+    monkeypatch.setattr(tasks.send_tracking_notification, "delay", lambda **kw: calls.append(kw))
 
     idempotency_key = "walk-in-retry-key-1"
     first = await _create_walk_in_success(
@@ -372,3 +488,37 @@ async def test_walk_in_registration_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         found = await InvitationRepository(other_session).get_by_tracking_id(data["trackingId"])
         assert found is None
+
+
+# --- visit-info-lookup-api: walk-in inherits the optional catalog id fields ---
+# (the resolve/validate/overwrite behavior itself is `invitations.service`'s —
+# already covered in `invitations/tests.py` — this only confirms the walk-in
+# endpoint, which shares the identical `VisitDetailsSubmit` schema, actually
+# wires it through the same way. spec.md "Walk-in registration inherits the
+# same optional fields".)
+
+
+async def test_walk_in_registration_with_department_id_overwrites_free_text(
+    client: AsyncClient,
+    registration_device_raw_key: str,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    from factories import DepartmentFactory
+
+    department = DepartmentFactory.build(
+        id=uuid.uuid4(), branch_id=branch.id, floor_id=None, code="RECEP-VI"
+    )
+    db_session.add(department)
+    await db_session.commit()
+
+    payload = _individual_payload()
+    payload["visitDetails"]["departmentToVisit"] = "does not match the catalog row"
+    payload["visitDetails"]["departmentId"] = str(department.id)
+
+    data = await _create_walk_in_success(client, registration_device_raw_key, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.department_to_visit == department.name
+    assert invitation.department_id == department.id

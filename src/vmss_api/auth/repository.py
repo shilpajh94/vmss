@@ -2,7 +2,7 @@ import uuid
 from collections.abc import Collection, Sequence
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
@@ -63,6 +63,34 @@ class UserRepository:
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def get_active(self, id_: uuid.UUID) -> User | None:
+        """Used to validate `hostId` on invitation/walk-in creation — an id
+        must resolve to an *active* employee, not merely a non-deleted one
+        (visit-info-lookup-api spec.md "Unknown or cross-tenant id is
+        rejected").
+        """
+        stmt = select(User).where(
+            User.id == id_, User.is_active.is_(True), User.deleted_at.is_(None)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def search_active_by_name_or_email(self, query: str | None, *, limit: int) -> list[User]:
+        """Backs `GET /hosts/search` (visit-info-lookup-api): active
+        employees whose name or email contains `query`, case-insensitively.
+        No `employee_code` requirement — that field is optional directory
+        metadata, not a gate on being a valid visit host (design.md
+        Decisions). Deactivated employees are excluded via `is_active`, same
+        posture as `list_employees_page`. A `None` query returns a browsable
+        default list (alphabetical, still capped by `limit`) instead of
+        filtering by name/email.
+        """
+        filters = [User.is_active.is_(True), User.deleted_at.is_(None)]
+        if query:
+            pattern = f"%{query}%"
+            filters.append(or_(User.full_name.ilike(pattern), User.email.ilike(pattern)))
+        stmt = select(User).where(*filters).order_by(User.full_name.asc()).limit(limit)
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def get_branch_role_assignment(
         self, user_id: uuid.UUID, assignment_id: uuid.UUID
     ) -> UserBranchRole | None:
@@ -82,40 +110,64 @@ class UserRepository:
         *,
         branch_scope: BranchScope,
         department_id: uuid.UUID | None,
+        email: str | None,
+        role: str | None,
         page: int,
         page_size: int,
         sort_by: str,
         sort_order: SortOrder,
     ) -> tuple[list[User], int]:
-        """Branch-scoped: joins `Department -> Floor -> Building` to filter
-        to employees whose department resolves to the caller's authorized
-        scope (`org_structure/deps.py::require_branch_scope`). Employees with
-        no `department_id` aren't resolvable to any branch and so never
-        appear in a branch-scoped list — see `org_structure/router.py`'s
-        module docstring for the equivalent pattern applied to
+        """Every non-deleted user in the tenant, not just ones reconciled
+        through `sync_employee_directory`/`create_employee` — an Admin,
+        Security, or Reception account created directly (no
+        `employee_code`) is still a real person who belongs in this
+        directory. Outer-joins `Department -> Floor -> Building` to resolve
+        each user's branch for scoping
+        (`org_structure/deps.py::public_branch_scope` — this endpoint is
+        public, so "scope" is just `X-Branch-ID` or every branch, not a
+        caller's authorized branches): a user with no `department_id` set
+        still appears in an unscoped ("all branches") listing. They only
+        drop out of a *branch-scoped* view (`branch_scope != "all"`), since
+        there's no department/floor/building chain to resolve them to that
+        specific branch — see `org_structure/router.py`'s module docstring
+        for the equivalent pattern applied to
         Building/Floor/Department/Desk/Gate.
+
+        `role` matches via a correlated `EXISTS` against `UserBranchRole`/
+        `Role` rather than a join, so a user holding that role at more than
+        one branch is never duplicated in the page or double-counted in
+        `total` (query-performance.md §1).
         """
         column: Any = {"name": User.full_name, "created_at": User.created_at}[sort_by]
         order = column.desc() if sort_order == SortOrder.desc else column.asc()
-        conditions: list[Any] = [User.employee_code.is_not(None), User.deleted_at.is_(None)]
+        conditions: list[Any] = [User.deleted_at.is_(None)]
         if branch_scope != "all":
             conditions.append(Building.branch_id.in_(branch_scope))
         if department_id is not None:
             conditions.append(User.department_id == department_id)
+        if email is not None:
+            conditions.append(User.email == email)
+        if role is not None:
+            conditions.append(
+                select(UserBranchRole.id)
+                .join(Role, UserBranchRole.role_id == Role.id)
+                .where(UserBranchRole.user_id == User.id, Role.name == role)
+                .exists()
+            )
 
         joined_from = (
             select(User)
-            .join(Department, User.department_id == Department.id)
-            .join(Floor, Department.floor_id == Floor.id)
-            .join(Building, Floor.building_id == Building.id)
+            .outerjoin(Department, User.department_id == Department.id)
+            .outerjoin(Floor, Department.floor_id == Floor.id)
+            .outerjoin(Building, Floor.building_id == Building.id)
         )
 
         count_stmt = (
             select(func.count())
             .select_from(User)
-            .join(Department, User.department_id == Department.id)
-            .join(Floor, Department.floor_id == Floor.id)
-            .join(Building, Floor.building_id == Building.id)
+            .outerjoin(Department, User.department_id == Department.id)
+            .outerjoin(Floor, Department.floor_id == Floor.id)
+            .outerjoin(Building, Floor.building_id == Building.id)
             .where(*conditions)
         )
         total = (await self.session.execute(count_stmt)).scalar_one()
@@ -123,6 +175,39 @@ class UserRepository:
         stmt = (
             joined_from.where(*conditions)
             .order_by(order)
+            .limit(page_size)
+            .offset((page - 1) * page_size)
+        )
+        items = list((await self.session.execute(stmt)).scalars().all())
+        return items, total
+
+    async def list_hosts_page(self, *, page: int, page_size: int) -> tuple[list[User], int]:
+        """Backs the public host-directory listing
+        (`router.py::list_employee_directory`) — every active user holding
+        the `host` role, full stop. Deliberately not branch/department
+        scoped like `list_employees_page`: a visitor's "who are you
+        visiting" picker shouldn't hide a host just because they have no
+        `department_id` set (unlike the employee-directory sync flow, a
+        `host` account isn't necessarily reconciled through
+        `sync_employee_directory`, so `employee_code`/`department_id` are
+        often unset here).
+        """
+        conditions: list[Any] = [
+            User.deleted_at.is_(None),
+            User.is_active.is_(True),
+            select(UserBranchRole.id)
+            .join(Role, UserBranchRole.role_id == Role.id)
+            .where(UserBranchRole.user_id == User.id, Role.name == "host")
+            .exists(),
+        ]
+
+        count_stmt = select(func.count()).select_from(User).where(*conditions)
+        total = (await self.session.execute(count_stmt)).scalar_one()
+
+        stmt = (
+            select(User)
+            .where(*conditions)
+            .order_by(User.full_name.asc())
             .limit(page_size)
             .offset((page - 1) * page_size)
         )
