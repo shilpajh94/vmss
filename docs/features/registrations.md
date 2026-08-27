@@ -25,6 +25,14 @@ No separate tracking-lookup endpoint here — a walk-in registration's tracking
 ID works with the existing `GET /invitations/track` (both lookup forms),
 since it's stored in the same table.
 
+Since `POST /registrations/walk-in` submits the identical `VisitDetailsSubmit`
+shape `POST /invitations` does, it also inherits that schema's optional
+`purposeId`/`hostId`/`durationId`/`departmentId` catalog-id fields — see
+`docs/features/invitations.md`'s "Optional catalog ids on visit details" and
+`docs/features/visit_info.md` for where those ids come from
+(`GET /hosts/search`, `GET /visit-info/departments`,
+`GET /visit-info/options`).
+
 ## Device credential authentication
 
 Unlike every other tenant-scoped endpoint in this API, `POST

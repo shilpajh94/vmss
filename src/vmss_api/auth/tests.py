@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import BuildingFactory, DepartmentFactory, FloorFactory, RoleFactory, UserFactory
-from vmss_api.auth.models import Permission, User, UserBranchRole
+from vmss_api.auth.models import Permission, Role, User, UserBranchRole
 from vmss_api.auth.rbac_catalog import seed_default_roles
 from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core.config import settings
@@ -19,9 +19,10 @@ from vmss_api.tenant.models import Tenant
 
 @pytest_asyncio.fixture(autouse=True)
 def _default_tenant_slug_matches_test_tenant(monkeypatch):
-    """`GET /auth/employees` is now a public listing endpoint and falls back
-    to `settings.default_tenant_slug` when no token resolves a tenant —
-    mirrors `org_structure/tests.py`'s fixture of the same name.
+    """`GET /auth/employees` and `GET /auth/employees/directory` are both
+    public listing endpoints and fall back to `settings.default_tenant_slug`
+    when no token resolves a tenant — mirrors `org_structure/tests.py`'s
+    fixture of the same name.
     """
     monkeypatch.setattr(settings, "default_tenant_slug", "acme-test")
 
@@ -633,6 +634,81 @@ async def test_list_employees_success(
     assert body["data"][0]["email"] == "erin@acme-test.example"
 
 
+async def test_list_employees_includes_users_with_no_employee_code(
+    client: AsyncClient, user: User
+) -> None:
+    """`user` (a company-wide Admin) was created directly, not through
+    `sync_employee_directory`/`create_employee`, so it has no
+    `employeeCode` — it still belongs in this directory
+    (`UserRepository.list_employees_page` no longer requires one).
+    """
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/auth/employees", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    emails = {row["email"] for row in response.json()["data"]}
+    assert user.email in emails
+
+
+async def test_list_employees_without_branch_header_includes_employee_with_no_department(
+    client: AsyncClient, user: User
+) -> None:
+    """A departmentless employee still appears in an unscoped ("all
+    branches") listing — `UserRepository.list_employees_page`'s outer join
+    against Department/Floor/Building, not an inner one. They only drop
+    out of a branch-scoped view, since there's no chain to resolve them to
+    a specific branch — see the test right below.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    await client.post(
+        "/api/v1/auth/employees/sync",
+        json={
+            "employees": [
+                {
+                    "email": "dana@acme-test.example",
+                    "fullName": "Dana Employee",
+                    "employeeCode": "EMP-006",
+                }
+            ]
+        },
+        headers=headers,
+    )
+
+    response = await client.get("/api/v1/auth/employees", headers=headers)
+    assert response.status_code == 200
+    names = {e["fullName"] for e in response.json()["data"]}
+    assert "Dana Employee" in names
+
+
+async def test_list_employees_with_branch_header_excludes_employee_with_no_department(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    await client.post(
+        "/api/v1/auth/employees/sync",
+        json={
+            "employees": [
+                {
+                    "email": "dana@acme-test.example",
+                    "fullName": "Dana Employee",
+                    "employeeCode": "EMP-006",
+                }
+            ]
+        },
+        headers=headers,
+    )
+
+    response = await client.get(
+        "/api/v1/auth/employees", headers={**headers, "X-Branch-ID": str(branch.id)}
+    )
+    assert response.status_code == 200
+    names = {e["fullName"] for e in response.json()["data"]}
+    assert "Dana Employee" not in names
+
+
 async def _branch_scoped_employee_viewer(
     db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
 ) -> User:
@@ -688,7 +764,8 @@ async def test_list_employees_without_branch_header_scopes_to_every_authorized_b
     response = await client.get("/api/v1/auth/employees", headers=headers)
     assert response.status_code == 200
     body = response.json()
-    assert body["data"][0]["email"] == "erin@acme-test.example"
+    emails = {row["email"] for row in body["data"]}
+    assert "erin@acme-test.example" in emails
 
 
 async def test_list_employees_not_scoped_by_caller_permission(
@@ -698,7 +775,12 @@ async def test_list_employees_not_scoped_by_caller_permission(
     only one branch (or no caller at all) no longer narrows the result —
     every branch's employees are in scope regardless of the token
     presented, superseding the pre-public-listing behavior this test used
-    to assert.
+    to assert. No `X-Branch-ID` is sent, so this is also an unscoped
+    listing: `user` (admin) and `viewer` — both department-less — appear
+    alongside the two synced employees, per
+    `UserRepository.list_employees_page`'s outer join
+    (`test_list_employees_without_branch_header_includes_employee_with_no_department`
+    covers that case in isolation).
     """
     department = await _make_department(db_session, branch)
     admin_token = await _login(client, user.email)
@@ -744,7 +826,12 @@ async def test_list_employees_not_scoped_by_caller_permission(
     )
     assert response.status_code == 200
     emails = {row["email"] for row in response.json()["data"]}
-    assert emails == {"own-branch@acme-test.example", "other-branch@acme-test.example"}
+    assert emails == {
+        "own-branch@acme-test.example",
+        "other-branch@acme-test.example",
+        user.email,
+        viewer.email,
+    }
 
 
 async def test_list_employees_no_auth_header_succeeds(
@@ -916,6 +1003,97 @@ async def test_list_employees_filter_by_role(
     body = response.json()
     assert body["pagination"]["total"] == 1
     assert body["data"][0]["email"] == "receptionist@acme-test.example"
+
+
+async def _make_role_user(
+    db_session: AsyncSession,
+    tenant: Tenant,
+    role: Role,
+    *,
+    email: str,
+    full_name: str,
+    is_active: bool = True,
+) -> User:
+    """A user granted `role` company-wide, deliberately with no
+    `employee_code`/`department_id` — a `host` account isn't necessarily
+    reconciled through `sync_employee_directory`, so the directory listing
+    must not require either.
+    """
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=None)
+    new_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=email,
+        hashed_password=hash_password("correct-password"),
+        full_name=full_name,
+        is_active=is_active,
+        branch_roles=[branch_role],
+    )
+    db_session.add(new_user)
+    await db_session.flush()
+    db_session.add(TenantUserIndex(email=email, tenant_id=tenant.id, user_id=new_user.id))
+    await db_session.commit()
+    return new_user
+
+
+async def test_list_employee_directory_no_auth_header_succeeds(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant
+) -> None:
+    """Public — no bearer token, same rationale as
+    `org_structure/router.py::list_branches`: a pre-registration form needs
+    a "who are you visiting" picker before a visitor authenticates. Only
+    the reduced, non-PII field set is exposed — see `EmployeeDirectoryOut`.
+    No department assigned, and it still shows up (`UserRepository.list_hosts_page`
+    isn't branch/department scoped).
+    """
+    host_role = RoleFactory.build(id=uuid.uuid4(), name="host", permissions=[])
+    db_session.add(host_role)
+    await db_session.commit()
+    await _make_role_user(
+        db_session, tenant, host_role, email="erin@acme-test.example", full_name="Erin Host"
+    )
+
+    response = await client.get("/api/v1/auth/employees/directory")
+    assert response.status_code == 200
+    body = response.json()
+    names = {e["fullName"] for e in body["data"]}
+    assert "Erin Host" in names
+    for entry in body["data"]:
+        assert "email" not in entry
+        assert "phoneNumber" not in entry
+        assert "employeeCode" not in entry
+
+
+async def test_list_employee_directory_excludes_inactive_and_non_host_roles(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant
+) -> None:
+    host_role = RoleFactory.build(id=uuid.uuid4(), name="host", permissions=[])
+    reception_role = RoleFactory.build(id=uuid.uuid4(), name="reception", permissions=[])
+    db_session.add_all([host_role, reception_role])
+    await db_session.commit()
+
+    await _make_role_user(
+        db_session, tenant, host_role, email="alice@acme-test.example", full_name="Alice Host"
+    )
+    await _make_role_user(
+        db_session,
+        tenant,
+        host_role,
+        email="bob@acme-test.example",
+        full_name="Bob Host",
+        is_active=False,
+    )
+    await _make_role_user(
+        db_session,
+        tenant,
+        reception_role,
+        email="carol@acme-test.example",
+        full_name="Carol Reception",
+    )
+
+    response = await client.get("/api/v1/auth/employees/directory")
+    assert response.status_code == 200
+    names = {e["fullName"] for e in response.json()["data"]}
+    assert names == {"Alice Host"}
 
 
 # --- Permission catalog ------------------------------------------------------

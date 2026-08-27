@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.auth.models import User
+from vmss_api.auth.models import Role, User, UserBranchRole
 from vmss_api.org_structure.models import (
     Branch,
     Building,
@@ -86,6 +86,27 @@ class BranchRollupRepository:
             .group_by(SecurityGate.branch_id)
         )
         return {branch_id: count for branch_id, count in (await self.session.execute(stmt)).all()}
+
+    async def admin_users(self) -> list[User]:
+        """Every active user holding the `"admin"` role, for
+        `reports/tasks.py`'s scheduled snapshot recipient list
+        (add-background-jobs-and-integration-tests). Not a permission
+        check — the job runs unattended, so this is a role-membership
+        query, the same shape as `active_employee_counts_by_branch`'s join
+        above, not a new `require_permission` code.
+        """
+        stmt = (
+            select(User)
+            .join(UserBranchRole, UserBranchRole.user_id == User.id)
+            .join(Role, Role.id == UserBranchRole.role_id)
+            .where(
+                Role.name == "admin",
+                User.deleted_at.is_(None),
+                User.is_active.is_(True),
+            )
+            .distinct()
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def active_employee_counts_by_branch(self) -> dict[uuid.UUID, int]:
         """Joins straight to `Department.branch_id` — see

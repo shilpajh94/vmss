@@ -39,3 +39,13 @@ gates directly, active employees via a join through `Department` → `Floor`
 → `Building`) — never a per-branch loop, per `query-performance.md` §2.
 `service.py::get_cross_branch_rollup` merges the six count dicts against
 the branch list in Python and sums the tenant-wide totals.
+
+## Scheduled snapshot (API-17)
+
+In addition to the on-demand endpoint above, `tasks.py` runs the same
+rollup automatically once a day and emails a summary to every Admin-role
+user in each active tenant — see `docs/features/background-jobs.md` for
+the job-runner mechanics (beat schedule, per-tenant fan-out, idempotency).
+`repository.py::BranchRollupRepository.admin_users()` resolves the
+recipient list — a role-membership query, not a permission check, since
+the job runs unattended with no caller to authorize.

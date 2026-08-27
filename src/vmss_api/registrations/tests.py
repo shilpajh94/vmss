@@ -375,3 +375,37 @@ async def test_walk_in_registration_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         found = await InvitationRepository(other_session).get_by_tracking_id(data["trackingId"])
         assert found is None
+
+
+# --- visit-info-lookup-api: walk-in inherits the optional catalog id fields ---
+# (the resolve/validate/overwrite behavior itself is `invitations.service`'s —
+# already covered in `invitations/tests.py` — this only confirms the walk-in
+# endpoint, which shares the identical `VisitDetailsSubmit` schema, actually
+# wires it through the same way. spec.md "Walk-in registration inherits the
+# same optional fields".)
+
+
+async def test_walk_in_registration_with_department_id_overwrites_free_text(
+    client: AsyncClient,
+    registration_device_raw_key: str,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    from factories import DepartmentFactory
+
+    department = DepartmentFactory.build(
+        id=uuid.uuid4(), branch_id=branch.id, floor_id=None, code="RECEP-VI"
+    )
+    db_session.add(department)
+    await db_session.commit()
+
+    payload = _individual_payload()
+    payload["visitDetails"]["departmentToVisit"] = "does not match the catalog row"
+    payload["visitDetails"]["departmentId"] = str(department.id)
+
+    data = await _create_walk_in_success(client, registration_device_raw_key, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.department_to_visit == department.name
+    assert invitation.department_id == department.id

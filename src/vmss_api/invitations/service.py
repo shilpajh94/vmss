@@ -1,11 +1,13 @@
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import structlog
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.auth.repository import UserRepository
 from vmss_api.core.config import settings
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.storage import FileTooLargeError, UnsupportedFileTypeError, validate_upload
@@ -17,9 +19,11 @@ from vmss_api.invitations.schemas import (
     InvitationCreate,
     InvitationSortableField,
     RegistrationSource,
+    VisitDetailsSubmit,
 )
-from vmss_api.org_structure.repository import CompanyRepository
+from vmss_api.org_structure.repository import CompanyRepository, DepartmentRepository
 from vmss_api.tenant.models import Tenant
+from vmss_api.visit_info.repository import VisitDurationRepository, VisitPurposeRepository
 
 
 async def _generate_unique_tracking_id(repo: InvitationRepository) -> str:
@@ -49,6 +53,55 @@ def _validate_id_proof(content: bytes, max_size: int) -> str:
         return validate_upload(content, max_size_bytes=max_size)
     except (UnsupportedFileTypeError, FileTooLargeError) as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
+async def _resolve_visit_detail_ids(
+    tenant_db: AsyncSession, visit_details: VisitDetailsSubmit
+) -> dict[str, Any]:
+    """spec.md "Visit Details Optionally Accept Catalog IDs Alongside Free
+    Text": each of `purposeId`/`hostId`/`durationId`/`departmentId`, if
+    supplied, must resolve to an existing, active row in this tenant's
+    schema — its canonical display value then overwrites the paired
+    free-text field, never the other way round. Omitted ids leave their
+    paired free-text field untouched, identical to today's behavior.
+    """
+    resolved: dict[str, Any] = {
+        "purpose_of_visit": visit_details.purpose_of_visit,
+        "host_name_or_email": visit_details.host_name_or_email,
+        "expected_duration": visit_details.expected_duration,
+        "department_to_visit": visit_details.department_to_visit,
+        "purpose_id": None,
+        "host_id": None,
+        "duration_id": None,
+        "department_id": None,
+    }
+    if visit_details.purpose_id is not None:
+        purpose = await VisitPurposeRepository(tenant_db).get_active(visit_details.purpose_id)
+        if purpose is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown purposeId")
+        resolved["purpose_id"] = purpose.id
+        resolved["purpose_of_visit"] = purpose.name
+    if visit_details.host_id is not None:
+        host = await UserRepository(tenant_db).get_active(visit_details.host_id)
+        if host is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown hostId")
+        resolved["host_id"] = host.id
+        resolved["host_name_or_email"] = host.full_name
+    if visit_details.duration_id is not None:
+        duration = await VisitDurationRepository(tenant_db).get_active(visit_details.duration_id)
+        if duration is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown durationId")
+        resolved["duration_id"] = duration.id
+        resolved["expected_duration"] = duration.name
+    if visit_details.department_id is not None:
+        department = await DepartmentRepository(tenant_db).get_active(visit_details.department_id)
+        if department is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown departmentId"
+            )
+        resolved["department_id"] = department.id
+        resolved["department_to_visit"] = department.name
+    return resolved
 
 
 async def create_invitation(
@@ -89,6 +142,11 @@ async def create_invitation(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Visitor list and uploaded ID proof files must match in count",
         )
+
+    # Validated (and, where an id is present, resolved to its canonical
+    # display value) before any file I/O, so a bad `purposeId`/`hostId`/
+    # `durationId`/`departmentId` fails fast without wasting a storage write.
+    visit_details = await _resolve_visit_detail_ids(tenant_db, payload.visit_details)
 
     repo = InvitationRepository(tenant_db)
     tracking_id = await _generate_unique_tracking_id(repo)
@@ -138,13 +196,17 @@ async def create_invitation(
         ),
         primary_contact_id_proof_type=payload.primary_contact.id_proof_type.value,
         primary_contact_id_proof_storage_key=primary_key,
-        purpose_of_visit=payload.visit_details.purpose_of_visit,
-        host_name_or_email=payload.visit_details.host_name_or_email,
+        purpose_of_visit=visit_details["purpose_of_visit"],
+        host_name_or_email=visit_details["host_name_or_email"],
         preferred_visit_date=payload.visit_details.preferred_visit_date,
         preferred_visit_time=payload.visit_details.preferred_visit_time,
-        expected_duration=payload.visit_details.expected_duration,
-        department_to_visit=payload.visit_details.department_to_visit,
+        expected_duration=visit_details["expected_duration"],
+        department_to_visit=visit_details["department_to_visit"],
         additional_notes=payload.visit_details.additional_notes,
+        purpose_id=visit_details["purpose_id"],
+        host_id=visit_details["host_id"],
+        duration_id=visit_details["duration_id"],
+        department_id=visit_details["department_id"],
         carried_items=[item.value for item in payload.carried_items.items],
         carried_items_description=payload.carried_items.item_description,
         terms_accepted=payload.consents.terms_accepted,

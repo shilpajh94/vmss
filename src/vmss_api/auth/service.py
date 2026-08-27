@@ -491,3 +491,15 @@ async def list_employees(
         sort_by=sort_by,
         sort_order=sort_order,
     )
+
+
+async def list_employee_directory(
+    tenant_db: AsyncSession, *, page: int, page_size: int
+) -> tuple[list[User], int]:
+    """Backs the public host-directory listing
+    (`router.py::list_employee_directory`) — every active employee holding
+    the `host` role (a Reception/Security/Admin account is staff, not
+    someone a visitor can be pre-registered against). Not branch/department
+    scoped — see `UserRepository.list_hosts_page`.
+    """
+    return await UserRepository(tenant_db).list_hosts_page(page=page, page_size=page_size)

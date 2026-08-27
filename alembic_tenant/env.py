@@ -34,6 +34,7 @@ from vmss_api.org_structure.models import (  # noqa: F401
     ReceptionDesk,
     SecurityGate,
 )
+from vmss_api.visit_info.models import VisitDuration, VisitPurpose  # noqa: F401
 
 config = context.config
 

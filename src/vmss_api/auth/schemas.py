@@ -135,3 +135,17 @@ class EmployeeOut(CamelModel):
     is_active: bool
     avatar_url: str | None
     branch_roles: list[BranchRoleOut]
+
+
+class EmployeeDirectoryOut(CamelModel):
+    """Reduced-field projection of `EmployeeOut` for the public host-picker
+    listing (`router.py::list_employee_directory`) — deliberately omits
+    `email`/`phone_number`/`employee_code`: those are PII, and this endpoint
+    has no bearer token to gate access to them
+    (security-architecture.md §4's PII-handling posture).
+    """
+
+    id: uuid.UUID
+    full_name: str
+    designation: str | None
+    department_id: uuid.UUID | None

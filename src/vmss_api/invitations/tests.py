@@ -14,7 +14,16 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
-from factories import CompanyFactory, InvitationFactory, PermissionFactory, RoleFactory, UserFactory
+from factories import (
+    CompanyFactory,
+    DepartmentFactory,
+    InvitationFactory,
+    PermissionFactory,
+    RoleFactory,
+    UserFactory,
+    VisitDurationFactory,
+    VisitPurposeFactory,
+)
 from vmss_api.auth.models import User, UserBranchRole
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
@@ -23,9 +32,10 @@ from vmss_api.core.security import hash_password
 from vmss_api.invitations import notifications, tasks
 from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.repository import InvitationRepository
-from vmss_api.org_structure.models import Branch
+from vmss_api.org_structure.models import Branch, Department
 from vmss_api.platform.models import TenantUserIndex
 from vmss_api.tenant.models import Tenant
+from vmss_api.visit_info.models import VisitDuration, VisitPurpose
 
 
 def _jpeg_bytes() -> bytes:
@@ -1207,6 +1217,168 @@ async def test_send_approval_notification_delivers_email_with_qr_via_mailpit(mon
     # Deliberately not deleted from Mailpit afterward — left for a human to
     # inspect via the Mailpit web UI (task 5.4), and harmless to accumulate
     # since each run uses a fresh, unique tracking_id/recipient.
+
+
+# --- visit-info-lookup-api: optional purposeId/hostId/durationId/departmentId -
+
+
+@pytest_asyncio.fixture
+async def visit_department(db_session: AsyncSession, branch: Branch) -> Department:
+    department = DepartmentFactory.build(
+        id=uuid.uuid4(), branch_id=branch.id, floor_id=None, code="ENG-VI"
+    )
+    db_session.add(department)
+    await db_session.commit()
+    return department
+
+
+@pytest_asyncio.fixture
+async def visit_purpose(db_session: AsyncSession) -> VisitPurpose:
+    purpose = VisitPurposeFactory.build(id=uuid.uuid4(), name="Business Meeting")
+    db_session.add(purpose)
+    await db_session.commit()
+    return purpose
+
+
+@pytest_asyncio.fixture
+async def visit_duration(db_session: AsyncSession) -> VisitDuration:
+    duration = VisitDurationFactory.build(id=uuid.uuid4(), name="1 hour", minutes=60)
+    db_session.add(duration)
+    await db_session.commit()
+    return duration
+
+
+@pytest_asyncio.fixture
+async def visit_host(db_session: AsyncSession) -> User:
+    host = UserFactory.build(
+        id=uuid.uuid4(), full_name="Rahul Nair", email="rahul.nair@acme-test.example"
+    )
+    db_session.add(host)
+    await db_session.commit()
+    return host
+
+
+async def test_create_invitation_with_no_ids_behaves_exactly_as_before(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """spec.md "Submission with no ids behaves exactly as before"."""
+    data = await _create_invitation_success(
+        client, await _login(client, user.email), branch, payload=_individual_payload()
+    )
+    assert data["registrationType"] == "individual"
+
+
+async def test_create_invitation_with_ids_overwrites_free_text_with_canonical_value(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    visit_purpose: VisitPurpose,
+    visit_host: User,
+    visit_duration: VisitDuration,
+    visit_department: Department,
+) -> None:
+    """spec.md "Submission with an id overwrites free text with the catalog
+    value" — a mismatched free-text string is discarded in favor of the
+    referenced row's canonical name.
+    """
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "does not match the catalog row"
+    payload["visitDetails"]["hostNameOrEmail"] = "does not match either"
+    payload["visitDetails"]["expectedDuration"] = "nor this"
+    payload["visitDetails"]["departmentToVisit"] = "nor this either"
+    payload["visitDetails"]["purposeId"] = str(visit_purpose.id)
+    payload["visitDetails"]["hostId"] = str(visit_host.id)
+    payload["visitDetails"]["durationId"] = str(visit_duration.id)
+    payload["visitDetails"]["departmentId"] = str(visit_department.id)
+
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.purpose_of_visit == visit_purpose.name
+    assert invitation.host_name_or_email == visit_host.full_name
+    assert invitation.expected_duration == visit_duration.name
+    assert invitation.department_to_visit == visit_department.name
+    assert invitation.purpose_id == visit_purpose.id
+    assert invitation.host_id == visit_host.id
+    assert invitation.duration_id == visit_duration.id
+    assert invitation.department_id == visit_department.id
+
+
+async def test_create_invitation_unknown_purpose_id_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Unknown or cross-tenant id is rejected"."""
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeId"] = str(uuid.uuid4())
+
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+    invitations = await InvitationRepository(db_session).list()
+    assert invitations == []
+
+
+async def test_create_invitation_inactive_department_id_rejected(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    visit_department: Department,
+) -> None:
+    visit_department.is_active = False
+    db_session.add(visit_department)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["departmentId"] = str(visit_department.id)
+
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_cross_tenant_purpose_id_rejected(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """testing-standards.md §2's tenant-isolation case: a `purposeId` valid
+    in a different tenant's schema must not resolve here.
+    """
+    other_schema = "tenant_other_test_visit_info"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_purpose = VisitPurposeFactory.build(id=uuid.uuid4(), name="Other Tenant Purpose")
+        other_session.add(other_purpose)
+        await other_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeId"] = str(other_purpose.id)
+
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_walk_in_registration_visit_details_submit_exposes_id_fields() -> None:
+    """spec.md "Walk-in registration inherits the same optional fields" —
+    guards against a future refactor breaking `registrations.schemas`'s
+    re-export of the shared `VisitDetailsSubmit` class (task 6.3).
+    """
+    from vmss_api.registrations.schemas import VisitDetailsSubmit as WalkInVisitDetailsSubmit
+
+    assert set(WalkInVisitDetailsSubmit.model_fields) >= {
+        "purpose_id",
+        "host_id",
+        "duration_id",
+        "department_id",
+    }
 
 
 # --- Manual approval (POST /invitations/{id}/approve) ------------------------
