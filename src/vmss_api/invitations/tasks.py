@@ -4,6 +4,14 @@ tenant-bound session from a `tenant_schema` argument (`background-jobs.md`
 runs — and binds `request_id`/`tenant_schema` into `structlog`'s context at
 the top of the body (`logging-observability.md` §1) so a failed send is
 traceable back to the request that triggered it.
+
+Two distinct notifications, not one with a conditional attachment
+(`add-invitation-approval-flow-and-role-resync/design.md` Decision 2):
+`send_approval_notification` (tracking ID + QR code) is only ever enqueued
+once an invitation is actually `approved` — at creation when the tenant
+auto-approves, or later via `POST /invitations/{id}/approve`.
+`send_tracking_notification` (tracking ID only, no QR) is enqueued when
+creation instead leaves the invitation `submitted` (awaiting approval).
 """
 
 import asyncio
@@ -27,34 +35,35 @@ _RETRY_KWARGS = {
 
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
-def send_visit_confirmation(
+def send_approval_notification(
     self, *, request_id: str, tenant_schema: str, invitation_id: str
 ) -> None:
     structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
     try:
-        asyncio.run(_send_visit_confirmation(tenant_schema, invitation_id))
+        asyncio.run(_send_approval_notification(tenant_schema, invitation_id))
     except Exception:
         if self.request.retries >= self.max_retries:
             logger.error(
-                "visit_confirmation_dispatch_exhausted",
+                "approval_notification_dispatch_exhausted",
                 tenant_schema=tenant_schema,
                 invitation_id=invitation_id,
             )
         raise
 
 
-async def _send_visit_confirmation(tenant_schema: str, invitation_id: str) -> None:
+async def _send_approval_notification(tenant_schema: str, invitation_id: str) -> None:
     try:
         async with tenant_session_scope(tenant_schema) as session:
             invitation = await session.get(Invitation, uuid.UUID(invitation_id))
             # Idempotent against redelivery/retry (background-jobs.md §2): a
             # missing invitation (the row somehow removed since the task was
             # enqueued) has nothing left to notify about. There's no separate
-            # "already notified" flag to guard on beyond that — creation
-            # enqueues this task exactly once, atomically with the row's insert,
-            # so the only source of a duplicate send is Celery's own
-            # at-least-once redelivery, which the idempotency-key cache on the
-            # creating request already bounds (api-conventions.md §3).
+            # "already notified" flag to guard on beyond that — creation and
+            # the approve action each enqueue this exactly once, atomically
+            # with the state change that triggered it, so the only source of
+            # a duplicate send is Celery's own at-least-once redelivery,
+            # which the idempotency-key cache on the creating request already
+            # bounds (api-conventions.md §3).
             if invitation is None:
                 return
             subject = "Your visit is confirmed"
@@ -70,16 +79,50 @@ async def _send_visit_confirmation(tenant_schema: str, invitation_id: str) -> No
                 attachment=notifications.make_attachment(qr_png, "visit-qr.png", "image/png"),
             )
     finally:
-        # `send_visit_confirmation` below runs this coroutine via a fresh
-        # `asyncio.run()` call per task, but `core/database.py::engine` is a
-        # single, process-wide `AsyncEngine` built once at import — its
-        # pooled asyncpg connections are bound to whichever loop first used
-        # them. A worker process handling a second task on a new loop would
-        # otherwise reuse a connection tied to this (about-to-close) loop and
-        # fail with "got Future ... attached to a different loop"
-        # (reproduced directly once a real worker processed more than one
-        # task — see SQLAlchemy's asyncio docs on disposing an engine before
-        # switching event loops).
+        # `send_approval_notification`/`send_tracking_notification` below run
+        # this coroutine via a fresh `asyncio.run()` call per task, but
+        # `core/database.py::engine` is a single, process-wide `AsyncEngine`
+        # built once at import — its pooled asyncpg connections are bound to
+        # whichever loop first used them. A worker process handling a second
+        # task on a new loop would otherwise reuse a connection tied to this
+        # (about-to-close) loop and fail with "got Future ... attached to a
+        # different loop" (reproduced directly once a real worker processed
+        # more than one task — see SQLAlchemy's asyncio docs on disposing an
+        # engine before switching event loops).
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_tracking_notification(
+    self, *, request_id: str, tenant_schema: str, invitation_id: str
+) -> None:
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(_send_tracking_notification(tenant_schema, invitation_id))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "tracking_notification_dispatch_exhausted",
+                tenant_schema=tenant_schema,
+                invitation_id=invitation_id,
+            )
+        raise
+
+
+async def _send_tracking_notification(tenant_schema: str, invitation_id: str) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            if invitation is None:
+                return
+            subject = "Your registration is received"
+            body = (
+                f"Your registration is awaiting approval. Tracking ID: "
+                f"{invitation.tracking_id}.\n"
+                "You'll receive a check-in QR code once it's approved."
+            )
+            await _dispatch(invitation, subject=subject, body=body)
+    finally:
         await engine.dispose()
 
 

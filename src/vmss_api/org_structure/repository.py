@@ -53,11 +53,27 @@ class BranchRepository(TenantScopedRepository[Branch]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def list_page(
-        self, *, page: int, page_size: int, sort_by: str, sort_order: SortOrder
+        self,
+        *,
+        branch_scope: BranchScope,
+        page: int,
+        page_size: int,
+        sort_by: str,
+        sort_order: SortOrder,
     ) -> tuple[list[Branch], int]:
+        """`branch_scope` mirrors `BuildingRepository.list_page` — the
+        caller's authorized scope (`org_structure/deps.py::require_branch_scope`),
+        filtered on `Branch.id` itself rather than a `branch_id` column,
+        since a branch *is* the entity here.
+        """
         column = {"name": Branch.name, "created_at": Branch.created_at}[sort_by]
+        branch_filter = _branch_filter(Branch.id, branch_scope)
+        filters: list[Any] = [branch_filter] if branch_filter is not None else []
         return await super().paginate(
-            page=page, page_size=page_size, order_by=_order_clause(column, sort_order)
+            page=page,
+            page_size=page_size,
+            order_by=_order_clause(column, sort_order),
+            filters=filters,
         )
 
 
@@ -68,6 +84,22 @@ class BuildingRepository(TenantScopedRepository[Building]):
         stmt = select(Building).where(
             Building.branch_id == branch_id, Building.code == code, Building.deleted_at.is_(None)
         )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_including_deleted(self, id_: uuid.UUID) -> Building | None:
+        """Like `get`, but does not filter out a soft-deleted building.
+
+        Used only to resolve the branch of an *existing* Floor/SecurityGate
+        whose parent building was later soft-deleted (nothing today cascades
+        that delete or blocks it while child floors remain) — without this,
+        `TenantScopedRepository.get`'s `deleted_at IS NULL` filter makes
+        `resolve_building_branch_id` return `None` for such a floor forever,
+        so its own get/update/delete permission check can never resolve a
+        branch and 404s permanently, even though the floor row itself was
+        never deleted. Never use this for create-time validation, where a
+        soft-deleted parent must still be treated as absent.
+        """
+        stmt = select(Building).where(Building.id == id_)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def list_page(
@@ -105,6 +137,15 @@ class FloorRepository(TenantScopedRepository[Floor]):
             Floor.floor_number == floor_number,
             Floor.deleted_at.is_(None),
         )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_including_deleted(self, id_: uuid.UUID) -> Floor | None:
+        """Like `get`, but does not filter out a soft-deleted floor — see
+        `BuildingRepository.get_including_deleted` for why this exists.
+        Used to resolve the branch of an existing ReceptionDesk whose parent
+        floor was later soft-deleted.
+        """
+        stmt = select(Floor).where(Floor.id == id_)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def list_page(

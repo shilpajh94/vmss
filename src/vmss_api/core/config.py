@@ -170,6 +170,16 @@ class Settings(BaseSettings):
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
     invitation_max_group_visitors: int = 20
 
+    # `registrations` feature config (API-13, add-walkin-visitor-registration).
+    # Fallback tenant/branch for `POST /registrations/walk-in` when the
+    # caller sends no `X-Device-Key` (registrations/deps.py::get_registration_device) —
+    # resolved server-side from config, same "never trust a client-supplied
+    # tenant/branch id" posture as `default_tenant_slug`, never read from the
+    # request itself.
+    registration_default_branch_code: str = Field(
+        default="MAIN", alias="REGISTRATION_DEFAULT_BRANCH_CODE"
+    )
+
     # `identity_verification` feature config (API-15, add-identity-verification-otp).
     otp_ttl_seconds: int = 300
     otp_length: int = 6

@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,13 +14,15 @@ from vmss_api.core.deps import (
     get_tenant_db,
     require_permission,
 )
+from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.org_structure import service
 from vmss_api.org_structure.deps import (
     authorize_branch_id,
+    public_branch_scope,
+    public_tenant_db,
     require_branch_permission,
-    require_branch_scope,
 )
 from vmss_api.org_structure.models import Branch
 from vmss_api.org_structure.schemas import (
@@ -211,17 +213,30 @@ async def create_branch(
 @branch_router.get(
     "",
     response_model=PaginatedEnvelope[BranchOut],
-    dependencies=[Depends(require_permission("branches:view"))],
 )
+@limiter.limit("60/minute")
 async def list_branches(
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    request: Request,
+    branch_scope: Annotated[BranchScope, Depends(public_branch_scope)],
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
+    """Public — no bearer token, no permission check (security-architecture.md
+    §2's public-endpoint posture, applied here per
+    `fix-public-org-listings-and-email-diagnostics/design.md` Decision 1).
+    `X-Branch-ID` narrows to one branch when supplied; every branch's rows
+    are returned otherwise.
+    """
     page, page_size = pagination
     branches, total = await service.list_branches_page(
-        tenant_db, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+        tenant_db,
+        branch_scope=branch_scope,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     return paginated_response(
         data=[BranchOut.model_validate(b) for b in branches],
@@ -290,12 +305,13 @@ async def get_current_branch(
 @branch_router.get(
     "/{branch_id}",
     response_model=Envelope[BranchOut],
-    dependencies=[Depends(require_permission("branches:view"))],
 )
 async def get_branch(
-    branch_id: uuid.UUID, tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)]
+    branch_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
 ) -> JSONResponse:
-    branch = await service.get_branch(tenant_db, branch_id)
+    branch = await service.get_branch(tenant_db, branch_id, user, "branches:view")
     return success_response(data=BranchOut.model_validate(branch))
 
 
@@ -380,9 +396,11 @@ async def create_building(
 
 
 @building_router.get("", response_model=PaginatedEnvelope[BuildingOut])
+@limiter.limit("60/minute")
 async def list_buildings(
-    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("buildings:view"))],
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    request: Request,
+    branch_scope: Annotated[BranchScope, Depends(public_branch_scope)],
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
@@ -486,9 +504,11 @@ async def create_floor(
 
 
 @floor_router.get("", response_model=PaginatedEnvelope[FloorOut])
+@limiter.limit("60/minute")
 async def list_floors(
-    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("floors:view"))],
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    request: Request,
+    branch_scope: Annotated[BranchScope, Depends(public_branch_scope)],
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     building_id: Annotated[uuid.UUID | None, Query(alias="buildingId")] = None,
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
@@ -593,9 +613,11 @@ async def create_department(
 
 
 @department_router.get("", response_model=PaginatedEnvelope[DepartmentOut])
+@limiter.limit("60/minute")
 async def list_departments(
-    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("departments:view"))],
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    request: Request,
+    branch_scope: Annotated[BranchScope, Depends(public_branch_scope)],
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     floor_id: Annotated[uuid.UUID | None, Query(alias="floorId")] = None,
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
@@ -703,9 +725,11 @@ async def create_reception_desk(
 
 
 @desk_router.get("", response_model=PaginatedEnvelope[ReceptionDeskOut])
+@limiter.limit("60/minute")
 async def list_reception_desks(
-    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("desks:view"))],
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    request: Request,
+    branch_scope: Annotated[BranchScope, Depends(public_branch_scope)],
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     floor_id: Annotated[uuid.UUID | None, Query(alias="floorId")] = None,
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
@@ -808,9 +832,11 @@ async def create_security_gate(
 
 
 @gate_router.get("", response_model=PaginatedEnvelope[SecurityGateOut])
+@limiter.limit("60/minute")
 async def list_security_gates(
-    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("gates:view"))],
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    request: Request,
+    branch_scope: Annotated[BranchScope, Depends(public_branch_scope)],
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     building_id: Annotated[uuid.UUID | None, Query(alias="buildingId")] = None,
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",

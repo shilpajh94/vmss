@@ -16,6 +16,7 @@ from factories import (
     UserFactory,
 )
 from vmss_api.auth.models import User, UserBranchRole
+from vmss_api.core.config import settings
 from vmss_api.core.security import hash_password
 from vmss_api.org_structure.models import (
     Branch,
@@ -37,6 +38,15 @@ from vmss_api.org_structure.repository import (
 )
 from vmss_api.platform.models import TenantUserIndex
 from vmss_api.tenant.models import Tenant
+
+
+@pytest_asyncio.fixture(autouse=True)
+def _default_tenant_slug_matches_test_tenant(monkeypatch):
+    """The six public org-structure listing endpoints resolve
+    `settings.default_tenant_slug` (no JWT to read a tenant from) — mirrors
+    `identity_verification/tests.py`'s fixture of the same name.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", "acme-test")
 
 
 @pytest_asyncio.fixture
@@ -217,6 +227,120 @@ async def test_list_branches_success(client: AsyncClient, user: User, branch: Br
     assert response.status_code == 200
     codes = {b["code"] for b in response.json()["data"]}
     assert branch.code in codes
+
+
+async def test_list_branches_no_auth_header_succeeds(
+    client: AsyncClient, tenant: Tenant, branch: Branch
+) -> None:
+    """Listing is public (`fix-public-org-listings-and-email-diagnostics`)
+    — no bearer token at all is required.
+    """
+    response = await client.get("/api/v1/branches")
+    assert response.status_code == 200
+    assert branch.code in {b["code"] for b in response.json()["data"]}
+
+
+async def test_list_branches_invalid_token_still_succeeds(
+    client: AsyncClient, tenant: Tenant, branch: Branch
+) -> None:
+    """An expired/malformed token is simply not inspected for this endpoint."""
+    response = await client.get(
+        "/api/v1/branches", headers={"Authorization": "Bearer not-a-real-token"}
+    )
+    assert response.status_code == 200
+    assert branch.code in {b["code"] for b in response.json()["data"]}
+
+
+async def test_list_branches_not_scoped_by_caller_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user_scoped_to_branch: User,
+    branch: Branch,
+) -> None:
+    """Listing no longer requires `branches:view`, so a caller's own
+    branch-scoped role grant no longer narrows the result — every branch is
+    in scope regardless of the token presented, superseding the
+    pre-public-listing behavior this test used to assert.
+    """
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-LIST")
+    db_session.add(other_branch)
+    await db_session.commit()
+
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get("/api/v1/branches", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    codes = {b["code"] for b in response.json()["data"]}
+    assert branch.code in codes
+    assert other_branch.code in codes
+
+
+async def test_list_branches_with_branch_header_narrows(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, branch: Branch
+) -> None:
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-NARROW")
+    db_session.add(other_branch)
+    await db_session.commit()
+
+    response = await client.get("/api/v1/branches", headers={"X-Branch-ID": str(branch.id)})
+    assert response.status_code == 200
+    codes = {b["code"] for b in response.json()["data"]}
+    assert branch.code in codes
+    assert other_branch.code not in codes
+
+
+async def test_list_branches_unknown_branch_header_404(client: AsyncClient, tenant: Tenant) -> None:
+    response = await client.get("/api/v1/branches", headers={"X-Branch-ID": str(uuid.uuid4())})
+    assert response.status_code == 404
+
+
+async def test_list_branches_tenant_isolation(
+    client: AsyncClient,
+    make_tenant_schema,
+    open_tenant_session,
+    tenant: Tenant,
+    branch: Branch,
+) -> None:
+    """The tenant-isolation case `testing-standards.md` §2 requires for any
+    changed endpoint — a row that only exists in a different tenant's
+    schema must never surface in the public listing, which always resolves
+    to `settings.default_tenant_slug`'s schema.
+    """
+    other_schema = "tenant_other_test_org"
+    other_code = f"OTHER-TENANT-{uuid.uuid4().hex[:8]}"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_session.add(Branch(id=uuid.uuid4(), name="Other Tenant Branch", code=other_code))
+        await other_session.commit()
+
+    response = await client.get("/api/v1/branches")
+    assert response.status_code == 200
+    codes = {b["code"] for b in response.json()["data"]}
+    assert branch.code in codes
+    assert other_code not in codes
+
+
+async def test_get_branch_success_for_branch_scoped_user(
+    client: AsyncClient, user_scoped_to_branch: User, branch: Branch
+) -> None:
+    token = await _login(client, user_scoped_to_branch.email)
+    response = await client.get(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["code"] == branch.code
+
+
+async def test_get_branch_denied_for_user_scoped_elsewhere(
+    client: AsyncClient, user_scoped_to_other_branch: User, branch: Branch
+) -> None:
+    """The branch-level counterpart of `test_get_building_not_found_for_other_branch`
+    — a role grant scoped to a different branch must not resolve this one.
+    """
+    token = await _login(client, user_scoped_to_other_branch.email)
+    response = await client.get(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 404
 
 
 async def test_get_current_branch_with_access(
@@ -710,57 +834,42 @@ async def test_create_building_denied_for_user_scoped_elsewhere(
     assert response.status_code == 403
 
 
-async def test_list_buildings_scoped_to_authorized_branch(
-    client: AsyncClient, user: User, building: Building
+async def test_list_buildings_no_auth_header_succeeds(
+    client: AsyncClient, tenant: Tenant, building: Building
 ) -> None:
-    token = await _login(client, user.email)
-    response = await client.get(
-        "/api/v1/buildings",
-        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
-    )
+    """Listing is public — no bearer token required."""
+    response = await client.get("/api/v1/buildings")
     assert response.status_code == 200
     body = response.json()
     assert body["pagination"]["total"] >= 1
     assert building.code in {b["code"] for b in body["data"]}
 
 
-async def test_list_buildings_excludes_other_branch(
-    client: AsyncClient, user_scoped_to_branch: User, branch: Branch, building: Building
+async def test_list_buildings_with_branch_header_narrows(
+    client: AsyncClient, tenant: Tenant, branch: Branch, building: Building
 ) -> None:
-    """`building` belongs to `branch`; a caller scoped to `branch` should see
-    it, but a building created under a different branch must never show up
-    — the list-endpoint counterpart of the create-side guard above.
-    """
-    token = await _login(client, user_scoped_to_branch.email)
-    response = await client.get(
-        "/api/v1/buildings",
-        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
-    )
+    response = await client.get("/api/v1/buildings", headers={"X-Branch-ID": str(branch.id)})
     assert response.status_code == 200
     assert building.code in {b["code"] for b in response.json()["data"]}
 
 
-async def test_list_buildings_without_branch_header_returns_every_authorized_branch(
-    client: AsyncClient, user: User, building: Building
+async def test_list_buildings_unknown_branch_header_404(
+    client: AsyncClient, tenant: Tenant
 ) -> None:
-    """`user` is a company-wide Admin — omitting `X-Branch-ID` on a list
-    request now scopes to every branch it's authorized for, not just one.
-    """
-    token = await _login(client, user.email)
-    response = await client.get("/api/v1/buildings", headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 200
-    assert building.code in {b["code"] for b in response.json()["data"]}
+    response = await client.get("/api/v1/buildings", headers={"X-Branch-ID": str(uuid.uuid4())})
+    assert response.status_code == 404
 
 
-async def test_list_buildings_without_branch_header_excludes_other_branches(
+async def test_list_buildings_without_branch_header_includes_every_branch(
     client: AsyncClient,
     db_session: AsyncSession,
-    user_scoped_to_branch: User,
+    tenant: Tenant,
     building: Building,
 ) -> None:
-    """A caller scoped to only one branch, with no `X-Branch-ID` header,
-    must never see another branch's buildings — the tenant/branch-isolation
-    case testing-standards.md §2 requires for this change.
+    """Listing no longer requires `buildings:view`, so omitting
+    `X-Branch-ID` now returns every branch's buildings — superseding the
+    pre-public-listing behavior this test used to assert (that a
+    branch-scoped caller's other branches were excluded).
     """
     other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-BLD")
     db_session.add(other_branch)
@@ -769,12 +878,11 @@ async def test_list_buildings_without_branch_header_excludes_other_branches(
     db_session.add(other_building)
     await db_session.commit()
 
-    token = await _login(client, user_scoped_to_branch.email)
-    response = await client.get("/api/v1/buildings", headers={"Authorization": f"Bearer {token}"})
+    response = await client.get("/api/v1/buildings")
     assert response.status_code == 200
     codes = {b["code"] for b in response.json()["data"]}
     assert building.code in codes
-    assert other_building.code not in codes
+    assert other_building.code in codes
 
 
 async def test_get_building_success(client: AsyncClient, user: User, building: Building) -> None:
@@ -974,29 +1082,38 @@ async def test_create_floor_denied_for_user_scoped_elsewhere(
     assert response.status_code == 403
 
 
-async def test_list_floors_success(
-    client: AsyncClient, user: User, floor: Floor, building: Building
+async def test_list_floors_no_auth_header_succeeds(
+    client: AsyncClient, tenant: Tenant, floor: Floor, building: Building
 ) -> None:
-    token = await _login(client, user.email)
-    response = await client.get(
-        "/api/v1/floors",
-        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
-    )
+    """Listing is public — no bearer token required."""
+    response = await client.get("/api/v1/floors")
     assert response.status_code == 200
     assert floor.floor_number in {f["floorNumber"] for f in response.json()["data"]}
 
 
-async def test_list_floors_excludes_other_branch(
+async def test_list_floors_with_branch_header_narrows(
+    client: AsyncClient, tenant: Tenant, branch: Branch, floor: Floor, building: Building
+) -> None:
+    response = await client.get("/api/v1/floors", headers={"X-Branch-ID": str(branch.id)})
+    assert response.status_code == 200
+    assert floor.floor_number in {f["floorNumber"] for f in response.json()["data"]}
+
+
+async def test_list_floors_unknown_branch_header_404(client: AsyncClient, tenant: Tenant) -> None:
+    response = await client.get("/api/v1/floors", headers={"X-Branch-ID": str(uuid.uuid4())})
+    assert response.status_code == 404
+
+
+async def test_list_floors_without_branch_header_includes_every_branch(
     client: AsyncClient,
     db_session: AsyncSession,
-    user_scoped_to_branch: User,
+    tenant: Tenant,
     floor: Floor,
     building: Building,
 ) -> None:
-    """`floor` belongs to `building`, which belongs to `branch`; a floor
-    provisioned under a completely different branch's building must never
-    show up in the branch-scoped caller's list — the list-endpoint
-    counterpart of `test_create_floor_denied_for_user_scoped_elsewhere`.
+    """Listing no longer requires `floors:view`, so omitting `X-Branch-ID`
+    now returns every branch's floors — superseding the pre-public-listing
+    behavior this test used to assert.
     """
     other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-FLR")
     db_session.add(other_branch)
@@ -1010,12 +1127,11 @@ async def test_list_floors_excludes_other_branch(
     db_session.add(other_floor)
     await db_session.commit()
 
-    token = await _login(client, user_scoped_to_branch.email)
-    response = await client.get("/api/v1/floors", headers={"Authorization": f"Bearer {token}"})
+    response = await client.get("/api/v1/floors")
     assert response.status_code == 200
     ids = {f["id"] for f in response.json()["data"]}
     assert str(floor.id) in ids
-    assert str(other_floor.id) not in ids
+    assert str(other_floor.id) in ids
 
 
 async def test_get_floor_success(
@@ -1118,6 +1234,42 @@ async def test_create_floor_after_soft_delete_reuses_number(
     assert recreate_response.status_code == 201
 
 
+async def test_update_floor_succeeds_after_parent_building_soft_deleted(
+    client: AsyncClient, db_session: AsyncSession, user: User, floor: Floor, building: Building
+) -> None:
+    """A floor whose building was soft-deleted out from under it (nothing
+    cascades or blocks that today) must not turn into a permanent 404 the
+    moment that happens — the floor row itself was never deleted, so its own
+    get/update/delete must keep resolving a branch via the building
+    regardless of the building's own `deleted_at`. Regression test for the
+    bug where `resolve_building_branch_id`'s `deleted_at IS NULL` filter made
+    such a floor unmanageable (though still visible in `GET /floors`) as soon
+    as its building was deleted.
+    """
+    await BuildingRepository(db_session).soft_delete(building)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)}
+    response = await client.put(
+        f"/api/v1/floors/{floor.id}", json={"name": "Renamed Floor"}, headers=headers
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["name"] == "Renamed Floor"
+
+
+async def test_delete_floor_succeeds_after_parent_building_soft_deleted(
+    client: AsyncClient, db_session: AsyncSession, user: User, floor: Floor, building: Building
+) -> None:
+    await BuildingRepository(db_session).soft_delete(building)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)}
+    response = await client.delete(f"/api/v1/floors/{floor.id}", headers=headers)
+    assert response.status_code == 204
+
+
 async def test_floor_repository_tenant_schema_isolation(
     make_tenant_schema, open_tenant_session, floor: Floor
 ) -> None:
@@ -1188,29 +1340,51 @@ async def test_create_department_denied_for_user_scoped_elsewhere(
     assert response.status_code == 403
 
 
-async def test_list_departments_success(
-    client: AsyncClient, user: User, department: Department, building: Building
+async def test_list_departments_no_auth_header_succeeds(
+    client: AsyncClient, tenant: Tenant, department: Department, building: Building
 ) -> None:
-    token = await _login(client, user.email)
+    """Listing is public — no bearer token required."""
+    response = await client.get("/api/v1/departments")
+    assert response.status_code == 200
+    assert department.code in {d["code"] for d in response.json()["data"]}
+
+
+async def test_list_departments_invalid_token_still_succeeds(
+    client: AsyncClient, tenant: Tenant, department: Department, building: Building
+) -> None:
+    """An expired/malformed token is simply not inspected for this endpoint."""
     response = await client.get(
-        "/api/v1/departments",
-        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
+        "/api/v1/departments", headers={"Authorization": "Bearer not-a-real-token"}
     )
     assert response.status_code == 200
     assert department.code in {d["code"] for d in response.json()["data"]}
 
 
-async def test_list_departments_excludes_other_branch(
+async def test_list_departments_with_branch_header_narrows(
+    client: AsyncClient, tenant: Tenant, branch: Branch, department: Department, building: Building
+) -> None:
+    response = await client.get("/api/v1/departments", headers={"X-Branch-ID": str(branch.id)})
+    assert response.status_code == 200
+    assert department.code in {d["code"] for d in response.json()["data"]}
+
+
+async def test_list_departments_unknown_branch_header_404(
+    client: AsyncClient, tenant: Tenant
+) -> None:
+    response = await client.get("/api/v1/departments", headers={"X-Branch-ID": str(uuid.uuid4())})
+    assert response.status_code == 404
+
+
+async def test_list_departments_without_branch_header_includes_every_branch(
     client: AsyncClient,
     db_session: AsyncSession,
-    user_scoped_to_branch: User,
+    tenant: Tenant,
     department: Department,
     building: Building,
 ) -> None:
-    """`department` belongs to `branch`; a department created directly under
-    a different branch must never show up in the branch-scoped caller's
-    list — the list-endpoint counterpart of
-    `test_create_department_denied_for_user_scoped_elsewhere`.
+    """Listing no longer requires `departments:view`, so omitting
+    `X-Branch-ID` now returns every branch's departments — superseding the
+    pre-public-listing behavior this test used to assert.
     """
     other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-DEPT")
     db_session.add(other_branch)
@@ -1221,12 +1395,49 @@ async def test_list_departments_excludes_other_branch(
     db_session.add(other_department)
     await db_session.commit()
 
-    token = await _login(client, user_scoped_to_branch.email)
-    response = await client.get("/api/v1/departments", headers={"Authorization": f"Bearer {token}"})
+    response = await client.get("/api/v1/departments")
     assert response.status_code == 200
     codes = {d["code"] for d in response.json()["data"]}
     assert department.code in codes
-    assert other_department.code not in codes
+    assert other_department.code in codes
+
+
+async def test_list_departments_tenant_isolation(
+    client: AsyncClient,
+    make_tenant_schema,
+    open_tenant_session,
+    tenant: Tenant,
+    department: Department,
+) -> None:
+    """The tenant-isolation case `testing-standards.md` §2 requires for any
+    changed endpoint, for a branch-scoped entity (`org-structure/spec.md`'s
+    "Public listing never crosses tenant boundaries" scenario).
+    """
+    other_schema = "tenant_dept_isolation_test_org"
+    suffix = uuid.uuid4().hex[:8]
+    other_branch_code = f"OTHER-TENANT-BR-{suffix}"
+    other_department_code = f"OTHER-TENANT-DEPT-{suffix}"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_branch = Branch(id=uuid.uuid4(), name="Other Tenant Branch", code=other_branch_code)
+        other_session.add(other_branch)
+        await other_session.flush()
+        other_session.add(
+            Department(
+                id=uuid.uuid4(),
+                branch_id=other_branch.id,
+                floor_id=None,
+                name="Other Tenant Department",
+                code=other_department_code,
+            )
+        )
+        await other_session.commit()
+
+    response = await client.get("/api/v1/departments")
+    assert response.status_code == 200
+    codes = {d["code"] for d in response.json()["data"]}
+    assert department.code in codes
+    assert other_department_code not in codes
 
 
 async def test_get_department_success(
@@ -1411,29 +1622,46 @@ async def test_create_reception_desk_denied_for_user_scoped_elsewhere(
     assert response.status_code == 403
 
 
-async def test_list_reception_desks_success(
-    client: AsyncClient, user: User, reception_desk: ReceptionDesk, building: Building
+async def test_list_reception_desks_no_auth_header_succeeds(
+    client: AsyncClient, tenant: Tenant, reception_desk: ReceptionDesk, building: Building
 ) -> None:
-    token = await _login(client, user.email)
-    response = await client.get(
-        "/api/v1/reception-desks",
-        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
-    )
+    """Listing is public — no bearer token required."""
+    response = await client.get("/api/v1/reception-desks")
     assert response.status_code == 200
     assert reception_desk.code in {d["code"] for d in response.json()["data"]}
 
 
-async def test_list_reception_desks_excludes_other_branch(
+async def test_list_reception_desks_with_branch_header_narrows(
     client: AsyncClient,
-    db_session: AsyncSession,
-    user_scoped_to_branch: User,
+    tenant: Tenant,
+    branch: Branch,
     reception_desk: ReceptionDesk,
     building: Building,
 ) -> None:
-    """`reception_desk` sits on `floor`, under `building`, under `branch`; a
-    desk on a floor belonging to a different branch entirely must never
-    show up in the branch-scoped caller's list — the list-endpoint
-    counterpart of `test_create_reception_desk_denied_for_user_scoped_elsewhere`.
+    response = await client.get("/api/v1/reception-desks", headers={"X-Branch-ID": str(branch.id)})
+    assert response.status_code == 200
+    assert reception_desk.code in {d["code"] for d in response.json()["data"]}
+
+
+async def test_list_reception_desks_unknown_branch_header_404(
+    client: AsyncClient, tenant: Tenant
+) -> None:
+    response = await client.get(
+        "/api/v1/reception-desks", headers={"X-Branch-ID": str(uuid.uuid4())}
+    )
+    assert response.status_code == 404
+
+
+async def test_list_reception_desks_without_branch_header_includes_every_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    reception_desk: ReceptionDesk,
+    building: Building,
+) -> None:
+    """Listing no longer requires `desks:view`, so omitting `X-Branch-ID`
+    now returns every branch's desks — superseding the pre-public-listing
+    behavior this test used to assert.
     """
     other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-DESK")
     db_session.add(other_branch)
@@ -1452,14 +1680,11 @@ async def test_list_reception_desks_excludes_other_branch(
     db_session.add(other_desk)
     await db_session.commit()
 
-    token = await _login(client, user_scoped_to_branch.email)
-    response = await client.get(
-        "/api/v1/reception-desks", headers={"Authorization": f"Bearer {token}"}
-    )
+    response = await client.get("/api/v1/reception-desks")
     assert response.status_code == 200
     codes = {d["code"] for d in response.json()["data"]}
     assert reception_desk.code in codes
-    assert other_desk.code not in codes
+    assert other_desk.code in codes
 
 
 async def test_get_reception_desk_success(
@@ -1518,6 +1743,28 @@ async def test_delete_reception_desk_success(
         f"/api/v1/reception-desks/{reception_desk.id}",
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
     )
+    assert response.status_code == 204
+
+
+async def test_delete_reception_desk_succeeds_after_parent_floor_soft_deleted(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    reception_desk: ReceptionDesk,
+    floor: Floor,
+    building: Building,
+) -> None:
+    """Same bug as
+    `test_delete_floor_succeeds_after_parent_building_soft_deleted`, one
+    level down: a desk's floor being soft-deleted must not make the desk
+    itself permanently unmanageable.
+    """
+    await FloorRepository(db_session).soft_delete(floor)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)}
+    response = await client.delete(f"/api/v1/reception-desks/{reception_desk.id}", headers=headers)
     assert response.status_code == 204
 
 
@@ -1684,29 +1931,42 @@ async def test_create_security_gate_denied_for_user_scoped_elsewhere(
     assert response.status_code == 403
 
 
-async def test_list_security_gates_success(
-    client: AsyncClient, user: User, security_gate: SecurityGate, branch: Branch
+async def test_list_security_gates_no_auth_header_succeeds(
+    client: AsyncClient, tenant: Tenant, security_gate: SecurityGate, branch: Branch
 ) -> None:
-    token = await _login(client, user.email)
-    response = await client.get(
-        "/api/v1/security-gates",
-        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
-    )
+    """Listing is public — no bearer token required."""
+    response = await client.get("/api/v1/security-gates")
     assert response.status_code == 200
     assert security_gate.code in {g["code"] for g in response.json()["data"]}
 
 
-async def test_list_security_gates_excludes_other_branch(
+async def test_list_security_gates_with_branch_header_narrows(
+    client: AsyncClient, tenant: Tenant, security_gate: SecurityGate, branch: Branch
+) -> None:
+    response = await client.get("/api/v1/security-gates", headers={"X-Branch-ID": str(branch.id)})
+    assert response.status_code == 200
+    assert security_gate.code in {g["code"] for g in response.json()["data"]}
+
+
+async def test_list_security_gates_unknown_branch_header_404(
+    client: AsyncClient, tenant: Tenant
+) -> None:
+    response = await client.get(
+        "/api/v1/security-gates", headers={"X-Branch-ID": str(uuid.uuid4())}
+    )
+    assert response.status_code == 404
+
+
+async def test_list_security_gates_without_branch_header_includes_every_branch(
     client: AsyncClient,
     db_session: AsyncSession,
-    user_scoped_to_branch: User,
+    tenant: Tenant,
     security_gate: SecurityGate,
     branch: Branch,
 ) -> None:
-    """`security_gate` belongs to `branch`; a gate created directly under a
-    different branch must never show up in the branch-scoped caller's list
-    — the list-endpoint counterpart of
-    `test_create_security_gate_denied_for_user_scoped_elsewhere`.
+    """Listing no longer requires `gates:view`, so omitting `X-Branch-ID`
+    now returns every branch's gates — superseding the pre-public-listing
+    behavior this test used to assert.
     """
     other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-GATE")
     db_session.add(other_branch)
@@ -1721,14 +1981,11 @@ async def test_list_security_gates_excludes_other_branch(
     db_session.add(other_gate)
     await db_session.commit()
 
-    token = await _login(client, user_scoped_to_branch.email)
-    response = await client.get(
-        "/api/v1/security-gates", headers={"Authorization": f"Bearer {token}"}
-    )
+    response = await client.get("/api/v1/security-gates")
     assert response.status_code == 200
     codes = {g["code"] for g in response.json()["data"]}
     assert security_gate.code in codes
-    assert other_gate.code not in codes
+    assert other_gate.code in codes
 
 
 async def test_get_security_gate_success(

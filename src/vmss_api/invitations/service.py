@@ -18,6 +18,7 @@ from vmss_api.invitations.schemas import (
     InvitationSortableField,
     RegistrationSource,
 )
+from vmss_api.org_structure.repository import CompanyRepository
 from vmss_api.tenant.models import Tenant
 
 
@@ -62,11 +63,15 @@ async def create_invitation(
     source: RegistrationSource = RegistrationSource.staff_pre_registration,
 ) -> Invitation:
     """API-09 (and, via `source=visitor_walk_in`, API-13). Creates a fully
-    populated, immediately-`submitted` invitation in a single call — the
-    validation, ID-proof storage, and child-row construction that used to
-    happen in a separate self-registration step (API-10, now removed) happen
-    here instead (design.md Decisions 1 and 2). Generates the human-readable
-    expiry-bound tracking ID and enqueues the visit-confirmation dispatch
+    populated invitation in a single call — the validation, ID-proof
+    storage, and child-row construction that used to happen in a separate
+    self-registration step (API-10, now removed) happen here instead
+    (design.md Decisions 1 and 2). Generates the human-readable expiry-bound
+    tracking ID and, depending on whether the tenant's Company profile
+    auto-approves pre-registered visitors, either resolves the invitation
+    as `approved` right away or leaves it `submitted` (awaiting approval)
+    — see `add-invitation-approval-flow-and-role-resync/design.md` Decision
+    1. Either way, the corresponding notification is enqueued
     (API-11) — never sent inline (`background-jobs.md` §5).
 
     `created_by_user_id` is `None` for a walk-in registration — there is no
@@ -91,6 +96,16 @@ async def create_invitation(
     expires_at = now + timedelta(hours=settings.invitation_token_ttl_hours)
     max_size = settings.invitation_max_upload_size_bytes
 
+    # Resolved once, at creation, rather than recomputed later — an
+    # invitation's approval state is a stable, recorded fact of what
+    # actually happened (design.md Decision 1). Defaults to the more
+    # conservative "awaiting approval" path when no Company profile is
+    # configured yet, matching the column's own default.
+    company = await CompanyRepository(tenant_db).get_singleton()
+    auto_approved = company is not None and company.auto_approve_pre_registered_visitors
+    initial_status = "approved" if auto_approved else "submitted"
+    approved_at = now if auto_approved else None
+
     # Validate every file before persisting any of them (spec.md "Each Visitor
     # Has at Least One Reachable Contact and an ID Proof") — otherwise a later
     # visitor's invalid file would abort the request after an earlier
@@ -110,10 +125,11 @@ async def create_invitation(
         created_by_user_id=created_by_user_id,
         source=source.value,
         registration_type=payload.registration_type.value,
-        status="submitted",
+        status=initial_status,
         tracking_id=tracking_id,
         expires_at=expires_at,
         submitted_at=now,
+        approved_at=approved_at,
         primary_contact_full_name=payload.primary_contact.full_name,
         primary_contact_email=payload.primary_contact.email,
         primary_contact_phone=payload.primary_contact.phone,
@@ -173,12 +189,49 @@ async def create_invitation(
     created = await repo.get_with_children(invitation.id)
     assert created is not None  # just committed; guaranteed to exist
 
-    tasks.send_visit_confirmation.delay(
+    notification_task = (
+        tasks.send_approval_notification if auto_approved else tasks.send_tracking_notification
+    )
+    notification_task.delay(
         request_id=_current_request_id(),
         tenant_schema=tenant.schema_name,
         invitation_id=str(invitation.id),
     )
     return created
+
+
+async def get_invitation(tenant_db: AsyncSession, invitation_id: uuid.UUID) -> Invitation:
+    """Plain by-id fetch, no eager-loaded children — used by
+    `POST /invitations/{id}/approve` to resolve the invitation's own
+    `branch_id` for `authorize_branch_id` before the state transition.
+    """
+    invitation = await InvitationRepository(tenant_db).get(invitation_id)
+    if invitation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    return invitation
+
+
+async def approve_invitation(
+    tenant_db: AsyncSession, invitation: Invitation, *, tenant: Tenant
+) -> Invitation:
+    """Transitions a `submitted` invitation to `approved` and enqueues the
+    approval notification (`add-invitation-approval-flow-and-role-resync/
+    design.md` Decision 3), mirroring `create_invitation`'s own
+    dispatch-after-commit pattern. `router.py` fetches `invitation` and
+    resolves branch authorization (404/403) before calling this — a
+    not-found or unauthorized invitation never reaches here.
+    """
+    if invitation.status != "submitted":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not awaiting approval")
+    invitation.status = "approved"
+    invitation.approved_at = datetime.now(UTC)
+    await tenant_db.commit()
+    tasks.send_approval_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(invitation.id),
+    )
+    return invitation
 
 
 async def track_by_tracking_id(tenant_db: AsyncSession, tracking_id: str) -> Invitation:

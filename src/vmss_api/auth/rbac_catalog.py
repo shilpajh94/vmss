@@ -47,6 +47,7 @@ PERMISSION_CODES = [
     "invitations:create",
     "invitations:view",
     "invitations:cancel",
+    "invitations:approve",
     "roles:manage",
     "roles:view",
 ]
@@ -60,17 +61,32 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     "admin": PERMISSION_CODES,
     "reception": [
         "branches:view",
+        "buildings:view",
+        "departments:view",
+        "employees:view",
         "desks:view",
         "visitor-categories:view",
         "invitations:create",
         "invitations:view",
+        "invitations:approve",
     ],
-    "security": ["branches:view", "gates:view", "invitations:view"],
+    "security": [
+        "branches:view",
+        "buildings:view",
+        "departments:view",
+        "employees:view",
+        "gates:view",
+        "invitations:view",
+    ],
     "host": [
         "branches:view",
+        "buildings:view",
+        "departments:view",
+        "employees:view",
         "visitor-categories:view",
         "invitations:create",
         "invitations:view",
+        "invitations:approve",
     ],
     # Exists only so the catalog literally lists all five names API-02
     # requires. Visitors never authenticate through this JWT/RBAC system

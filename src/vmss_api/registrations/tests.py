@@ -114,7 +114,7 @@ async def _create_walk_in(
 
 async def _create_walk_in_success(
     client: AsyncClient,
-    device_key: str,
+    device_key: str | None,
     *,
     payload: dict,
     visitor_file_count: int = 0,
@@ -179,6 +179,7 @@ async def test_walk_in_registration_response_has_no_check_in_state(
         "status",
         "expiresAt",
         "submittedAt",
+        "approvedAt",
     }
 
 
@@ -230,7 +231,45 @@ async def test_walk_in_registration_oversized_file_rejected(
 # --- Device-auth-denied (testing-standards.md §2's permission-denied case) ---
 
 
-async def test_walk_in_registration_missing_device_key_rejected(client: AsyncClient) -> None:
+async def test_walk_in_registration_missing_device_key_falls_back_to_default_tenant_success(
+    client: AsyncClient, tenant: Tenant, branch: Branch, monkeypatch
+) -> None:
+    """`X-Device-Key` is optional (`registrations/deps.py::_resolve_default_device_context`)
+    — omitting it resolves tenant/branch from server config instead of
+    rejecting outright, the same `default_tenant_slug` pattern
+    `identity_verification`/`invitations.track` already use for their public
+    endpoints.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", "acme-test")
+    monkeypatch.setattr(settings, "registration_default_branch_code", branch.code)
+
+    data = await _create_walk_in_success(client, None, payload=_individual_payload())
+    assert data["source"] == "visitor_walk_in"
+    assert data["status"] == "submitted"
+
+
+async def test_walk_in_registration_missing_device_key_no_default_tenant_rejected(
+    client: AsyncClient,
+) -> None:
+    """No `X-Device-Key` and no `default_tenant_slug` match in this schema
+    (the test tenant's slug is `acme-test`, not `settings.default_tenant_slug`'s
+    unmodified default) — the fallback must still reject rather than resolve
+    to nothing.
+    """
+    response = await _create_walk_in(client, None, payload=_individual_payload())
+    assert response.status_code == 401
+
+
+async def test_walk_in_registration_missing_device_key_no_default_branch_rejected(
+    client: AsyncClient, tenant: Tenant, branch: Branch, monkeypatch
+) -> None:
+    """The default tenant resolves, but no branch matches
+    `registration_default_branch_code` — must still reject, not fall through
+    to an unscoped branch.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", "acme-test")
+    monkeypatch.setattr(settings, "registration_default_branch_code", "NO-SUCH-BRANCH")
+
     response = await _create_walk_in(client, None, payload=_individual_payload())
     assert response.status_code == 401
 
@@ -281,7 +320,9 @@ async def test_walk_in_registration_idempotency_key_replay(
     client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession, monkeypatch
 ) -> None:
     calls: list[dict] = []
-    monkeypatch.setattr(tasks.send_visit_confirmation, "delay", lambda **kw: calls.append(kw))
+    # No `Company` profile is configured for this test tenant, so creation
+    # resolves to `submitted` (awaiting approval), not `approved`.
+    monkeypatch.setattr(tasks.send_tracking_notification, "delay", lambda **kw: calls.append(kw))
 
     idempotency_key = "walk-in-retry-key-1"
     first = await _create_walk_in_success(

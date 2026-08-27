@@ -55,8 +55,13 @@ def _stub_visit_confirmation_dispatch(monkeypatch):
     """Matches the pattern `invitations/tests.py` already uses: the
     confirmation email is a Celery task dispatch, not something this chain
     needs to actually deliver to assert the workflow composes correctly.
+    Stubs both notification tasks — no `Company` profile is configured in
+    this chain, so creation resolves to `submitted` (`send_tracking_notification`),
+    but stubbing `send_approval_notification` too keeps this fixture correct
+    if that ever changes.
     """
-    monkeypatch.setattr(tasks.send_visit_confirmation, "delay", lambda **kw: None)
+    monkeypatch.setattr(tasks.send_tracking_notification, "delay", lambda **kw: None)
+    monkeypatch.setattr(tasks.send_approval_notification, "delay", lambda **kw: None)
 
 
 class _RecordingEmailSender:

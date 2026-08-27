@@ -88,6 +88,29 @@ async def resolve_floor_branch_id(tenant_db: AsyncSession, floor_id: uuid.UUID) 
     return await resolve_building_branch_id(tenant_db, floor.building_id)
 
 
+async def _resolve_building_branch_id_tolerant(
+    tenant_db: AsyncSession, building_id: uuid.UUID
+) -> uuid.UUID | None:
+    """Same as `resolve_building_branch_id`, but tolerates the building
+    itself having been soft-deleted — for resolving the branch of an
+    *existing* Floor/desk whose own row was never deleted, so it doesn't
+    become a permanent 404 the moment an ancestor is removed. Never use this
+    for create-time validation, where a soft-deleted parent must still be
+    treated as absent.
+    """
+    building = await BuildingRepository(tenant_db).get_including_deleted(building_id)
+    return building.branch_id if building is not None else None
+
+
+async def _resolve_floor_branch_id_tolerant(
+    tenant_db: AsyncSession, floor_id: uuid.UUID
+) -> uuid.UUID | None:
+    floor = await FloorRepository(tenant_db).get_including_deleted(floor_id)
+    if floor is None:
+        return None
+    return await _resolve_building_branch_id_tolerant(tenant_db, floor.building_id)
+
+
 # --- Company (singleton) -----------------------------------------------
 
 
@@ -160,19 +183,39 @@ async def create_branch(tenant_db: AsyncSession, payload: BranchCreate) -> Branc
 async def list_branches_page(
     tenant_db: AsyncSession,
     *,
+    branch_scope: BranchScope,
     page: int,
     page_size: int,
     sort_by: str,
     sort_order: SortOrder,
 ) -> tuple[list[Branch], int]:
     return await BranchRepository(tenant_db).list_page(
-        page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+        branch_scope=branch_scope,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 
-async def get_branch(tenant_db: AsyncSession, branch_id: uuid.UUID) -> Branch:
+async def _get_branch_or_404(tenant_db: AsyncSession, branch_id: uuid.UUID) -> Branch:
     branch = await BranchRepository(tenant_db).get(branch_id)
     if branch is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Branch not found")
+    return branch
+
+
+async def get_branch(
+    tenant_db: AsyncSession, branch_id: uuid.UUID, user: User, permission_code: str
+) -> Branch:
+    """`permission_code` check mirrors `get_building`'s pattern: a
+    branch-scoped role only holds `branches:view` at its own branch(es), so
+    checking it here (rather than the blanket, company-wide-only
+    `require_permission` the route used to depend on) is what lets a
+    non-admin caller see the one branch they belong to at all.
+    """
+    branch = await _get_branch_or_404(tenant_db, branch_id)
+    if not user.has_permission(permission_code, branch_id=branch.id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Branch not found")
     return branch
 
@@ -180,7 +223,12 @@ async def get_branch(tenant_db: AsyncSession, branch_id: uuid.UUID) -> Branch:
 async def update_branch(
     tenant_db: AsyncSession, branch_id: uuid.UUID, payload: BranchUpdate
 ) -> Branch:
-    branch = await get_branch(tenant_db, branch_id)
+    """No permission re-check here: the route's `branches:manage` dependency
+    is deliberately company-wide-only (see `router.py`'s "Company-wide only,
+    not branch-scoped" note), so by the time this runs the caller is already
+    known to be authorized for every branch.
+    """
+    branch = await _get_branch_or_404(tenant_db, branch_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(branch, field, value)
     await tenant_db.commit()
@@ -190,7 +238,7 @@ async def update_branch(
 
 async def delete_branch(tenant_db: AsyncSession, branch_id: uuid.UUID) -> None:
     repo = BranchRepository(tenant_db)
-    branch = await get_branch(tenant_db, branch_id)
+    branch = await _get_branch_or_404(tenant_db, branch_id)
     await repo.soft_delete(branch)
     await tenant_db.commit()
 
@@ -485,7 +533,7 @@ async def get_floor(
     floor = await FloorRepository(tenant_db).get(floor_id)
     if floor is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
-    branch_id = await resolve_building_branch_id(tenant_db, floor.building_id)
+    branch_id = await _resolve_building_branch_id_tolerant(tenant_db, floor.building_id)
     if branch_id is None or not user.has_permission(permission_code, branch_id=branch_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
     return floor
@@ -656,7 +704,7 @@ async def get_reception_desk(
     desk = await ReceptionDeskRepository(tenant_db).get(desk_id)
     if desk is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Desk not found")
-    branch_id = await resolve_floor_branch_id(tenant_db, desk.floor_id)
+    branch_id = await _resolve_floor_branch_id_tolerant(tenant_db, desk.floor_id)
     if branch_id is None or not user.has_permission(permission_code, branch_id=branch_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Desk not found")
     return desk

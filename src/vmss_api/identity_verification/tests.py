@@ -3,10 +3,12 @@ import re
 import time
 import uuid
 
+import aiosmtplib
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from structlog.testing import capture_logs
 from twilio.base.exceptions import TwilioRestException
 
 from factories import TenantFactory
@@ -196,6 +198,71 @@ async def test_request_otp_twilio_failure_returns_503_without_leaking_detail(
     )
     assert second.status_code == 503
     assert attempts["n"] == 2
+
+
+async def test_request_otp_smtp_failure_returns_503_without_leaking_detail(
+    client: AsyncClient, tenant: Tenant, monkeypatch
+) -> None:
+    class _FailingEmailSender:
+        async def send(self, **kwargs) -> None:
+            raise senders.EmailDispatchError("Email dispatch failed")
+
+    monkeypatch.setattr(senders, "email_sender", _FailingEmailSender())
+
+    idempotency_key = str(uuid.uuid4())
+    identifier = _unique_email()
+    payload = {"identifier": identifier, "channel": "email"}
+
+    first = await client.post(
+        "/api/v1/identity-verification/otp/request",
+        json=payload,
+        headers={"Idempotency-Key": idempotency_key},
+    )
+    assert first.status_code == 503
+
+    # Deliberately NOT cached, same as the Twilio-failure case — a retry
+    # with the same key re-attempts dispatch instead of replaying the same
+    # SMTP-side failure forever.
+    recorder = _RecordingSender()
+    monkeypatch.setattr(senders, "email_sender", recorder)
+
+    second = await client.post(
+        "/api/v1/identity-verification/otp/request",
+        json=payload,
+        headers={"Idempotency-Key": idempotency_key},
+    )
+    assert second.status_code == 200
+    assert len(recorder.calls) == 1
+
+
+async def test_smtp_dispatch_failure_logs_host_port_and_exception_type(monkeypatch) -> None:
+    """`fix-public-org-listings-and-email-diagnostics/design.md` Decision 3
+    — a dispatch failure now logs enough detail (SMTP host/port, the
+    underlying exception's type) to root-cause a dev-server-only failure
+    without reproducing it locally, while never leaking credentials or the
+    OTP code itself.
+    """
+
+    async def _raise(*args, **kwargs) -> None:
+        raise aiosmtplib.SMTPConnectError("Connection refused")
+
+    monkeypatch.setattr(aiosmtplib, "send", _raise)
+    monkeypatch.setattr(settings, "smtp_username", "should-never-appear")
+    monkeypatch.setattr(settings, "smtp_password", "super-secret-password")  # noqa: S105
+
+    sender = senders.SmtpEmailSender()
+    with capture_logs() as captured, pytest.raises(senders.EmailDispatchError):
+        await sender.send(to=_unique_email(), subject="Your code", body="Your code is 654321")
+
+    [entry] = [e for e in captured if e["event"] == "smtp_email_dispatch_failed"]
+    assert entry["smtp_host"] == settings.smtp_host
+    assert entry["smtp_port"] == settings.smtp_port
+    assert entry["exception_type"] == "SMTPConnectError"
+
+    log_text = str(captured)
+    assert "should-never-appear" not in log_text
+    assert "super-secret-password" not in log_text
+    assert "654321" not in log_text
 
 
 async def test_request_otp_gateway_not_configured_response_is_cached(

@@ -22,7 +22,11 @@ from vmss_api.identity_verification.schemas import (
     OtpVerifyIn,
     OtpVerifyOut,
 )
-from vmss_api.identity_verification.senders import GatewayNotConfiguredError, SmsDispatchError
+from vmss_api.identity_verification.senders import (
+    EmailDispatchError,
+    GatewayNotConfiguredError,
+    SmsDispatchError,
+)
 
 router = APIRouter(prefix="/identity-verification", tags=["identity-verification"])
 
@@ -105,10 +109,10 @@ async def request_otp(
         )
         await _cache_response(tenant_id, idempotency_key, response)
         return response
-    except SmsDispatchError:
+    except (SmsDispatchError, EmailDispatchError):
         # Transient (design.md's Idempotency-Key refinement) — deliberately
         # NOT cached, so a retry with the same key re-attempts dispatch
-        # instead of replaying a Twilio-side failure forever.
+        # instead of replaying a gateway-side failure forever.
         return error_response(
             "This delivery channel is temporarily unavailable",
             status.HTTP_503_SERVICE_UNAVAILABLE,

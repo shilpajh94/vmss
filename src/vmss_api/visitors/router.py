@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,10 +14,12 @@ from vmss_api.core.deps import (
     get_tenant_db,
     require_permission,
 )
+from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
 from vmss_api.core.schemas import Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.tenant.models import Tenant
 from vmss_api.visitors import service
+from vmss_api.visitors.deps import public_tenant_db
 from vmss_api.visitors.schemas import (
     ApprovalWorkflowRuleCreate,
     ApprovalWorkflowRuleOut,
@@ -94,14 +96,20 @@ async def create_visitor_category(
 @category_router.get(
     "",
     response_model=PaginatedEnvelope[VisitorCategoryOut],
-    dependencies=[Depends(require_permission("visitor-categories:view"))],
 )
+@limiter.limit("60/minute")
 async def list_visitor_categories(
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    request: Request,
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     sort_by: Annotated[VisitorCategorySortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
+    """Public — no bearer token, no permission check
+    (security-architecture.md §2's public-endpoint posture, same rationale
+    as `org_structure/router.py::list_branches`): the pre-registration form
+    needs to render a category picker before a visitor authenticates.
+    """
     page, page_size = pagination
     categories, total = await service.list_visitor_categories_page(
         tenant_db, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order

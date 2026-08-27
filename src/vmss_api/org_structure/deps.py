@@ -1,16 +1,25 @@
 import uuid
+from collections.abc import AsyncGenerator
 from typing import Annotated
 
 import structlog
 from fastapi import Depends, Header, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import User
+from vmss_api.core.config import settings
+from vmss_api.core.database import get_db, tenant_session_scope
 from vmss_api.core.deps import get_current_user, get_tenant_db
 from vmss_api.core.logging import logger
 from vmss_api.core.schemas import BranchScope
+from vmss_api.core.security import decode_token
 from vmss_api.org_structure.models import Branch
 from vmss_api.org_structure.repository import BranchRepository
+from vmss_api.tenant.models import Tenant
+from vmss_api.tenant.repository import TenantRepository
+
+_optional_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_branch_context(
@@ -116,3 +125,72 @@ def require_branch_scope(permission_code: str):
         return scope
 
     return _check
+
+
+async def _tenant_from_bearer_token(
+    db: AsyncSession, credentials: HTTPAuthorizationCredentials
+) -> Tenant | None:
+    """Best-effort tenant resolution from an optionally-presented token —
+    never raises: an absent, malformed, expired, or otherwise unusable
+    token simply yields `None` so the caller falls back to the default
+    tenant, per spec.md's "An expired or invalid token no longer blocks
+    listing".
+    """
+    try:
+        payload = decode_token(credentials.credentials)
+    except HTTPException:
+        return None
+    if payload.get("type") != "access":
+        return None
+    raw_tenant_id = payload.get("tenant_id")
+    if raw_tenant_id is None:
+        return None
+    try:
+        tenant_id = uuid.UUID(raw_tenant_id)
+    except ValueError:
+        return None
+    return await TenantRepository(db).get(tenant_id)
+
+
+async def public_tenant_db(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(_optional_bearer_scheme)
+    ] = None,
+) -> AsyncGenerator[AsyncSession]:
+    """Tenant resolution for org-structure's public listing endpoints.
+
+    Prefers the caller's own tenant when a valid access token is presented
+    — so an authenticated multi-tenant caller lists their own org-structure
+    data, not the deployment's default tenant (`test_staff_admin_full_workflow`
+    is exactly this case: an admin of a freshly-provisioned, non-default
+    tenant listing its own branches). Falls back to
+    `settings.default_tenant_slug` — mirroring
+    `invitations/deps.py::track_default_tenant_db` and
+    `identity_verification/deps.py::default_tenant_id`'s same known
+    single-tenant limitation — when no token is presented, or it doesn't
+    resolve to a real, active tenant.
+    """
+    tenant = await _tenant_from_bearer_token(db, credentials) if credentials is not None else None
+    if tenant is None:
+        tenant = await TenantRepository(db).get_by_slug(settings.default_tenant_slug)
+    if tenant is None or not tenant.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Tenant not found or inactive")
+    async with tenant_session_scope(tenant.schema_name) as session:
+        yield session
+
+
+async def public_branch_scope(
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
+    x_branch_id: Annotated[uuid.UUID | None, Header(alias="X-Branch-ID")] = None,
+) -> BranchScope:
+    """Public counterpart to `require_branch_scope` — no caller, so no
+    permission check: `X-Branch-ID` narrows to that one branch when
+    supplied, otherwise every branch in the tenant is in scope.
+    """
+    if x_branch_id is not None:
+        branch = await BranchRepository(tenant_db).get(x_branch_id)
+        if branch is None or not branch.is_active:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found")
+        return frozenset({branch.id})
+    return "all"
