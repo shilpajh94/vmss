@@ -294,6 +294,32 @@ async def test_walk_in_registration_missing_device_key_no_default_tenant_rejecte
 
     [entry] = [e for e in captured if e["event"] == "registration_default_tenant_unconfigured"]
     assert entry["log_level"] == "error"
+    assert entry["reason"] == "not_found"
+
+
+async def test_walk_in_registration_missing_device_key_default_tenant_inactive_rejected(
+    client: AsyncClient, tenant: Tenant, db_session: AsyncSession, monkeypatch
+) -> None:
+    """The default tenant slug matches, but the tenant row is inactive — a
+    distinct cause from "no such tenant" (spec.md's misconfiguration
+    scenario), so it must be logged with `reason="inactive"` while keeping
+    the same client-facing 401 message and ERROR log level.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", tenant.slug)
+    await db_session.execute(update(Tenant).where(Tenant.id == tenant.id).values(is_active=False))
+    await db_session.commit()
+
+    with capture_logs() as captured:
+        response = await _create_walk_in(client, None, payload=_individual_payload())
+
+    assert response.status_code == 401
+    assert (
+        response.json()["message"] == "Registration service is not configured for this environment"
+    )
+
+    [entry] = [e for e in captured if e["event"] == "registration_default_tenant_unconfigured"]
+    assert entry["log_level"] == "error"
+    assert entry["reason"] == "inactive"
 
 
 async def test_walk_in_registration_missing_device_key_no_default_branch_rejected(
@@ -318,6 +344,37 @@ async def test_walk_in_registration_missing_device_key_no_default_branch_rejecte
     [entry] = [e for e in captured if e["event"] == "registration_default_branch_unconfigured"]
     assert entry["log_level"] == "error"
     assert entry["branch_code"] == "NO-SUCH-BRANCH"
+    assert entry["reason"] == "not_found"
+
+
+async def test_walk_in_registration_missing_device_key_default_branch_inactive_rejected(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    """The default tenant and default branch code both resolve, but the
+    branch row is inactive — a distinct cause from "no such branch", so it
+    must be logged with `reason="inactive"` while keeping the same
+    client-facing 401 message and ERROR log level.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", tenant.slug)
+    monkeypatch.setattr(settings, "registration_default_branch_code", branch.code)
+    await db_session.execute(update(Branch).where(Branch.id == branch.id).values(is_active=False))
+    await db_session.commit()
+
+    with capture_logs() as captured:
+        response = await _create_walk_in(client, None, payload=_individual_payload())
+
+    assert response.status_code == 401
+    assert (
+        response.json()["message"] == "Registration service is not configured for this environment"
+    )
+
+    [entry] = [e for e in captured if e["event"] == "registration_default_branch_unconfigured"]
+    assert entry["log_level"] == "error"
+    assert entry["reason"] == "inactive"
 
 
 async def test_walk_in_registration_invalid_device_key_rejected(
