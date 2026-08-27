@@ -243,6 +243,7 @@ def _to_invitation_out(invitation) -> InvitationOut:
         status=invitation.status,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
+        approved_at=invitation.approved_at,
     )
 
 
@@ -257,6 +258,7 @@ def _to_list_item_out(invitation) -> InvitationListItemOut:
         purpose_of_visit=invitation.purpose_of_visit,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
+        approved_at=invitation.approved_at,
     )
 
 
@@ -278,6 +280,7 @@ def _to_tracking_out(invitation) -> InvitationTrackingOut:
         carried_items_description=invitation.carried_items_description,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
+        approved_at=invitation.approved_at,
         visitors=[
             InvitationVisitorOut(
                 id=v.id,
@@ -438,6 +441,38 @@ async def create_invitation(
     )
     await _cache_response(tenant.id, idempotency_key, response)
     return response
+
+
+# --- Manual approval ----------------------------------------------------------
+
+
+@router.post(
+    "/{invitation_id}/approve",
+    response_model=Envelope[InvitationOut],
+)
+async def approve_invitation(
+    invitation_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Transitions a `submitted` invitation to `approved` and dispatches
+    the QR-bearing approval notification at that point
+    (`add-invitation-approval-flow-and-role-resync/design.md` Decision 3).
+    """
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id(tenant_db, user, "invitations:approve", invitation.branch_id)
+    invitation = await service.approve_invitation(tenant_db, invitation, tenant=tenant)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_approved",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    return success_response(data=_to_invitation_out(invitation))
 
 
 # --- Employee listing ---------------------------------------------------------
