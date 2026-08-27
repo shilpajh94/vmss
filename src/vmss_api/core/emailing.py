@@ -11,6 +11,7 @@ from typing import Protocol
 import aiosmtplib
 
 from vmss_api.core.config import settings
+from vmss_api.core.logging import logger
 
 
 class Attachment(Protocol):
@@ -66,14 +67,27 @@ class SmtpEmailSender:
         # an empty-but-set credential must be treated the same as unset.
         username = settings.smtp_username or None
         password = settings.smtp_password or None
-        await aiosmtplib.send(
-            message,
-            hostname=settings.smtp_host,
-            port=settings.smtp_port,
-            username=username,
-            password=password,
-            start_tls=settings.smtp_use_tls,
-        )
+        try:
+            await aiosmtplib.send(
+                message,
+                hostname=settings.smtp_host,
+                port=settings.smtp_port,
+                username=username,
+                password=password,
+                start_tls=settings.smtp_use_tls,
+            )
+        except aiosmtplib.SMTPException as exc:
+            # No recipient address here — the enqueuing task already binds
+            # tenant/invitation context (logging-observability.md §2), and
+            # that's enough to locate the record without logging PII.
+            logger.warning(
+                "smtp_email_dispatch_failed",
+                smtp_host=settings.smtp_host,
+                smtp_port=settings.smtp_port,
+                exception_type=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
 
 
 email_sender: EmailSender = SmtpEmailSender()

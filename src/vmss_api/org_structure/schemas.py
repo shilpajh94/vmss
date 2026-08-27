@@ -234,21 +234,13 @@ class GateType(StrEnum):
     both = "both"
 
 
-class GateConnectivityStatus(StrEnum):
-    online = "online"
-    maintenance = "maintenance"
-    offline = "offline"
-
-
 class SecurityGateCreate(CamelModel):
     branch_id: uuid.UUID
     building_id: uuid.UUID | None = None
     name: str = Field(max_length=255)
     code: str = Field(max_length=50)
     gate_type: GateType = GateType.both
-    connectivity_status: GateConnectivityStatus = GateConnectivityStatus.online
     high_security: bool = False
-    auth_method: str | None = Field(default=None, max_length=100)
 
 
 class SecurityGateUpdate(CamelModel):
@@ -256,9 +248,7 @@ class SecurityGateUpdate(CamelModel):
     code: str | None = Field(default=None, max_length=50)
     building_id: uuid.UUID | None = None
     gate_type: GateType | None = None
-    connectivity_status: GateConnectivityStatus | None = None
     high_security: bool | None = None
-    auth_method: str | None = Field(default=None, max_length=100)
 
 
 class SecurityGateOut(CamelModel):
@@ -268,9 +258,7 @@ class SecurityGateOut(CamelModel):
     name: str
     code: str
     gate_type: str
-    connectivity_status: str
     high_security: bool
-    auth_method: str | None
 
 
 # --- Branch provisioning (bulk bootstrap) ---------------------------------

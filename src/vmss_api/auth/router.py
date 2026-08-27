@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 from fastapi.responses import JSONResponse
+from pydantic import EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth import service
@@ -41,7 +42,7 @@ from vmss_api.core.deps import (
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
-from vmss_api.org_structure.deps import public_tenant_db, require_branch_scope
+from vmss_api.org_structure.deps import public_branch_scope, public_tenant_db
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -259,25 +260,37 @@ async def create_employee(
     "/employees",
     response_model=PaginatedEnvelope[EmployeeOut],
 )
+@limiter.limit("60/minute")
 async def list_employees(
-    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("employees:view"))],
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    request: Request,
+    branch_scope: Annotated[BranchScope, Depends(public_branch_scope)],
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     department_id: Annotated[uuid.UUID | None, Query(alias="departmentId")] = None,
+    email: Annotated[EmailStr | None, Query()] = None,
+    role: Annotated[str | None, Query(max_length=100)] = None,
     sort_by: Annotated[EmployeeSortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
-    """`X-Branch-ID` is optional: scopes to that one branch when supplied,
-    otherwise to every branch the caller holds `employees:view` at.
-    Employees are matched to a branch via `department_id -> Department ->
-    Floor -> Building`; an employee with no department assigned is not
-    visible here — see `auth/repository.py::UserRepository.list_employees_page`.
+    """No bearer token or permission required: tenant resolves from a
+    presented access token when valid, otherwise `settings.default_tenant_slug`
+    (`org_structure/deps.py::public_tenant_db`/`public_branch_scope`, the
+    same mechanism already used by the public org-structure listing
+    endpoints). Rate-limited by client IP (60/minute), consistent with
+    every other unauthenticated endpoint (`security-architecture.md` §2).
+    `X-Branch-ID` is optional: scopes to that one branch when supplied,
+    otherwise every branch in the resolved tenant. Employees are matched to
+    a branch via `department_id -> Department -> Floor -> Building`; an
+    employee with no department assigned is not visible here — see
+    `auth/repository.py::UserRepository.list_employees_page`.
     """
     page, page_size = pagination
     employees, total = await service.list_employees(
         tenant_db,
         branch_scope=branch_scope,
         department_id=department_id,
+        email=email,
+        role=role,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

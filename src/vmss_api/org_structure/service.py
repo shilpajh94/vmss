@@ -757,7 +757,6 @@ async def create_security_gate(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Gate code already exists")
     data = payload.model_dump()
     data["gate_type"] = data["gate_type"].value
-    data["connectivity_status"] = data["connectivity_status"].value
     gate = SecurityGate(id=uuid.uuid4(), **data)
     tenant_db.add(gate)
     await _commit_or_conflict(tenant_db, "Gate code already exists")
@@ -816,8 +815,6 @@ async def update_security_gate(
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Building not found")
     if "gate_type" in changes and changes["gate_type"] is not None:
         changes["gate_type"] = changes["gate_type"].value
-    if "connectivity_status" in changes and changes["connectivity_status"] is not None:
-        changes["connectivity_status"] = changes["connectivity_status"].value
     for field, value in changes.items():
         setattr(gate, field, value)
     await _commit_or_conflict(tenant_db, "Gate code already exists")

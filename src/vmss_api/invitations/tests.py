@@ -5,12 +5,14 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
+import aiosmtplib
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, Response
 from PIL import Image
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from structlog.testing import capture_logs
 
 from factories import (
     CompanyFactory,
@@ -1109,6 +1111,37 @@ async def test_send_approval_notification_exhausted_retries_logs_error(monkeypat
     )
     assert result.failed()
     assert logged and logged[0][0] == "approval_notification_dispatch_exhausted"
+
+
+async def test_smtp_dispatch_failure_logs_host_port_and_exception_type(monkeypatch) -> None:
+    """`fix-email-dispatch-diagnosability/design.md` — a dispatch failure now
+    logs enough detail (SMTP host/port, the underlying exception's type) to
+    root-cause a dev-server-only failure without reproducing it locally,
+    mirroring `identity_verification/senders.py`'s existing coverage of the
+    same behavior. No recipient address is logged (invitations/tasks.py
+    already binds tenant/invitation context for locating the record).
+    """
+
+    async def _raise(*args, **kwargs) -> None:
+        raise aiosmtplib.SMTPConnectError("Connection refused")
+
+    monkeypatch.setattr(aiosmtplib, "send", _raise)
+    monkeypatch.setattr(settings, "smtp_username", "should-never-appear")
+    monkeypatch.setattr(settings, "smtp_password", "super-secret-password")  # noqa: S105
+
+    sender = notifications.SmtpEmailSender()
+    with capture_logs() as captured, pytest.raises(aiosmtplib.SMTPConnectError):
+        await sender.send(to="visitor@example.com", subject="Your visit confirmation", body="body")
+
+    [entry] = [e for e in captured if e["event"] == "smtp_email_dispatch_failed"]
+    assert entry["smtp_host"] == settings.smtp_host
+    assert entry["smtp_port"] == settings.smtp_port
+    assert entry["exception_type"] == "SMTPConnectError"
+
+    log_text = str(captured)
+    assert "should-never-appear" not in log_text
+    assert "super-secret-password" not in log_text
+    assert "visitor@example.com" not in log_text
 
 
 # --- Real dispatch verification (against DDEV's Mailpit, not a fake sender) ---
