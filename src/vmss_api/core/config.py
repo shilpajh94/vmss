@@ -150,12 +150,12 @@ class Settings(BaseSettings):
     # Defaults point at a local dev mail-catcher (e.g. mailhog/mailpit) so a
     # fresh checkout doesn't need a real mail server to send/queue without
     # erroring.
-    smtp_host: str = Field(default="localhost", alias="MAIL_HOST")
-    smtp_port: int = Field(default=1025, alias="MAIL_PORT")
-    smtp_username: str | None = Field(default=None, alias="MAIL_USERNAME")
-    smtp_password: str | None = Field(default=None, alias="MAIL_PASSWORD")
-    smtp_use_tls: bool = Field(default=False, alias="MAIL_USE_TLS")
-    smtp_from_address: str = Field(default="no-reply@vmss.local", alias="MAIL_FROM_ADDRESS")
+    smtp_host: str = Field(default="localhost", alias="SMTP_HOST")
+    smtp_port: int = Field(default=1025, alias="SMTP_PORT")
+    smtp_username: str | None = Field(default=None, alias="SMTP_USERNAME")
+    smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
+    smtp_use_tls: bool = Field(default=False, alias="SMTP_USE_TLS")
+    smtp_from_address: str = Field(default="no-reply@vmss.local", alias="SMTP_FROM_ADDRESS")
 
     # SMS gateway — no vendor chosen yet (design.md Open Questions); these are
     # placeholders the `SmsSender` adapter reads once one is picked. Left
