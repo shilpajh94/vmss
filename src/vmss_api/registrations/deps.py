@@ -7,7 +7,7 @@ of a bearer token. See add-walkin-visitor-registration/design.md Decision 3.
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Annotated, NoReturn
+from typing import Annotated, Literal, NoReturn
 
 import structlog
 from fastapi import Depends, Header, HTTPException, status
@@ -33,13 +33,20 @@ _INVALID_DEVICE_KEY_DETAIL = "Invalid device credential"
 _DEFAULT_UNCONFIGURED_DETAIL = "Registration service is not configured for this environment"
 
 
-def _reject_unconfigured_default(event: str, **fields: str) -> NoReturn:
+def _reject_unconfigured_default(
+    event: str, *, reason: Literal["not_found", "inactive"], **fields: str
+) -> NoReturn:
     """Shared by both `_resolve_default_device_context` failure branches
     (no default tenant, no default branch) — a server-side configuration
     gap, not a property of the caller's request, so it's always logged at
     `ERROR` (per `logging-observability.md` §3) with the same 401 detail.
+
+    `reason` distinguishes "no such row exists" from "the row exists but is
+    inactive" so an operator can tell from the log alone whether the fix is
+    provisioning a missing tenant/branch or re-activating an existing one,
+    without reading this source file.
     """
-    logger.error(event, **fields)
+    logger.error(event, reason=reason, **fields)
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=_DEFAULT_UNCONFIGURED_DETAIL)
 
 
@@ -69,18 +76,33 @@ async def _resolve_default_device_context(db: AsyncSession) -> RegistrationDevic
     """
     logger.warning("registration_device_key_absent")
     tenant = await TenantRepository(db).get_by_slug(settings.default_tenant_slug)
-    if tenant is None or not tenant.is_active:
+    if tenant is None:
         _reject_unconfigured_default(
-            "registration_default_tenant_unconfigured", tenant_slug=settings.default_tenant_slug
+            "registration_default_tenant_unconfigured",
+            reason="not_found",
+            tenant_slug=settings.default_tenant_slug,
+        )
+    if not tenant.is_active:
+        _reject_unconfigured_default(
+            "registration_default_tenant_unconfigured",
+            reason="inactive",
+            tenant_slug=settings.default_tenant_slug,
         )
 
     async with tenant_session_scope(tenant.schema_name) as tenant_db:
         branch = await BranchRepository(tenant_db).get_by_code(
             settings.registration_default_branch_code
         )
-    if branch is None or not branch.is_active:
+    if branch is None:
         _reject_unconfigured_default(
             "registration_default_branch_unconfigured",
+            reason="not_found",
+            branch_code=settings.registration_default_branch_code,
+        )
+    if not branch.is_active:
+        _reject_unconfigured_default(
+            "registration_default_branch_unconfigured",
+            reason="inactive",
             branch_code=settings.registration_default_branch_code,
         )
 
