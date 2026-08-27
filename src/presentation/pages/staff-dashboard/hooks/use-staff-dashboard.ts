@@ -12,6 +12,17 @@ export const DASHBOARD_STATUS_COLUMNS = [
   { status: 'denied', label: 'Denied' },
 ] as const
 
+// Maps raw API `status` values to the columns above.
+// TODO: only "submitted" -> "requested" is confirmed against real API data so far;
+// the approved/checked_in/denied wire values still need verifying against the backend.
+const STATUS_ALIASES: Record<string, (typeof DASHBOARD_STATUS_COLUMNS)[number]['status']> = {
+  submitted: 'requested',
+}
+
+function normalizeStatus(status: string): string {
+  return STATUS_ALIASES[status] ?? status
+}
+
 export function useStaffDashboard() {
   const navigate = useNavigate()
   const { listVisitRequestsUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
@@ -31,7 +42,8 @@ export function useStaffDashboard() {
       const [user, requests] = await Promise.all([getCurrentStaffUserUseCase.execute(), listVisitRequestsUseCase.execute()])
       setCurrentUser(user)
       setVisitRequests(requests)
-    } catch {
+    } catch (error) {
+      console.error('Failed to load dashboard', error)
       setErrorMessage('Something went wrong loading the dashboard. Please try again.')
       toast.error('Something went wrong loading the dashboard. Please try again.')
     } finally {
@@ -63,9 +75,8 @@ export function useStaffDashboard() {
 
     return visitRequests.filter(
       (request) =>
-        request.visitorName.toLowerCase().includes(query) ||
-        request.hostName.toLowerCase().includes(query) ||
-        request.reqId.toLowerCase().includes(query),
+        request.primaryContactFullName.toLowerCase().includes(query) ||
+        request.trackingId.toLowerCase().includes(query),
     )
   }, [visitRequests, search])
 
@@ -73,7 +84,7 @@ export function useStaffDashboard() {
     () =>
       DASHBOARD_STATUS_COLUMNS.map((column) => ({
         ...column,
-        requests: filteredRequests.filter((request) => request.status === column.status),
+        requests: filteredRequests.filter((request) => normalizeStatus(request.status) === column.status),
       })),
     [filteredRequests],
   )

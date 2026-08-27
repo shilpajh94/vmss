@@ -3,9 +3,14 @@ import { CalendarClockIcon } from '../../../components/icons'
 
 const AVATAR_TINTS = ['#dbeafe', '#ffe4e6', '#d1fae5', '#fef3c7', '#f3e8ff', '#fee2e2']
 
-function avatarTintFor(reqId: string): string {
-  const hash = reqId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)
+function avatarTintFor(trackingId: string): string {
+  const hash = trackingId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)
   return AVATAR_TINTS[hash % AVATAR_TINTS.length]
+}
+
+function initialsFor(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/)
+  return ((parts[0]?.[0] ?? '') + (parts[parts.length - 1]?.[0] ?? '')).toUpperCase()
 }
 
 interface VisitRequestCardProps {
@@ -18,18 +23,18 @@ export function VisitRequestCard({ request }: VisitRequestCardProps) {
       <div className="flex w-full items-center justify-between">
         <span
           className="flex size-8 shrink-0 items-center justify-center rounded-full font-display text-xs font-bold text-text"
-          style={{ backgroundColor: avatarTintFor(request.reqId) }}
+          style={{ backgroundColor: avatarTintFor(request.trackingId) }}
         >
-          {request.visitorInitials}
+          {initialsFor(request.primaryContactFullName)}
         </span>
-        <span className="font-body text-[11px] font-semibold whitespace-nowrap text-text-faint">{request.reqId}</span>
+        <span className="font-body text-[11px] font-semibold whitespace-nowrap text-text-faint">{request.trackingId}</span>
       </div>
 
       <div className="flex w-full flex-col gap-1">
-        <p className="truncate font-body text-sm font-bold text-text">{request.visitorName}</p>
+        <p className="truncate font-body text-sm font-bold text-text">{request.primaryContactFullName}</p>
         <div className="flex items-center gap-1 font-body text-xs">
-          <span className="text-text-muted">Host:</span>
-          <span className="font-medium text-text">{request.hostName}</span>
+          <span className="text-text-muted">Purpose:</span>
+          <span className="font-medium text-text">{request.purposeOfVisit}</span>
         </div>
       </div>
 
@@ -37,7 +42,7 @@ export function VisitRequestCard({ request }: VisitRequestCardProps) {
 
       <div className="flex w-full items-center gap-1.5">
         <CalendarClockIcon className="size-3 shrink-0 text-text-faint" />
-        <span className="font-body text-[11px] whitespace-nowrap text-text-faint">{request.scheduledAt}</span>
+        <span className="font-body text-[11px] whitespace-nowrap text-text-faint">{request.submittedAt}</span>
       </div>
     </div>
   )

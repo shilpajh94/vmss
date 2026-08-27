@@ -64,14 +64,17 @@ export function VisitorInfoStep({
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1.5">
         <span className="text-body font-medium text-text">Registration Type</span>
-        <SegmentedToggle
-          options={[
-            { value: 'individual', label: 'Individual' },
-            { value: 'group', label: 'Group' },
-          ]}
-          value={registrationType}
-          onChange={(value) => onRegistrationTypeChange(value as RegistrationType)}
-        />
+        <div className="w-[320px]">
+          <SegmentedToggle
+            options={[
+              { value: 'individual', label: 'Individual' },
+              { value: 'group', label: 'Group' },
+            ]}
+            value={registrationType}
+            onChange={(value) => onRegistrationTypeChange(value as RegistrationType)}
+            variant="pill"
+          />
+        </div>
       </div>
 
       <div className="flex flex-col gap-3">

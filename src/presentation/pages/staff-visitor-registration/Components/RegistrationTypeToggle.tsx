@@ -18,6 +18,7 @@ export function RegistrationTypeToggle({ value, onChange }: RegistrationTypeTogg
           ]}
           value={value}
           onChange={(next) => onChange(next as RegistrationType)}
+          variant="pill"
         />
       </div>
     </div>

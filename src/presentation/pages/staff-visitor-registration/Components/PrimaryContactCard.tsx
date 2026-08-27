@@ -58,6 +58,7 @@ export function PrimaryContactCard({ value, onChange, uploadFile, errors }: Prim
             ]}
             value={value.preferredContactMethod ?? 'email'}
             onChange={(preferredContactMethod) => onChange({ ...value, preferredContactMethod: preferredContactMethod as 'email' | 'sms' })}
+            variant="divided"
           />
         </div>
 
