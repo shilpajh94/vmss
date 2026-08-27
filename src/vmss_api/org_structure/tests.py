@@ -444,6 +444,16 @@ async def test_delete_branch_success(client: AsyncClient, user: User, branch: Br
     assert get_response.status_code == 404
 
 
+async def test_delete_branch_requires_permission(
+    client: AsyncClient, user_without_permissions: User, branch: Branch
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.delete(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 403
+
+
 async def test_create_branch_after_soft_delete_reuses_code(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
@@ -672,6 +682,14 @@ async def test_get_company_not_configured_yet(client: AsyncClient, user: User) -
     assert response.status_code == 404
 
 
+async def test_get_company_requires_permission(
+    client: AsyncClient, user_without_permissions: User
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.get("/api/v1/company", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
+
+
 async def test_get_company_success(client: AsyncClient, user: User) -> None:
     token = await _login(client, user.email)
     headers = {"Authorization": f"Bearer {token}"}
@@ -699,6 +717,25 @@ async def test_update_company_success(client: AsyncClient, user: User) -> None:
     assert response.json()["data"]["legalName"] == "Updated Co"
 
 
+async def test_update_company_requires_permission(
+    client: AsyncClient, user: User, user_without_permissions: User
+) -> None:
+    token = await _login(client, user.email)
+    await client.post(
+        "/api/v1/company",
+        json={"legalName": "Gate-Checked Co"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    other_token = await _login(client, user_without_permissions.email)
+    response = await client.put(
+        "/api/v1/company",
+        json={"legalName": "Should Not Update"},
+        headers={"Authorization": f"Bearer {other_token}"},
+    )
+    assert response.status_code == 403
+
+
 async def test_delete_company_success(client: AsyncClient, user: User) -> None:
     token = await _login(client, user.email)
     headers = {"Authorization": f"Bearer {token}"}
@@ -709,6 +746,23 @@ async def test_delete_company_success(client: AsyncClient, user: User) -> None:
 
     get_response = await client.get("/api/v1/company", headers=headers)
     assert get_response.status_code == 404
+
+
+async def test_delete_company_requires_permission(
+    client: AsyncClient, user: User, user_without_permissions: User
+) -> None:
+    token = await _login(client, user.email)
+    await client.post(
+        "/api/v1/company",
+        json={"legalName": "Delete-Gate-Checked Co"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    other_token = await _login(client, user_without_permissions.email)
+    response = await client.delete(
+        "/api/v1/company", headers={"Authorization": f"Bearer {other_token}"}
+    )
+    assert response.status_code == 403
 
 
 async def test_create_company_after_soft_delete_reuses_registration_number(

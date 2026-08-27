@@ -6,9 +6,11 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient, Response
 from PIL import Image
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from structlog.testing import capture_logs
 
+from vmss_api.auth.models import AuditLog
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.security import hash_password
@@ -164,6 +166,30 @@ async def test_create_group_walk_in_registration_success(
     assert invitation.source == "visitor_walk_in"
 
 
+async def test_walk_in_registration_writes_audit_log_with_no_actor(
+    client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession
+) -> None:
+    """spec.md "Walk-in registration is audited" / "Audit entry recorded
+    with no actor" — no test previously asserted this, even though the
+    write itself (`record_audit_log`, dispatched via `BackgroundTasks` in
+    `router.py`) is real and already runs on every walk-in creation.
+    """
+    data = await _create_walk_in_success(
+        client, registration_device_raw_key, payload=_individual_payload()
+    )
+
+    entry = (
+        await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "walk_in_registration_created",
+                AuditLog.entity_id == uuid.UUID(data["id"]),
+            )
+        )
+    ).scalar_one()
+    assert entry.actor_user_id is None
+    assert entry.entity_type == "Invitation"
+
+
 async def test_walk_in_registration_response_has_no_check_in_state(
     client: AsyncClient, registration_device_raw_key: str
 ) -> None:
@@ -254,10 +280,20 @@ async def test_walk_in_registration_missing_device_key_no_default_tenant_rejecte
     """No `X-Device-Key` and no `default_tenant_slug` match in this schema
     (the test tenant's slug is `acme-test`, not `settings.default_tenant_slug`'s
     unmodified default) — the fallback must still reject rather than resolve
-    to nothing.
+    to nothing. This is a server misconfiguration (no client credential was
+    even sent), distinct from a bad device key, so it gets its own message
+    and is logged at ERROR, not WARNING.
     """
-    response = await _create_walk_in(client, None, payload=_individual_payload())
+    with capture_logs() as captured:
+        response = await _create_walk_in(client, None, payload=_individual_payload())
+
     assert response.status_code == 401
+    assert (
+        response.json()["message"] == "Registration service is not configured for this environment"
+    )
+
+    [entry] = [e for e in captured if e["event"] == "registration_default_tenant_unconfigured"]
+    assert entry["log_level"] == "error"
 
 
 async def test_walk_in_registration_missing_device_key_no_default_branch_rejected(
@@ -265,22 +301,42 @@ async def test_walk_in_registration_missing_device_key_no_default_branch_rejecte
 ) -> None:
     """The default tenant resolves, but no branch matches
     `registration_default_branch_code` — must still reject, not fall through
-    to an unscoped branch.
+    to an unscoped branch. Same server-misconfiguration message/log level as
+    the no-default-tenant case above.
     """
     monkeypatch.setattr(settings, "default_tenant_slug", "acme-test")
     monkeypatch.setattr(settings, "registration_default_branch_code", "NO-SUCH-BRANCH")
 
-    response = await _create_walk_in(client, None, payload=_individual_payload())
+    with capture_logs() as captured:
+        response = await _create_walk_in(client, None, payload=_individual_payload())
+
     assert response.status_code == 401
+    assert (
+        response.json()["message"] == "Registration service is not configured for this environment"
+    )
+
+    [entry] = [e for e in captured if e["event"] == "registration_default_branch_unconfigured"]
+    assert entry["log_level"] == "error"
+    assert entry["branch_code"] == "NO-SUCH-BRANCH"
 
 
 async def test_walk_in_registration_invalid_device_key_rejected(
     client: AsyncClient, registration_device_raw_key: str
 ) -> None:
-    response = await _create_walk_in(
-        client, "definitely-not-a-provisioned-key", payload=_individual_payload()
-    )
+    """spec.md "Invalid device credential is reported and logged as a
+    client-side anomaly" — distinct message/log level from the
+    unconfigured-default-tenant/branch case above.
+    """
+    with capture_logs() as captured:
+        response = await _create_walk_in(
+            client, "definitely-not-a-provisioned-key", payload=_individual_payload()
+        )
+
     assert response.status_code == 401
+    assert response.json()["message"] == "Invalid device credential"
+
+    [entry] = [e for e in captured if e["event"] == "registration_device_key_invalid"]
+    assert entry["log_level"] == "warning"
 
 
 async def test_walk_in_registration_inactive_device_key_rejected(

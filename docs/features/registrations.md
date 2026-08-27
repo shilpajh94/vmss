@@ -67,9 +67,17 @@ same tenant-trust-boundary rule `security-architecture.md` states for
 | `REGISTRATION_DEFAULT_BRANCH_CODE` | `MAIN` | Which branch, within that tenant, a header-less walk-in is attributed to. |
 
 If either lookup fails (no such tenant, tenant inactive, no branch with
-that code, branch inactive), the fallback still 401s with the same
-`_INVALID_DEVICE_KEY_DETAIL` an invalid key gets — it never falls through to
-an unscoped or partially-resolved registration.
+that code, branch inactive), the fallback still 401s — it never falls
+through to an unscoped or partially-resolved registration — but with a
+message and log level distinct from an invalid device key. This is a
+server-side configuration gap (nothing the caller sent was wrong), so it
+gets `_DEFAULT_TENANT_UNCONFIGURED_DETAIL` ("Registration service is not
+configured for this environment") and is logged at `ERROR`
+(`registration_default_tenant_unconfigured` /
+`registration_default_branch_unconfigured`) instead of the `WARNING` an
+actually-invalid key produces — per `logging-observability.md` §3, a
+missing default tenant/branch needs a human to look, not a log line nobody
+alerts on.
 
 **Sanctioned default path, not a stopgap**: this path has no credential at
 all — it trades the device key's authentication away for availability,

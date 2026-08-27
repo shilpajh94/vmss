@@ -74,25 +74,21 @@ class UserRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def search_active_by_name_or_email(self, query: str, *, limit: int) -> list[User]:
+    async def search_active_by_name_or_email(self, query: str | None, *, limit: int) -> list[User]:
         """Backs `GET /hosts/search` (visit-info-lookup-api): active
         employees whose name or email contains `query`, case-insensitively.
         No `employee_code` requirement — that field is optional directory
         metadata, not a gate on being a valid visit host (design.md
         Decisions). Deactivated employees are excluded via `is_active`, same
-        posture as `list_employees_page`.
+        posture as `list_employees_page`. A `None` query returns a browsable
+        default list (alphabetical, still capped by `limit`) instead of
+        filtering by name/email.
         """
-        pattern = f"%{query}%"
-        stmt = (
-            select(User)
-            .where(
-                User.is_active.is_(True),
-                User.deleted_at.is_(None),
-                or_(User.full_name.ilike(pattern), User.email.ilike(pattern)),
-            )
-            .order_by(User.full_name.asc())
-            .limit(limit)
-        )
+        filters = [User.is_active.is_(True), User.deleted_at.is_(None)]
+        if query:
+            pattern = f"%{query}%"
+            filters.append(or_(User.full_name.ilike(pattern), User.email.ilike(pattern)))
+        stmt = select(User).where(*filters).order_by(User.full_name.asc()).limit(limit)
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def get_branch_role_assignment(

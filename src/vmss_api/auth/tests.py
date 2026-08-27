@@ -1205,6 +1205,14 @@ async def test_create_role_unknown_permission_code_not_found(
     assert response.status_code == 404
 
 
+async def test_list_roles_requires_permission(
+    client: AsyncClient, user_without_permissions: User
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.get("/api/v1/auth/roles", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
+
+
 async def test_list_roles_includes_standard_and_custom(client: AsyncClient, user: User) -> None:
     token = await _login(client, user.email)
     headers = {"Authorization": f"Bearer {token}"}
@@ -1265,6 +1273,24 @@ async def test_get_role_success(client: AsyncClient, user: User) -> None:
     assert response.json()["data"]["name"] == "Getter Role"
 
 
+async def test_get_role_requires_permission(
+    client: AsyncClient, user: User, user_without_permissions: User
+) -> None:
+    token = await _login(client, user.email)
+    created = await client.post(
+        "/api/v1/auth/roles",
+        json={"name": "Gate-Checked Role", "permissionCodes": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    role_id = created.json()["data"]["id"]
+
+    other_token = await _login(client, user_without_permissions.email)
+    response = await client.get(
+        f"/api/v1/auth/roles/{role_id}", headers={"Authorization": f"Bearer {other_token}"}
+    )
+    assert response.status_code == 403
+
+
 async def test_get_role_not_found(client: AsyncClient, user: User) -> None:
     token = await _login(client, user.email)
     response = await client.get(
@@ -1293,6 +1319,26 @@ async def test_update_role_success(client: AsyncClient, user: User) -> None:
     assert body["permissionCodes"] == []
 
 
+async def test_update_role_requires_permission(
+    client: AsyncClient, user: User, user_without_permissions: User
+) -> None:
+    token = await _login(client, user.email)
+    created = await client.post(
+        "/api/v1/auth/roles",
+        json={"name": "Update-Gate-Checked Role", "permissionCodes": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    role_id = created.json()["data"]["id"]
+
+    other_token = await _login(client, user_without_permissions.email)
+    response = await client.put(
+        f"/api/v1/auth/roles/{role_id}",
+        json={"description": "Should not be allowed"},
+        headers={"Authorization": f"Bearer {other_token}"},
+    )
+    assert response.status_code == 403
+
+
 async def test_update_role_not_found(client: AsyncClient, user: User) -> None:
     token = await _login(client, user.email)
     response = await client.put(
@@ -1318,6 +1364,24 @@ async def test_delete_role_success(client: AsyncClient, user: User) -> None:
     assert get_response.status_code == 404
 
 
+async def test_delete_role_requires_permission(
+    client: AsyncClient, user: User, user_without_permissions: User
+) -> None:
+    token = await _login(client, user.email)
+    created = await client.post(
+        "/api/v1/auth/roles",
+        json={"name": "Delete-Gate-Checked Role", "permissionCodes": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    role_id = created.json()["data"]["id"]
+
+    other_token = await _login(client, user_without_permissions.email)
+    response = await client.delete(
+        f"/api/v1/auth/roles/{role_id}", headers={"Authorization": f"Bearer {other_token}"}
+    )
+    assert response.status_code == 403
+
+
 async def test_delete_role_not_found(client: AsyncClient, user: User) -> None:
     token = await _login(client, user.email)
     response = await client.delete(
@@ -1339,6 +1403,17 @@ async def test_verify_role_name_availability(client: AsyncClient, user: User) ->
     taken = await client.get("/api/v1/auth/roles/verify?name=taken role", headers=headers)
     assert taken.status_code == 200
     assert taken.json()["data"]["available"] is False
+
+
+async def test_verify_role_name_requires_permission(
+    client: AsyncClient, user_without_permissions: User
+) -> None:
+    token = await _login(client, user_without_permissions.email)
+    response = await client.get(
+        "/api/v1/auth/roles/verify?name=Whatever",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
 
 
 async def test_rename_standard_role_rejected(client: AsyncClient, user: User) -> None:
