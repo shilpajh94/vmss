@@ -7,7 +7,7 @@ of a bearer token. See add-walkin-visitor-registration/design.md Decision 3.
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 import structlog
 from fastapi import Depends, Header, HTTPException, status
@@ -30,6 +30,17 @@ class RegistrationDeviceContext:
 
 
 _INVALID_DEVICE_KEY_DETAIL = "Invalid device credential"
+_DEFAULT_UNCONFIGURED_DETAIL = "Registration service is not configured for this environment"
+
+
+def _reject_unconfigured_default(event: str, **fields: str) -> NoReturn:
+    """Shared by both `_resolve_default_device_context` failure branches
+    (no default tenant, no default branch) — a server-side configuration
+    gap, not a property of the caller's request, so it's always logged at
+    `ERROR` (per `logging-observability.md` §3) with the same 401 detail.
+    """
+    logger.error(event, **fields)
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=_DEFAULT_UNCONFIGURED_DETAIL)
 
 
 async def _resolve_default_device_context(db: AsyncSession) -> RegistrationDeviceContext:
@@ -59,18 +70,19 @@ async def _resolve_default_device_context(db: AsyncSession) -> RegistrationDevic
     logger.warning("registration_device_key_absent")
     tenant = await TenantRepository(db).get_by_slug(settings.default_tenant_slug)
     if tenant is None or not tenant.is_active:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=_INVALID_DEVICE_KEY_DETAIL)
+        _reject_unconfigured_default(
+            "registration_default_tenant_unconfigured", tenant_slug=settings.default_tenant_slug
+        )
 
     async with tenant_session_scope(tenant.schema_name) as tenant_db:
         branch = await BranchRepository(tenant_db).get_by_code(
             settings.registration_default_branch_code
         )
     if branch is None or not branch.is_active:
-        logger.warning(
-            "registration_default_branch_unavailable",
+        _reject_unconfigured_default(
+            "registration_default_branch_unconfigured",
             branch_code=settings.registration_default_branch_code,
         )
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=_INVALID_DEVICE_KEY_DETAIL)
 
     structlog.contextvars.bind_contextvars(tenant_id=str(tenant.id), branch_id=str(branch.id))
     return RegistrationDeviceContext(tenant=tenant, branch_id=branch.id)

@@ -8,12 +8,12 @@ imports that dependency rather than duplicating it.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.core.rate_limit import limiter
-from vmss_api.core.responses import success_response
+from vmss_api.core.responses import error_response, success_response
 from vmss_api.core.schemas import Envelope
 from vmss_api.registrations.deps import (
     RegistrationDeviceContext,
@@ -39,14 +39,24 @@ _MAX_LIMIT = 25
 async def search_hosts(
     request: Request,
     tenant_db: Annotated[AsyncSession, Depends(get_registration_tenant_db)],
-    query: Annotated[str, Query(min_length=_MIN_QUERY_LENGTH)],
+    query: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = _DEFAULT_LIMIT,
 ) -> JSONResponse:
     """Autocomplete lookup so a visitor/kiosk operator can find the employee
     they're visiting by partial name or email, instead of free-typing it
     (spec.md "Host Search Returns Active Employees Matching Name or Email").
+    `query` is optional: omitted or blank returns a browsable default list
+    of active employees instead of an error (spec.md "Host Search Validates
+    Query Length and Caps Result Count"); a supplied-but-too-short query is
+    still rejected.
     """
-    hosts = await service.search_hosts(tenant_db, query=query, limit=limit)
+    normalized_query = (query or "").strip() or None
+    if normalized_query is not None and len(normalized_query) < _MIN_QUERY_LENGTH:
+        return error_response(
+            message=f"query must be at least {_MIN_QUERY_LENGTH} characters",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    hosts = await service.search_hosts(tenant_db, query=normalized_query, limit=limit)
     return success_response(data=HostSearchOut(hosts=hosts))
 
 

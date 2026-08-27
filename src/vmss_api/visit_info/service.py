@@ -15,11 +15,12 @@ from vmss_api.visit_info.schemas import (
 
 
 async def search_hosts(
-    tenant_db: AsyncSession, *, query: str, limit: int
+    tenant_db: AsyncSession, *, query: str | None, limit: int
 ) -> list[HostSearchResultOut]:
     """`GET /hosts/search`. Resolves each matched employee's department name
     with one batched query, not one query per host (query-performance.md
-    §2).
+    §2). A `None` query returns a browsable default list instead of a
+    filtered match set.
     """
     hosts = await UserRepository(tenant_db).search_active_by_name_or_email(query, limit=limit)
     department_ids = {host.department_id for host in hosts if host.department_id is not None}
