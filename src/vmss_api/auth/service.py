@@ -474,6 +474,8 @@ async def list_employees(
     *,
     branch_scope: BranchScope,
     department_id: uuid.UUID | None,
+    email: str | None,
+    role: str | None,
     page: int,
     page_size: int,
     sort_by: EmployeeSortableField,
@@ -482,6 +484,8 @@ async def list_employees(
     return await UserRepository(tenant_db).list_employees_page(
         branch_scope=branch_scope,
         department_id=department_id,
+        email=email,
+        role=role,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

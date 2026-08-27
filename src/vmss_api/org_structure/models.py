@@ -240,9 +240,4 @@ class SecurityGate(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255))
     code: Mapped[str] = mapped_column(String(50))
     gate_type: Mapped[str] = mapped_column(String(20), default="both")
-    # `connectivity_status` replaced the original boolean `is_active` — see
-    # openspec/changes/add-role-management-and-org-field-gaps/design.md
-    # Decision 3.
-    connectivity_status: Mapped[str] = mapped_column(String(20), default="online")
     high_security: Mapped[bool] = mapped_column(Boolean, default=False)
-    auth_method: Mapped[str | None] = mapped_column(String(100))

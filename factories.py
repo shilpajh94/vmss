@@ -131,7 +131,6 @@ class ReceptionDeskFactory(SQLAlchemyFactory[ReceptionDesk]):
 
 class SecurityGateFactory(SQLAlchemyFactory[SecurityGate]):
     __model__ = SecurityGate
-    connectivity_status = "online"
     high_security = False
     deleted_at = None
 

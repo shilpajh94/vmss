@@ -33,11 +33,11 @@ A design-vs-implementation review of the admin portal
   the boolean `isActive` — a maintenance desk isn't representable as a
   boolean. Also `assignedReceptionistUserId`,
   `operatingHoursFrom`/`operatingHoursTo`.
-- **`SecurityGate`**: `connectivityStatus` (`online`/`maintenance`/`offline`)
-  replaced the boolean `isActive`, for the same reason. Also `highSecurity`
-  (bool, independent of `gateType`) and `authMethod` (free-form string for
-  now — the design's compound values like "Biometric/RFID Card" aren't yet
-  split into a clean enum; see the change's design doc Open Questions).
+- **`SecurityGate`**: `highSecurity` (bool, independent of `gateType`).
+  `connectivityStatus` and `authMethod` (both added when the boolean
+  `isActive` was replaced) were later removed
+  (`update-employee-list-and-gate-crud`) — a create/update request that still
+  sends either is accepted and the field is simply ignored, not rejected.
 - **`Company`**: `defaultTimezone`, `autoApprovePreRegisteredVisitors`,
   `badgeExpiryDurationMinutes` — the "Organisation Configs" screen's
   tenant-wide visitor-policy defaults. Stored, not yet *read* by any other
@@ -252,6 +252,12 @@ clients need to render these lists (e.g. a branch/department picker) before
 a visitor has authenticated, and were hitting "Invalid or expired token"
 trying to. Get-by-id, create, update, delete, and `/branches/provision` are
 unaffected — still authenticated and permissioned exactly as before.
+
+`GET /auth/employees` (`docs/features/auth.md`) reuses this exact same
+mechanism (`update-employee-list-and-gate-crud`) even though it's served by
+`auth/router.py`, not this feature's router — `auth/router.py` depends on
+`public_tenant_db`/`public_branch_scope` directly rather than duplicating
+the tenant-fallback logic.
 
 `org_structure/deps.py::public_tenant_db` resolves which tenant a listing
 request sees:

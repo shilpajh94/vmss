@@ -2098,13 +2098,14 @@ async def test_security_gate_repository_tenant_schema_isolation(
         assert found is None
 
 
-async def test_create_security_gate_with_offline_connectivity(
+async def test_create_security_gate_ignores_removed_connectivity_and_auth_fields(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
-    """`connectivityStatus` is independent of `gateType` and `highSecurity`
-    — see
-    openspec/changes/add-role-management-and-org-field-gaps/design.md
-    Decision 3.
+    """`connectivityStatus`/`authMethod` no longer exist on `SecurityGate` —
+    a client that still sends them gets a normal 201, with the extra fields
+    simply absent from the response (superseding the removed
+    `test_create_security_gate_with_offline_connectivity`, which asserted on
+    these fields directly).
     """
     token = await _login(client, user.email)
     response = await client.post(
@@ -2122,14 +2123,19 @@ async def test_create_security_gate_with_offline_connectivity(
     )
     assert response.status_code == 201
     body = response.json()["data"]
-    assert body["connectivityStatus"] == "offline"
+    assert "connectivityStatus" not in body
+    assert "authMethod" not in body
     assert body["highSecurity"] is True
     assert body["gateType"] == "both"
 
 
-async def test_update_security_gate_connectivity_status(
+async def test_update_security_gate_ignores_removed_connectivity_field(
     client: AsyncClient, user: User, security_gate: SecurityGate, branch: Branch
 ) -> None:
+    """Superseding the removed `test_update_security_gate_connectivity_status`
+    — the field no longer exists, so an update that only sends it changes
+    nothing and the response carries no such field.
+    """
     token = await _login(client, user.email)
     response = await client.put(
         f"/api/v1/security-gates/{security_gate.id}",
@@ -2137,4 +2143,4 @@ async def test_update_security_gate_connectivity_status(
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
     )
     assert response.status_code == 200
-    assert response.json()["data"]["connectivityStatus"] == "maintenance"
+    assert "connectivityStatus" not in response.json()["data"]

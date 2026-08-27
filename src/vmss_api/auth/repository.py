@@ -82,18 +82,27 @@ class UserRepository:
         *,
         branch_scope: BranchScope,
         department_id: uuid.UUID | None,
+        email: str | None,
+        role: str | None,
         page: int,
         page_size: int,
         sort_by: str,
         sort_order: SortOrder,
     ) -> tuple[list[User], int]:
         """Branch-scoped: joins `Department -> Floor -> Building` to filter
-        to employees whose department resolves to the caller's authorized
-        scope (`org_structure/deps.py::require_branch_scope`). Employees with
-        no `department_id` aren't resolvable to any branch and so never
-        appear in a branch-scoped list — see `org_structure/router.py`'s
-        module docstring for the equivalent pattern applied to
+        to employees whose department resolves to the requested scope
+        (`org_structure/deps.py::public_branch_scope` — this endpoint is
+        public, so "scope" is just `X-Branch-ID` or every branch, not a
+        caller's authorized branches). Employees with no `department_id`
+        aren't resolvable to any branch and so never appear in a
+        branch-scoped list — see `org_structure/router.py`'s module
+        docstring for the equivalent pattern applied to
         Building/Floor/Department/Desk/Gate.
+
+        `role` matches via a correlated `EXISTS` against `UserBranchRole`/
+        `Role` rather than a join, so a user holding that role at more than
+        one branch is never duplicated in the page or double-counted in
+        `total` (query-performance.md §1).
         """
         column: Any = {"name": User.full_name, "created_at": User.created_at}[sort_by]
         order = column.desc() if sort_order == SortOrder.desc else column.asc()
@@ -102,6 +111,15 @@ class UserRepository:
             conditions.append(Building.branch_id.in_(branch_scope))
         if department_id is not None:
             conditions.append(User.department_id == department_id)
+        if email is not None:
+            conditions.append(User.email == email)
+        if role is not None:
+            conditions.append(
+                select(UserBranchRole.id)
+                .join(Role, UserBranchRole.role_id == Role.id)
+                .where(UserBranchRole.user_id == User.id, Role.name == role)
+                .exists()
+            )
 
         joined_from = (
             select(User)
