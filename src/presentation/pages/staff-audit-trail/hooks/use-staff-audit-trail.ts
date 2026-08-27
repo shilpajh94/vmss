@@ -56,7 +56,7 @@ export function useStaffAuditTrail() {
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
+      navigate('/staff/login', { replace: true })
       return
     }
 
@@ -93,7 +93,7 @@ export function useStaffAuditTrail() {
 
   const signOut = useCallback(() => {
     sessionStorage.removeItem('token')
-    navigate('/admin/login')
+    navigate('/staff/login')
   }, [navigate])
 
   return {

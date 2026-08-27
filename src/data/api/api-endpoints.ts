@@ -24,6 +24,16 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: false,
   },
+  START_SSO_LOGIN: {
+    endpoint: "/auth/sso/:tenantSlug/login",
+    method: "GET",
+    hasToken: false,
+  },
+  SSO_EXCHANGE: {
+    endpoint: "/auth/sso/exchange",
+    method: "POST",
+    hasToken: false,
+  },
   LIST_VISIT_REQUESTS: {
     endpoint: "/invitations",
     method: "GET",
