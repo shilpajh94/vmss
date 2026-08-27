@@ -91,6 +91,11 @@ SHALL distinguish two causes in its response and log output:
   `logging-observability.md` §3's "needs a human to look" bar, since this
   is a server-side configuration gap and not caused by anything the caller
   sent
+- **AND** the `ERROR` log distinguishes, per entity (default tenant vs.
+  default branch), whether the cause was that no such row exists at all
+  versus that the row exists but is inactive — so an operator can tell
+  from the log alone whether the fix is provisioning a missing tenant/branch
+  or re-activating an existing one, without reading source
 
 #### Scenario: Valid device credential resolves tenant and branch
 - **WHEN** a request carries a device credential provisioned for a specific
