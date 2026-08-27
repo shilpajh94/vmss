@@ -44,6 +44,7 @@ from vmss_api.org_structure.models import (
 from vmss_api.platform.models import SuperAdmin
 from vmss_api.registrations.models import RegistrationDeviceKey
 from vmss_api.tenant.models import Tenant
+from vmss_api.visit_info.models import VisitDuration, VisitPurpose
 from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
 
 
@@ -165,6 +166,14 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     carried_items: list[str] = []
     visitors: list[InvitationVisitor] = []
     vehicles: list[InvitationVehicle] = []
+    # Same FK-safety rationale as `BranchFactory.contact_person_user_id`:
+    # these are the visit-info-lookup-api optional catalog FKs, all
+    # nullable — a random polyfactory-generated UUID here would violate
+    # each one's constraint unless a real row happens to exist with that id.
+    purpose_id = None
+    host_id = None
+    duration_id = None
+    department_id = None
 
 
 class InvitationVisitorFactory(SQLAlchemyFactory[InvitationVisitor]):
@@ -180,3 +189,15 @@ class InvitationVehicleFactory(SQLAlchemyFactory[InvitationVehicle]):
 class RegistrationDeviceKeyFactory(SQLAlchemyFactory[RegistrationDeviceKey]):
     __model__ = RegistrationDeviceKey
     is_active = True
+
+
+class VisitPurposeFactory(SQLAlchemyFactory[VisitPurpose]):
+    __model__ = VisitPurpose
+    is_active = True
+    deleted_at = None
+
+
+class VisitDurationFactory(SQLAlchemyFactory[VisitDuration]):
+    __model__ = VisitDuration
+    is_active = True
+    deleted_at = None

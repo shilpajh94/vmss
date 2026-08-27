@@ -79,6 +79,24 @@ class Invitation(Base, TimestampMixin):
     department_to_visit: Mapped[str | None] = mapped_column(String(255))
     additional_notes: Mapped[str | None] = mapped_column(String(2000))
 
+    # --- Visit details: optional catalog ids (visit-info-lookup-api) -------
+    # Nullable and purely additive: when a caller supplies one of these, the
+    # paired free-text column above is server-side overwritten with the
+    # referenced row's canonical name/full_name before persisting (never
+    # trusts client-supplied text once an id is given) — see
+    # openspec/changes/visit-info-lookup-api/design.md. Omitted entirely,
+    # behavior is unchanged from before this feature existed.
+    purpose_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("visit_purposes.id"), index=True
+    )
+    host_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"), index=True)
+    duration_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("visit_durations.id"), index=True
+    )
+    department_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("departments.id"), index=True
+    )
+
     # --- Carried items -------------------------------------------------------
     # JSONB list, not a child table: items have no independent identity or
     # per-row actions of their own, unlike visitors/vehicles below — same
