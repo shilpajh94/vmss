@@ -232,10 +232,12 @@ export const API_ENDPOINTS = {
     method: "DELETE",
     hasToken: true,
   },
+  // Public for the pre-authentication visitor portal, same as LIST_EMPLOYEE_DIRECTORY —
+  // the backend already serves this endpoint without auth.
   LIST_VISITOR_CATEGORIES: {
     endpoint: "/visitor-categories",
     method: "GET",
-    hasToken: true,
+    hasToken: false,
   },
   CREATE_VISITOR_CATEGORY: {
     endpoint: "/visitor-categories",
