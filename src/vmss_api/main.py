@@ -94,6 +94,15 @@ _TAGS_METADATA = [
         ),
     },
     {
+        "name": "sso",
+        "description": (
+            "Staff OIDC single sign-on: per-tenant provider configuration, "
+            "IdP-group-to-role mapping, the login-initiate/callback/exchange "
+            "flow, and just-in-time account provisioning. Visitor login is "
+            "unaffected."
+        ),
+    },
+    {
         "name": "visit-info",
         "description": (
             "Public, kiosk-facing lookups backing the walk-in registration "

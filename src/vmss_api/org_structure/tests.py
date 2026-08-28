@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import pytest_asyncio
@@ -229,9 +230,11 @@ async def test_create_branch_duplicate_code_conflict(
 
 
 async def test_create_branch_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/branches",
         json={"name": "New Branch", "code": "NEW"},
@@ -275,6 +278,7 @@ async def test_list_branches_not_scoped_by_caller_permission(
     db_session: AsyncSession,
     user_scoped_to_branch: User,
     branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
     """Listing no longer requires `branches:view`, so a caller's own
     branch-scoped role grant no longer narrows the result — every branch is
@@ -285,7 +289,7 @@ async def test_list_branches_not_scoped_by_caller_permission(
     db_session.add(other_branch)
     await db_session.commit()
 
-    token = await _login(client, user_scoped_to_branch.email)
+    token = issue_token(user_scoped_to_branch)
     response = await client.get("/api/v1/branches", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     codes = {b["code"] for b in response.json()["data"]}
@@ -339,9 +343,12 @@ async def test_list_branches_tenant_isolation(
 
 
 async def test_get_branch_success_for_branch_scoped_user(
-    client: AsyncClient, user_scoped_to_branch: User, branch: Branch
+    client: AsyncClient,
+    user_scoped_to_branch: User,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_scoped_to_branch.email)
+    token = issue_token(user_scoped_to_branch)
     response = await client.get(
         f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
     )
@@ -350,12 +357,15 @@ async def test_get_branch_success_for_branch_scoped_user(
 
 
 async def test_get_branch_denied_for_user_scoped_elsewhere(
-    client: AsyncClient, user_scoped_to_other_branch: User, branch: Branch
+    client: AsyncClient,
+    user_scoped_to_other_branch: User,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
     """The branch-level counterpart of `test_get_building_not_found_for_other_branch`
     — a role grant scoped to a different branch must not resolve this one.
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.get(
         f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
     )
@@ -392,13 +402,16 @@ async def test_get_current_branch_requires_header(client: AsyncClient, user: Use
 
 
 async def test_get_current_branch_denied_for_user_scoped_elsewhere(
-    client: AsyncClient, branch: Branch, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    branch: Branch,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """A branch-scoped role grant at one branch must not grant access to a
     different one — the branch-level analogue of testing-standards.md §2's
     tenant-isolation case.
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.get(
         "/api/v1/branches/current",
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
@@ -449,9 +462,12 @@ async def test_update_branch_ignores_code_field(
 
 
 async def test_update_branch_requires_permission(
-    client: AsyncClient, user_without_permissions: User, branch: Branch
+    client: AsyncClient,
+    user_without_permissions: User,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.put(
         f"/api/v1/branches/{branch.id}",
         json={"name": "Renamed Branch"},
@@ -512,9 +528,12 @@ async def test_delete_branch_matching_registration_default_code_rejected(
 
 
 async def test_delete_branch_requires_permission(
-    client: AsyncClient, user_without_permissions: User, branch: Branch
+    client: AsyncClient,
+    user_without_permissions: User,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.delete(
         f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
     )
@@ -714,12 +733,14 @@ async def test_provision_branch_success(client: AsyncClient, user: User) -> None
 
 
 async def test_provision_branch_requires_permission(
-    client: AsyncClient, user_scoped_to_branch: User
+    client: AsyncClient,
+    user_scoped_to_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """`user_scoped_to_branch` has `branches:view` but not `branches:provision`
     — a branch-scoped role isn't enough to bootstrap a whole new location.
     """
-    token = await _login(client, user_scoped_to_branch.email)
+    token = issue_token(user_scoped_to_branch)
     response = await client.post(
         "/api/v1/branches/provision",
         json=_provision_payload(),
@@ -839,9 +860,11 @@ async def test_create_company_success(client: AsyncClient, user: User) -> None:
 
 
 async def test_create_company_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/company",
         json={"legalName": "Acme Test Co Pvt Ltd"},
@@ -869,9 +892,9 @@ async def test_get_company_not_configured_yet(client: AsyncClient, user: User) -
 
 
 async def test_get_company_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.get("/api/v1/company", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 403
 
@@ -904,7 +927,10 @@ async def test_update_company_success(client: AsyncClient, user: User) -> None:
 
 
 async def test_update_company_requires_permission(
-    client: AsyncClient, user: User, user_without_permissions: User
+    client: AsyncClient,
+    user: User,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     token = await _login(client, user.email)
     await client.post(
@@ -913,7 +939,7 @@ async def test_update_company_requires_permission(
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    other_token = await _login(client, user_without_permissions.email)
+    other_token = issue_token(user_without_permissions)
     response = await client.put(
         "/api/v1/company",
         json={"legalName": "Should Not Update"},
@@ -935,7 +961,10 @@ async def test_delete_company_success(client: AsyncClient, user: User) -> None:
 
 
 async def test_delete_company_requires_permission(
-    client: AsyncClient, user: User, user_without_permissions: User
+    client: AsyncClient,
+    user: User,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     token = await _login(client, user.email)
     await client.post(
@@ -944,7 +973,7 @@ async def test_delete_company_requires_permission(
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    other_token = await _login(client, user_without_permissions.email)
+    other_token = issue_token(user_without_permissions)
     response = await client.delete(
         "/api/v1/company", headers={"Authorization": f"Bearer {other_token}"}
     )
@@ -1049,9 +1078,12 @@ async def test_create_building_soft_deleted_branch_not_found(
 
 
 async def test_create_building_requires_permission(
-    client: AsyncClient, user_without_permissions: User, branch: Branch
+    client: AsyncClient,
+    user_without_permissions: User,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/buildings",
         json={"branchId": str(branch.id), "name": "Tower B", "code": "TWR-B"},
@@ -1078,14 +1110,17 @@ async def test_create_building_succeeds_without_branch_header(
 
 
 async def test_create_building_denied_for_user_scoped_elsewhere(
-    client: AsyncClient, branch: Branch, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    branch: Branch,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """The core branch-RBAC fix: a role grant scoped to Branch B must not let
     its holder create a building for Branch A, even when they pass Branch
     A's id in the request body — authorization comes from `X-Branch-ID`
     resolving to a branch they hold a grant for, not from the payload.
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.post(
         "/api/v1/buildings",
         json={"branchId": str(branch.id), "name": "Tower B", "code": "TWR-B"},
@@ -1156,9 +1191,12 @@ async def test_get_building_success(client: AsyncClient, user: User, building: B
 
 
 async def test_get_building_not_found_for_other_branch(
-    client: AsyncClient, building: Building, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    building: Building,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.get(
         f"/api/v1/buildings/{building.id}",
         headers={
@@ -1170,13 +1208,16 @@ async def test_get_building_not_found_for_other_branch(
 
 
 async def test_get_building_without_branch_header_resolves_from_the_building_itself(
-    client: AsyncClient, user_scoped_to_branch: User, building: Building
+    client: AsyncClient,
+    user_scoped_to_branch: User,
+    building: Building,
+    issue_token: Callable[[User], str],
 ) -> None:
     """No `X-Branch-ID` header at all — authorization comes from the
     building's own (real) branch, looked up by id, per the auth spec's
     by-id optional-header requirement.
     """
-    token = await _login(client, user_scoped_to_branch.email)
+    token = issue_token(user_scoped_to_branch)
     response = await client.get(
         f"/api/v1/buildings/{building.id}", headers={"Authorization": f"Bearer {token}"}
     )
@@ -1185,9 +1226,12 @@ async def test_get_building_without_branch_header_resolves_from_the_building_its
 
 
 async def test_get_building_without_branch_header_denied_for_user_scoped_elsewhere(
-    client: AsyncClient, building: Building, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    building: Building,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.get(
         f"/api/v1/buildings/{building.id}", headers={"Authorization": f"Bearer {token}"}
     )
@@ -1206,13 +1250,16 @@ async def test_update_building_success(client: AsyncClient, user: User, building
 
 
 async def test_update_building_not_found_for_other_branch(
-    client: AsyncClient, building: Building, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    building: Building,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """`building` belongs to `branch`; a role grant scoped to a different
     branch must not be able to rename it, even by id — the update-endpoint
     counterpart of the get-by-id guard above.
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.put(
         f"/api/v1/buildings/{building.id}",
         json={"name": "Hijacked Tower"},
@@ -1235,6 +1282,7 @@ async def test_delete_building_not_found_for_other_branch(
     db_session: AsyncSession,
     building: Building,
     user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """A role grant scoped to a different branch must not be able to delete
     `building`, and the building must genuinely survive the attempt (not
@@ -1244,7 +1292,7 @@ async def test_delete_building_not_found_for_other_branch(
     `Permission` rows under the same codes — combining any two of them in
     one test collides on `global.permissions`' unique `code` index.
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.delete(
         f"/api/v1/buildings/{building.id}", headers={"Authorization": f"Bearer {token}"}
     )
@@ -1332,9 +1380,12 @@ async def test_create_floor_soft_deleted_building_not_found(
 
 
 async def test_create_floor_requires_permission(
-    client: AsyncClient, user_without_permissions: User, building: Building
+    client: AsyncClient,
+    user_without_permissions: User,
+    building: Building,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/floors",
         json={"buildingId": str(building.id), "name": "First Floor", "floorNumber": 1},
@@ -1344,13 +1395,16 @@ async def test_create_floor_requires_permission(
 
 
 async def test_create_floor_denied_for_user_scoped_elsewhere(
-    client: AsyncClient, building: Building, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    building: Building,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """The branch resolves transitively from `buildingId` in the body, not
     `X-Branch-ID` — a caller with no grant at that building's real branch is
     rejected with 403, regardless of what header they send (or omit).
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.post(
         "/api/v1/floors",
         json={"buildingId": str(building.id), "name": "First Floor", "floorNumber": 1},
@@ -1424,9 +1478,12 @@ async def test_get_floor_success(
 
 
 async def test_get_floor_not_found_for_other_branch(
-    client: AsyncClient, floor: Floor, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    floor: Floor,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.get(
         f"/api/v1/floors/{floor.id}", headers={"Authorization": f"Bearer {token}"}
     )
@@ -1447,9 +1504,12 @@ async def test_update_floor_success(
 
 
 async def test_update_floor_not_found_for_other_branch(
-    client: AsyncClient, floor: Floor, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    floor: Floor,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.put(
         f"/api/v1/floors/{floor.id}",
         json={"name": "Hijacked Floor"},
@@ -1474,11 +1534,12 @@ async def test_delete_floor_not_found_for_other_branch(
     db_session: AsyncSession,
     floor: Floor,
     user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """See `test_delete_building_not_found_for_other_branch` for why
     survival is checked via the repository rather than a second HTTP call.
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.delete(
         f"/api/v1/floors/{floor.id}", headers={"Authorization": f"Bearer {token}"}
     )
@@ -1602,9 +1663,13 @@ async def test_create_department_soft_deleted_branch_not_found(
 
 
 async def test_create_department_requires_permission(
-    client: AsyncClient, user_without_permissions: User, floor: Floor, building: Building
+    client: AsyncClient,
+    user_without_permissions: User,
+    floor: Floor,
+    building: Building,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/departments",
         json={
@@ -1619,13 +1684,17 @@ async def test_create_department_requires_permission(
 
 
 async def test_create_department_denied_for_user_scoped_elsewhere(
-    client: AsyncClient, floor: Floor, building: Building, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    floor: Floor,
+    building: Building,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """The branch resolves from `branchId` in the body, not `X-Branch-ID` —
     a caller with no grant at that branch is rejected with 403, regardless
     of what header they send (or omit).
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.post(
         "/api/v1/departments",
         json={
@@ -1752,9 +1821,12 @@ async def test_get_department_success(
 
 
 async def test_get_department_not_found_for_other_branch(
-    client: AsyncClient, department: Department, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    department: Department,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.get(
         f"/api/v1/departments/{department.id}", headers={"Authorization": f"Bearer {token}"}
     )
@@ -1775,9 +1847,12 @@ async def test_update_department_success(
 
 
 async def test_update_department_not_found_for_other_branch(
-    client: AsyncClient, department: Department, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    department: Department,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.put(
         f"/api/v1/departments/{department.id}",
         json={"name": "Hijacked Department"},
@@ -1802,11 +1877,12 @@ async def test_delete_department_not_found_for_other_branch(
     db_session: AsyncSession,
     department: Department,
     user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """See `test_delete_building_not_found_for_other_branch` for why
     survival is checked via the repository rather than a second HTTP call.
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.delete(
         f"/api/v1/departments/{department.id}", headers={"Authorization": f"Bearer {token}"}
     )
@@ -1911,9 +1987,13 @@ async def test_create_reception_desk_soft_deleted_floor_not_found(
 
 
 async def test_create_reception_desk_requires_permission(
-    client: AsyncClient, user_without_permissions: User, floor: Floor, building: Building
+    client: AsyncClient,
+    user_without_permissions: User,
+    floor: Floor,
+    building: Building,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/reception-desks",
         json={"floorId": str(floor.id), "name": "Front Desk", "code": "DESK-1"},
@@ -1923,13 +2003,16 @@ async def test_create_reception_desk_requires_permission(
 
 
 async def test_create_reception_desk_denied_for_user_scoped_elsewhere(
-    client: AsyncClient, floor: Floor, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    floor: Floor,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """The branch resolves transitively from `floorId` in the body, not
     `X-Branch-ID` — a caller with no grant at that floor's real branch is
     rejected with 403, regardless of what header they send (or omit).
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.post(
         "/api/v1/reception-desks",
         json={"floorId": str(floor.id), "name": "Front Desk", "code": "DESK-1"},
@@ -1953,6 +2036,7 @@ async def test_list_reception_desks_with_branch_header_narrows(
     branch: Branch,
     reception_desk: ReceptionDesk,
     building: Building,
+    issue_token: Callable[[User], str],
 ) -> None:
     response = await client.get("/api/v1/reception-desks", headers={"X-Branch-ID": str(branch.id)})
     assert response.status_code == 200
@@ -2016,9 +2100,12 @@ async def test_get_reception_desk_success(
 
 
 async def test_get_reception_desk_not_found_for_other_branch(
-    client: AsyncClient, reception_desk: ReceptionDesk, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    reception_desk: ReceptionDesk,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.get(
         f"/api/v1/reception-desks/{reception_desk.id}",
         headers={"Authorization": f"Bearer {token}"},
@@ -2040,9 +2127,12 @@ async def test_update_reception_desk_success(
 
 
 async def test_update_reception_desk_not_found_for_other_branch(
-    client: AsyncClient, reception_desk: ReceptionDesk, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    reception_desk: ReceptionDesk,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.put(
         f"/api/v1/reception-desks/{reception_desk.id}",
         json={"name": "Hijacked Desk"},
@@ -2089,11 +2179,12 @@ async def test_delete_reception_desk_not_found_for_other_branch(
     db_session: AsyncSession,
     reception_desk: ReceptionDesk,
     user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """See `test_delete_building_not_found_for_other_branch` for why
     survival is checked via the repository rather than a second HTTP call.
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.delete(
         f"/api/v1/reception-desks/{reception_desk.id}",
         headers={"Authorization": f"Bearer {token}"},
@@ -2240,9 +2331,12 @@ async def test_create_security_gate_soft_deleted_branch_not_found(
 
 
 async def test_create_security_gate_requires_permission(
-    client: AsyncClient, user_without_permissions: User, branch: Branch
+    client: AsyncClient,
+    user_without_permissions: User,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/security-gates",
         json={"branchId": str(branch.id), "name": "Main Gate", "code": "GATE-1"},
@@ -2252,7 +2346,10 @@ async def test_create_security_gate_requires_permission(
 
 
 async def test_create_security_gate_denied_for_user_scoped_elsewhere(
-    client: AsyncClient, branch: Branch, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    branch: Branch,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """`branch` (in the payload) belongs to a different branch than
     `user_scoped_to_other_branch` is authorized for — the branch resolves
@@ -2260,7 +2357,7 @@ async def test_create_security_gate_denied_for_user_scoped_elsewhere(
     grant there is rejected with 403, regardless of what header they send
     (or omit).
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.post(
         "/api/v1/security-gates",
         json={"branchId": str(branch.id), "name": "Main Gate", "code": "GATE-1"},
@@ -2339,9 +2436,12 @@ async def test_get_security_gate_success(
 
 
 async def test_get_security_gate_not_found_for_other_branch(
-    client: AsyncClient, security_gate: SecurityGate, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    security_gate: SecurityGate,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.get(
         f"/api/v1/security-gates/{security_gate.id}", headers={"Authorization": f"Bearer {token}"}
     )
@@ -2362,9 +2462,12 @@ async def test_update_security_gate_success(
 
 
 async def test_update_security_gate_not_found_for_other_branch(
-    client: AsyncClient, security_gate: SecurityGate, user_scoped_to_other_branch: User
+    client: AsyncClient,
+    security_gate: SecurityGate,
+    user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.put(
         f"/api/v1/security-gates/{security_gate.id}",
         json={"name": "Hijacked Gate"},
@@ -2389,11 +2492,12 @@ async def test_delete_security_gate_not_found_for_other_branch(
     db_session: AsyncSession,
     security_gate: SecurityGate,
     user_scoped_to_other_branch: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     """See `test_delete_building_not_found_for_other_branch` for why
     survival is checked via the repository rather than a second HTTP call.
     """
-    token = await _login(client, user_scoped_to_other_branch.email)
+    token = issue_token(user_scoped_to_other_branch)
     response = await client.delete(
         f"/api/v1/security-gates/{security_gate.id}",
         headers={"Authorization": f"Bearer {token}"},

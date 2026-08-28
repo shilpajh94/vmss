@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import uuid
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
@@ -309,8 +310,9 @@ async def test_create_invitation_requires_permission(
     branch: Branch,
     payload_factory,
     visitor_file_count: int,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await _create_invitation(
         client,
         token,
@@ -877,15 +879,19 @@ async def test_list_invitations_success(
 
 
 async def test_list_invitations_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.get("/api/v1/invitations", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 403
 
 
 async def test_list_invitations_branch_header_narrows_to_one_branch(
-    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, branch: Branch
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
     other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-INV")
     db_session.add(other_branch)
@@ -897,7 +903,7 @@ async def test_list_invitations_branch_header_narrows_to_one_branch(
     await db_session.commit()
 
     viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
-    token = await _login(client, viewer.email)
+    token = issue_token(viewer)
     response = await client.get(
         "/api/v1/invitations",
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
@@ -909,14 +915,18 @@ async def test_list_invitations_branch_header_narrows_to_one_branch(
 
 
 async def test_list_invitations_unauthorized_branch_id_rejected(
-    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, branch: Branch
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
     other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-INV-2")
     db_session.add(other_branch)
     await db_session.commit()
 
     viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
-    token = await _login(client, viewer.email)
+    token = issue_token(viewer)
     response = await client.get(
         "/api/v1/invitations",
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(other_branch.id)},
@@ -925,7 +935,11 @@ async def test_list_invitations_unauthorized_branch_id_rejected(
 
 
 async def test_list_invitations_without_branch_header_returns_every_authorized_branch(
-    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, branch: Branch
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
     other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-INV-3")
     db_session.add(other_branch)
@@ -937,7 +951,7 @@ async def test_list_invitations_without_branch_header_returns_every_authorized_b
     await db_session.commit()
 
     viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
-    token = await _login(client, viewer.email)
+    token = issue_token(viewer)
     response = await client.get("/api/v1/invitations", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     tracking_ids = {row["trackingId"] for row in response.json()["data"]}
@@ -1587,6 +1601,7 @@ async def test_approve_invitation_requires_permission(
     tenant: Tenant,
     branch: Branch,
     monkeypatch,
+    issue_token: Callable[[User], str],
 ) -> None:
     viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
     invitation = _build_invitation(db_session, branch.id, status="submitted", approved_at=None)
@@ -1598,7 +1613,7 @@ async def test_approve_invitation_requires_permission(
         tasks.send_approval_notification, "delay", lambda **kw: approval_calls.append(kw)
     )
 
-    token = await _login(client, viewer.email)
+    token = issue_token(viewer)
     response = await client.post(
         f"/api/v1/invitations/{invitation.id}/approve",
         headers={"Authorization": f"Bearer {token}"},
@@ -1620,7 +1635,11 @@ async def test_approve_invitation_unknown_id_not_found(client: AsyncClient, user
 
 
 async def test_approve_invitation_denied_for_approver_scoped_elsewhere(
-    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, branch: Branch
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
     """An `invitations:approve` grant at a different branch gets 403, not
     404 — `authorize_branch_id` (the same dependency `POST /invitations`
@@ -1635,7 +1654,7 @@ async def test_approve_invitation_denied_for_approver_scoped_elsewhere(
     db_session.add(invitation)
     await db_session.commit()
 
-    token = await _login(client, approver.email)
+    token = issue_token(approver)
     response = await client.post(
         f"/api/v1/invitations/{invitation.id}/approve",
         headers={"Authorization": f"Bearer {token}"},

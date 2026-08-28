@@ -2,7 +2,7 @@ import uuid
 from collections.abc import Collection, Sequence
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import ColumnElement, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
@@ -86,7 +86,7 @@ class UserRepository(TenantScopedRepository[User]):
         default list (alphabetical, still capped by `limit`) instead of
         filtering by name/email.
         """
-        filters = [User.is_active.is_(True), User.deleted_at.is_(None)]
+        filters: list[ColumnElement[bool]] = [User.is_active.is_(True), User.deleted_at.is_(None)]
         if query:
             pattern = f"%{query}%"
             filters.append(or_(User.full_name.ilike(pattern), User.email.ilike(pattern)))
