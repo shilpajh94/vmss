@@ -26,17 +26,19 @@ dependencies = [
     "anyio>=4.14.2",
     "aioboto3>=15.5.0",
     "twilio>=9.11.0",
+    "httpx>=0.28.1",
+    "cryptography>=46.0.3",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
-    "httpx>=0.28.1",
     "ruff>=0.16.2",
     "mypy>=2.3.0",
     "pre-commit>=4.6.2",
     "polyfactory>=3.3.0",
+    "respx>=0.22.0",
 ]
 
 [build-system]

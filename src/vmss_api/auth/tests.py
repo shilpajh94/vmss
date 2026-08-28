@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Callable
 
 import pytest_asyncio
 from httpx import AsyncClient
@@ -6,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import BuildingFactory, DepartmentFactory, FloorFactory, RoleFactory, UserFactory
-from vmss_api.auth.models import Permission, Role, User, UserBranchRole
+from vmss_api.auth.models import AuditLog, Permission, Role, User, UserBranchRole
 from vmss_api.auth.rbac_catalog import seed_default_roles
 from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core.config import settings
@@ -74,6 +75,37 @@ async def test_login_rate_limit_trips(client: AsyncClient, user: User, monkeypat
     assert any(r.status_code == 429 for r in responses)
 
 
+async def test_login_rejects_non_admin_account(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant
+) -> None:
+    """Reception/Security/Host (and any custom non-Admin role) must sign in
+    via SSO, not password login — `test_login_success` above already
+    covers the Admin happy path via the `user` fixture (a company-wide
+    Admin). See `openspec/changes/separate-admin-staff-login`.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name="reception", permissions=[])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=None)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email="reception-login-test@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Reception User",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"email": test_user.email, "password": "correct-password"},
+    )
+    assert response.status_code == 403
+
+
 async def test_tenant_schema_isolation(make_tenant_schema, open_tenant_session, user: User) -> None:
     """A session bound to a *different* tenant's schema must not see this
     tenant's `users` row — under schema-per-tenant, isolation is which
@@ -130,7 +162,7 @@ async def test_create_user_duplicate_email_conflict(client: AsyncClient, user: U
 
 
 async def test_create_user_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
     """Also asserts the response body shape: `HTTPException`s raised across
     the app (401/403/404/409/...) go through `core/middleware.py`'s
@@ -138,7 +170,7 @@ async def test_create_user_requires_permission(
     `{success, message, errors}` envelope every other response uses — not
     FastAPI's default `{"detail": ...}` body. See security-architecture.md §1.
     """
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/auth/users",
         json={
@@ -161,6 +193,7 @@ async def test_assign_branch_role_scopes_access_to_that_branch(
     user: User,
     user_without_permissions: User,
     branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
     """Exercises the full grant flow end to end: an Admin assigns a role to
     another user scoped to one branch, and that user then gains access to
@@ -195,7 +228,7 @@ async def test_assign_branch_role_scopes_access_to_that_branch(
     # implicit reload outside any active session IO context).
     db_session.expire(user_without_permissions, ["branch_roles"])
 
-    granted_token = await _login(client, user_without_permissions.email)
+    granted_token = issue_token(user_without_permissions)
     current = await client.get(
         "/api/v1/branches/current",
         headers={"Authorization": f"Bearer {granted_token}", "X-Branch-ID": str(branch.id)},
@@ -204,9 +237,12 @@ async def test_assign_branch_role_scopes_access_to_that_branch(
 
 
 async def test_assign_branch_role_requires_permission(
-    client: AsyncClient, user_without_permissions: User, branch: Branch
+    client: AsyncClient,
+    user_without_permissions: User,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         f"/api/v1/auth/users/{user_without_permissions.id}/branch-roles",
         json={"roleId": str(user_without_permissions.id), "branchId": str(branch.id)},
@@ -402,9 +438,9 @@ async def test_sync_employee_directory_duplicate_employee_code_in_batch_conflict
 
 
 async def test_sync_employee_directory_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/auth/employees/sync",
         json={
@@ -769,7 +805,12 @@ async def test_list_employees_without_branch_header_scopes_to_every_authorized_b
 
 
 async def test_list_employees_not_scoped_by_caller_permission(
-    client: AsyncClient, db_session: AsyncSession, user: User, tenant: Tenant, branch: Branch
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
     """Listing no longer requires `employees:view`, so a caller scoped to
     only one branch (or no caller at all) no longer narrows the result —
@@ -820,7 +861,7 @@ async def test_list_employees_not_scoped_by_caller_permission(
     )
 
     viewer = await _branch_scoped_employee_viewer(db_session, tenant, branch.id)
-    viewer_token = await _login(client, viewer.email)
+    viewer_token = issue_token(viewer)
     response = await client.get(
         "/api/v1/auth/employees", headers={"Authorization": f"Bearer {viewer_token}"}
     )
@@ -1126,10 +1167,13 @@ async def _company_wide_user(db_session: AsyncSession, tenant: Tenant, *, codes:
 
 
 async def test_list_permissions_success(
-    client: AsyncClient, db_session: AsyncSession, tenant: Tenant
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token: Callable[[User], str],
 ) -> None:
     viewer = await _company_wide_user(db_session, tenant, codes=["roles:view"])
-    token = await _login(client, viewer.email)
+    token = issue_token(viewer)
     response = await client.get(
         "/api/v1/auth/permissions", headers={"Authorization": f"Bearer {token}"}
     )
@@ -1139,9 +1183,9 @@ async def test_list_permissions_success(
 
 
 async def test_list_permissions_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.get(
         "/api/v1/auth/permissions", headers={"Authorization": f"Bearer {token}"}
     )
@@ -1170,9 +1214,9 @@ async def test_create_role_success(client: AsyncClient, user: User) -> None:
 
 
 async def test_create_role_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/auth/roles",
         json={"name": "Security Admin", "permissionCodes": []},
@@ -1581,6 +1625,7 @@ async def test_revoke_branch_role_removes_access(
     user: User,
     user_without_permissions: User,
     branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
     existing = (
         await db_session.execute(select(Permission).where(Permission.code == "branches:view"))
@@ -1605,7 +1650,7 @@ async def test_revoke_branch_role_removes_access(
     assert revoke_response.status_code == 204
 
     db_session.expire(user_without_permissions, ["branch_roles"])
-    granted_token = await _login(client, user_without_permissions.email)
+    granted_token = issue_token(user_without_permissions)
     current = await client.get(
         "/api/v1/branches/current",
         headers={"Authorization": f"Bearer {granted_token}", "X-Branch-ID": str(branch.id)},
@@ -1614,9 +1659,9 @@ async def test_revoke_branch_role_removes_access(
 
 
 async def test_revoke_branch_role_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.delete(
         f"/api/v1/auth/users/{user_without_permissions.id}/branch-roles/{uuid.uuid4()}",
         headers={"Authorization": f"Bearer {token}"},
@@ -1633,3 +1678,27 @@ async def test_revoke_branch_role_not_found(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 404
+
+
+# --- Logout (API-19, audit-only — no token revocation) ------------------------
+
+
+async def test_logout_writes_audit_entry(
+    client: AsyncClient, db_session: AsyncSession, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200, response.text
+
+    audit_stmt = select(AuditLog).where(
+        AuditLog.actor_user_id == user.id, AuditLog.action == "logout"
+    )
+    entries = (await db_session.execute(audit_stmt)).scalars().all()
+    assert len(entries) == 1
+
+
+async def test_logout_requires_authentication(client: AsyncClient) -> None:
+    response = await client.post("/api/v1/auth/logout")
+    assert response.status_code == 401

@@ -15,6 +15,7 @@ os.environ.setdefault("APP_ENV", "test")
 # happen first, the same way `ENVIRONMENT` is set above.
 os.environ["DB_NAME"] = "vmss_test"
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
@@ -32,7 +33,7 @@ from factories import (
 from vmss_api.auth.models import User, UserBranchRole
 from vmss_api.core.config import settings
 from vmss_api.core.database import Base, GlobalBase, get_db
-from vmss_api.core.security import hash_password
+from vmss_api.core.security import create_access_token, hash_password
 from vmss_api.core.tenancy import get_tenant_db
 from vmss_api.main import app
 from vmss_api.org_structure.models import Branch
@@ -196,6 +197,8 @@ ADMIN_PERMISSION_CODES = [
     "invitations:approve",
     "roles:view",
     "roles:manage",
+    "sso-config:view",
+    "sso-config:manage",
 ]
 
 
@@ -243,6 +246,26 @@ async def user_without_permissions(db_session: AsyncSession, tenant: Tenant) -> 
     )
     await db_session.commit()
     return test_user
+
+
+@pytest.fixture
+def issue_token(tenant: Tenant) -> Callable[[User], str]:
+    """Mints a valid access token directly (the same helper `POST
+    /auth/login`/the SSO exchange endpoint use internally), bypassing the
+    password-login endpoint entirely. `separate-admin-staff-login` made
+    `POST /auth/login` reject any non-Admin account, so RBAC/branch-scoping
+    tests that need a bearer token for an arbitrary role — purely to
+    exercise a permission or branch-scoping check, not to test login
+    itself — use this instead of the per-file `_login()` HTTP helper.
+    Real login-flow behavior (including the Admin-only gate) stays covered
+    by `auth/tests.py`'s and `sso/tests.py`'s own login tests, which still
+    go through the real endpoints.
+    """
+
+    def _issue(user: User) -> str:
+        return create_access_token(user.id, tenant.id)
+
+    return _issue
 
 
 @pytest_asyncio.fixture

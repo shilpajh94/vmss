@@ -4,9 +4,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 from PIL import Image
 
-from vmss_api.core import storage
+from vmss_api.core import encryption, storage
 from vmss_api.core.config import settings
 
 
@@ -120,3 +121,51 @@ async def test_s3_backend_misconfigured_bucket_raises_storage_backend_error(monk
 
     with pytest.raises(storage.StorageBackendError):
         await storage.save(uuid.uuid4(), "tests/photo", _png_bytes(), "image/png")
+
+
+# --- encryption (API-19, add-sso-oidc-login) ----------------------------------
+
+
+def test_encrypt_decrypt_round_trips(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "sso_encryption_key", Fernet.generate_key().decode())
+    encryption._fernet.cache_clear()
+
+    ciphertext = encryption.encrypt("super-secret-value")
+    assert ciphertext != "super-secret-value"
+    assert encryption.decrypt(ciphertext) == "super-secret-value"
+
+
+def test_decrypt_tampered_ciphertext_raises(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "sso_encryption_key", Fernet.generate_key().decode())
+    encryption._fernet.cache_clear()
+
+    ciphertext = encryption.encrypt("super-secret-value")
+    tampered = ciphertext[:-4] + ("A" if ciphertext[-4] != "A" else "B") + ciphertext[-3:]
+
+    with pytest.raises(ValueError):
+        encryption.decrypt(tampered)
+
+
+def test_decrypt_with_a_different_key_raises(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "sso_encryption_key", Fernet.generate_key().decode())
+    encryption._fernet.cache_clear()
+    ciphertext = encryption.encrypt("super-secret-value")
+
+    monkeypatch.setattr(settings, "sso_encryption_key", Fernet.generate_key().decode())
+    encryption._fernet.cache_clear()
+
+    with pytest.raises(ValueError):
+        encryption.decrypt(ciphertext)
+
+
+def test_encrypt_without_key_configured_raises_loudly(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "sso_encryption_key", None)
+    encryption._fernet.cache_clear()
+
+    with pytest.raises(encryption.EncryptionKeyNotConfigured):
+        encryption.encrypt("anything")
+
+
+def test_mask_secret_keeps_only_the_last_four_characters() -> None:
+    assert encryption.mask_secret("abcd1234wxyz") == "****wxyz"
+    assert encryption.mask_secret("ab") == "****ab"

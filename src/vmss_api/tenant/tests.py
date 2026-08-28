@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from httpx import AsyncClient
 
 from vmss_api.auth.models import User
@@ -24,13 +26,9 @@ async def test_get_my_tenant_requires_auth(client: AsyncClient) -> None:
 
 
 async def test_get_my_tenant_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    login = await client.post(
-        "/api/v1/auth/login",
-        json={"email": user_without_permissions.email, "password": "correct-password"},
-    )
-    token = login.json()["data"]["accessToken"]
+    token = issue_token(user_without_permissions)
 
     response = await client.get("/api/v1/tenants/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 403

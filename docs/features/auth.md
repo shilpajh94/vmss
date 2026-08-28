@@ -15,7 +15,8 @@ is identical for every tenant.
 
 | Method | Path | Auth | Rate limit | Description |
 |---|---|---|---|---|
-| POST | `/api/v1/auth/login` | None (public) | 5/minute per IP | Returns an access + refresh token pair. |
+| POST | `/api/v1/auth/login` | None (public) | 3/minute per IP | Returns an access + refresh token pair — **Admin accounts only**; a caller whose account holds no Admin role grant is rejected with 403 even with a correct password. Every other role signs in via SSO instead — see `docs/features/sso_authentication.md`. Rate limit tightened from 5/minute once SSO (API-19) made this endpoint's remaining (Admin) traffic the higher-value brute-force target. |
+| POST | `/api/v1/auth/logout` | Any authenticated user | — | Records a `logout` audit entry. Does not invalidate the token — see "Not yet built" below. |
 | GET | `/api/v1/auth/me` | Any authenticated user | — | The caller's own profile, including its branch-role grants. |
 | POST | `/api/v1/auth/users` | `users:manage` (company-wide) | — | Creates a user with no role grants; follow with the branch-roles endpoint below to give it access. |
 | POST | `/api/v1/auth/users/{id}/branch-roles` | `users:manage` (company-wide) | — | Grants a role to a user, scoped to one branch (or company-wide when `branchId` is omitted). |
@@ -252,10 +253,18 @@ code isn't in the catalog (`auth/service.py::_resolve_permission_codes`).
   login and mutating action (`auth/audit.py`) — required from day one per
   `security-architecture.md` §5.
 - **Not yet built**: refresh-token endpoint (exchanging a refresh token for a
-  new access token), logout/token revocation, password reset, user
-  deactivation, staff SSO login (the design shows an SSO-only login screen;
-  no SAML/OIDC flow exists yet — protocol choice is an open product/infra
-  decision).
+  new access token), token revocation (`POST /auth/logout` exists and is
+  audited, but does not invalidate the token — see
+  `docs/features/sso_authentication.md`'s Known limitations), password
+  reset, user deactivation. Staff OIDC SSO login **is** built — see
+  `docs/features/sso_authentication.md` (API-19); SAML remains a
+  not-yet-built Phase 2.
+- **Login method is split by role, not just offered as an alternative**:
+  `POST /auth/login` (password) succeeds only for an Admin account;
+  Reception, Security, Host, and any tenant-defined custom role
+  authenticate exclusively through SSO (`docs/features/sso_authentication.md`).
+  This is enforced, not just documented convention — see
+  `openspec/changes/separate-admin-staff-login`.
 - Superadmin login (a completely separate identity — not a member of any
   tenant's schema) lives in `platform/`, not here — see
   `docs/features/platform.md`.
