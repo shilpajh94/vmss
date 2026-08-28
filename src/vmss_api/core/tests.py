@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from cryptography.fernet import Fernet
+from httpx import ASGITransport, AsyncClient
 from PIL import Image
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.core import encryption, storage
 from vmss_api.core.config import settings
 from vmss_api.core.tenancy import DefaultTenantUnresolved, resolve_default_tenant
+from vmss_api.main import create_app
 from vmss_api.tenant.models import Tenant
 
 
@@ -218,3 +220,103 @@ def test_encrypt_without_key_configured_raises_loudly(monkeypatch) -> None:
 def test_mask_secret_keeps_only_the_last_four_characters() -> None:
     assert encryption.mask_secret("abcd1234wxyz") == "****wxyz"
     assert encryption.mask_secret("ab") == "****ab"
+
+
+# --- environment-configuration capability: debug-mode safety and exception
+# leak hardening (fix-unhandled-exception-leak) ------------------------------
+#
+# `RequestIdMiddleware` used to subclass Starlette's `BaseHTTPMiddleware`,
+# which can let an exception raised downstream bypass the app's registered
+# exception handlers — that's how a production request once returned a raw
+# framework traceback instead of the standard error envelope. These tests
+# build a fresh app via the real `create_app()` wiring (not the module-level
+# `app` singleton) so `settings.environment`/`settings.debug` can vary per
+# case, and add a route that unconditionally raises to prove the envelope
+# is what a client actually receives end-to-end.
+
+
+@pytest.mark.parametrize(
+    ("environment", "debug"),
+    [
+        ("production", True),
+        ("staging", True),
+        ("local", True),
+        ("testing", True),
+        ("production", False),
+    ],
+)
+def test_effective_debug_is_only_true_in_local_or_testing(
+    monkeypatch, environment: str, debug: bool
+) -> None:
+    monkeypatch.setattr(settings, "environment", environment)
+    monkeypatch.setattr(settings, "debug", debug)
+
+    assert settings.effective_debug == (debug and environment in {"local", "testing"})
+
+
+_STANDARD_ERROR_ENVELOPE = {
+    "success": False,
+    "message": "An unexpected error occurred.",
+    "errors": None,
+}
+
+
+async def test_unhandled_exception_in_a_route_returns_standard_envelope_when_debug_disabled(
+    monkeypatch,
+) -> None:
+    """Reproduces the reported incident with debug mode disabled — the state
+    every real `staging`/`production` deployment is forced into by
+    `effective_debug`. `ASGITransport`'s default `raise_app_exceptions=True`
+    re-raises the exception Starlette's `ServerErrorMiddleware` itself
+    always re-raises after already sending the response (see design.md's
+    Context) — `raise_app_exceptions=False` lets this test inspect that
+    already-sent response instead of the re-raise.
+    """
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "debug", False)
+    test_app = create_app("production")
+
+    @test_app.get("/_test/boom")
+    async def boom() -> None:
+        raise RuntimeError("boom")
+
+    transport = ASGITransport(app=test_app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/_test/boom")
+
+    assert response.status_code == 500
+    assert response.json() == _STANDARD_ERROR_ENVELOPE
+    assert "boom" not in response.text
+    assert "Traceback" not in response.text
+    assert "vmss_api" not in response.text
+
+
+async def test_unhandled_exception_in_middleware_returns_standard_envelope_when_debug_disabled(
+    monkeypatch,
+) -> None:
+    """Same as above, but the exception originates ahead of routing —
+    proving the standard envelope isn't just a route-handler-specific
+    behavior (`unhandled_exception_handler` is reached the same way
+    regardless of where in the stack the exception is raised).
+    """
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "debug", False)
+    test_app = create_app("production")
+
+    class _AlwaysRaisesMiddleware:
+        def __init__(self, app) -> None:
+            self.app = app
+
+        async def __call__(self, scope, receive, send) -> None:
+            raise RuntimeError("boom-in-middleware")
+
+    test_app.add_middleware(_AlwaysRaisesMiddleware)
+
+    transport = ASGITransport(app=test_app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/health")
+
+    assert response.status_code == 500
+    assert response.json() == _STANDARD_ERROR_ENVELOPE
+    assert "boom-in-middleware" not in response.text
+    assert "Traceback" not in response.text

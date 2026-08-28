@@ -47,6 +47,20 @@ One Redis instance, one logical database index per purpose:
 | `REDIS_CELERY_RESULT_DB` | `2` | Logical DB index for the Celery result backend. |
 | `REDIS_URL` / `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | unset | **Optional full-URL overrides**, one per purpose. Each wins outright for that one purpose if set, independent of the others — e.g. you can point just the broker at a different Redis instance. |
 
+## `APP_DEBUG` is only ever honored in `local`/`testing`
+
+`APP_DEBUG` alone does not control whether the running app exposes verbose,
+framework-level error responses (a full stack trace instead of the standard
+`{success, message, errors}` envelope on an unhandled exception). The app
+computes an effective debug flag from both `APP_ENV` and `APP_DEBUG`
+(`Settings.effective_debug`): debug behavior is only ever enabled when
+`APP_ENV` is `local` or `testing`, regardless of what `APP_DEBUG` is set to.
+Setting `APP_DEBUG=true` in `staging`/`production` has no effect — the app
+still returns the standard error envelope on an unhandled exception, never a
+raw traceback. This exists specifically so a deployment that forgets to set
+`APP_DEBUG=false` doesn't expose internal details to callers
+(`security-architecture.md` §4).
+
 ## Other groups
 
 See `.env.example` for the full, current list (it is kept in sync with
