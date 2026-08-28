@@ -15,11 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import RoleFactory, SsoProviderFactory, SsoRoleMappingFactory
 from vmss_api.auth.models import AuditLog, Role, User
+from vmss_api.auth.repository import UserRepository
 from vmss_api.core import encryption
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.security import decode_token
 from vmss_api.sso import oidc_client
+from vmss_api.sso import service as sso_service
 from vmss_api.sso.models import SsoProvider
 from vmss_api.tenant.models import Tenant
 
@@ -698,6 +700,51 @@ async def test_returning_user_reuses_existing_account(
         groups=["VMS-Security-Team"],
     )
     assert second.status_code == 307
+
+    users = (await db_session.execute(select(User).where(User.email == email))).scalars().all()
+    assert len(users) == 1
+
+
+async def test_provision_or_resolve_user_concurrent_first_login_resolves_to_one_user(
+    db_session: AsyncSession, tenant: Tenant, monkeypatch
+) -> None:
+    """Regression test for a check-then-act race:
+    `sso/service.py::_provision_or_resolve_user` checks `get_by_email` for
+    `None`, then inserts a new `User` for a not-yet-provisioned email — two
+    concurrent first-time SSO logins for the same email (e.g. a
+    double-click on "Sign in with SSO") can both see `None` before either
+    commits, and the second's insert then hits `User.email`'s unique
+    constraint. Simulated (not a real thread race, matching this
+    project's established pattern — see
+    `invitations/tests.py::test_approve_invitation_concurrent_requests_
+    transition_exactly_once`) by making the second call's own internal
+    existence check return a stale `None` even though the first call's
+    row has already committed. See
+    verify-post-merge-regression-suite/design.md.
+    """
+    email = f"race-{uuid.uuid4().hex[:8]}@acme-test.example"
+
+    user_a, created_a = await sso_service._provision_or_resolve_user(
+        db_session, tenant_id=tenant.id, email=email, full_name="Racer A", groups=[]
+    )
+    assert created_a is True
+
+    real_get_by_email = UserRepository.get_by_email
+    calls = {"n": 0}
+
+    async def stale_read_once(self: UserRepository, email_arg: str) -> User | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None
+        return await real_get_by_email(self, email_arg)
+
+    monkeypatch.setattr(UserRepository, "get_by_email", stale_read_once)
+    user_b, created_b = await sso_service._provision_or_resolve_user(
+        db_session, tenant_id=tenant.id, email=email, full_name="Racer B", groups=[]
+    )
+
+    assert created_b is False
+    assert user_b.id == user_a.id
 
     users = (await db_session.execute(select(User).where(User.email == email))).scalars().all()
     assert len(users) == 1

@@ -3,6 +3,7 @@ import secrets
 import uuid
 
 from fastapi import BackgroundTasks, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth import service as auth_service
@@ -376,15 +377,28 @@ async def _provision_or_resolve_user(
     else:
         role = await role_repo.get_by_name(_HOST_DEFAULT_ROLE_NAME)
 
-    user = await auth_service.create_user(
-        tenant_db,
-        tenant_id=tenant_id,
-        email=email,
-        hashed_password=hash_password(secrets.token_urlsafe(32)),
-        full_name=full_name,
-        role_assignments=[(role, None)] if role is not None else None,
-    )
-    await tenant_db.commit()
+    try:
+        user = await auth_service.create_user(
+            tenant_db,
+            tenant_id=tenant_id,
+            email=email,
+            hashed_password=hash_password(secrets.token_urlsafe(32)),
+            full_name=full_name,
+            role_assignments=[(role, None)] if role is not None else None,
+        )
+        await tenant_db.commit()
+    except IntegrityError:
+        # Two concurrent first-time SSO logins for the same not-yet-
+        # provisioned email (e.g. a double-click on "Sign in with SSO")
+        # can both see `None` above before either commits. The email
+        # itself is what the caller is trying to log in as, so the second
+        # racer's intent is still satisfiable by resolving to the row the
+        # first racer just created, rather than failing the login.
+        await tenant_db.rollback()
+        resolved = await UserRepository(tenant_db).get_by_email(email)
+        if resolved is None:
+            raise
+        return resolved, False
     return user, True
 
 

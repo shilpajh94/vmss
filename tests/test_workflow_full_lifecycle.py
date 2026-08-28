@@ -558,6 +558,16 @@ async def _run_workflow_after_provisioning(
     )
     await db_session.commit()
 
+    # Branch B's code (`BR-B-{suffix}`) must never collide with the
+    # walk-in no-device-key fallback's configured default branch code, or
+    # this deletion would also be rejected by
+    # `protect-walkin-default-branch-config`'s guard — a test-data
+    # coincidence, not something this workflow is testing. Asserted
+    # explicitly so a future change to either value can't silently
+    # reintroduce the collision `conftest.py`'s shared `branch` fixture
+    # already had with it.
+    assert f"BR-B-{suffix}" != settings.registration_default_branch_code
+
     final_delete_response = await client.delete(
         f"/api/v1/branches/{branch_b_id}", headers=admin_headers
     )
