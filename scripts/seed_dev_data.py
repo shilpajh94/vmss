@@ -24,8 +24,6 @@ from vmss_api.tenant.repository import TenantRepository
 ADMIN_EMAIL = "admin@example.com"
 ADMIN_PASSWORD = "admin12345"
 
-DEFAULT_BRANCH_CODE = "MAIN"
-
 
 async def seed() -> None:
     async with AsyncSessionLocal() as db:
@@ -72,7 +70,11 @@ async def seed() -> None:
             seeded_roles = (await tenant_db.execute(role_stmt)).scalars().all()
             roles_by_name = {r.name: r for r in seeded_roles}
 
-            branch = Branch(id=uuid.uuid4(), name="Main Branch", code=DEFAULT_BRANCH_CODE)
+            branch = Branch(
+                id=uuid.uuid4(),
+                name="Main Branch",
+                code=settings.registration_default_branch_code,
+            )
             tenant_db.add(branch)
             await tenant_db.flush()
 
@@ -94,7 +96,8 @@ async def seed() -> None:
             await tenant_db.commit()
 
         print(
-            f"Seeded tenant '{tenant.slug}', branch '{DEFAULT_BRANCH_CODE}', "
+            f"Seeded tenant '{tenant.slug}', branch "
+            f"'{settings.registration_default_branch_code}', "
             f"role catalog {sorted(ROLE_PERMISSIONS)}, and admin user "
             f"'{ADMIN_EMAIL}' / '{ADMIN_PASSWORD}' (company-wide Admin)"
         )
