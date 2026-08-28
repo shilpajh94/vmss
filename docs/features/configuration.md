@@ -47,6 +47,20 @@ One Redis instance, one logical database index per purpose:
 | `REDIS_CELERY_RESULT_DB` | `2` | Logical DB index for the Celery result backend. |
 | `REDIS_URL` / `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | unset | **Optional full-URL overrides**, one per purpose. Each wins outright for that one purpose if set, independent of the others — e.g. you can point just the broker at a different Redis instance. |
 
+## `APP_DEBUG` is only ever honored in `local`/`testing`
+
+`APP_DEBUG` alone does not control whether the running app exposes verbose,
+framework-level error responses (a full stack trace instead of the standard
+`{success, message, errors}` envelope on an unhandled exception). The app
+computes an effective debug flag from both `APP_ENV` and `APP_DEBUG`
+(`Settings.effective_debug`): debug behavior is only ever enabled when
+`APP_ENV` is `local` or `testing`, regardless of what `APP_DEBUG` is set to.
+Setting `APP_DEBUG=true` in `staging`/`production` has no effect — the app
+still returns the standard error envelope on an unhandled exception, never a
+raw traceback. This exists specifically so a deployment that forgets to set
+`APP_DEBUG=false` doesn't expose internal details to callers
+(`security-architecture.md` §4).
+
 ## Other groups
 
 See `.env.example` for the full, current list (it is kept in sync with
@@ -62,6 +76,63 @@ boto3's default credential provider chain reads them directly from the
 process environment when `STORAGE_BACKEND=s3`. They're documented in
 `.env.example` for discoverability even though `core/config.py` never
 touches them.
+
+## Provisioning the default tenant/branch
+
+`TENANT_DEFAULT_SLUG` and `REGISTRATION_DEFAULT_BRANCH_CODE` back the
+unauthenticated fallback several public endpoints use when a request carries
+no tenant/device credential at all — the web portal's walk-in registration,
+visit-info lookups, identity verification (OTP), and invitation tracking
+(`docs/features/registrations.md`'s "Fallback when no `X-Device-Key` is sent
+at all"). Setting these two variables in `.env` is not enough on its own:
+the tenant named by `TENANT_DEFAULT_SLUG` and a branch with `code` equal to
+`REGISTRATION_DEFAULT_BRANCH_CODE` must actually exist and be active in that
+environment's database, or every one of those public endpoints rejects every
+header-less request with a 401/404 server-misconfiguration response.
+
+A new environment needs this as an explicit provisioning step, not something
+discovered by a failing live request:
+
+1. Provision a tenant whose slug matches `TENANT_DEFAULT_SLUG` (local dev:
+   `scripts/seed_dev_data.py` does this against the values already in
+   `.env`; any other environment provisions one the same way
+   `platform/service.py::create_tenant` does, then sets `TENANT_DEFAULT_SLUG`
+   to match its slug).
+2. Within that tenant's schema, provision a branch whose `code` matches
+   `REGISTRATION_DEFAULT_BRANCH_CODE` (default `MAIN`) and confirm it's
+   active.
+3. `GET /health/ready` verifies both of these resolve, in addition to
+   Postgres/Redis connectivity — a deployment missing either reports
+   unready (503) with a message naming which one, instead of reporting
+   healthy until a real caller hits the walk-in/visit-info/OTP/tracking
+   endpoints and gets rejected.
+
+## Resetting and re-seeding dev data
+
+To get a fully fresh local dev dataset spanning every feature (org
+structure, visitor categories, invitations, OTP requests, a walk-in
+registration) instead of only the minimal tenant/branch/admin
+`seed_dev_data.py` provisions on its own, run these three scripts in
+sequence:
+
+```
+ddev exec uv run python scripts/reset_dev_tenant_data.py --yes
+ddev exec uv run python scripts/seed_dev_data.py
+ddev exec uv run python scripts/seed_demo_workflow.py
+```
+
+`reset_dev_tenant_data.py` clears every row in the one tenant named by
+`TENANT_DEFAULT_SLUG` (`TRUNCATE`, not a schema drop — its migration state
+is untouched) plus that tenant's rows in the handful of global-schema
+tables that reference it (`tenant_user_index`, `registration_device_keys`,
+`platform_audit_events`). It never touches a second tenant's data, refuses
+outright when `APP_ENV`/`settings.environment` is `production`, and without
+`--yes` only prints what it *would* clear and exits — it performs no
+partial or automatic action, since this is the one script in this
+directory whose entire job is destructive. `seed_dev_data.py` then
+re-provisions the tenant/branch/admin (idempotent either way), and
+`seed_demo_workflow.py` (real HTTP, additive, safe to re-run) populates the
+rest.
 
 ## Migrating an existing `.env`
 

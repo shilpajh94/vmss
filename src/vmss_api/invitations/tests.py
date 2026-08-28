@@ -9,9 +9,11 @@ from datetime import UTC, datetime, timedelta
 import aiosmtplib
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from httpx import AsyncClient, Response
 from PIL import Image
 from pydantic import BaseModel
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
@@ -749,6 +751,52 @@ async def test_track_rate_limit_trips(client: AsyncClient, tenant: Tenant, monke
     assert any(r.status_code == 429 for r in responses)
 
 
+async def test_track_unresolvable_default_tenant_logged_as_error(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """`track_default_tenant_db` (`invitations/deps.py`) resolves the single
+    configured default tenant via `core.tenancy.resolve_default_tenant`. When
+    that tenant doesn't exist, this is a server-side misconfiguration, not a
+    caller error, so it must be logged at `ERROR` with the same
+    not-found/inactive distinction `registrations/deps.py`'s equivalent
+    fallback already has — see
+    harden-default-tenant-resolution-and-readiness/design.md. The
+    client-facing 404 is unchanged from before this consistency fix.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", "no-such-tenant-slug")
+
+    with capture_logs() as captured:
+        response = await client.get(
+            "/api/v1/invitations/track", params={"trackingId": "INV-DEADBEEF"}
+        )
+
+    assert response.status_code == 404
+    assert response.json()["message"] == "Tenant not found or inactive"
+
+    [entry] = [e for e in captured if e["event"] == "invitations_track_default_tenant_unconfigured"]
+    assert entry["log_level"] == "error"
+    assert entry["reason"] == "not_found"
+
+
+async def test_track_inactive_default_tenant_logged_as_error(
+    client: AsyncClient, tenant: Tenant, db_session: AsyncSession
+) -> None:
+    await db_session.execute(update(Tenant).where(Tenant.id == tenant.id).values(is_active=False))
+    await db_session.commit()
+
+    with capture_logs() as captured:
+        response = await client.get(
+            "/api/v1/invitations/track", params={"trackingId": "INV-DEADBEEF"}
+        )
+
+    assert response.status_code == 404
+    assert response.json()["message"] == "Tenant not found or inactive"
+
+    [entry] = [e for e in captured if e["event"] == "invitations_track_default_tenant_unconfigured"]
+    assert entry["log_level"] == "error"
+    assert entry["reason"] == "inactive"
+
+
 # --- Employee listing (GET /invitations) -------------------------------------
 
 
@@ -1454,6 +1502,43 @@ async def test_approve_invitation_success(
     assert invitation.approved_at is not None
 
 
+async def test_approve_invitation_soft_deleted_branch_succeeds(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """Regression test: approving a `submitted` invitation no longer 404s
+    just because its recorded branch was soft-deleted after submission —
+    see harden-referential-integrity-and-rbac-gates. The invitation's own
+    `branchId` is already-persisted historical data, not something that
+    needs to still exist for the approval to go through.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted", approved_at=None)
+    db_session.add(invitation)
+    await db_session.execute(
+        update(Branch).where(Branch.id == branch.id).values(deleted_at=datetime.now(UTC))
+    )
+    await db_session.commit()
+
+    approval_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_approval_notification, "delay", lambda **kw: approval_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "approved"
+    assert data["approvedAt"] is not None
+    assert len(approval_calls) == 1
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+    assert invitation.approved_at is not None
+
+
 async def test_approve_invitation_already_approved_rejected(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
 ) -> None:
@@ -1476,12 +1561,47 @@ async def test_approve_invitation_already_approved_rejected(
     assert invitation.approved_at == original_approved_at
 
 
+async def test_approve_invitation_concurrent_requests_transition_exactly_once(
+    branch: Branch, tenant: Tenant, db_session: AsyncSession, monkeypatch
+) -> None:
+    """Regression test for a check-then-act race:
+    `invitations/service.py::approve_invitation` used to read
+    `invitation.status`, check it, then mutate and commit — two request
+    handlers that each independently fetched the same `submitted`
+    invitation before either approved it (the shape a real concurrent pair
+    of requests produces) could both pass the check and both dispatch a
+    notification. Simulated here by calling the service function twice
+    against the same stale, pre-approval `invitation` object — neither call
+    has seen the other's transition — and asserting the atomic
+    conditional-`UPDATE` fix still only transitions and notifies once. See
+    codebase-review-and-e2e-scenario-test/design.md.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted", approved_at=None)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    approval_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_approval_notification, "delay", lambda **kw: approval_calls.append(kw)
+    )
+
+    first = await invitations_service.approve_invitation(db_session, invitation, tenant=tenant)
+    assert first.status == "approved"
+
+    with pytest.raises(HTTPException) as exc_info:
+        await invitations_service.approve_invitation(db_session, invitation, tenant=tenant)
+    assert exc_info.value.status_code == 409
+
+    assert len(approval_calls) == 1
+
+
 async def test_approve_invitation_requires_permission(
     client: AsyncClient,
     db_session: AsyncSession,
     tenant: Tenant,
     branch: Branch,
     monkeypatch,
+    issue_token: Callable[[User], str],
 ) -> None:
     viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
     invitation = _build_invitation(db_session, branch.id, status="submitted", approved_at=None)
@@ -1493,7 +1613,7 @@ async def test_approve_invitation_requires_permission(
         tasks.send_approval_notification, "delay", lambda **kw: approval_calls.append(kw)
     )
 
-    token = await _login(client, viewer.email)
+    token = issue_token(viewer)
     response = await client.post(
         f"/api/v1/invitations/{invitation.id}/approve",
         headers={"Authorization": f"Bearer {token}"},
@@ -1515,7 +1635,11 @@ async def test_approve_invitation_unknown_id_not_found(client: AsyncClient, user
 
 
 async def test_approve_invitation_denied_for_approver_scoped_elsewhere(
-    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, branch: Branch
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
 ) -> None:
     """An `invitations:approve` grant at a different branch gets 403, not
     404 — `authorize_branch_id` (the same dependency `POST /invitations`
@@ -1530,7 +1654,7 @@ async def test_approve_invitation_denied_for_approver_scoped_elsewhere(
     db_session.add(invitation)
     await db_session.commit()
 
-    token = await _login(client, approver.email)
+    token = issue_token(approver)
     response = await client.post(
         f"/api/v1/invitations/{invitation.id}/approve",
         headers={"Authorization": f"Bearer {token}"},

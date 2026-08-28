@@ -90,9 +90,17 @@ itself. The client-facing response is unchanged — still a generic 503
 
 Like `GET /invitations/track`, these endpoints carry no bearer token and
 no tenant identifier, so they resolve the single configured
-`settings.default_tenant_slug` tenant (`identity_verification/deps.py::
+`settings.default_tenant_slug` tenant via the shared
+`core.tenancy.resolve_default_tenant` (`identity_verification/deps.py::
 default_tenant_id`) — a known limitation to replace with real
-hostname-based tenant routing once a second tenant exists.
+hostname-based tenant routing once a second tenant exists. If that tenant
+doesn't exist or is inactive, this is a server-side misconfiguration, not a
+caller error: it's logged at `ERROR` as
+`identity_verification_default_tenant_unconfigured`, distinguishing "no
+such tenant" from "tenant inactive" so an operator can tell the fix from
+the log alone, consistent with `registrations`' equivalent fallback
+(`docs/features/registrations.md`). The client-facing response is
+unchanged — still 404 `"Tenant not found or inactive"`.
 
 ## Config knobs
 

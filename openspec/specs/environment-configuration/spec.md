@@ -89,3 +89,87 @@ for diagnosis in a given environment without modifying and redeploying code.
   than the default in a given environment
 - **THEN** log lines at that verbosity appear in that environment's output
   without any source code change
+
+### Requirement: Readiness Reporting Verifies the Configured Default Tenant and Branch Resolve
+Several public, unauthenticated endpoints (walk-in registration without a
+device credential, identity verification, invitation tracking) resolve a
+single server-configured default tenant, and in one case a default branch
+within it, rather than a caller-supplied identifier. The readiness probe
+SHALL verify that this configured default tenant — and, separately, the
+configured default walk-in branch — resolves to an active row, in addition
+to verifying database and cache connectivity, so a deployment where these
+settings do not resolve is reported unready instead of healthy.
+
+#### Scenario: Readiness passes when the default tenant and branch are correctly provisioned
+- **WHEN** the readiness endpoint is called, the database and cache are
+  reachable, and the configured default tenant slug resolves to an active
+  tenant whose schema contains an active branch matching the configured
+  default branch code
+- **THEN** the readiness endpoint reports ready
+
+#### Scenario: Readiness fails when the configured default tenant does not resolve
+- **WHEN** the readiness endpoint is called and the configured default
+  tenant slug does not match any tenant, or matches one that is inactive
+- **THEN** the readiness endpoint reports not-ready and the response
+  distinguishes this cause from a database/cache connectivity failure
+
+#### Scenario: Readiness fails when the configured default branch does not resolve
+- **WHEN** the readiness endpoint is called, the configured default tenant
+  resolves and is active, but the configured default walk-in branch code
+  does not match any branch in that tenant's schema, or matches one that is
+  inactive
+- **THEN** the readiness endpoint reports not-ready and the response
+  distinguishes this cause from a default-tenant resolution failure
+
+### Requirement: Debug Mode Cannot Be Enabled Outside Local/Testing Environments
+The system SHALL only run with framework debug mode enabled when the
+configured environment is `local` or `testing`. If the debug-mode
+environment variable is set to enable it while the configured environment
+is anything else (e.g. `staging`, `production`), the system SHALL run with
+debug mode disabled rather than honoring the variable, so a deployment that
+fails to explicitly disable debug mode is not exposed to debug-mode
+behavior (including verbose error responses) as a result.
+
+#### Scenario: Debug variable ignored in production
+- **WHEN** the environment is configured as `production` and the debug-mode
+  environment variable is set to enable debug mode
+- **THEN** the system runs with debug mode disabled
+
+#### Scenario: Debug variable ignored in staging
+- **WHEN** the environment is configured as `staging` and the debug-mode
+  environment variable is set to enable debug mode
+- **THEN** the system runs with debug mode disabled
+
+#### Scenario: Debug variable honored in local and testing
+- **WHEN** the environment is configured as `local` or as `testing` and the
+  debug-mode environment variable is set to enable debug mode
+- **THEN** the system runs with debug mode enabled
+
+### Requirement: Unhandled Exceptions Never Expose Internal Details to Clients When Debug Mode Is Disabled
+Whenever debug mode is disabled, regardless of where in the request-handling
+path an exception is raised — including inside request-scoped middleware
+that runs before routing, not only inside a route handler — the system
+SHALL return the standard error response envelope with a generic message
+and a `500` status code, and SHALL NOT return a stack trace, file path,
+source line, or any other framework-internal diagnostic detail in the
+response body. Combined with the previous requirement, this guarantees no
+`staging`/`production` deployment can expose these details regardless of
+where an exception originates, since debug mode can never be enabled there.
+A framework debug traceback remains an accepted, intentional result only
+when debug mode is enabled (`local`/`testing` only) — that is debug mode's
+purpose in local development, not a leak.
+
+#### Scenario: Exception raised inside a route handler with debug disabled
+- **WHEN** debug mode is disabled and a request causes an unhandled
+  exception inside a route's service or repository call
+- **THEN** the client receives the standard error response envelope with a
+  generic message and status `500`, with no stack trace or internal detail
+  in the body
+
+#### Scenario: Exception raised inside request-scoped middleware with debug disabled
+- **WHEN** debug mode is disabled and a request causes an unhandled
+  exception inside middleware that runs before the route handler (e.g.
+  request-id binding)
+- **THEN** the client receives the same standard error response envelope,
+  with no stack trace or internal detail in the body, exactly as it would
+  if the exception had been raised inside the route handler itself

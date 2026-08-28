@@ -1,7 +1,7 @@
 from importlib.metadata import version
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.api import api_router
 from vmss_api.core.config import settings
-from vmss_api.core.database import get_db
+from vmss_api.core.database import get_db, tenant_session_scope
 from vmss_api.core.logging import configure_logging
 from vmss_api.core.middleware import (
     RequestIdMiddleware,
@@ -21,6 +21,8 @@ from vmss_api.core.rate_limit import limiter
 from vmss_api.core.redis import get_redis
 from vmss_api.core.responses import error_response, success_response
 from vmss_api.core.schemas import CamelModel, Envelope
+from vmss_api.core.tenancy import DefaultTenantUnresolved, resolve_default_tenant
+from vmss_api.org_structure.repository import BranchRepository
 
 configure_logging(settings.debug, settings.log_level)
 
@@ -136,7 +138,7 @@ def create_app(environment: str | None = None) -> FastAPI:
         title=settings.app_name,
         version=_APP_VERSION,
         description="Visitor Management SaaS — backend API.",
-        debug=settings.debug,
+        debug=settings.effective_debug,
         docs_url=docs_url,
         redoc_url=redoc_url,
         openapi_url=openapi_url,
@@ -174,9 +176,37 @@ def create_app(environment: str | None = None) -> FastAPI:
 
     @app.get("/health/ready", tags=["health"], response_model=Envelope[HealthStatus])
     async def health_ready(db: Annotated[AsyncSession, Depends(get_db)]) -> JSONResponse:
-        """Readiness — the process AND its dependencies are actually usable."""
+        """Readiness — the process AND its dependencies are actually usable.
+
+        Also verifies the configured default tenant and default walk-in
+        branch (`registrations`/`identity_verification`/`invitations`'
+        shared unauthenticated-fallback config, `environment-configuration`
+        capability) resolve to active rows — a deployment where they don't
+        previously reported "ready" right up until a real caller hit one of
+        those endpoints and got a 401/404. See
+        harden-default-tenant-resolution-and-readiness/design.md.
+        """
         await db.execute(text("SELECT 1"))
         await (await get_redis()).ping()
+
+        try:
+            default_tenant = await resolve_default_tenant(db)
+        except DefaultTenantUnresolved as exc:
+            return error_response(
+                message=f"Default tenant is not configured ({exc.reason})",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        async with tenant_session_scope(default_tenant.schema_name) as tenant_db:
+            branch = await BranchRepository(tenant_db).get_by_code(
+                settings.registration_default_branch_code
+            )
+        if branch is None or not branch.is_active:
+            return error_response(
+                message="Default walk-in branch is not configured",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
         return success_response(data=HealthStatus(status="ok"))
 
     return app

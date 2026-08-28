@@ -2,7 +2,7 @@ import uuid
 from collections.abc import Collection, Sequence
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import ColumnElement, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
@@ -11,19 +11,21 @@ from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.org_structure.models import Building, Department, Floor
 
 
-class UserRepository:
+class UserRepository(TenantScopedRepository[User]):
     """Operates on the `users` table of whichever tenant schema `session` is
     already bound to (see `core/tenancy.py::get_tenant_db`) — tenant
     isolation here is structural, not a WHERE clause. See
-    database-architecture.md §3.
+    database-architecture.md §3. Inherits `TenantScopedRepository[User]`
+    like every other tenant repository, for its `get`/`count`/`paginate`/
+    `soft_delete` — `get_by_id` below is that inherited `get`, kept under
+    its existing name since it's already the public method every caller
+    uses.
     """
 
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
+    model = User
 
     async def get_by_id(self, id_: uuid.UUID) -> User | None:
-        stmt = select(User).where(User.id == id_, User.deleted_at.is_(None))
-        return (await self.session.execute(stmt)).scalar_one_or_none()
+        return await self.get(id_)
 
     async def get_by_email(self, email: str) -> User | None:
         stmt = select(User).where(User.email == email, User.deleted_at.is_(None))
@@ -84,7 +86,7 @@ class UserRepository:
         default list (alphabetical, still capped by `limit`) instead of
         filtering by name/email.
         """
-        filters = [User.is_active.is_(True), User.deleted_at.is_(None)]
+        filters: list[ColumnElement[bool]] = [User.is_active.is_(True), User.deleted_at.is_(None)]
         if query:
             pattern = f"%{query}%"
             filters.append(or_(User.full_name.ilike(pattern), User.email.ilike(pattern)))

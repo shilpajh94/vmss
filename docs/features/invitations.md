@@ -145,13 +145,22 @@ eager-load either child collection for a list view that doesn't render them
 `GET /invitations/track` has no bearer token and no tenant identifier at all
 to resolve from — a caller who lost their tracking ID is exactly who needs
 it — so it resolves the single configured `settings.default_tenant_slug`
-tenant (`invitations/deps.py::track_default_tenant_db`). This is a known
+tenant via the shared `core.tenancy.resolve_default_tenant`
+(`invitations/deps.py::track_default_tenant_db`). This is a known
 limitation once a second tenant exists: a real multi-tenant deployment would
 resolve this from the request's hostname/subdomain, which nothing in this
 codebase does yet. There is no signed token anywhere in this feature
 anymore — the confirmation QR code encodes the plain `tracking_id`, since
 there is no unauthenticated write endpoint left that needed a signed token
 to resolve tenancy.
+
+If the default tenant doesn't exist or is inactive, this is a server-side
+misconfiguration, not a caller error: it's logged at `ERROR` as
+`invitations_track_default_tenant_unconfigured`, distinguishing "no such
+tenant" from "tenant inactive" so an operator can tell the fix from the log
+alone, consistent with `registrations`' equivalent fallback
+(`docs/features/registrations.md`). The client-facing response is
+unchanged — still 404 `"Tenant not found or inactive"`.
 
 ## Minimal disclosure on the email-based tracking lookup
 

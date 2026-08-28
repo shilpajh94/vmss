@@ -18,6 +18,16 @@ class Settings(BaseSettings):
     environment: str = Field(default="local", alias="APP_ENV")
     debug: bool = Field(default=True, alias="APP_DEBUG")
 
+    @property
+    def effective_debug(self) -> bool:
+        """Gates FastAPI's debug behavior (verbose tracebacks on an
+        unhandled exception) — `APP_DEBUG` alone is never trusted for this,
+        so a deployment that forgets to set `APP_DEBUG=false` can't leak a
+        debug traceback in `staging`/`production`. `debug` itself is left
+        untouched for its other use (`configure_logging`'s verbosity gate).
+        """
+        return self.debug and self.environment.lower() in {"local", "testing"}
+
     # `core/logging.py` — minimum level to emit; production-safe default so
     # verbosity is raised per-environment without a code change
     # (logging-observability.md §3).

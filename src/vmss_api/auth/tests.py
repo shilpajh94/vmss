@@ -1,9 +1,10 @@
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import BuildingFactory, DepartmentFactory, FloorFactory, RoleFactory, UserFactory
@@ -236,6 +237,60 @@ async def test_assign_branch_role_scopes_access_to_that_branch(
     assert current.status_code == 200
 
 
+async def test_assign_branch_role_duplicate_grant_rejected(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    user_without_permissions: User,
+    branch: Branch,
+) -> None:
+    """Regression test: a second identical grant used to raise an unhandled
+    `IntegrityError` (the DB's `uq_user_branch_role` constraint) instead of
+    a clean 409 — see codebase-review-and-e2e-scenario-test.
+    """
+    existing = (
+        await db_session.execute(select(Permission).where(Permission.code == "branches:view"))
+    ).scalar_one()
+    role = RoleFactory.build(id=uuid.uuid4(), name="reception-duplicate", permissions=[existing])
+    db_session.add(role)
+    await db_session.commit()
+
+    # Captured before the requests below: the service's `IntegrityError`
+    # rollback on the second request expires every object already loaded in
+    # this shared `db_session` (the `client` fixture routes `get_db`/
+    # `get_tenant_db` through it), so touching `.id` on these fixtures
+    # afterward would trigger an out-of-greenlet-context lazy refresh.
+    target_user_id, role_id, branch_id = user_without_permissions.id, role.id, branch.id
+    token = await _login(client, user.email)
+    payload = {"roleId": str(role_id), "branchId": str(branch_id)}
+    headers = {"Authorization": f"Bearer {token}"}
+
+    first = await client.post(
+        f"/api/v1/auth/users/{target_user_id}/branch-roles",
+        json=payload,
+        headers=headers,
+    )
+    assert first.status_code == 201
+
+    second = await client.post(
+        f"/api/v1/auth/users/{target_user_id}/branch-roles",
+        json=payload,
+        headers=headers,
+    )
+    assert second.status_code == 409
+
+    count = await db_session.execute(
+        select(func.count())
+        .select_from(UserBranchRole)
+        .where(
+            UserBranchRole.user_id == target_user_id,
+            UserBranchRole.role_id == role_id,
+            UserBranchRole.branch_id == branch_id,
+        )
+    )
+    assert count.scalar_one() == 1
+
+
 async def test_assign_branch_role_requires_permission(
     client: AsyncClient,
     user_without_permissions: User,
@@ -279,6 +334,64 @@ async def test_assign_branch_role_unknown_branch_not_found(
     response = await client.post(
         f"/api/v1/auth/users/{user_without_permissions.id}/branch-roles",
         json={"roleId": str(role.id), "branchId": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
+async def test_assign_branch_role_soft_deleted_role_not_found(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    user_without_permissions: User,
+    branch: Branch,
+) -> None:
+    """A soft-deleted role is invisible to normal lookups, same as one that
+    never existed — see harden-referential-integrity-and-rbac-gates.
+    """
+    existing = (
+        await db_session.execute(select(Permission).where(Permission.code == "branches:view"))
+    ).scalar_one()
+    role = RoleFactory.build(id=uuid.uuid4(), name="reception-soft-deleted", permissions=[existing])
+    db_session.add(role)
+    await db_session.flush()
+    await db_session.execute(
+        update(Role).where(Role.id == role.id).values(deleted_at=datetime.now(UTC))
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/auth/users/{user_without_permissions.id}/branch-roles",
+        json={"roleId": str(role.id), "branchId": str(branch.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
+async def test_assign_branch_role_soft_deleted_branch_not_found(
+    client: AsyncClient, db_session: AsyncSession, user: User, user_without_permissions: User
+) -> None:
+    branch = Branch(id=uuid.uuid4(), name="Soft Deleted Branch", code="SOFT-DEL")
+    db_session.add(branch)
+    await db_session.flush()
+    await db_session.execute(
+        update(Branch).where(Branch.id == branch.id).values(deleted_at=datetime.now(UTC))
+    )
+
+    existing = (
+        await db_session.execute(select(Permission).where(Permission.code == "branches:view"))
+    ).scalar_one()
+    role = RoleFactory.build(
+        id=uuid.uuid4(), name="reception-soft-deleted-branch", permissions=[existing]
+    )
+    db_session.add(role)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/auth/users/{user_without_permissions.id}/branch-roles",
+        json={"roleId": str(role.id), "branchId": str(branch.id)},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 404
@@ -589,10 +702,14 @@ async def test_create_employee_unknown_department_not_found(
 
 
 async def test_create_employee_requires_permission(
-    client: AsyncClient, user_without_permissions: User, branch: Branch, db_session: AsyncSession
+    client: AsyncClient,
+    user_without_permissions: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
 ) -> None:
     department = await _make_department(db_session, branch)
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/auth/employees",
         json={
@@ -1250,9 +1367,9 @@ async def test_create_role_unknown_permission_code_not_found(
 
 
 async def test_list_roles_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.get("/api/v1/auth/roles", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 403
 
@@ -1318,7 +1435,10 @@ async def test_get_role_success(client: AsyncClient, user: User) -> None:
 
 
 async def test_get_role_requires_permission(
-    client: AsyncClient, user: User, user_without_permissions: User
+    client: AsyncClient,
+    user: User,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     token = await _login(client, user.email)
     created = await client.post(
@@ -1328,7 +1448,7 @@ async def test_get_role_requires_permission(
     )
     role_id = created.json()["data"]["id"]
 
-    other_token = await _login(client, user_without_permissions.email)
+    other_token = issue_token(user_without_permissions)
     response = await client.get(
         f"/api/v1/auth/roles/{role_id}", headers={"Authorization": f"Bearer {other_token}"}
     )
@@ -1364,7 +1484,10 @@ async def test_update_role_success(client: AsyncClient, user: User) -> None:
 
 
 async def test_update_role_requires_permission(
-    client: AsyncClient, user: User, user_without_permissions: User
+    client: AsyncClient,
+    user: User,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     token = await _login(client, user.email)
     created = await client.post(
@@ -1374,7 +1497,7 @@ async def test_update_role_requires_permission(
     )
     role_id = created.json()["data"]["id"]
 
-    other_token = await _login(client, user_without_permissions.email)
+    other_token = issue_token(user_without_permissions)
     response = await client.put(
         f"/api/v1/auth/roles/{role_id}",
         json={"description": "Should not be allowed"},
@@ -1409,7 +1532,10 @@ async def test_delete_role_success(client: AsyncClient, user: User) -> None:
 
 
 async def test_delete_role_requires_permission(
-    client: AsyncClient, user: User, user_without_permissions: User
+    client: AsyncClient,
+    user: User,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
 ) -> None:
     token = await _login(client, user.email)
     created = await client.post(
@@ -1419,7 +1545,7 @@ async def test_delete_role_requires_permission(
     )
     role_id = created.json()["data"]["id"]
 
-    other_token = await _login(client, user_without_permissions.email)
+    other_token = issue_token(user_without_permissions)
     response = await client.delete(
         f"/api/v1/auth/roles/{role_id}", headers={"Authorization": f"Bearer {other_token}"}
     )
@@ -1450,9 +1576,9 @@ async def test_verify_role_name_availability(client: AsyncClient, user: User) ->
 
 
 async def test_verify_role_name_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.get(
         "/api/v1/auth/roles/verify?name=Whatever",
         headers={"Authorization": f"Bearer {token}"},
@@ -1592,9 +1718,9 @@ async def test_resync_role_permissions_preserves_custom_grant(
 
 
 async def test_resync_role_permissions_requires_permission(
-    client: AsyncClient, user_without_permissions: User
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
-    token = await _login(client, user_without_permissions.email)
+    token = issue_token(user_without_permissions)
     response = await client.post(
         "/api/v1/auth/roles/resync-permissions", headers={"Authorization": f"Bearer {token}"}
     )

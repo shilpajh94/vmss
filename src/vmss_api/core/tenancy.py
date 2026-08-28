@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import AsyncGenerator
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import structlog
 from fastapi import Depends, HTTPException, status
@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import User
+from vmss_api.core.config import settings
 from vmss_api.core.database import get_db, tenant_session_scope
 from vmss_api.core.logging import logger
 from vmss_api.core.security import decode_token
@@ -16,6 +17,39 @@ from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
 
 _bearer_scheme = HTTPBearer(auto_error=False)
+
+
+class DefaultTenantUnresolved(Exception):
+    """Raised by `resolve_default_tenant` when `settings.default_tenant_slug`
+    doesn't resolve to an active tenant. Every public, unauthenticated
+    endpoint that falls back to this single configured tenant
+    (`registrations`, `identity_verification`, `invitations`' tracking
+    lookup) catches this and translates it into its own existing status
+    code/message — this exception only centralizes detection, not the
+    response shape, which legitimately differs per caller.
+    """
+
+    def __init__(self, reason: Literal["not_found", "inactive"]) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+async def resolve_default_tenant(db: AsyncSession) -> Tenant:
+    """Resolves `settings.default_tenant_slug` to an active tenant — the
+    shared lookup behind every public endpoint that has no caller-supplied
+    tenant identifier to resolve from instead. Raises `DefaultTenantUnresolved`
+    rather than an `HTTPException` so each caller keeps its own existing
+    status code and message; only the lookup and its `reason` classification
+    (missing row vs. inactive row) are shared, per
+    `logging-observability.md` §3's requirement that a caller distinguish
+    the two when logging a server-side misconfiguration.
+    """
+    tenant = await TenantRepository(db).get_by_slug(settings.default_tenant_slug)
+    if tenant is None:
+        raise DefaultTenantUnresolved(reason="not_found")
+    if not tenant.is_active:
+        raise DefaultTenantUnresolved(reason="inactive")
+    return tenant
 
 
 async def get_bearer_payload(

@@ -45,7 +45,11 @@ from vmss_api.invitations.schemas import (
     VisitDetailsSubmit,
     VisitorSubmit,
 )
-from vmss_api.org_structure.deps import authorize_branch_id, require_branch_scope
+from vmss_api.org_structure.deps import (
+    authorize_branch_id,
+    authorize_branch_id_tolerant,
+    require_branch_scope,
+)
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/invitations", tags=["invitations"])
@@ -462,7 +466,7 @@ async def approve_invitation(
     (`add-invitation-approval-flow-and-role-resync/design.md` Decision 3).
     """
     invitation = await service.get_invitation(tenant_db, invitation_id)
-    await authorize_branch_id(tenant_db, user, "invitations:approve", invitation.branch_id)
+    await authorize_branch_id_tolerant(tenant_db, user, "invitations:approve", invitation.branch_id)
     invitation = await service.approve_invitation(tenant_db, invitation, tenant=tenant)
     background_tasks.add_task(
         record_audit_log,

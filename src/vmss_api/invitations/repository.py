@@ -1,7 +1,8 @@
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, update
 from sqlalchemy.orm import selectinload
 
 from vmss_api.core.database import TenantScopedRepository
@@ -36,6 +37,26 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
 
     async def get_with_children(self, id_: uuid.UUID) -> Invitation | None:
         stmt = self._with_children().where(Invitation.id == id_, Invitation.deleted_at.is_(None))
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def approve_if_submitted(self, id_: uuid.UUID) -> Invitation | None:
+        """Atomic conditional transition: the `UPDATE` only affects a row
+        that is still `submitted`, so two concurrent approval requests for
+        the same invitation can't both transition it and both dispatch an
+        approval notification — a plain read-then-write has no such
+        guarantee (see codebase-review-and-e2e-scenario-test/design.md).
+        Returns the updated row if this call performed the transition,
+        `None` if the invitation was already approved (or lost the race to
+        a concurrent call) — the caller treats `None` as "not currently
+        submitted", the same 409 the sequential already-approved case
+        already raises.
+        """
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_, Invitation.status == "submitted")
+            .values(status="approved", approved_at=datetime.now(UTC))
+            .returning(Invitation)
+        )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_tracking_id(self, tracking_id: str) -> Invitation | None:

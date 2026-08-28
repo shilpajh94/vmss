@@ -2,31 +2,47 @@ import uuid
 
 import structlog
 from fastapi import HTTPException, Request
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from vmss_api.core.logging import logger
 from vmss_api.core.responses import error_response
 
 
-class RequestIdMiddleware(BaseHTTPMiddleware):
+class RequestIdMiddleware:
     """Stamps every request with an id so a log line can be traced end to end.
 
     Binds it into structlog's contextvars so every log line emitted for this
     request — router, service, repository — inherits it automatically; see
     logging-observability.md §1.
+
+    Implemented as a plain ASGI callable, not `starlette.middleware.base.
+    BaseHTTPMiddleware` — Starlette's own docs note that base class can let
+    an exception raised downstream bypass the app's registered exception
+    handlers, which previously let an unhandled exception reach the client
+    as a raw framework traceback instead of `unhandled_exception_handler`'s
+    standard envelope. A bare ASGI callable sits directly in the chain with
+    no such gap.
     """
 
     def __init__(self, app: ASGIApp) -> None:
-        super().__init__(app)
+        self.app = app
 
-    async def dispatch(self, request: Request, call_next):
-        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_id = Headers(scope=scope).get("x-request-id") or str(uuid.uuid4())
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id)
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        return response
+
+        async def send_with_request_id(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                MutableHeaders(raw=message["headers"]).append("X-Request-ID", request_id)
+            await send(message)
+
+        await self.app(scope, receive, send_with_request_id)
 
 
 async def http_exception_handler(request: Request, exc: HTTPException):

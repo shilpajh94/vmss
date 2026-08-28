@@ -138,6 +138,17 @@ async def test_list_tenants_requires_superadmin_auth(client: AsyncClient) -> Non
     assert response.status_code == 401
 
 
+async def test_create_tenant_requires_superadmin_auth(client: AsyncClient) -> None:
+    """Negative-auth counterpart to `test_create_tenant_success_via_endpoint`
+    — `POST /platform/tenants` only had a positive-path test before; every
+    other platform endpoint's negative case is covered.
+    """
+    response = await client.post(
+        "/api/v1/platform/tenants", json={"name": "Should Not Exist", "slug": "no-auth-tenant"}
+    )
+    assert response.status_code == 401
+
+
 async def test_tenant_user_token_rejected_by_platform_endpoints(
     client: AsyncClient, user: User
 ) -> None:

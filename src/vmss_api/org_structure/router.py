@@ -9,6 +9,7 @@ from vmss_api.auth.audit import record_audit_log
 from vmss_api.auth.models import User
 from vmss_api.core.deps import (
     get_current_user,
+    get_db,
     get_pagination,
     get_tenant,
     get_tenant_db,
@@ -350,9 +351,10 @@ async def delete_branch(
     background_tasks: BackgroundTasks,
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    global_db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    await service.delete_branch(tenant_db, branch_id)
+    await service.delete_branch(tenant_db, branch_id, global_db)
     _queue_audit(
         background_tasks,
         tenant,

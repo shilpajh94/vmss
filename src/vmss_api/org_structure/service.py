@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import User
+from vmss_api.core.config import settings
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.org_structure.models import (
     Branch,
@@ -41,6 +42,7 @@ from vmss_api.org_structure.schemas import (
     SecurityGateCreate,
     SecurityGateUpdate,
 )
+from vmss_api.registrations.repository import RegistrationDeviceKeyRepository
 
 # --- Branch-resolution helpers -------------------------------------------
 #
@@ -227,6 +229,12 @@ async def update_branch(
     is deliberately company-wide-only (see `router.py`'s "Company-wide only,
     not branch-scoped" note), so by the time this runs the caller is already
     known to be authorized for every branch.
+
+    No walk-in-registration-default guard is needed here (contrast
+    `delete_branch`): `BranchUpdate` has no `code` field at all, so a
+    branch's `code` can never be renamed through this endpoint in the first
+    place — there's no reachable path for this update to silently break the
+    no-device-key walk-in fallback.
     """
     branch = await _get_branch_or_404(tenant_db, branch_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
@@ -236,9 +244,40 @@ async def update_branch(
     return branch
 
 
-async def delete_branch(tenant_db: AsyncSession, branch_id: uuid.UUID) -> None:
+async def delete_branch(
+    tenant_db: AsyncSession, branch_id: uuid.UUID, global_db: AsyncSession
+) -> None:
+    """Blocked (409) while the branch still has an active org-chart
+    descendant, an active walk-in device credential, or is itself the
+    branch currently configured as the walk-in registration default
+    (`settings.registration_default_branch_code`) — mirrors
+    `auth/service.py::delete_role`'s `has_active_grants()` guard. Without
+    this, soft-deleting a branch silently orphans a live
+    `RegistrationDeviceKey`, or silently breaks the no-device-key fallback
+    that resolves its branch by matching this exact code, and either
+    kiosk starts failing walk-in registration with no indication why (the
+    original bugs this guard closes).
+    """
     repo = BranchRepository(tenant_db)
     branch = await _get_branch_or_404(tenant_db, branch_id)
+    if branch.code == settings.registration_default_branch_code:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Branch is configured as the walk-in registration default and cannot be deleted",
+        )
+    if await repo.has_active_org_chart_descendants(branch.id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=(
+                "Branch has active buildings, floors, departments, reception "
+                "desks, or security gates and cannot be deleted"
+            ),
+        )
+    if await RegistrationDeviceKeyRepository(global_db).has_active_key_for_branch(branch.id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Branch has an active registration device credential and cannot be deleted",
+        )
     await repo.soft_delete(branch)
     await tenant_db.commit()
 

@@ -1,6 +1,7 @@
 import io
 import json
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
@@ -406,6 +407,32 @@ async def test_walk_in_registration_inactive_device_key_rejected(
         client, registration_device_raw_key, payload=_individual_payload()
     )
     assert response.status_code == 401
+
+
+async def test_walk_in_registration_soft_deleted_branch_device_key_rejected(
+    client: AsyncClient,
+    registration_device_raw_key: str,
+    db_session: AsyncSession,
+    branch: Branch,
+) -> None:
+    """Regression test for the reported bug: an already-provisioned device
+    key whose branch has since been soft-deleted must fail cleanly (401,
+    same as an inactive branch) rather than raising an unhandled error.
+    `org_structure/service.py::delete_branch` now blocks this from
+    happening via the API going forward (its own branch-deletion guard
+    tests cover that) — this covers the case of data that predates the
+    guard, or a branch removed by any other path.
+    """
+    await db_session.execute(
+        update(Branch).where(Branch.id == branch.id).values(deleted_at=datetime.now(UTC))
+    )
+    await db_session.commit()
+
+    response = await _create_walk_in(
+        client, registration_device_raw_key, payload=_individual_payload()
+    )
+    assert response.status_code == 401
+    assert response.json()["message"] == "Invalid device credential"
 
 
 # --- Rate limiting -------------------------------------------------------------

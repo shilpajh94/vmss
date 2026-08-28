@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,3 +26,19 @@ class RegistrationDeviceKeyRepository:
         """
         stmt = select(RegistrationDeviceKey).where(RegistrationDeviceKey.is_active.is_(True))
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def has_active_key_for_branch(self, branch_id: uuid.UUID) -> bool:
+        """Whether an active device credential is still provisioned against
+        `branch_id` — checked by `org_structure/service.py::delete_branch`
+        before soft-deleting a branch, so a branch is never removed out
+        from under a live kiosk credential.
+        """
+        stmt = (
+            select(RegistrationDeviceKey.id)
+            .where(
+                RegistrationDeviceKey.branch_id == branch_id,
+                RegistrationDeviceKey.is_active.is_(True),
+            )
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none() is not None
