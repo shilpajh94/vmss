@@ -39,6 +39,12 @@ export class ApiClient {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
   }
 
+  // Exposed for adapters that need to build a full-page-navigation URL (e.g. an
+  // SSO redirect) rather than issue a `fetch` through makeRequest.
+  getBaseUrl(): string {
+    return this.baseUrl
+  }
+
   private buildPath(endpoint: string, pathParams?: Record<string, string>): string {
     if (!pathParams) return endpoint
     return endpoint.replace(/:([a-zA-Z]+)/g, (match, key: string) =>

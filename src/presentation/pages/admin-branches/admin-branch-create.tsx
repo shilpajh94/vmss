@@ -10,7 +10,8 @@ import { useAdminBranchCreate } from './hooks/use-admin-branch-create'
 const BREADCRUMB = [{ label: 'Organisation Admin' }, { label: 'Branches' }, { label: 'Create New Branch', isActive: true }]
 
 export function AdminBranchCreatePage() {
-  const { currentUser, values, errors, isSaving, updateField, submit, cancel } = useAdminBranchCreate()
+  const { currentUser, employees, values, errors, isSaving, updateField, submit, cancel } = useAdminBranchCreate()
+  const employeeOptions = employees.map((employee) => ({ value: employee.id, label: employee.fullName }))
 
   return (
     <div className="flex min-h-screen w-full items-stretch bg-bg">
@@ -83,11 +84,13 @@ export function AdminBranchCreatePage() {
               <h2 className="font-display text-base font-semibold text-text">Operations &amp; Administration</h2>
               <div className="flex gap-6">
                 <div className="flex-1">
-                  <TextField
+                  <SelectField
                     label="Contact Person (Regional Admin)"
                     required
                     value={values.contactPersonUserId}
                     onChange={(contactPersonUserId) => updateField('contactPersonUserId', contactPersonUserId)}
+                    options={employeeOptions}
+                    placeholder="Select employee..."
                     error={errors.contactPersonUserId}
                   />
                 </div>

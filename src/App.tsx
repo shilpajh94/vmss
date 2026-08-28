@@ -5,6 +5,7 @@ import { VisitorPortalLandingPage } from './presentation/pages/visitor-portal-la
 import { VisitorRequestPage } from './presentation/pages/visitor-request/visitor-request'
 import { VisitorTrackPage } from './presentation/pages/visitor-track/visitor-track'
 import { StaffLoginPage } from './presentation/pages/staff-login/staff-login'
+import { StaffSsoLoginPage } from './presentation/pages/staff-sso-login/staff-sso-login'
 import { StaffDashboardPage } from './presentation/pages/staff-dashboard/staff-dashboard'
 import { StaffVisitorRegistrationPage } from './presentation/pages/staff-visitor-registration/staff-visitor-registration'
 import { StaffAuditTrailPage } from './presentation/pages/staff-audit-trail/staff-audit-trail'
@@ -36,6 +37,7 @@ function RootLayout() {
           <Route path="/visitor/request" element={<VisitorRequestPage />} />
           <Route path="/visitor/track" element={<VisitorTrackPage />} />
           <Route path="/admin/login" element={<StaffLoginPage />} />
+          <Route path="/staff/login" element={<StaffSsoLoginPage />} />
           <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
           <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
           <Route path="/staff/audit-trail" element={<StaffAuditTrailPage />} />

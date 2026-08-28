@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 
 type DepartmentInput = Omit<Department, 'id' | 'branchName'>
 
@@ -23,12 +24,19 @@ export function useAdminDepartmentForm() {
   const { id } = useParams<{ id: string }>()
   const isEditMode = id !== undefined
 
-  const { getCurrentStaffUserUseCase, listBranchesUseCase, listDepartmentsUseCase, createDepartmentUseCase, updateDepartmentUseCase } =
-    useAppDependencies()
+  const {
+    getCurrentStaffUserUseCase,
+    listBranchesUseCase,
+    listDepartmentsUseCase,
+    listHostEmployeesUseCase,
+    createDepartmentUseCase,
+    updateDepartmentUseCase,
+  } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [branches, setBranches] = useState<Branch[]>([])
+  const [employees, setEmployees] = useState<HostEmployee[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
@@ -41,9 +49,14 @@ export function useAdminDepartmentForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, branchList] = await Promise.all([getCurrentStaffUserUseCase.execute(), listBranchesUseCase.execute()])
+      const [user, branchList, employeeList] = await Promise.all([
+        getCurrentStaffUserUseCase.execute(),
+        listBranchesUseCase.execute(),
+        listHostEmployeesUseCase.execute(),
+      ])
       setCurrentUser(user)
       setBranches(branchList)
+      setEmployees(employeeList)
 
       if (isEditMode) {
         const departments = await listDepartmentsUseCase.execute()
@@ -70,7 +83,7 @@ export function useAdminDepartmentForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listBranchesUseCase, listDepartmentsUseCase, isEditMode, id, toast])
+  }, [getCurrentStaffUserUseCase, listBranchesUseCase, listDepartmentsUseCase, listHostEmployeesUseCase, isEditMode, id, toast])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -126,6 +139,7 @@ export function useAdminDepartmentForm() {
     isEditMode,
     currentUser,
     branches,
+    employees,
     isLoading,
     errorMessage,
     retry,

@@ -14,6 +14,7 @@ export function AdminBranchesPage() {
   const {
     currentUser,
     branches,
+    employees,
     isLoading,
     errorMessage,
     retry,
@@ -74,12 +75,18 @@ export function AdminBranchesPage() {
               <EmptyState message="No branches yet." action={{ label: 'Add Branch', onClick: goToCreateBranch }} />
             </div>
           ) : (
-            <BranchesTable branches={branches} onEdit={openEditForm} onDelete={requestDelete} />
+            <BranchesTable branches={branches} employees={employees} onEdit={openEditForm} onDelete={requestDelete} />
           )}
         </main>
       </div>
 
-      <BranchFormModal formState={formState} isSaving={isSaving} onSubmit={(input) => void saveBranch(input)} onClose={closeForm} />
+      <BranchFormModal
+        formState={formState}
+        employees={employees}
+        isSaving={isSaving}
+        onSubmit={(input) => void saveBranch(input)}
+        onClose={closeForm}
+      />
 
       <ConfirmDialog
         isOpen={pendingDelete !== undefined}

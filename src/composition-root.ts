@@ -4,6 +4,7 @@ import type { VisitRequestSummaryRepository } from './data/repositories/visit-re
 import type { VisitTrackingRepository } from './data/repositories/visit-tracking-repository'
 import type { VisitorOtpRepository } from './data/repositories/visitor-otp-repository'
 import type { StaffAuthRepository } from './data/repositories/staff-auth-repository'
+import type { SsoAuthRepository } from './data/repositories/sso-auth-repository'
 import type { StaffVisitRequestRepository } from './data/repositories/staff-visit-request-repository'
 import type { AuditTrailRepository } from './data/repositories/audit-trail-repository'
 import type { OrganisationConfigRepository } from './data/repositories/organisation-config-repository'
@@ -24,6 +25,8 @@ import { TrackVisitRequestUseCase } from './data/use-cases/track-visit-request'
 import { RequestVisitorOtpUseCase } from './data/use-cases/request-visitor-otp'
 import { VerifyVisitorOtpUseCase } from './data/use-cases/verify-visitor-otp'
 import { LoginStaffUseCase } from './data/use-cases/login-staff'
+import { StartSsoLoginUseCase } from './data/use-cases/start-sso-login'
+import { ExchangeSsoCodeUseCase } from './data/use-cases/exchange-sso-code'
 import { ListVisitRequestsUseCase } from './data/use-cases/list-visit-requests'
 import { GetCurrentStaffUserUseCase } from './data/use-cases/get-current-staff-user'
 import { GetOrganisationConfigUseCase } from './data/use-cases/get-organisation-config'
@@ -69,6 +72,7 @@ import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-reques
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
 import { HttpVisitorOtpRepository } from './infrastructure/visitor-otp-repository'
 import { HttpStaffAuthRepository } from './infrastructure/staff-auth-repository'
+import { HttpSsoAuthRepository } from './infrastructure/sso-auth-repository'
 import { HttpStaffVisitRequestRepository } from './infrastructure/staff-visit-request-repository'
 import { HttpAuditTrailRepository } from './infrastructure/audit-trail-repository'
 import { HttpOrganisationConfigRepository } from './infrastructure/organisation-config-repository'
@@ -90,6 +94,8 @@ export interface AppDependencies {
   requestVisitorOtpUseCase: RequestVisitorOtpUseCase
   verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase
   loginStaffUseCase: LoginStaffUseCase
+  startSsoLoginUseCase: StartSsoLoginUseCase
+  exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase
   listVisitRequestsUseCase: ListVisitRequestsUseCase
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
@@ -141,11 +147,14 @@ export function createApp(): AppDependencies {
   let visitTrackingRepository: VisitTrackingRepository | undefined
   let visitorOtpRepository: VisitorOtpRepository | undefined
   let staffAuthRepository: StaffAuthRepository | undefined
+  let ssoAuthRepository: SsoAuthRepository | undefined
   let submitVisitRequestUseCase: SubmitVisitRequestUseCase | undefined
   let trackVisitRequestUseCase: TrackVisitRequestUseCase | undefined
   let requestVisitorOtpUseCase: RequestVisitorOtpUseCase | undefined
   let verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase | undefined
   let loginStaffUseCase: LoginStaffUseCase | undefined
+  let startSsoLoginUseCase: StartSsoLoginUseCase | undefined
+  let exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase | undefined
   let listVisitRequestsUseCase: ListVisitRequestsUseCase | undefined
   let getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase | undefined
   let staffVisitRequestRepository: StaffVisitRequestRepository | undefined
@@ -250,6 +259,21 @@ export function createApp(): AppDependencies {
   const resolveLoginStaffUseCase = (): LoginStaffUseCase => {
     loginStaffUseCase ??= new LoginStaffUseCase(resolveStaffAuthRepository())
     return loginStaffUseCase
+  }
+
+  const resolveSsoAuthRepository = (): SsoAuthRepository => {
+    ssoAuthRepository ??= new HttpSsoAuthRepository(resolveApiClient())
+    return ssoAuthRepository
+  }
+
+  const resolveStartSsoLoginUseCase = (): StartSsoLoginUseCase => {
+    startSsoLoginUseCase ??= new StartSsoLoginUseCase(resolveSsoAuthRepository(), import.meta.env.VITE_SSO_TENANT_SLUG)
+    return startSsoLoginUseCase
+  }
+
+  const resolveExchangeSsoCodeUseCase = (): ExchangeSsoCodeUseCase => {
+    exchangeSsoCodeUseCase ??= new ExchangeSsoCodeUseCase(resolveSsoAuthRepository())
+    return exchangeSsoCodeUseCase
   }
 
   const resolveVisitRequestSummaryRepository = (): VisitRequestSummaryRepository => {
@@ -556,6 +580,12 @@ export function createApp(): AppDependencies {
     },
     get loginStaffUseCase() {
       return resolveLoginStaffUseCase()
+    },
+    get startSsoLoginUseCase() {
+      return resolveStartSsoLoginUseCase()
+    },
+    get exchangeSsoCodeUseCase() {
+      return resolveExchangeSsoCodeUseCase()
     },
     get listVisitRequestsUseCase() {
       return resolveListVisitRequestsUseCase()

@@ -4,14 +4,16 @@ import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 
 export function useAdminDepartments() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listDepartmentsUseCase, deleteDepartmentUseCase } = useAppDependencies()
+  const { getCurrentStaffUserUseCase, listDepartmentsUseCase, listHostEmployeesUseCase, deleteDepartmentUseCase } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [departments, setDepartments] = useState<Department[]>([])
+  const [employees, setEmployees] = useState<HostEmployee[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
@@ -23,16 +25,21 @@ export function useAdminDepartments() {
     setErrorMessage(undefined)
 
     try {
-      const [user, list] = await Promise.all([getCurrentStaffUserUseCase.execute(), listDepartmentsUseCase.execute()])
+      const [user, list, employeeList] = await Promise.all([
+        getCurrentStaffUserUseCase.execute(),
+        listDepartmentsUseCase.execute(),
+        listHostEmployeesUseCase.execute(),
+      ])
       setCurrentUser(user)
       setDepartments(list)
+      setEmployees(employeeList)
     } catch {
       setErrorMessage('Something went wrong loading the departments. Please try again.')
       toast.error('Something went wrong loading the departments. Please try again.')
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listDepartmentsUseCase, toast])
+  }, [getCurrentStaffUserUseCase, listDepartmentsUseCase, listHostEmployeesUseCase, toast])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -74,6 +81,7 @@ export function useAdminDepartments() {
   return {
     currentUser,
     departments,
+    employees,
     isLoading,
     errorMessage,
     retry,

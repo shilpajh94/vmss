@@ -4,6 +4,7 @@ import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 
 export type BranchCreateValues = Omit<Branch, 'id'>
 
@@ -35,13 +36,14 @@ const REQUIRED_FIELDS: Array<{ key: keyof BranchCreateValues; message: string }>
 
 export function useAdminBranchCreate() {
   const navigate = useNavigate()
-  const { createBranchUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
+  const { createBranchUseCase, getCurrentStaffUserUseCase, listHostEmployeesUseCase } = useAppDependencies()
   const toast = useToast()
 
   const [values, setValues] = useState<BranchCreateValues>(EMPTY_VALUES)
   const [errors, setErrors] = useState<Partial<Record<keyof BranchCreateValues, string>>>({})
   const [isSaving, setIsSaving] = useState(false)
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const [employees, setEmployees] = useState<HostEmployee[]>([])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -50,7 +52,8 @@ export function useAdminBranchCreate() {
     }
 
     void getCurrentStaffUserUseCase.execute().then(setCurrentUser).catch(() => undefined)
-  }, [navigate, getCurrentStaffUserUseCase])
+    void listHostEmployeesUseCase.execute().then(setEmployees).catch(() => undefined)
+  }, [navigate, getCurrentStaffUserUseCase, listHostEmployeesUseCase])
 
   const updateField = useCallback(<K extends keyof BranchCreateValues>(key: K, value: BranchCreateValues[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
@@ -89,6 +92,7 @@ export function useAdminBranchCreate() {
 
   return {
     currentUser,
+    employees,
     values,
     errors,
     isSaving,
