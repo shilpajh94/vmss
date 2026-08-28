@@ -314,6 +314,49 @@ async def test_list_departments_scoped_to_resolved_branch(
     assert other_branch_department.name not in names
 
 
+async def test_list_departments_tenant_schema_isolation(
+    client: AsyncClient,
+    registration_device_raw_key: str,
+    department: Department,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """testing-standards.md §2's tenant-isolation case — previously only
+    `search_hosts` had one for this feature. See
+    `test_search_hosts_tenant_schema_isolation` above for the same pattern.
+    """
+    # Random suffixes, not literals — the extra schema `make_tenant_schema`
+    # creates persists in the test database across separate `pytest`
+    # invocations (unlike `db_session`'s per-test cleanup), so fixed codes
+    # here would collide with the partial unique indexes on a second run —
+    # see `test_search_hosts_tenant_schema_isolation`'s `unique_email`.
+    suffix = uuid.uuid4().hex[:8]
+    other_schema = "tenant_other_test_visit_info_departments"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_branch = BranchFactory.build(id=uuid.uuid4(), code=f"OTH-BR-{suffix}")
+        other_session.add(other_branch)
+        await other_session.flush()
+        other_session.add(
+            DepartmentFactory.build(
+                id=uuid.uuid4(),
+                branch_id=other_branch.id,
+                floor_id=None,
+                code=f"OTH-DEPT-{suffix}",
+                name="Other Tenant Department",
+            )
+        )
+        await other_session.commit()
+
+    response = await client.get(
+        "/api/v1/visit-info/departments", headers=_auth_headers(registration_device_raw_key)
+    )
+    assert response.status_code == 200, response.text
+    names = [d["name"] for d in response.json()["data"]["departments"]]
+    assert department.name in names
+    assert "Other Tenant Department" not in names
+
+
 async def test_list_departments_excludes_inactive_department(
     client: AsyncClient,
     registration_device_raw_key: str,
@@ -347,6 +390,32 @@ async def test_visit_info_options_returns_seeded_purposes_and_durations(
     durations_by_name = {d["name"]: d["minutes"] for d in data["durations"]}
     assert durations_by_name["30 minutes"] == 30
     assert durations_by_name["Half day (4 hours)"] == 240
+
+
+async def test_visit_info_options_tenant_schema_isolation(
+    client: AsyncClient,
+    registration_device_raw_key: str,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """testing-standards.md §2's tenant-isolation case — previously only
+    `search_hosts` had one for this feature.
+    """
+    other_schema = "tenant_other_test_visit_info_options"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_session.add(
+            VisitPurposeFactory.build(id=uuid.uuid4(), name="Other Tenant Purpose", sort_order=0)
+        )
+        await other_session.commit()
+
+    response = await client.get(
+        "/api/v1/visit-info/options", headers=_auth_headers(registration_device_raw_key)
+    )
+    assert response.status_code == 200, response.text
+    purpose_names = [p["name"] for p in response.json()["data"]["purposes"]]
+    assert "Other Tenant Purpose" not in purpose_names
+    assert purpose_names == ["Business Meeting", "Job Interview", "Other"]
 
 
 # --- Device-key-optional (mirrors registrations/tests.py's coverage for --

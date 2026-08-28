@@ -1,8 +1,9 @@
 import uuid
+from datetime import UTC, datetime
 
 import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import (
@@ -11,6 +12,7 @@ from factories import (
     FloorFactory,
     PermissionFactory,
     ReceptionDeskFactory,
+    RegistrationDeviceKeyFactory,
     RoleFactory,
     SecurityGateFactory,
     UserFactory,
@@ -47,6 +49,23 @@ def _default_tenant_slug_matches_test_tenant(monkeypatch):
     `identity_verification/tests.py`'s fixture of the same name.
     """
     monkeypatch.setattr(settings, "default_tenant_slug", "acme-test")
+
+
+@pytest_asyncio.fixture(autouse=True)
+def _registration_default_branch_code_does_not_collide(monkeypatch):
+    """The shared `branch` fixture (`conftest.py`) is coincidentally built
+    with `code="MAIN"` — the same string
+    `settings.registration_default_branch_code` defaults to. Without this,
+    every test in this file that deletes or renames that fixture's code
+    would start hitting `harden-referential-integrity-and-rbac-gates`'s
+    walk-in-default guard (`org_structure/service.py::delete_branch`/
+    `update_branch`) purely by accident of shared test data, even though
+    none of them are testing that interaction. The handful of tests that
+    *do* test it re-monkeypatch this back to `branch.code` locally.
+    """
+    monkeypatch.setattr(
+        settings, "registration_default_branch_code", "NOT-THE-REGISTRATION-DEFAULT"
+    )
 
 
 @pytest_asyncio.fixture
@@ -409,6 +428,26 @@ async def test_update_branch_success(client: AsyncClient, user: User, branch: Br
     assert response.json()["data"]["name"] == "Renamed Branch"
 
 
+async def test_update_branch_ignores_code_field(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """`BranchUpdate` has no `code` field — confirms `code` in the request
+    body is silently ignored (not a validation error, not a rename) rather
+    than assuming this from reading the schema alone. This is why no
+    walk-in-registration-default guard is needed in `update_branch`: there
+    is no reachable path here that could rename a branch's code.
+    """
+    token = await _login(client, user.email)
+    response = await client.put(
+        f"/api/v1/branches/{branch.id}",
+        json={"name": "Renamed Branch", "code": "SOMETHING-ELSE"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["name"] == "Renamed Branch"
+    assert response.json()["data"]["code"] == branch.code
+
+
 async def test_update_branch_requires_permission(
     client: AsyncClient, user_without_permissions: User, branch: Branch
 ) -> None:
@@ -432,6 +471,11 @@ async def test_get_branch_success(client: AsyncClient, user: User, branch: Branc
 
 
 async def test_delete_branch_success(client: AsyncClient, user: User, branch: Branch) -> None:
+    """Also the negative case for the walk-in-registration-default guard
+    below: this module's autouse fixture makes `settings
+    .registration_default_branch_code` not match `branch.code`, so this
+    delete proceeds exactly as it did before that guard existed.
+    """
     token = await _login(client, user.email)
     delete_response = await client.delete(
         f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
@@ -444,6 +488,29 @@ async def test_delete_branch_success(client: AsyncClient, user: User, branch: Br
     assert get_response.status_code == 404
 
 
+async def test_delete_branch_matching_registration_default_code_rejected(
+    client: AsyncClient, user: User, branch: Branch, monkeypatch
+) -> None:
+    """Regression test for the reported bug: deleting the branch currently
+    configured as the walk-in registration default (the module autouse
+    fixture normally keeps this from colliding with `branch.code`; this
+    test deliberately restores the collision) is rejected — see
+    protect-walkin-default-branch-config.
+    """
+    monkeypatch.setattr(settings, "registration_default_branch_code", branch.code)
+
+    token = await _login(client, user.email)
+    delete_response = await client.delete(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert delete_response.status_code == 409
+
+    get_response = await client.get(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert get_response.status_code == 200
+
+
 async def test_delete_branch_requires_permission(
     client: AsyncClient, user_without_permissions: User, branch: Branch
 ) -> None:
@@ -452,6 +519,125 @@ async def test_delete_branch_requires_permission(
         f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 403
+
+
+async def test_delete_branch_with_active_building_rejected(
+    client: AsyncClient, user: User, branch: Branch, building: Building
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.delete(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 409
+
+    get_response = await client.get(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert get_response.status_code == 200
+
+
+async def test_delete_branch_with_active_floor_rejected(
+    client: AsyncClient, user: User, branch: Branch, floor: Floor
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.delete(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 409
+
+
+async def test_delete_branch_with_active_department_rejected(
+    client: AsyncClient, user: User, branch: Branch, department: Department
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.delete(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 409
+
+
+async def test_delete_branch_with_active_reception_desk_rejected(
+    client: AsyncClient, user: User, branch: Branch, reception_desk: ReceptionDesk
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.delete(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 409
+
+
+async def test_delete_branch_with_active_security_gate_rejected(
+    client: AsyncClient, user: User, branch: Branch, security_gate: SecurityGate
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.delete(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 409
+
+
+async def test_delete_branch_with_active_device_key_rejected(
+    client: AsyncClient, user: User, branch: Branch, tenant: Tenant, db_session: AsyncSession
+) -> None:
+    """Regression test for the reported bug's root cause: a branch with a
+    live walk-in device credential provisioned against it can no longer be
+    soft-deleted out from under that kiosk.
+    """
+    db_session.add(
+        RegistrationDeviceKeyFactory.build(
+            id=uuid.uuid4(), tenant_id=tenant.id, branch_id=branch.id, is_active=True
+        )
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.delete(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 409
+
+    get_response = await client.get(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert get_response.status_code == 200
+
+
+async def test_delete_branch_with_inactive_device_key_succeeds(
+    client: AsyncClient, user: User, branch: Branch, tenant: Tenant, db_session: AsyncSession
+) -> None:
+    """An already-deactivated device key doesn't block deletion — only an
+    active one does.
+    """
+    db_session.add(
+        RegistrationDeviceKeyFactory.build(
+            id=uuid.uuid4(), tenant_id=tenant.id, branch_id=branch.id, is_active=False
+        )
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.delete(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 204
+
+
+async def test_delete_branch_succeeds_after_active_children_soft_deleted(
+    client: AsyncClient, user: User, branch: Branch, building: Building, db_session: AsyncSession
+) -> None:
+    """Once the branch's only active descendant is itself soft-deleted, the
+    guard no longer sees it and the branch can be deleted normally.
+    """
+    await db_session.execute(
+        update(Building).where(Building.id == building.id).values(deleted_at=datetime.now(UTC))
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.delete(
+        f"/api/v1/branches/{branch.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 204
 
 
 async def test_create_branch_after_soft_delete_reuses_code(
@@ -842,6 +1028,26 @@ async def test_create_building_unknown_branch_not_found(
     assert response.status_code == 404
 
 
+async def test_create_building_soft_deleted_branch_not_found(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """A soft-deleted parent is invisible to normal lookups, same as one
+    that never existed — see harden-referential-integrity-and-rbac-gates.
+    """
+    await db_session.execute(
+        update(Branch).where(Branch.id == branch.id).values(deleted_at=datetime.now(UTC))
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/buildings",
+        json={"branchId": str(branch.id), "name": "Tower B", "code": "TWR-B"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
 async def test_create_building_requires_permission(
     client: AsyncClient, user_without_permissions: User, branch: Branch
 ) -> None:
@@ -1108,6 +1314,23 @@ async def test_create_floor_duplicate_number_conflict(
     assert response.status_code == 409
 
 
+async def test_create_floor_soft_deleted_building_not_found(
+    client: AsyncClient, user: User, building: Building, db_session: AsyncSession
+) -> None:
+    await db_session.execute(
+        update(Building).where(Building.id == building.id).values(deleted_at=datetime.now(UTC))
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/floors",
+        json={"buildingId": str(building.id), "name": "First Floor", "floorNumber": 1},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
 async def test_create_floor_requires_permission(
     client: AsyncClient, user_without_permissions: User, building: Building
 ) -> None:
@@ -1354,6 +1577,28 @@ async def test_create_department_success(
     )
     assert response.status_code == 201
     assert response.json()["data"]["code"] == "HR"
+
+
+async def test_create_department_soft_deleted_branch_not_found(
+    client: AsyncClient, user: User, floor: Floor, building: Building, db_session: AsyncSession
+) -> None:
+    await db_session.execute(
+        update(Branch).where(Branch.id == building.branch_id).values(deleted_at=datetime.now(UTC))
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/departments",
+        json={
+            "branchId": str(building.branch_id),
+            "floorId": str(floor.id),
+            "name": "Human Resources",
+            "code": "HR",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
 
 
 async def test_create_department_requires_permission(
@@ -1646,6 +1891,23 @@ async def test_create_reception_desk_success(
     )
     assert response.status_code == 201
     assert response.json()["data"]["code"] == "DESK-1"
+
+
+async def test_create_reception_desk_soft_deleted_floor_not_found(
+    client: AsyncClient, user: User, floor: Floor, building: Building, db_session: AsyncSession
+) -> None:
+    await db_session.execute(
+        update(Floor).where(Floor.id == floor.id).values(deleted_at=datetime.now(UTC))
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/reception-desks",
+        json={"floorId": str(floor.id), "name": "Front Desk", "code": "DESK-1"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
 
 
 async def test_create_reception_desk_requires_permission(
@@ -1953,6 +2215,28 @@ async def test_create_security_gate_with_building(
     )
     assert response.status_code == 201
     assert response.json()["data"]["buildingId"] == str(building.id)
+
+
+async def test_create_security_gate_soft_deleted_branch_not_found(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    await db_session.execute(
+        update(Branch).where(Branch.id == branch.id).values(deleted_at=datetime.now(UTC))
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/security-gates",
+        json={
+            "branchId": str(branch.id),
+            "name": "Main Gate",
+            "code": "GATE-1",
+            "gateType": "entry",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
 
 
 async def test_create_security_gate_requires_permission(

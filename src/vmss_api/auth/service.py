@@ -179,7 +179,13 @@ async def assign_branch_role(
     )
     assignment.role = role
     tenant_db.add(assignment)
-    await tenant_db.commit()
+    try:
+        await tenant_db.commit()
+    except IntegrityError as exc:
+        await tenant_db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="User already holds this role at this branch"
+        ) from exc
     logger.info(
         "branch_role_assigned",
         target_user_id=str(user_id),
@@ -234,7 +240,11 @@ async def create_role(tenant_db: AsyncSession, payload: RoleCreateRequest) -> Ro
         id=uuid.uuid4(), name=payload.name, description=payload.description, permissions=permissions
     )
     tenant_db.add(role)
-    await tenant_db.commit()
+    try:
+        await tenant_db.commit()
+    except IntegrityError as exc:
+        await tenant_db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Role name already exists") from exc
     await tenant_db.refresh(role)
     return role
 
@@ -287,7 +297,11 @@ async def update_role(
     if new_codes is not None:
         role.permissions = await _resolve_permission_codes(repo, new_codes)
 
-    await tenant_db.commit()
+    try:
+        await tenant_db.commit()
+    except IntegrityError as exc:
+        await tenant_db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Role name already exists") from exc
     await tenant_db.refresh(role)
     return role
 

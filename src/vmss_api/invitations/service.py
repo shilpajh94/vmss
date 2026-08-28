@@ -265,7 +265,8 @@ async def create_invitation(
 async def get_invitation(tenant_db: AsyncSession, invitation_id: uuid.UUID) -> Invitation:
     """Plain by-id fetch, no eager-loaded children — used by
     `POST /invitations/{id}/approve` to resolve the invitation's own
-    `branch_id` for `authorize_branch_id` before the state transition.
+    `branch_id` for `authorize_branch_id_tolerant` before the state
+    transition.
     """
     invitation = await InvitationRepository(tenant_db).get(invitation_id)
     if invitation is None:
@@ -282,18 +283,24 @@ async def approve_invitation(
     dispatch-after-commit pattern. `router.py` fetches `invitation` and
     resolves branch authorization (404/403) before calling this — a
     not-found or unauthorized invitation never reaches here.
+
+    The transition itself goes through `InvitationRepository
+    .approve_if_submitted` — a single conditional `UPDATE`, not a
+    read-then-write on the `invitation` object already in hand — so two
+    concurrent approval requests for the same invitation can't both pass a
+    status check and both dispatch a notification (see
+    codebase-review-and-e2e-scenario-test/design.md).
     """
-    if invitation.status != "submitted":
+    updated = await InvitationRepository(tenant_db).approve_if_submitted(invitation.id)
+    if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not awaiting approval")
-    invitation.status = "approved"
-    invitation.approved_at = datetime.now(UTC)
     await tenant_db.commit()
     tasks.send_approval_notification.delay(
         request_id=_current_request_id(),
         tenant_schema=tenant.schema_name,
-        invitation_id=str(invitation.id),
+        invitation_id=str(updated.id),
     )
-    return invitation
+    return updated
 
 
 async def track_by_tracking_id(tenant_db: AsyncSession, tracking_id: str) -> Invitation:

@@ -98,6 +98,35 @@ async def authorize_branch_id(
     return branch
 
 
+async def authorize_branch_id_tolerant(
+    tenant_db: AsyncSession, user: User, permission_code: str, branch_id: uuid.UUID
+) -> Branch:
+    """Same checks as `authorize_branch_id`, but tolerates the branch itself
+    having been soft-deleted — for authorizing an action against an
+    *existing* record's own recorded `branch_id` (e.g. approving an
+    invitation whose branch was later soft-deleted), where the id is
+    already-persisted data, not something the caller supplied and could use
+    to probe an unrelated branch. Never use this for create-time validation,
+    where a soft-deleted branch must still be treated as absent — see
+    `authorize_branch_id`.
+    """
+    branch = await BranchRepository(tenant_db).get_including_deleted(branch_id)
+    if branch is None or not branch.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found")
+    if not user.has_branch_access(branch.id):
+        logger.warning("branch_access_denied", branch_id=str(branch.id))
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="No access to this branch"
+        )
+    if not user.has_permission(permission_code, branch_id=branch.id):
+        logger.warning(
+            "permission_denied", permission_code=permission_code, branch_id=str(branch.id)
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permission")
+    structlog.contextvars.bind_contextvars(branch_id=str(branch.id))
+    return branch
+
+
 def require_branch_scope(permission_code: str):
     """List-endpoint counterpart to `require_branch_permission` with an
     optional `X-Branch-ID`: narrows to that one branch when it's supplied

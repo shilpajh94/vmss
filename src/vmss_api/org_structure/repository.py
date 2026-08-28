@@ -52,6 +52,63 @@ class BranchRepository(TenantScopedRepository[Branch]):
         stmt = select(Branch).where(Branch.code == code, Branch.deleted_at.is_(None))
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def get_including_deleted(self, id_: uuid.UUID) -> Branch | None:
+        """Like `get`, but does not filter out a soft-deleted branch — used
+        to authorize approving an invitation whose recorded branch was later
+        soft-deleted. See `BuildingRepository.get_including_deleted`.
+        """
+        stmt = select(Branch).where(Branch.id == id_)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def has_active_org_chart_descendants(self, branch_id: uuid.UUID) -> bool:
+        """Whether any active (non-soft-deleted) Building, Department,
+        SecurityGate (direct `branch_id`), or Floor/ReceptionDesk
+        (transitively via `building_id`) still belongs to this branch —
+        checked by `service.py::delete_branch` before soft-deleting a
+        branch, mirroring `RoleRepository.has_active_grants`.
+        """
+        building_stmt = (
+            select(Building.id)
+            .where(Building.branch_id == branch_id, Building.deleted_at.is_(None))
+            .limit(1)
+        )
+        if (await self.session.execute(building_stmt)).scalar_one_or_none() is not None:
+            return True
+
+        department_stmt = (
+            select(Department.id)
+            .where(Department.branch_id == branch_id, Department.deleted_at.is_(None))
+            .limit(1)
+        )
+        if (await self.session.execute(department_stmt)).scalar_one_or_none() is not None:
+            return True
+
+        gate_stmt = (
+            select(SecurityGate.id)
+            .where(SecurityGate.branch_id == branch_id, SecurityGate.deleted_at.is_(None))
+            .limit(1)
+        )
+        if (await self.session.execute(gate_stmt)).scalar_one_or_none() is not None:
+            return True
+
+        floor_stmt = (
+            select(Floor.id)
+            .join(Building, Floor.building_id == Building.id)
+            .where(Building.branch_id == branch_id, Floor.deleted_at.is_(None))
+            .limit(1)
+        )
+        if (await self.session.execute(floor_stmt)).scalar_one_or_none() is not None:
+            return True
+
+        desk_stmt = (
+            select(ReceptionDesk.id)
+            .join(Floor, ReceptionDesk.floor_id == Floor.id)
+            .join(Building, Floor.building_id == Building.id)
+            .where(Building.branch_id == branch_id, ReceptionDesk.deleted_at.is_(None))
+            .limit(1)
+        )
+        return (await self.session.execute(desk_stmt)).scalar_one_or_none() is not None
+
     async def list_page(
         self,
         *,
