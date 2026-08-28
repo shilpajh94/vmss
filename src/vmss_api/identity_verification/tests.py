@@ -7,6 +7,7 @@ import aiosmtplib
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 from twilio.base.exceptions import TwilioRestException
@@ -567,6 +568,61 @@ async def test_otp_and_rate_limit_state_are_isolated_per_tenant(
         tenant_id=tenant_b.id, identifier=identifier, channel=Channel.email, code=code_b
     )
     assert result_b.identifier == identifier
+
+
+# --- Default-tenant misconfiguration is logged as a server error -------------
+
+
+async def test_otp_request_unresolvable_default_tenant_logged_as_error(
+    client: AsyncClient, monkeypatch
+) -> None:
+    """`default_tenant_id` (`identity_verification/deps.py`) resolves the
+    single configured default tenant via `core.tenancy.resolve_default_tenant`.
+    When that tenant doesn't exist, this is a server-side misconfiguration,
+    not a caller error, so it must be logged at `ERROR` with the same
+    not-found/inactive distinction `registrations/deps.py`'s equivalent
+    fallback already has — see
+    harden-default-tenant-resolution-and-readiness/design.md. The
+    client-facing 404 is unchanged from before this consistency fix.
+    """
+    monkeypatch.setattr(settings, "default_tenant_slug", "no-such-tenant-slug")
+
+    with capture_logs() as captured:
+        response = await client.post(
+            "/api/v1/identity-verification/otp/request",
+            json={"identifier": _unique_email(), "channel": "email"},
+        )
+
+    assert response.status_code == 404
+    assert response.json()["message"] == "Tenant not found or inactive"
+
+    [entry] = [
+        e for e in captured if e["event"] == "identity_verification_default_tenant_unconfigured"
+    ]
+    assert entry["log_level"] == "error"
+    assert entry["reason"] == "not_found"
+
+
+async def test_otp_request_inactive_default_tenant_logged_as_error(
+    client: AsyncClient, tenant: Tenant, db_session: AsyncSession
+) -> None:
+    await db_session.execute(update(Tenant).where(Tenant.id == tenant.id).values(is_active=False))
+    await db_session.commit()
+
+    with capture_logs() as captured:
+        response = await client.post(
+            "/api/v1/identity-verification/otp/request",
+            json={"identifier": _unique_email(), "channel": "email"},
+        )
+
+    assert response.status_code == 404
+    assert response.json()["message"] == "Tenant not found or inactive"
+
+    [entry] = [
+        e for e in captured if e["event"] == "identity_verification_default_tenant_unconfigured"
+    ]
+    assert entry["log_level"] == "error"
+    assert entry["reason"] == "inactive"
 
 
 # --- No plaintext leakage -----------------------------------------------------

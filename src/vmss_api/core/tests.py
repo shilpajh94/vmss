@@ -5,9 +5,13 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.core import storage
 from vmss_api.core.config import settings
+from vmss_api.core.tenancy import DefaultTenantUnresolved, resolve_default_tenant
+from vmss_api.tenant.models import Tenant
 
 
 def _png_bytes() -> bytes:
@@ -120,3 +124,48 @@ async def test_s3_backend_misconfigured_bucket_raises_storage_backend_error(monk
 
     with pytest.raises(storage.StorageBackendError):
         await storage.save(uuid.uuid4(), "tests/photo", _png_bytes(), "image/png")
+
+
+# --- environment-configuration capability: shared default-tenant resolver ----
+#
+# `resolve_default_tenant` (`core/tenancy.py`) is the single lookup behind
+# every public endpoint that falls back to `settings.default_tenant_slug`
+# (`registrations`, `identity_verification`, `invitations`' tracking lookup —
+# see harden-default-tenant-resolution-and-readiness/design.md). It raises
+# `DefaultTenantUnresolved` rather than an `HTTPException` so each caller
+# keeps its own status code/message; these tests cover the resolver itself,
+# not any one caller's translation of it.
+
+
+async def test_resolve_default_tenant_resolves_active_tenant(
+    db_session: AsyncSession, tenant: Tenant, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "default_tenant_slug", tenant.slug)
+
+    resolved = await resolve_default_tenant(db_session)
+
+    assert resolved.id == tenant.id
+
+
+async def test_resolve_default_tenant_raises_not_found_for_unknown_slug(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "default_tenant_slug", "no-such-tenant-slug")
+
+    with pytest.raises(DefaultTenantUnresolved) as exc_info:
+        await resolve_default_tenant(db_session)
+
+    assert exc_info.value.reason == "not_found"
+
+
+async def test_resolve_default_tenant_raises_inactive_for_inactive_tenant(
+    db_session: AsyncSession, tenant: Tenant, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "default_tenant_slug", tenant.slug)
+    await db_session.execute(update(Tenant).where(Tenant.id == tenant.id).values(is_active=False))
+    await db_session.commit()
+
+    with pytest.raises(DefaultTenantUnresolved) as exc_info:
+        await resolve_default_tenant(db_session)
+
+    assert exc_info.value.reason == "inactive"

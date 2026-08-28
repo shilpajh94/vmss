@@ -17,6 +17,7 @@ from vmss_api.core.config import settings
 from vmss_api.core.database import get_db, tenant_session_scope
 from vmss_api.core.logging import logger
 from vmss_api.core.security import verify_password
+from vmss_api.core.tenancy import DefaultTenantUnresolved, resolve_default_tenant
 from vmss_api.org_structure.repository import BranchRepository
 from vmss_api.registrations.repository import RegistrationDeviceKeyRepository
 from vmss_api.tenant.models import Tenant
@@ -75,17 +76,12 @@ async def _resolve_default_device_context(db: AsyncSession) -> RegistrationDevic
     `security-architecture.md` §2's "fake-entry prevention" open item.
     """
     logger.warning("registration_device_key_absent")
-    tenant = await TenantRepository(db).get_by_slug(settings.default_tenant_slug)
-    if tenant is None:
+    try:
+        tenant = await resolve_default_tenant(db)
+    except DefaultTenantUnresolved as exc:
         _reject_unconfigured_default(
             "registration_default_tenant_unconfigured",
-            reason="not_found",
-            tenant_slug=settings.default_tenant_slug,
-        )
-    if not tenant.is_active:
-        _reject_unconfigured_default(
-            "registration_default_tenant_unconfigured",
-            reason="inactive",
+            reason=exc.reason,
             tenant_slug=settings.default_tenant_slug,
         )
 
