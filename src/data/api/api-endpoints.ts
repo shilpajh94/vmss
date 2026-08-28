@@ -64,10 +64,12 @@ export const API_ENDPOINTS = {
     method: "PUT",
     hasToken: true,
   },
+  // Public for the pre-authentication visitor portal, same as LIST_EMPLOYEE_DIRECTORY —
+  // the backend already serves this endpoint without auth.
   LIST_BRANCHES: {
     endpoint: "/branches",
     method: "GET",
-    hasToken: true,
+    hasToken: false,
   },
   CREATE_BRANCH: {
     endpoint: "/branches",
@@ -84,10 +86,12 @@ export const API_ENDPOINTS = {
     method: "DELETE",
     hasToken: true,
   },
+  // Public for the pre-authentication visitor portal, same as LIST_EMPLOYEE_DIRECTORY —
+  // the backend already serves this endpoint without auth.
   LIST_DEPARTMENTS: {
     endpoint: "/departments",
     method: "GET",
-    hasToken: true,
+    hasToken: false,
   },
   CREATE_DEPARTMENT: {
     endpoint: "/departments",
@@ -104,10 +108,12 @@ export const API_ENDPOINTS = {
     method: "DELETE",
     hasToken: true,
   },
+  // Public for the pre-authentication visitor portal, same as LIST_EMPLOYEE_DIRECTORY —
+  // the backend already serves this endpoint without auth.
   LIST_BUILDINGS: {
     endpoint: "/buildings",
     method: "GET",
-    hasToken: true,
+    hasToken: false,
   },
   CREATE_BUILDING: {
     endpoint: "/buildings",

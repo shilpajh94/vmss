@@ -75,7 +75,7 @@ export function AdminBranchesPage() {
               <EmptyState message="No branches yet." action={{ label: 'Add Branch', onClick: goToCreateBranch }} />
             </div>
           ) : (
-            <BranchesTable branches={branches} onEdit={openEditForm} onDelete={requestDelete} />
+            <BranchesTable branches={branches} employees={employees} onEdit={openEditForm} onDelete={requestDelete} />
           )}
         </main>
       </div>

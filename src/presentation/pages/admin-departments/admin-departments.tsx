@@ -13,6 +13,7 @@ export function AdminDepartmentsPage() {
   const {
     currentUser,
     departments,
+    employees,
     isLoading,
     errorMessage,
     retry,
@@ -68,7 +69,7 @@ export function AdminDepartmentsPage() {
               <EmptyState message="No departments yet." action={{ label: 'Add Department', onClick: goToAddDepartment }} />
             </div>
           ) : (
-            <DepartmentsTable departments={departments} onDelete={requestDelete} />
+            <DepartmentsTable departments={departments} employees={employees} onDelete={requestDelete} />
           )}
         </main>
       </div>
