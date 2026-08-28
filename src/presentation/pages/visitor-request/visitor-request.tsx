@@ -37,9 +37,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     try {
       setVisitorCategories(await listVisitorCategoriesUseCase.execute())
     } catch {
-      // Anonymous visitors have no staff session token, so this master-data
-      // call 401s for them; the Visitor Category field falls back to its
-      // hardcoded options in that case.
+      // Falls back to no options; the field stays empty if this fails.
     }
   }, [listVisitorCategoriesUseCase])
 
