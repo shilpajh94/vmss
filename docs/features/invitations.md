@@ -30,6 +30,15 @@ branch from the request body via the same `authorize_branch_id` helper.
 | GET | `/api/v1/invitations` | `invitations:view`, branch-scoped | — | Paginated listing of invitations for triage/browsing — see "Listing invitations" below. |
 | GET | `/api/v1/invitations/track?trackingId=` | None (public) | 20/minute per IP | Full status/visit-summary lookup by the human-readable tracking ID — returns `InvitationTrackingOut`, including every visit-detail and carried-item field captured at creation. |
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
+| GET | `/api/v1/invitations/{id}` | `invitations:view` at the invitation's branch | — | Authenticated, staff-facing single-invitation detail view (`InvitationDetailOut`) — branch/source/creator plus every lifecycle field below. 404 unknown id, 403 (not 404) if the caller lacks branch access. See "Lifecycle actions" below. |
+| PATCH | `/api/v1/invitations/{id}/deny` | `invitations:deny` at the invitation's branch | — | Transitions a `submitted` invitation to `denied`, with a mandatory `reason`, and dispatches a denial notification. 409 if not currently `submitted`. |
+| PATCH | `/api/v1/invitations/{id}/check-in` | `invitations:checkin` at the invitation's branch | — | Transitions an `approved` invitation to `checked_in`. 409 if not `approved`, or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key`. |
+| PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. |
+| PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`. 409 once `checked_in`/`checked_out`/`denied`. |
+| PATCH | `/api/v1/invitations/{id}/extend` | `invitations:extend` at the invitation's branch | — | Pushes `expiresAt` forward while `approved` or `checked_in`. 422 if the new expiry isn't strictly later than the current one; 409 if ineligible. |
+| POST | `/api/v1/invitations/{id}/badge` | `invitations:badge` at the invitation's branch | — | Issues a printable badge (PNG) for an `approved`/`checked_in` invitation. 409 if ineligible or already issued (use reprint). Accepts `Idempotency-Key`. |
+| POST | `/api/v1/invitations/{id}/badge/reprint` | `invitations:badge` at the invitation's branch | — | Re-renders an already-issued badge from current data and increments its reprint count. 409 if none issued yet. |
+| POST | `/api/v1/invitations/{id}/watchlist-override` | `invitations:watchlist-override` (admin only by default) at the invitation's branch | — | Clears a `watchlistFlagged` invitation, with a mandatory `reason`, so check-in can proceed. 409 if not currently flagged. Does not itself check the invitation in. |
 
 ## Finding the payload shape in Swagger
 
@@ -109,6 +118,44 @@ change an already-created invitation's status. Only the per-visitor-category
 `ApprovalWorkflowRule` multi-step engine (`visitors/` — config CRUD only,
 no runtime evaluation yet) is unaffected; this flow uses only the
 company-wide flag.
+
+## Lifecycle actions: deny / check-in / check-out / reschedule / extend / badge / watchlist-override
+
+`add-invitation-lifecycle-actions` adds `status` values `denied`,
+`checked_in`, `checked_out` alongside the existing `submitted`/`approved`,
+plus one atomic conditional `UPDATE`-based transition per action (same
+concurrency-safe shape `POST /invitations/{id}/approve` already uses — a
+losing concurrent request gets 409, never a corrupted double-transition):
+
+```
+submitted ──deny──> denied
+submitted ──approve──> approved ──check-in──> checked_in ──check-out──> checked_out
+```
+
+- **Reschedule** (`preferredVisitDate`/`preferredVisitTime`) and **extend**
+  (`expiresAt`) operate on different status windows: reschedule only while
+  `submitted`/`approved` (before check-in); extend only while
+  `approved`/`checked_in` (an active visit). Extend also requires the new
+  expiry be strictly later than the current one (422 otherwise).
+- **Badge** issuance/reprint requires `approved`/`checked_in`. Issuance
+  generates a `BDG-XXXXXXXX` number and a rendered PNG (visitor name,
+  tracking ID, a QR code encoding it, and the expiry — `invitations/badge.py`,
+  reusing `qr.py`'s QR generation, composited with Pillow, no new
+  dependency), saved via `core/storage.py`'s existing save/`url_for`
+  interface. Reprint re-renders from the invitation's *current* data (so a
+  reprint after a reschedule/extension reflects the new values) and
+  increments `badgeReprintCount`; it keeps the same `badgeNumber` — that
+  identifies the visit, not one physical printout.
+- **Watchlist override**: `watchlistFlagged` is a new column, but **nothing
+  in this codebase sets it to `true` yet** — there is no automatic
+  watchlist/blacklist matching built. It exists so `POST
+  /invitations/{id}/watchlist-override` and the check-in gate that reads it
+  have a real contract to operate on ahead of that future capability. Until
+  a future feature sets the flag (e.g. at creation time), `check-in` simply
+  never hits the 409 this gate would otherwise produce.
+- Denial dispatches `invitations/tasks.py::send_denial_notification`
+  (tracking ID + reason, no QR) — structurally identical to
+  `send_tracking_notification`, async/Celery, never inline.
 
 ## Listing invitations
 
@@ -229,15 +276,20 @@ table for the S3 connection settings.
 
 ## Not yet built (flagged, not silently dropped)
 
-- **Cancel/reschedule an invitation.** The product spec's Employee Features
-  list these, but they weren't part of this feature's scope — meaningful
-  cancel/reschedule needs a check-in state machine to interact with, which
-  doesn't exist yet. `invitations:cancel` is already seeded into the
-  permission catalog for when that lands.
+- **Cancel an invitation.** `add-invitation-lifecycle-actions` added
+  deny/check-in/check-out/reschedule/extend/badge/watchlist-override, but
+  not cancel — `invitations:cancel` is still seeded into the permission
+  catalog, unused, for when that lands. Deny (`submitted` → `denied`) is a
+  distinct concept: a reviewer's rejection before approval, not a
+  withdrawal of an already-approved/active invitation.
 - **Recurring invitations.** One-off single/group invitations only.
-- **Reject/decline a submitted invitation.** `POST /invitations/{id}/approve`
-  exists; there is no corresponding reject action yet — explicitly out of
-  scope for `add-invitation-approval-flow-and-role-resync`.
+- **Automatic watchlist/blacklist matching.** `watchlistFlagged` and
+  `POST /invitations/{id}/watchlist-override` exist (see "Lifecycle
+  actions" above), but nothing sets the flag yet — no matching logic runs
+  at creation or anywhere else.
+- **Hardware/printer integration for badges.** `POST /invitations/{id}/badge`
+  renders and stores a badge image a reception device can retrieve and send
+  to its own printer; there is no server-to-printer protocol.
 - **Per-visitor-category, multi-step approval workflow evaluation.**
   `ApprovalWorkflowRule` (`visitors/`) is still config CRUD only — nothing
   evaluates it against an invitation. The auto-approve/manual-approve flow

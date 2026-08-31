@@ -48,6 +48,13 @@ PERMISSION_CODES = [
     "invitations:view",
     "invitations:cancel",
     "invitations:approve",
+    "invitations:deny",
+    "invitations:checkin",
+    "invitations:checkout",
+    "invitations:reschedule",
+    "invitations:extend",
+    "invitations:badge",
+    "invitations:watchlist-override",
     "roles:manage",
     "roles:view",
     "sso-config:manage",
@@ -71,6 +78,10 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:create",
         "invitations:view",
         "invitations:approve",
+        "invitations:deny",
+        "invitations:reschedule",
+        "invitations:extend",
+        "invitations:badge",
     ],
     "security": [
         "branches:view",
@@ -79,6 +90,8 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "employees:view",
         "gates:view",
         "invitations:view",
+        "invitations:checkin",
+        "invitations:checkout",
     ],
     "host": [
         "branches:view",
@@ -89,6 +102,9 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:create",
         "invitations:view",
         "invitations:approve",
+        "invitations:deny",
+        "invitations:reschedule",
+        "invitations:extend",
     ],
     # Exists only so the catalog literally lists all five names API-02
     # requires. Visitors never authenticate through this JWT/RBAC system

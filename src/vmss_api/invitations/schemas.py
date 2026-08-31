@@ -285,3 +285,84 @@ class InvitationTrackingSummaryOut(CamelModel):
 
     tracking_id: str
     status: str
+
+
+# --- add-invitation-lifecycle-actions: staff detail view + lifecycle actions -
+
+
+class InvitationDetailOut(CamelModel):
+    """`GET /invitations/{id}` — everything `InvitationTrackingOut` returns
+    plus branch/source/creator and every lifecycle field this capability
+    adds (design.md Decision 2). Deliberately a separate schema from
+    `InvitationTrackingOut`: that one is served to an unauthenticated public
+    caller and must never carry `branchId`/`createdByUserId`/badge/
+    watchlist internals.
+    """
+
+    id: uuid.UUID
+    branch_id: uuid.UUID
+    source: RegistrationSource
+    created_by_user_id: uuid.UUID | None
+    tracking_id: str
+    status: str
+    registration_type: str
+    primary_contact_full_name: str
+    purpose_of_visit: str | None
+    host_name_or_email: str | None
+    preferred_visit_date: date | None
+    preferred_visit_time: time | None
+    expected_duration: str | None
+    department_to_visit: str | None
+    additional_notes: str | None
+    carried_items: list[str]
+    carried_items_description: str | None
+    expires_at: datetime
+    submitted_at: datetime | None
+    approved_at: datetime | None
+    denial_reason: str | None
+    denied_at: datetime | None
+    checked_in_at: datetime | None
+    checked_in_by_user_id: uuid.UUID | None
+    checked_out_at: datetime | None
+    checked_out_by_user_id: uuid.UUID | None
+    badge_number: str | None
+    badge_issued_at: datetime | None
+    badge_reprint_count: int
+    watchlist_flagged: bool
+    watchlist_override_at: datetime | None
+    watchlist_override_reason: str | None
+    watchlist_override_by_user_id: uuid.UUID | None
+    visitors: list[InvitationVisitorOut]
+    vehicles: list[InvitationVehicleOut]
+
+
+class InvitationDenyRequest(CamelModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class InvitationRescheduleRequest(CamelModel):
+    preferred_visit_date: date
+    preferred_visit_time: time
+
+
+class InvitationExtendRequest(CamelModel):
+    expires_at: datetime = Field(
+        description="New expiry — must be strictly later than the invitation's current expiresAt."
+    )
+
+    @model_validator(mode="after")
+    def _check_timezone_aware(self) -> Self:
+        if self.expires_at.tzinfo is None:
+            raise ValueError("expiresAt must include a timezone offset")
+        return self
+
+
+class WatchlistOverrideRequest(CamelModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class BadgeOut(CamelModel):
+    badge_number: str
+    badge_url: str
+    issued_at: datetime
+    reprint_count: int

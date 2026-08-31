@@ -174,6 +174,24 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     host_id = None
     duration_id = None
     department_id = None
+    # add-invitation-lifecycle-actions: same FK-safety rationale for the new
+    # lifecycle actor columns, plus a representative "nothing has happened
+    # yet" default for the rest — a fresh `submitted` row has no denial/
+    # check-in/check-out/badge/watchlist-override state.
+    denial_reason = None
+    denied_at = None
+    checked_in_at = None
+    checked_in_by_user_id = None
+    checked_out_at = None
+    checked_out_by_user_id = None
+    badge_number = None
+    badge_storage_key = None
+    badge_issued_at = None
+    badge_reprint_count = 0
+    watchlist_flagged = False
+    watchlist_override_at = None
+    watchlist_override_reason = None
+    watchlist_override_by_user_id = None
 
 
 class InvitationVisitorFactory(SQLAlchemyFactory[InvitationVisitor]):

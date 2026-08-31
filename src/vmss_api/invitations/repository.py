@@ -22,6 +22,13 @@ def _order_clause(column: Any, sort_order: SortOrder) -> Any:
     return column.desc() if sort_order == SortOrder.desc else column.asc()
 
 
+# add-invitation-lifecycle-actions/design.md Decision 1: statuses eligible
+# for reschedule (before check-in) vs. the "active visit" statuses extend
+# and badge issuance operate on.
+_RESCHEDULABLE_STATUSES = ("submitted", "approved")
+_ACTIVE_STATUSES = ("approved", "checked_in")
+
+
 class InvitationRepository(TenantScopedRepository[Invitation]):
     model = Invitation
 
@@ -57,6 +64,150 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             .values(status="approved", approved_at=datetime.now(UTC))
             .returning(Invitation)
         )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def deny_if_submitted(self, id_: uuid.UUID, *, reason: str) -> Invitation | None:
+        """Atomic conditional transition, same shape as `approve_if_submitted`
+        — see spec.md "A Submitted Invitation Can Be Denied With a Reason".
+        """
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_, Invitation.status == "submitted")
+            .values(status="denied", denial_reason=reason, denied_at=datetime.now(UTC))
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def check_in_if_eligible(
+        self, id_: uuid.UUID, *, user_id: uuid.UUID
+    ) -> Invitation | None:
+        """Only transitions a row that is both `approved` and not
+        watchlist-flagged (spec.md "A Watchlist-Flagged Invitation Blocks
+        Check-In Until Overridden") — both conditions are checked in the
+        same atomic `UPDATE` so a concurrent override/check-in pair can't
+        race past a read-then-write gap the way `approve_if_submitted`'s
+        docstring already explains for the approve case.
+        """
+        stmt = (
+            update(Invitation)
+            .where(
+                Invitation.id == id_,
+                Invitation.status == "approved",
+                Invitation.watchlist_flagged.is_(False),
+            )
+            .values(
+                status="checked_in",
+                checked_in_at=datetime.now(UTC),
+                checked_in_by_user_id=user_id,
+            )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def check_out_if_checked_in(
+        self, id_: uuid.UUID, *, user_id: uuid.UUID
+    ) -> Invitation | None:
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_, Invitation.status == "checked_in")
+            .values(
+                status="checked_out",
+                checked_out_at=datetime.now(UTC),
+                checked_out_by_user_id=user_id,
+            )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def reschedule_if_eligible(
+        self, id_: uuid.UUID, *, preferred_visit_date: Any, preferred_visit_time: Any
+    ) -> Invitation | None:
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
+            .values(
+                preferred_visit_date=preferred_visit_date,
+                preferred_visit_time=preferred_visit_time,
+            )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def extend_if_eligible(
+        self, id_: uuid.UUID, *, new_expires_at: datetime
+    ) -> Invitation | None:
+        """The new-expiry-must-be-later check is folded into the `WHERE`
+        clause too (`Invitation.expires_at < new_expires_at`), not just
+        validated by the caller — so a concurrent extend to a later value
+        can't be silently clobbered by a stale, earlier one that started
+        first but committed second.
+        """
+        stmt = (
+            update(Invitation)
+            .where(
+                Invitation.id == id_,
+                Invitation.status.in_(_ACTIVE_STATUSES),
+                Invitation.expires_at < new_expires_at,
+            )
+            .values(expires_at=new_expires_at)
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def issue_badge_if_eligible(
+        self, id_: uuid.UUID, *, badge_number: str, badge_storage_key: str
+    ) -> Invitation | None:
+        stmt = (
+            update(Invitation)
+            .where(
+                Invitation.id == id_,
+                Invitation.status.in_(_ACTIVE_STATUSES),
+                Invitation.badge_number.is_(None),
+            )
+            .values(
+                badge_number=badge_number,
+                badge_storage_key=badge_storage_key,
+                badge_issued_at=datetime.now(UTC),
+            )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def reprint_badge_if_issued(
+        self, id_: uuid.UUID, *, badge_storage_key: str
+    ) -> Invitation | None:
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_, Invitation.badge_number.is_not(None))
+            .values(
+                badge_storage_key=badge_storage_key,
+                badge_reprint_count=Invitation.badge_reprint_count + 1,
+            )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def override_watchlist_if_flagged(
+        self, id_: uuid.UUID, *, user_id: uuid.UUID, reason: str
+    ) -> Invitation | None:
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_, Invitation.watchlist_flagged.is_(True))
+            .values(
+                watchlist_flagged=False,
+                watchlist_override_at=datetime.now(UTC),
+                watchlist_override_by_user_id=user_id,
+                watchlist_override_reason=reason,
+            )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_badge_number(self, badge_number: str) -> Invitation | None:
+        """Backs `_generate_unique_badge_number`'s retry-against-uniqueness
+        loop (design.md Decision 4) — same shape as tracking-id generation.
+        """
+        stmt = select(Invitation).where(Invitation.badge_number == badge_number)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_tracking_id(self, tracking_id: str) -> Invitation | None:

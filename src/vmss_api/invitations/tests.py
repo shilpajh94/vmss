@@ -5,6 +5,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import aiosmtplib
 import pytest
@@ -1663,3 +1664,936 @@ async def test_approve_invitation_denied_for_approver_scoped_elsewhere(
 
     await db_session.refresh(invitation)
     assert invitation.status == "submitted"
+
+
+# --- add-invitation-lifecycle-actions ------------------------------------------
+
+
+async def _branch_scoped_user_with_permission(
+    db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID, *, permission_code: str
+) -> User:
+    """Generic counterpart of `_branch_scoped_invitation_viewer`/`_approver`
+    above — a caller whose only role grant is `permission_code` at
+    `branch_id`. One helper covers every new permission this capability
+    adds instead of a hand-written near-duplicate per code.
+    """
+    label = permission_code.split(":")[-1]
+    permission = PermissionFactory.build(
+        id=uuid.uuid4(), code=permission_code, description=permission_code
+    )
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"invitations-{label}", permissions=[permission])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"{label}-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name=f"Invitation {label.title()}",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([permission, role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+# --- GET /invitations/{id} ------------------------------------------------------
+
+
+async def test_get_invitation_detail_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="approved")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["id"] == str(invitation.id)
+    assert data["branchId"] == str(branch.id)
+    assert data["status"] == "approved"
+    assert data["watchlistFlagged"] is False
+    assert data["badgeNumber"] is None
+    assert data["visitors"] == []
+    assert data["vehicles"] == []
+
+
+async def test_get_invitation_detail_unknown_id_not_found(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    response = await client.get(
+        f"/api/v1/invitations/{uuid.uuid4()}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
+async def test_get_invitation_detail_denied_for_viewer_scoped_elsewhere(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-DETAIL")
+    db_session.add(other_branch)
+    await db_session.flush()
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, other_branch.id)
+    invitation = _build_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+# --- PATCH /invitations/{id}/deny -----------------------------------------------
+
+
+async def test_deny_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    denial_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_denial_notification, "delay", lambda **kw: denial_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/deny",
+        json={"reason": "Host unavailable"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "denied"
+    assert len(denial_calls) == 1
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "denied"
+    assert invitation.denial_reason == "Host unavailable"
+    assert invitation.denied_at is not None
+
+
+async def test_deny_invitation_missing_reason_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/deny",
+        json={"reason": ""},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+
+
+async def test_deny_invitation_non_submitted_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/deny",
+        json={"reason": "Too late"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+
+async def test_deny_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/deny",
+        json={"reason": "No"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+
+
+# --- PATCH /invitations/{id}/check-in -------------------------------------------
+
+
+async def test_check_in_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "checked_in"
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_in"
+    assert invitation.checked_in_at is not None
+    assert invitation.checked_in_by_user_id == user.id
+
+
+async def test_check_in_invitation_non_approved_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+
+
+async def test_check_in_invitation_watchlist_flagged_blocked(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+
+async def test_check_in_invitation_succeeds_after_watchlist_override(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    override_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/watchlist-override",
+        json={"reason": "Confirmed false positive"},
+        headers=headers,
+    )
+    assert override_response.status_code == 200
+
+    check_in_response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in", headers=headers
+    )
+    assert check_in_response.status_code == 200
+    assert check_in_response.json()["data"]["status"] == "checked_in"
+
+    await db_session.refresh(invitation)
+    assert invitation.watchlist_flagged is False
+    assert invitation.watchlist_override_reason == "Confirmed false positive"
+    assert invitation.watchlist_override_by_user_id == user.id
+    assert invitation.status == "checked_in"
+
+
+async def test_check_in_invitation_idempotency_key_replay(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "checkin-key-1"}
+
+    first = await client.patch(f"/api/v1/invitations/{invitation.id}/check-in", headers=headers)
+    second = await client.patch(f"/api/v1/invitations/{invitation.id}/check-in", headers=headers)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+
+
+async def test_check_in_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+
+# --- PATCH /invitations/{id}/check-out ------------------------------------------
+
+
+async def test_check_out_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-out",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "checked_out"
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_out"
+    assert invitation.checked_out_at is not None
+    assert invitation.checked_out_by_user_id == user.id
+
+
+async def test_check_out_invitation_non_checked_in_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-out",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+
+async def test_check_out_invitation_idempotency_key_replay(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "checkout-key-1"}
+
+    first = await client.patch(f"/api/v1/invitations/{invitation.id}/check-out", headers=headers)
+    second = await client.patch(f"/api/v1/invitations/{invitation.id}/check-out", headers=headers)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+
+
+async def test_check_out_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-out",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_in"
+
+
+# --- PATCH /invitations/{id}/reschedule -----------------------------------------
+
+
+async def test_reschedule_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/reschedule",
+        json={"preferredVisitDate": "2026-12-01", "preferredVisitTime": "15:30:00"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "submitted"
+
+    await db_session.refresh(invitation)
+    assert invitation.preferred_visit_date.isoformat() == "2026-12-01"
+    assert invitation.preferred_visit_time.isoformat() == "15:30:00"
+
+
+async def test_reschedule_invitation_after_check_in_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    original_date = invitation.preferred_visit_date
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/reschedule",
+        json={"preferredVisitDate": "2026-12-01", "preferredVisitTime": "15:30:00"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.preferred_visit_date == original_date
+
+
+async def test_reschedule_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/reschedule",
+        json={"preferredVisitDate": "2026-12-01", "preferredVisitTime": "15:30:00"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+# --- PATCH /invitations/{id}/extend ---------------------------------------------
+
+
+async def test_extend_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=now,
+        expires_at=now + timedelta(days=1),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    new_expiry = now + timedelta(days=7)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/extend",
+        json={"expiresAt": new_expiry.isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+    await db_session.refresh(invitation)
+    assert invitation.expires_at == new_expiry
+
+
+async def test_extend_invitation_earlier_expiry_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC)
+    original_expiry = now + timedelta(days=7)
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=now, expires_at=original_expiry
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/extend",
+        json={"expiresAt": (now + timedelta(days=1)).isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.expires_at == original_expiry
+
+
+async def test_extend_invitation_ineligible_status_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/extend",
+        json={"expiresAt": (datetime.now(UTC) + timedelta(days=30)).isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_extend_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/extend",
+        json={"expiresAt": (datetime.now(UTC) + timedelta(days=30)).isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+# --- POST /invitations/{id}/badge and /badge/reprint ----------------------------
+
+
+async def test_issue_badge_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
+    data = response.json()["data"]
+    assert data["badgeNumber"].startswith("BDG-")
+    assert data["reprintCount"] == 0
+
+    await db_session.refresh(invitation)
+    assert invitation.badge_number == data["badgeNumber"]
+    assert invitation.badge_storage_key is not None
+    badge_bytes = Path(data["badgeUrl"]).read_bytes()
+    assert Image.open(io.BytesIO(badge_bytes)).format == "PNG"
+
+
+async def test_issue_badge_already_issued_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        badge_number="BDG-EXISTING",
+        badge_storage_key="vmss:test:invitations/badges:existing.png",
+        badge_issued_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_issue_badge_ineligible_status_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_issue_badge_idempotency_key_replay(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "badge-key-1"}
+
+    first = await client.post(f"/api/v1/invitations/{invitation.id}/badge", headers=headers)
+    second = await client.post(f"/api/v1/invitations/{invitation.id}/badge", headers=headers)
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json() == second.json()
+
+
+async def test_issue_badge_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+async def test_reprint_badge_success_and_reflects_updated_expiry(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=now,
+        expires_at=now + timedelta(days=1),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    issue_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge", headers=headers
+    )
+    assert issue_response.status_code == 201
+    badge_number = issue_response.json()["data"]["badgeNumber"]
+    await db_session.refresh(invitation)
+    first_storage_key = invitation.badge_storage_key
+
+    new_expiry = now + timedelta(days=30)
+    extend_response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/extend",
+        json={"expiresAt": new_expiry.isoformat()},
+        headers=headers,
+    )
+    assert extend_response.status_code == 200
+
+    reprint_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge/reprint", headers=headers
+    )
+    assert reprint_response.status_code == 200
+    reprint_data = reprint_response.json()["data"]
+    assert reprint_data["badgeNumber"] == badge_number
+    assert reprint_data["reprintCount"] == 1
+
+    await db_session.refresh(invitation)
+    assert invitation.badge_reprint_count == 1
+    assert invitation.badge_number == badge_number
+    assert invitation.badge_storage_key != first_storage_key
+    assert invitation.expires_at == new_expiry
+
+
+async def test_reprint_badge_none_issued_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge/reprint",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_reprint_badge_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        badge_number="BDG-EXISTING2",
+        badge_storage_key="vmss:test:invitations/badges:existing2.png",
+        badge_issued_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge/reprint",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+# --- POST /invitations/{id}/watchlist-override ----------------------------------
+
+
+async def test_override_watchlist_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/watchlist-override",
+        json={"reason": "Confirmed not a match"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+    await db_session.refresh(invitation)
+    assert invitation.watchlist_flagged is False
+    assert invitation.watchlist_override_reason == "Confirmed not a match"
+    assert invitation.watchlist_override_by_user_id == user.id
+    assert invitation.watchlist_override_at is not None
+    assert invitation.status == "approved"
+
+
+async def test_override_watchlist_not_flagged_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/watchlist-override",
+        json={"reason": "Not needed"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_override_watchlist_missing_reason_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/watchlist-override",
+        json={"reason": ""},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.watchlist_flagged is True
+
+
+async def test_override_watchlist_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    approver = await _branch_scoped_invitation_approver(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(approver)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/watchlist-override",
+        json={"reason": "Not allowed"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.watchlist_flagged is True
+
+
+# --- Tenant isolation ------------------------------------------------------------
+
+
+async def test_check_in_repository_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_checkin"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).check_in_if_eligible(
+            invitation.id, user_id=uuid.uuid4()
+        )
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
