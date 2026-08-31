@@ -7,6 +7,7 @@ import { StaffVisitorSchema } from "./staff-visitor-schema"
 // `branchId` isn't part of this payload — it travels as the `X-Branch-ID` header.
 export const StaffVisitRequestSchema = z.object({
   registrationType: z.enum(["individual", "group"]),
+  visitorCategoryId: z.string().min(1),
   primaryContact: StaffVisitorSchema,
   visitors: z.array(StaffVisitorSchema),
   visitDetails: z.object({

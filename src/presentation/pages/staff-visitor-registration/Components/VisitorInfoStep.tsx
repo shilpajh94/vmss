@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { PlusIcon } from '../../../components/icons'
 import type { RegistrationType } from '../../visitor-request/types'
+import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffVisitorFormEntry } from '../types'
 import { AddVisitorForm } from './AddVisitorForm'
 import { PrimaryContactCard } from './PrimaryContactCard'
@@ -16,6 +17,7 @@ interface VisitorInfoStepProps {
   onAdditionalVisitorsChange: (visitors: StaffVisitorFormEntry[]) => void
   uploadFile: (file: File) => Promise<string>
   errors: Record<string, string>
+  visitorCategories?: VisitorCategory[]
 }
 
 export function VisitorInfoStep({
@@ -27,6 +29,7 @@ export function VisitorInfoStep({
   onAdditionalVisitorsChange,
   uploadFile,
   errors,
+  visitorCategories,
 }: VisitorInfoStepProps) {
   const [isAdding, setIsAdding] = useState(false)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
@@ -64,7 +67,13 @@ export function VisitorInfoStep({
     <div className="flex flex-col gap-6">
       <RegistrationTypeToggle value={registrationType} onChange={onRegistrationTypeChange} />
 
-      <PrimaryContactCard value={primaryContact} onChange={onPrimaryContactChange} uploadFile={uploadFile} errors={errors} />
+      <PrimaryContactCard
+        value={primaryContact}
+        onChange={onPrimaryContactChange}
+        uploadFile={uploadFile}
+        errors={errors}
+        visitorCategories={visitorCategories}
+      />
 
       {registrationType === 'group' && (
         <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-6">

@@ -97,6 +97,13 @@ The system SHALL present a summary of every prior step's entered data on the fin
 - **WHEN** the visitor chooses to go back from the Review & Confirm step
 - **THEN** the system returns to the previous step with all previously entered data intact
 
+### Requirement: The primary contact's visitor category is submitted as the invitation's category
+The system SHALL submit the primary contact's selected visitor category as the invitation-level visitor category, identified by that category's id, since the backend associates one visitor category with an invitation as a whole rather than per visitor.
+
+#### Scenario: Submission includes the invitation's visitor category
+- **WHEN** the visitor confirms submission
+- **THEN** the submitted request includes the primary contact's selected visitor category's id as the invitation's visitor category
+
 ### Requirement: Submission reports success with a tracking reference
 The system SHALL, on successful submission, show the visitor a confirmation containing a tracking reference for the request.
 

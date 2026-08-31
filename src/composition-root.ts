@@ -30,6 +30,11 @@ import { StartSsoLoginUseCase } from './data/use-cases/start-sso-login'
 import { ExchangeSsoCodeUseCase } from './data/use-cases/exchange-sso-code'
 import { ListVisitRequestsUseCase } from './data/use-cases/list-visit-requests'
 import { ApproveInvitationUseCase } from './data/use-cases/approve-invitation'
+import { GetInvitationDetailUseCase } from './data/use-cases/get-invitation-detail'
+import { RescheduleInvitationUseCase } from './data/use-cases/reschedule-invitation'
+import { DenyInvitationUseCase } from './data/use-cases/deny-invitation'
+import { ApproveInvitationStepUseCase } from './data/use-cases/approve-invitation-step'
+import { RejectInvitationStepUseCase } from './data/use-cases/reject-invitation-step'
 import { GetCurrentStaffUserUseCase } from './data/use-cases/get-current-staff-user'
 import { GetOrganisationConfigUseCase } from './data/use-cases/get-organisation-config'
 import { UpdateOrganisationConfigUseCase } from './data/use-cases/update-organisation-config'
@@ -55,6 +60,9 @@ import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
 import { ListEmployeeDirectoryUseCase } from './data/use-cases/list-employee-directory'
 import { CreateHostEmployeeUseCase } from './data/use-cases/create-host-employee'
 import { ListRolesUseCase } from './data/use-cases/list-roles'
+import { ListPermissionsUseCase } from './data/use-cases/list-permissions'
+import { UpdateRolePermissionsUseCase } from './data/use-cases/update-role-permissions'
+import { ResyncRolePermissionsUseCase } from './data/use-cases/resync-role-permissions'
 import { AssignHostEmployeeRoleUseCase } from './data/use-cases/assign-host-employee-role'
 import { RevokeHostEmployeeRoleUseCase } from './data/use-cases/revoke-host-employee-role'
 import { ListReceptionDesksUseCase } from './data/use-cases/list-reception-desks'
@@ -104,6 +112,11 @@ export interface AppDependencies {
   exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase
   listVisitRequestsUseCase: ListVisitRequestsUseCase
   approveInvitationUseCase: ApproveInvitationUseCase
+  getInvitationDetailUseCase: GetInvitationDetailUseCase
+  rescheduleInvitationUseCase: RescheduleInvitationUseCase
+  denyInvitationUseCase: DenyInvitationUseCase
+  approveInvitationStepUseCase: ApproveInvitationStepUseCase
+  rejectInvitationStepUseCase: RejectInvitationStepUseCase
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
   getAuditTrailUseCase: GetAuditTrailUseCase
@@ -131,6 +144,9 @@ export interface AppDependencies {
   listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase
   createHostEmployeeUseCase: CreateHostEmployeeUseCase
   listRolesUseCase: ListRolesUseCase
+  listPermissionsUseCase: ListPermissionsUseCase
+  updateRolePermissionsUseCase: UpdateRolePermissionsUseCase
+  resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase
   assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase
   revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase
   listReceptionDesksUseCase: ListReceptionDesksUseCase
@@ -167,6 +183,11 @@ export function createApp(): AppDependencies {
   let exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase | undefined
   let listVisitRequestsUseCase: ListVisitRequestsUseCase | undefined
   let approveInvitationUseCase: ApproveInvitationUseCase | undefined
+  let getInvitationDetailUseCase: GetInvitationDetailUseCase | undefined
+  let rescheduleInvitationUseCase: RescheduleInvitationUseCase | undefined
+  let denyInvitationUseCase: DenyInvitationUseCase | undefined
+  let approveInvitationStepUseCase: ApproveInvitationStepUseCase | undefined
+  let rejectInvitationStepUseCase: RejectInvitationStepUseCase | undefined
   let getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase | undefined
   let staffVisitRequestRepository: StaffVisitRequestRepository | undefined
   let submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase | undefined
@@ -204,6 +225,9 @@ export function createApp(): AppDependencies {
   let listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase | undefined
   let createHostEmployeeUseCase: CreateHostEmployeeUseCase | undefined
   let listRolesUseCase: ListRolesUseCase | undefined
+  let listPermissionsUseCase: ListPermissionsUseCase | undefined
+  let updateRolePermissionsUseCase: UpdateRolePermissionsUseCase | undefined
+  let resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase | undefined
   let assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase | undefined
   let revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase | undefined
   let receptionDeskRepository: ReceptionDeskRepository | undefined
@@ -304,6 +328,31 @@ export function createApp(): AppDependencies {
   const resolveApproveInvitationUseCase = (): ApproveInvitationUseCase => {
     approveInvitationUseCase ??= new ApproveInvitationUseCase(resolveVisitRequestSummaryRepository())
     return approveInvitationUseCase
+  }
+
+  const resolveGetInvitationDetailUseCase = (): GetInvitationDetailUseCase => {
+    getInvitationDetailUseCase ??= new GetInvitationDetailUseCase(resolveVisitRequestSummaryRepository())
+    return getInvitationDetailUseCase
+  }
+
+  const resolveRescheduleInvitationUseCase = (): RescheduleInvitationUseCase => {
+    rescheduleInvitationUseCase ??= new RescheduleInvitationUseCase(resolveVisitRequestSummaryRepository())
+    return rescheduleInvitationUseCase
+  }
+
+  const resolveDenyInvitationUseCase = (): DenyInvitationUseCase => {
+    denyInvitationUseCase ??= new DenyInvitationUseCase(resolveVisitRequestSummaryRepository())
+    return denyInvitationUseCase
+  }
+
+  const resolveApproveInvitationStepUseCase = (): ApproveInvitationStepUseCase => {
+    approveInvitationStepUseCase ??= new ApproveInvitationStepUseCase(resolveVisitRequestSummaryRepository())
+    return approveInvitationStepUseCase
+  }
+
+  const resolveRejectInvitationStepUseCase = (): RejectInvitationStepUseCase => {
+    rejectInvitationStepUseCase ??= new RejectInvitationStepUseCase(resolveVisitRequestSummaryRepository())
+    return rejectInvitationStepUseCase
   }
 
   const resolveGetCurrentStaffUserUseCase = (): GetCurrentStaffUserUseCase => {
@@ -492,6 +541,21 @@ export function createApp(): AppDependencies {
     return listRolesUseCase
   }
 
+  const resolveListPermissionsUseCase = (): ListPermissionsUseCase => {
+    listPermissionsUseCase ??= new ListPermissionsUseCase(resolveHostEmployeeRepository())
+    return listPermissionsUseCase
+  }
+
+  const resolveUpdateRolePermissionsUseCase = (): UpdateRolePermissionsUseCase => {
+    updateRolePermissionsUseCase ??= new UpdateRolePermissionsUseCase(resolveHostEmployeeRepository())
+    return updateRolePermissionsUseCase
+  }
+
+  const resolveResyncRolePermissionsUseCase = (): ResyncRolePermissionsUseCase => {
+    resyncRolePermissionsUseCase ??= new ResyncRolePermissionsUseCase(resolveHostEmployeeRepository())
+    return resyncRolePermissionsUseCase
+  }
+
   const resolveAssignHostEmployeeRoleUseCase = (): AssignHostEmployeeRoleUseCase => {
     assignHostEmployeeRoleUseCase ??= new AssignHostEmployeeRoleUseCase(resolveHostEmployeeRepository())
     return assignHostEmployeeRoleUseCase
@@ -630,6 +694,21 @@ export function createApp(): AppDependencies {
     get listVisitRequestsUseCase() {
       return resolveListVisitRequestsUseCase()
     },
+    get getInvitationDetailUseCase() {
+      return resolveGetInvitationDetailUseCase()
+    },
+    get rescheduleInvitationUseCase() {
+      return resolveRescheduleInvitationUseCase()
+    },
+    get denyInvitationUseCase() {
+      return resolveDenyInvitationUseCase()
+    },
+    get approveInvitationStepUseCase() {
+      return resolveApproveInvitationStepUseCase()
+    },
+    get rejectInvitationStepUseCase() {
+      return resolveRejectInvitationStepUseCase()
+    },
     get approveInvitationUseCase() {
       return resolveApproveInvitationUseCase()
     },
@@ -713,6 +792,15 @@ export function createApp(): AppDependencies {
     },
     get listRolesUseCase() {
       return resolveListRolesUseCase()
+    },
+    get listPermissionsUseCase() {
+      return resolveListPermissionsUseCase()
+    },
+    get updateRolePermissionsUseCase() {
+      return resolveUpdateRolePermissionsUseCase()
+    },
+    get resyncRolePermissionsUseCase() {
+      return resolveResyncRolePermissionsUseCase()
     },
     get assignHostEmployeeRoleUseCase() {
       return resolveAssignHostEmployeeRoleUseCase()

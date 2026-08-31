@@ -54,6 +54,31 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: true,
   },
+  GET_INVITATION_DETAIL: {
+    endpoint: "/invitations/:id",
+    method: "GET",
+    hasToken: true,
+  },
+  RESCHEDULE_INVITATION: {
+    endpoint: "/invitations/:id/reschedule",
+    method: "PATCH",
+    hasToken: true,
+  },
+  DENY_INVITATION: {
+    endpoint: "/invitations/:id/deny",
+    method: "PATCH",
+    hasToken: true,
+  },
+  APPROVE_INVITATION_STEP: {
+    endpoint: "/invitations/:invitationId/approval-steps/:stepId/approve",
+    method: "POST",
+    hasToken: true,
+  },
+  REJECT_INVITATION_STEP: {
+    endpoint: "/invitations/:invitationId/approval-steps/:stepId/reject",
+    method: "POST",
+    hasToken: true,
+  },
   LIST_AUDIT_TRAIL: {
     endpoint: "/staff/audit-trail",
     method: "GET",
@@ -185,6 +210,21 @@ export const API_ENDPOINTS = {
   LIST_ROLES: {
     endpoint: "/auth/roles",
     method: "GET",
+    hasToken: true,
+  },
+  LIST_PERMISSIONS: {
+    endpoint: "/auth/permissions",
+    method: "GET",
+    hasToken: true,
+  },
+  UPDATE_ROLE: {
+    endpoint: "/auth/roles/:id",
+    method: "PUT",
+    hasToken: true,
+  },
+  RESYNC_ROLE_PERMISSIONS: {
+    endpoint: "/auth/roles/resync-permissions",
+    method: "POST",
     hasToken: true,
   },
   ASSIGN_HOST_EMPLOYEE_ROLE: {

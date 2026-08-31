@@ -1,6 +1,7 @@
 import { SegmentedToggle } from '../../../components/ui/SegmentedToggle'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
+import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffVisitorFormEntry } from '../types'
 import { ID_PROOF_ALLOWED_TYPES, ID_PROOF_OPTIONS } from './constants'
 import { InlineFileUpload } from './InlineFileUpload'
@@ -10,9 +11,12 @@ interface PrimaryContactCardProps {
   onChange: (value: StaffVisitorFormEntry) => void
   uploadFile: (file: File) => Promise<string>
   errors: Record<string, string>
+  visitorCategories?: VisitorCategory[]
 }
 
-export function PrimaryContactCard({ value, onChange, uploadFile, errors }: PrimaryContactCardProps) {
+export function PrimaryContactCard({ value, onChange, uploadFile, errors, visitorCategories }: PrimaryContactCardProps) {
+  const visitorCategoryOptions = (visitorCategories ?? []).map((category) => ({ value: category.id, label: category.name }))
+
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-6">
       <h3 className="font-display text-base font-semibold text-text">Primary Contact Details</h3>
@@ -44,6 +48,15 @@ export function PrimaryContactCard({ value, onChange, uploadFile, errors }: Prim
           value={value.phone}
           onChange={(phone) => onChange({ ...value, phone })}
           error={errors.phone}
+          required
+        />
+        <SelectField
+          label="Visitor Category"
+          placeholder="Select category"
+          options={visitorCategoryOptions}
+          value={value.visitorCategory}
+          onChange={(visitorCategory) => onChange({ ...value, visitorCategory })}
+          error={errors.visitorCategory}
           required
         />
       </div>

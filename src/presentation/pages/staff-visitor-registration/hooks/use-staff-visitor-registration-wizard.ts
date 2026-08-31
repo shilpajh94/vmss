@@ -15,6 +15,7 @@ function validateStaffVisitorContact(contact: StaffVisitorFormEntry): Record<str
   if (!contact.fullName) errors.fullName = 'Full name is required.'
   if (!contact.email) errors.email = 'Email is required.'
   if (!contact.phone) errors.phone = 'Phone number is required.'
+  if (!contact.visitorCategory) errors.visitorCategory = 'Visitor category is required.'
   if (!contact.preferredContactMethod) errors.preferredContactMethod = 'Preferred contact method is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
   if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'

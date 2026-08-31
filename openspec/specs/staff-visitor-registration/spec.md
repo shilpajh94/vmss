@@ -47,11 +47,18 @@ The system SHALL let the staff member declare whether the registration is for a 
 - **THEN** the system blocks progression and indicates at least one visitor must be added
 
 ### Requirement: Primary contact details are required before proceeding
-The system SHALL require full name, email address, and phone number for the primary contact, and SHALL require a preferred contact method (email or SMS) and an ID proof type, before the Visitor Info step can be completed.
+The system SHALL require full name, email address, phone number, and a visitor category for the primary contact, and SHALL require a preferred contact method (email or SMS) and an ID proof type, before the Visitor Info step can be completed.
 
 #### Scenario: Missing a required primary contact field blocks progression
-- **WHEN** the staff member attempts to proceed without full name, email, phone, preferred contact method, or ID proof type filled in for the primary contact
+- **WHEN** the staff member attempts to proceed without full name, email, phone, visitor category, preferred contact method, or ID proof type filled in for the primary contact
 - **THEN** the system blocks progression and indicates which fields are missing
+
+### Requirement: The primary contact's visitor category is submitted as the invitation's category
+The system SHALL submit the primary contact's selected visitor category as the invitation-level visitor category, identified by that category's id, since the backend associates one visitor category with an invitation as a whole rather than per visitor.
+
+#### Scenario: Submission includes the invitation's visitor category
+- **WHEN** the staff member submits the registration
+- **THEN** the submitted request includes the primary contact's selected visitor category's id as the invitation's visitor category
 
 ### Requirement: ID proof can optionally be uploaded for each visitor
 The system SHALL let the staff member attach an image or PDF as ID proof for the primary contact and for each additional visitor in a group registration. The system SHALL reject files that are not PNG, JPG, or PDF, or that exceed 5MB.

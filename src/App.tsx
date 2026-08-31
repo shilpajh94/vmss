@@ -29,6 +29,9 @@ import { AdminVisitorCategoriesPage } from './presentation/pages/admin-visitor-c
 import { AdminVisitorCategoryFormPage } from './presentation/pages/admin-visitor-categories/admin-visitor-category-form'
 import { AdminWorkflowsPage } from './presentation/pages/admin-workflows/admin-workflows'
 import { AdminWorkflowFormPage } from './presentation/pages/admin-workflows/admin-workflow-form'
+import { AdminInvitationsPage } from './presentation/pages/admin-invitations/admin-invitations'
+import { AdminRolesPage } from './presentation/pages/admin-roles/admin-roles'
+import { AdminRolePermissionsFormPage } from './presentation/pages/admin-roles/admin-role-permissions-form'
 
 function RootLayout() {
   return (
@@ -71,6 +74,9 @@ function RootLayout() {
           <Route path="/admin/workflows" element={<AdminWorkflowsPage />} />
           <Route path="/admin/workflows/new" element={<AdminWorkflowFormPage />} />
           <Route path="/admin/workflows/:visitorCategoryId/edit" element={<AdminWorkflowFormPage />} />
+          <Route path="/admin/invitations" element={<AdminInvitationsPage />} />
+          <Route path="/admin/roles" element={<AdminRolesPage />} />
+          <Route path="/admin/roles/:id/edit" element={<AdminRolePermissionsFormPage />} />
         </Routes>
       </AppDependenciesProvider>
     </ToastProvider>
