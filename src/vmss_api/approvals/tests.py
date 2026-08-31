@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import (
+    ApprovalWorkflowRuleFactory,
     InvitationApprovalStepFactory,
     InvitationFactory,
     PermissionFactory,
@@ -154,6 +155,71 @@ async def _get_step(db_session: AsyncSession, invitation_id: uuid.UUID, step_ord
     return next(s for s in steps if s.step_order == step_order)
 
 
+async def _host_step_invitation(
+    db_session: AsyncSession, branch: Branch
+) -> tuple[Invitation, User]:
+    """A `submitted` invitation with a single host-identified pending step
+    at `stepOrder` 0 — used by the host-authorization tests below
+    (add-approval-step-id-and-host-routing). Returns `(invitation, host)`.
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example",
+        full_name="Invitation Host",
+    )
+    db_session.add(host)
+    await db_session.flush()
+
+    invitation = _build_invitation(db_session, branch.id, host_id=host.id)
+    db_session.add(invitation)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=0,
+            approver_role_id=None,
+            approver_user_id=host.id,
+        )
+    )
+    await db_session.commit()
+    return invitation, host
+
+
+async def _grant_approve_permission(
+    db_session: AsyncSession, user: User, branch_id: uuid.UUID, *, override: bool = False
+) -> None:
+    """Grants `invitations:approve` (and, if `override`, also
+    `invitations:approve-override`) to an already-existing `user` — unlike
+    `_user_with_role`, which always mints a fresh user, the host-match tests
+    below need to grant permission to a specific user identity (the
+    invitation's own host) without changing who they are.
+
+    Appends to `user.branch_roles` in-memory, not just `session.add()` on
+    the join row: `client`'s `expire_on_commit=False` test session
+    (`conftest.py::db_session`) never re-queries an already-identity-mapped
+    `User`'s relationships after a later commit, so a `UserBranchRole`
+    inserted purely via a raw FK (`user_id=...`) is invisible to
+    `User.has_branch_access`/`has_permission` — which read the in-memory
+    `branch_roles` collection — for the rest of the test, even though the
+    row is genuinely in the database.
+    """
+    codes = (
+        ("invitations:approve", "invitations:approve-override")
+        if override
+        else ("invitations:approve",)
+    )
+    permissions = [await _get_or_create_permission(db_session, code) for code in codes]
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"granted-role-{uuid.uuid4().hex[:8]}")
+    role.permissions = permissions
+    db_session.add(role)
+    await db_session.flush()
+    branch_role = UserBranchRole(id=uuid.uuid4(), user_id=user.id, role=role, branch_id=branch_id)
+    user.branch_roles.append(branch_role)
+    db_session.add(branch_role)
+    await db_session.commit()
+
+
 # --- Happy path: approve every step in order ---------------------------------
 
 
@@ -177,9 +243,12 @@ async def test_approve_step_non_final_unlocks_next_step_and_computes_its_clock(
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data["status"] == "submitted"
+    step_two_before_assert = await _get_step(db_session, invitation.id, 2)
     assert data["currentApprovalStep"] == {
+        "id": str(step_two_before_assert.id),
         "stepOrder": 2,
-        "approverRoleId": str((await _get_step(db_session, invitation.id, 2)).approver_role_id),
+        "approverRoleId": str(step_two_before_assert.approver_role_id),
+        "approverUserId": None,
         "totalSteps": 2,
     }
 
@@ -565,6 +634,144 @@ async def test_approve_step_company_wide_role_grant_matches_any_branch(
     assert response.status_code == 200, response.text
 
 
+# --- Host-identified step authorization (add-approval-step-id-and-host-routing) --
+
+
+async def test_approve_step_host_identified_matching_user_succeeds(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "Caller matching the step's approver user
+    succeeds" — the invitation's own host, granted `invitations:approve`,
+    approves their own host-identified step.
+    """
+    invitation, host = await _host_step_invitation(db_session, branch)
+    await _grant_approve_permission(db_session, host, branch.id)
+
+    step_zero = await _get_step(db_session, invitation.id, 0)
+    token = issue_token(host)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    updated = await _get_step(db_session, invitation.id, 0)
+    assert updated.status == "approved"
+    assert updated.acted_by_user_id == host.id
+
+
+async def test_approve_step_host_identified_non_matching_user_without_override_rejected(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "Caller who is not the step's approver user
+    and lacks override is rejected" — a different user, holding
+    `invitations:approve` but not matching the step's `approverUserId`.
+    """
+    invitation, _host = await _host_step_invitation(db_session, branch)
+    other_role = _approve_permission_role(name="other-role")
+    db_session.add(other_role)
+    await db_session.flush()
+    caller = await _user_with_role(db_session, branch.id, role=other_role)
+
+    step_zero = await _get_step(db_session, invitation.id, 0)
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    unchanged = await _get_step(db_session, invitation.id, 0)
+    assert unchanged.status == "pending"
+
+
+async def test_approve_step_host_identified_override_permission_bypasses_host_mismatch(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "Override permission bypasses the role-match
+    check" applies the same way to a host-identified step.
+    """
+    invitation, _host = await _host_step_invitation(db_session, branch)
+    override_role = _approve_permission_role(name="override-role-host")
+    db_session.add(override_role)
+    await db_session.flush()
+    caller = await _user_with_role(
+        db_session,
+        branch.id,
+        role=override_role,
+        extra_permission_codes=("invitations:approve-override",),
+    )
+
+    step_zero = await _get_step(db_session, invitation.id, 0)
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    updated = await _get_step(db_session, invitation.id, 0)
+    assert updated.status == "approved"
+
+
+async def test_approve_step_host_identified_requires_invitations_approve_permission(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "Caller lacking invitations:approve entirely
+    is rejected regardless of role" — the host themself, with no
+    `invitations:approve` grant at all, still can't act on their own
+    host-identified step.
+    """
+    invitation, host = await _host_step_invitation(db_session, branch)
+
+    step_zero = await _get_step(db_session, invitation.id, 0)
+    token = issue_token(host)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    unchanged = await _get_step(db_session, invitation.id, 0)
+    assert unchanged.status == "pending"
+
+
+async def test_reject_step_host_identified_matching_user_denies_invitation(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Same out-of-order/identity guards (specs/approvals/spec.md "Rejecting
+    a Step Is Terminal and Denies the Invitation") apply to a
+    host-identified current step, not just a role-identified one.
+    """
+    invitation, host = await _host_step_invitation(db_session, branch)
+    await _grant_approve_permission(db_session, host, branch.id)
+
+    step_zero = await _get_step(db_session, invitation.id, 0)
+    token = issue_token(host)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/reject",
+        json={"reason": "Not expected"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "denied"
+
+
 # --- Tenant isolation (testing-standards.md §2) ------------------------------
 
 
@@ -594,6 +801,33 @@ async def test_invitation_approval_step_tenant_schema_isolation(
     found_in_own_schema = await InvitationApprovalStepRepository(
         db_session
     ).get_by_id_for_invitation(invitation.id, step_one.id)
+    assert found_in_own_schema is not None
+
+
+async def test_host_identified_approval_step_tenant_schema_isolation(
+    branch: Branch,
+    db_session: AsyncSession,
+    make_tenant_schema: Callable,
+    open_tenant_session,
+) -> None:
+    """Same isolation guarantee as
+    `test_invitation_approval_step_tenant_schema_isolation`, for a
+    host-identified (`approver_user_id` set) step.
+    """
+    invitation, _host = await _host_step_invitation(db_session, branch)
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    other_schema = "tenant_other_approvals_host_test"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        found = await InvitationApprovalStepRepository(other_session).get_by_id_for_invitation(
+            invitation.id, step_zero.id
+        )
+        assert found is None
+
+    found_in_own_schema = await InvitationApprovalStepRepository(
+        db_session
+    ).get_by_id_for_invitation(invitation.id, step_zero.id)
     assert found_in_own_schema is not None
 
 
@@ -655,3 +889,157 @@ async def test_category_with_no_active_rules_creates_no_steps(
     )
     steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation.id)
     assert steps == []
+
+
+# --- Host-as-step-0 snapshotting (add-approval-step-id-and-host-routing) ----
+
+
+async def test_resolved_host_with_no_active_rules_creates_single_host_step(
+    tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """specs/approvals/spec.md "A resolved host with no configured rules
+    creates a single host-approval step".
+    """
+    from datetime import date, time
+
+    from vmss_api.invitations import service as invitations_service
+    from vmss_api.invitations.schemas import (
+        ConsentsSubmit,
+        IdProofType,
+        InvitationCreate,
+        InvitationPrimaryContactCreate,
+        RegistrationType,
+        VisitDetailsSubmit,
+    )
+
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    category = VisitorCategoryFactory.build(id=uuid.uuid4(), name="Host Only", code="HOST-ONLY")
+    db_session.add_all([host, category])
+    await db_session.commit()
+
+    payload = InvitationCreate(
+        registration_type=RegistrationType.individual,
+        visitor_category_id=category.id,
+        primary_contact=InvitationPrimaryContactCreate(
+            full_name="Test Visitor",
+            email="test.visitor@example.com",
+            id_proof_type=IdProofType.passport,
+        ),
+        visit_details=VisitDetailsSubmit(
+            purpose_of_visit="Test",
+            host_name_or_email="ignored@example.com",
+            host_id=host.id,
+            preferred_visit_date=date(2026, 9, 1),
+            preferred_visit_time=time(10, 0, 0),
+            expected_duration="< 1 hour",
+            department_to_visit="Test",
+        ),
+        consents=ConsentsSubmit(
+            terms_accepted=True, data_processing_accepted=True, safety_guidelines_accepted=True
+        ),
+    )
+    invitation = await invitations_service.create_invitation(
+        db_session,
+        payload,
+        branch_id=branch.id,
+        created_by_user_id=None,
+        tenant=tenant,
+        primary_contact_id_proof_content=_jpeg_bytes(),
+        visitor_id_proof_contents=[],
+    )
+    assert invitation.host_id == host.id
+
+    steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation.id)
+    assert len(steps) == 1
+    assert steps[0].step_order == 0
+    assert steps[0].approver_user_id == host.id
+    assert steps[0].approver_role_id is None
+    assert steps[0].status == "pending"
+
+
+async def test_resolved_host_with_configured_rules_creates_host_step_ahead_of_role_chain(
+    tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """specs/approvals/spec.md "A resolved host with configured rules
+    creates a host step ahead of the role chain" — host is `stepOrder` 0,
+    the three configured rules keep their own `stepOrder` 1/2/3 unchanged.
+    """
+    from datetime import date, time
+
+    from vmss_api.invitations import service as invitations_service
+    from vmss_api.invitations.schemas import (
+        ConsentsSubmit,
+        IdProofType,
+        InvitationCreate,
+        InvitationPrimaryContactCreate,
+        RegistrationType,
+        VisitDetailsSubmit,
+    )
+
+    host = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example",
+        full_name="Host With Workflow",
+    )
+    category = VisitorCategoryFactory.build(
+        id=uuid.uuid4(), name="Host And Workflow", code="HOST-AND-WORKFLOW"
+    )
+    role = RoleFactory.build(id=uuid.uuid4(), name="workflow-role", permissions=[])
+    db_session.add_all([host, category, role])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ApprovalWorkflowRuleFactory.build(
+                id=uuid.uuid4(),
+                visitor_category_id=category.id,
+                step_order=step_order,
+                approver_role_id=role.id,
+            )
+            for step_order in (1, 2, 3)
+        ]
+    )
+    await db_session.commit()
+
+    payload = InvitationCreate(
+        registration_type=RegistrationType.individual,
+        visitor_category_id=category.id,
+        primary_contact=InvitationPrimaryContactCreate(
+            full_name="Test Visitor",
+            email="test.visitor2@example.com",
+            id_proof_type=IdProofType.passport,
+        ),
+        visit_details=VisitDetailsSubmit(
+            purpose_of_visit="Test",
+            host_name_or_email="ignored@example.com",
+            host_id=host.id,
+            preferred_visit_date=date(2026, 9, 1),
+            preferred_visit_time=time(10, 0, 0),
+            expected_duration="< 1 hour",
+            department_to_visit="Test",
+        ),
+        consents=ConsentsSubmit(
+            terms_accepted=True, data_processing_accepted=True, safety_guidelines_accepted=True
+        ),
+    )
+    invitation = await invitations_service.create_invitation(
+        db_session,
+        payload,
+        branch_id=branch.id,
+        created_by_user_id=None,
+        tenant=tenant,
+        primary_contact_id_proof_content=_jpeg_bytes(),
+        visitor_id_proof_contents=[],
+    )
+
+    steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation.id)
+    assert len(steps) == 4
+    by_order = {s.step_order: s for s in steps}
+    assert by_order[0].approver_user_id == host.id
+    assert by_order[0].approver_role_id is None
+    assert by_order[0].status == "pending"
+    for step_order in (1, 2, 3):
+        assert by_order[step_order].approver_role_id == role.id
+        assert by_order[step_order].approver_user_id is None
+        assert by_order[step_order].status == "pending"

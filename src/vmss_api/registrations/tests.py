@@ -222,6 +222,7 @@ async def test_walk_in_registration_response_has_no_check_in_state(
         "source",
         "status",
         "visitorCategoryId",
+        "hostId",
         "expiresAt",
         "submittedAt",
         "approvedAt",

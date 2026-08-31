@@ -39,17 +39,29 @@ async def _authorize_step_action(
     Matching Role, or an Explicit Override" — the caller's own
     `invitations:approve` permission is already checked by the router's
     `Depends()` chain before this is called (design.md Decision 4); this
-    covers the role-match/override half only.
+    covers the role-match/host-match/override half only.
+
+    A host-identified step (`approver_user_id` set — add-approval-step-id-
+    and-host-routing/design.md) is authorized for that specific person
+    only, regardless of their assigned role — it is not role-matched at
+    all. A role-identified step (`approver_role_id` set) keeps the
+    pre-existing role-match check. Either way,
+    `invitations:approve-override` bypasses the match entirely.
     """
-    if await _user_holds_role_at_branch(
-        tenant_db, user.id, step.approver_role_id, invitation.branch_id
-    ):
-        return
+    if step.approver_user_id is not None:
+        if user.id == step.approver_user_id:
+            return
+    else:
+        assert step.approver_role_id is not None  # DB CHECK: exactly one of the two is set
+        if await _user_holds_role_at_branch(
+            tenant_db, user.id, step.approver_role_id, invitation.branch_id
+        ):
+            return
     if user.has_permission("invitations:approve-override", branch_id=invitation.branch_id):
         return
     raise HTTPException(
         status.HTTP_403_FORBIDDEN,
-        detail="Caller's assigned role does not match this step's approver role",
+        detail="Caller does not match this step's approver",
     )
 
 

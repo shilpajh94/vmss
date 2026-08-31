@@ -118,9 +118,10 @@ This is resolved once, at creation (or at manual approval), never
 recomputed — flipping the Company setting later doesn't retroactively
 change an already-created invitation's status. This flag decides only
 *whether* a `submitted` invitation needs approval at all; if it does, and
-the invitation's `visitorCategoryId` has a configured approval workflow,
-that workflow's steps — not the blanket approve endpoint — govern getting
-it to `approved`. See "Per-category multi-step approval" below.
+either the invitation's `visitorCategoryId` has a configured approval
+workflow or its host resolved to a user, snapshotted steps — not the
+blanket approve endpoint — govern getting it to `approved`. See
+"Per-category multi-step approval" below.
 
 ## Per-category multi-step approval
 
@@ -129,8 +130,18 @@ If `visitorCategoryId`'s category has one or more active
 `submitted` invitation is created, the system snapshots them into ordered
 `InvitationApprovalStep` rows on that invitation — a point-in-time copy, so
 editing the category's workflow later never changes an invitation already
-in flight. A category with no active rules gets no steps, and that
-invitation keeps exactly the single-approve behavior described above.
+in flight. A category with no active rules, and no resolved host (see
+below), gets no steps, and that invitation keeps exactly the single-approve
+behavior described above.
+
+**The invitation's own host is always the first approver, when resolved.**
+Whenever `hostId` resolves to an active user at submission (see "Optional
+catalog ids on visit details" above), an additional step is prepended at
+`stepOrder` 0, ahead of any role-based steps — unconditionally, whether or
+not the category has any configured rules. See `docs/features/approvals.md`
+"Host as step 0" for the full composition rules and authorization details;
+in short: this step is authorized for that specific person (or
+`invitations:approve-override`), not by role match.
 
 - **Approving/rejecting a step**: `POST /invitations/{id}/approval-steps
   /{stepId}/approve` and `.../reject` (see the endpoints table above) act
@@ -149,17 +160,24 @@ invitation keeps exactly the single-approve behavior described above.
   resubmission path; a denied invitation is done.
 - **Authorization** is tighter than the blanket endpoint's: the caller
   needs `invitations:approve` at the invitation's branch (same as today)
-  **and** their own branch-scoped role assignment must match the current
-  step's `approverRoleId` — or they hold the new
-  `invitations:approve-override` permission (seeded to `admin` only),
-  which bypasses the role-match check entirely.
-- **`currentApprovalStep`** (`{stepOrder, approverRoleId, totalSteps}`) is
-  included on `InvitationOut` (create/step-approve/reject responses),
-  `InvitationTrackingOut` (the public tracking lookup), and
-  `InvitationDetailOut` (the staff detail view) whenever the invitation is
-  `submitted` and has a current pending step — `null` otherwise (no
-  workflow, or no longer `submitted`) — so a client can render "waiting on:
-  Manager, step 2 of 3" without a second call.
+  **and** either their own branch-scoped role assignment must match the
+  current step's `approverRoleId` (role-identified step), or their own user
+  id must match the current step's `approverUserId` (host-identified step)
+  — or they hold the `invitations:approve-override` permission (seeded to
+  `admin` only), which bypasses either match entirely.
+- **`currentApprovalStep`** (`{id, stepOrder, approverRoleId,
+  approverUserId, totalSteps}`, exactly one of `approverRoleId`/
+  `approverUserId` non-null) is included on `InvitationOut` (create/
+  step-approve/reject responses), `InvitationTrackingOut` (the public
+  tracking lookup), and `InvitationDetailOut` (the staff detail view)
+  whenever the invitation is `submitted` and has a current pending step —
+  `null` otherwise (no workflow, no host, or no longer `submitted`) — so a
+  client can render "waiting on: Manager, step 2 of 3" without a second
+  call, and call the approve/reject endpoints directly using `id` as
+  `stepId`.
+- **`hostId`** (the invitation's resolved host user id, or `null`) is
+  included on `InvitationOut` and `InvitationDetailOut` alongside the
+  existing free-text `hostNameOrEmail`.
 - **Escalation/auto-approve timestamps exist but aren't enforced yet.**
   Each step carries `escalatesAt`/`autoApprovesAt`, computed from the
   snapshotted rule's `escalationMinutes`/`autoApproveMinutes` relative to

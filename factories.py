@@ -202,6 +202,13 @@ class InvitationApprovalStepFactory(SQLAlchemyFactory[InvitationApprovalStep]):
     __model__ = InvitationApprovalStep
     deleted_at = None
     status = "pending"
+    # Defaults to unset so every existing role-identified step build (which
+    # always passes `approver_role_id=...` explicitly) doesn't also get a
+    # polyfactory-generated random `approver_user_id`, which would violate
+    # the `ck_invitation_approval_steps_approver_xor` CHECK constraint
+    # (add-approval-step-id-and-host-routing) requiring exactly one of the
+    # two to be set. A host-identified step build overrides this explicitly.
+    approver_user_id = None
     acted_by_user_id = None
     acted_at = None
     escalation_minutes = None

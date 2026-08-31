@@ -212,6 +212,7 @@ class InvitationOut(CamelModel):
     source: RegistrationSource
     status: str
     visitor_category_id: uuid.UUID | None
+    host_id: uuid.UUID | None = None
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -324,6 +325,7 @@ class InvitationDetailOut(CamelModel):
     primary_contact_full_name: str
     purpose_of_visit: str | None
     host_name_or_email: str | None
+    host_id: uuid.UUID | None = None
     preferred_visit_date: date | None
     preferred_visit_time: time | None
     expected_duration: str | None

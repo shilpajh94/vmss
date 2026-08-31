@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from httpx import AsyncClient, Response
 from PIL import Image
 from pydantic import BaseModel
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
@@ -31,7 +31,8 @@ from factories import (
     VisitorCategoryFactory,
     VisitPurposeFactory,
 )
-from vmss_api.auth.models import User, UserBranchRole
+from vmss_api.approvals.repository import InvitationApprovalStepRepository
+from vmss_api.auth.models import Permission, User, UserBranchRole
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.schemas import SortOrder
@@ -864,9 +865,15 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
     payload = _individual_payload()
     payload["visitorCategoryId"] = str(category.id)
     data = await _create_invitation_success(client, token, branch, payload=payload)
+    steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(
+        uuid.UUID(data["id"])
+    )
+    step_one = next(s for s in steps if s.step_order == 1)
     assert data["currentApprovalStep"] == {
+        "id": str(step_one.id),
         "stepOrder": 1,
         "approverRoleId": str(approver_role.id),
+        "approverUserId": None,
         "totalSteps": 2,
     }
 
@@ -875,8 +882,10 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
     )
     assert response.status_code == 200
     assert response.json()["data"]["currentApprovalStep"] == {
+        "id": str(step_one.id),
         "stepOrder": 1,
         "approverRoleId": str(approver_role.id),
+        "approverUserId": None,
         "totalSteps": 2,
     }
 
@@ -1549,6 +1558,60 @@ async def test_create_invitation_with_ids_overwrites_free_text_with_canonical_va
     assert invitation.department_id == visit_department.id
 
 
+async def test_created_invitation_current_step_id_is_directly_actionable(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    visit_host: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    """add-approval-step-id-and-host-routing — `currentApprovalStep.id` on
+    the creation response is the same id `POST /invitations/{id}/approval-
+    steps/{stepId}/approve` expects, with no separate lookup needed. A
+    resolved `hostId` with no configured workflow rules snapshots exactly
+    one host-identified step, so the host is the current approver.
+    """
+    # Reuse the existing global `invitations:approve` permission row (the
+    # `user` fixture already seeded it — `conftest.py`'s standard admin
+    # permission set) rather than inserting a second one with the same
+    # unique `code`.
+    permission = (
+        await db_session.execute(select(Permission).where(Permission.code == "invitations:approve"))
+    ).scalar_one()
+    role = RoleFactory.build(id=uuid.uuid4(), name="host-approver-role", permissions=[permission])
+    db_session.add(role)
+    await db_session.flush()
+    # Append in-memory too, not just `session.add()` — see
+    # `approvals/tests.py::_grant_approve_permission`'s docstring for why
+    # the test session's `expire_on_commit=False` makes this necessary.
+    branch_role = UserBranchRole(
+        id=uuid.uuid4(), user_id=visit_host.id, role=role, branch_id=branch.id
+    )
+    visit_host.branch_roles.append(branch_role)
+    db_session.add(branch_role)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["hostId"] = str(visit_host.id)
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    assert data["hostId"] == str(visit_host.id)
+    assert data["currentApprovalStep"] is not None
+    step_id = data["currentApprovalStep"]["id"]
+    assert data["currentApprovalStep"]["approverUserId"] == str(visit_host.id)
+    assert data["currentApprovalStep"]["approverRoleId"] is None
+
+    host_token = issue_token(visit_host)
+    response = await client.post(
+        f"/api/v1/invitations/{data['id']}/approval-steps/{step_id}/approve",
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "approved"
+
+
 async def test_create_invitation_unknown_purpose_id_rejected(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
 ) -> None:
@@ -1773,6 +1836,47 @@ async def test_approve_invitation_rejected_for_workflow_backed_invitation(
     assert invitation.status == "submitted"
 
 
+async def test_approve_invitation_rejected_for_host_only_invitation(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """specs/invitations/spec.md "Blanket approve rejected when only a
+    host-approval step is snapshotted" (add-approval-step-id-and-host-
+    routing) — zero configured workflow rules, but a resolved host still
+    snapshots one host-identified step, which must route through the step
+    endpoint, not the blanket one.
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    invitation = _build_invitation(
+        db_session, branch.id, status="submitted", approved_at=None, host_id=host.id
+    )
+    db_session.add(invitation)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=0,
+            approver_role_id=None,
+            approver_user_id=host.id,
+        )
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+
+
 async def test_approve_invitation_concurrent_requests_transition_exactly_once(
     branch: Branch, tenant: Tenant, db_session: AsyncSession, monkeypatch
 ) -> None:
@@ -1934,6 +2038,40 @@ async def test_get_invitation_detail_success(
     assert data["badgeNumber"] is None
     assert data["visitors"] == []
     assert data["vehicles"] == []
+
+
+async def test_get_invitation_detail_surfaces_resolved_host_as_host_id(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """specs/invitations/spec.md "Invitation Output Surfaces the Resolved
+    Host as hostId" — detail lookup exposes `hostId` when the host resolved
+    at submission, and null when it did not.
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    resolved = _build_invitation(db_session, branch.id, status="approved", host_id=host.id)
+    unresolved = _build_invitation(db_session, branch.id, status="approved", host_id=None)
+    db_session.add_all([resolved, unresolved])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+
+    response = await client.get(
+        f"/api/v1/invitations/{resolved.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["hostId"] == str(host.id)
+
+    response = await client.get(
+        f"/api/v1/invitations/{unresolved.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["hostId"] is None
 
 
 async def test_get_invitation_detail_unknown_id_not_found(client: AsyncClient, user: User) -> None:

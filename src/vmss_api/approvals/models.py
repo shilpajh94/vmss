@@ -40,7 +40,18 @@ class InvitationApprovalStep(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     invitation_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("invitations.id"), index=True)
     step_order: Mapped[int] = mapped_column(Integer)
-    approver_role_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("roles.id"), index=True)
+    # Exactly one of `approver_role_id`/`approver_user_id` is set per row —
+    # enforced by the `ck_invitation_approval_steps_approver_xor` CHECK
+    # constraint (add-approval-step-id-and-host-routing/design.md). A role-
+    # identified step (the pre-existing kind) sets `approver_role_id`; a
+    # host-identified step (the invitation's own host, always `stepOrder` 0
+    # when the host resolves) sets `approver_user_id` instead.
+    approver_role_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("roles.id"), index=True
+    )
+    approver_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id"), index=True
+    )
     is_mandatory: Mapped[bool] = mapped_column(default=True)
     # Plain string, not a DB enum — matches `Invitation.status`'s existing
     # convention (design.md Decision 5). One of: pending, approved, rejected,

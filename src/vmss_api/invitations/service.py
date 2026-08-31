@@ -136,26 +136,52 @@ async def _resolve_active_category(
 
 
 def _build_approval_steps(
-    rules: list[Any], *, invitation_id: uuid.UUID, now: datetime
+    rules: list[Any], *, invitation_id: uuid.UUID, now: datetime, host_id: uuid.UUID | None
 ) -> list[InvitationApprovalStep]:
     """Snapshots a category's active `ApprovalWorkflowRule`s (already
     ordered by `step_order`) into `InvitationApprovalStep` rows — a
-    point-in-time copy, not a live reference (design.md Decision 1). Only
-    the first step's `escalates_at`/`auto_approves_at` are computed here,
-    relative to `now` (the submission timestamp) — every later step's pair
-    is computed when it becomes the current pending step, i.e. when the
-    step before it is approved (`approvals/service.py::approve_step`), per
-    specs/approvals/spec.md "Escalation and Auto-Approve Timestamps".
+    point-in-time copy, not a live reference (design.md Decision 1). When
+    `host_id` is not None, an implicit host-identified step is prepended at
+    `step_order` 0, ahead of the role-identified steps (specs/approvals/
+    spec.md "Submission Snapshots the Category's Active Workflow Into
+    Ordered Steps" — add-approval-step-id-and-host-routing). Only the step
+    that is current the moment this snapshot is taken — the host step if
+    one was prepended, else the first rule step — has its
+    `escalates_at`/`auto_approves_at` computed here, relative to `now` (the
+    submission timestamp); every later step's pair is computed when it
+    becomes the current pending step, i.e. when the step before it is
+    approved (`approvals/service.py::approve_step`), per specs/approvals/
+    spec.md "Escalation and Auto-Approve Timestamps". The host step never
+    has escalation/auto-approve minutes to compute from — no
+    `ApprovalWorkflowRule` backs it — so its pair stays null
+    (add-approval-step-id-and-host-routing/design.md).
     """
     steps: list[InvitationApprovalStep] = []
+    if host_id is not None:
+        steps.append(
+            InvitationApprovalStep(
+                id=uuid.uuid4(),
+                invitation_id=invitation_id,
+                step_order=0,
+                approver_role_id=None,
+                approver_user_id=host_id,
+                is_mandatory=True,
+                status="pending",
+                escalation_minutes=None,
+                auto_approve_minutes=None,
+                escalates_at=None,
+                auto_approves_at=None,
+            )
+        )
     for index, rule in enumerate(rules):
-        is_first = index == 0
+        is_first = index == 0 and host_id is None
         steps.append(
             InvitationApprovalStep(
                 id=uuid.uuid4(),
                 invitation_id=invitation_id,
                 step_order=rule.step_order,
                 approver_role_id=rule.approver_role_id,
+                approver_user_id=None,
                 is_mandatory=rule.is_mandatory,
                 status="pending",
                 escalation_minutes=rule.escalation_minutes,
@@ -329,15 +355,20 @@ async def create_invitation(
     # (specs/approvals/spec.md "Submission Snapshots the Category's Active
     # Workflow Into Ordered Steps") — only for a `submitted` (not
     # auto-approved) invitation, and only once, in the same transaction as
-    # the `Invitation` insert above (design.md Decision 1). A category with
-    # no active rules gets no steps: today's single-approve behavior.
+    # the `Invitation` insert above (design.md Decision 1). A resolved host
+    # additionally gets an implicit step 0 ahead of the role chain
+    # (add-approval-step-id-and-host-routing/design.md) — unconditional
+    # whenever the host resolves, regardless of whether the category has
+    # any active rules. Neither a host nor any active rules: no steps,
+    # today's single-approve behavior.
     if not auto_approved:
         rules = await ApprovalWorkflowRuleRepository(tenant_db).list_active_for_category(
             visitor_category_id
         )
-        if rules:
+        host_id = visit_details["host_id"]
+        if rules or host_id is not None:
             InvitationApprovalStepRepository(tenant_db).add_steps(
-                _build_approval_steps(rules, invitation_id=invitation.id, now=now)
+                _build_approval_steps(rules, invitation_id=invitation.id, now=now, host_id=host_id)
             )
 
     await tenant_db.commit()
@@ -636,8 +667,10 @@ async def get_current_approval_step(
         return None
     total_steps = await repo.count_for_invitation(invitation.id)
     return CurrentApprovalStepOut(
+        id=current.id,
         step_order=current.step_order,
         approver_role_id=current.approver_role_id,
+        approver_user_id=current.approver_user_id,
         total_steps=total_steps,
     )
 
