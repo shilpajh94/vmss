@@ -49,6 +49,11 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: true,
   },
+  APPROVE_INVITATION: {
+    endpoint: "/invitations/:id/approve",
+    method: "POST",
+    hasToken: true,
+  },
   LIST_AUDIT_TRAIL: {
     endpoint: "/staff/audit-trail",
     method: "GET",
@@ -251,6 +256,26 @@ export const API_ENDPOINTS = {
   },
   DELETE_VISITOR_CATEGORY: {
     endpoint: "/visitor-categories/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  LIST_APPROVAL_WORKFLOW_RULES: {
+    endpoint: "/approval-workflow-rules",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_APPROVAL_WORKFLOW_RULE: {
+    endpoint: "/approval-workflow-rules",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_APPROVAL_WORKFLOW_RULE: {
+    endpoint: "/approval-workflow-rules/:id",
+    method: "PUT",
+    hasToken: true,
+  },
+  DELETE_APPROVAL_WORKFLOW_RULE: {
+    endpoint: "/approval-workflow-rules/:id",
     method: "DELETE",
     hasToken: true,
   },

@@ -15,11 +15,22 @@ function initialsFor(fullName: string): string {
 
 interface VisitRequestCardProps {
   request: VisitRequestSummary
+  isDraggable?: boolean
+  isApproving?: boolean
 }
 
-export function VisitRequestCard({ request }: VisitRequestCardProps) {
+export function VisitRequestCard({ request, isDraggable, isApproving }: VisitRequestCardProps) {
   return (
-    <div className="flex w-full flex-col gap-3 rounded-xl border border-border bg-surface p-4 drop-shadow-[0px_4px_4px_rgba(15,23,42,0.03)]">
+    <div
+      draggable={isDraggable && !isApproving}
+      onDragStart={(event) => {
+        event.dataTransfer.setData('text/plain', request.id)
+        event.dataTransfer.effectAllowed = 'move'
+      }}
+      className={`flex w-full flex-col gap-3 rounded-xl border border-border bg-surface p-4 drop-shadow-[0px_4px_4px_rgba(15,23,42,0.03)] ${
+        isDraggable && !isApproving ? 'cursor-grab active:cursor-grabbing' : ''
+      } ${isApproving ? 'opacity-60' : ''}`}
+    >
       <div className="flex w-full items-center justify-between">
         <span
           className="flex size-8 shrink-0 items-center justify-center rounded-full font-display text-xs font-bold text-text"
@@ -42,7 +53,9 @@ export function VisitRequestCard({ request }: VisitRequestCardProps) {
 
       <div className="flex w-full items-center gap-1.5">
         <CalendarClockIcon className="size-3 shrink-0 text-text-faint" />
-        <span className="font-body text-[11px] whitespace-nowrap text-text-faint">{request.submittedAt}</span>
+        <span className="font-body text-[11px] whitespace-nowrap text-text-faint">
+          {isApproving ? 'Approving…' : request.submittedAt}
+        </span>
       </div>
     </div>
   )

@@ -2,4 +2,5 @@ import type { VisitRequestSummary } from '../../domain/entities/visit-request-su
 
 export interface VisitRequestSummaryRepository {
   list(): Promise<VisitRequestSummary[]>
+  approve(id: string): Promise<void>
 }

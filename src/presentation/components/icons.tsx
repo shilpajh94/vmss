@@ -253,6 +253,15 @@ export const TrendingDownIcon = createIcon(
   </>,
 )
 
+export const ListChecksIcon = createIcon(
+  <>
+    <path d="M11 18H3" />
+    <path d="m15 18 2 2 4-4" />
+    <path d="M16 12H3" />
+    <path d="M16 6H3" />
+  </>,
+)
+
 export const CalendarCheckIcon = createIcon(
   <>
     <rect width="18" height="18" x="3" y="4" rx="2" />

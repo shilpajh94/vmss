@@ -13,7 +13,7 @@ const EMPTY_MESSAGES: Record<string, string> = {
 }
 
 export function StaffDashboardPage() {
-  const { currentUser, columns, isLoading, errorMessage, search, setSearch, refresh, signOut } = useStaffDashboard()
+  const { currentUser, columns, isLoading, errorMessage, search, setSearch, refresh, signOut, approve, approvingId } = useStaffDashboard()
 
   return (
     <div className="flex min-h-screen w-full items-stretch bg-bg">
@@ -41,6 +41,8 @@ export function StaffDashboardPage() {
                 label={column.label}
                 requests={column.requests}
                 emptyMessage={EMPTY_MESSAGES[column.status]}
+                onDropApprove={column.status === 'approved' ? approve : undefined}
+                approvingId={approvingId}
               />
             ))}
           </div>

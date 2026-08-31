@@ -1,3 +1,4 @@
+import z from 'zod'
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
 import type { VisitRequestSummaryRepository } from '../data/repositories/visit-request-summary-repository'
@@ -21,5 +22,13 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
     })
 
     return response.data
+  }
+
+  async approve(id: string): Promise<void> {
+    await this.apiClient.makeRequest<unknown>({
+      endpointConfig: API_ENDPOINTS.APPROVE_INVITATION,
+      pathParams: { id },
+      parserSchema: z.unknown(),
+    })
   }
 }

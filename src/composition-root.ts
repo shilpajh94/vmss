@@ -18,6 +18,7 @@ import type { EmployeeDirectoryRepository } from './data/repositories/employee-d
 import type { ReceptionDeskRepository } from './data/repositories/reception-desk-repository'
 import type { SecurityGateRepository } from './data/repositories/security-gate-repository'
 import type { VisitorCategoryRepository } from './data/repositories/visitor-category-repository'
+import type { ApprovalWorkflowRuleRepository } from './data/repositories/approval-workflow-rule-repository'
 import { SubmitVisitRequestUseCase } from './data/use-cases/submit-visit-request'
 import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-visit-request'
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
@@ -28,6 +29,7 @@ import { LoginStaffUseCase } from './data/use-cases/login-staff'
 import { StartSsoLoginUseCase } from './data/use-cases/start-sso-login'
 import { ExchangeSsoCodeUseCase } from './data/use-cases/exchange-sso-code'
 import { ListVisitRequestsUseCase } from './data/use-cases/list-visit-requests'
+import { ApproveInvitationUseCase } from './data/use-cases/approve-invitation'
 import { GetCurrentStaffUserUseCase } from './data/use-cases/get-current-staff-user'
 import { GetOrganisationConfigUseCase } from './data/use-cases/get-organisation-config'
 import { UpdateOrganisationConfigUseCase } from './data/use-cases/update-organisation-config'
@@ -67,6 +69,9 @@ import { ListVisitorCategoriesUseCase } from './data/use-cases/list-visitor-cate
 import { CreateVisitorCategoryUseCase } from './data/use-cases/create-visitor-category'
 import { UpdateVisitorCategoryUseCase } from './data/use-cases/update-visitor-category'
 import { DeleteVisitorCategoryUseCase } from './data/use-cases/delete-visitor-category'
+import { ListApprovalWorkflowRulesUseCase } from './data/use-cases/list-approval-workflow-rules'
+import { SaveWorkflowUseCase } from './data/use-cases/save-workflow'
+import { DeleteWorkflowUseCase } from './data/use-cases/delete-workflow'
 import { HttpVisitRequestRepository } from './infrastructure/visit-request-repository'
 import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-request-summary-repository'
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
@@ -86,6 +91,7 @@ import { HttpEmployeeDirectoryRepository } from './infrastructure/employee-direc
 import { HttpReceptionDeskRepository } from './infrastructure/reception-desk-repository'
 import { HttpSecurityGateRepository } from './infrastructure/security-gate-repository'
 import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category-repository'
+import { HttpApprovalWorkflowRuleRepository } from './infrastructure/approval-workflow-rule-repository'
 
 export interface AppDependencies {
   apiClient: ApiClient
@@ -97,6 +103,7 @@ export interface AppDependencies {
   startSsoLoginUseCase: StartSsoLoginUseCase
   exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase
   listVisitRequestsUseCase: ListVisitRequestsUseCase
+  approveInvitationUseCase: ApproveInvitationUseCase
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
   getAuditTrailUseCase: GetAuditTrailUseCase
@@ -138,6 +145,9 @@ export interface AppDependencies {
   createVisitorCategoryUseCase: CreateVisitorCategoryUseCase
   updateVisitorCategoryUseCase: UpdateVisitorCategoryUseCase
   deleteVisitorCategoryUseCase: DeleteVisitorCategoryUseCase
+  listApprovalWorkflowRulesUseCase: ListApprovalWorkflowRulesUseCase
+  saveWorkflowUseCase: SaveWorkflowUseCase
+  deleteWorkflowUseCase: DeleteWorkflowUseCase
 }
 
 export function createApp(): AppDependencies {
@@ -156,6 +166,7 @@ export function createApp(): AppDependencies {
   let startSsoLoginUseCase: StartSsoLoginUseCase | undefined
   let exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase | undefined
   let listVisitRequestsUseCase: ListVisitRequestsUseCase | undefined
+  let approveInvitationUseCase: ApproveInvitationUseCase | undefined
   let getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase | undefined
   let staffVisitRequestRepository: StaffVisitRequestRepository | undefined
   let submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase | undefined
@@ -210,6 +221,10 @@ export function createApp(): AppDependencies {
   let createVisitorCategoryUseCase: CreateVisitorCategoryUseCase | undefined
   let updateVisitorCategoryUseCase: UpdateVisitorCategoryUseCase | undefined
   let deleteVisitorCategoryUseCase: DeleteVisitorCategoryUseCase | undefined
+  let approvalWorkflowRuleRepository: ApprovalWorkflowRuleRepository | undefined
+  let listApprovalWorkflowRulesUseCase: ListApprovalWorkflowRulesUseCase | undefined
+  let saveWorkflowUseCase: SaveWorkflowUseCase | undefined
+  let deleteWorkflowUseCase: DeleteWorkflowUseCase | undefined
 
   const resolveApiClient = (): ApiClient => {
     apiClient ??= new ApiClient(import.meta.env.VITE_API_BASE_URL)
@@ -284,6 +299,11 @@ export function createApp(): AppDependencies {
   const resolveListVisitRequestsUseCase = (): ListVisitRequestsUseCase => {
     listVisitRequestsUseCase ??= new ListVisitRequestsUseCase(resolveVisitRequestSummaryRepository())
     return listVisitRequestsUseCase
+  }
+
+  const resolveApproveInvitationUseCase = (): ApproveInvitationUseCase => {
+    approveInvitationUseCase ??= new ApproveInvitationUseCase(resolveVisitRequestSummaryRepository())
+    return approveInvitationUseCase
   }
 
   const resolveGetCurrentStaffUserUseCase = (): GetCurrentStaffUserUseCase => {
@@ -562,6 +582,26 @@ export function createApp(): AppDependencies {
     return deleteVisitorCategoryUseCase
   }
 
+  const resolveApprovalWorkflowRuleRepository = (): ApprovalWorkflowRuleRepository => {
+    approvalWorkflowRuleRepository ??= new HttpApprovalWorkflowRuleRepository(resolveApiClient())
+    return approvalWorkflowRuleRepository
+  }
+
+  const resolveListApprovalWorkflowRulesUseCase = (): ListApprovalWorkflowRulesUseCase => {
+    listApprovalWorkflowRulesUseCase ??= new ListApprovalWorkflowRulesUseCase(resolveApprovalWorkflowRuleRepository())
+    return listApprovalWorkflowRulesUseCase
+  }
+
+  const resolveSaveWorkflowUseCase = (): SaveWorkflowUseCase => {
+    saveWorkflowUseCase ??= new SaveWorkflowUseCase(resolveApprovalWorkflowRuleRepository())
+    return saveWorkflowUseCase
+  }
+
+  const resolveDeleteWorkflowUseCase = (): DeleteWorkflowUseCase => {
+    deleteWorkflowUseCase ??= new DeleteWorkflowUseCase(resolveApprovalWorkflowRuleRepository())
+    return deleteWorkflowUseCase
+  }
+
   return {
     get apiClient() {
       return resolveApiClient()
@@ -589,6 +629,9 @@ export function createApp(): AppDependencies {
     },
     get listVisitRequestsUseCase() {
       return resolveListVisitRequestsUseCase()
+    },
+    get approveInvitationUseCase() {
+      return resolveApproveInvitationUseCase()
     },
     get getCurrentStaffUserUseCase() {
       return resolveGetCurrentStaffUserUseCase()
@@ -712,6 +755,15 @@ export function createApp(): AppDependencies {
     },
     get deleteVisitorCategoryUseCase() {
       return resolveDeleteVisitorCategoryUseCase()
+    },
+    get listApprovalWorkflowRulesUseCase() {
+      return resolveListApprovalWorkflowRulesUseCase()
+    },
+    get saveWorkflowUseCase() {
+      return resolveSaveWorkflowUseCase()
+    },
+    get deleteWorkflowUseCase() {
+      return resolveDeleteWorkflowUseCase()
     },
   }
 }

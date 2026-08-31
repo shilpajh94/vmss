@@ -25,7 +25,7 @@ function normalizeStatus(status: string): string {
 
 export function useStaffDashboard() {
   const navigate = useNavigate()
-  const { listVisitRequestsUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
+  const { listVisitRequestsUseCase, approveInvitationUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
@@ -33,6 +33,7 @@ export function useStaffDashboard() {
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
   const [search, setSearch] = useState('')
+  const [approvingId, setApprovingId] = useState<string | undefined>(undefined)
 
   const loadDashboard = useCallback(async () => {
     setIsLoading(true)
@@ -69,6 +70,24 @@ export function useStaffDashboard() {
     navigate('/staff/login')
   }, [navigate])
 
+  const approve = useCallback(
+    async (id: string) => {
+      setApprovingId(id)
+
+      try {
+        await approveInvitationUseCase.execute(id)
+        toast.success('Visit request approved.')
+        await loadDashboard()
+      } catch (error) {
+        console.error('Failed to approve visit request', error)
+        toast.error('Failed to approve the visit request. Please try again.')
+      } finally {
+        setApprovingId(undefined)
+      }
+    },
+    [approveInvitationUseCase, loadDashboard, toast],
+  )
+
   const filteredRequests = useMemo(() => {
     const query = search.trim().toLowerCase()
     if (!query) return visitRequests
@@ -98,5 +117,7 @@ export function useStaffDashboard() {
     setSearch,
     refresh,
     signOut,
+    approve,
+    approvingId,
   }
 }
