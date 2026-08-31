@@ -25,7 +25,9 @@ import uuid
 import pytest_asyncio
 from httpx import AsyncClient
 from PIL import Image
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from factories import VisitorCategoryFactory
 from vmss_api.auth.models import User
 from vmss_api.core.config import settings
 from vmss_api.identity_verification import senders
@@ -36,6 +38,25 @@ from vmss_api.org_structure.models import Branch
 # it locally" -- importing avoids a second copy of the device-key seeding
 # logic drifting out of sync with the original).
 from vmss_api.registrations.tests import registration_device_raw_key  # noqa: F401
+
+# invitation-multi-step-approval: same fixed-id/autouse-fixture pattern as
+# `invitations/tests.py`/`registrations/tests.py` -- this file builds its own
+# payloads locally rather than importing theirs, so it needs its own category
+# fixture too (an autouse fixture defined in another test module doesn't
+# apply here just because one of that module's other fixtures is imported).
+_DEFAULT_VISITOR_CATEGORY_ID = uuid.UUID("33333333-3333-3333-3333-333333333333")
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _default_visitor_category(db_session: AsyncSession) -> None:
+    db_session.add(
+        VisitorCategoryFactory.build(
+            id=_DEFAULT_VISITOR_CATEGORY_ID,
+            name="Default Workflow Test Category",
+            code="WORKFLOW-TEST-DEFAULT",
+        )
+    )
+    await db_session.commit()
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -86,6 +107,7 @@ def _jpeg_bytes() -> bytes:
 def _individual_payload(full_name: str) -> dict:
     return {
         "registrationType": "individual",
+        "visitorCategoryId": str(_DEFAULT_VISITOR_CATEGORY_ID),
         "primaryContact": {
             "fullName": full_name,
             "email": f"{full_name.lower().replace(' ', '.')}@example.com",

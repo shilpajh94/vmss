@@ -30,6 +30,7 @@ arbitrary:
 
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
+from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
 from vmss_api.org_structure.models import (
@@ -174,6 +175,9 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     host_id = None
     duration_id = None
     department_id = None
+    # Same FK-safety rationale — the invitation-multi-step-approval category
+    # tag, nullable at the DB level for pre-existing rows.
+    visitor_category_id = None
     # add-invitation-lifecycle-actions: same FK-safety rationale for the new
     # lifecycle actor columns, plus a representative "nothing has happened
     # yet" default for the rest — a fresh `submitted` row has no denial/
@@ -192,6 +196,18 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     watchlist_override_at = None
     watchlist_override_reason = None
     watchlist_override_by_user_id = None
+
+
+class InvitationApprovalStepFactory(SQLAlchemyFactory[InvitationApprovalStep]):
+    __model__ = InvitationApprovalStep
+    deleted_at = None
+    status = "pending"
+    acted_by_user_id = None
+    acted_at = None
+    escalation_minutes = None
+    auto_approve_minutes = None
+    escalates_at = None
+    auto_approves_at = None
 
 
 class InvitationVisitorFactory(SQLAlchemyFactory[InvitationVisitor]):

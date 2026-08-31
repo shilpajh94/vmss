@@ -77,11 +77,13 @@ category's chain, but a soft-deleted rule's slot is freed for reuse (same
 partial-unique-index fix as `VisitorCategory` above).
 
 This is configuration only. Evaluating these rules against an actual visit
-request — deciding who needs to act, escalating, auto-approving — is the
-(not-yet-built) `approvals` feature's job
-(`project-rules.md`'s "configurable approval workflow engine"), the same way
-`org_structure`'s tables describe the org chart without owning check-in
-behavior themselves.
+request — snapshotting them onto a submitted invitation, sequencing step
+approval/rejection, escalating, auto-approving — is the `approvals`
+feature's job (`project-rules.md`'s "configurable approval workflow
+engine"), the same way `org_structure`'s tables describe the org chart
+without owning check-in behavior themselves. See
+`docs/features/approvals.md` for how a category's rules actually take
+effect once `invitations` submits against them.
 
 ## Endpoints
 

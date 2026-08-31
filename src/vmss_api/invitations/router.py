@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.auth.models import User
 from vmss_api.core.deps import get_current_user, get_pagination, get_tenant, get_tenant_db
@@ -83,6 +84,7 @@ _NO_VISITOR_FILES = File(
 # dict per registration type means both channels can never drift apart.
 _INDIVIDUAL_PAYLOAD_EXAMPLE = {
     "registrationType": "individual",
+    "visitorCategoryId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
     "primaryContact": {
         "fullName": "Meera Krishnan",
         "email": "meera.krishnan@example.com",
@@ -111,6 +113,7 @@ _INDIVIDUAL_PAYLOAD_EXAMPLE = {
 
 _GROUP_PAYLOAD_EXAMPLE = {
     "registrationType": "group",
+    "visitorCategoryId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
     "primaryContact": {
         "fullName": "Priya Sharma",
         "email": "priya.sharma@enterprise-ugo.co",
@@ -245,16 +248,20 @@ _PAYLOAD_DESCRIPTION = (
 )
 
 
-def _to_invitation_out(invitation) -> InvitationOut:
+def to_invitation_out(
+    invitation, current_approval_step: CurrentApprovalStepOut | None = None
+) -> InvitationOut:
     return InvitationOut(
         id=invitation.id,
         tracking_id=invitation.tracking_id,
         registration_type=RegistrationType(invitation.registration_type),
         source=RegistrationSource(invitation.source),
         status=invitation.status,
+        visitor_category_id=invitation.visitor_category_id,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
+        current_approval_step=current_approval_step,
     )
 
 
@@ -265,6 +272,7 @@ def _to_list_item_out(invitation) -> InvitationListItemOut:
         registration_type=RegistrationType(invitation.registration_type),
         source=RegistrationSource(invitation.source),
         status=invitation.status,
+        visitor_category_id=invitation.visitor_category_id,
         primary_contact_full_name=invitation.primary_contact_full_name,
         purpose_of_visit=invitation.purpose_of_visit,
         expires_at=invitation.expires_at,
@@ -273,12 +281,16 @@ def _to_list_item_out(invitation) -> InvitationListItemOut:
     )
 
 
-def _to_tracking_out(invitation) -> InvitationTrackingOut:
+def _to_tracking_out(
+    invitation, current_approval_step: CurrentApprovalStepOut | None = None
+) -> InvitationTrackingOut:
     return InvitationTrackingOut(
         tracking_id=invitation.tracking_id,
         status=invitation.status,
         registration_type=invitation.registration_type,
         source=invitation.source,
+        visitor_category_id=invitation.visitor_category_id,
+        current_approval_step=current_approval_step,
         primary_contact_full_name=invitation.primary_contact_full_name,
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
@@ -315,7 +327,9 @@ def _to_tracking_out(invitation) -> InvitationTrackingOut:
     )
 
 
-def _to_invitation_detail_out(invitation) -> InvitationDetailOut:
+def _to_invitation_detail_out(
+    invitation, current_approval_step: CurrentApprovalStepOut | None = None
+) -> InvitationDetailOut:
     return InvitationDetailOut(
         id=invitation.id,
         branch_id=invitation.branch_id,
@@ -324,6 +338,8 @@ def _to_invitation_detail_out(invitation) -> InvitationDetailOut:
         tracking_id=invitation.tracking_id,
         status=invitation.status,
         registration_type=invitation.registration_type,
+        visitor_category_id=invitation.visitor_category_id,
+        current_approval_step=current_approval_step,
         primary_contact_full_name=invitation.primary_contact_full_name,
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
@@ -514,8 +530,9 @@ async def create_invitation(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
+    current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
     response = success_response(
-        data=_to_invitation_out(invitation),
+        data=to_invitation_out(invitation, current_approval_step),
         status_code=status.HTTP_201_CREATED,
     )
     await _cache_response(tenant.id, idempotency_key, response)
@@ -551,7 +568,7 @@ async def approve_invitation(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    return success_response(data=_to_invitation_out(invitation))
+    return success_response(data=to_invitation_out(invitation))
 
 
 # --- add-invitation-lifecycle-actions: deny / check-in / check-out / --------
@@ -586,7 +603,7 @@ async def deny_invitation(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    return success_response(data=_to_invitation_out(invitation))
+    return success_response(data=to_invitation_out(invitation))
 
 
 @router.patch(
@@ -631,7 +648,7 @@ async def check_in_invitation(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    response = success_response(data=_to_invitation_out(invitation))
+    response = success_response(data=to_invitation_out(invitation))
     await _cache_response(tenant.id, idempotency_key, response)
     return response
 
@@ -670,7 +687,7 @@ async def check_out_invitation(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    response = success_response(data=_to_invitation_out(invitation))
+    response = success_response(data=to_invitation_out(invitation))
     await _cache_response(tenant.id, idempotency_key, response)
     return response
 
@@ -709,7 +726,7 @@ async def reschedule_invitation(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    return success_response(data=_to_invitation_out(invitation))
+    return success_response(data=to_invitation_out(invitation))
 
 
 @router.patch(
@@ -740,7 +757,7 @@ async def extend_invitation(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    return success_response(data=_to_invitation_out(invitation))
+    return success_response(data=to_invitation_out(invitation))
 
 
 @router.post(
@@ -842,7 +859,7 @@ async def override_watchlist(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    return success_response(data=_to_invitation_out(invitation))
+    return success_response(data=to_invitation_out(invitation))
 
 
 # --- Employee listing ---------------------------------------------------------
@@ -904,7 +921,8 @@ async def track_invitation(
 
     if tracking_id is not None:
         invitation = await service.track_by_tracking_id(tenant_db, tracking_id)
-        return success_response(data=_to_tracking_out(invitation))
+        current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
+        return success_response(data=_to_tracking_out(invitation, current_approval_step))
 
     assert email is not None  # exactly one of the two is guaranteed set above
     invitations = await service.track_by_email(tenant_db, email)
@@ -938,4 +956,5 @@ async def get_invitation_detail(
     """
     invitation = await service.get_invitation_detail(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:view", invitation.branch_id)
-    return success_response(data=_to_invitation_detail_out(invitation))
+    current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
+    return success_response(data=_to_invitation_detail_out(invitation, current_approval_step))

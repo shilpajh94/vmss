@@ -19,13 +19,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
 from factories import (
+    ApprovalWorkflowRuleFactory,
     CompanyFactory,
     DepartmentFactory,
+    InvitationApprovalStepFactory,
     InvitationFactory,
     PermissionFactory,
     RoleFactory,
     UserFactory,
     VisitDurationFactory,
+    VisitorCategoryFactory,
     VisitPurposeFactory,
 )
 from vmss_api.auth.models import User, UserBranchRole
@@ -41,6 +44,13 @@ from vmss_api.platform.models import TenantUserIndex
 from vmss_api.tenant.models import Tenant
 from vmss_api.visit_info.models import VisitDuration, VisitPurpose
 
+# Fixed id baked into `_individual_payload()`/`_group_payload()` below, and
+# created for real by the `_default_visitor_category` autouse fixture — every
+# test in this module gets a valid, active `visitorCategoryId` for free
+# without having to plumb one through each of the ~40 call sites that build
+# an invitation-creation payload.
+_DEFAULT_VISITOR_CATEGORY_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
+
 
 def _jpeg_bytes() -> bytes:
     buffer = io.BytesIO()
@@ -51,6 +61,7 @@ def _jpeg_bytes() -> bytes:
 def _individual_payload() -> dict:
     return {
         "registrationType": "individual",
+        "visitorCategoryId": str(_DEFAULT_VISITOR_CATEGORY_ID),
         "primaryContact": {
             "fullName": "Meera Krishnan",
             "email": "meera.krishnan@example.com",
@@ -79,6 +90,7 @@ def _individual_payload() -> dict:
 def _group_payload() -> dict:
     return {
         "registrationType": "group",
+        "visitorCategoryId": str(_DEFAULT_VISITOR_CATEGORY_ID),
         "primaryContact": {
             "fullName": "Priya Sharma",
             "email": "priya.sharma@enterprise-ugo.co",
@@ -179,6 +191,23 @@ async def _create_invitation_success(
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def _default_visitor_category(db_session: AsyncSession) -> None:
+    """Backs the fixed `visitorCategoryId` baked into `_individual_payload()`
+    /`_group_payload()` — an active category with no configured approval
+    workflow (no `ApprovalWorkflowRule` rows), so every existing test in
+    this module keeps exercising today's single-approve behavior unless it
+    explicitly attaches a workflow (see `approvals/tests.py` for the
+    workflow-backed cases).
+    """
+    db_session.add(
+        VisitorCategoryFactory.build(
+            id=_DEFAULT_VISITOR_CATEGORY_ID, name="Default Test Category", code="DEFAULT-TEST"
+        )
+    )
+    await db_session.commit()
+
+
+@pytest_asyncio.fixture(autouse=True)
 def _default_tenant_slug_matches_test_tenant(monkeypatch):
     """`GET /invitations/track` has no token to resolve a tenant from and
     falls back to `settings.default_tenant_slug` (`invitations/deps.py`'s
@@ -224,6 +253,84 @@ async def test_create_group_invitation_success_with_visitors_and_vehicles(
     assert len(invitation.vehicles) == 2
     assert invitation.carried_items == ["laptop_tablet", "mobile_phone"]
     assert invitation.terms_accepted is True
+
+
+# --- invitation-multi-step-approval: visitorCategoryId on creation ----------
+
+
+async def test_create_invitation_missing_visitor_category_id_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    del payload["visitorCategoryId"]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_unknown_visitor_category_id_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(uuid.uuid4())
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_inactive_visitor_category_id_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    inactive_category = VisitorCategoryFactory.build(
+        id=uuid.uuid4(), name="Inactive Category", code="INACTIVE", is_active=False
+    )
+    db_session.add(inactive_category)
+    await db_session.commit()
+
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(inactive_category.id)
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_cross_tenant_visitor_category_id_rejected(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """testing-standards.md §2 tenant-isolation case: a category id that is
+    valid in another tenant's schema must not be usable from this tenant's
+    session — the category lookup is a plain `WHERE id=...` scoped to
+    whichever schema the session is bound to, same isolation guarantee as
+    every other `TenantScopedRepository` query.
+    """
+    other_schema = "tenant_other_category_test"
+    await make_tenant_schema(other_schema)
+    other_category_id = uuid.uuid4()
+    async with open_tenant_session(other_schema) as other_session:
+        other_session.add(
+            VisitorCategoryFactory.build(
+                id=other_category_id, name="Other Tenant Category", code="OTHER-TENANT"
+            )
+        )
+        await other_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(other_category_id)
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_response_includes_visitor_category_id(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    data = await _create_invitation_success(client, token, branch, payload=_individual_payload())
+    assert data["visitorCategoryId"] == str(_DEFAULT_VISITOR_CATEGORY_ID)
 
 
 # --- Auto-approve driven status/notification (add-invitation-approval-flow-and-role-resync) ---
@@ -704,6 +811,76 @@ async def test_track_by_tracking_id_group_success(
     assert body["carriedItemsDescription"] == "2 laptops"
 
 
+async def test_track_by_tracking_id_omits_current_step_for_non_workflow_invitation(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """invitation-multi-step-approval spec.md "Non-workflow invitation omits
+    step progress" — the default test category has no configured
+    `ApprovalWorkflowRule`s.
+    """
+    token = await _login(client, user.email)
+    data = await _create_invitation_success(client, token, branch, payload=_individual_payload())
+
+    response = await client.get(
+        "/api/v1/invitations/track", params={"trackingId": data["trackingId"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["currentApprovalStep"] is None
+
+
+async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_invitation(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """invitation-multi-step-approval spec.md "Workflow-backed invitation
+    exposes current step progress" — a category with two active rules
+    snapshots two steps at submission; the tracking lookup surfaces the
+    first one as current.
+    """
+    category = VisitorCategoryFactory.build(
+        id=uuid.uuid4(), name="Workflow Category", code="WORKFLOW-CAT"
+    )
+    approver_role = RoleFactory.build(id=uuid.uuid4(), name="step-one-approver", permissions=[])
+    db_session.add_all([category, approver_role])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ApprovalWorkflowRuleFactory.build(
+                id=uuid.uuid4(),
+                visitor_category_id=category.id,
+                step_order=1,
+                approver_role_id=approver_role.id,
+            ),
+            ApprovalWorkflowRuleFactory.build(
+                id=uuid.uuid4(),
+                visitor_category_id=category.id,
+                step_order=2,
+                approver_role_id=approver_role.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(category.id)
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["currentApprovalStep"] == {
+        "stepOrder": 1,
+        "approverRoleId": str(approver_role.id),
+        "totalSteps": 2,
+    }
+
+    response = await client.get(
+        "/api/v1/invitations/track", params={"trackingId": data["trackingId"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["currentApprovalStep"] == {
+        "stepOrder": 1,
+        "approverRoleId": str(approver_role.id),
+        "totalSteps": 2,
+    }
+
+
 async def test_track_unknown_tracking_id_not_found(client: AsyncClient, tenant: Tenant) -> None:
     response = await client.get("/api/v1/invitations/track", params={"trackingId": "INV-DEADBEEF"})
     assert response.status_code == 404
@@ -871,12 +1048,14 @@ async def test_list_invitations_success(
         "registrationType",
         "source",
         "status",
+        "visitorCategoryId",
         "primaryContactFullName",
         "purposeOfVisit",
         "expiresAt",
         "submittedAt",
         "approvedAt",
     }
+    assert row["visitorCategoryId"] is None
 
 
 async def test_list_invitations_requires_permission(
@@ -1560,6 +1739,38 @@ async def test_approve_invitation_already_approved_rejected(
     await db_session.refresh(invitation)
     assert invitation.status == "approved"
     assert invitation.approved_at == original_approved_at
+
+
+async def test_approve_invitation_rejected_for_workflow_backed_invitation(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """invitation-multi-step-approval spec.md "Blanket approve rejected for
+    a workflow-backed invitation" (design.md Decision 3) — an invitation
+    with any snapshotted `InvitationApprovalStep` must be approved through
+    the step endpoint, never the blanket one.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted", approved_at=None)
+    db_session.add(invitation)
+    await db_session.flush()
+    role = RoleFactory.build(id=uuid.uuid4(), name="step-approver", permissions=[])
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(), invitation_id=invitation.id, step_order=1, approver_role_id=role.id
+        )
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
 
 
 async def test_approve_invitation_concurrent_requests_transition_exactly_once(

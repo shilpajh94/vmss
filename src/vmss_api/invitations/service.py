@@ -7,6 +7,9 @@ import structlog
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.approvals.models import InvitationApprovalStep
+from vmss_api.approvals.repository import InvitationApprovalStepRepository
+from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.auth.repository import UserRepository
 from vmss_api.core.config import settings
 from vmss_api.core.schemas import BranchScope, SortOrder
@@ -24,6 +27,7 @@ from vmss_api.invitations.schemas import (
 from vmss_api.org_structure.repository import CompanyRepository, DepartmentRepository
 from vmss_api.tenant.models import Tenant
 from vmss_api.visit_info.repository import VisitDurationRepository, VisitPurposeRepository
+from vmss_api.visitors.repository import ApprovalWorkflowRuleRepository, VisitorCategoryRepository
 
 
 async def _generate_unique_tracking_id(repo: InvitationRepository) -> str:
@@ -115,6 +119,65 @@ async def _resolve_visit_detail_ids(
     return resolved
 
 
+async def _resolve_active_category(
+    tenant_db: AsyncSession, visitor_category_id: uuid.UUID
+) -> uuid.UUID:
+    """spec.md "Missing visitor category is rejected" /
+    "Unknown, inactive, or cross-tenant visitor category is rejected" —
+    validated before any file I/O, same "fail fast" ordering
+    `_resolve_visit_detail_ids` already uses for the optional catalog ids.
+    """
+    category = await VisitorCategoryRepository(tenant_db).get_active(visitor_category_id)
+    if category is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown or inactive visitorCategoryId"
+        )
+    return category.id
+
+
+def _build_approval_steps(
+    rules: list[Any], *, invitation_id: uuid.UUID, now: datetime
+) -> list[InvitationApprovalStep]:
+    """Snapshots a category's active `ApprovalWorkflowRule`s (already
+    ordered by `step_order`) into `InvitationApprovalStep` rows — a
+    point-in-time copy, not a live reference (design.md Decision 1). Only
+    the first step's `escalates_at`/`auto_approves_at` are computed here,
+    relative to `now` (the submission timestamp) — every later step's pair
+    is computed when it becomes the current pending step, i.e. when the
+    step before it is approved (`approvals/service.py::approve_step`), per
+    specs/approvals/spec.md "Escalation and Auto-Approve Timestamps".
+    """
+    steps: list[InvitationApprovalStep] = []
+    for index, rule in enumerate(rules):
+        is_first = index == 0
+        steps.append(
+            InvitationApprovalStep(
+                id=uuid.uuid4(),
+                invitation_id=invitation_id,
+                step_order=rule.step_order,
+                approver_role_id=rule.approver_role_id,
+                is_mandatory=rule.is_mandatory,
+                status="pending",
+                escalation_minutes=rule.escalation_minutes,
+                auto_approve_minutes=rule.auto_approve_minutes,
+                # Only the first step is current the moment it's snapshotted
+                # — every later step's pair is computed when it becomes
+                # current instead (`approvals/service.py::_advance_step_clock`).
+                escalates_at=(
+                    now + timedelta(minutes=rule.escalation_minutes)
+                    if is_first and rule.escalation_minutes is not None
+                    else None
+                ),
+                auto_approves_at=(
+                    now + timedelta(minutes=rule.auto_approve_minutes)
+                    if is_first and rule.auto_approve_minutes is not None
+                    else None
+                ),
+            )
+        )
+    return steps
+
+
 async def create_invitation(
     tenant_db: AsyncSession,
     payload: InvitationCreate,
@@ -153,6 +216,10 @@ async def create_invitation(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Visitor list and uploaded ID proof files must match in count",
         )
+
+    # Validated before any file I/O, same "fail fast" reasoning as the
+    # optional catalog ids resolved right below.
+    visitor_category_id = await _resolve_active_category(tenant_db, payload.visitor_category_id)
 
     # Validated (and, where an id is present, resolved to its canonical
     # display value) before any file I/O, so a bad `purposeId`/`hostId`/
@@ -195,6 +262,7 @@ async def create_invitation(
         source=source.value,
         registration_type=payload.registration_type.value,
         status=initial_status,
+        visitor_category_id=visitor_category_id,
         tracking_id=tracking_id,
         expires_at=expires_at,
         submitted_at=now,
@@ -257,6 +325,21 @@ async def create_invitation(
     repo.add_visitors(visitor_rows)
     repo.add_vehicles(vehicle_rows)
 
+    # Snapshot the category's active workflow rules into ordered steps
+    # (specs/approvals/spec.md "Submission Snapshots the Category's Active
+    # Workflow Into Ordered Steps") — only for a `submitted` (not
+    # auto-approved) invitation, and only once, in the same transaction as
+    # the `Invitation` insert above (design.md Decision 1). A category with
+    # no active rules gets no steps: today's single-approve behavior.
+    if not auto_approved:
+        rules = await ApprovalWorkflowRuleRepository(tenant_db).list_active_for_category(
+            visitor_category_id
+        )
+        if rules:
+            InvitationApprovalStepRepository(tenant_db).add_steps(
+                _build_approval_steps(rules, invitation_id=invitation.id, now=now)
+            )
+
     await tenant_db.commit()
 
     created = await repo.get_with_children(invitation.id)
@@ -301,7 +384,22 @@ async def approve_invitation(
     concurrent approval requests for the same invitation can't both pass a
     status check and both dispatch a notification (see
     codebase-review-and-e2e-scenario-test/design.md).
+
+    Rejected with 409 (design.md Decision 3) if the invitation still has a
+    `pending` `InvitationApprovalStep` — that invitation must be approved
+    step by step through `POST /invitations/{id}/approval-steps/{stepId}
+    /approve` instead (specs/invitations/spec.md "Blanket approve rejected
+    for a workflow-backed invitation"). Checking for a *pending* step, not
+    merely "any step at all", is what lets `approvals.service.approve_step`
+    call this function verbatim to finalize the last step (design.md
+    Decision 2) — by then every step is already `approved`, so this guard
+    correctly falls through instead of rejecting its own caller.
     """
+    if await InvitationApprovalStepRepository(tenant_db).has_pending_for_invitation(invitation.id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Invitation has a configured approval workflow; approve its steps instead",
+        )
     updated = await InvitationRepository(tenant_db).approve_if_submitted(invitation.id)
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not awaiting approval")
@@ -516,6 +614,32 @@ async def override_watchlist(
         )
     await tenant_db.commit()
     return updated
+
+
+async def get_current_approval_step(
+    tenant_db: AsyncSession, invitation: Invitation
+) -> CurrentApprovalStepOut | None:
+    """Backs the `currentApprovalStep` field on `InvitationOut`/
+    `InvitationTrackingOut`/`InvitationDetailOut` (design.md Decision 7) —
+    two indexed queries (current pending step + total count), run only for a
+    single-invitation lookup, never for `GET /invitations` list rows
+    (query-performance.md §2). `None` for an invitation with no snapshotted
+    steps, or one that is no longer `submitted`
+    (specs/invitations/spec.md "Non-workflow invitation omits step
+    progress").
+    """
+    if invitation.status != "submitted":
+        return None
+    repo = InvitationApprovalStepRepository(tenant_db)
+    current = await repo.get_current_pending(invitation.id)
+    if current is None:
+        return None
+    total_steps = await repo.count_for_invitation(invitation.id)
+    return CurrentApprovalStepOut(
+        step_order=current.step_order,
+        approver_role_id=current.approver_role_id,
+        total_steps=total_steps,
+    )
 
 
 async def track_by_tracking_id(tenant_db: AsyncSession, tracking_id: str) -> Invitation:

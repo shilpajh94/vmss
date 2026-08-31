@@ -48,6 +48,7 @@ PERMISSION_CODES = [
     "invitations:view",
     "invitations:cancel",
     "invitations:approve",
+    "invitations:approve-override",
     "invitations:deny",
     "invitations:checkin",
     "invitations:checkout",

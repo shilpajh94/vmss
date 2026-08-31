@@ -41,7 +41,7 @@ from PIL import Image
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from factories import UserFactory
+from factories import UserFactory, VisitorCategoryFactory
 from vmss_api.auth.models import Role, UserBranchRole
 from vmss_api.core.config import settings
 from vmss_api.core.database import get_db, tenant_session_scope
@@ -100,6 +100,26 @@ async def _seed_first_admin(
         await tenant_db.commit()
 
 
+_DEFAULT_VISITOR_CATEGORY_ID = uuid.UUID("44444444-4444-4444-4444-444444444444")
+
+
+async def _seed_default_visitor_category(schema_name: str) -> None:
+    """invitation-multi-step-approval: `visitorCategoryId` is now required on
+    `InvitationCreate` — this freshly-provisioned tenant needs a real
+    category row before either invitation-creation step below can succeed,
+    same "one non-API seed step" posture as `_seed_first_admin`.
+    """
+    async with tenant_session_scope(schema_name) as tenant_db:
+        tenant_db.add(
+            VisitorCategoryFactory.build(
+                id=_DEFAULT_VISITOR_CATEGORY_ID,
+                name="Full Lifecycle Test Category",
+                code="FULL-LIFECYCLE-DEFAULT",
+            )
+        )
+        await tenant_db.commit()
+
+
 class _RecordingSender:
     """Local copy of `identity_verification/tests.py::_RecordingSender` —
     same "no cross-import between root-level `tests/*.py` files" convention
@@ -145,6 +165,7 @@ def _visit_details(**catalog_ids: str) -> dict:
 def _invitation_payload(full_name: str, **catalog_ids: str) -> dict:
     return {
         "registrationType": "individual",
+        "visitorCategoryId": str(_DEFAULT_VISITOR_CATEGORY_ID),
         "primaryContact": {
             "fullName": full_name,
             "email": f"{full_name.lower().replace(' ', '.')}@example.com",
@@ -203,6 +224,7 @@ async def _run_workflow_after_provisioning(
     await _seed_first_admin(
         schema_name, tenant_id=tenant_id, email=admin_email, password=admin_password
     )
+    await _seed_default_visitor_category(schema_name)
 
     admin_login = await client.post(
         "/api/v1/auth/login", json={"email": admin_email, "password": admin_password}

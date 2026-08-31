@@ -5,6 +5,7 @@ from typing import Literal, Self
 
 from pydantic import EmailStr, Field, model_validator
 
+from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.core.schemas import CamelModel
 
 InvitationSortableField = Literal["submitted_at", "created_at"]
@@ -179,6 +180,14 @@ class InvitationCreate(CamelModel):
             "required."
         ),
     )
+    visitor_category_id: uuid.UUID = Field(
+        description=(
+            "Which VisitorCategory this invitation is tagged with — must "
+            "resolve to an active category in the resolved tenant. Drives "
+            "whether the invitation gets a multi-step approval workflow "
+            "snapshotted onto it at submission time."
+        ),
+    )
     primary_contact: InvitationPrimaryContactCreate
     visitors: list[VisitorSubmit] = Field(default_factory=list)
     visit_details: VisitDetailsSubmit
@@ -202,9 +211,11 @@ class InvitationOut(CamelModel):
     registration_type: RegistrationType
     source: RegistrationSource
     status: str
+    visitor_category_id: uuid.UUID | None
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
+    current_approval_step: CurrentApprovalStepOut | None = None
 
 
 # --- Employee listing --------------------------------------------------------
@@ -222,6 +233,7 @@ class InvitationListItemOut(CamelModel):
     registration_type: RegistrationType
     source: RegistrationSource
     status: str
+    visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
     purpose_of_visit: str | None
     expires_at: datetime
@@ -260,6 +272,7 @@ class InvitationTrackingOut(CamelModel):
     status: str
     registration_type: str
     source: str
+    visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
     purpose_of_visit: str | None
     host_name_or_email: str | None
@@ -273,6 +286,7 @@ class InvitationTrackingOut(CamelModel):
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
+    current_approval_step: CurrentApprovalStepOut | None = None
     visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 
@@ -306,6 +320,7 @@ class InvitationDetailOut(CamelModel):
     tracking_id: str
     status: str
     registration_type: str
+    visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
     purpose_of_visit: str | None
     host_name_or_email: str | None
@@ -319,6 +334,7 @@ class InvitationDetailOut(CamelModel):
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
+    current_approval_step: CurrentApprovalStepOut | None = None
     denial_reason: str | None
     denied_at: datetime | None
     checked_in_at: datetime | None

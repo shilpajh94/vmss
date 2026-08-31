@@ -56,6 +56,14 @@ class Invitation(Base, TimestampMixin):
     source: Mapped[str] = mapped_column(String(30), default="staff_pre_registration")
     registration_type: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    # Nullable at the DB level (pre-existing rows have none), but required on
+    # `InvitationCreate` going forward — see
+    # invitation-multi-step-approval/design.md Decision 1. Drives which
+    # `ApprovalWorkflowRule`s (visitors/models.py) get snapshotted into this
+    # invitation's own `InvitationApprovalStep` rows at submission time.
+    visitor_category_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("visitor_categories.id"), index=True
+    )
     tracking_id: Mapped[str] = mapped_column(String(20), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -22,7 +22,12 @@ from vmss_api.core.rate_limit import limiter
 from vmss_api.core.redis import get_redis
 from vmss_api.core.responses import error_response, success_response
 from vmss_api.core.schemas import Envelope
-from vmss_api.invitations.router import _INVITATION_PAYLOAD_EXAMPLES, _NO_VISITOR_FILES
+from vmss_api.invitations import service as invitations_service
+from vmss_api.invitations.router import (
+    _INVITATION_PAYLOAD_EXAMPLES,
+    _NO_VISITOR_FILES,
+    to_invitation_out,
+)
 from vmss_api.invitations.router import _PAYLOAD_DESCRIPTION as _INVITATION_PAYLOAD_DESCRIPTION
 from vmss_api.registrations import service
 from vmss_api.registrations.deps import (
@@ -30,12 +35,7 @@ from vmss_api.registrations.deps import (
     get_registration_device,
     get_registration_tenant_db,
 )
-from vmss_api.registrations.schemas import (
-    RegistrationSource,
-    RegistrationType,
-    WalkInRegistrationCreate,
-    WalkInRegistrationOut,
-)
+from vmss_api.registrations.schemas import WalkInRegistrationCreate, WalkInRegistrationOut
 
 router = APIRouter(prefix="/registrations", tags=["registrations"])
 
@@ -45,19 +45,6 @@ _IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
 # Decision 2) — reused rather than restated so the two endpoints' docs can
 # never drift apart the way two hand-maintained copies eventually would.
 _PAYLOAD_DESCRIPTION = _INVITATION_PAYLOAD_DESCRIPTION
-
-
-def _to_walk_in_registration_out(invitation) -> WalkInRegistrationOut:
-    return WalkInRegistrationOut(
-        id=invitation.id,
-        tracking_id=invitation.tracking_id,
-        registration_type=RegistrationType(invitation.registration_type),
-        source=RegistrationSource(invitation.source),
-        status=invitation.status,
-        expires_at=invitation.expires_at,
-        submitted_at=invitation.submitted_at,
-        approved_at=invitation.approved_at,
-    )
 
 
 def _idempotency_cache_key(tenant_id: uuid.UUID, idempotency_key: str) -> str:
@@ -167,8 +154,11 @@ async def create_walk_in_registration(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
+    current_approval_step = await invitations_service.get_current_approval_step(
+        tenant_db, invitation
+    )
     response = success_response(
-        data=_to_walk_in_registration_out(invitation),
+        data=to_invitation_out(invitation, current_approval_step),
         status_code=status.HTTP_201_CREATED,
     )
     await _cache_response(device.tenant.id, idempotency_key, response)
