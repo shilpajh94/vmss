@@ -20,6 +20,7 @@ from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
 from vmss_api.invitations import tasks
 from vmss_api.invitations.models import Invitation
+from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.models import Branch
 from vmss_api.tenant.models import Tenant
 
@@ -301,6 +302,239 @@ async def test_approve_step_last_step_approves_invitation_and_dispatches_notific
     assert data["approvedAt"] is not None
     assert data["currentApprovalStep"] is None
     assert len(approval_calls) == 1
+
+
+# --- Push notifications (add-invitation-push-notifications) -----------------
+
+
+async def test_approve_step_non_final_admin_role_identified_step_sends_no_push(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    """specs/approvals/spec.md "Approving a step activates a role-identified
+    step, sending no push" (exclude-admin-role-only-from-push) — approving
+    step one activates step two, but step two is identified by the tenant's
+    standard `admin` role, so no push is dispatched to anyone.
+    """
+    step_one_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"step-one-role-{uuid.uuid4().hex[:8]}", permissions=[]
+    )
+    admin_role = RoleFactory.build(id=uuid.uuid4(), name="admin", permissions=[])
+    db_session.add_all([step_one_role, admin_role])
+    await db_session.flush()
+
+    invitation = _build_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            InvitationApprovalStepFactory.build(
+                id=uuid.uuid4(),
+                invitation_id=invitation.id,
+                step_order=1,
+                approver_role_id=step_one_role.id,
+                escalation_minutes=None,
+                auto_approve_minutes=None,
+            ),
+            InvitationApprovalStepFactory.build(
+                id=uuid.uuid4(),
+                invitation_id=invitation.id,
+                step_order=2,
+                approver_role_id=admin_role.id,
+                escalation_minutes=None,
+                auto_approve_minutes=None,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    approver = await _user_with_role(
+        db_session, branch.id, role=step_one_role, extra_permission_codes=("invitations:approve",)
+    )
+
+    user_calls: list[dict] = []
+    role_calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        user_calls.append(kwargs)
+
+    async def _fake_notify_role_at_branch(tenant_db, **kwargs):
+        role_calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+    monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify_role_at_branch)
+
+    token = issue_token(approver)
+    step_one = await _get_step(db_session, invitation.id, 1)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert user_calls == []
+    assert role_calls == []
+
+
+async def test_approve_step_non_final_non_admin_role_identified_step_notifies_role(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    """specs/approvals/spec.md "Approving a step activates a non-Admin
+    role-identified step" — a role-identified step for any role other than
+    `admin` (e.g. this test's `step-two-role-*`) still dispatches a push to
+    that role's holders at the invitation's branch.
+    """
+    invitation, step_one_role, step_two_role = await _two_step_invitation(db_session, branch)
+    approver = await _user_with_role(
+        db_session, branch.id, role=step_one_role, extra_permission_codes=("invitations:approve",)
+    )
+
+    role_calls: list[dict] = []
+
+    async def _fake_notify_role_at_branch(tenant_db, **kwargs):
+        role_calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify_role_at_branch)
+
+    token = issue_token(approver)
+    step_one = await _get_step(db_session, invitation.id, 1)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert len(role_calls) == 1
+    assert role_calls[0]["role_id"] == step_two_role.id
+    assert role_calls[0]["branch_id"] == branch.id
+
+
+async def test_approve_step_non_final_activates_host_identified_step_notifies_host(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    """specs/approvals/spec.md "Approving a role-identified step activates a
+    host-identified step" — the host-only push path still fires when a role
+    step's approval activates a *host*-identified next step.
+    """
+    step_one_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"step-one-role-{uuid.uuid4().hex[:8]}", permissions=[]
+    )
+    host = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example",
+        full_name="Step Two Host",
+    )
+    db_session.add_all([step_one_role, host])
+    await db_session.flush()
+
+    invitation = _build_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            InvitationApprovalStepFactory.build(
+                id=uuid.uuid4(),
+                invitation_id=invitation.id,
+                step_order=1,
+                approver_role_id=step_one_role.id,
+                escalation_minutes=None,
+                auto_approve_minutes=None,
+            ),
+            InvitationApprovalStepFactory.build(
+                id=uuid.uuid4(),
+                invitation_id=invitation.id,
+                step_order=2,
+                approver_role_id=None,
+                approver_user_id=host.id,
+                escalation_minutes=None,
+                auto_approve_minutes=None,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    approver = await _user_with_role(
+        db_session, branch.id, role=step_one_role, extra_permission_codes=("invitations:approve",)
+    )
+
+    calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+
+    token = issue_token(approver)
+    step_one = await _get_step(db_session, invitation.id, 1)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert len(calls) == 1
+    assert calls[0]["user_id"] == host.id
+
+
+async def test_approve_step_last_step_does_not_double_notify(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    """specs/approvals/spec.md "Approving the last step does not double-
+    notify via this requirement" — no next step is activated by the last
+    step's approval, so `notify_step_approver` never fires for it; the
+    invitation's own resolution outcome is instead notified by
+    `invitations.service.approve_invitation`'s separate `notify_user` call
+    (not under test here, and a no-op anyway since this invitation has no
+    resolved host).
+    """
+    invitation, step_one_role, step_two_role = await _two_step_invitation(db_session, branch)
+    first_approver = await _user_with_role(
+        db_session, branch.id, role=step_one_role, extra_permission_codes=("invitations:approve",)
+    )
+    second_approver = await _user_with_role(
+        db_session, branch.id, role=step_two_role, extra_permission_codes=("invitations:approve",)
+    )
+
+    calls: list[dict] = []
+
+    async def _fake_notify_step_approver(tenant_db, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_step_approver", _fake_notify_step_approver)
+    monkeypatch.setattr(tasks.send_approval_notification, "delay", lambda **kw: None)
+
+    step_one = await _get_step(db_session, invitation.id, 1)
+    token = issue_token(first_approver)
+    await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert len(calls) == 1  # step one's approval activated step two
+
+    calls.clear()
+    step_two = await _get_step(db_session, invitation.id, 2)
+    token = issue_token(second_approver)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_two.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert calls == []  # last step approved — no next step to activate/notify
 
 
 # --- Rejection is terminal ----------------------------------------------------

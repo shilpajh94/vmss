@@ -641,7 +641,9 @@ async def check_in_invitation(
 
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:checkin", invitation.branch_id)
-    invitation = await service.check_in_invitation(tenant_db, invitation, user_id=user.id)
+    invitation = await service.check_in_invitation(
+        tenant_db, invitation, user_id=user.id, tenant=tenant
+    )
     background_tasks.add_task(
         record_audit_log,
         tenant.schema_name,
@@ -680,7 +682,9 @@ async def check_out_invitation(
     await authorize_branch_id_tolerant(
         tenant_db, user, "invitations:checkout", invitation.branch_id
     )
-    invitation = await service.check_out_invitation(tenant_db, invitation, user_id=user.id)
+    invitation = await service.check_out_invitation(
+        tenant_db, invitation, user_id=user.id, tenant=tenant
+    )
     background_tasks.add_task(
         record_audit_log,
         tenant.schema_name,

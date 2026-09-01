@@ -19,11 +19,14 @@ celery_app.conf.task_default_queue = "vmss_api"
 # ddev worker picks them up fine since it listens on every queue.
 celery_app.conf.task_routes = {
     "vmss_api.invitations.tasks.*": {"queue": "notifications"},
+    "vmss_api.notifications.tasks.*": {"queue": "notifications"},
     "vmss_api.reports.tasks.*": {"queue": "cron_jobs"},
 }
 
 # Feature task modules register themselves here as they're built.
-celery_app.autodiscover_tasks(["vmss_api.invitations", "vmss_api.reports"])
+celery_app.autodiscover_tasks(
+    ["vmss_api.invitations", "vmss_api.notifications", "vmss_api.reports"]
+)
 
 # Recurring, time-triggered tasks (background-jobs.md, the `background-jobs`
 # capability's "Scheduled Tasks Run Independently of Any Request"

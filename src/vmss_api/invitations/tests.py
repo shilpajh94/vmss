@@ -33,6 +33,7 @@ from factories import (
 )
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import Permission, User, UserBranchRole
+from vmss_api.auth.repository import RoleRepository
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.schemas import SortOrder
@@ -40,6 +41,7 @@ from vmss_api.core.security import hash_password
 from vmss_api.invitations import notifications, tasks
 from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.repository import InvitationRepository
+from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.models import Branch, Department
 from vmss_api.platform.models import TenantUserIndex
 from vmss_api.tenant.models import Tenant
@@ -1468,6 +1470,94 @@ async def test_send_approval_notification_delivers_email_with_qr_via_mailpit(mon
     # Deliberately not deleted from Mailpit afterward — left for a human to
     # inspect via the Mailpit web UI (task 5.4), and harmless to accumulate
     # since each run uses a fresh, unique tracking_id/recipient.
+
+
+async def test_send_denial_notification_delivers_email_via_mailpit(monkeypatch) -> None:
+    """Same real-SMTP-round-trip bar as
+    `test_send_approval_notification_delivers_email_with_qr_via_mailpit`
+    above, extended to the denial notification per design.md Decision 1 —
+    "the stub was called correctly" and "an email genuinely arrived" have
+    only ever been proven together for the approval path until now.
+    """
+    tracking_id = f"INV-{uuid.uuid4().hex[:8].upper()}"
+    recipient = f"mailpit-check-{uuid.uuid4().hex[:8]}@example.com"
+    fake_invitation = _FakeInvitation(
+        status="denied",
+        tracking_id=tracking_id,
+        denial_reason="Visitor not on the expected list",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email=recipient,
+        primary_contact_phone=None,
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_denial_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+
+    async with AsyncClient() as mailpit:
+        list_response = await mailpit.get(_MAILPIT_API_URL, params={"limit": 50})
+        assert list_response.status_code == 200
+        matches = [
+            m
+            for m in list_response.json()["messages"]
+            if tracking_id in m["Snippet"] and any(to["Address"] == recipient for to in m["To"])
+        ]
+        assert len(matches) == 1, (
+            f"expected exactly one Mailpit message for {tracking_id}, found {len(matches)}"
+        )
+        detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{matches[0]['ID']}")
+        assert detail_response.status_code == 200
+        assert detail_response.json()["Subject"] == "Your visit request was not approved"
+
+
+async def test_send_reschedule_notification_delivers_email_via_mailpit(monkeypatch) -> None:
+    """Same real-SMTP-round-trip bar, extended to the reschedule
+    notification per design.md Decision 1.
+    """
+    tracking_id = f"INV-{uuid.uuid4().hex[:8].upper()}"
+    recipient = f"mailpit-check-{uuid.uuid4().hex[:8]}@example.com"
+    fake_invitation = _FakeInvitation(
+        status="approved",
+        tracking_id=tracking_id,
+        preferred_visit_date="2026-12-01",
+        preferred_visit_time="15:30:00",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email=recipient,
+        primary_contact_phone=None,
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_reschedule_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+
+    async with AsyncClient() as mailpit:
+        list_response = await mailpit.get(_MAILPIT_API_URL, params={"limit": 50})
+        assert list_response.status_code == 200
+        matches = [
+            m
+            for m in list_response.json()["messages"]
+            if tracking_id in m["Snippet"] and any(to["Address"] == recipient for to in m["To"])
+        ]
+        assert len(matches) == 1, (
+            f"expected exactly one Mailpit message for {tracking_id}, found {len(matches)}"
+        )
+        detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{matches[0]['ID']}")
+        assert detail_response.status_code == 200
+        assert detail_response.json()["Subject"] == "Your visit has been rescheduled"
 
 
 # --- visit-info-lookup-api: optional purposeId/hostId/durationId/departmentId -
@@ -2990,6 +3080,399 @@ async def test_override_watchlist_requires_permission(
 
     await db_session.refresh(invitation)
     assert invitation.watchlist_flagged is True
+
+
+# --- Push notifications (add-invitation-push-notifications) -----------------
+
+
+def _make_host(db_session: AsyncSession) -> User:
+    return UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+
+
+async def test_create_invitation_submission_notifies_host_step_approver(
+    client: AsyncClient, user: User, branch: Branch, visit_host: User, monkeypatch
+) -> None:
+    """specs/invitations/spec.md "Invitation Submission Notifies the
+    Approval Workflow's First Approver(s) via Push" — a resolved host gets
+    an implicit host-identified step 0, which is pushed at submission.
+    """
+    calls: list[dict] = []
+    email_calls: list[dict] = []
+
+    async def _fake_notify_step_approver(tenant_db, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_step_approver", _fake_notify_step_approver)
+    monkeypatch.setattr(
+        tasks.send_tracking_notification, "delay", lambda **kw: email_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["hostId"] = str(visit_host.id)
+    created = await _create_invitation_success(client, token, branch, payload=payload)
+
+    # Push to the host-identified step approver ...
+    assert len(calls) == 1
+    assert calls[0]["approver_user_id"] == visit_host.id
+    assert calls[0]["approver_role_id"] is None
+    assert calls[0]["branch_id"] == branch.id
+    # ... and, for the same submission, the visitor's own tracking email/SMS
+    # (proposal.md finding #1 — both channels must fire for the same request,
+    # not just whichever one this test happened to check).
+    assert len(email_calls) == 1
+    assert email_calls[0]["invitation_id"] == created["id"]
+
+
+async def test_create_invitation_non_admin_role_identified_step_notifies_role(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """specs/invitations/spec.md "Submission with a role-identified first
+    step" (exclude-admin-role-only-from-push) — no resolved host, and the
+    category's workflow gives it a role-identified step 0 for a role other
+    than `admin`. That role's holders still get pushed.
+    """
+    category = VisitorCategoryFactory.build(
+        id=uuid.uuid4(), name="Role Workflow Category", code="ROLE-WORKFLOW-CAT"
+    )
+    approver_role = RoleFactory.build(
+        id=uuid.uuid4(), name="submission-approver-role", permissions=[]
+    )
+    db_session.add_all([category, approver_role])
+    await db_session.flush()
+    db_session.add(
+        ApprovalWorkflowRuleFactory.build(
+            id=uuid.uuid4(),
+            visitor_category_id=category.id,
+            step_order=1,
+            approver_role_id=approver_role.id,
+        )
+    )
+    await db_session.commit()
+
+    role_calls: list[dict] = []
+
+    async def _fake_notify_role_at_branch(tenant_db, **kwargs):
+        role_calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify_role_at_branch)
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(category.id)
+    await _create_invitation_success(client, token, branch, payload=payload)
+
+    assert len(role_calls) == 1
+    assert role_calls[0]["role_id"] == approver_role.id
+    assert role_calls[0]["branch_id"] == branch.id
+
+
+async def test_create_invitation_admin_role_identified_step_sends_no_push(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """specs/invitations/spec.md "Submission with an Admin-role first step
+    sends no push" — no resolved host, and the category's workflow gives it
+    a role-identified step 0 for the tenant's standard `admin` role
+    (already seeded by the `user` fixture). No push is dispatched to anyone.
+    """
+    admin_role = await RoleRepository(db_session).get_by_name("admin")
+    assert admin_role is not None  # seeded by the `user` fixture
+
+    category = VisitorCategoryFactory.build(
+        id=uuid.uuid4(), name="Admin Workflow Category", code="ADMIN-WORKFLOW-CAT"
+    )
+    db_session.add(category)
+    await db_session.flush()
+    db_session.add(
+        ApprovalWorkflowRuleFactory.build(
+            id=uuid.uuid4(),
+            visitor_category_id=category.id,
+            step_order=1,
+            approver_role_id=admin_role.id,
+        )
+    )
+    await db_session.commit()
+
+    user_calls: list[dict] = []
+    role_calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        user_calls.append(kwargs)
+
+    async def _fake_notify_role_at_branch(tenant_db, **kwargs):
+        role_calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+    monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify_role_at_branch)
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(category.id)
+    await _create_invitation_success(client, token, branch, payload=payload)
+
+    assert user_calls == []
+    assert role_calls == []
+
+
+async def test_create_invitation_auto_approve_skips_submission_push(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """specs/invitations/spec.md "Auto-Approved Invitations Do Not Trigger a
+    Submission Push".
+    """
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), auto_approve_pre_registered_visitors=True))
+    await db_session.commit()
+
+    calls: list[dict] = []
+
+    async def _fake_notify_step_approver(tenant_db, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_step_approver", _fake_notify_step_approver)
+
+    token = await _login(client, user.email)
+    await _create_invitation_success(client, token, branch, payload=_individual_payload())
+
+    assert calls == []
+
+
+async def test_create_invitation_hostless_no_rules_skips_push(
+    client: AsyncClient, user: User, branch: Branch, monkeypatch
+) -> None:
+    """No resolved host, and the default test category
+    (`_default_visitor_category`) has no active workflow rules — zero
+    approval steps, so nothing to push (proposal.md's "no push recipient"
+    case).
+    """
+    calls: list[dict] = []
+
+    async def _fake_notify_step_approver(tenant_db, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_step_approver", _fake_notify_step_approver)
+
+    token = await _login(client, user.email)
+    await _create_invitation_success(client, token, branch, payload=_individual_payload())
+
+    assert calls == []
+
+
+async def test_approve_invitation_notifies_host(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host = _make_host(db_session)
+    db_session.add(host)
+    await db_session.flush()
+    invitation = _build_invitation(db_session, branch.id, status="submitted", host_id=host.id)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    email_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_approval_notification, "delay", lambda **kw: email_calls.append(kw)
+    )
+    calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert len(calls) == 1
+    assert calls[0]["user_id"] == host.id
+    assert calls[0]["data"]["action"] == "approved"
+    # Visitor's own approval email/SMS must fire for the same request
+    # (proposal.md finding #1).
+    assert len(email_calls) == 1
+    assert email_calls[0]["invitation_id"] == str(invitation.id)
+
+
+async def test_approve_invitation_hostless_skips_push(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """specs/invitations/spec.md "No resolved host means no push, and the
+    request still succeeds".
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    monkeypatch.setattr(tasks.send_approval_notification, "delay", lambda **kw: None)
+    calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert calls == []
+
+
+async def test_deny_invitation_notifies_host(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host = _make_host(db_session)
+    db_session.add(host)
+    await db_session.flush()
+    invitation = _build_invitation(db_session, branch.id, status="submitted", host_id=host.id)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    email_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_denial_notification, "delay", lambda **kw: email_calls.append(kw)
+    )
+    calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/deny",
+        json={"reason": "Not expected"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert len(calls) == 1
+    assert calls[0]["user_id"] == host.id
+    assert calls[0]["data"]["action"] == "denied"
+    # Visitor's own denial email/SMS must fire for the same request
+    # (proposal.md finding #1).
+    assert len(email_calls) == 1
+    assert email_calls[0]["invitation_id"] == str(invitation.id)
+
+
+async def test_reschedule_invitation_notifies_host(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host = _make_host(db_session)
+    db_session.add(host)
+    await db_session.flush()
+    invitation = _build_invitation(db_session, branch.id, status="submitted", host_id=host.id)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    email_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_reschedule_notification, "delay", lambda **kw: email_calls.append(kw)
+    )
+    calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/reschedule",
+        json={"preferredVisitDate": "2026-12-01", "preferredVisitTime": "15:30:00"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert len(calls) == 1
+    assert calls[0]["user_id"] == host.id
+    assert calls[0]["data"]["action"] == "rescheduled"
+    # Visitor's own reschedule email/SMS must fire for the same request
+    # (proposal.md finding #1).
+    assert len(email_calls) == 1
+    assert email_calls[0]["invitation_id"] == str(invitation.id)
+
+
+async def test_check_in_invitation_notifies_host(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """No dual-channel assertion here (unlike submit/approve/deny/reschedule,
+    proposal.md finding #1): `invitations/service.py::check_in_invitation`
+    dispatches only the host push, no visitor-facing email/SMS task — there
+    is nothing on the other channel to assert.
+    """
+    host = _make_host(db_session)
+    db_session.add(host)
+    await db_session.flush()
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC), host_id=host.id
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert len(calls) == 1
+    assert calls[0]["user_id"] == host.id
+    assert calls[0]["data"]["action"] == "checked_in"
+
+
+async def test_check_out_invitation_notifies_host(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """No dual-channel assertion here either, same reason as
+    `test_check_in_invitation_notifies_host` above: `check_out_invitation`
+    dispatches only the host push, no visitor-facing email/SMS task.
+    """
+    host = _make_host(db_session)
+    db_session.add(host)
+    await db_session.flush()
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+        host_id=host.id,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-out",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert len(calls) == 1
+    assert calls[0]["user_id"] == host.id
+    assert calls[0]["data"]["action"] == "checked_out"
 
 
 # --- Tenant isolation ------------------------------------------------------------

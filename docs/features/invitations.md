@@ -324,6 +324,14 @@ context if retries are exhausted. Email goes out over SMTP
 yet (`UnconfiguredSmsSender` raises loudly rather than pretending to send —
 this is a known open item, not an oversight).
 
+Submission (if it snapshots at least one approval step), approval, denial,
+reschedule, check-in, and check-out each also dispatch a **staff-facing
+push notification** — additional to, and dispatched independently from, the
+visitor email/SMS above. Submission pushes the current approval step's
+approver(s) (host or role-at-branch); the other five push the invitation's
+host, if one resolved. See `docs/features/notifications.md` for the
+dispatch primitive and recipient-resolution rules.
+
 **No Celery worker runs by default in this DDEV dev environment** — a
 created invitation's notification task will sit queued in Redis until
 something consumes it. To manually verify dispatch outside the automated

@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import User, UserBranchRole
+from vmss_api.invitations import push_notifications
 from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.models import Invitation
+from vmss_api.notifications import service as notifications_service
 from vmss_api.tenant.models import Tenant
 
 
@@ -91,17 +93,22 @@ def _require_is_current(
         )
 
 
-async def _activate_next_step(tenant_db: AsyncSession, invitation_id: uuid.UUID) -> None:
+async def _activate_next_step(
+    tenant_db: AsyncSession, invitation_id: uuid.UUID
+) -> InvitationApprovalStep | None:
     """After a step is approved, the next step by `step_order` (if any)
     becomes current — its own `escalates_at`/`auto_approves_at` are computed
     now, from its own snapshotted minute values, relative to *this* moment,
     not the invitation's original submission time (specs/approvals/spec.md
-    "A later step's timestamps are set when it becomes current").
+    "A later step's timestamps are set when it becomes current"). Returns
+    that newly-current step (or `None`) so the caller can dispatch its push
+    *after* its own commit (`approve_step` below) — never from in here, which
+    runs before that commit.
     """
     repo = InvitationApprovalStepRepository(tenant_db)
     next_step = await repo.get_current_pending(invitation_id)
     if next_step is None:
-        return
+        return None
     now = datetime.now(UTC)
     await repo.set_clock(
         next_step.id,
@@ -116,6 +123,7 @@ async def _activate_next_step(tenant_db: AsyncSession, invitation_id: uuid.UUID)
             else None
         ),
     )
+    return next_step
 
 
 async def approve_step(
@@ -148,8 +156,20 @@ async def approve_step(
     if remaining is None:
         return await invitations_service.approve_invitation(tenant_db, invitation, tenant=tenant)
 
-    await _activate_next_step(tenant_db, invitation.id)
+    activated_step = await _activate_next_step(tenant_db, invitation.id)
     await tenant_db.commit()
+    if activated_step is not None:
+        title, body, data = push_notifications.step_awaiting_approval(invitation)
+        await notifications_service.notify_step_approver(
+            tenant_db,
+            tenant_schema=tenant.schema_name,
+            approver_user_id=activated_step.approver_user_id,
+            approver_role_id=activated_step.approver_role_id,
+            branch_id=invitation.branch_id,
+            title=title,
+            body=body,
+            data=data,
+        )
     return invitation
 
 

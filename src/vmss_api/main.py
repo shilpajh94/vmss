@@ -120,6 +120,15 @@ _TAGS_METADATA = [
             "tenant/branch the same way `POST /registrations/walk-in` does."
         ),
     },
+    {
+        "name": "notifications",
+        "description": (
+            "Staff device registration and push-notification dispatch "
+            "(Firebase Cloud Messaging) for the web portal and Flutter app — "
+            "wired into the invitation/approval lifecycle so a host or "
+            "approver is notified of an action awaiting or affecting them."
+        ),
+    },
 ]
 
 

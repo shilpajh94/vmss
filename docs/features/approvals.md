@@ -76,6 +76,16 @@ The host step never has `escalatesAt`/`autoApprovesAt` — no rule backs it,
 so both stay null (consistent with "an unconfigured duration leaves its
 timestamp null").
 
+## Push notifications on step activation
+
+Approving a non-final step activates the next one (`_activate_next_step`),
+which — after the approving request's own commit — dispatches a staff
+push notification to that newly-current step's approver(s): the host if
+host-identified, else every holder of the step's role at the invitation's
+branch. Approving the *last* step activates nothing here; the invitation's
+own resolution (via `invitations.service.approve_invitation`) sends its own
+push to the host instead — see `docs/features/notifications.md`.
+
 ## Endpoints
 
 Both live under the `/invitations` path prefix (they're actions on an

@@ -33,6 +33,7 @@ from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
+from vmss_api.notifications.models import DeviceToken
 from vmss_api.org_structure.models import (
     Branch,
     Building,
@@ -86,6 +87,10 @@ class UserFactory(SQLAlchemyFactory[User]):
 
 class UserBranchRoleFactory(SQLAlchemyFactory[UserBranchRole]):
     __model__ = UserBranchRole
+
+
+class DeviceTokenFactory(SQLAlchemyFactory[DeviceToken]):
+    __model__ = DeviceToken
 
 
 class CompanyFactory(SQLAlchemyFactory[Company]):
