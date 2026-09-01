@@ -877,6 +877,7 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
         "approverRoleId": str(approver_role.id),
         "approverUserId": None,
         "totalSteps": 2,
+        "delegatedToUserId": None,
     }
 
     response = await client.get(
@@ -889,6 +890,7 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
         "approverRoleId": str(approver_role.id),
         "approverUserId": None,
         "totalSteps": 2,
+        "delegatedToUserId": None,
     }
 
 
@@ -1217,6 +1219,268 @@ async def test_list_invitations_invalid_sort_by_rejected(client: AsyncClient, us
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 422
+
+
+# --- relevantToMe filter (invitation-relevant-to-me-and-delegation) ----------
+
+
+async def _invitation_with_host_step(
+    db_session: AsyncSession, branch_id: uuid.UUID, host: User, **overrides
+):
+    """A `submitted` invitation whose `stepOrder` 0 step snapshots `host` as
+    its approver — the shape specs/invitations/spec.md "Caller Lists
+    Invitations Relevant to Themselves via relevantToMe" keys off.
+    """
+    invitation = _build_invitation(db_session, branch_id, host_id=host.id, **overrides)
+    db_session.add(invitation)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=0,
+            approver_role_id=None,
+            approver_user_id=host.id,
+        )
+    )
+    await db_session.commit()
+    return invitation
+
+
+async def _delegate_step(db_session: AsyncSession, invitation, delegate: User, delegated_by: User):
+    """Directly assigns `delegate` to `invitation`'s `stepOrder` 1 step, for
+    tests that only need a delegated step to already exist rather than
+    exercising the delegate endpoint itself (that's `approvals/tests.py`'s
+    job) — mirrors this module's other "unit-style" direct-repository setup
+    (testing-standards.md §3).
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"relevant-role-{uuid.uuid4().hex[:8]}")
+    db_session.add(role)
+    await db_session.flush()
+    step = InvitationApprovalStepFactory.build(
+        id=uuid.uuid4(),
+        invitation_id=invitation.id,
+        step_order=1,
+        approver_role_id=role.id,
+    )
+    db_session.add(step)
+    await db_session.flush()
+    updated = await InvitationApprovalStepRepository(db_session).delegate_if_eligible(
+        step.id, delegated_to_user_id=delegate.id, delegated_by_user_id=delegated_by.id
+    )
+    await db_session.commit()
+    return updated
+
+
+async def test_list_invitations_relevant_to_me_host_without_view_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "Host sees their own invitation without
+    invitations:view" — `relevantToMe` bypasses the branch-scoped
+    permission check entirely.
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    invitation = await _invitation_with_host_step(db_session, branch.id, host)
+
+    token = issue_token(host)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_delegate_sees_delegated_invitation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "Delegate sees the invitation they were
+    delegated" — regardless of `invitations:view` and regardless of that
+    step's current status.
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    delegate = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"delegate-{uuid.uuid4().hex[:8]}@acme-test.example",
+        full_name="Delegate",
+    )
+    db_session.add_all([host, delegate])
+    await db_session.flush()
+    invitation = await _invitation_with_host_step(db_session, branch.id, host)
+    await _delegate_step(db_session, invitation, delegate, host)
+
+    token = issue_token(delegate)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_excludes_unrelated_caller(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "Caller who is neither host nor delegate
+    sees nothing for that invitation" — even one who holds
+    `invitations:view` at that branch.
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    invitation = await _invitation_with_host_step(db_session, branch.id, host)
+
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    token = issue_token(viewer)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id not in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_composes_with_status_filter(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "relevantToMe composes with status
+    filtering".
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    submitted = await _invitation_with_host_step(
+        db_session, branch.id, host, status="submitted", approved_at=None
+    )
+    denied = await _invitation_with_host_step(
+        db_session, branch.id, host, status="denied", approved_at=None
+    )
+
+    token = issue_token(host)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true", "status": "submitted"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert submitted.tracking_id in tracking_ids
+    assert denied.tracking_id not in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_empty_result_is_not_an_error(
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
+) -> None:
+    """specs/invitations/spec.md "No relevant invitations returns an empty
+    page, not an error" — no `invitations:view` grant needed, and no
+    invitation names this caller either.
+    """
+    token = issue_token(user_without_permissions)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["data"] == []
+    assert body["pagination"]["total"] == 0
+
+
+async def test_list_invitations_relevant_to_me_ignores_branch_header(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "X-Branch-ID is ignored when relevantToMe
+    is set".
+    """
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-RELEVANT")
+    db_session.add(other_branch)
+    await db_session.flush()
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    invitation = await _invitation_with_host_step(db_session, other_branch.id, host)
+
+    token = issue_token(host)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    """testing-standards.md §2 — a caller's relevant-to-me set from one
+    tenant's schema must not see another tenant's invitations, even for a
+    user id that happens to exist in both.
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    await _invitation_with_host_step(db_session, branch.id, host)
+
+    other_schema = "tenant_other_test_invitation_relevant_to_me"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        rows, total = await InvitationRepository(other_session).list_page(
+            branch_scope=None,
+            relevant_to_user_id=host.id,
+            status=None,
+            registration_type=None,
+            source=None,
+            page=1,
+            page_size=20,
+            sort_by="submitted_at",
+            sort_order=SortOrder.desc,
+        )
+        assert rows == []
+        assert total == 0
 
 
 async def test_invitation_list_page_tenant_schema_isolation(

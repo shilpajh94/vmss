@@ -264,6 +264,7 @@ Query params:
 | `status` | string | unset | Exact match against the invitation's `status` column. |
 | `registrationType` | `individual` \| `group` | unset | |
 | `source` | `staff_pre_registration` \| `visitor_walk_in` | unset | |
+| `relevantToMe` | bool | `false` | See "Relevant to me" below — a different filter mode entirely, not a narrower branch scope. |
 
 Each row is an `InvitationListItemOut` — tracking ID, registration type,
 source, status, `visitorCategoryId`, primary contact name, purpose of visit,
@@ -272,6 +273,26 @@ and expiry/submission timestamps — deliberately narrower than
 `currentApprovalStep` either, so the underlying query never needs to
 eager-load a child collection or run the extra current-step lookup for a
 list view that doesn't render either (`query-performance.md` §1-2).
+
+## Relevant to me
+
+`GET /invitations?relevantToMe=true` is a personal worklist, not a narrower
+branch scope: it returns invitations where the caller is either the
+snapshotted host (the `stepOrder` 0 `InvitationApprovalStep`'s
+`approverUserId` — see `docs/features/approvals.md`) or has been delegated
+one of that invitation's approval steps (`docs/features/approvals.md`'s
+"Host delegation"), regardless of that step's or the invitation's current
+status.
+
+This deliberately **bypasses** `invitations:view` and `X-Branch-ID`
+entirely — a host or delegate with no branch-level view permission still
+needs to see and act on their own invitation, so this is a distinct query
+path from the branch-scoped mode above, not a variant of it. `X-Branch-ID`
+is ignored (not rejected, not narrowing) when `relevantToMe=true` is set.
+It composes with `status`/`registrationType`/`source` and with
+pagination/sorting exactly like the branch-scoped mode. A caller who is
+neither host nor delegate on any invitation gets an empty, successfully
+paginated result, not an error.
 
 ## The tracking ID is a plain, human-readable identifier
 

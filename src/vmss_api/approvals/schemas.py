@@ -26,6 +26,7 @@ class InvitationApprovalStepOut(CamelModel):
     acted_at: datetime | None
     escalates_at: datetime | None
     auto_approves_at: datetime | None
+    delegated_to_user_id: uuid.UUID | None
 
 
 class CurrentApprovalStepOut(CamelModel):
@@ -37,7 +38,10 @@ class CurrentApprovalStepOut(CamelModel):
     step's `id` grants no privilege by itself; both mutating endpoints
     independently re-check permission and role/host/override match).
     Exactly one of `approver_role_id`/`approver_user_id` is set, mirroring
-    `InvitationApprovalStep`'s own invariant.
+    `InvitationApprovalStep`'s own invariant. `delegated_to_user_id` is
+    null unless the host has delegated this step
+    (invitation-relevant-to-me-and-delegation/specs/approvals/spec.md
+    "Host Delegates the Step Following Their Own to a Specific Person").
     """
 
     id: uuid.UUID
@@ -45,7 +49,12 @@ class CurrentApprovalStepOut(CamelModel):
     approver_role_id: uuid.UUID | None
     approver_user_id: uuid.UUID | None
     total_steps: int
+    delegated_to_user_id: uuid.UUID | None = None
 
 
 class InvitationApprovalStepRejectRequest(CamelModel):
     reason: str = Field(min_length=1, max_length=500)
+
+
+class InvitationApprovalStepDelegateRequest(CamelModel):
+    delegate_user_id: uuid.UUID

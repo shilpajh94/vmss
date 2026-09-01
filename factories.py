@@ -220,6 +220,11 @@ class InvitationApprovalStepFactory(SQLAlchemyFactory[InvitationApprovalStep]):
     auto_approve_minutes = None
     escalates_at = None
     auto_approves_at = None
+    # Same FK-violation rationale as `approver_user_id` above: unset unless a
+    # test explicitly builds a delegated step.
+    delegated_to_user_id = None
+    delegated_by_user_id = None
+    delegated_at = None
 
 
 class InvitationVisitorFactory(SQLAlchemyFactory[InvitationVisitor]):

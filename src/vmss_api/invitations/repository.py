@@ -2,9 +2,10 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Select, select, update
+from sqlalchemy import Select, and_, or_, select, update
 from sqlalchemy.orm import selectinload
 
+from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
@@ -16,6 +17,28 @@ def _branch_filter(branch_scope: BranchScope) -> Any | None:
     company-wide "all" scope, otherwise `Invitation.branch_id IN (...)`.
     """
     return None if branch_scope == "all" else Invitation.branch_id.in_(branch_scope)
+
+
+def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
+    """specs/invitations/spec.md "Caller Lists Invitations Relevant to
+    Themselves via relevantToMe": invitations where `user_id` is either the
+    snapshotted host (the `stepOrder` 0 step's `approver_user_id`) or has
+    been delegated any step, regardless of that step's status. A single
+    subquery against `invitation_approval_steps`, not a per-invitation loop
+    (query-performance.md §2).
+    """
+    return Invitation.id.in_(
+        select(InvitationApprovalStep.invitation_id).where(
+            InvitationApprovalStep.deleted_at.is_(None),
+            or_(
+                and_(
+                    InvitationApprovalStep.step_order == 0,
+                    InvitationApprovalStep.approver_user_id == user_id,
+                ),
+                InvitationApprovalStep.delegated_to_user_id == user_id,
+            ),
+        )
+    )
 
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
@@ -230,7 +253,8 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
     async def list_page(
         self,
         *,
-        branch_scope: BranchScope,
+        branch_scope: BranchScope | None,
+        relevant_to_user_id: uuid.UUID | None = None,
         status: str | None,
         registration_type: str | None,
         source: str | None,
@@ -242,12 +266,26 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         """Backs `GET /invitations` (design.md Decision 2) — deliberately no
         `selectinload` of visitors/vehicles here (unlike `_with_children`
         above), since `InvitationListItemOut` doesn't serialize either.
+
+        `relevant_to_user_id`, when given, replaces the branch-scoped filter
+        entirely with the caller's personal host/delegate worklist
+        (specs/invitations/spec.md "Caller Lists Invitations Relevant to
+        Themselves via relevantToMe") — `branch_scope` is ignored in that
+        case, per invitation-relevant-to-me-and-delegation/design.md
+        "relevantToMe is implemented as a distinct query path, not a
+        require_branch_scope variant".
         """
         column = {"submitted_at": Invitation.submitted_at, "created_at": Invitation.created_at}[
             sort_by
         ]
-        branch_filter = _branch_filter(branch_scope)
-        filters: list[Any] = [f for f in [branch_filter] if f is not None]
+        filters: list[Any] = []
+        if relevant_to_user_id is not None:
+            filters.append(_relevant_to_me_filter(relevant_to_user_id))
+        else:
+            assert branch_scope is not None
+            branch_filter = _branch_filter(branch_scope)
+            if branch_filter is not None:
+                filters.append(branch_filter)
         if status is not None:
             filters.append(Invitation.status == status)
         if registration_type is not None:

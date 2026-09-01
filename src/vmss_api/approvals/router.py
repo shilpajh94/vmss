@@ -6,7 +6,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.approvals import service
-from vmss_api.approvals.schemas import InvitationApprovalStepRejectRequest
+from vmss_api.approvals.schemas import (
+    InvitationApprovalStepDelegateRequest,
+    InvitationApprovalStepRejectRequest,
+)
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.auth.models import User
 from vmss_api.core.deps import get_current_user, get_tenant, get_tenant_db
@@ -95,3 +98,43 @@ async def reject_step(
         entity_id=step_id,
     )
     return success_response(data=to_invitation_out(invitation))
+
+
+@router.post(
+    "/{invitation_id}/approval-steps/{step_id}/delegate",
+    response_model=Envelope[InvitationOut],
+)
+async def delegate_step(
+    invitation_id: uuid.UUID,
+    step_id: uuid.UUID,
+    payload: InvitationApprovalStepDelegateRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Lets the invitation's host hand the role-identified step immediately
+    following their own to a specific person, once their own step is
+    approved (specs/approvals/spec.md "Host Delegates the Step Following
+    Their Own to a Specific Person"). The delegation itself does not
+    advance the workflow — the delegate still has to separately approve or
+    reject the step via the endpoints above.
+    """
+    invitation = await invitations_service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(tenant_db, user, "invitations:approve", invitation.branch_id)
+    await service.delegate_step(
+        tenant_db, user, invitation, step_id, delegate_user_id=payload.delegate_user_id
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_approval_step_delegated",
+        entity_type="InvitationApprovalStep",
+        entity_id=step_id,
+        diff={"delegatedToUserId": str(payload.delegate_user_id)},
+    )
+    current_approval_step = await invitations_service.get_current_approval_step(
+        tenant_db, invitation
+    )
+    return success_response(data=to_invitation_out(invitation, current_approval_step))

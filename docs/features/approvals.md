@@ -49,6 +49,7 @@ constraint enforces this) — a role-identified step (from a rule) sets
 | `isMandatory` | Copied from the rule (always `true` for the host step). Not currently enforced by any skip logic — informational only in this change. |
 | `status` | `pending` \| `approved` \| `rejected` \| `skipped` \| `auto_approved` — plain string, not a DB enum, matching `Invitation.status`'s own convention. Only `pending`/`approved`/`rejected` are ever produced by code today; `skipped`/`auto_approved` are reserved for the not-yet-built enforcement job. |
 | `actedByUserId` / `actedAt` | Set when a caller approves or rejects the step. |
+| `delegatedToUserId` / `delegatedByUserId` / `delegatedAt` | Set once, by the host, on the role-identified step immediately following their own (`stepOrder` 1 only) — see "Host delegation" below. Null on every other step. |
 | `escalationMinutes` / `autoApproveMinutes` | Raw minute values copied from the rule at snapshot time — kept separately from the computed timestamps below because a later step needs its own duration again when it becomes current, and re-reading the live rule at that point would defeat the snapshot. |
 | `escalatesAt` / `autoApprovesAt` | Computed by adding the step's own `escalationMinutes`/`autoApproveMinutes` to the moment it became the current pending step (submission time for the first step, the moment the prior step was approved for every step after it). Null when the corresponding minute value isn't configured, or the step hasn't become current yet. **Nothing currently acts on either timestamp once it passes** — see invitations.md's "Not yet built". |
 
@@ -95,32 +96,64 @@ request/response reference. Summary:
 
 | Method | Path | Auth |
 |---|---|---|
-| POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/approve` | `invitations:approve` at the invitation's branch, **and** role-match or `invitations:approve-override` |
+| POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/approve` | `invitations:approve` at the invitation's branch, **and** delegate-match, role-match, host-match, or `invitations:approve-override` |
 | POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/reject` | Same as above; body: `{"reason": "..."}` |
+| POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/delegate` | `invitations:approve` at the invitation's branch, **and** caller must be the invitation's host acting on the step immediately following their own — see "Host delegation" below; body: `{"delegateUserId": "..."}` |
 
-## Authorization: role-match, host-match, or override
+## Authorization: delegate-match, role-match, host-match, or override
 
 Holding `invitations:approve` at the invitation's branch is necessary but
 not sufficient. The caller must additionally either:
 
-- for a **role-identified** step: hold, via a `UserBranchRole` grant, the
-  exact `Role` the current step's `approverRoleId` names — scoped to the
-  invitation's branch, or granted company-wide (`branch_id IS NULL`),
-  matching `auth.models.User.has_permission`'s own branch-or-company-wide
-  semantics; or
+- for a step with a **delegate assigned** (`delegatedToUserId` set): be
+  that exact user — `caller.id == step.delegatedToUserId`. Once a step has
+  a delegate, general role membership stops being a second valid path in —
+  see "Host delegation" below; or
+- for a **role-identified** step with no delegate assigned: hold, via a
+  `UserBranchRole` grant, the exact `Role` the current step's
+  `approverRoleId` names — scoped to the invitation's branch, or granted
+  company-wide (`branch_id IS NULL`), matching
+  `auth.models.User.has_permission`'s own branch-or-company-wide semantics;
+  or
 - for a **host-identified** step (`stepOrder` 0, when present): be that
   exact user — `caller.id == step.approverUserId`. No role check applies at
   all for this step kind; the step is authorized for that one person
   regardless of which role(s) they otherwise hold; or
 - hold the `invitations:approve-override` permission (seeded to `admin`
-  only in the default catalog), which bypasses the role-match or host-match
-  check entirely, for either step kind.
+  only in the default catalog), which bypasses the delegate-match,
+  role-match, or host-match check entirely, for any step kind.
 
 None of the above met → 403, whether or not the role/permission dependency
 chain already passed on `invitations:approve` alone. Note this means a host
 with no `invitations:approve` grant at their own branch cannot act on their
 own host-identified step — provisioning hosts with that permission is an
 RBAC/onboarding decision, not something this endpoint decides on its own.
+
+## Host delegation
+
+Once an invitation's `stepOrder` 0 host-identified step is `approved`,
+making the role-identified step at `stepOrder` 1 the current pending one,
+the invitation's host (the user identified by that `stepOrder` 0 step's
+`approverUserId`) can delegate `stepOrder` 1 to a specific person of their
+choosing, instead of leaving it open to anyone holding that step's role.
+
+- Only the step immediately following the host's own is delegable —
+  `stepOrder` 0 itself, and `stepOrder` 2+ in a 3-or-more level workflow,
+  are rejected.
+- The named delegate must hold the step's `approverRoleId` role at the
+  invitation's branch (or company-wide) at the moment of delegation, via the
+  same role-membership check a role-identified step action is authorized
+  with — an ineligible delegate is rejected (422).
+- A step can be delegated once; delegating an already-delegated step, or one
+  that's no longer the current pending step (already acted on, or the host's
+  own step isn't approved yet), is rejected (409).
+- Delegating does **not** itself advance the workflow — the step stays
+  `pending` until the delegate (or an `invitations:approve-override` holder)
+  separately approves or rejects it. A delegate approving the last step
+  finalizes the invitation exactly like any other last-step approval.
+
+The delegate then sees the invitation in their own `GET /invitations
+?relevantToMe=true` list — see `docs/features/invitations.md`.
 
 ## Not yet built
 

@@ -878,18 +878,37 @@ async def override_watchlist(
 )
 async def list_invitations(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
-    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("invitations:view"))],
+    user: Annotated[User, Depends(get_current_user)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    x_branch_id: Annotated[uuid.UUID | None, Header(alias="X-Branch-ID")] = None,
+    relevant_to_me: Annotated[bool, Query(alias="relevantToMe")] = False,
     sort_by: Annotated[InvitationSortableField, Query(alias="sortBy")] = "submitted_at",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.desc,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     registration_type: Annotated[RegistrationType | None, Query(alias="registrationType")] = None,
     source: Annotated[RegistrationSource | None, Query(alias="source")] = None,
 ) -> JSONResponse:
+    """specs/invitations/spec.md "Employee Lists Invitations at Their
+    Authorized Branches" (the default, branch-scoped mode) and "Caller
+    Lists Invitations Relevant to Themselves via relevantToMe" —
+    `relevantToMe=true` is a distinct personal worklist that bypasses the
+    `invitations:view` branch-permission check entirely rather than
+    narrowing it, so `X-Branch-ID` is read directly here (not via
+    `require_branch_scope`'s `Depends()`) and only consulted when
+    `relevantToMe` is not set (invitation-relevant-to-me-and-delegation/
+    design.md "relevantToMe is implemented as a distinct query path, not a
+    require_branch_scope variant").
+    """
     page, page_size = pagination
+    branch_scope: BranchScope | None = None
+    if not relevant_to_me:
+        branch_scope = await require_branch_scope("invitations:view")(
+            user=user, tenant_db=tenant_db, x_branch_id=x_branch_id
+        )
     invitations, total = await service.list_invitations_page(
         tenant_db,
         branch_scope=branch_scope,
+        relevant_to_user_id=user.id if relevant_to_me else None,
         status=status_filter,
         registration_type=registration_type.value if registration_type is not None else None,
         source=source.value if source is not None else None,

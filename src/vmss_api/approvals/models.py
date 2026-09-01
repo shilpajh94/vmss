@@ -80,3 +80,16 @@ class InvitationApprovalStep(Base, TimestampMixin):
     # Nothing in this change acts on either timestamp once it passes.
     escalates_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     auto_approves_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set once, by the host, on the role-identified step immediately
+    # following their own (`stepOrder` 1 only) — see
+    # invitation-relevant-to-me-and-delegation/design.md "Add
+    # delegated_to_user_id / delegated_by_user_id / delegated_at columns
+    # rather than repurposing approver_user_id". When set, this step is
+    # authorized for `delegated_to_user_id` only; `approver_role_id`'s role
+    # match no longer applies (specs/approvals/spec.md "Acting on a Step
+    # Requires the Caller's Matching Role, or an Explicit Override").
+    delegated_to_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id"), index=True
+    )
+    delegated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+    delegated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

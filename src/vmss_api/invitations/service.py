@@ -758,6 +758,7 @@ async def get_current_approval_step(
         approver_role_id=current.approver_role_id,
         approver_user_id=current.approver_user_id,
         total_steps=total_steps,
+        delegated_to_user_id=current.delegated_to_user_id,
     )
 
 
@@ -780,7 +781,8 @@ async def track_by_email(tenant_db: AsyncSession, email: str) -> list[Invitation
 async def list_invitations_page(
     tenant_db: AsyncSession,
     *,
-    branch_scope: BranchScope,
+    branch_scope: BranchScope | None,
+    relevant_to_user_id: uuid.UUID | None = None,
     status: str | None,
     registration_type: str | None,
     source: str | None,
@@ -791,6 +793,7 @@ async def list_invitations_page(
 ) -> tuple[list[Invitation], int]:
     return await InvitationRepository(tenant_db).list_page(
         branch_scope=branch_scope,
+        relevant_to_user_id=relevant_to_user_id,
         status=status,
         registration_type=registration_type,
         source=source,

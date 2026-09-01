@@ -47,10 +47,17 @@ async def _authorize_step_action(
     and-host-routing/design.md) is authorized for that specific person
     only, regardless of their assigned role — it is not role-matched at
     all. A role-identified step (`approver_role_id` set) keeps the
-    pre-existing role-match check. Either way,
-    `invitations:approve-override` bypasses the match entirely.
+    pre-existing role-match check, unless the host has delegated it
+    (`delegated_to_user_id` set — invitation-relevant-to-me-and-delegation/
+    design.md "_authorize_step_action checks the delegate before falling
+    back to the role match"), in which case only the delegate matches, not
+    just-any holder of the role. Either way, `invitations:approve-override`
+    bypasses the match entirely.
     """
-    if step.approver_user_id is not None:
+    if step.delegated_to_user_id is not None:
+        if user.id == step.delegated_to_user_id:
+            return
+    elif step.approver_user_id is not None:
         if user.id == step.approver_user_id:
             return
     else:
@@ -203,3 +210,68 @@ async def reject_step(
     return await invitations_service.deny_invitation(
         tenant_db, invitation, reason=reason, tenant=tenant
     )
+
+
+async def delegate_step(
+    tenant_db: AsyncSession,
+    user: User,
+    invitation: Invitation,
+    step_id: uuid.UUID,
+    *,
+    delegate_user_id: uuid.UUID,
+) -> InvitationApprovalStep:
+    """specs/approvals/spec.md "Host Delegates the Step Following Their Own
+    to a Specific Person". Only the invitation's host — the same user
+    identified by its `stepOrder` 0 step's `approver_user_id` — may
+    delegate, only once that host step is `approved`, and only the
+    role-identified step immediately following it (`stepOrder` 1, the now-
+    current pending step). The delegate must hold that step's
+    `approver_role_id` role at the invitation's branch (or company-wide),
+    checked with the same `_user_holds_role_at_branch` a role-identified
+    step action is authorized with (design.md "Delegation eligibility check
+    reuses `_user_holds_role_at_branch`").
+    """
+    repo = InvitationApprovalStepRepository(tenant_db)
+    named_step, current = await _resolve_current_step(tenant_db, invitation.id, step_id)
+    _require_is_current(named_step, current)
+
+    host_step = await repo.get_by_step_order(invitation.id, 0)
+    if host_step is None or host_step.approver_user_id is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="This invitation has no host-identified step to delegate from",
+        )
+    if user.id != host_step.approver_user_id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Only the invitation's host may delegate this step",
+        )
+    if named_step.step_order != host_step.step_order + 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Only the step immediately following the host's own step can be delegated",
+        )
+    if host_step.status != "approved":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="The host's own step must be approved before delegating the next one",
+        )
+    assert named_step.approver_role_id is not None  # DB CHECK: exactly one of role/user is set
+    if not await _user_holds_role_at_branch(
+        tenant_db, delegate_user_id, named_step.approver_role_id, invitation.branch_id
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Delegate does not hold this step's approver role at the invitation's branch",
+        )
+
+    updated_step = await repo.delegate_if_eligible(
+        step_id, delegated_to_user_id=delegate_user_id, delegated_by_user_id=user.id
+    )
+    if updated_step is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="This step has already been delegated or is no longer pending",
+        )
+    await tenant_db.commit()
+    return updated_step
