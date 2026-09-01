@@ -18,6 +18,7 @@ import type { EmployeeDirectoryRepository } from './data/repositories/employee-d
 import type { ReceptionDeskRepository } from './data/repositories/reception-desk-repository'
 import type { SecurityGateRepository } from './data/repositories/security-gate-repository'
 import type { VisitorCategoryRepository } from './data/repositories/visitor-category-repository'
+import type { ApprovalWorkflowRuleRepository } from './data/repositories/approval-workflow-rule-repository'
 import { SubmitVisitRequestUseCase } from './data/use-cases/submit-visit-request'
 import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-visit-request'
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
@@ -28,6 +29,12 @@ import { LoginStaffUseCase } from './data/use-cases/login-staff'
 import { StartSsoLoginUseCase } from './data/use-cases/start-sso-login'
 import { ExchangeSsoCodeUseCase } from './data/use-cases/exchange-sso-code'
 import { ListVisitRequestsUseCase } from './data/use-cases/list-visit-requests'
+import { ApproveInvitationUseCase } from './data/use-cases/approve-invitation'
+import { GetInvitationDetailUseCase } from './data/use-cases/get-invitation-detail'
+import { RescheduleInvitationUseCase } from './data/use-cases/reschedule-invitation'
+import { DenyInvitationUseCase } from './data/use-cases/deny-invitation'
+import { ApproveInvitationStepUseCase } from './data/use-cases/approve-invitation-step'
+import { RejectInvitationStepUseCase } from './data/use-cases/reject-invitation-step'
 import { GetCurrentStaffUserUseCase } from './data/use-cases/get-current-staff-user'
 import { GetOrganisationConfigUseCase } from './data/use-cases/get-organisation-config'
 import { UpdateOrganisationConfigUseCase } from './data/use-cases/update-organisation-config'
@@ -53,6 +60,9 @@ import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
 import { ListEmployeeDirectoryUseCase } from './data/use-cases/list-employee-directory'
 import { CreateHostEmployeeUseCase } from './data/use-cases/create-host-employee'
 import { ListRolesUseCase } from './data/use-cases/list-roles'
+import { ListPermissionsUseCase } from './data/use-cases/list-permissions'
+import { UpdateRolePermissionsUseCase } from './data/use-cases/update-role-permissions'
+import { ResyncRolePermissionsUseCase } from './data/use-cases/resync-role-permissions'
 import { AssignHostEmployeeRoleUseCase } from './data/use-cases/assign-host-employee-role'
 import { RevokeHostEmployeeRoleUseCase } from './data/use-cases/revoke-host-employee-role'
 import { ListReceptionDesksUseCase } from './data/use-cases/list-reception-desks'
@@ -67,6 +77,9 @@ import { ListVisitorCategoriesUseCase } from './data/use-cases/list-visitor-cate
 import { CreateVisitorCategoryUseCase } from './data/use-cases/create-visitor-category'
 import { UpdateVisitorCategoryUseCase } from './data/use-cases/update-visitor-category'
 import { DeleteVisitorCategoryUseCase } from './data/use-cases/delete-visitor-category'
+import { ListApprovalWorkflowRulesUseCase } from './data/use-cases/list-approval-workflow-rules'
+import { SaveWorkflowUseCase } from './data/use-cases/save-workflow'
+import { DeleteWorkflowUseCase } from './data/use-cases/delete-workflow'
 import { HttpVisitRequestRepository } from './infrastructure/visit-request-repository'
 import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-request-summary-repository'
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
@@ -86,6 +99,7 @@ import { HttpEmployeeDirectoryRepository } from './infrastructure/employee-direc
 import { HttpReceptionDeskRepository } from './infrastructure/reception-desk-repository'
 import { HttpSecurityGateRepository } from './infrastructure/security-gate-repository'
 import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category-repository'
+import { HttpApprovalWorkflowRuleRepository } from './infrastructure/approval-workflow-rule-repository'
 
 export interface AppDependencies {
   apiClient: ApiClient
@@ -97,6 +111,12 @@ export interface AppDependencies {
   startSsoLoginUseCase: StartSsoLoginUseCase
   exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase
   listVisitRequestsUseCase: ListVisitRequestsUseCase
+  approveInvitationUseCase: ApproveInvitationUseCase
+  getInvitationDetailUseCase: GetInvitationDetailUseCase
+  rescheduleInvitationUseCase: RescheduleInvitationUseCase
+  denyInvitationUseCase: DenyInvitationUseCase
+  approveInvitationStepUseCase: ApproveInvitationStepUseCase
+  rejectInvitationStepUseCase: RejectInvitationStepUseCase
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
   getAuditTrailUseCase: GetAuditTrailUseCase
@@ -124,6 +144,9 @@ export interface AppDependencies {
   listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase
   createHostEmployeeUseCase: CreateHostEmployeeUseCase
   listRolesUseCase: ListRolesUseCase
+  listPermissionsUseCase: ListPermissionsUseCase
+  updateRolePermissionsUseCase: UpdateRolePermissionsUseCase
+  resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase
   assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase
   revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase
   listReceptionDesksUseCase: ListReceptionDesksUseCase
@@ -138,6 +161,9 @@ export interface AppDependencies {
   createVisitorCategoryUseCase: CreateVisitorCategoryUseCase
   updateVisitorCategoryUseCase: UpdateVisitorCategoryUseCase
   deleteVisitorCategoryUseCase: DeleteVisitorCategoryUseCase
+  listApprovalWorkflowRulesUseCase: ListApprovalWorkflowRulesUseCase
+  saveWorkflowUseCase: SaveWorkflowUseCase
+  deleteWorkflowUseCase: DeleteWorkflowUseCase
 }
 
 export function createApp(): AppDependencies {
@@ -156,6 +182,12 @@ export function createApp(): AppDependencies {
   let startSsoLoginUseCase: StartSsoLoginUseCase | undefined
   let exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase | undefined
   let listVisitRequestsUseCase: ListVisitRequestsUseCase | undefined
+  let approveInvitationUseCase: ApproveInvitationUseCase | undefined
+  let getInvitationDetailUseCase: GetInvitationDetailUseCase | undefined
+  let rescheduleInvitationUseCase: RescheduleInvitationUseCase | undefined
+  let denyInvitationUseCase: DenyInvitationUseCase | undefined
+  let approveInvitationStepUseCase: ApproveInvitationStepUseCase | undefined
+  let rejectInvitationStepUseCase: RejectInvitationStepUseCase | undefined
   let getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase | undefined
   let staffVisitRequestRepository: StaffVisitRequestRepository | undefined
   let submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase | undefined
@@ -193,6 +225,9 @@ export function createApp(): AppDependencies {
   let listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase | undefined
   let createHostEmployeeUseCase: CreateHostEmployeeUseCase | undefined
   let listRolesUseCase: ListRolesUseCase | undefined
+  let listPermissionsUseCase: ListPermissionsUseCase | undefined
+  let updateRolePermissionsUseCase: UpdateRolePermissionsUseCase | undefined
+  let resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase | undefined
   let assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase | undefined
   let revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase | undefined
   let receptionDeskRepository: ReceptionDeskRepository | undefined
@@ -210,6 +245,10 @@ export function createApp(): AppDependencies {
   let createVisitorCategoryUseCase: CreateVisitorCategoryUseCase | undefined
   let updateVisitorCategoryUseCase: UpdateVisitorCategoryUseCase | undefined
   let deleteVisitorCategoryUseCase: DeleteVisitorCategoryUseCase | undefined
+  let approvalWorkflowRuleRepository: ApprovalWorkflowRuleRepository | undefined
+  let listApprovalWorkflowRulesUseCase: ListApprovalWorkflowRulesUseCase | undefined
+  let saveWorkflowUseCase: SaveWorkflowUseCase | undefined
+  let deleteWorkflowUseCase: DeleteWorkflowUseCase | undefined
 
   const resolveApiClient = (): ApiClient => {
     apiClient ??= new ApiClient(import.meta.env.VITE_API_BASE_URL)
@@ -284,6 +323,36 @@ export function createApp(): AppDependencies {
   const resolveListVisitRequestsUseCase = (): ListVisitRequestsUseCase => {
     listVisitRequestsUseCase ??= new ListVisitRequestsUseCase(resolveVisitRequestSummaryRepository())
     return listVisitRequestsUseCase
+  }
+
+  const resolveApproveInvitationUseCase = (): ApproveInvitationUseCase => {
+    approveInvitationUseCase ??= new ApproveInvitationUseCase(resolveVisitRequestSummaryRepository())
+    return approveInvitationUseCase
+  }
+
+  const resolveGetInvitationDetailUseCase = (): GetInvitationDetailUseCase => {
+    getInvitationDetailUseCase ??= new GetInvitationDetailUseCase(resolveVisitRequestSummaryRepository())
+    return getInvitationDetailUseCase
+  }
+
+  const resolveRescheduleInvitationUseCase = (): RescheduleInvitationUseCase => {
+    rescheduleInvitationUseCase ??= new RescheduleInvitationUseCase(resolveVisitRequestSummaryRepository())
+    return rescheduleInvitationUseCase
+  }
+
+  const resolveDenyInvitationUseCase = (): DenyInvitationUseCase => {
+    denyInvitationUseCase ??= new DenyInvitationUseCase(resolveVisitRequestSummaryRepository())
+    return denyInvitationUseCase
+  }
+
+  const resolveApproveInvitationStepUseCase = (): ApproveInvitationStepUseCase => {
+    approveInvitationStepUseCase ??= new ApproveInvitationStepUseCase(resolveVisitRequestSummaryRepository())
+    return approveInvitationStepUseCase
+  }
+
+  const resolveRejectInvitationStepUseCase = (): RejectInvitationStepUseCase => {
+    rejectInvitationStepUseCase ??= new RejectInvitationStepUseCase(resolveVisitRequestSummaryRepository())
+    return rejectInvitationStepUseCase
   }
 
   const resolveGetCurrentStaffUserUseCase = (): GetCurrentStaffUserUseCase => {
@@ -472,6 +541,21 @@ export function createApp(): AppDependencies {
     return listRolesUseCase
   }
 
+  const resolveListPermissionsUseCase = (): ListPermissionsUseCase => {
+    listPermissionsUseCase ??= new ListPermissionsUseCase(resolveHostEmployeeRepository())
+    return listPermissionsUseCase
+  }
+
+  const resolveUpdateRolePermissionsUseCase = (): UpdateRolePermissionsUseCase => {
+    updateRolePermissionsUseCase ??= new UpdateRolePermissionsUseCase(resolveHostEmployeeRepository())
+    return updateRolePermissionsUseCase
+  }
+
+  const resolveResyncRolePermissionsUseCase = (): ResyncRolePermissionsUseCase => {
+    resyncRolePermissionsUseCase ??= new ResyncRolePermissionsUseCase(resolveHostEmployeeRepository())
+    return resyncRolePermissionsUseCase
+  }
+
   const resolveAssignHostEmployeeRoleUseCase = (): AssignHostEmployeeRoleUseCase => {
     assignHostEmployeeRoleUseCase ??= new AssignHostEmployeeRoleUseCase(resolveHostEmployeeRepository())
     return assignHostEmployeeRoleUseCase
@@ -562,6 +646,26 @@ export function createApp(): AppDependencies {
     return deleteVisitorCategoryUseCase
   }
 
+  const resolveApprovalWorkflowRuleRepository = (): ApprovalWorkflowRuleRepository => {
+    approvalWorkflowRuleRepository ??= new HttpApprovalWorkflowRuleRepository(resolveApiClient())
+    return approvalWorkflowRuleRepository
+  }
+
+  const resolveListApprovalWorkflowRulesUseCase = (): ListApprovalWorkflowRulesUseCase => {
+    listApprovalWorkflowRulesUseCase ??= new ListApprovalWorkflowRulesUseCase(resolveApprovalWorkflowRuleRepository())
+    return listApprovalWorkflowRulesUseCase
+  }
+
+  const resolveSaveWorkflowUseCase = (): SaveWorkflowUseCase => {
+    saveWorkflowUseCase ??= new SaveWorkflowUseCase(resolveApprovalWorkflowRuleRepository())
+    return saveWorkflowUseCase
+  }
+
+  const resolveDeleteWorkflowUseCase = (): DeleteWorkflowUseCase => {
+    deleteWorkflowUseCase ??= new DeleteWorkflowUseCase(resolveApprovalWorkflowRuleRepository())
+    return deleteWorkflowUseCase
+  }
+
   return {
     get apiClient() {
       return resolveApiClient()
@@ -589,6 +693,24 @@ export function createApp(): AppDependencies {
     },
     get listVisitRequestsUseCase() {
       return resolveListVisitRequestsUseCase()
+    },
+    get getInvitationDetailUseCase() {
+      return resolveGetInvitationDetailUseCase()
+    },
+    get rescheduleInvitationUseCase() {
+      return resolveRescheduleInvitationUseCase()
+    },
+    get denyInvitationUseCase() {
+      return resolveDenyInvitationUseCase()
+    },
+    get approveInvitationStepUseCase() {
+      return resolveApproveInvitationStepUseCase()
+    },
+    get rejectInvitationStepUseCase() {
+      return resolveRejectInvitationStepUseCase()
+    },
+    get approveInvitationUseCase() {
+      return resolveApproveInvitationUseCase()
     },
     get getCurrentStaffUserUseCase() {
       return resolveGetCurrentStaffUserUseCase()
@@ -671,6 +793,15 @@ export function createApp(): AppDependencies {
     get listRolesUseCase() {
       return resolveListRolesUseCase()
     },
+    get listPermissionsUseCase() {
+      return resolveListPermissionsUseCase()
+    },
+    get updateRolePermissionsUseCase() {
+      return resolveUpdateRolePermissionsUseCase()
+    },
+    get resyncRolePermissionsUseCase() {
+      return resolveResyncRolePermissionsUseCase()
+    },
     get assignHostEmployeeRoleUseCase() {
       return resolveAssignHostEmployeeRoleUseCase()
     },
@@ -712,6 +843,15 @@ export function createApp(): AppDependencies {
     },
     get deleteVisitorCategoryUseCase() {
       return resolveDeleteVisitorCategoryUseCase()
+    },
+    get listApprovalWorkflowRulesUseCase() {
+      return resolveListApprovalWorkflowRulesUseCase()
+    },
+    get saveWorkflowUseCase() {
+      return resolveSaveWorkflowUseCase()
+    },
+    get deleteWorkflowUseCase() {
+      return resolveDeleteWorkflowUseCase()
     },
   }
 }

@@ -1,6 +1,7 @@
 import { DashboardSidebar } from '../../components/DashboardSidebar'
 import { LoadingState } from '../../components/ui/LoadingState'
-import { KanbanColumn } from './Components/KanbanColumn'
+import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
+import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { SearchActionBar } from './Components/SearchActionBar'
 import { WorkspaceHeader } from './Components/WorkspaceHeader'
 import { useStaffDashboard } from './hooks/use-staff-dashboard'
@@ -13,7 +14,31 @@ const EMPTY_MESSAGES: Record<string, string> = {
 }
 
 export function StaffDashboardPage() {
-  const { currentUser, columns, isLoading, errorMessage, search, setSearch, refresh, signOut } = useStaffDashboard()
+  const {
+    currentUser,
+    columns,
+    isLoading,
+    errorMessage,
+    search,
+    setSearch,
+    refresh,
+    signOut,
+    approve,
+    approvingId,
+    expandedId,
+    toggleExpand,
+    invitationDetails,
+    loadingDetailId,
+    roleNameById,
+    employeeNameById,
+    reschedule,
+    reschedulingId,
+    pendingDenyId,
+    requestDeny,
+    cancelDeny,
+    confirmDeny,
+    denyingId,
+  } = useStaffDashboard()
 
   return (
     <div className="flex min-h-screen w-full items-stretch bg-bg">
@@ -41,11 +66,23 @@ export function StaffDashboardPage() {
                 label={column.label}
                 requests={column.requests}
                 emptyMessage={EMPTY_MESSAGES[column.status]}
+                onDrop={column.status === 'approved' ? approve : column.status === 'denied' ? requestDeny : undefined}
+                approvingId={approvingId}
+                expandedId={expandedId}
+                onToggleExpand={toggleExpand}
+                invitationDetails={invitationDetails}
+                loadingDetailId={loadingDetailId}
+                roleNameById={roleNameById}
+                employeeNameById={employeeNameById}
+                onReschedule={reschedule}
+                reschedulingId={reschedulingId}
               />
             ))}
           </div>
         )}
       </main>
+
+      <DenyInvitationModal isOpen={pendingDenyId !== undefined} isDenying={denyingId !== undefined} onConfirm={confirmDeny} onCancel={cancelDeny} />
     </div>
   )
 }

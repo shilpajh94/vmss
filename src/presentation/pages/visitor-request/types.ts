@@ -95,12 +95,15 @@ export function toVisitor(entry: VisitorFormEntry): Visitor {
 }
 
 // Maps wizard form state onto the `payload` wire contract for
-// POST /registrations/walk-in. `location`/`building`/address/visitorCategory/
-// profile image aren't part of that contract (yet) and are dropped here; ID-proof
+// POST /registrations/walk-in. `location`/`building`/address/profile image
+// aren't part of that contract (yet) and are dropped here; the primary
+// contact's visitor category becomes the invitation-level `visitorCategoryId`
+// (the wire contract has one category per invitation, not per visitor). ID-proof
 // files travel separately as multipart file fields, see use-visitor-request-wizard.
 export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
   return {
     registrationType: formState.registrationType,
+    visitorCategoryId: formState.primaryContact.visitorCategory,
     primaryContact: toVisitor(formState.primaryContact),
     visitors: formState.additionalVisitors.map(toVisitor),
     visitDetails: {

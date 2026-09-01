@@ -1,9 +1,11 @@
 import { useNavigate } from 'react-router'
 import {
   BuildingIcon,
+  CalendarCheckIcon,
   GitBranchIcon,
   HomeIcon,
   LayersIcon,
+  ListChecksIcon,
   MonitorIcon,
   SettingsIcon,
   ShieldIcon,
@@ -23,6 +25,9 @@ export type AdminSidebarActiveItem =
   | 'security-gates'
   | 'host-employees'
   | 'visitor-categories'
+  | 'workflows'
+  | 'invitations'
+  | 'roles'
 
 interface AdminSidebarProps {
   activeItem: AdminSidebarActiveItem
@@ -39,6 +44,9 @@ const NAV_ITEMS = [
   { key: 'security-gates', label: 'Security Gates', icon: ShieldIcon },
   { key: 'host-employees', label: 'Host Employees', icon: UserCheckIcon },
   { key: 'visitor-categories', label: 'Visitor Categories', icon: TagIcon },
+  { key: 'workflows', label: 'Workflows', icon: ListChecksIcon },
+  { key: 'invitations', label: 'Invitations', icon: CalendarCheckIcon },
+  { key: 'roles', label: 'Roles & Permissions', icon: ShieldIcon },
 ] as const satisfies ReadonlyArray<{ key: AdminSidebarActiveItem; label: string; icon: unknown }>
 
 export function AdminSidebar({ activeItem }: AdminSidebarProps) {
@@ -55,6 +63,9 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
     if (key === 'reception-desks') navigate('/admin/reception-desks')
     if (key === 'security-gates') navigate('/admin/security-gates')
     if (key === 'visitor-categories') navigate('/admin/visitor-categories')
+    if (key === 'workflows') navigate('/admin/workflows')
+    if (key === 'invitations') navigate('/admin/invitations')
+    if (key === 'roles') navigate('/admin/roles')
   }
 
   return (

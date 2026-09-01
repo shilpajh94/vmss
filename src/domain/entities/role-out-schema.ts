@@ -23,3 +23,11 @@ export const RoleListResponseSchema = z.object({
 })
 
 export type RoleListResponse = z.infer<typeof RoleListResponseSchema>
+
+export const RoleResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: RoleOutSchema,
+})
+
+export type RoleResponse = z.infer<typeof RoleResponseSchema>

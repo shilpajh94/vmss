@@ -5,7 +5,13 @@ import type { HostEmployeeRepository } from '../data/repositories/host-employee-
 import { EmployeeListResponseSchema, type EmployeeOut } from '../domain/entities/employee-out-schema'
 import { EmployeeSyncResponseSchema, type EmployeeSyncItem } from '../domain/entities/employee-sync-schema'
 import type { BranchRoleAssignment, HostEmployee, HostEmployeeCreateInput } from '../domain/entities/host-employee-schema'
-import { RoleListResponseSchema, type RoleOut } from '../domain/entities/role-out-schema'
+import { RoleListResponseSchema, RoleResponseSchema, type RoleOut } from '../domain/entities/role-out-schema'
+import {
+  PermissionListResponseSchema,
+  RolePermissionResyncResponseSchema,
+  type PermissionOut,
+  type RolePermissionResyncEntry,
+} from '../domain/entities/permission-out-schema'
 import { BranchRoleResponseSchema } from '../domain/entities/user-out-schema'
 
 function toHostEmployee(employee: EmployeeOut): HostEmployee {
@@ -112,5 +118,34 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
       pathParams: { userId, assignmentId },
       parserSchema: z.unknown(),
     })
+  }
+
+  async listPermissions(): Promise<PermissionOut[]> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.LIST_PERMISSIONS,
+      parserSchema: PermissionListResponseSchema,
+    })
+
+    return response.data
+  }
+
+  async updateRolePermissions(roleId: string, permissionCodes: string[]): Promise<RoleOut> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.UPDATE_ROLE,
+      pathParams: { id: roleId },
+      body: { permissionCodes },
+      parserSchema: RoleResponseSchema,
+    })
+
+    return response.data
+  }
+
+  async resyncRolePermissions(): Promise<RolePermissionResyncEntry[]> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.RESYNC_ROLE_PERMISSIONS,
+      parserSchema: RolePermissionResyncResponseSchema,
+    })
+
+    return response.data
   }
 }

@@ -40,7 +40,7 @@ interface VisitorFieldsFormProps {
 
 export function VisitorFieldsForm({ value, onChange, showContactMethod, uploadFile, errors, visitorCategories }: VisitorFieldsFormProps) {
   const visitorCategoryOptions = visitorCategories?.length
-    ? visitorCategories.map((category) => ({ value: category.code, label: category.name }))
+    ? visitorCategories.map((category) => ({ value: category.id, label: category.name }))
     : VISITOR_CATEGORY_OPTIONS
 
   return (

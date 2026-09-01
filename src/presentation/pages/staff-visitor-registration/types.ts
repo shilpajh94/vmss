@@ -6,6 +6,7 @@ export interface StaffVisitorFormEntry {
   fullName: string
   email: string
   phone: string
+  visitorCategory: string
   preferredContactMethod?: 'email' | 'sms'
   idProofType: string
   idProofFileRef?: string
@@ -17,6 +18,7 @@ export function createEmptyStaffVisitorFormEntry(): StaffVisitorFormEntry {
     fullName: '',
     email: '',
     phone: '',
+    visitorCategory: '',
     // Matches the Preferred Contact Method toggle's default visual selection.
     preferredContactMethod: 'email',
     idProofType: '',
@@ -67,11 +69,14 @@ function toStaffVisitor(entry: StaffVisitorFormEntry) {
 
 // Maps wizard form state onto the `payload` wire contract for POST /invitations
 // (identical contract to POST /registrations/walk-in, see visitor-request/types.ts).
-// `location`/`building` aren't part of that contract and are dropped here;
-// ID-proof files travel separately, see use-staff-visitor-registration-wizard.
+// `location`/`building` aren't part of that contract and are dropped here; the
+// primary contact's visitor category becomes the invitation-level
+// `visitorCategoryId` (one category per invitation, not per visitor). ID-proof
+// files travel separately, see use-staff-visitor-registration-wizard.
 export function toStaffVisitRequest(formState: StaffVisitRequestFormState): StaffVisitRequest {
   return {
     registrationType: formState.registrationType,
+    visitorCategoryId: formState.primaryContact.visitorCategory,
     primaryContact: toStaffVisitor(formState.primaryContact),
     visitors: formState.additionalVisitors.map(toStaffVisitor),
     visitDetails: {

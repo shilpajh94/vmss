@@ -6,6 +6,7 @@ import { VisitorSchema } from "./visitor-schema"
 // POST /registrations/walk-in (identical contract to POST /invitations).
 export const VisitRequestSchema = z.object({
   registrationType: z.enum(["individual", "group"]),
+  visitorCategoryId: z.string().min(1),
   primaryContact: VisitorSchema,
   visitors: z.array(VisitorSchema),
   visitDetails: z.object({

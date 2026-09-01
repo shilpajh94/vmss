@@ -7,6 +7,7 @@ import type { Building } from '../../../domain/entities/building-schema'
 import type { Department } from '../../../domain/entities/department-schema'
 import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
 import type { StaffUser } from '../../../domain/entities/staff-user-schema'
+import type { VisitorCategory } from '../../../domain/entities/visitor-category-schema'
 import { CarriedItemsStep } from '../visitor-request/Components/steps/CarriedItemsStep'
 import { ConsentStep } from '../visitor-request/Components/steps/ConsentStep'
 import { ReviewConfirmStep } from '../visitor-request/Components/steps/ReviewConfirmStep'
@@ -20,13 +21,20 @@ import { STAFF_WIZARD_STEPS } from './types'
 
 export function StaffVisitorRegistrationPage() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listHostEmployeesUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase } =
-    useAppDependencies()
+  const {
+    getCurrentStaffUserUseCase,
+    listHostEmployeesUseCase,
+    listBranchesUseCase,
+    listBuildingsUseCase,
+    listDepartmentsUseCase,
+    listVisitorCategoriesUseCase,
+  } = useAppDependencies()
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [hostEmployees, setHostEmployees] = useState<HostEmployee[] | undefined>(undefined)
   const [branches, setBranches] = useState<Branch[] | undefined>(undefined)
   const [buildings, setBuildings] = useState<Building[] | undefined>(undefined)
   const [departments, setDepartments] = useState<Department[] | undefined>(undefined)
+  const [visitorCategories, setVisitorCategories] = useState<VisitorCategory[] | undefined>(undefined)
 
   const {
     currentStep,
@@ -53,20 +61,22 @@ export function StaffVisitorRegistrationPage() {
 
   const loadVisitInfoMasterData = useCallback(async () => {
     try {
-      const [employees, branchList, buildingList, departmentList] = await Promise.all([
+      const [employees, branchList, buildingList, departmentList, categoryList] = await Promise.all([
         listHostEmployeesUseCase.execute(),
         listBranchesUseCase.execute(),
         listBuildingsUseCase.execute(),
         listDepartmentsUseCase.execute(),
+        listVisitorCategoriesUseCase.execute(),
       ])
       setHostEmployees(employees)
       setBranches(branchList)
       setBuildings(buildingList)
       setDepartments(departmentList)
+      setVisitorCategories(categoryList)
     } catch {
       // Visit Info step falls back to free-text fields if master data can't be loaded.
     }
-  }, [listHostEmployeesUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase])
+  }, [listHostEmployeesUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase, listVisitorCategoriesUseCase])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -108,6 +118,7 @@ export function StaffVisitorRegistrationPage() {
                 onAdditionalVisitorsChange={(additionalVisitors) => setFormState({ ...formState, additionalVisitors })}
                 uploadFile={uploadFile}
                 errors={errors}
+                visitorCategories={visitorCategories}
               />
             )}
             {currentStep === 1 && (
