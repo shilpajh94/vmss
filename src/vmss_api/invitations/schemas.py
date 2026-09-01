@@ -5,6 +5,7 @@ from typing import Literal, Self
 
 from pydantic import EmailStr, Field, model_validator
 
+from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.core.schemas import CamelModel
 
 InvitationSortableField = Literal["submitted_at", "created_at"]
@@ -179,6 +180,14 @@ class InvitationCreate(CamelModel):
             "required."
         ),
     )
+    visitor_category_id: uuid.UUID = Field(
+        description=(
+            "Which VisitorCategory this invitation is tagged with — must "
+            "resolve to an active category in the resolved tenant. Drives "
+            "whether the invitation gets a multi-step approval workflow "
+            "snapshotted onto it at submission time."
+        ),
+    )
     primary_contact: InvitationPrimaryContactCreate
     visitors: list[VisitorSubmit] = Field(default_factory=list)
     visit_details: VisitDetailsSubmit
@@ -202,9 +211,12 @@ class InvitationOut(CamelModel):
     registration_type: RegistrationType
     source: RegistrationSource
     status: str
+    visitor_category_id: uuid.UUID | None
+    host_id: uuid.UUID | None = None
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
+    current_approval_step: CurrentApprovalStepOut | None = None
 
 
 # --- Employee listing --------------------------------------------------------
@@ -222,6 +234,7 @@ class InvitationListItemOut(CamelModel):
     registration_type: RegistrationType
     source: RegistrationSource
     status: str
+    visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
     purpose_of_visit: str | None
     expires_at: datetime
@@ -260,6 +273,7 @@ class InvitationTrackingOut(CamelModel):
     status: str
     registration_type: str
     source: str
+    visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
     purpose_of_visit: str | None
     host_name_or_email: str | None
@@ -273,6 +287,7 @@ class InvitationTrackingOut(CamelModel):
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
+    current_approval_step: CurrentApprovalStepOut | None = None
     visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 
@@ -285,3 +300,87 @@ class InvitationTrackingSummaryOut(CamelModel):
 
     tracking_id: str
     status: str
+
+
+# --- add-invitation-lifecycle-actions: staff detail view + lifecycle actions -
+
+
+class InvitationDetailOut(CamelModel):
+    """`GET /invitations/{id}` — everything `InvitationTrackingOut` returns
+    plus branch/source/creator and every lifecycle field this capability
+    adds (design.md Decision 2). Deliberately a separate schema from
+    `InvitationTrackingOut`: that one is served to an unauthenticated public
+    caller and must never carry `branchId`/`createdByUserId`/badge/
+    watchlist internals.
+    """
+
+    id: uuid.UUID
+    branch_id: uuid.UUID
+    source: RegistrationSource
+    created_by_user_id: uuid.UUID | None
+    tracking_id: str
+    status: str
+    registration_type: str
+    visitor_category_id: uuid.UUID | None
+    primary_contact_full_name: str
+    purpose_of_visit: str | None
+    host_name_or_email: str | None
+    host_id: uuid.UUID | None = None
+    preferred_visit_date: date | None
+    preferred_visit_time: time | None
+    expected_duration: str | None
+    department_to_visit: str | None
+    additional_notes: str | None
+    carried_items: list[str]
+    carried_items_description: str | None
+    expires_at: datetime
+    submitted_at: datetime | None
+    approved_at: datetime | None
+    current_approval_step: CurrentApprovalStepOut | None = None
+    denial_reason: str | None
+    denied_at: datetime | None
+    checked_in_at: datetime | None
+    checked_in_by_user_id: uuid.UUID | None
+    checked_out_at: datetime | None
+    checked_out_by_user_id: uuid.UUID | None
+    badge_number: str | None
+    badge_issued_at: datetime | None
+    badge_reprint_count: int
+    watchlist_flagged: bool
+    watchlist_override_at: datetime | None
+    watchlist_override_reason: str | None
+    watchlist_override_by_user_id: uuid.UUID | None
+    visitors: list[InvitationVisitorOut]
+    vehicles: list[InvitationVehicleOut]
+
+
+class InvitationDenyRequest(CamelModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class InvitationRescheduleRequest(CamelModel):
+    preferred_visit_date: date
+    preferred_visit_time: time
+
+
+class InvitationExtendRequest(CamelModel):
+    expires_at: datetime = Field(
+        description="New expiry — must be strictly later than the invitation's current expiresAt."
+    )
+
+    @model_validator(mode="after")
+    def _check_timezone_aware(self) -> Self:
+        if self.expires_at.tzinfo is None:
+            raise ValueError("expiresAt must include a timezone offset")
+        return self
+
+
+class WatchlistOverrideRequest(CamelModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class BadgeOut(CamelModel):
+    badge_number: str
+    badge_url: str
+    issued_at: datetime
+    reprint_count: int

@@ -5,6 +5,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import aiosmtplib
 import pytest
@@ -13,21 +14,25 @@ from fastapi import HTTPException
 from httpx import AsyncClient, Response
 from PIL import Image
 from pydantic import BaseModel
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
 from factories import (
+    ApprovalWorkflowRuleFactory,
     CompanyFactory,
     DepartmentFactory,
+    InvitationApprovalStepFactory,
     InvitationFactory,
     PermissionFactory,
     RoleFactory,
     UserFactory,
     VisitDurationFactory,
+    VisitorCategoryFactory,
     VisitPurposeFactory,
 )
-from vmss_api.auth.models import User, UserBranchRole
+from vmss_api.approvals.repository import InvitationApprovalStepRepository
+from vmss_api.auth.models import Permission, User, UserBranchRole
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.schemas import SortOrder
@@ -40,6 +45,13 @@ from vmss_api.platform.models import TenantUserIndex
 from vmss_api.tenant.models import Tenant
 from vmss_api.visit_info.models import VisitDuration, VisitPurpose
 
+# Fixed id baked into `_individual_payload()`/`_group_payload()` below, and
+# created for real by the `_default_visitor_category` autouse fixture — every
+# test in this module gets a valid, active `visitorCategoryId` for free
+# without having to plumb one through each of the ~40 call sites that build
+# an invitation-creation payload.
+_DEFAULT_VISITOR_CATEGORY_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
+
 
 def _jpeg_bytes() -> bytes:
     buffer = io.BytesIO()
@@ -50,6 +62,7 @@ def _jpeg_bytes() -> bytes:
 def _individual_payload() -> dict:
     return {
         "registrationType": "individual",
+        "visitorCategoryId": str(_DEFAULT_VISITOR_CATEGORY_ID),
         "primaryContact": {
             "fullName": "Meera Krishnan",
             "email": "meera.krishnan@example.com",
@@ -78,6 +91,7 @@ def _individual_payload() -> dict:
 def _group_payload() -> dict:
     return {
         "registrationType": "group",
+        "visitorCategoryId": str(_DEFAULT_VISITOR_CATEGORY_ID),
         "primaryContact": {
             "fullName": "Priya Sharma",
             "email": "priya.sharma@enterprise-ugo.co",
@@ -178,6 +192,23 @@ async def _create_invitation_success(
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def _default_visitor_category(db_session: AsyncSession) -> None:
+    """Backs the fixed `visitorCategoryId` baked into `_individual_payload()`
+    /`_group_payload()` — an active category with no configured approval
+    workflow (no `ApprovalWorkflowRule` rows), so every existing test in
+    this module keeps exercising today's single-approve behavior unless it
+    explicitly attaches a workflow (see `approvals/tests.py` for the
+    workflow-backed cases).
+    """
+    db_session.add(
+        VisitorCategoryFactory.build(
+            id=_DEFAULT_VISITOR_CATEGORY_ID, name="Default Test Category", code="DEFAULT-TEST"
+        )
+    )
+    await db_session.commit()
+
+
+@pytest_asyncio.fixture(autouse=True)
 def _default_tenant_slug_matches_test_tenant(monkeypatch):
     """`GET /invitations/track` has no token to resolve a tenant from and
     falls back to `settings.default_tenant_slug` (`invitations/deps.py`'s
@@ -223,6 +254,84 @@ async def test_create_group_invitation_success_with_visitors_and_vehicles(
     assert len(invitation.vehicles) == 2
     assert invitation.carried_items == ["laptop_tablet", "mobile_phone"]
     assert invitation.terms_accepted is True
+
+
+# --- invitation-multi-step-approval: visitorCategoryId on creation ----------
+
+
+async def test_create_invitation_missing_visitor_category_id_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    del payload["visitorCategoryId"]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_unknown_visitor_category_id_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(uuid.uuid4())
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_inactive_visitor_category_id_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    inactive_category = VisitorCategoryFactory.build(
+        id=uuid.uuid4(), name="Inactive Category", code="INACTIVE", is_active=False
+    )
+    db_session.add(inactive_category)
+    await db_session.commit()
+
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(inactive_category.id)
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_cross_tenant_visitor_category_id_rejected(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """testing-standards.md §2 tenant-isolation case: a category id that is
+    valid in another tenant's schema must not be usable from this tenant's
+    session — the category lookup is a plain `WHERE id=...` scoped to
+    whichever schema the session is bound to, same isolation guarantee as
+    every other `TenantScopedRepository` query.
+    """
+    other_schema = "tenant_other_category_test"
+    await make_tenant_schema(other_schema)
+    other_category_id = uuid.uuid4()
+    async with open_tenant_session(other_schema) as other_session:
+        other_session.add(
+            VisitorCategoryFactory.build(
+                id=other_category_id, name="Other Tenant Category", code="OTHER-TENANT"
+            )
+        )
+        await other_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(other_category_id)
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_response_includes_visitor_category_id(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    data = await _create_invitation_success(client, token, branch, payload=_individual_payload())
+    assert data["visitorCategoryId"] == str(_DEFAULT_VISITOR_CATEGORY_ID)
 
 
 # --- Auto-approve driven status/notification (add-invitation-approval-flow-and-role-resync) ---
@@ -703,6 +812,84 @@ async def test_track_by_tracking_id_group_success(
     assert body["carriedItemsDescription"] == "2 laptops"
 
 
+async def test_track_by_tracking_id_omits_current_step_for_non_workflow_invitation(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """invitation-multi-step-approval spec.md "Non-workflow invitation omits
+    step progress" — the default test category has no configured
+    `ApprovalWorkflowRule`s.
+    """
+    token = await _login(client, user.email)
+    data = await _create_invitation_success(client, token, branch, payload=_individual_payload())
+
+    response = await client.get(
+        "/api/v1/invitations/track", params={"trackingId": data["trackingId"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["currentApprovalStep"] is None
+
+
+async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_invitation(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """invitation-multi-step-approval spec.md "Workflow-backed invitation
+    exposes current step progress" — a category with two active rules
+    snapshots two steps at submission; the tracking lookup surfaces the
+    first one as current.
+    """
+    category = VisitorCategoryFactory.build(
+        id=uuid.uuid4(), name="Workflow Category", code="WORKFLOW-CAT"
+    )
+    approver_role = RoleFactory.build(id=uuid.uuid4(), name="step-one-approver", permissions=[])
+    db_session.add_all([category, approver_role])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ApprovalWorkflowRuleFactory.build(
+                id=uuid.uuid4(),
+                visitor_category_id=category.id,
+                step_order=1,
+                approver_role_id=approver_role.id,
+            ),
+            ApprovalWorkflowRuleFactory.build(
+                id=uuid.uuid4(),
+                visitor_category_id=category.id,
+                step_order=2,
+                approver_role_id=approver_role.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(category.id)
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(
+        uuid.UUID(data["id"])
+    )
+    step_one = next(s for s in steps if s.step_order == 1)
+    assert data["currentApprovalStep"] == {
+        "id": str(step_one.id),
+        "stepOrder": 1,
+        "approverRoleId": str(approver_role.id),
+        "approverUserId": None,
+        "totalSteps": 2,
+    }
+
+    response = await client.get(
+        "/api/v1/invitations/track", params={"trackingId": data["trackingId"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["currentApprovalStep"] == {
+        "id": str(step_one.id),
+        "stepOrder": 1,
+        "approverRoleId": str(approver_role.id),
+        "approverUserId": None,
+        "totalSteps": 2,
+    }
+
+
 async def test_track_unknown_tracking_id_not_found(client: AsyncClient, tenant: Tenant) -> None:
     response = await client.get("/api/v1/invitations/track", params={"trackingId": "INV-DEADBEEF"})
     assert response.status_code == 404
@@ -870,12 +1057,14 @@ async def test_list_invitations_success(
         "registrationType",
         "source",
         "status",
+        "visitorCategoryId",
         "primaryContactFullName",
         "purposeOfVisit",
         "expiresAt",
         "submittedAt",
         "approvedAt",
     }
+    assert row["visitorCategoryId"] is None
 
 
 async def test_list_invitations_requires_permission(
@@ -1369,6 +1558,60 @@ async def test_create_invitation_with_ids_overwrites_free_text_with_canonical_va
     assert invitation.department_id == visit_department.id
 
 
+async def test_created_invitation_current_step_id_is_directly_actionable(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    visit_host: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    """add-approval-step-id-and-host-routing — `currentApprovalStep.id` on
+    the creation response is the same id `POST /invitations/{id}/approval-
+    steps/{stepId}/approve` expects, with no separate lookup needed. A
+    resolved `hostId` with no configured workflow rules snapshots exactly
+    one host-identified step, so the host is the current approver.
+    """
+    # Reuse the existing global `invitations:approve` permission row (the
+    # `user` fixture already seeded it — `conftest.py`'s standard admin
+    # permission set) rather than inserting a second one with the same
+    # unique `code`.
+    permission = (
+        await db_session.execute(select(Permission).where(Permission.code == "invitations:approve"))
+    ).scalar_one()
+    role = RoleFactory.build(id=uuid.uuid4(), name="host-approver-role", permissions=[permission])
+    db_session.add(role)
+    await db_session.flush()
+    # Append in-memory too, not just `session.add()` — see
+    # `approvals/tests.py::_grant_approve_permission`'s docstring for why
+    # the test session's `expire_on_commit=False` makes this necessary.
+    branch_role = UserBranchRole(
+        id=uuid.uuid4(), user_id=visit_host.id, role=role, branch_id=branch.id
+    )
+    visit_host.branch_roles.append(branch_role)
+    db_session.add(branch_role)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["hostId"] = str(visit_host.id)
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    assert data["hostId"] == str(visit_host.id)
+    assert data["currentApprovalStep"] is not None
+    step_id = data["currentApprovalStep"]["id"]
+    assert data["currentApprovalStep"]["approverUserId"] == str(visit_host.id)
+    assert data["currentApprovalStep"]["approverRoleId"] is None
+
+    host_token = issue_token(visit_host)
+    response = await client.post(
+        f"/api/v1/invitations/{data['id']}/approval-steps/{step_id}/approve",
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "approved"
+
+
 async def test_create_invitation_unknown_purpose_id_rejected(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
 ) -> None:
@@ -1561,6 +1804,79 @@ async def test_approve_invitation_already_approved_rejected(
     assert invitation.approved_at == original_approved_at
 
 
+async def test_approve_invitation_rejected_for_workflow_backed_invitation(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """invitation-multi-step-approval spec.md "Blanket approve rejected for
+    a workflow-backed invitation" (design.md Decision 3) — an invitation
+    with any snapshotted `InvitationApprovalStep` must be approved through
+    the step endpoint, never the blanket one.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted", approved_at=None)
+    db_session.add(invitation)
+    await db_session.flush()
+    role = RoleFactory.build(id=uuid.uuid4(), name="step-approver", permissions=[])
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(), invitation_id=invitation.id, step_order=1, approver_role_id=role.id
+        )
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+
+
+async def test_approve_invitation_rejected_for_host_only_invitation(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """specs/invitations/spec.md "Blanket approve rejected when only a
+    host-approval step is snapshotted" (add-approval-step-id-and-host-
+    routing) — zero configured workflow rules, but a resolved host still
+    snapshots one host-identified step, which must route through the step
+    endpoint, not the blanket one.
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    invitation = _build_invitation(
+        db_session, branch.id, status="submitted", approved_at=None, host_id=host.id
+    )
+    db_session.add(invitation)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=0,
+            approver_role_id=None,
+            approver_user_id=host.id,
+        )
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+
+
 async def test_approve_invitation_concurrent_requests_transition_exactly_once(
     branch: Branch, tenant: Tenant, db_session: AsyncSession, monkeypatch
 ) -> None:
@@ -1663,3 +1979,1042 @@ async def test_approve_invitation_denied_for_approver_scoped_elsewhere(
 
     await db_session.refresh(invitation)
     assert invitation.status == "submitted"
+
+
+# --- add-invitation-lifecycle-actions ------------------------------------------
+
+
+async def _branch_scoped_user_with_permission(
+    db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID, *, permission_code: str
+) -> User:
+    """Generic counterpart of `_branch_scoped_invitation_viewer`/`_approver`
+    above — a caller whose only role grant is `permission_code` at
+    `branch_id`. One helper covers every new permission this capability
+    adds instead of a hand-written near-duplicate per code.
+    """
+    label = permission_code.split(":")[-1]
+    permission = PermissionFactory.build(
+        id=uuid.uuid4(), code=permission_code, description=permission_code
+    )
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"invitations-{label}", permissions=[permission])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"{label}-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name=f"Invitation {label.title()}",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([permission, role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+# --- GET /invitations/{id} ------------------------------------------------------
+
+
+async def test_get_invitation_detail_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="approved")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["id"] == str(invitation.id)
+    assert data["branchId"] == str(branch.id)
+    assert data["status"] == "approved"
+    assert data["watchlistFlagged"] is False
+    assert data["badgeNumber"] is None
+    assert data["visitors"] == []
+    assert data["vehicles"] == []
+
+
+async def test_get_invitation_detail_surfaces_resolved_host_as_host_id(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """specs/invitations/spec.md "Invitation Output Surfaces the Resolved
+    Host as hostId" — detail lookup exposes `hostId` when the host resolved
+    at submission, and null when it did not.
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    resolved = _build_invitation(db_session, branch.id, status="approved", host_id=host.id)
+    unresolved = _build_invitation(db_session, branch.id, status="approved", host_id=None)
+    db_session.add_all([resolved, unresolved])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+
+    response = await client.get(
+        f"/api/v1/invitations/{resolved.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["hostId"] == str(host.id)
+
+    response = await client.get(
+        f"/api/v1/invitations/{unresolved.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["hostId"] is None
+
+
+async def test_get_invitation_detail_unknown_id_not_found(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    response = await client.get(
+        f"/api/v1/invitations/{uuid.uuid4()}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
+async def test_get_invitation_detail_denied_for_viewer_scoped_elsewhere(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-DETAIL")
+    db_session.add(other_branch)
+    await db_session.flush()
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, other_branch.id)
+    invitation = _build_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+# --- PATCH /invitations/{id}/deny -----------------------------------------------
+
+
+async def test_deny_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    denial_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_denial_notification, "delay", lambda **kw: denial_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/deny",
+        json={"reason": "Host unavailable"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "denied"
+    assert len(denial_calls) == 1
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "denied"
+    assert invitation.denial_reason == "Host unavailable"
+    assert invitation.denied_at is not None
+
+
+async def test_deny_invitation_missing_reason_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/deny",
+        json={"reason": ""},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+
+
+async def test_deny_invitation_non_submitted_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/deny",
+        json={"reason": "Too late"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+
+async def test_deny_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/deny",
+        json={"reason": "No"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+
+
+# --- PATCH /invitations/{id}/check-in -------------------------------------------
+
+
+async def test_check_in_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "checked_in"
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_in"
+    assert invitation.checked_in_at is not None
+    assert invitation.checked_in_by_user_id == user.id
+
+
+async def test_check_in_invitation_non_approved_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+
+
+async def test_check_in_invitation_watchlist_flagged_blocked(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+
+async def test_check_in_invitation_succeeds_after_watchlist_override(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    override_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/watchlist-override",
+        json={"reason": "Confirmed false positive"},
+        headers=headers,
+    )
+    assert override_response.status_code == 200
+
+    check_in_response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in", headers=headers
+    )
+    assert check_in_response.status_code == 200
+    assert check_in_response.json()["data"]["status"] == "checked_in"
+
+    await db_session.refresh(invitation)
+    assert invitation.watchlist_flagged is False
+    assert invitation.watchlist_override_reason == "Confirmed false positive"
+    assert invitation.watchlist_override_by_user_id == user.id
+    assert invitation.status == "checked_in"
+
+
+async def test_check_in_invitation_idempotency_key_replay(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "checkin-key-1"}
+
+    first = await client.patch(f"/api/v1/invitations/{invitation.id}/check-in", headers=headers)
+    second = await client.patch(f"/api/v1/invitations/{invitation.id}/check-in", headers=headers)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+
+
+async def test_check_in_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+
+# --- PATCH /invitations/{id}/check-out ------------------------------------------
+
+
+async def test_check_out_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-out",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "checked_out"
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_out"
+    assert invitation.checked_out_at is not None
+    assert invitation.checked_out_by_user_id == user.id
+
+
+async def test_check_out_invitation_non_checked_in_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-out",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+
+async def test_check_out_invitation_idempotency_key_replay(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "checkout-key-1"}
+
+    first = await client.patch(f"/api/v1/invitations/{invitation.id}/check-out", headers=headers)
+    second = await client.patch(f"/api/v1/invitations/{invitation.id}/check-out", headers=headers)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+
+
+async def test_check_out_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-out",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_in"
+
+
+# --- PATCH /invitations/{id}/reschedule -----------------------------------------
+
+
+async def test_reschedule_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """specs/invitations/spec.md "Reschedule Dispatches a Notification to
+    the Primary Contact" — a successful reschedule enqueues the
+    notification task with the invitation's own id.
+    """
+    reschedule_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_reschedule_notification, "delay", lambda **kw: reschedule_calls.append(kw)
+    )
+
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/reschedule",
+        json={"preferredVisitDate": "2026-12-01", "preferredVisitTime": "15:30:00"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "submitted"
+
+    await db_session.refresh(invitation)
+    assert invitation.preferred_visit_date.isoformat() == "2026-12-01"
+    assert invitation.preferred_visit_time.isoformat() == "15:30:00"
+
+    assert len(reschedule_calls) == 1
+    assert reschedule_calls[0]["invitation_id"] == str(invitation.id)
+
+
+async def test_reschedule_invitation_after_check_in_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    reschedule_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_reschedule_notification, "delay", lambda **kw: reschedule_calls.append(kw)
+    )
+
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    original_date = invitation.preferred_visit_date
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/reschedule",
+        json={"preferredVisitDate": "2026-12-01", "preferredVisitTime": "15:30:00"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.preferred_visit_date == original_date
+    assert reschedule_calls == []
+
+
+async def test_reschedule_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    reschedule_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_reschedule_notification, "delay", lambda **kw: reschedule_calls.append(kw)
+    )
+
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/reschedule",
+        json={"preferredVisitDate": "2026-12-01", "preferredVisitTime": "15:30:00"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+    assert reschedule_calls == []
+
+
+async def test_send_reschedule_notification_routes_to_sms_when_preferred(monkeypatch) -> None:
+    """specs/invitations/spec.md "Successful reschedule notifies the
+    primary contact by SMS when preferred" — exercised directly against
+    the task (`testing-standards.md` §3's "unit-style" tier), mirroring
+    `test_send_approval_notification_exhausted_retries_logs_error`'s fake
+    session/invitation pattern rather than a real Celery/DB round trip.
+    """
+    sms_sent: list[dict] = []
+
+    class _RecordingSmsSender:
+        async def send(self, **kwargs):
+            sms_sent.append(kwargs)
+
+    email_sent: list[dict] = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            email_sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "sms_sender", _RecordingSmsSender())
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        tracking_id="INV-TEST0002",
+        preferred_visit_date="2026-12-01",
+        preferred_visit_time="15:30:00",
+        primary_contact_preferred_contact_method="sms",
+        primary_contact_email=None,
+        primary_contact_phone="+1 555 0100",
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_reschedule_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+
+    assert email_sent == []
+    assert len(sms_sent) == 1
+    assert sms_sent[0]["to"] == "+1 555 0100"
+    assert "INV-TEST0002" in sms_sent[0]["body"]
+
+
+# --- PATCH /invitations/{id}/extend ---------------------------------------------
+
+
+async def test_extend_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=now,
+        expires_at=now + timedelta(days=1),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    new_expiry = now + timedelta(days=7)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/extend",
+        json={"expiresAt": new_expiry.isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+    await db_session.refresh(invitation)
+    assert invitation.expires_at == new_expiry
+
+
+async def test_extend_invitation_earlier_expiry_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC)
+    original_expiry = now + timedelta(days=7)
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=now, expires_at=original_expiry
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/extend",
+        json={"expiresAt": (now + timedelta(days=1)).isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.expires_at == original_expiry
+
+
+async def test_extend_invitation_ineligible_status_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/extend",
+        json={"expiresAt": (datetime.now(UTC) + timedelta(days=30)).isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_extend_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/extend",
+        json={"expiresAt": (datetime.now(UTC) + timedelta(days=30)).isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+# --- POST /invitations/{id}/badge and /badge/reprint ----------------------------
+
+
+async def test_issue_badge_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
+    data = response.json()["data"]
+    assert data["badgeNumber"].startswith("BDG-")
+    assert data["reprintCount"] == 0
+
+    await db_session.refresh(invitation)
+    assert invitation.badge_number == data["badgeNumber"]
+    assert invitation.badge_storage_key is not None
+    badge_bytes = Path(data["badgeUrl"]).read_bytes()
+    assert Image.open(io.BytesIO(badge_bytes)).format == "PNG"
+
+
+async def test_issue_badge_already_issued_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        badge_number="BDG-EXISTING",
+        badge_storage_key="vmss:test:invitations/badges:existing.png",
+        badge_issued_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_issue_badge_ineligible_status_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_issue_badge_idempotency_key_replay(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "badge-key-1"}
+
+    first = await client.post(f"/api/v1/invitations/{invitation.id}/badge", headers=headers)
+    second = await client.post(f"/api/v1/invitations/{invitation.id}/badge", headers=headers)
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json() == second.json()
+
+
+async def test_issue_badge_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+async def test_reprint_badge_success_and_reflects_updated_expiry(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=now,
+        expires_at=now + timedelta(days=1),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    issue_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge", headers=headers
+    )
+    assert issue_response.status_code == 201
+    badge_number = issue_response.json()["data"]["badgeNumber"]
+    await db_session.refresh(invitation)
+    first_storage_key = invitation.badge_storage_key
+
+    new_expiry = now + timedelta(days=30)
+    extend_response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/extend",
+        json={"expiresAt": new_expiry.isoformat()},
+        headers=headers,
+    )
+    assert extend_response.status_code == 200
+
+    reprint_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge/reprint", headers=headers
+    )
+    assert reprint_response.status_code == 200
+    reprint_data = reprint_response.json()["data"]
+    assert reprint_data["badgeNumber"] == badge_number
+    assert reprint_data["reprintCount"] == 1
+
+    await db_session.refresh(invitation)
+    assert invitation.badge_reprint_count == 1
+    assert invitation.badge_number == badge_number
+    assert invitation.badge_storage_key != first_storage_key
+    assert invitation.expires_at == new_expiry
+
+
+async def test_reprint_badge_none_issued_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge/reprint",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_reprint_badge_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        badge_number="BDG-EXISTING2",
+        badge_storage_key="vmss:test:invitations/badges:existing2.png",
+        badge_issued_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/badge/reprint",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+# --- POST /invitations/{id}/watchlist-override ----------------------------------
+
+
+async def test_override_watchlist_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/watchlist-override",
+        json={"reason": "Confirmed not a match"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+    await db_session.refresh(invitation)
+    assert invitation.watchlist_flagged is False
+    assert invitation.watchlist_override_reason == "Confirmed not a match"
+    assert invitation.watchlist_override_by_user_id == user.id
+    assert invitation.watchlist_override_at is not None
+    assert invitation.status == "approved"
+
+
+async def test_override_watchlist_not_flagged_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/watchlist-override",
+        json={"reason": "Not needed"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_override_watchlist_missing_reason_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/watchlist-override",
+        json={"reason": ""},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.watchlist_flagged is True
+
+
+async def test_override_watchlist_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    approver = await _branch_scoped_invitation_approver(db_session, tenant, branch.id)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(approver)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/watchlist-override",
+        json={"reason": "Not allowed"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.watchlist_flagged is True
+
+
+# --- Tenant isolation ------------------------------------------------------------
+
+
+async def test_check_in_repository_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_checkin"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).check_in_if_eligible(
+            invitation.id, user_id=uuid.uuid4()
+        )
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"

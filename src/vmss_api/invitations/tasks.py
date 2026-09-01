@@ -126,6 +126,85 @@ async def _send_tracking_notification(tenant_schema: str, invitation_id: str) ->
         await engine.dispose()
 
 
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_denial_notification(
+    self, *, request_id: str, tenant_schema: str, invitation_id: str
+) -> None:
+    """add-invitation-lifecycle-actions/design.md Decision 7: structurally
+    identical to `send_tracking_notification` above — same tenant-scoped
+    session, `request_id` context binding, retry policy, and `_dispatch`
+    helper — only the subject/body differ.
+    """
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(_send_denial_notification(tenant_schema, invitation_id))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "denial_notification_dispatch_exhausted",
+                tenant_schema=tenant_schema,
+                invitation_id=invitation_id,
+            )
+        raise
+
+
+async def _send_denial_notification(tenant_schema: str, invitation_id: str) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            if invitation is None:
+                return
+            subject = "Your visit request was not approved"
+            body = (
+                f"Your registration was not approved. Tracking ID: "
+                f"{invitation.tracking_id}.\n"
+                f"Reason: {invitation.denial_reason}"
+            )
+            await _dispatch(invitation, subject=subject, body=body)
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_reschedule_notification(
+    self, *, request_id: str, tenant_schema: str, invitation_id: str
+) -> None:
+    """add-reschedule-notification/design.md: structurally identical to
+    `send_denial_notification` above — same tenant-scoped session,
+    `request_id` context binding, retry policy, and `_dispatch` helper —
+    only the subject/body differ.
+    """
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(_send_reschedule_notification(tenant_schema, invitation_id))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "reschedule_notification_dispatch_exhausted",
+                tenant_schema=tenant_schema,
+                invitation_id=invitation_id,
+            )
+        raise
+
+
+async def _send_reschedule_notification(tenant_schema: str, invitation_id: str) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            if invitation is None:
+                return
+            subject = "Your visit has been rescheduled"
+            body = (
+                f"Your visit has been rescheduled. New date: "
+                f"{invitation.preferred_visit_date}, time: "
+                f"{invitation.preferred_visit_time}. Tracking ID: "
+                f"{invitation.tracking_id}."
+            )
+            await _dispatch(invitation, subject=subject, body=body)
+    finally:
+        await engine.dispose()
+
+
 async def _dispatch(invitation: Invitation, *, subject: str, body: str, attachment=None) -> None:
     """Routes to email or SMS per the invitation's `preferred_contact_method`
     — never both. The `assert`s below are a data-integrity check, not

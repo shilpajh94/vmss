@@ -69,6 +69,15 @@ _TAGS_METADATA = [
         ),
     },
     {
+        "name": "approvals",
+        "description": (
+            "Runtime evaluation of a visitor category's configured approval "
+            "workflow against a submitted invitation: the per-invitation "
+            "approval-step snapshot, and the step approve/reject actions "
+            "that advance or terminate it."
+        ),
+    },
+    {
         "name": "registrations",
         "description": (
             "Walk-in visitor registration: a visitor registers themselves on "

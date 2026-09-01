@@ -7,12 +7,15 @@ import structlog
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.approvals.models import InvitationApprovalStep
+from vmss_api.approvals.repository import InvitationApprovalStepRepository
+from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.auth.repository import UserRepository
 from vmss_api.core.config import settings
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.storage import FileTooLargeError, UnsupportedFileTypeError, validate_upload
 from vmss_api.core.storage import save as storage_save
-from vmss_api.invitations import tasks
+from vmss_api.invitations import badge, tasks
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.invitations.schemas import (
@@ -24,6 +27,7 @@ from vmss_api.invitations.schemas import (
 from vmss_api.org_structure.repository import CompanyRepository, DepartmentRepository
 from vmss_api.tenant.models import Tenant
 from vmss_api.visit_info.repository import VisitDurationRepository, VisitPurposeRepository
+from vmss_api.visitors.repository import ApprovalWorkflowRuleRepository, VisitorCategoryRepository
 
 
 async def _generate_unique_tracking_id(repo: InvitationRepository) -> str:
@@ -37,6 +41,17 @@ async def _generate_unique_tracking_id(repo: InvitationRepository) -> str:
         if await repo.get_by_tracking_id(candidate) is None:
             return candidate
     raise RuntimeError("Could not generate a unique invitation tracking id")
+
+
+async def _generate_unique_badge_number(repo: InvitationRepository) -> str:
+    """`BDG-XXXXXXXX` — same retry-against-uniqueness shape as
+    `_generate_unique_tracking_id` above (design.md Decision 4).
+    """
+    for _ in range(5):
+        candidate = "BDG-" + secrets.token_hex(4).upper()
+        if await repo.get_by_badge_number(candidate) is None:
+            return candidate
+    raise RuntimeError("Could not generate a unique badge number")
 
 
 def _current_request_id() -> str:
@@ -104,6 +119,91 @@ async def _resolve_visit_detail_ids(
     return resolved
 
 
+async def _resolve_active_category(
+    tenant_db: AsyncSession, visitor_category_id: uuid.UUID
+) -> uuid.UUID:
+    """spec.md "Missing visitor category is rejected" /
+    "Unknown, inactive, or cross-tenant visitor category is rejected" —
+    validated before any file I/O, same "fail fast" ordering
+    `_resolve_visit_detail_ids` already uses for the optional catalog ids.
+    """
+    category = await VisitorCategoryRepository(tenant_db).get_active(visitor_category_id)
+    if category is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown or inactive visitorCategoryId"
+        )
+    return category.id
+
+
+def _build_approval_steps(
+    rules: list[Any], *, invitation_id: uuid.UUID, now: datetime, host_id: uuid.UUID | None
+) -> list[InvitationApprovalStep]:
+    """Snapshots a category's active `ApprovalWorkflowRule`s (already
+    ordered by `step_order`) into `InvitationApprovalStep` rows — a
+    point-in-time copy, not a live reference (design.md Decision 1). When
+    `host_id` is not None, an implicit host-identified step is prepended at
+    `step_order` 0, ahead of the role-identified steps (specs/approvals/
+    spec.md "Submission Snapshots the Category's Active Workflow Into
+    Ordered Steps" — add-approval-step-id-and-host-routing). Only the step
+    that is current the moment this snapshot is taken — the host step if
+    one was prepended, else the first rule step — has its
+    `escalates_at`/`auto_approves_at` computed here, relative to `now` (the
+    submission timestamp); every later step's pair is computed when it
+    becomes the current pending step, i.e. when the step before it is
+    approved (`approvals/service.py::approve_step`), per specs/approvals/
+    spec.md "Escalation and Auto-Approve Timestamps". The host step never
+    has escalation/auto-approve minutes to compute from — no
+    `ApprovalWorkflowRule` backs it — so its pair stays null
+    (add-approval-step-id-and-host-routing/design.md).
+    """
+    steps: list[InvitationApprovalStep] = []
+    if host_id is not None:
+        steps.append(
+            InvitationApprovalStep(
+                id=uuid.uuid4(),
+                invitation_id=invitation_id,
+                step_order=0,
+                approver_role_id=None,
+                approver_user_id=host_id,
+                is_mandatory=True,
+                status="pending",
+                escalation_minutes=None,
+                auto_approve_minutes=None,
+                escalates_at=None,
+                auto_approves_at=None,
+            )
+        )
+    for index, rule in enumerate(rules):
+        is_first = index == 0 and host_id is None
+        steps.append(
+            InvitationApprovalStep(
+                id=uuid.uuid4(),
+                invitation_id=invitation_id,
+                step_order=rule.step_order,
+                approver_role_id=rule.approver_role_id,
+                approver_user_id=None,
+                is_mandatory=rule.is_mandatory,
+                status="pending",
+                escalation_minutes=rule.escalation_minutes,
+                auto_approve_minutes=rule.auto_approve_minutes,
+                # Only the first step is current the moment it's snapshotted
+                # — every later step's pair is computed when it becomes
+                # current instead (`approvals/service.py::_advance_step_clock`).
+                escalates_at=(
+                    now + timedelta(minutes=rule.escalation_minutes)
+                    if is_first and rule.escalation_minutes is not None
+                    else None
+                ),
+                auto_approves_at=(
+                    now + timedelta(minutes=rule.auto_approve_minutes)
+                    if is_first and rule.auto_approve_minutes is not None
+                    else None
+                ),
+            )
+        )
+    return steps
+
+
 async def create_invitation(
     tenant_db: AsyncSession,
     payload: InvitationCreate,
@@ -142,6 +242,10 @@ async def create_invitation(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Visitor list and uploaded ID proof files must match in count",
         )
+
+    # Validated before any file I/O, same "fail fast" reasoning as the
+    # optional catalog ids resolved right below.
+    visitor_category_id = await _resolve_active_category(tenant_db, payload.visitor_category_id)
 
     # Validated (and, where an id is present, resolved to its canonical
     # display value) before any file I/O, so a bad `purposeId`/`hostId`/
@@ -184,6 +288,7 @@ async def create_invitation(
         source=source.value,
         registration_type=payload.registration_type.value,
         status=initial_status,
+        visitor_category_id=visitor_category_id,
         tracking_id=tracking_id,
         expires_at=expires_at,
         submitted_at=now,
@@ -246,6 +351,26 @@ async def create_invitation(
     repo.add_visitors(visitor_rows)
     repo.add_vehicles(vehicle_rows)
 
+    # Snapshot the category's active workflow rules into ordered steps
+    # (specs/approvals/spec.md "Submission Snapshots the Category's Active
+    # Workflow Into Ordered Steps") — only for a `submitted` (not
+    # auto-approved) invitation, and only once, in the same transaction as
+    # the `Invitation` insert above (design.md Decision 1). A resolved host
+    # additionally gets an implicit step 0 ahead of the role chain
+    # (add-approval-step-id-and-host-routing/design.md) — unconditional
+    # whenever the host resolves, regardless of whether the category has
+    # any active rules. Neither a host nor any active rules: no steps,
+    # today's single-approve behavior.
+    if not auto_approved:
+        rules = await ApprovalWorkflowRuleRepository(tenant_db).list_active_for_category(
+            visitor_category_id
+        )
+        host_id = visit_details["host_id"]
+        if rules or host_id is not None:
+            InvitationApprovalStepRepository(tenant_db).add_steps(
+                _build_approval_steps(rules, invitation_id=invitation.id, now=now, host_id=host_id)
+            )
+
     await tenant_db.commit()
 
     created = await repo.get_with_children(invitation.id)
@@ -290,7 +415,22 @@ async def approve_invitation(
     concurrent approval requests for the same invitation can't both pass a
     status check and both dispatch a notification (see
     codebase-review-and-e2e-scenario-test/design.md).
+
+    Rejected with 409 (design.md Decision 3) if the invitation still has a
+    `pending` `InvitationApprovalStep` — that invitation must be approved
+    step by step through `POST /invitations/{id}/approval-steps/{stepId}
+    /approve` instead (specs/invitations/spec.md "Blanket approve rejected
+    for a workflow-backed invitation"). Checking for a *pending* step, not
+    merely "any step at all", is what lets `approvals.service.approve_step`
+    call this function verbatim to finalize the last step (design.md
+    Decision 2) — by then every step is already `approved`, so this guard
+    correctly falls through instead of rejecting its own caller.
     """
+    if await InvitationApprovalStepRepository(tenant_db).has_pending_for_invitation(invitation.id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Invitation has a configured approval workflow; approve its steps instead",
+        )
     updated = await InvitationRepository(tenant_db).approve_if_submitted(invitation.id)
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not awaiting approval")
@@ -301,6 +441,249 @@ async def approve_invitation(
         invitation_id=str(updated.id),
     )
     return updated
+
+
+async def get_invitation_detail(tenant_db: AsyncSession, invitation_id: uuid.UUID) -> Invitation:
+    """Eager-loaded counterpart of `get_invitation` — backs
+    `GET /invitations/{id}`, whose response schema (`InvitationDetailOut`)
+    serializes `visitors`/`vehicles` the same way `InvitationTrackingOut`
+    does.
+    """
+    invitation = await InvitationRepository(tenant_db).get_with_children(invitation_id)
+    if invitation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    return invitation
+
+
+async def deny_invitation(
+    tenant_db: AsyncSession, invitation: Invitation, *, reason: str, tenant: Tenant
+) -> Invitation:
+    """Transitions a `submitted` invitation to `denied` and enqueues the
+    denial notification — mirrors `approve_invitation`'s own
+    dispatch-after-commit pattern (spec.md "A Submitted Invitation Can Be
+    Denied With a Reason").
+    """
+    updated = await InvitationRepository(tenant_db).deny_if_submitted(invitation.id, reason=reason)
+    if updated is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not awaiting approval")
+    await tenant_db.commit()
+    tasks.send_denial_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(updated.id),
+    )
+    return updated
+
+
+async def check_in_invitation(
+    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID
+) -> Invitation:
+    """spec.md "An Approved Invitation Can Be Checked In" /
+    "A Watchlist-Flagged Invitation Blocks Check-In Until Overridden". The
+    pre-check below gives a caller a specific reason for the 409 (flagged vs.
+    wrong status); the repository's atomic `WHERE` clause re-checks both
+    conditions so a race with a concurrent flag/status change can't slip a
+    check-in through between this read and the write.
+    """
+    if invitation.watchlist_flagged:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Invitation is watchlist-flagged; override required before check-in",
+        )
+    if invitation.status != "approved":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
+    updated = await InvitationRepository(tenant_db).check_in_if_eligible(
+        invitation.id, user_id=user_id
+    )
+    if updated is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Invitation is no longer eligible for check-in",
+        )
+    await tenant_db.commit()
+    return updated
+
+
+async def check_out_invitation(
+    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID
+) -> Invitation:
+    updated = await InvitationRepository(tenant_db).check_out_if_checked_in(
+        invitation.id, user_id=user_id
+    )
+    if updated is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not checked in")
+    await tenant_db.commit()
+    return updated
+
+
+_RESCHEDULABLE_STATUSES = ("submitted", "approved")
+_ACTIVE_STATUSES = ("approved", "checked_in")
+
+
+async def reschedule_invitation(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    preferred_visit_date: Any,
+    preferred_visit_time: Any,
+    tenant: Tenant,
+) -> Invitation:
+    """Notifies the primary contact of the new date/time on success
+    (specs/invitations/spec.md "Reschedule Dispatches a Notification to the
+    Primary Contact") — enqueued only after the commit below, never for a
+    request rejected by either guard.
+    """
+    if invitation.status not in _RESCHEDULABLE_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
+        )
+    updated = await InvitationRepository(tenant_db).reschedule_if_eligible(
+        invitation.id,
+        preferred_visit_date=preferred_visit_date,
+        preferred_visit_time=preferred_visit_time,
+    )
+    if updated is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
+        )
+    await tenant_db.commit()
+    tasks.send_reschedule_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(updated.id),
+    )
+    return updated
+
+
+async def extend_invitation(
+    tenant_db: AsyncSession, invitation: Invitation, *, new_expires_at: datetime
+) -> Invitation:
+    if invitation.status not in _ACTIVE_STATUSES:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not active")
+    if new_expires_at <= invitation.expires_at:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="New expiry must be later than the current expiry",
+        )
+    updated = await InvitationRepository(tenant_db).extend_if_eligible(
+        invitation.id, new_expires_at=new_expires_at
+    )
+    if updated is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not active")
+    await tenant_db.commit()
+    return updated
+
+
+async def issue_badge(
+    tenant_db: AsyncSession, invitation: Invitation, *, tenant: Tenant
+) -> Invitation:
+    """spec.md "A Badge Can Be Printed for an Approved or Active Visit" —
+    generates the badge number and renders the image before the guarded
+    `UPDATE`, same "validate/generate before the write" ordering
+    `create_invitation` already uses for ID-proof uploads.
+    """
+    if invitation.status not in _ACTIVE_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Invitation is not eligible for a badge"
+        )
+    if invitation.badge_number is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="A badge is already issued for this invitation; use the reprint endpoint",
+        )
+    repo = InvitationRepository(tenant_db)
+    badge_number = await _generate_unique_badge_number(repo)
+    png = await badge.render_badge_png(
+        tracking_id=invitation.tracking_id,
+        primary_contact_full_name=invitation.primary_contact_full_name,
+        expires_at=invitation.expires_at,
+    )
+    storage_key = await storage_save(tenant.id, "invitations/badges", png, "image/png")
+    updated = await repo.issue_badge_if_eligible(
+        invitation.id, badge_number=badge_number, badge_storage_key=storage_key
+    )
+    if updated is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Invitation is not eligible for a badge"
+        )
+    await tenant_db.commit()
+    return updated
+
+
+async def reprint_badge(
+    tenant_db: AsyncSession, invitation: Invitation, *, tenant: Tenant
+) -> Invitation:
+    """spec.md "A Badge Can Be Reprinted" — re-renders from the invitation's
+    *current* data (not what was captured at original issuance), so a
+    reprint after a reschedule/extension reflects the up-to-date values.
+    """
+    if invitation.badge_number is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="No badge has been issued for this invitation yet; use the issuance endpoint",
+        )
+    png = await badge.render_badge_png(
+        tracking_id=invitation.tracking_id,
+        primary_contact_full_name=invitation.primary_contact_full_name,
+        expires_at=invitation.expires_at,
+    )
+    storage_key = await storage_save(tenant.id, "invitations/badges", png, "image/png")
+    updated = await InvitationRepository(tenant_db).reprint_badge_if_issued(
+        invitation.id, badge_storage_key=storage_key
+    )
+    if updated is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="No badge has been issued for this invitation yet; use the issuance endpoint",
+        )
+    await tenant_db.commit()
+    return updated
+
+
+async def override_watchlist(
+    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID, reason: str
+) -> Invitation:
+    """spec.md "A Watchlist-Flagged Invitation Blocks Check-In Until
+    Overridden" — clears the flag only; it does not itself check the
+    invitation in.
+    """
+    updated = await InvitationRepository(tenant_db).override_watchlist_if_flagged(
+        invitation.id, user_id=user_id, reason=reason
+    )
+    if updated is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Invitation is not currently watchlist-flagged"
+        )
+    await tenant_db.commit()
+    return updated
+
+
+async def get_current_approval_step(
+    tenant_db: AsyncSession, invitation: Invitation
+) -> CurrentApprovalStepOut | None:
+    """Backs the `currentApprovalStep` field on `InvitationOut`/
+    `InvitationTrackingOut`/`InvitationDetailOut` (design.md Decision 7) —
+    two indexed queries (current pending step + total count), run only for a
+    single-invitation lookup, never for `GET /invitations` list rows
+    (query-performance.md §2). `None` for an invitation with no snapshotted
+    steps, or one that is no longer `submitted`
+    (specs/invitations/spec.md "Non-workflow invitation omits step
+    progress").
+    """
+    if invitation.status != "submitted":
+        return None
+    repo = InvitationApprovalStepRepository(tenant_db)
+    current = await repo.get_current_pending(invitation.id)
+    if current is None:
+        return None
+    total_steps = await repo.count_for_invitation(invitation.id)
+    return CurrentApprovalStepOut(
+        id=current.id,
+        step_order=current.step_order,
+        approver_role_id=current.approver_role_id,
+        approver_user_id=current.approver_user_id,
+        total_steps=total_steps,
+    )
 
 
 async def track_by_tracking_id(tenant_db: AsyncSession, tracking_id: str) -> Invitation:

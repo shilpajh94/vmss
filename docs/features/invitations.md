@@ -17,8 +17,10 @@ change that collapsed it into the single-call contract described below.
 
 | Method | Path | Auth | Rate limit | Description |
 |---|---|---|---|---|
-| POST | `/api/v1/invitations` | `invitations:create` at the resolved branch | — | An employee creates a fully completed single or group invitation in one call: primary contact, co-visitors, visit details, carried items, vehicles, and consent, each visitor (including the primary contact) with their own ID-proof upload. Multipart: a JSON `payload` part (camelCased fields, matching `InvitationCreate`) plus `primary_contact_id_proof_file`/`visitor_id_proof_files` file parts — multipart field *names* are the literal Python parameter names, not camelCased, since they aren't part of a JSON body. Returns a tracking ID with the invitation's status resolved from `Company.autoApprovePreRegisteredVisitors` — `approved` immediately, or `submitted` (awaiting approval) — see "Auto-approve vs. manual approval" below. Accepts an optional `Idempotency-Key` header (`api-conventions.md` §3) — a retried request with the same key and tenant returns the original response instead of creating a second invitation. See "Finding the payload shape in Swagger" below for where to actually see the `individual`/`group` JSON examples in `/docs`. |
-| POST | `/api/v1/invitations/{id}/approve` | `invitations:approve` at the invitation's branch | — | Transitions a `submitted` invitation to `approved` and dispatches the QR-bearing approval notification at that point. 409 if the invitation isn't currently `submitted`; 404 for an unknown id; 403 (not 404) if the caller lacks branch access to an invitation that does exist — see "Auto-approve vs. manual approval" below. |
+| POST | `/api/v1/invitations` | `invitations:create` at the resolved branch | — | An employee creates a fully completed single or group invitation in one call: `visitorCategoryId` (required — must resolve to an active `VisitorCategory` in the tenant), primary contact, co-visitors, visit details, carried items, vehicles, and consent, each visitor (including the primary contact) with their own ID-proof upload. Multipart: a JSON `payload` part (camelCased fields, matching `InvitationCreate`) plus `primary_contact_id_proof_file`/`visitor_id_proof_files` file parts — multipart field *names* are the literal Python parameter names, not camelCased, since they aren't part of a JSON body. Returns a tracking ID with the invitation's status resolved from `Company.autoApprovePreRegisteredVisitors` — `approved` immediately, or `submitted` (awaiting approval) — see "Auto-approve vs. manual approval" below. If the invitation submits `submitted` and its category has an active approval workflow, the response's `currentApprovalStep` shows the first step immediately — see "Per-category multi-step approval" below. Accepts an optional `Idempotency-Key` header (`api-conventions.md` §3) — a retried request with the same key and tenant returns the original response instead of creating a second invitation. **BREAKING**: `visitorCategoryId` is a new required field — existing callers must be updated to send it. See "Finding the payload shape in Swagger" below for where to actually see the `individual`/`group` JSON examples in `/docs`. |
+| POST | `/api/v1/invitations/{id}/approve` | `invitations:approve` at the invitation's branch | — | Transitions a `submitted` invitation to `approved` and dispatches the QR-bearing approval notification at that point. 409 if the invitation isn't currently `submitted`, **or if it still has a pending approval step** (a workflow-backed invitation must be approved through `POST /invitations/{id}/approval-steps/{stepId}/approve` instead — see "Per-category multi-step approval" below); 404 for an unknown id; 403 (not 404) if the caller lacks branch access to an invitation that does exist. |
+| POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/approve` | `invitations:approve` at the invitation's branch, **and** the caller's assigned role must match the step's `approverRoleId` (or hold `invitations:approve-override`) | — | Approves the invitation's current pending step. The last step's approval flips the invitation to `approved` and fires the same QR/notification dispatch the blanket endpoint does; any earlier step unlocks the next one instead. 409 if `stepId` isn't the current pending step; 404 for an unknown invitation/step id (or a step belonging to a different invitation); 403 if the caller's role doesn't match and they lack the override permission. Registered by the `approvals` feature — see `docs/features/approvals.md`. |
+| POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/reject` | Same as the approve variant above | — | Rejects the current pending step (mandatory `reason`) — terminal: immediately denies the whole invitation (same `denied` state `POST /invitations/{id}/deny` produces) regardless of how many steps remain, which stay `pending`/unactioned. Same 409/404/403 conditions as the approve variant. |
 
 The branch an invitation belongs to comes from either the optional
 `X-Branch-ID` header or `branchId` in the `payload` JSON body — the header
@@ -30,6 +32,15 @@ branch from the request body via the same `authorize_branch_id` helper.
 | GET | `/api/v1/invitations` | `invitations:view`, branch-scoped | — | Paginated listing of invitations for triage/browsing — see "Listing invitations" below. |
 | GET | `/api/v1/invitations/track?trackingId=` | None (public) | 20/minute per IP | Full status/visit-summary lookup by the human-readable tracking ID — returns `InvitationTrackingOut`, including every visit-detail and carried-item field captured at creation. |
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
+| GET | `/api/v1/invitations/{id}` | `invitations:view` at the invitation's branch | — | Authenticated, staff-facing single-invitation detail view (`InvitationDetailOut`) — branch/source/creator plus every lifecycle field below. 404 unknown id, 403 (not 404) if the caller lacks branch access. See "Lifecycle actions" below. |
+| PATCH | `/api/v1/invitations/{id}/deny` | `invitations:deny` at the invitation's branch | — | Transitions a `submitted` invitation to `denied`, with a mandatory `reason`, and dispatches a denial notification. 409 if not currently `submitted`. |
+| PATCH | `/api/v1/invitations/{id}/check-in` | `invitations:checkin` at the invitation's branch | — | Transitions an `approved` invitation to `checked_in`. 409 if not `approved`, or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key`. |
+| PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. |
+| PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`, and dispatches a reschedule notification to the primary contact. 409 once `checked_in`/`checked_out`/`denied`. |
+| PATCH | `/api/v1/invitations/{id}/extend` | `invitations:extend` at the invitation's branch | — | Pushes `expiresAt` forward while `approved` or `checked_in`. 422 if the new expiry isn't strictly later than the current one; 409 if ineligible. |
+| POST | `/api/v1/invitations/{id}/badge` | `invitations:badge` at the invitation's branch | — | Issues a printable badge (PNG) for an `approved`/`checked_in` invitation. 409 if ineligible or already issued (use reprint). Accepts `Idempotency-Key`. |
+| POST | `/api/v1/invitations/{id}/badge/reprint` | `invitations:badge` at the invitation's branch | — | Re-renders an already-issued badge from current data and increments its reprint count. 409 if none issued yet. |
+| POST | `/api/v1/invitations/{id}/watchlist-override` | `invitations:watchlist-override` (admin only by default) at the invitation's branch | — | Clears a `watchlistFlagged` invitation, with a mandatory `reason`, so check-in can proceed. 409 if not currently flagged. Does not itself check the invitation in. |
 
 ## Finding the payload shape in Swagger
 
@@ -105,10 +116,131 @@ config) decides an invitation's fate at creation time
 
 This is resolved once, at creation (or at manual approval), never
 recomputed — flipping the Company setting later doesn't retroactively
-change an already-created invitation's status. Only the per-visitor-category
-`ApprovalWorkflowRule` multi-step engine (`visitors/` — config CRUD only,
-no runtime evaluation yet) is unaffected; this flow uses only the
-company-wide flag.
+change an already-created invitation's status. This flag decides only
+*whether* a `submitted` invitation needs approval at all; if it does, and
+either the invitation's `visitorCategoryId` has a configured approval
+workflow or its host resolved to a user, snapshotted steps — not the
+blanket approve endpoint — govern getting it to `approved`. See
+"Per-category multi-step approval" below.
+
+## Per-category multi-step approval
+
+If `visitorCategoryId`'s category has one or more active
+`ApprovalWorkflowRule` rows (`docs/features/visitors.md`) at the moment a
+`submitted` invitation is created, the system snapshots them into ordered
+`InvitationApprovalStep` rows on that invitation — a point-in-time copy, so
+editing the category's workflow later never changes an invitation already
+in flight. A category with no active rules, and no resolved host (see
+below), gets no steps, and that invitation keeps exactly the single-approve
+behavior described above.
+
+**The invitation's own host is always the first approver, when resolved.**
+Whenever `hostId` resolves to an active user at submission (see "Optional
+catalog ids on visit details" above), an additional step is prepended at
+`stepOrder` 0, ahead of any role-based steps — unconditionally, whether or
+not the category has any configured rules. See `docs/features/approvals.md`
+"Host as step 0" for the full composition rules and authorization details;
+in short: this step is authorized for that specific person (or
+`invitations:approve-override`), not by role match.
+
+- **Approving/rejecting a step**: `POST /invitations/{id}/approval-steps
+  /{stepId}/approve` and `.../reject` (see the endpoints table above) act
+  on the invitation's *current pending step* — the lowest `stepOrder` still
+  `pending`. Only that one step is ever actionable; naming any other step
+  id is rejected with 409.
+- **Approving the last step** finalizes the invitation exactly the way
+  `POST /invitations/{id}/approve` already does — same `approved` status
+  flip, same QR-bearing approval notification. Approving an earlier step
+  just unlocks the next one; the invitation's own `status` stays
+  `submitted` until the last step clears.
+- **Rejecting any step is terminal.** It denies the whole invitation
+  immediately (the same `denied` state and denial notification
+  `POST /invitations/{id}/deny` produces), regardless of how many steps
+  remain — those stay `pending` and are never evaluated. There is no
+  resubmission path; a denied invitation is done.
+- **Authorization** is tighter than the blanket endpoint's: the caller
+  needs `invitations:approve` at the invitation's branch (same as today)
+  **and** either their own branch-scoped role assignment must match the
+  current step's `approverRoleId` (role-identified step), or their own user
+  id must match the current step's `approverUserId` (host-identified step)
+  — or they hold the `invitations:approve-override` permission (seeded to
+  `admin` only), which bypasses either match entirely.
+- **`currentApprovalStep`** (`{id, stepOrder, approverRoleId,
+  approverUserId, totalSteps}`, exactly one of `approverRoleId`/
+  `approverUserId` non-null) is included on `InvitationOut` (create/
+  step-approve/reject responses), `InvitationTrackingOut` (the public
+  tracking lookup), and `InvitationDetailOut` (the staff detail view)
+  whenever the invitation is `submitted` and has a current pending step —
+  `null` otherwise (no workflow, no host, or no longer `submitted`) — so a
+  client can render "waiting on: Manager, step 2 of 3" without a second
+  call, and call the approve/reject endpoints directly using `id` as
+  `stepId`.
+- **`hostId`** (the invitation's resolved host user id, or `null`) is
+  included on `InvitationOut` and `InvitationDetailOut` alongside the
+  existing free-text `hostNameOrEmail`.
+- **Escalation/auto-approve timestamps exist but aren't enforced yet.**
+  Each step carries `escalatesAt`/`autoApprovesAt`, computed from the
+  snapshotted rule's `escalationMinutes`/`autoApproveMinutes` relative to
+  the moment that step becomes current (the invitation's submission time
+  for the first step, or the moment the prior step is approved for every
+  step after it). Nothing currently acts on either timestamp once it
+  passes — no scheduled auto-approve, no escalation notification. That's
+  deliberately out of scope for now; the fields exist for a UI countdown.
+
+The engine itself lives in the `approvals` feature, not `invitations` —
+see `docs/features/approvals.md` for its own model/endpoint reference.
+`invitations` only owns the snapshot-at-submission step and the two status
+outcomes (`approved` on the last step, `denied` on any rejection).
+
+## Lifecycle actions: deny / check-in / check-out / reschedule / extend / badge / watchlist-override
+
+`add-invitation-lifecycle-actions` adds `status` values `denied`,
+`checked_in`, `checked_out` alongside the existing `submitted`/`approved`,
+plus one atomic conditional `UPDATE`-based transition per action (same
+concurrency-safe shape `POST /invitations/{id}/approve` already uses — a
+losing concurrent request gets 409, never a corrupted double-transition):
+
+```
+submitted ──deny──> denied
+submitted ──approve──> approved ──check-in──> checked_in ──check-out──> checked_out
+```
+
+- **Reschedule** (`preferredVisitDate`/`preferredVisitTime`) and **extend**
+  (`expiresAt`) operate on different status windows: reschedule only while
+  `submitted`/`approved` (before check-in); extend only while
+  `approved`/`checked_in` (an active visit). Extend also requires the new
+  expiry be strictly later than the current one (422 otherwise).
+- **Badge** issuance/reprint requires `approved`/`checked_in`. Issuance
+  generates a `BDG-XXXXXXXX` number and a rendered PNG (visitor name,
+  tracking ID, a QR code encoding it, and the expiry — `invitations/badge.py`,
+  reusing `qr.py`'s QR generation, composited with Pillow, no new
+  dependency), saved via `core/storage.py`'s existing save/`url_for`
+  interface. Reprint re-renders from the invitation's *current* data (so a
+  reprint after a reschedule/extension reflects the new values) and
+  increments `badgeReprintCount`; it keeps the same `badgeNumber` — that
+  identifies the visit, not one physical printout.
+- **Watchlist override**: `watchlistFlagged` is a new column, but **nothing
+  in this codebase sets it to `true` yet** — there is no automatic
+  watchlist/blacklist matching built. It exists so `POST
+  /invitations/{id}/watchlist-override` and the check-in gate that reads it
+  have a real contract to operate on ahead of that future capability. Until
+  a future feature sets the flag (e.g. at creation time), `check-in` simply
+  never hits the 409 this gate would otherwise produce.
+- Denial dispatches `invitations/tasks.py::send_denial_notification`
+  (tracking ID + reason, no QR) — structurally identical to
+  `send_tracking_notification`, async/Celery, never inline.
+- A successful reschedule dispatches
+  `invitations/tasks.py::send_reschedule_notification` (tracking ID + the
+  new `preferredVisitDate`/`preferredVisitTime`, no QR — the existing QR
+  from creation/approval is still valid) — same structure and channel
+  routing (`primaryContactPreferredContactMethod`) as the other three
+  notifications, only to the primary contact (not co-visitors on a group
+  registration, matching every other lifecycle notification). A request
+  rejected with 409 (ineligible status) or 403 (no branch access) dispatches
+  nothing. `add-reschedule-notification/design.md` flags one known gap:
+  this endpoint still has no `Idempotency-Key` support, so a client retry
+  can trigger more than one notification for what was meant as a single
+  reschedule.
 
 ## Listing invitations
 
@@ -134,11 +266,12 @@ Query params:
 | `source` | `staff_pre_registration` \| `visitor_walk_in` | unset | |
 
 Each row is an `InvitationListItemOut` — tracking ID, registration type,
-source, status, primary contact name, purpose of visit, and expiry/submission
-timestamps — deliberately narrower than `InvitationTrackingOut`: it carries
-no per-visitor/vehicle detail, so the underlying query never needs to
-eager-load either child collection for a list view that doesn't render them
-(`query-performance.md` §1).
+source, status, `visitorCategoryId`, primary contact name, purpose of visit,
+and expiry/submission timestamps — deliberately narrower than
+`InvitationTrackingOut`: it carries no per-visitor/vehicle detail, and no
+`currentApprovalStep` either, so the underlying query never needs to
+eager-load a child collection or run the extra current-step lookup for a
+list view that doesn't render either (`query-performance.md` §1-2).
 
 ## The tracking ID is a plain, human-readable identifier
 
@@ -179,9 +312,12 @@ notifications via Celery, never inline in the request path
 (tracking ID + QR code — sent for an `approved` invitation) or
 `send_tracking_notification` (tracking ID only, no QR — sent for a
 `submitted` one). See "Auto-approve vs. manual approval" above for which
-one a given creation/approval triggers. Both tasks resolve their own
-tenant-bound session from a `tenant_schema` argument, skip if the
-invitation row is no longer found (redelivery after removal), and declare
+one a given creation/approval triggers. Denial (`send_denial_notification`)
+and a successful reschedule (`send_reschedule_notification`) each dispatch
+their own notification the same way — see "Lifecycle actions" above. Every
+one of these four tasks resolves its own tenant-bound session from a
+`tenant_schema` argument, skips if the invitation row is no longer found
+(redelivery after removal), and declares
 `autoretry_for`/`retry_backoff`/`max_retries`, logging at `ERROR` with full
 context if retries are exhausted. Email goes out over SMTP
 (`invitations/notifications.py::SmtpEmailSender`); SMS has no gateway wired up
@@ -229,21 +365,27 @@ table for the S3 connection settings.
 
 ## Not yet built (flagged, not silently dropped)
 
-- **Cancel/reschedule an invitation.** The product spec's Employee Features
-  list these, but they weren't part of this feature's scope — meaningful
-  cancel/reschedule needs a check-in state machine to interact with, which
-  doesn't exist yet. `invitations:cancel` is already seeded into the
-  permission catalog for when that lands.
+- **Cancel an invitation.** `add-invitation-lifecycle-actions` added
+  deny/check-in/check-out/reschedule/extend/badge/watchlist-override, but
+  not cancel — `invitations:cancel` is still seeded into the permission
+  catalog, unused, for when that lands. Deny (`submitted` → `denied`) is a
+  distinct concept: a reviewer's rejection before approval, not a
+  withdrawal of an already-approved/active invitation.
 - **Recurring invitations.** One-off single/group invitations only.
-- **Reject/decline a submitted invitation.** `POST /invitations/{id}/approve`
-  exists; there is no corresponding reject action yet — explicitly out of
-  scope for `add-invitation-approval-flow-and-role-resync`.
-- **Per-visitor-category, multi-step approval workflow evaluation.**
-  `ApprovalWorkflowRule` (`visitors/`) is still config CRUD only — nothing
-  evaluates it against an invitation. The auto-approve/manual-approve flow
-  above uses only the tenant-wide `Company.autoApprovePreRegisteredVisitors`
-  flag, not this per-category rule chain; wiring the two together is a
-  separate, larger effort.
+- **Automatic watchlist/blacklist matching.** `watchlistFlagged` and
+  `POST /invitations/{id}/watchlist-override` exist (see "Lifecycle
+  actions" above), but nothing sets the flag yet — no matching logic runs
+  at creation or anywhere else.
+- **Hardware/printer integration for badges.** `POST /invitations/{id}/badge`
+  renders and stores a badge image a reception device can retrieve and send
+  to its own printer; there is no server-to-printer protocol.
+- **Scheduled escalation/auto-approve enforcement.** Each approval step's
+  `escalatesAt`/`autoApprovesAt` are computed and exposed (see "Per-category
+  multi-step approval" above), but no Celery beat task acts on either yet —
+  a step overdue for escalation or auto-approval just sits `pending` until a
+  human acts on it.
+- **Resubmission after a workflow rejection.** Rejecting any step denies the
+  invitation outright; there is no path back to `submitted`.
 - **SMS gateway integration.** See the config table above.
 
 **Visitor-authored registration** — removed along with API-10 as a *remote*

@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.auth.models import User
 from vmss_api.core.deps import get_current_user, get_pagination, get_tenant, get_tenant_db
@@ -25,15 +26,21 @@ from vmss_api.core.rate_limit import limiter
 from vmss_api.core.redis import get_redis
 from vmss_api.core.responses import error_response, paginated_response, success_response
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
+from vmss_api.core.storage import url_for as storage_url_for
 from vmss_api.invitations import service
 from vmss_api.invitations.deps import track_default_tenant_db
 from vmss_api.invitations.schemas import (
+    BadgeOut,
     CarriedItemsSubmit,
     ConsentsSubmit,
     InvitationCreate,
+    InvitationDenyRequest,
+    InvitationDetailOut,
+    InvitationExtendRequest,
     InvitationListItemOut,
     InvitationOut,
     InvitationPrimaryContactCreate,
+    InvitationRescheduleRequest,
     InvitationSortableField,
     InvitationTrackingOut,
     InvitationTrackingSummaryOut,
@@ -44,6 +51,7 @@ from vmss_api.invitations.schemas import (
     VehicleSubmit,
     VisitDetailsSubmit,
     VisitorSubmit,
+    WatchlistOverrideRequest,
 )
 from vmss_api.org_structure.deps import (
     authorize_branch_id,
@@ -76,6 +84,7 @@ _NO_VISITOR_FILES = File(
 # dict per registration type means both channels can never drift apart.
 _INDIVIDUAL_PAYLOAD_EXAMPLE = {
     "registrationType": "individual",
+    "visitorCategoryId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
     "primaryContact": {
         "fullName": "Meera Krishnan",
         "email": "meera.krishnan@example.com",
@@ -104,6 +113,7 @@ _INDIVIDUAL_PAYLOAD_EXAMPLE = {
 
 _GROUP_PAYLOAD_EXAMPLE = {
     "registrationType": "group",
+    "visitorCategoryId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
     "primaryContact": {
         "fullName": "Priya Sharma",
         "email": "priya.sharma@enterprise-ugo.co",
@@ -238,16 +248,21 @@ _PAYLOAD_DESCRIPTION = (
 )
 
 
-def _to_invitation_out(invitation) -> InvitationOut:
+def to_invitation_out(
+    invitation, current_approval_step: CurrentApprovalStepOut | None = None
+) -> InvitationOut:
     return InvitationOut(
         id=invitation.id,
         tracking_id=invitation.tracking_id,
         registration_type=RegistrationType(invitation.registration_type),
         source=RegistrationSource(invitation.source),
         status=invitation.status,
+        visitor_category_id=invitation.visitor_category_id,
+        host_id=invitation.host_id,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
+        current_approval_step=current_approval_step,
     )
 
 
@@ -258,6 +273,7 @@ def _to_list_item_out(invitation) -> InvitationListItemOut:
         registration_type=RegistrationType(invitation.registration_type),
         source=RegistrationSource(invitation.source),
         status=invitation.status,
+        visitor_category_id=invitation.visitor_category_id,
         primary_contact_full_name=invitation.primary_contact_full_name,
         purpose_of_visit=invitation.purpose_of_visit,
         expires_at=invitation.expires_at,
@@ -266,12 +282,16 @@ def _to_list_item_out(invitation) -> InvitationListItemOut:
     )
 
 
-def _to_tracking_out(invitation) -> InvitationTrackingOut:
+def _to_tracking_out(
+    invitation, current_approval_step: CurrentApprovalStepOut | None = None
+) -> InvitationTrackingOut:
     return InvitationTrackingOut(
         tracking_id=invitation.tracking_id,
         status=invitation.status,
         registration_type=invitation.registration_type,
         source=invitation.source,
+        visitor_category_id=invitation.visitor_category_id,
+        current_approval_step=current_approval_step,
         primary_contact_full_name=invitation.primary_contact_full_name,
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
@@ -305,6 +325,79 @@ def _to_tracking_out(invitation) -> InvitationTrackingOut:
             )
             for v in invitation.vehicles
         ],
+    )
+
+
+def _to_invitation_detail_out(
+    invitation, current_approval_step: CurrentApprovalStepOut | None = None
+) -> InvitationDetailOut:
+    return InvitationDetailOut(
+        id=invitation.id,
+        branch_id=invitation.branch_id,
+        source=RegistrationSource(invitation.source),
+        created_by_user_id=invitation.created_by_user_id,
+        tracking_id=invitation.tracking_id,
+        status=invitation.status,
+        registration_type=invitation.registration_type,
+        visitor_category_id=invitation.visitor_category_id,
+        current_approval_step=current_approval_step,
+        primary_contact_full_name=invitation.primary_contact_full_name,
+        purpose_of_visit=invitation.purpose_of_visit,
+        host_name_or_email=invitation.host_name_or_email,
+        host_id=invitation.host_id,
+        preferred_visit_date=invitation.preferred_visit_date,
+        preferred_visit_time=invitation.preferred_visit_time,
+        expected_duration=invitation.expected_duration,
+        department_to_visit=invitation.department_to_visit,
+        additional_notes=invitation.additional_notes,
+        carried_items=invitation.carried_items,
+        carried_items_description=invitation.carried_items_description,
+        expires_at=invitation.expires_at,
+        submitted_at=invitation.submitted_at,
+        approved_at=invitation.approved_at,
+        denial_reason=invitation.denial_reason,
+        denied_at=invitation.denied_at,
+        checked_in_at=invitation.checked_in_at,
+        checked_in_by_user_id=invitation.checked_in_by_user_id,
+        checked_out_at=invitation.checked_out_at,
+        checked_out_by_user_id=invitation.checked_out_by_user_id,
+        badge_number=invitation.badge_number,
+        badge_issued_at=invitation.badge_issued_at,
+        badge_reprint_count=invitation.badge_reprint_count,
+        watchlist_flagged=invitation.watchlist_flagged,
+        watchlist_override_at=invitation.watchlist_override_at,
+        watchlist_override_reason=invitation.watchlist_override_reason,
+        watchlist_override_by_user_id=invitation.watchlist_override_by_user_id,
+        visitors=[
+            InvitationVisitorOut(
+                id=v.id,
+                full_name=v.full_name,
+                email=v.email,
+                phone=v.phone,
+                id_proof_type=v.id_proof_type,
+            )
+            for v in invitation.visitors
+        ],
+        vehicles=[
+            InvitationVehicleOut(
+                id=v.id,
+                vehicle_type=v.vehicle_type,
+                license_plate=v.license_plate,
+                make_model=v.make_model,
+                color=v.color,
+            )
+            for v in invitation.vehicles
+        ],
+    )
+
+
+async def _to_badge_out(invitation) -> BadgeOut:
+    assert invitation.badge_number is not None and invitation.badge_issued_at is not None
+    return BadgeOut(
+        badge_number=invitation.badge_number,
+        badge_url=await storage_url_for(invitation.badge_storage_key),
+        issued_at=invitation.badge_issued_at,
+        reprint_count=invitation.badge_reprint_count,
     )
 
 
@@ -439,8 +532,9 @@ async def create_invitation(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
+    current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
     response = success_response(
-        data=_to_invitation_out(invitation),
+        data=to_invitation_out(invitation, current_approval_step),
         status_code=status.HTTP_201_CREATED,
     )
     await _cache_response(tenant.id, idempotency_key, response)
@@ -476,7 +570,299 @@ async def approve_invitation(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    return success_response(data=_to_invitation_out(invitation))
+    return success_response(data=to_invitation_out(invitation))
+
+
+# --- add-invitation-lifecycle-actions: deny / check-in / check-out / --------
+# --- reschedule / extend / badge / watchlist-override -----------------------
+
+
+@router.patch(
+    "/{invitation_id}/deny",
+    response_model=Envelope[InvitationOut],
+)
+async def deny_invitation(
+    invitation_id: uuid.UUID,
+    payload: InvitationDenyRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Transitions a `submitted` invitation to `denied` with a mandatory
+    reason (spec.md "A Submitted Invitation Can Be Denied With a Reason").
+    """
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(tenant_db, user, "invitations:deny", invitation.branch_id)
+    invitation = await service.deny_invitation(
+        tenant_db, invitation, reason=payload.reason, tenant=tenant
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_denied",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    return success_response(data=to_invitation_out(invitation))
+
+
+@router.patch(
+    "/{invitation_id}/check-in",
+    response_model=Envelope[InvitationOut],
+)
+async def check_in_invitation(
+    invitation_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            description=(
+                "Optional. Omitting it simply forgoes retry-dedup safety — a "
+                "retried request with no key may check in twice. See "
+                "api-conventions.md §3."
+            ),
+        ),
+    ] = None,
+) -> JSONResponse:
+    """Transitions an `approved` invitation to `checked_in` (spec.md "An
+    Approved Invitation Can Be Checked In"), rejected with 409 while
+    `watchlistFlagged` is set and not yet overridden (spec.md "A
+    Watchlist-Flagged Invitation Blocks Check-In Until Overridden").
+    """
+    cached = await _cached_response(tenant.id, idempotency_key)
+    if cached is not None:
+        return cached
+
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(tenant_db, user, "invitations:checkin", invitation.branch_id)
+    invitation = await service.check_in_invitation(tenant_db, invitation, user_id=user.id)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_checked_in",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    response = success_response(data=to_invitation_out(invitation))
+    await _cache_response(tenant.id, idempotency_key, response)
+    return response
+
+
+@router.patch(
+    "/{invitation_id}/check-out",
+    response_model=Envelope[InvitationOut],
+)
+async def check_out_invitation(
+    invitation_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", description="Optional — see check-in.")
+    ] = None,
+) -> JSONResponse:
+    """Transitions a `checked_in` invitation to `checked_out`, closing the
+    visit (spec.md "A Checked-In Invitation Can Be Checked Out").
+    """
+    cached = await _cached_response(tenant.id, idempotency_key)
+    if cached is not None:
+        return cached
+
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(
+        tenant_db, user, "invitations:checkout", invitation.branch_id
+    )
+    invitation = await service.check_out_invitation(tenant_db, invitation, user_id=user.id)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_checked_out",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    response = success_response(data=to_invitation_out(invitation))
+    await _cache_response(tenant.id, idempotency_key, response)
+    return response
+
+
+@router.patch(
+    "/{invitation_id}/reschedule",
+    response_model=Envelope[InvitationOut],
+)
+async def reschedule_invitation(
+    invitation_id: uuid.UUID,
+    payload: InvitationRescheduleRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Changes the visit date/time while the invitation is `submitted` or
+    `approved` (spec.md "Visit Date/Time Can Be Rescheduled Before
+    Check-In").
+    """
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(
+        tenant_db, user, "invitations:reschedule", invitation.branch_id
+    )
+    invitation = await service.reschedule_invitation(
+        tenant_db,
+        invitation,
+        preferred_visit_date=payload.preferred_visit_date,
+        preferred_visit_time=payload.preferred_visit_time,
+        tenant=tenant,
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_rescheduled",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    return success_response(data=to_invitation_out(invitation))
+
+
+@router.patch(
+    "/{invitation_id}/extend",
+    response_model=Envelope[InvitationOut],
+)
+async def extend_invitation(
+    invitation_id: uuid.UUID,
+    payload: InvitationExtendRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Pushes `expiresAt` forward for an `approved`/`checked_in` visit
+    (spec.md "An Active Visit's Expiry Can Be Extended").
+    """
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(tenant_db, user, "invitations:extend", invitation.branch_id)
+    invitation = await service.extend_invitation(
+        tenant_db, invitation, new_expires_at=payload.expires_at
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_extended",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    return success_response(data=to_invitation_out(invitation))
+
+
+@router.post(
+    "/{invitation_id}/badge",
+    response_model=Envelope[BadgeOut],
+    status_code=status.HTTP_201_CREATED,
+)
+async def issue_badge(
+    invitation_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", description="Optional — see check-in.")
+    ] = None,
+) -> JSONResponse:
+    """Issues a printable badge for an `approved`/`checked_in` invitation
+    (spec.md "A Badge Can Be Printed for an Approved or Active Visit").
+    """
+    cached = await _cached_response(tenant.id, idempotency_key)
+    if cached is not None:
+        return cached
+
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(tenant_db, user, "invitations:badge", invitation.branch_id)
+    invitation = await service.issue_badge(tenant_db, invitation, tenant=tenant)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_badge_issued",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    response = success_response(
+        data=await _to_badge_out(invitation), status_code=status.HTTP_201_CREATED
+    )
+    await _cache_response(tenant.id, idempotency_key, response)
+    return response
+
+
+@router.post(
+    "/{invitation_id}/badge/reprint",
+    response_model=Envelope[BadgeOut],
+)
+async def reprint_badge(
+    invitation_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Re-renders an already-issued badge and increments its reprint count
+    (spec.md "A Badge Can Be Reprinted").
+    """
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(tenant_db, user, "invitations:badge", invitation.branch_id)
+    invitation = await service.reprint_badge(tenant_db, invitation, tenant=tenant)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_badge_reprinted",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    return success_response(data=await _to_badge_out(invitation))
+
+
+@router.post(
+    "/{invitation_id}/watchlist-override",
+    response_model=Envelope[InvitationOut],
+)
+async def override_watchlist(
+    invitation_id: uuid.UUID,
+    payload: WatchlistOverrideRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Admin-only override that clears `watchlistFlagged` so check-in can
+    proceed (spec.md "A Watchlist-Flagged Invitation Blocks Check-In Until
+    Overridden"). Does not itself check the invitation in.
+    """
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(
+        tenant_db, user, "invitations:watchlist-override", invitation.branch_id
+    )
+    invitation = await service.override_watchlist(
+        tenant_db, invitation, user_id=user.id, reason=payload.reason
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_watchlist_overridden",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    return success_response(data=to_invitation_out(invitation))
 
 
 # --- Employee listing ---------------------------------------------------------
@@ -538,7 +924,8 @@ async def track_invitation(
 
     if tracking_id is not None:
         invitation = await service.track_by_tracking_id(tenant_db, tracking_id)
-        return success_response(data=_to_tracking_out(invitation))
+        current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
+        return success_response(data=_to_tracking_out(invitation, current_approval_step))
 
     assert email is not None  # exactly one of the two is guaranteed set above
     invitations = await service.track_by_email(tenant_db, email)
@@ -548,3 +935,29 @@ async def track_invitation(
             for inv in invitations
         ]
     )
+
+
+# --- add-invitation-lifecycle-actions: authenticated detail lookup -----------
+# Registered after "/track" above so that literal path is matched first —
+# FastAPI resolves routes for the same method in registration order, and
+# "/track" would otherwise be swallowed by "/{invitation_id}"'s UUID
+# validation (and fail with 422) before ever reaching this route.
+
+
+@router.get(
+    "/{invitation_id}",
+    response_model=Envelope[InvitationDetailOut],
+)
+async def get_invitation_detail(
+    invitation_id: uuid.UUID,
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Authenticated, branch-scoped single-invitation detail view (spec.md
+    "Authenticated Detail Lookup by Invitation ID") — the staff-facing
+    counterpart of the public `GET /invitations/track` lookup above.
+    """
+    invitation = await service.get_invitation_detail(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(tenant_db, user, "invitations:view", invitation.branch_id)
+    current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
+    return success_response(data=_to_invitation_detail_out(invitation, current_approval_step))

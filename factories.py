@@ -30,6 +30,7 @@ arbitrary:
 
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
+from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
 from vmss_api.org_structure.models import (
@@ -174,6 +175,46 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     host_id = None
     duration_id = None
     department_id = None
+    # Same FK-safety rationale — the invitation-multi-step-approval category
+    # tag, nullable at the DB level for pre-existing rows.
+    visitor_category_id = None
+    # add-invitation-lifecycle-actions: same FK-safety rationale for the new
+    # lifecycle actor columns, plus a representative "nothing has happened
+    # yet" default for the rest — a fresh `submitted` row has no denial/
+    # check-in/check-out/badge/watchlist-override state.
+    denial_reason = None
+    denied_at = None
+    checked_in_at = None
+    checked_in_by_user_id = None
+    checked_out_at = None
+    checked_out_by_user_id = None
+    badge_number = None
+    badge_storage_key = None
+    badge_issued_at = None
+    badge_reprint_count = 0
+    watchlist_flagged = False
+    watchlist_override_at = None
+    watchlist_override_reason = None
+    watchlist_override_by_user_id = None
+
+
+class InvitationApprovalStepFactory(SQLAlchemyFactory[InvitationApprovalStep]):
+    __model__ = InvitationApprovalStep
+    deleted_at = None
+    status = "pending"
+    # Defaults to unset so every existing role-identified step build (which
+    # always passes `approver_role_id=...` explicitly) doesn't also get a
+    # polyfactory-generated random `approver_user_id`, which would violate
+    # the `ck_invitation_approval_steps_approver_xor` CHECK constraint
+    # (add-approval-step-id-and-host-routing) requiring exactly one of the
+    # two to be set. A host-identified step build overrides this explicitly.
+    approver_user_id = None
+    acted_by_user_id = None
+    acted_at = None
+    escalation_minutes = None
+    auto_approve_minutes = None
+    escalates_at = None
+    auto_approves_at = None
 
 
 class InvitationVisitorFactory(SQLAlchemyFactory[InvitationVisitor]):

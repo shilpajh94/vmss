@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String, Time, Uuid
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Time, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,9 +21,13 @@ class Invitation(Base, TimestampMixin):
     Company auto-approve setting at creation time, and may become
     `approved` later via `POST /invitations/{id}/approve` if it started
     `submitted` (`add-invitation-approval-flow-and-role-resync/design.md`
-    Decision 1). It stays a plain string column for future values
-    (`cancelled`/`expired`), but `pending` is no longer produced by any
-    code path.
+    Decision 1). It stays a plain string column for future values, three of
+    which this class now uses: `denied` (via `POST /invitations/{id}/deny`,
+    from `submitted`), `checked_in` (via `POST /invitations/{id}/check-in`,
+    from `approved`), and `checked_out` (via
+    `POST /invitations/{id}/check-out`, from `checked_in`) — see
+    `add-invitation-lifecycle-actions/design.md`. `pending` is no longer
+    produced by any code path.
 
     No tracking-token column here: the QR payload handed back at
     confirmation is the plain, human-readable `tracking_id` below
@@ -52,6 +56,14 @@ class Invitation(Base, TimestampMixin):
     source: Mapped[str] = mapped_column(String(30), default="staff_pre_registration")
     registration_type: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    # Nullable at the DB level (pre-existing rows have none), but required on
+    # `InvitationCreate` going forward — see
+    # invitation-multi-step-approval/design.md Decision 1. Drives which
+    # `ApprovalWorkflowRule`s (visitors/models.py) get snapshotted into this
+    # invitation's own `InvitationApprovalStep` rows at submission time.
+    visitor_category_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("visitor_categories.id"), index=True
+    )
     tracking_id: Mapped[str] = mapped_column(String(20), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -109,6 +121,38 @@ class Invitation(Base, TimestampMixin):
     data_processing_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     safety_guidelines_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     consent_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # --- Lifecycle: denial (add-invitation-lifecycle-actions/design.md) ----
+    denial_reason: Mapped[str | None] = mapped_column(String(500))
+    denied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # --- Lifecycle: check-in / check-out --------------------------------------
+    checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    checked_in_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+    checked_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    checked_out_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+
+    # --- Lifecycle: badge ------------------------------------------------------
+    # `badge_number` identifies the visit, not a single physical printout —
+    # a reprint keeps it and only changes `badge_storage_key` (design.md
+    # Decision 4).
+    badge_number: Mapped[str | None] = mapped_column(String(20), unique=True, index=True)
+    badge_storage_key: Mapped[str | None] = mapped_column(String(500))
+    badge_issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    badge_reprint_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # --- Lifecycle: watchlist override -----------------------------------------
+    # `watchlist_flagged` is set by nothing in this codebase yet — no
+    # automatic watchlist/blacklist matching exists (design.md Non-Goals).
+    # It exists so `POST /invitations/{id}/watchlist-override` and the
+    # check-in gate that reads it have a real column to operate on ahead of
+    # that future capability.
+    watchlist_flagged: Mapped[bool] = mapped_column(Boolean, default=False)
+    watchlist_override_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    watchlist_override_reason: Mapped[str | None] = mapped_column(String(500))
+    watchlist_override_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id")
+    )
 
     # `lazy="raise"` (not the SQLAlchemy default lazy-load, and not "noload")
     # forces every query touching these to eager-load explicitly via

@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
+from factories import VisitorCategoryFactory
 from vmss_api.auth.models import AuditLog
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
@@ -20,6 +21,21 @@ from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.org_structure.models import Branch
 from vmss_api.registrations.models import RegistrationDeviceKey
 from vmss_api.tenant.models import Tenant
+
+# Same fixed-id/autouse-fixture pattern as `invitations/tests.py` — walk-in
+# registration shares `InvitationCreate` (aliased `WalkInRegistrationCreate`)
+# verbatim, so it now needs a valid `visitorCategoryId` too.
+_DEFAULT_VISITOR_CATEGORY_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _default_visitor_category(db_session: AsyncSession) -> None:
+    db_session.add(
+        VisitorCategoryFactory.build(
+            id=_DEFAULT_VISITOR_CATEGORY_ID, name="Default Walk-in Category", code="WALKIN-DEFAULT"
+        )
+    )
+    await db_session.commit()
 
 
 @pytest_asyncio.fixture
@@ -54,6 +70,7 @@ def _jpeg_bytes() -> bytes:
 def _individual_payload() -> dict:
     return {
         "registrationType": "individual",
+        "visitorCategoryId": str(_DEFAULT_VISITOR_CATEGORY_ID),
         "primaryContact": {
             "fullName": "Walk In Visitor",
             "email": "walkin.visitor@example.com",
@@ -204,9 +221,12 @@ async def test_walk_in_registration_response_has_no_check_in_state(
         "registrationType",
         "source",
         "status",
+        "visitorCategoryId",
+        "hostId",
         "expiresAt",
         "submittedAt",
         "approvedAt",
+        "currentApprovalStep",
     }
 
 
