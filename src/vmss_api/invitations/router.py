@@ -24,11 +24,16 @@ from vmss_api.auth.models import User
 from vmss_api.core.deps import get_current_user, get_pagination, get_tenant, get_tenant_db
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.redis import get_redis
-from vmss_api.core.responses import error_response, paginated_response, success_response
+from vmss_api.core.responses import (
+    error_response,
+    mark_deprecated,
+    paginated_response,
+    success_response,
+)
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.core.storage import url_for as storage_url_for
 from vmss_api.invitations import service
-from vmss_api.invitations.deps import track_default_tenant_db
+from vmss_api.invitations.deps import track_default_tenant, track_default_tenant_db
 from vmss_api.invitations.schemas import (
     BadgeOut,
     CarriedItemsSubmit,
@@ -634,6 +639,12 @@ async def check_in_invitation(
     Approved Invitation Can Be Checked In"), rejected with 409 while
     `watchlistFlagged` is set and not yet overridden (spec.md "A
     Watchlist-Flagged Invitation Blocks Check-In Until Overridden").
+
+    **Deprecated** — see `PATCH /api/v2/invitations/{trackingId}/check-in`
+    for the public, tracking-ID-keyed replacement
+    (add-public-checkin-endpoint/design.md). This route stays fully
+    functional during the migration window; api-conventions.md §2 governs
+    its eventual removal.
     """
     cached = await _cached_response(tenant.id, idempotency_key)
     if cached is not None:
@@ -649,6 +660,66 @@ async def check_in_invitation(
         tenant.schema_name,
         actor_user_id=user.id,
         action="invitation_checked_in",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    response = success_response(data=to_invitation_out(invitation))
+    await _cache_response(tenant.id, idempotency_key, response)
+    return mark_deprecated(response)
+
+
+# --- add-public-checkin-endpoint: public check-in by tracking ID ------------
+# A second, minimal router mounted at /api/v2 (see api.py/main.py) — not a
+# wholesale re-exposure of every v1 invitations route under v2, just this one
+# endpoint (design.md Decision 1).
+
+router_v2 = APIRouter(prefix="/invitations", tags=["invitations"])
+
+
+@router_v2.patch(
+    "/{tracking_id}/check-in",
+    response_model=Envelope[InvitationOut],
+)
+@limiter.limit("20/minute")
+async def check_in_invitation_by_tracking_id(
+    request: Request,
+    tracking_id: str,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(track_default_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            description=(
+                "Optional. Omitting it simply forgoes retry-dedup safety — a "
+                "retried request with no key may check in twice. See "
+                "api-conventions.md §3."
+            ),
+        ),
+    ] = None,
+) -> JSONResponse:
+    """Public, unauthenticated counterpart of
+    `PATCH /api/v1/invitations/{id}/check-in`, keyed by the invitation's
+    `tracking_id` instead of its internal UUID `id` (spec.md "An Approved
+    Invitation Can Be Publicly Checked In By Tracking ID") — for a kiosk or
+    the visitor's own device checking in from the QR/badge code, with no
+    staff bearer token. Same 409/404/`Idempotency-Key` behavior as the
+    staff-authenticated route; no branch authorization check, since there is
+    no authenticated caller to check it against.
+    """
+    cached = await _cached_response(tenant.id, idempotency_key)
+    if cached is not None:
+        return cached
+
+    invitation = await service.check_in_invitation_by_tracking_id(
+        tenant_db, tracking_id, tenant=tenant
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=None,
+        action="invitation_checked_in_public",
         entity_type="Invitation",
         entity_id=invitation.id,
     )
