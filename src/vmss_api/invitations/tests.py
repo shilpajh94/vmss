@@ -2455,8 +2455,17 @@ async def test_check_out_invitation_requires_permission(
 
 
 async def test_reschedule_invitation_success(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
 ) -> None:
+    """specs/invitations/spec.md "Reschedule Dispatches a Notification to
+    the Primary Contact" — a successful reschedule enqueues the
+    notification task with the invitation's own id.
+    """
+    reschedule_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_reschedule_notification, "delay", lambda **kw: reschedule_calls.append(kw)
+    )
+
     invitation = _build_invitation(db_session, branch.id, status="submitted")
     db_session.add(invitation)
     await db_session.commit()
@@ -2474,10 +2483,18 @@ async def test_reschedule_invitation_success(
     assert invitation.preferred_visit_date.isoformat() == "2026-12-01"
     assert invitation.preferred_visit_time.isoformat() == "15:30:00"
 
+    assert len(reschedule_calls) == 1
+    assert reschedule_calls[0]["invitation_id"] == str(invitation.id)
+
 
 async def test_reschedule_invitation_after_check_in_rejected(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
 ) -> None:
+    reschedule_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_reschedule_notification, "delay", lambda **kw: reschedule_calls.append(kw)
+    )
+
     invitation = _build_invitation(
         db_session,
         branch.id,
@@ -2499,6 +2516,7 @@ async def test_reschedule_invitation_after_check_in_rejected(
 
     await db_session.refresh(invitation)
     assert invitation.preferred_visit_date == original_date
+    assert reschedule_calls == []
 
 
 async def test_reschedule_invitation_requires_permission(
@@ -2507,7 +2525,13 @@ async def test_reschedule_invitation_requires_permission(
     tenant: Tenant,
     branch: Branch,
     issue_token: Callable[[User], str],
+    monkeypatch,
 ) -> None:
+    reschedule_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_reschedule_notification, "delay", lambda **kw: reschedule_calls.append(kw)
+    )
+
     viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
     invitation = _build_invitation(db_session, branch.id, status="submitted")
     db_session.add(invitation)
@@ -2520,6 +2544,54 @@ async def test_reschedule_invitation_requires_permission(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
+    assert reschedule_calls == []
+
+
+async def test_send_reschedule_notification_routes_to_sms_when_preferred(monkeypatch) -> None:
+    """specs/invitations/spec.md "Successful reschedule notifies the
+    primary contact by SMS when preferred" — exercised directly against
+    the task (`testing-standards.md` §3's "unit-style" tier), mirroring
+    `test_send_approval_notification_exhausted_retries_logs_error`'s fake
+    session/invitation pattern rather than a real Celery/DB round trip.
+    """
+    sms_sent: list[dict] = []
+
+    class _RecordingSmsSender:
+        async def send(self, **kwargs):
+            sms_sent.append(kwargs)
+
+    email_sent: list[dict] = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            email_sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "sms_sender", _RecordingSmsSender())
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        tracking_id="INV-TEST0002",
+        preferred_visit_date="2026-12-01",
+        preferred_visit_time="15:30:00",
+        primary_contact_preferred_contact_method="sms",
+        primary_contact_email=None,
+        primary_contact_phone="+1 555 0100",
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_reschedule_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+
+    assert email_sent == []
+    assert len(sms_sent) == 1
+    assert sms_sent[0]["to"] == "+1 555 0100"
+    assert "INV-TEST0002" in sms_sent[0]["body"]
 
 
 # --- PATCH /invitations/{id}/extend ---------------------------------------------

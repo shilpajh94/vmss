@@ -36,7 +36,7 @@ branch from the request body via the same `authorize_branch_id` helper.
 | PATCH | `/api/v1/invitations/{id}/deny` | `invitations:deny` at the invitation's branch | — | Transitions a `submitted` invitation to `denied`, with a mandatory `reason`, and dispatches a denial notification. 409 if not currently `submitted`. |
 | PATCH | `/api/v1/invitations/{id}/check-in` | `invitations:checkin` at the invitation's branch | — | Transitions an `approved` invitation to `checked_in`. 409 if not `approved`, or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key`. |
 | PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. |
-| PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`. 409 once `checked_in`/`checked_out`/`denied`. |
+| PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`, and dispatches a reschedule notification to the primary contact. 409 once `checked_in`/`checked_out`/`denied`. |
 | PATCH | `/api/v1/invitations/{id}/extend` | `invitations:extend` at the invitation's branch | — | Pushes `expiresAt` forward while `approved` or `checked_in`. 422 if the new expiry isn't strictly later than the current one; 409 if ineligible. |
 | POST | `/api/v1/invitations/{id}/badge` | `invitations:badge` at the invitation's branch | — | Issues a printable badge (PNG) for an `approved`/`checked_in` invitation. 409 if ineligible or already issued (use reprint). Accepts `Idempotency-Key`. |
 | POST | `/api/v1/invitations/{id}/badge/reprint` | `invitations:badge` at the invitation's branch | — | Re-renders an already-issued badge from current data and increments its reprint count. 409 if none issued yet. |
@@ -229,6 +229,18 @@ submitted ──approve──> approved ──check-in──> checked_in ──c
 - Denial dispatches `invitations/tasks.py::send_denial_notification`
   (tracking ID + reason, no QR) — structurally identical to
   `send_tracking_notification`, async/Celery, never inline.
+- A successful reschedule dispatches
+  `invitations/tasks.py::send_reschedule_notification` (tracking ID + the
+  new `preferredVisitDate`/`preferredVisitTime`, no QR — the existing QR
+  from creation/approval is still valid) — same structure and channel
+  routing (`primaryContactPreferredContactMethod`) as the other three
+  notifications, only to the primary contact (not co-visitors on a group
+  registration, matching every other lifecycle notification). A request
+  rejected with 409 (ineligible status) or 403 (no branch access) dispatches
+  nothing. `add-reschedule-notification/design.md` flags one known gap:
+  this endpoint still has no `Idempotency-Key` support, so a client retry
+  can trigger more than one notification for what was meant as a single
+  reschedule.
 
 ## Listing invitations
 
@@ -300,9 +312,12 @@ notifications via Celery, never inline in the request path
 (tracking ID + QR code — sent for an `approved` invitation) or
 `send_tracking_notification` (tracking ID only, no QR — sent for a
 `submitted` one). See "Auto-approve vs. manual approval" above for which
-one a given creation/approval triggers. Both tasks resolve their own
-tenant-bound session from a `tenant_schema` argument, skip if the
-invitation row is no longer found (redelivery after removal), and declare
+one a given creation/approval triggers. Denial (`send_denial_notification`)
+and a successful reschedule (`send_reschedule_notification`) each dispatch
+their own notification the same way — see "Lifecycle actions" above. Every
+one of these four tasks resolves its own tenant-bound session from a
+`tenant_schema` argument, skips if the invitation row is no longer found
+(redelivery after removal), and declares
 `autoretry_for`/`retry_backoff`/`max_retries`, logging at `ERROR` with full
 context if retries are exhausted. Email goes out over SMTP
 (`invitations/notifications.py::SmtpEmailSender`); SMS has no gateway wired up

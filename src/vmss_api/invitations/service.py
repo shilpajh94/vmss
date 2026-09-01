@@ -526,7 +526,13 @@ async def reschedule_invitation(
     *,
     preferred_visit_date: Any,
     preferred_visit_time: Any,
+    tenant: Tenant,
 ) -> Invitation:
+    """Notifies the primary contact of the new date/time on success
+    (specs/invitations/spec.md "Reschedule Dispatches a Notification to the
+    Primary Contact") — enqueued only after the commit below, never for a
+    request rejected by either guard.
+    """
     if invitation.status not in _RESCHEDULABLE_STATUSES:
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
@@ -541,6 +547,11 @@ async def reschedule_invitation(
             status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
         )
     await tenant_db.commit()
+    tasks.send_reschedule_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(updated.id),
+    )
     return updated
 
 

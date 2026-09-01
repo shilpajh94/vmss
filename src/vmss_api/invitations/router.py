@@ -719,6 +719,7 @@ async def reschedule_invitation(
         invitation,
         preferred_visit_date=payload.preferred_visit_date,
         preferred_visit_time=payload.preferred_visit_time,
+        tenant=tenant,
     )
     background_tasks.add_task(
         record_audit_log,
