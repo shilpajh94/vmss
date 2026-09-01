@@ -293,7 +293,17 @@ invitation id that does not exist at all SHALL be rejected with 404. A
 caller who lacks branch access to an invitation that does exist SHALL be
 rejected with 403 — the same branch-authorization behavior `POST
 /invitations` itself already applies when resolving a branch it doesn't
-otherwise know from the request.
+otherwise know from the request. The invitation's recorded `branchId` is
+already-persisted historical data, not caller-supplied input, so branch
+authorization for approval SHALL succeed based on that recorded id even if
+the branch has since been soft-deleted — approval SHALL NOT fail with a
+branch-not-found error for an invitation that otherwise exists and is
+`submitted`. The transition itself SHALL be atomic: when two approval
+requests for the same invitation are processed concurrently, exactly one
+SHALL succeed and exactly one approval notification SHALL be dispatched —
+the other SHALL observe the same 409 "not currently submitted" outcome the
+sequential already-approved case produces, never a duplicate transition or
+a duplicate notification.
 
 #### Scenario: Manual approval transitions status and dispatches the QR notification
 - **WHEN** a caller with `invitations:approve` at the invitation's branch
@@ -340,6 +350,21 @@ otherwise know from the request.
   attempts to approve an invitation that exists at another branch
 - **THEN** the request is rejected with 403, not 404 — the invitation's
   existence is not hidden, only the caller's access to act on it is denied
+
+#### Scenario: Approving an invitation whose branch was soft-deleted after submission
+- **WHEN** a caller with `invitations:approve` at the invitation's recorded
+  branch approves a `submitted` invitation whose `branchId` refers to a
+  `Branch` that has since been soft-deleted
+- **THEN** the approval succeeds exactly as it would have before the branch
+  was deleted — the invitation's status becomes `approved`, `approvedAt` is
+  set, and the approval notification is dispatched
+
+#### Scenario: Concurrent approval requests result in exactly one transition
+- **WHEN** two approval requests for the same `submitted` invitation are
+  processed concurrently, both otherwise authorized
+- **THEN** exactly one request transitions the invitation to `approved` and
+  dispatches the approval notification, and the other is rejected with 409
+  as if the invitation were already approved
 
 ### Requirement: Approval-Step Rejection Denies the Invitation
 Rejecting any snapshotted `InvitationApprovalStep` SHALL immediately

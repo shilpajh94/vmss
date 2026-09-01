@@ -216,6 +216,18 @@ revoke a previously granted role assignment.
 - **THEN** the assignment row no longer exists, and subsequent permission
   checks for that user against that role/branch combination fail
 
+### Requirement: Duplicate Branch-Role Grant Assignment Is Rejected
+Granting a user a role at a branch scope (a specific branch, or company-wide
+when no branch is given) that the user already holds that exact role at
+SHALL be rejected with 409, leaving the existing grant unchanged and
+creating no second `UserBranchRole` row.
+
+#### Scenario: Assigning an identical grant a second time is rejected
+- **WHEN** a caller with `users:manage` grants a role to a user at a branch
+  scope the user already holds that same role at
+- **THEN** the request is rejected with 409, the user's existing grant is
+  unchanged, and no duplicate `UserBranchRole` row is created
+
 ### Requirement: The Visitor Role Grants No Access and Is Never Assignable to a User
 The "Visitor" role SHALL exist in the seeded role catalog (to satisfy the
 five-role requirement) but SHALL carry zero permissions, and the system
