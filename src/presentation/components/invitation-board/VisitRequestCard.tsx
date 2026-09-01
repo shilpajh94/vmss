@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
+import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
 import { resolveApproverLabel } from '../../utils/approval-step-label'
 import { CalendarClockIcon } from '../icons'
 
@@ -30,6 +31,9 @@ interface VisitRequestCardProps {
   employeeNameById?: Record<string, string>
   onReschedule?: (id: string, preferredVisitDate: string, preferredVisitTime: string) => void
   isRescheduling?: boolean
+  hostEmployees?: HostEmployee[]
+  onDelegate?: (id: string, delegateUserId: string) => void
+  isDelegating?: boolean
 }
 
 export function VisitRequestCard({
@@ -44,10 +48,23 @@ export function VisitRequestCard({
   employeeNameById,
   onReschedule,
   isRescheduling,
+  hostEmployees,
+  onDelegate,
+  isDelegating,
 }: VisitRequestCardProps) {
   const [rescheduleDate, setRescheduleDate] = useState('')
   const [rescheduleTime, setRescheduleTime] = useState('')
+  const [delegateUserId, setDelegateUserId] = useState('')
   const canReschedule = Boolean(onReschedule) && RESCHEDULABLE_STATUSES.has(request.status)
+  const canDelegate = Boolean(onDelegate) && Boolean(detail?.currentApprovalStep)
+  // A step configured for a role can only be delegated to someone who holds
+  // that role — the picker is locked to the step's own approverRoleId rather
+  // than letting staff pick an unrelated role.
+  const stepRoleId = detail?.currentApprovalStep?.approverRoleId
+  const stepRoleName = stepRoleId ? roleNameById?.[stepRoleId] : undefined
+  const delegateCandidates = stepRoleId
+    ? hostEmployees?.filter((employee) => employee.branchRoles.some((branchRole) => branchRole.roleName === stepRoleName))
+    : hostEmployees
 
   return (
     <div
@@ -132,6 +149,42 @@ export function VisitRequestCard({
             className="w-full rounded-md bg-secondary-accent px-2 py-1.5 font-body text-xs font-semibold text-white disabled:opacity-50"
           >
             {isRescheduling ? 'Rescheduling…' : 'Save new date & time'}
+          </button>
+        </div>
+      ) : null}
+
+      {isExpanded && canDelegate ? (
+        <div
+          className="flex w-full flex-col gap-2 rounded-lg bg-bg p-2.5"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <p className="font-body text-[11px] font-semibold text-text-muted">Delegate this step</p>
+          {stepRoleId ? (
+            <p className="font-body text-[11px] text-text-faint">
+              Delegating within role: <span className="font-semibold text-text">{stepRoleName ?? 'the configured role'}</span>
+            </p>
+          ) : null}
+          <select
+            value={delegateUserId}
+            onChange={(event) => setDelegateUserId(event.target.value)}
+            className="w-full rounded-md border border-border bg-surface px-2 py-1 font-body text-xs text-text"
+          >
+            <option value="">
+              {delegateCandidates?.length ? 'Select host…' : stepRoleId ? `No one currently holds ${stepRoleName}` : 'Select host…'}
+            </option>
+            {delegateCandidates?.map((employee) => (
+              <option key={employee.id} value={employee.id}>
+                {employee.fullName}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={!delegateUserId || isDelegating}
+            onClick={() => delegateUserId && onDelegate?.(request.id, delegateUserId)}
+            className="w-full rounded-md bg-secondary-accent px-2 py-1.5 font-body text-xs font-semibold text-white disabled:opacity-50"
+          >
+            {isDelegating ? 'Delegating…' : 'Delegate approval'}
           </button>
         </div>
       ) : null}

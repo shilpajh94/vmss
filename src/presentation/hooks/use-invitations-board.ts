@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
 import { resolveApproverLabel } from '../utils/approval-step-label'
@@ -7,6 +7,7 @@ import type { VisitRequestSummary } from '../../domain/entities/visit-request-su
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entities/invitation-detail-schema'
 import type { RoleOut } from '../../domain/entities/role-out-schema'
+import type { HostEmployee } from '../../domain/entities/host-employee-schema'
 
 export const BOARD_STATUS_COLUMNS = [
   { status: 'requested', label: 'Requested' },
@@ -47,6 +48,7 @@ function describeApprovalOutcome(
 // behavior, differing only in where an unauthenticated visitor is redirected.
 export function useInvitationsBoard(loginRedirectPath: string) {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const {
     listVisitRequestsUseCase,
     approveInvitationUseCase,
@@ -58,12 +60,15 @@ export function useInvitationsBoard(loginRedirectPath: string) {
     denyInvitationUseCase,
     approveInvitationStepUseCase,
     rejectInvitationStepUseCase,
+    delegateInvitationStepUseCase,
   } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [visitRequests, setVisitRequests] = useState<VisitRequestSummary[]>([])
+  const [roles, setRoles] = useState<RoleOut[]>([])
   const [roleNameById, setRoleNameById] = useState<Record<string, string>>({})
+  const [hostEmployees, setHostEmployees] = useState<HostEmployee[]>([])
   const [employeeNameById, setEmployeeNameById] = useState<Record<string, string>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
@@ -73,6 +78,7 @@ export function useInvitationsBoard(loginRedirectPath: string) {
   const [invitationDetails, setInvitationDetails] = useState<Record<string, InvitationDetail>>({})
   const [loadingDetailId, setLoadingDetailId] = useState<string | undefined>(undefined)
   const [reschedulingId, setReschedulingId] = useState<string | undefined>(undefined)
+  const [delegatingId, setDelegatingId] = useState<string | undefined>(undefined)
   const [pendingDenyId, setPendingDenyId] = useState<string | undefined>(undefined)
   const [denyingId, setDenyingId] = useState<string | undefined>(undefined)
 
@@ -89,7 +95,9 @@ export function useInvitationsBoard(loginRedirectPath: string) {
       ])
       setCurrentUser(user)
       setVisitRequests(requests)
+      setRoles(roles)
       setRoleNameById(Object.fromEntries(roles.map((role: RoleOut) => [role.id, role.name])))
+      setHostEmployees(employees)
       setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
     } catch (error) {
       console.error('Failed to load dashboard', error)
@@ -170,6 +178,22 @@ export function useInvitationsBoard(loginRedirectPath: string) {
     [expandedId, loadDetail, toast],
   )
 
+  // Opens the invitation named by ?invitationId=... (e.g. from a clicked push
+  // notification) the same way clicking its card does, once on mount.
+  const hasOpenedDeepLinkRef = useRef(false)
+  useEffect(() => {
+    if (hasOpenedDeepLinkRef.current) return
+    const invitationId = searchParams.get('invitationId')
+    if (!invitationId) return
+
+    hasOpenedDeepLinkRef.current = true
+    setExpandedId(invitationId)
+    void loadDetail(invitationId).catch((error: unknown) => {
+      console.error('Failed to load invitation detail from notification link', error)
+      toast.error('Could not load approval progress for this request.')
+    })
+  }, [searchParams, loadDetail, toast])
+
   const approve = useCallback(
     async (id: string) => {
       setApprovingId(id)
@@ -225,6 +249,37 @@ export function useInvitationsBoard(loginRedirectPath: string) {
       }
     },
     [rescheduleInvitationUseCase, loadDashboard, toast],
+  )
+
+  // Reassigns the current pending approval step to a different person — the
+  // delegate target is always a specific host/employee, whether picked
+  // directly or narrowed down via another role's roster.
+  const delegate = useCallback(
+    async (id: string, delegateUserId: string) => {
+      setDelegatingId(id)
+
+      try {
+        const detail = await loadDetail(id)
+        if (!detail.currentApprovalStep) {
+          throw new Error('This request has no pending approval step to delegate.')
+        }
+
+        await delegateInvitationStepUseCase.execute(id, detail.currentApprovalStep.id, delegateUserId)
+        const updatedDetail = await getInvitationDetailUseCase.execute(id)
+        setInvitationDetails((previous) => ({ ...previous, [id]: updatedDetail }))
+
+        const approverLabel = employeeNameById[delegateUserId] ?? 'the selected host'
+        toast.success(`Delegated level ${detail.currentApprovalStep.stepOrder} of ${detail.currentApprovalStep.totalSteps} to ${approverLabel}.`)
+
+        await loadDashboard()
+      } catch (error) {
+        console.error('Failed to delegate approval step', error)
+        toast.error(error instanceof Error ? error.message : 'Failed to delegate this approval step. Please try again.')
+      } finally {
+        setDelegatingId(undefined)
+      }
+    },
+    [delegateInvitationStepUseCase, getInvitationDetailUseCase, loadDashboard, loadDetail, employeeNameById, toast],
   )
 
   const requestDeny = useCallback((id: string) => {
@@ -301,10 +356,14 @@ export function useInvitationsBoard(loginRedirectPath: string) {
     toggleExpand,
     invitationDetails,
     loadingDetailId,
+    roles,
     roleNameById,
+    hostEmployees,
     employeeNameById,
     reschedule,
     reschedulingId,
+    delegate,
+    delegatingId,
     pendingDenyId,
     requestDeny,
     cancelDeny,

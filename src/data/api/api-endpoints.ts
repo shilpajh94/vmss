@@ -79,6 +79,11 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: true,
   },
+  DELEGATE_INVITATION_STEP: {
+    endpoint: "/invitations/:invitationId/approval-steps/:stepId/delegate",
+    method: "POST",
+    hasToken: true,
+  },
   LIST_AUDIT_TRAIL: {
     endpoint: "/staff/audit-trail",
     method: "GET",
@@ -316,6 +321,16 @@ export const API_ENDPOINTS = {
   },
   DELETE_APPROVAL_WORKFLOW_RULE: {
     endpoint: "/approval-workflow-rules/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  REGISTER_DEVICE: {
+    endpoint: "/notifications/devices",
+    method: "POST",
+    hasToken: true,
+  },
+  UNREGISTER_DEVICE: {
+    endpoint: "/notifications/devices/:fcmToken",
     method: "DELETE",
     hasToken: true,
   },

@@ -1,6 +1,8 @@
 import { useNavigate } from 'react-router'
-import { BellIcon, LogOutIcon, SearchGlyphIcon } from './icons'
+import { LogOutIcon, SearchGlyphIcon } from './icons'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
+import { usePushNotifications } from '../hooks/use-push-notifications'
+import { NotificationBell } from './notification-bell/NotificationBell'
 
 interface AdminTopBarBreadcrumbItem {
   label: string
@@ -15,10 +17,13 @@ interface AdminTopBarProps {
 
 export function AdminTopBar({ description, breadcrumb, currentUser }: AdminTopBarProps) {
   const navigate = useNavigate()
+  const { unregisterCurrentDevice } = usePushNotifications()
 
   const signOut = () => {
-    sessionStorage.removeItem('token')
-    navigate('/admin/login')
+    void unregisterCurrentDevice().finally(() => {
+      sessionStorage.removeItem('token')
+      navigate('/admin/login')
+    })
   }
 
   return (
@@ -45,10 +50,7 @@ export function AdminTopBar({ description, breadcrumb, currentUser }: AdminTopBa
           <span className="font-body text-[13px] text-text-faint">Search workspace...</span>
         </div>
 
-        <span className="relative flex size-9 items-center justify-center rounded-full bg-border-subtle">
-          <BellIcon className="size-4 text-text" />
-          <span className="absolute top-[10px] right-[10px] size-1.5 rounded-full bg-danger" />
-        </span>
+        <NotificationBell />
 
         <div className="flex items-center gap-2">
           <span className="size-8 rounded-full bg-neutral-subtle" />

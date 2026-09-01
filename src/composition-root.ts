@@ -19,6 +19,7 @@ import type { ReceptionDeskRepository } from './data/repositories/reception-desk
 import type { SecurityGateRepository } from './data/repositories/security-gate-repository'
 import type { VisitorCategoryRepository } from './data/repositories/visitor-category-repository'
 import type { ApprovalWorkflowRuleRepository } from './data/repositories/approval-workflow-rule-repository'
+import type { NotificationRepository } from './data/repositories/notification-repository'
 import { SubmitVisitRequestUseCase } from './data/use-cases/submit-visit-request'
 import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-visit-request'
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
@@ -35,6 +36,7 @@ import { RescheduleInvitationUseCase } from './data/use-cases/reschedule-invitat
 import { DenyInvitationUseCase } from './data/use-cases/deny-invitation'
 import { ApproveInvitationStepUseCase } from './data/use-cases/approve-invitation-step'
 import { RejectInvitationStepUseCase } from './data/use-cases/reject-invitation-step'
+import { DelegateInvitationStepUseCase } from './data/use-cases/delegate-invitation-step'
 import { GetCurrentStaffUserUseCase } from './data/use-cases/get-current-staff-user'
 import { GetOrganisationConfigUseCase } from './data/use-cases/get-organisation-config'
 import { UpdateOrganisationConfigUseCase } from './data/use-cases/update-organisation-config'
@@ -80,6 +82,8 @@ import { DeleteVisitorCategoryUseCase } from './data/use-cases/delete-visitor-ca
 import { ListApprovalWorkflowRulesUseCase } from './data/use-cases/list-approval-workflow-rules'
 import { SaveWorkflowUseCase } from './data/use-cases/save-workflow'
 import { DeleteWorkflowUseCase } from './data/use-cases/delete-workflow'
+import { RegisterDeviceUseCase } from './data/use-cases/register-device'
+import { UnregisterDeviceUseCase } from './data/use-cases/unregister-device'
 import { HttpVisitRequestRepository } from './infrastructure/visit-request-repository'
 import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-request-summary-repository'
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
@@ -100,6 +104,7 @@ import { HttpReceptionDeskRepository } from './infrastructure/reception-desk-rep
 import { HttpSecurityGateRepository } from './infrastructure/security-gate-repository'
 import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category-repository'
 import { HttpApprovalWorkflowRuleRepository } from './infrastructure/approval-workflow-rule-repository'
+import { HttpNotificationRepository } from './infrastructure/notification-repository'
 
 export interface AppDependencies {
   apiClient: ApiClient
@@ -117,6 +122,7 @@ export interface AppDependencies {
   denyInvitationUseCase: DenyInvitationUseCase
   approveInvitationStepUseCase: ApproveInvitationStepUseCase
   rejectInvitationStepUseCase: RejectInvitationStepUseCase
+  delegateInvitationStepUseCase: DelegateInvitationStepUseCase
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
   getAuditTrailUseCase: GetAuditTrailUseCase
@@ -164,6 +170,8 @@ export interface AppDependencies {
   listApprovalWorkflowRulesUseCase: ListApprovalWorkflowRulesUseCase
   saveWorkflowUseCase: SaveWorkflowUseCase
   deleteWorkflowUseCase: DeleteWorkflowUseCase
+  registerDeviceUseCase: RegisterDeviceUseCase
+  unregisterDeviceUseCase: UnregisterDeviceUseCase
 }
 
 export function createApp(): AppDependencies {
@@ -188,6 +196,7 @@ export function createApp(): AppDependencies {
   let denyInvitationUseCase: DenyInvitationUseCase | undefined
   let approveInvitationStepUseCase: ApproveInvitationStepUseCase | undefined
   let rejectInvitationStepUseCase: RejectInvitationStepUseCase | undefined
+  let delegateInvitationStepUseCase: DelegateInvitationStepUseCase | undefined
   let getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase | undefined
   let staffVisitRequestRepository: StaffVisitRequestRepository | undefined
   let submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase | undefined
@@ -249,6 +258,9 @@ export function createApp(): AppDependencies {
   let listApprovalWorkflowRulesUseCase: ListApprovalWorkflowRulesUseCase | undefined
   let saveWorkflowUseCase: SaveWorkflowUseCase | undefined
   let deleteWorkflowUseCase: DeleteWorkflowUseCase | undefined
+  let notificationRepository: NotificationRepository | undefined
+  let registerDeviceUseCase: RegisterDeviceUseCase | undefined
+  let unregisterDeviceUseCase: UnregisterDeviceUseCase | undefined
 
   const resolveApiClient = (): ApiClient => {
     apiClient ??= new ApiClient(import.meta.env.VITE_API_BASE_URL)
@@ -353,6 +365,11 @@ export function createApp(): AppDependencies {
   const resolveRejectInvitationStepUseCase = (): RejectInvitationStepUseCase => {
     rejectInvitationStepUseCase ??= new RejectInvitationStepUseCase(resolveVisitRequestSummaryRepository())
     return rejectInvitationStepUseCase
+  }
+
+  const resolveDelegateInvitationStepUseCase = (): DelegateInvitationStepUseCase => {
+    delegateInvitationStepUseCase ??= new DelegateInvitationStepUseCase(resolveVisitRequestSummaryRepository())
+    return delegateInvitationStepUseCase
   }
 
   const resolveGetCurrentStaffUserUseCase = (): GetCurrentStaffUserUseCase => {
@@ -666,6 +683,21 @@ export function createApp(): AppDependencies {
     return deleteWorkflowUseCase
   }
 
+  const resolveNotificationRepository = (): NotificationRepository => {
+    notificationRepository ??= new HttpNotificationRepository(resolveApiClient())
+    return notificationRepository
+  }
+
+  const resolveRegisterDeviceUseCase = (): RegisterDeviceUseCase => {
+    registerDeviceUseCase ??= new RegisterDeviceUseCase(resolveNotificationRepository())
+    return registerDeviceUseCase
+  }
+
+  const resolveUnregisterDeviceUseCase = (): UnregisterDeviceUseCase => {
+    unregisterDeviceUseCase ??= new UnregisterDeviceUseCase(resolveNotificationRepository())
+    return unregisterDeviceUseCase
+  }
+
   return {
     get apiClient() {
       return resolveApiClient()
@@ -708,6 +740,9 @@ export function createApp(): AppDependencies {
     },
     get rejectInvitationStepUseCase() {
       return resolveRejectInvitationStepUseCase()
+    },
+    get delegateInvitationStepUseCase() {
+      return resolveDelegateInvitationStepUseCase()
     },
     get approveInvitationUseCase() {
       return resolveApproveInvitationUseCase()
@@ -852,6 +887,12 @@ export function createApp(): AppDependencies {
     },
     get deleteWorkflowUseCase() {
       return resolveDeleteWorkflowUseCase()
+    },
+    get registerDeviceUseCase() {
+      return resolveRegisterDeviceUseCase()
+    },
+    get unregisterDeviceUseCase() {
+      return resolveUnregisterDeviceUseCase()
     },
   }
 }

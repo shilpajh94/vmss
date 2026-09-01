@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePushNotifications } from '../../../hooks/use-push-notifications'
 
 export type StaffLoginStatus = 'idle' | 'submitting' | 'error'
 
@@ -9,6 +10,7 @@ export function useStaffLoginPage() {
   const { loginStaffUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
   const toast = useToast()
   const navigate = useNavigate()
+  const { registerCurrentDevice } = usePushNotifications()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -34,6 +36,7 @@ export function useStaffLoginPage() {
     try {
       const { token } = await loginStaffUseCase.execute(trimmedEmail, trimmedPassword)
       sessionStorage.setItem('token', token)
+      void registerCurrentDevice()
 
       const user = await getCurrentStaffUserUseCase.execute()
       navigate(user.isAdmin ? '/admin/dashboard' : '/staff/dashboard')

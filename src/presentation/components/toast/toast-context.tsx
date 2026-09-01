@@ -3,10 +3,17 @@ import { ToastViewport } from './ToastViewport'
 
 export type ToastVariant = 'success' | 'error' | 'info'
 
+export interface ToastOptions {
+  // When provided, the toast becomes clickable and invokes this instead of
+  // just being a passive message (e.g. a push notification linking to its invitation).
+  onClick?: () => void
+}
+
 export interface ToastItem {
   id: string
   variant: ToastVariant
   message: string
+  onClick?: () => void
 }
 
 type ToastAction = { type: 'ADD'; toast: ToastItem } | { type: 'REMOVE'; id: string }
@@ -24,9 +31,9 @@ const AUTO_DISMISS_MS: Record<ToastVariant, number> = {
 }
 
 interface ToastContextValue {
-  success: (message: string) => void
-  error: (message: string) => void
-  info: (message: string) => void
+  success: (message: string, options?: ToastOptions) => void
+  error: (message: string, options?: ToastOptions) => void
+  info: (message: string, options?: ToastOptions) => void
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null)
@@ -36,15 +43,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const dismiss = useCallback((id: string) => dispatch({ type: 'REMOVE', id }), [])
 
-  const show = useCallback((variant: ToastVariant, message: string) => {
+  const show = useCallback((variant: ToastVariant, message: string, options?: ToastOptions) => {
     const id = crypto.randomUUID()
-    dispatch({ type: 'ADD', toast: { id, variant, message } })
+    dispatch({ type: 'ADD', toast: { id, variant, message, onClick: options?.onClick } })
     setTimeout(() => dispatch({ type: 'REMOVE', id }), AUTO_DISMISS_MS[variant])
   }, [])
 
-  const success = useCallback((message: string) => show('success', message), [show])
-  const error = useCallback((message: string) => show('error', message), [show])
-  const info = useCallback((message: string) => show('info', message), [show])
+  const success = useCallback((message: string, options?: ToastOptions) => show('success', message, options), [show])
+  const error = useCallback((message: string, options?: ToastOptions) => show('error', message, options), [show])
+  const info = useCallback((message: string, options?: ToastOptions) => show('info', message, options), [show])
 
   // Stable identity so consumers that put `useToast()`'s return value in a dependency
   // array (e.g. a data-loading useCallback) don't re-run every time a toast is added.
