@@ -91,10 +91,19 @@ async def make_tenant_schema() -> AsyncGenerator[Callable[[str], Awaitable[None]
     """Factory for provisioning an extra tenant schema on demand, for tests
     that need more than one (e.g. tenant-isolation tests) — most tests only
     need the default one the session fixture above already sets up.
+
+    Drops the schema first: callers use a fixed literal name (e.g.
+    `tenant_other_category_test`) rather than a per-run unique one, and
+    `CREATE SCHEMA IF NOT EXISTS` alone leaves any row a previous test run
+    committed into it still there — a test that inserts a uniquely-named
+    row (not just reads) collides with its own leftover data on the next
+    run otherwise.
     """
     engine = create_async_engine(_test_url)
 
     async def _make(schema_name: str) -> None:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
         await _create_schema_and_tables(engine, schema_name)
 
     yield _make
