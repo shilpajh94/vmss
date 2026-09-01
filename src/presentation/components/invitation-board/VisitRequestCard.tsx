@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
+import { resolveApproverLabel } from '../../utils/approval-step-label'
 import { CalendarClockIcon } from '../icons'
 
 const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved'])
@@ -78,6 +79,17 @@ export function VisitRequestCard({
         </div>
       </div>
 
+      {detail?.currentApprovalStep ? (
+        <div className="flex w-full items-center gap-1.5">
+          <span className="flex shrink-0 items-center gap-1 rounded-full border border-info/30 bg-info/8 px-2 py-0.5 font-body text-[10px] font-bold whitespace-nowrap text-info">
+            Level {detail.currentApprovalStep.stepOrder}/{detail.currentApprovalStep.totalSteps}
+          </span>
+          <span className="truncate font-body text-[10px] text-text-faint">
+            Pending: {resolveApproverLabel(detail.currentApprovalStep, roleNameById, employeeNameById)}
+          </span>
+        </div>
+      ) : null}
+
       {isExpanded ? (
         <div className="flex w-full items-center rounded-lg bg-bg px-2.5 py-1.5 font-body text-[11px] text-text-muted">
           {isLoadingDetail ? (
@@ -85,9 +97,7 @@ export function VisitRequestCard({
           ) : detail?.currentApprovalStep ? (
             <span>
               Step {detail.currentApprovalStep.stepOrder} of {detail.currentApprovalStep.totalSteps} — pending:{' '}
-              {detail.currentApprovalStep.approverUserId
-                ? (employeeNameById?.[detail.currentApprovalStep.approverUserId] ?? 'the invitation host')
-                : (roleNameById?.[detail.currentApprovalStep.approverRoleId ?? ''] ?? 'the configured approver role')}
+              {resolveApproverLabel(detail.currentApprovalStep, roleNameById, employeeNameById)}
             </span>
           ) : (
             <span>No multi-step approval workflow for this request.</span>

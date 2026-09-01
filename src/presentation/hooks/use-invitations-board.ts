@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
+import { resolveApproverLabel } from '../utils/approval-step-label'
 import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
-import type { InvitationDetail } from '../../domain/entities/invitation-detail-schema'
+import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entities/invitation-detail-schema'
 import type { RoleOut } from '../../domain/entities/role-out-schema'
 
 export const BOARD_STATUS_COLUMNS = [
@@ -23,6 +24,22 @@ const STATUS_ALIASES: Record<string, (typeof BOARD_STATUS_COLUMNS)[number]['stat
 
 function normalizeStatus(status: string): string {
   return STATUS_ALIASES[status] ?? status
+}
+
+// Toast copy for an approve action: names which level just cleared and,
+// unless this was the final one, who the request is now waiting on.
+function describeApprovalOutcome(
+  approvedStep: CurrentApprovalStep,
+  nextStep: CurrentApprovalStep | null,
+  roleNameById: Record<string, string>,
+  employeeNameById: Record<string, string>,
+): string {
+  if (!nextStep) {
+    return `Level ${approvedStep.stepOrder} of ${approvedStep.totalSteps} approved — request fully approved.`
+  }
+
+  const approverLabel = resolveApproverLabel(nextStep, roleNameById, employeeNameById)
+  return `Level ${approvedStep.stepOrder} of ${approvedStep.totalSteps} approved — now waiting on ${approverLabel} (level ${nextStep.stepOrder} of ${nextStep.totalSteps}).`
 }
 
 // Shared Kanban-board data/actions behind the staff dashboard and the admin
@@ -96,6 +113,31 @@ export function useInvitationsBoard(loginRedirectPath: string) {
     void loadDashboard()
   }, [loadDashboard])
 
+  // Preloads approval-step detail for pending requests so the "Level X/Y"
+  // badge is visible on the collapsed card, not just after expanding it.
+  const pendingDetailFetchesRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const idsNeedingDetail = visitRequests
+      .filter((request) => normalizeStatus(request.status) === 'requested')
+      .map((request) => request.id)
+      .filter((id) => !invitationDetails[id] && !pendingDetailFetchesRef.current.has(id))
+
+    idsNeedingDetail.forEach((id) => {
+      pendingDetailFetchesRef.current.add(id)
+      getInvitationDetailUseCase
+        .execute(id)
+        .then((detail) => {
+          setInvitationDetails((previous) => ({ ...previous, [id]: detail }))
+        })
+        .catch((error: unknown) => {
+          console.error('Failed to preload approval progress', error)
+        })
+        .finally(() => {
+          pendingDetailFetchesRef.current.delete(id)
+        })
+    })
+  }, [visitRequests, invitationDetails, getInvitationDetailUseCase])
+
   const loadDetail = useCallback(
     async (id: string): Promise<InvitationDetail> => {
       if (invitationDetails[id]) return invitationDetails[id]
@@ -137,11 +179,16 @@ export function useInvitationsBoard(loginRedirectPath: string) {
 
         if (detail.currentApprovalStep) {
           await approveInvitationStepUseCase.execute(id, detail.currentApprovalStep.id)
+          const updatedDetail = await getInvitationDetailUseCase.execute(id)
+          setInvitationDetails((previous) => ({ ...previous, [id]: updatedDetail }))
+          toast.success(
+            describeApprovalOutcome(detail.currentApprovalStep, updatedDetail.currentApprovalStep, roleNameById, employeeNameById),
+          )
         } else {
           await approveInvitationUseCase.execute(id)
+          toast.success('Visit request approved.')
         }
 
-        toast.success('Visit request approved.')
         await loadDashboard()
       } catch (error) {
         console.error('Failed to approve visit request', error)
@@ -150,7 +197,16 @@ export function useInvitationsBoard(loginRedirectPath: string) {
         setApprovingId(undefined)
       }
     },
-    [approveInvitationUseCase, approveInvitationStepUseCase, loadDashboard, loadDetail, toast],
+    [
+      approveInvitationUseCase,
+      approveInvitationStepUseCase,
+      getInvitationDetailUseCase,
+      loadDashboard,
+      loadDetail,
+      roleNameById,
+      employeeNameById,
+      toast,
+    ],
   )
 
   const reschedule = useCallback(
@@ -191,11 +247,14 @@ export function useInvitationsBoard(loginRedirectPath: string) {
 
         if (detail.currentApprovalStep) {
           await rejectInvitationStepUseCase.execute(id, detail.currentApprovalStep.id, reason)
+          toast.success(
+            `Denied at level ${detail.currentApprovalStep.stepOrder} of ${detail.currentApprovalStep.totalSteps}.`,
+          )
         } else {
           await denyInvitationUseCase.execute(id, reason)
+          toast.success('Visit request denied.')
         }
 
-        toast.success('Visit request denied.')
         setPendingDenyId(undefined)
         await loadDashboard()
       } catch (error) {
