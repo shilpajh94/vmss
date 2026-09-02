@@ -158,8 +158,19 @@ async def db_session() -> AsyncGenerator[AsyncSession]:
 
 @pytest_asyncio.fixture
 async def tenant(db_session: AsyncSession) -> Tenant:
+    # `timezone` is forced explicitly: `Tenant.timezone`'s Python-side
+    # `default="UTC"` (tenant/models.py) only applies to a row inserted with
+    # no value at all — polyfactory's `SQLAlchemyFactory` always generates a
+    # value for a plain `String` column instead of honoring that default, so
+    # `TenantFactory.build()` alone would produce a random hex string that
+    # isn't a valid IANA zone name (`dashboard/service.py` resolves this via
+    # `zoneinfo.ZoneInfo`).
     tenant = TenantFactory.build(
-        id=uuid.uuid4(), name="Acme Test Co", slug="acme-test", schema_name=_TENANT_SCHEMA
+        id=uuid.uuid4(),
+        name="Acme Test Co",
+        slug="acme-test",
+        schema_name=_TENANT_SCHEMA,
+        timezone="UTC",
     )
     db_session.add(tenant)
     await db_session.commit()
