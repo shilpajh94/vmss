@@ -23,9 +23,10 @@ class AuditReportJob(Base, TimestampMixin):
     already reached a terminal state (`background-jobs.md` §2).
 
     `csv_storage_key`/`pdf_storage_key` are opaque storage keys
-    (`core/storage.py`), never a URL — a download URL is resolved fresh on
-    every poll via `storage.url_for` (design.md Decision 2) rather than
-    stored, so no long-lived secret sits in this row.
+    (`core/storage.py`), never a URL — a client fetches the file through
+    `GET /audit-trail/reports/{id}/download`, which resolves the key to
+    bytes via `storage.load` fresh on every request rather than storing a
+    direct storage reference, so no long-lived secret sits in this row.
     """
 
     __tablename__ = "audit_report_jobs"

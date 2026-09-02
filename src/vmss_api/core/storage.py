@@ -89,6 +89,10 @@ def _write_file(path: Path, content: bytes) -> None:
     path.write_bytes(content)
 
 
+def _read_file(path: Path) -> bytes:
+    return path.read_bytes()
+
+
 async def save(tenant_id: uuid.UUID, category: str, content: bytes, content_type: str) -> str:
     """Persists `content` and returns a storage key following the
     `vmss:{tenant_id}:{feature}:{entity}:{id}` convention
@@ -109,10 +113,40 @@ async def url_for(key: str) -> str:
     """A usable retrieval reference for `key` — a pre-signed, time-boxed URL
     for the `s3` backend, a plain filesystem path for `local`. Either way,
     the caller never branches on which backend produced it.
+
+    The `local` variant is a bare filesystem path, not an HTTP-reachable
+    URL — fine for a caller that only needs to read the file back
+    server-side (e.g. a test), but never hand it to a client. A caller that
+    must let a client fetch the content over HTTP should use `load()`
+    behind its own authenticated route instead (see `audit_trail/router.py`'s
+    report-download endpoint).
     """
     if settings.storage_backend == "s3":
         return await _s3_presigned_url(key)
     return str(_path_for(key))
+
+
+async def load(key: str) -> bytes:
+    """Reads back the bytes stored under `key`, for a caller that must serve
+    the content itself from behind its own auth check rather than handing
+    out a direct storage reference via `url_for` — e.g. `local`'s bare
+    filesystem path from `url_for` is not HTTP-reachable, so a route like
+    `audit_trail`'s report download proxies the bytes through this instead.
+    """
+    if settings.storage_backend == "s3":
+        return await _s3_load(key)
+    return await anyio.to_thread.run_sync(_read_file, _path_for(key))
+
+
+def content_type_for(key: str) -> str:
+    """Recovers the content type `save()` stored `key` under, from its file
+    extension — the allow-list/generated-extension maps are small and
+    1:1, so this is just the reverse lookup of the map `save()` used.
+    """
+    extension = Path(key).suffix
+    all_types = {**_ALLOWED_CONTENT_TYPES, **_GENERATED_FILE_EXTENSIONS}
+    by_extension = {v: k for k, v in all_types.items()}
+    return by_extension[extension]
 
 
 async def _s3_save(key: str, content: bytes, content_type: str) -> None:
@@ -126,6 +160,16 @@ async def _s3_save(key: str, content: bytes, content_type: str) -> None:
             )
     except (BotoCoreError, ClientError) as exc:
         raise StorageBackendError(f"Failed to save {key!r} to S3: {exc}") from exc
+
+
+async def _s3_load(key: str) -> bytes:
+    try:
+        async with _s3_client() as client:
+            response = await client.get_object(Bucket=settings.storage_s3_bucket, Key=key)
+            async with response["Body"] as stream:
+                return await stream.read()
+    except (BotoCoreError, ClientError) as exc:
+        raise StorageBackendError(f"Failed to load {key!r} from S3: {exc}") from exc
 
 
 async def _s3_presigned_url(key: str) -> str:
