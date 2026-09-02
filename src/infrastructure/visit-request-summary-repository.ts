@@ -93,6 +93,19 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
     }
   }
 
+  async delegateStep(invitationId: string, stepId: string, delegateUserId: string): Promise<void> {
+    const response = await this.apiClient.makeRequest<InvitationActionResult>({
+      endpointConfig: API_ENDPOINTS.DELEGATE_INVITATION_STEP,
+      pathParams: { invitationId, stepId },
+      body: { delegateUserId },
+      parserSchema: InvitationActionResultSchema,
+    })
+
+    if (!response.success) {
+      throw new Error(response.message)
+    }
+  }
+
   async getDetail(id: string): Promise<InvitationDetail> {
     const response = await this.apiClient.makeRequest<InvitationDetailResponse>({
       endpointConfig: API_ENDPOINTS.GET_INVITATION_DETAIL,

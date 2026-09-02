@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
+import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
 import { VisitRequestCard } from './VisitRequestCard'
 import { UserIcon } from '../icons'
 import { EmptyState } from '../ui/EmptyState'
@@ -32,6 +33,9 @@ interface KanbanColumnProps {
   employeeNameById?: Record<string, string>
   onReschedule?: (id: string, preferredVisitDate: string, preferredVisitTime: string) => void
   reschedulingId?: string
+  hostEmployees?: HostEmployee[]
+  onDelegate?: (id: string, delegateUserId: string) => void
+  delegatingId?: string
 }
 
 export function KanbanColumn({
@@ -49,6 +53,9 @@ export function KanbanColumn({
   employeeNameById,
   onReschedule,
   reschedulingId,
+  hostEmployees,
+  onDelegate,
+  delegatingId,
 }: KanbanColumnProps) {
   const accent = ACCENT_CLASSES[status]
   const [isDragOver, setIsDragOver] = useState(false)
@@ -107,6 +114,9 @@ export function KanbanColumn({
               employeeNameById={employeeNameById}
               onReschedule={onReschedule}
               isRescheduling={reschedulingId === request.id}
+              hostEmployees={hostEmployees}
+              onDelegate={onDelegate}
+              isDelegating={delegatingId === request.id}
             />
           ))}
         </div>

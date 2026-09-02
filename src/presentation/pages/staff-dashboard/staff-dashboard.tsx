@@ -30,9 +30,12 @@ export function StaffDashboardPage() {
     invitationDetails,
     loadingDetailId,
     roleNameById,
+    hostEmployees,
     employeeNameById,
     reschedule,
     reschedulingId,
+    delegate,
+    delegatingId,
     pendingDenyId,
     requestDeny,
     cancelDeny,
@@ -76,6 +79,9 @@ export function StaffDashboardPage() {
                 employeeNameById={employeeNameById}
                 onReschedule={reschedule}
                 reschedulingId={reschedulingId}
+                hostEmployees={hostEmployees}
+                onDelegate={delegate}
+                delegatingId={delegatingId}
               />
             ))}
           </div>

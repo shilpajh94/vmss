@@ -29,9 +29,12 @@ export function AdminInvitationsPage() {
     invitationDetails,
     loadingDetailId,
     roleNameById,
+    hostEmployees,
     employeeNameById,
     reschedule,
     reschedulingId,
+    delegate,
+    delegatingId,
     pendingDenyId,
     requestDeny,
     cancelDeny,
@@ -99,6 +102,9 @@ export function AdminInvitationsPage() {
                   employeeNameById={employeeNameById}
                   onReschedule={reschedule}
                   reschedulingId={reschedulingId}
+                  hostEmployees={hostEmployees}
+                  onDelegate={delegate}
+                  delegatingId={delegatingId}
                 />
               ))}
             </div>

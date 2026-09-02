@@ -9,4 +9,5 @@ export interface VisitRequestSummaryRepository {
   deny(id: string, reason: string): Promise<void>
   approveStep(invitationId: string, stepId: string): Promise<void>
   rejectStep(invitationId: string, stepId: string, reason: string): Promise<void>
+  delegateStep(invitationId: string, stepId: string, delegateUserId: string): Promise<void>
 }
