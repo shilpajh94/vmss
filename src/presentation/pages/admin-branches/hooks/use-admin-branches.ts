@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
@@ -25,6 +25,9 @@ export function useAdminBranches() {
 
   const [pendingDelete, setPendingDelete] = useState<Branch | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [statusFilter, setStatusFilter] = useState('')
 
   const loadBranches = useCallback(async () => {
     setIsLoading(true)
@@ -111,13 +114,31 @@ export function useAdminBranches() {
     }
   }, [pendingDelete, deleteBranchUseCase, toast])
 
+  const filteredBranches = useMemo(() => {
+    return branches.filter((branch) => {
+      if (statusFilter && (statusFilter === 'active') !== branch.isActive) return false
+      return true
+    })
+  }, [branches, statusFilter])
+
+  const isFiltering = statusFilter !== ''
+  const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+  const clearFilters = useCallback(() => setStatusFilter(''), [])
+
   return {
     currentUser,
-    branches,
+    branches: filteredBranches,
+    hasAnyBranches: branches.length > 0,
     employees,
     isLoading,
     errorMessage,
     retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    statusFilter,
+    setStatusFilter,
+    clearFilters,
+    isFiltering,
     formState,
     isSaving,
     openEditForm,

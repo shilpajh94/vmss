@@ -42,7 +42,7 @@ const NAV_ITEMS = [
   { key: 'floors', label: 'Floors', icon: LayersIcon },
   { key: 'reception-desks', label: 'Reception Desks', icon: MonitorIcon },
   { key: 'security-gates', label: 'Security Gates', icon: ShieldIcon },
-  { key: 'host-employees', label: 'Host Employees', icon: UserCheckIcon },
+  { key: 'host-employees', label: 'Employees', icon: UserCheckIcon },
   { key: 'visitor-categories', label: 'Visitor Categories', icon: TagIcon },
   { key: 'workflows', label: 'Workflows', icon: ListChecksIcon },
   { key: 'invitations', label: 'Invitations', icon: CalendarCheckIcon },

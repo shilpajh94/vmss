@@ -55,7 +55,6 @@ export function AdminOrganisationConfigsPage() {
                 <VisitorPolicyCard
                   form={form}
                   onAutoApproveChange={(autoApprovePreRegistered) => updateField('autoApprovePreRegistered', autoApprovePreRegistered)}
-                  onBadgeExpiryChange={(passBadgeExpiryDuration) => updateField('passBadgeExpiryDuration', passBadgeExpiryDuration)}
                 />
               </div>
 

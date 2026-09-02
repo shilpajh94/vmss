@@ -1,8 +1,8 @@
-import z from 'zod'
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
 import type { DashboardRepository } from '../data/repositories/dashboard-repository'
-import { DashboardOverviewSchema, type DashboardOverview } from '../domain/entities/dashboard-overview-schema'
+import { DashboardOverviewResponseSchema, type DashboardOverview } from '../domain/entities/dashboard-overview-schema'
+import { DashboardRecentCheckinListResponseSchema, type DashboardRecentCheckin } from '../domain/entities/dashboard-checkin-schema'
 
 export class HttpDashboardRepository implements DashboardRepository {
   private readonly apiClient: ApiClient
@@ -12,17 +12,20 @@ export class HttpDashboardRepository implements DashboardRepository {
   }
 
   async getOverview(): Promise<DashboardOverview> {
-    return this.apiClient.makeRequest<DashboardOverview>({
+    const response = await this.apiClient.makeRequest({
       endpointConfig: API_ENDPOINTS.GET_ADMIN_DASHBOARD_OVERVIEW,
-      parserSchema: DashboardOverviewSchema,
+      parserSchema: DashboardOverviewResponseSchema,
     })
+
+    return response.data
   }
 
-  async checkInUpcomingVisitor(id: string): Promise<void> {
-    await this.apiClient.makeRequest<unknown>({
-      endpointConfig: API_ENDPOINTS.CHECK_IN_UPCOMING_VISITOR,
-      queryParams: { id },
-      parserSchema: z.unknown(),
+  async listRecentCheckins(): Promise<DashboardRecentCheckin[]> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.LIST_DASHBOARD_CHECKINS,
+      parserSchema: DashboardRecentCheckinListResponseSchema,
     })
+
+    return response.data
   }
 }

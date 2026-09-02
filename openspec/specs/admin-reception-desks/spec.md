@@ -81,12 +81,12 @@ The system SHALL populate the Floor field's options from the floors belonging to
 - **WHEN** an admin changes the selected building after already choosing a floor
 - **THEN** the previously selected floor is cleared and the Floor field offers the new building's floors
 
-### Requirement: Assigned receptionist options come from the organisation's existing host employees
-The system SHALL populate the Assigned Receptionist field's options from the organisation's existing host employees, and SHALL allow the field to be left unassigned.
+### Requirement: Assigned receptionist options come from the organisation's existing employees
+The system SHALL populate the Assigned Receptionist field's options from the organisation's existing employees, and SHALL allow the field to be left unassigned.
 
 #### Scenario: Receptionist options loaded
 - **WHEN** the Add Reception Desk page loads
-- **THEN** the Assigned Receptionist field offers every host employee currently in the organisation, plus an option to leave the desk unassigned
+- **THEN** the Assigned Receptionist field offers every employee currently in the organisation, plus an option to leave the desk unassigned
 
 ### Requirement: Submitting a valid new reception desk adds it to the list
 The system SHALL, when the Add Reception Desk page is submitted with all required fields present, create the reception desk, navigate back to the Reception Desks list, show the new desk in the visible list, and trigger a success notification.
@@ -152,9 +152,28 @@ The system SHALL render each reception desk's status as one of "Active", "Mainte
 - **WHEN** the Reception Desks list contains desks with Active, Maintenance, and Inactive status
 - **THEN** each row shows its own status as a badge visually distinct from the other two statuses
 
-### Requirement: Filters affordance is presented but not yet functional
-The system SHALL display the "Filters" control per the design, but SHALL NOT apply any filtering when it is activated.
+### Requirement: Reception desk list can be filtered by building, floor, and status
+The system SHALL, when "Filters" is activated, show a filter panel offering Building, Floor, and Status fields (each defaulting to "All"), and SHALL narrow the visible reception desks to those matching every selected filter as soon as a filter changes, without a separate confirm step. The system SHALL let an admin clear all active filters back to "All" in one action.
 
 #### Scenario: Filters activated
 - **WHEN** an admin activates "Filters"
-- **THEN** the visible reception desks do not change
+- **THEN** the system shows the Building, Floor, and Status filter fields
+
+#### Scenario: Filter selected narrows the list
+- **WHEN** an admin selects a specific Building, Floor, or Status value
+- **THEN** the table immediately shows only reception desks matching every currently selected filter
+
+#### Scenario: Multiple filters combine
+- **WHEN** an admin has selected values for more than one of Building, Floor, and Status
+- **THEN** the table shows only reception desks matching all of the selected filters at once
+
+#### Scenario: Filters cleared
+- **WHEN** an admin activates "Clear filters"
+- **THEN** every filter resets to "All" and the table shows the full reception desk list again
+
+### Requirement: No filter matches shows a distinct empty state
+The system SHALL, when one or more filters are active and no reception desk matches them, show a message indicating no reception desks match the current filters, distinct from the message shown when the organisation has zero reception desks at all.
+
+#### Scenario: No matches for active filters
+- **WHEN** one or more filters are active and no reception desk matches them
+- **THEN** the system shows a "no reception desks match these filters" message instead of the zero-reception-desks empty state

@@ -14,12 +14,12 @@ export const DATE_RANGE_OPTIONS: DropdownOption[] = [
 
 export const ACTIVITY_TYPE_OPTIONS: DropdownOption[] = [
   { value: 'all', label: 'All Activities' },
-  { value: 'check_in', label: 'Check-in' },
-  { value: 'check_out', label: 'Check-out' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'rejected', label: 'Rejected' },
-  { value: 'modified', label: 'Modified' },
-  { value: 'escalated', label: 'Escalated' },
+  { value: 'invitation_created', label: 'Invitation Created' },
+  { value: 'walk_in_registration_created', label: 'Walk-in Registered' },
+  { value: 'invitation_approved', label: 'Invitation Approved' },
+  { value: 'invitation_approval_step_approved', label: 'Approval Step Approved' },
+  { value: 'invitation_checked_in_public', label: 'Checked In' },
+  { value: 'invitation_rescheduled', label: 'Rescheduled' },
 ]
 
 export const DEFAULT_DATE_RANGE = DATE_RANGE_OPTIONS[1].value

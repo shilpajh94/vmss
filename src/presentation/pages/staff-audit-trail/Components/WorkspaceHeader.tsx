@@ -1,5 +1,6 @@
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { LogOutIcon } from '../../../components/icons'
+import { NotificationBell } from '../../../components/notification-bell/NotificationBell'
 
 interface WorkspaceHeaderProps {
   currentUser: StaffUser | undefined
@@ -20,10 +21,12 @@ export function WorkspaceHeader({ currentUser, onSignOut }: WorkspaceHeaderProps
     <div className="flex w-full items-center justify-between border-b border-border px-10 py-5">
       <div className="flex flex-col gap-1.5">
         <h1 className="font-display text-[28px] font-extrabold text-text">Audit Trail</h1>
-        <p className="font-body text-sm text-text-muted">Complete activity log for your hosted visitors</p>
+        <p className="font-body text-sm text-text-muted">System-wide activity log of account and invitation actions</p>
       </div>
 
       <div className="flex items-center gap-4">
+        <NotificationBell />
+
         {currentUser && (
           <div className="flex items-center gap-3">
             <span className="flex size-9 shrink-0 items-center justify-center rounded-full border-[1.5px] border-info bg-info/8 font-display text-[13px] font-bold text-info">

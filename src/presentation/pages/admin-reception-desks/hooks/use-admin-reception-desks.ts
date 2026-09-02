@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
@@ -17,6 +17,11 @@ export function useAdminReceptionDesks() {
 
   const [pendingDelete, setPendingDelete] = useState<ReceptionDesk | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [buildingFilter, setBuildingFilter] = useState('')
+  const [floorFilter, setFloorFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
 
   const loadReceptionDesks = useCallback(async () => {
     setIsLoading(true)
@@ -47,6 +52,39 @@ export function useAdminReceptionDesks() {
     void loadReceptionDesks()
   }, [loadReceptionDesks])
 
+  const buildingOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const desk of receptionDesks) {
+      if (!seen.has(desk.buildingId)) seen.set(desk.buildingId, desk.buildingName)
+    }
+    return [...seen.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))
+  }, [receptionDesks])
+
+  const floorOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const desk of receptionDesks) {
+      if (!seen.has(desk.floorId)) seen.set(desk.floorId, desk.floorName ?? desk.floorId)
+    }
+    return [...seen.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))
+  }, [receptionDesks])
+
+  const filteredReceptionDesks = useMemo(() => {
+    return receptionDesks.filter((desk) => {
+      if (buildingFilter && desk.buildingId !== buildingFilter) return false
+      if (floorFilter && desk.floorId !== floorFilter) return false
+      if (statusFilter && desk.status !== statusFilter) return false
+      return true
+    })
+  }, [receptionDesks, buildingFilter, floorFilter, statusFilter])
+
+  const isFiltering = buildingFilter !== '' || floorFilter !== '' || statusFilter !== ''
+  const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+  const clearFilters = useCallback(() => {
+    setBuildingFilter('')
+    setFloorFilter('')
+    setStatusFilter('')
+  }, [])
+
   const requestDelete = useCallback((receptionDesk: ReceptionDesk) => {
     setPendingDelete(receptionDesk)
   }, [])
@@ -73,10 +111,23 @@ export function useAdminReceptionDesks() {
 
   return {
     currentUser,
-    receptionDesks,
+    receptionDesks: filteredReceptionDesks,
+    hasAnyReceptionDesks: receptionDesks.length > 0,
     isLoading,
     errorMessage,
     retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    buildingOptions,
+    buildingFilter,
+    setBuildingFilter,
+    floorOptions,
+    floorFilter,
+    setFloorFilter,
+    statusFilter,
+    setStatusFilter,
+    clearFilters,
+    isFiltering,
     pendingDelete,
     isDeleting,
     requestDelete,

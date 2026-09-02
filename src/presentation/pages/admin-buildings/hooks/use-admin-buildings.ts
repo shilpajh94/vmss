@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
@@ -17,6 +17,10 @@ export function useAdminBuildings() {
 
   const [pendingDelete, setPendingDelete] = useState<Building | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [branchFilter, setBranchFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
 
   const loadBuildings = useCallback(async () => {
     setIsLoading(true)
@@ -71,12 +75,45 @@ export function useAdminBuildings() {
     }
   }, [pendingDelete, deleteBuildingUseCase, toast])
 
+  const branchOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const building of buildings) {
+      if (!seen.has(building.branchId)) seen.set(building.branchId, building.branchName)
+    }
+    return [...seen.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))
+  }, [buildings])
+
+  const filteredBuildings = useMemo(() => {
+    return buildings.filter((building) => {
+      if (branchFilter && building.branchId !== branchFilter) return false
+      if (statusFilter && (statusFilter === 'active') !== building.isActive) return false
+      return true
+    })
+  }, [buildings, branchFilter, statusFilter])
+
+  const isFiltering = branchFilter !== '' || statusFilter !== ''
+  const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+  const clearFilters = useCallback(() => {
+    setBranchFilter('')
+    setStatusFilter('')
+  }, [])
+
   return {
     currentUser,
-    buildings,
+    buildings: filteredBuildings,
+    hasAnyBuildings: buildings.length > 0,
     isLoading,
     errorMessage,
     retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    branchOptions,
+    branchFilter,
+    setBranchFilter,
+    statusFilter,
+    setStatusFilter,
+    clearFilters,
+    isFiltering,
     pendingDelete,
     isDeleting,
     requestDelete,

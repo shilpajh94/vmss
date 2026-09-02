@@ -17,6 +17,11 @@ export function useAdminHostEmployees() {
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [departmentFilter, setDepartmentFilter] = useState('')
+  const [roleFilter, setRoleFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+
   const loadHostEmployees = useCallback(async () => {
     setIsLoading(true)
     setErrorMessage(undefined)
@@ -31,8 +36,8 @@ export function useAdminHostEmployees() {
       setHostEmployees(list)
       setDepartments(departmentList)
     } catch {
-      setErrorMessage('Something went wrong loading the host employees. Please try again.')
-      toast.error('Something went wrong loading the host employees. Please try again.')
+      setErrorMessage('Something went wrong loading the employees. Please try again.')
+      toast.error('Something went wrong loading the employees. Please try again.')
     } finally {
       setIsLoading(false)
     }
@@ -53,12 +58,48 @@ export function useAdminHostEmployees() {
 
   const departmentNameById = useMemo(() => new Map(departments.map((department) => [department.id, department.name])), [departments])
 
+  const roleOptions = useMemo(() => {
+    const roleNames = new Set(hostEmployees.flatMap((employee) => employee.branchRoles.map((role) => role.roleName)))
+    return [...roleNames].sort((a, b) => a.localeCompare(b))
+  }, [hostEmployees])
+
+  const filteredHostEmployees = useMemo(() => {
+    return hostEmployees.filter((employee) => {
+      if (departmentFilter && employee.departmentId !== departmentFilter) return false
+      if (roleFilter && !employee.branchRoles.some((role) => role.roleName === roleFilter)) return false
+      if (statusFilter && (statusFilter === 'active') !== employee.isActive) return false
+      return true
+    })
+  }, [hostEmployees, departmentFilter, roleFilter, statusFilter])
+
+  const isFiltering = departmentFilter !== '' || roleFilter !== '' || statusFilter !== ''
+
+  const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+  const clearFilters = useCallback(() => {
+    setDepartmentFilter('')
+    setRoleFilter('')
+    setStatusFilter('')
+  }, [])
+
   return {
     currentUser,
-    hostEmployees,
+    hostEmployees: filteredHostEmployees,
+    hasAnyHostEmployees: hostEmployees.length > 0,
     departmentNameById,
     isLoading,
     errorMessage,
     retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    departments,
+    roleOptions,
+    departmentFilter,
+    setDepartmentFilter,
+    roleFilter,
+    setRoleFilter,
+    statusFilter,
+    setStatusFilter,
+    clearFilters,
+    isFiltering,
   }
 }

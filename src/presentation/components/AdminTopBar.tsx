@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router'
-import { LogOutIcon, SearchGlyphIcon } from './icons'
+import { LogOutIcon } from './icons'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import { usePushNotifications } from '../hooks/use-push-notifications'
 import { NotificationBell } from './notification-bell/NotificationBell'
@@ -45,11 +45,6 @@ export function AdminTopBar({ description, breadcrumb, currentUser }: AdminTopBa
       )}
 
       <div className="flex items-center gap-6">
-        <div className="flex w-[260px] items-center gap-2 rounded-lg bg-border-subtle px-3 py-2">
-          <SearchGlyphIcon className="size-4 shrink-0 text-text-faint" />
-          <span className="font-body text-[13px] text-text-faint">Search workspace...</span>
-        </div>
-
         <NotificationBell />
 
         <div className="flex items-center gap-2">

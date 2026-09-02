@@ -1,5 +1,6 @@
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { LogOutIcon, RefreshCcwIcon } from '../../../components/icons'
+import { NotificationBell } from '../../../components/notification-bell/NotificationBell'
 
 interface WorkspaceHeaderProps {
   currentUser: StaffUser | undefined
@@ -35,6 +36,8 @@ export function WorkspaceHeader({ currentUser, onRefresh, onSignOut }: Workspace
         </button>
 
         <div className="h-6 w-px bg-border" />
+
+        <NotificationBell />
 
         {currentUser && (
           <div className="flex items-center gap-3">

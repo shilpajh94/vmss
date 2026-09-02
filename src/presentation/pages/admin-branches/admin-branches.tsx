@@ -5,6 +5,7 @@ import { PlusIcon, SlidersIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { LoadingState } from '../../components/ui/LoadingState'
+import { SelectField } from '../../components/ui/SelectField'
 import { BranchesTable } from './Components/BranchesTable'
 import { BranchFormModal } from './Components/BranchFormModal'
 import { useAdminBranches } from './hooks/use-admin-branches'
@@ -14,10 +15,17 @@ export function AdminBranchesPage() {
   const {
     currentUser,
     branches,
+    hasAnyBranches,
     employees,
     isLoading,
     errorMessage,
     retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    statusFilter,
+    setStatusFilter,
+    clearFilters,
+    isFiltering,
     formState,
     isSaving,
     openEditForm,
@@ -45,6 +53,7 @@ export function AdminBranchesPage() {
             <div className="flex items-center gap-3">
               <button
                 type="button"
+                onClick={toggleFilterPanel}
                 className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
               >
                 <SlidersIcon className="size-3.5" />
@@ -61,6 +70,28 @@ export function AdminBranchesPage() {
             </div>
           </div>
 
+          {isFilterPanelOpen && (
+            <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-4">
+              <div className="w-48">
+                <SelectField
+                  label="Status"
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  placeholder="All"
+                  options={[
+                    { value: 'active', label: 'Active' },
+                    { value: 'inactive', label: 'Inactive' },
+                  ]}
+                />
+              </div>
+              {isFiltering && (
+                <button type="button" onClick={clearFilters} className="font-body text-[13px] font-semibold text-admin-accent">
+                  Clear filters
+                </button>
+              )}
+            </div>
+          )}
+
           {errorMessage ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
               <p className="font-body text-sm text-danger">{errorMessage}</p>
@@ -72,7 +103,11 @@ export function AdminBranchesPage() {
             <LoadingState label="Loading branches…" className="flex-1" />
           ) : branches.length === 0 ? (
             <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
-              <EmptyState message="No branches yet." action={{ label: 'Add Branch', onClick: goToCreateBranch }} />
+              {hasAnyBranches ? (
+                <EmptyState message="No branches match these filters." />
+              ) : (
+                <EmptyState message="No branches yet." action={{ label: 'Add Branch', onClick: goToCreateBranch }} />
+              )}
             </div>
           ) : (
             <BranchesTable branches={branches} employees={employees} onEdit={openEditForm} onDelete={requestDelete} />
