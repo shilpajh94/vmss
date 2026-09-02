@@ -7,7 +7,14 @@ from httpx import AsyncClient
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from factories import BuildingFactory, DepartmentFactory, FloorFactory, RoleFactory, UserFactory
+from factories import (
+    BranchFactory,
+    BuildingFactory,
+    DepartmentFactory,
+    FloorFactory,
+    RoleFactory,
+    UserFactory,
+)
 from vmss_api.auth.models import AuditLog, Permission, Role, User, UserBranchRole
 from vmss_api.auth.rbac_catalog import seed_default_roles
 from vmss_api.auth.repository import RoleRepository, UserRepository
@@ -1828,3 +1835,71 @@ async def test_logout_writes_audit_entry(
 async def test_logout_requires_authentication(client: AsyncClient) -> None:
     response = await client.post("/api/v1/auth/logout")
     assert response.status_code == 401
+
+
+# --- list_user_ids_holding_role_at_branch (add-invitation-push-notifications) -
+
+
+async def test_list_user_ids_holding_role_at_branch(
+    db_session: AsyncSession, branch: Branch
+) -> None:
+    """New in add-invitation-push-notifications/design.md Decision 3 — the
+    fan-out counterpart of `approvals/service.py::_user_holds_role_at_branch`'s
+    single-user check: every holder of a role at a branch, company-wide
+    grants (`branch_id IS NULL`) included, other branches excluded.
+    """
+    other_branch = BranchFactory.build(id=uuid.uuid4(), name="Other Branch", code="OTHER")
+    role = RoleFactory.build(id=uuid.uuid4(), name="branch-scoped-role", permissions=[])
+    branch_scoped_user = UserFactory.build(id=uuid.uuid4(), email="branch-scoped@acme-test.example")
+    company_wide_user = UserFactory.build(id=uuid.uuid4(), email="company-wide@acme-test.example")
+    other_branch_user = UserFactory.build(id=uuid.uuid4(), email="other-branch@acme-test.example")
+    db_session.add_all(
+        [other_branch, role, branch_scoped_user, company_wide_user, other_branch_user]
+    )
+    await db_session.flush()
+    db_session.add_all(
+        [
+            UserBranchRole(
+                id=uuid.uuid4(), user_id=branch_scoped_user.id, role_id=role.id, branch_id=branch.id
+            ),
+            UserBranchRole(
+                id=uuid.uuid4(), user_id=company_wide_user.id, role_id=role.id, branch_id=None
+            ),
+            UserBranchRole(
+                id=uuid.uuid4(),
+                user_id=other_branch_user.id,
+                role_id=role.id,
+                branch_id=other_branch.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    holders = await UserRepository(db_session).list_user_ids_holding_role_at_branch(
+        role.id, branch.id
+    )
+
+    assert set(holders) == {branch_scoped_user.id, company_wide_user.id}
+    assert other_branch_user.id not in holders
+
+
+async def test_list_user_ids_holding_role_at_branch_tenant_isolation(
+    make_tenant_schema, open_tenant_session, db_session: AsyncSession, branch: Branch
+) -> None:
+    role = RoleFactory.build(id=uuid.uuid4(), name="isolated-role", permissions=[])
+    holder = UserFactory.build(id=uuid.uuid4(), email="isolated-holder@acme-test.example")
+    db_session.add_all([role, holder])
+    await db_session.flush()
+    db_session.add(
+        UserBranchRole(id=uuid.uuid4(), user_id=holder.id, role_id=role.id, branch_id=branch.id)
+    )
+    await db_session.commit()
+
+    other_schema = "tenant_other_role_holders_test"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        holders = await UserRepository(other_session).list_user_ids_holding_role_at_branch(
+            role.id, branch.id
+        )
+        assert holders == []

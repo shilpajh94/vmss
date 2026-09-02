@@ -183,6 +183,26 @@ class UserRepository(TenantScopedRepository[User]):
         items = list((await self.session.execute(stmt)).scalars().all())
         return items, total
 
+    async def list_user_ids_holding_role_at_branch(
+        self, role_id: uuid.UUID, branch_id: uuid.UUID
+    ) -> list[uuid.UUID]:
+        """Every user holding `role_id` via a `UserBranchRole` scoped to
+        `branch_id`, or company-wide (`branch_id IS NULL`) — the fan-out
+        counterpart of `approvals/service.py::_user_holds_role_at_branch`'s
+        single-user check, added for
+        add-invitation-push-notifications/design.md Decision 3 (push
+        dispatch to "every user holding this step's role at this branch").
+        """
+        stmt = (
+            select(UserBranchRole.user_id)
+            .where(
+                UserBranchRole.role_id == role_id,
+                (UserBranchRole.branch_id == branch_id) | (UserBranchRole.branch_id.is_(None)),
+            )
+            .distinct()
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def list_hosts_page(self, *, page: int, page_size: int) -> tuple[list[User], int]:
         """Backs the public host-directory listing
         (`router.py::list_employee_directory`) — every active user holding

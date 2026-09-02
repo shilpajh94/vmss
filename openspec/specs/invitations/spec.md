@@ -293,7 +293,17 @@ invitation id that does not exist at all SHALL be rejected with 404. A
 caller who lacks branch access to an invitation that does exist SHALL be
 rejected with 403 — the same branch-authorization behavior `POST
 /invitations` itself already applies when resolving a branch it doesn't
-otherwise know from the request.
+otherwise know from the request. The invitation's recorded `branchId` is
+already-persisted historical data, not caller-supplied input, so branch
+authorization for approval SHALL succeed based on that recorded id even if
+the branch has since been soft-deleted — approval SHALL NOT fail with a
+branch-not-found error for an invitation that otherwise exists and is
+`submitted`. The transition itself SHALL be atomic: when two approval
+requests for the same invitation are processed concurrently, exactly one
+SHALL succeed and exactly one approval notification SHALL be dispatched —
+the other SHALL observe the same 409 "not currently submitted" outcome the
+sequential already-approved case produces, never a duplicate transition or
+a duplicate notification.
 
 #### Scenario: Manual approval transitions status and dispatches the QR notification
 - **WHEN** a caller with `invitations:approve` at the invitation's branch
@@ -340,6 +350,21 @@ otherwise know from the request.
   attempts to approve an invitation that exists at another branch
 - **THEN** the request is rejected with 403, not 404 — the invitation's
   existence is not hidden, only the caller's access to act on it is denied
+
+#### Scenario: Approving an invitation whose branch was soft-deleted after submission
+- **WHEN** a caller with `invitations:approve` at the invitation's recorded
+  branch approves a `submitted` invitation whose `branchId` refers to a
+  `Branch` that has since been soft-deleted
+- **THEN** the approval succeeds exactly as it would have before the branch
+  was deleted — the invitation's status becomes `approved`, `approvedAt` is
+  set, and the approval notification is dispatched
+
+#### Scenario: Concurrent approval requests result in exactly one transition
+- **WHEN** two approval requests for the same `submitted` invitation are
+  processed concurrently, both otherwise authorized
+- **THEN** exactly one request transitions the invitation to `approved` and
+  dispatches the approval notification, and the other is rejected with 409
+  as if the invitation were already approved
 
 ### Requirement: Approval-Step Rejection Denies the Invitation
 Rejecting any snapshotted `InvitationApprovalStep` SHALL immediately
@@ -534,6 +559,64 @@ single-invitation tracking lookup returns.
   per-vehicle detail that `GET /invitations/track` returns for a single
   invitation
 
+### Requirement: Caller Lists Invitations Relevant to Themselves via relevantToMe
+`GET /invitations` SHALL accept a `relevantToMe` boolean query parameter.
+WHEN `relevantToMe` is true, the system SHALL return invitations where the
+authenticated caller is either (a) the user identified by that invitation's
+`stepOrder` 0 host-identified `InvitationApprovalStep` (i.e. the snapshotted
+host), or (b) the delegate assigned to any of that invitation's approval
+steps (see the `approvals` capability's "Host Delegates the Step Following
+Their Own to a Specific Person" requirement) — regardless of that step's or
+the invitation's current status. This filter SHALL NOT require the caller
+to hold `invitations:view`, and SHALL NOT be scoped by `X-Branch-ID` or the
+caller's authorized branches: it is a personal worklist keyed to the
+caller's own identity, not the branch-scoped admin listing the "Employee
+Lists Invitations at Their Authorized Branches" requirement above
+describes. `relevantToMe` SHALL compose with the existing `status`,
+`registrationType`, and `source` filters and with pagination/sorting,
+narrowing the relevant-to-me set the same way those filters narrow the
+branch-scoped list. A caller with no invitations where they are host or
+delegate SHALL receive an empty, successfully-paginated result, not an
+error.
+
+#### Scenario: Host sees their own invitation without invitations:view
+- **WHEN** the user identified as the host of an invitation (its
+  `stepOrder` 0 step's `approverUserId`) requests `GET /invitations` with
+  `relevantToMe=true`, and holds no `invitations:view` grant at that
+  invitation's branch
+- **THEN** the response includes that invitation
+
+#### Scenario: Delegate sees the invitation they were delegated
+- **WHEN** a user who has been delegated one of an invitation's approval
+  steps requests `GET /invitations` with `relevantToMe=true`
+- **THEN** the response includes that invitation, whether or not the user
+  holds `invitations:view` at its branch and regardless of that step's
+  current status
+
+#### Scenario: Caller who is neither host nor delegate sees nothing for that invitation
+- **WHEN** a caller who is not the snapshotted host and has not been
+  delegated any step of a given invitation requests `GET /invitations` with
+  `relevantToMe=true`
+- **THEN** that invitation is absent from the response, even if the caller
+  holds `invitations:view` at its branch
+
+#### Scenario: relevantToMe composes with status filtering
+- **WHEN** a host requests `GET /invitations` with `relevantToMe=true` and
+  `status=submitted`
+- **THEN** the response includes only their relevant invitations that are
+  currently `submitted`
+
+#### Scenario: No relevant invitations returns an empty page, not an error
+- **WHEN** a caller who is neither host nor delegate on any invitation
+  requests `GET /invitations` with `relevantToMe=true`
+- **THEN** the response is a successful, empty, correctly-paginated result
+
+#### Scenario: X-Branch-ID is ignored when relevantToMe is set
+- **WHEN** a caller requests `GET /invitations` with both `relevantToMe=true`
+  and an `X-Branch-ID` header
+- **THEN** the response includes the caller's relevant invitations across
+  every branch, not narrowed to the named branch
+
 ### Requirement: A Confirmation or Approval Email Dispatch Failure Is Logged With Enough Detail To Diagnose
 WHEN the configured SMTP gateway rejects or fails to send a visit-
 confirmation, tracking-only, or approval notification email, the system
@@ -644,3 +727,82 @@ already defined for walk-in registration's default-tenant/branch fallback.
 - **THEN** the caller receives the same not-found response this endpoint
   already returns for that condition today — only the server-side log
   gains the `ERROR`-level detail
+
+### Requirement: Invitation Approval, Denial, Reschedule, Check-In, and Check-Out Notify the Host via Push
+When an invitation with a resolved host (`host_id` present) is approved
+(directly, or as the final step of a multi-step workflow), denied (directly,
+or via a rejected step), rescheduled, checked in, or checked out, the system
+SHALL dispatch a push notification to that host user, in addition to the
+visitor's existing email/SMS notification where one already exists for that
+action. An invitation with no resolved host SHALL skip the push dispatch for
+these actions without failing the triggering request.
+
+#### Scenario: Approval notifies the host
+- **WHEN** an invitation with a resolved host is approved (via
+  `POST /invitations/{id}/approve` or as the final approval step)
+- **THEN** the host user receives a push notification, and the visitor still
+  receives their existing approval email/SMS unchanged
+
+#### Scenario: Denial notifies the host
+- **WHEN** an invitation with a resolved host is denied (directly, or via a
+  rejected approval step)
+- **THEN** the host user receives a push notification stating the invitation
+  was denied
+
+#### Scenario: Reschedule notifies the host
+- **WHEN** an invitation with a resolved host has its preferred visit
+  date/time changed via the reschedule endpoint
+- **THEN** the host user receives a push notification stating the new
+  date/time, alongside the visitor's existing reschedule email/SMS
+
+#### Scenario: Check-in and check-out notify the host
+- **WHEN** an invitation with a resolved host is checked in, and later when
+  it is checked out
+- **THEN** the host user receives a push notification for each event
+
+#### Scenario: No resolved host means no push, and the request still succeeds
+- **WHEN** any of the actions above completes for an invitation whose
+  `host_id` never resolved
+- **THEN** the action's own HTTP response is unaffected and no push
+  notification is dispatched for that action
+
+### Requirement: Invitation Submission Notifies the Approval Workflow's First Approver(s) via Push
+When `create_invitation` leaves an invitation `submitted` (not auto-approved)
+with at least one approval step, the system SHALL dispatch a push
+notification to the newly-created first (`step_order` 0) step's
+approver(s): the resolved host if the step is host-identified, or every
+user holding the step's role at the invitation's branch if role-identified
+— except when that role is the tenant's standard `admin` role (matched by
+name, case-insensitively), which SHALL NOT receive a push notification.
+
+#### Scenario: Submission with a host-identified first step
+- **WHEN** an invitation is submitted and its host resolves, giving it an
+  implicit host-identified step 0
+- **THEN** the host user receives a push notification that a new invitation
+  awaits their approval
+
+#### Scenario: Submission with a role-identified first step
+- **WHEN** an invitation is submitted with no resolved host, and its
+  category's workflow gives it a role-identified step 0 for a role other
+  than the tenant's standard `admin` role (e.g. Reception, Security, or a
+  tenant-defined custom role)
+- **THEN** every user holding that role at the invitation's branch receives
+  a push notification that a new invitation awaits their approval
+
+#### Scenario: Submission with an Admin-role first step sends no push
+- **WHEN** an invitation is submitted with no resolved host, and its
+  category's workflow gives it a role-identified step 0 for the tenant's
+  standard `admin` role
+- **THEN** no push notification is dispatched to anyone for that step
+
+### Requirement: Auto-Approved Invitations Do Not Trigger a Submission Push
+An invitation created while the tenant's Company profile auto-approves
+pre-registered visitors never has approval steps, so its creation SHALL NOT
+dispatch a "submitted, awaiting your approval" push to anyone — only the
+visitor's existing auto-approval email/SMS fires.
+
+#### Scenario: Auto-approve tenant, no staff push on creation
+- **WHEN** an invitation is created for a tenant whose Company profile has
+  `auto_approve_pre_registered_visitors` enabled
+- **THEN** no approval-step push notification is dispatched, and the visitor
+  still receives their existing approval-confirmation email/SMS

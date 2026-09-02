@@ -19,11 +19,20 @@ celery_app.conf.task_default_queue = "vmss_api"
 # ddev worker picks them up fine since it listens on every queue.
 celery_app.conf.task_routes = {
     "vmss_api.invitations.tasks.*": {"queue": "notifications"},
+    "vmss_api.notifications.tasks.*": {"queue": "notifications"},
     "vmss_api.reports.tasks.*": {"queue": "cron_jobs"},
+    # No dedicated queue/worker Deployment exists for `audit_trail` — routed
+    # onto the existing "cron_jobs" queue/worker rather than provisioning a
+    # third one, since report generation is the same kind of
+    # not-time-critical background job as the rollup snapshot already on
+    # that queue.
+    "vmss_api.audit_trail.tasks.*": {"queue": "cron_jobs"},
 }
 
 # Feature task modules register themselves here as they're built.
-celery_app.autodiscover_tasks(["vmss_api.invitations", "vmss_api.reports"])
+celery_app.autodiscover_tasks(
+    ["vmss_api.invitations", "vmss_api.notifications", "vmss_api.reports", "vmss_api.audit_trail"]
+)
 
 # Recurring, time-triggered tasks (background-jobs.md, the `background-jobs`
 # capability's "Scheduled Tasks Run Independently of Any Request"

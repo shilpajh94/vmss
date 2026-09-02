@@ -50,3 +50,11 @@ def error_response(
         status_code=status_code,
         content={"success": False, "message": message, "errors": jsonable_encoder(errors)},
     )
+
+
+def mark_deprecated(response: JSONResponse) -> JSONResponse:
+    """Marks a response as coming from a deprecated route (api-conventions.md
+    §2), via the standard `Deprecation` response header (RFC 8594), so a
+    client library can surface the signal without parsing the docs note."""
+    response.headers["Deprecation"] = "true"
+    return response

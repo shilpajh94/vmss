@@ -24,11 +24,16 @@ from vmss_api.auth.models import User
 from vmss_api.core.deps import get_current_user, get_pagination, get_tenant, get_tenant_db
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.redis import get_redis
-from vmss_api.core.responses import error_response, paginated_response, success_response
+from vmss_api.core.responses import (
+    error_response,
+    mark_deprecated,
+    paginated_response,
+    success_response,
+)
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.core.storage import url_for as storage_url_for
 from vmss_api.invitations import service
-from vmss_api.invitations.deps import track_default_tenant_db
+from vmss_api.invitations.deps import track_default_tenant, track_default_tenant_db
 from vmss_api.invitations.schemas import (
     BadgeOut,
     CarriedItemsSubmit,
@@ -634,6 +639,12 @@ async def check_in_invitation(
     Approved Invitation Can Be Checked In"), rejected with 409 while
     `watchlistFlagged` is set and not yet overridden (spec.md "A
     Watchlist-Flagged Invitation Blocks Check-In Until Overridden").
+
+    **Deprecated** — see `PATCH /api/v2/invitations/{trackingId}/check-in`
+    for the public, tracking-ID-keyed replacement
+    (add-public-checkin-endpoint/design.md). This route stays fully
+    functional during the migration window; api-conventions.md §2 governs
+    its eventual removal.
     """
     cached = await _cached_response(tenant.id, idempotency_key)
     if cached is not None:
@@ -641,12 +652,74 @@ async def check_in_invitation(
 
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:checkin", invitation.branch_id)
-    invitation = await service.check_in_invitation(tenant_db, invitation, user_id=user.id)
+    invitation = await service.check_in_invitation(
+        tenant_db, invitation, user_id=user.id, tenant=tenant
+    )
     background_tasks.add_task(
         record_audit_log,
         tenant.schema_name,
         actor_user_id=user.id,
         action="invitation_checked_in",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    response = success_response(data=to_invitation_out(invitation))
+    await _cache_response(tenant.id, idempotency_key, response)
+    return mark_deprecated(response)
+
+
+# --- add-public-checkin-endpoint: public check-in by tracking ID ------------
+# A second, minimal router mounted at /api/v2 (see api.py/main.py) — not a
+# wholesale re-exposure of every v1 invitations route under v2, just this one
+# endpoint (design.md Decision 1).
+
+router_v2 = APIRouter(prefix="/invitations", tags=["invitations"])
+
+
+@router_v2.patch(
+    "/{tracking_id}/check-in",
+    response_model=Envelope[InvitationOut],
+)
+@limiter.limit("20/minute")
+async def check_in_invitation_by_tracking_id(
+    request: Request,
+    tracking_id: str,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(track_default_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            description=(
+                "Optional. Omitting it simply forgoes retry-dedup safety — a "
+                "retried request with no key may check in twice. See "
+                "api-conventions.md §3."
+            ),
+        ),
+    ] = None,
+) -> JSONResponse:
+    """Public, unauthenticated counterpart of
+    `PATCH /api/v1/invitations/{id}/check-in`, keyed by the invitation's
+    `tracking_id` instead of its internal UUID `id` (spec.md "An Approved
+    Invitation Can Be Publicly Checked In By Tracking ID") — for a kiosk or
+    the visitor's own device checking in from the QR/badge code, with no
+    staff bearer token. Same 409/404/`Idempotency-Key` behavior as the
+    staff-authenticated route; no branch authorization check, since there is
+    no authenticated caller to check it against.
+    """
+    cached = await _cached_response(tenant.id, idempotency_key)
+    if cached is not None:
+        return cached
+
+    invitation = await service.check_in_invitation_by_tracking_id(
+        tenant_db, tracking_id, tenant=tenant
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=None,
+        action="invitation_checked_in_public",
         entity_type="Invitation",
         entity_id=invitation.id,
     )
@@ -680,7 +753,9 @@ async def check_out_invitation(
     await authorize_branch_id_tolerant(
         tenant_db, user, "invitations:checkout", invitation.branch_id
     )
-    invitation = await service.check_out_invitation(tenant_db, invitation, user_id=user.id)
+    invitation = await service.check_out_invitation(
+        tenant_db, invitation, user_id=user.id, tenant=tenant
+    )
     background_tasks.add_task(
         record_audit_log,
         tenant.schema_name,
@@ -874,18 +949,37 @@ async def override_watchlist(
 )
 async def list_invitations(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
-    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("invitations:view"))],
+    user: Annotated[User, Depends(get_current_user)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    x_branch_id: Annotated[uuid.UUID | None, Header(alias="X-Branch-ID")] = None,
+    relevant_to_me: Annotated[bool, Query(alias="relevantToMe")] = False,
     sort_by: Annotated[InvitationSortableField, Query(alias="sortBy")] = "submitted_at",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.desc,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     registration_type: Annotated[RegistrationType | None, Query(alias="registrationType")] = None,
     source: Annotated[RegistrationSource | None, Query(alias="source")] = None,
 ) -> JSONResponse:
+    """specs/invitations/spec.md "Employee Lists Invitations at Their
+    Authorized Branches" (the default, branch-scoped mode) and "Caller
+    Lists Invitations Relevant to Themselves via relevantToMe" —
+    `relevantToMe=true` is a distinct personal worklist that bypasses the
+    `invitations:view` branch-permission check entirely rather than
+    narrowing it, so `X-Branch-ID` is read directly here (not via
+    `require_branch_scope`'s `Depends()`) and only consulted when
+    `relevantToMe` is not set (invitation-relevant-to-me-and-delegation/
+    design.md "relevantToMe is implemented as a distinct query path, not a
+    require_branch_scope variant").
+    """
     page, page_size = pagination
+    branch_scope: BranchScope | None = None
+    if not relevant_to_me:
+        branch_scope = await require_branch_scope("invitations:view")(
+            user=user, tenant_db=tenant_db, x_branch_id=x_branch_id
+        )
     invitations, total = await service.list_invitations_page(
         tenant_db,
         branch_scope=branch_scope,
+        relevant_to_user_id=user.id if relevant_to_me else None,
         status=status_filter,
         registration_type=registration_type.value if registration_type is not None else None,
         source=source.value if source is not None else None,

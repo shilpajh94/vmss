@@ -34,7 +34,8 @@ branch from the request body via the same `authorize_branch_id` helper.
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
 | GET | `/api/v1/invitations/{id}` | `invitations:view` at the invitation's branch | — | Authenticated, staff-facing single-invitation detail view (`InvitationDetailOut`) — branch/source/creator plus every lifecycle field below. 404 unknown id, 403 (not 404) if the caller lacks branch access. See "Lifecycle actions" below. |
 | PATCH | `/api/v1/invitations/{id}/deny` | `invitations:deny` at the invitation's branch | — | Transitions a `submitted` invitation to `denied`, with a mandatory `reason`, and dispatches a denial notification. 409 if not currently `submitted`. |
-| PATCH | `/api/v1/invitations/{id}/check-in` | `invitations:checkin` at the invitation's branch | — | Transitions an `approved` invitation to `checked_in`. 409 if not `approved`, or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key`. |
+| PATCH | `/api/v1/invitations/{id}/check-in` | `invitations:checkin` at the invitation's branch | — | **Deprecated** — see the public `/api/v2` route below. Transitions an `approved` invitation to `checked_in`. 409 if not `approved`, or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key`. Response carries a `Deprecation: true` header. Target removal date: TBD (see `openspec/changes/add-public-checkin-endpoint/design.md` Open Questions) — not yet removed, still fully functional. |
+| PATCH | `/api/v2/invitations/{trackingId}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated check-in by the invitation's `tracking_id` (`INV-XXXXXXXX`) — for a kiosk or the visitor's own device checking in from the QR/badge code, with no staff bearer token. Same transition/409/404 rules as the `v1` route; no branch-authorization check since there's no authenticated caller. Audit entries for this path use `actor_user_id = null` and `action = "invitation_checked_in_public"`, distinguishing self/kiosk check-ins from staff-performed ones. Accepts `Idempotency-Key`. First (and, as of this writing, only) route mounted under `/api/v2` — see "The tracking ID is a plain, human-readable identifier" below for how tenancy resolves with no bearer token. |
 | PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. |
 | PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`, and dispatches a reschedule notification to the primary contact. 409 once `checked_in`/`checked_out`/`denied`. |
 | PATCH | `/api/v1/invitations/{id}/extend` | `invitations:extend` at the invitation's branch | — | Pushes `expiresAt` forward while `approved` or `checked_in`. 422 if the new expiry isn't strictly later than the current one; 409 if ineligible. |
@@ -264,6 +265,7 @@ Query params:
 | `status` | string | unset | Exact match against the invitation's `status` column. |
 | `registrationType` | `individual` \| `group` | unset | |
 | `source` | `staff_pre_registration` \| `visitor_walk_in` | unset | |
+| `relevantToMe` | bool | `false` | See "Relevant to me" below — a different filter mode entirely, not a narrower branch scope. |
 
 Each row is an `InvitationListItemOut` — tracking ID, registration type,
 source, status, `visitorCategoryId`, primary contact name, purpose of visit,
@@ -272,6 +274,26 @@ and expiry/submission timestamps — deliberately narrower than
 `currentApprovalStep` either, so the underlying query never needs to
 eager-load a child collection or run the extra current-step lookup for a
 list view that doesn't render either (`query-performance.md` §1-2).
+
+## Relevant to me
+
+`GET /invitations?relevantToMe=true` is a personal worklist, not a narrower
+branch scope: it returns invitations where the caller is either the
+snapshotted host (the `stepOrder` 0 `InvitationApprovalStep`'s
+`approverUserId` — see `docs/features/approvals.md`) or has been delegated
+one of that invitation's approval steps (`docs/features/approvals.md`'s
+"Host delegation"), regardless of that step's or the invitation's current
+status.
+
+This deliberately **bypasses** `invitations:view` and `X-Branch-ID`
+entirely — a host or delegate with no branch-level view permission still
+needs to see and act on their own invitation, so this is a distinct query
+path from the branch-scoped mode above, not a variant of it. `X-Branch-ID`
+is ignored (not rejected, not narrowing) when `relevantToMe=true` is set.
+It composes with `status`/`registrationType`/`source` and with
+pagination/sorting exactly like the branch-scoped mode. A caller who is
+neither host nor delegate on any invitation gets an empty, successfully
+paginated result, not an error.
 
 ## The tracking ID is a plain, human-readable identifier
 
@@ -323,6 +345,14 @@ context if retries are exhausted. Email goes out over SMTP
 (`invitations/notifications.py::SmtpEmailSender`); SMS has no gateway wired up
 yet (`UnconfiguredSmsSender` raises loudly rather than pretending to send —
 this is a known open item, not an oversight).
+
+Submission (if it snapshots at least one approval step), approval, denial,
+reschedule, check-in, and check-out each also dispatch a **staff-facing
+push notification** — additional to, and dispatched independently from, the
+visitor email/SMS above. Submission pushes the current approval step's
+approver(s) (host or role-at-branch); the other five push the invitation's
+host, if one resolved. See `docs/features/notifications.md` for the
+dispatch primitive and recipient-resolution rules.
 
 **No Celery worker runs by default in this DDEV dev environment** — a
 created invitation's notification task will sit queued in Redis until

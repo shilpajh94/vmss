@@ -12,10 +12,11 @@ from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.auth.repository import UserRepository
 from vmss_api.core.config import settings
+from vmss_api.core.logging import logger
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.storage import FileTooLargeError, UnsupportedFileTypeError, validate_upload
 from vmss_api.core.storage import save as storage_save
-from vmss_api.invitations import badge, tasks
+from vmss_api.invitations import badge, push_notifications, tasks
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.invitations.schemas import (
@@ -24,6 +25,7 @@ from vmss_api.invitations.schemas import (
     RegistrationSource,
     VisitDetailsSubmit,
 )
+from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.repository import CompanyRepository, DepartmentRepository
 from vmss_api.tenant.models import Tenant
 from vmss_api.visit_info.repository import VisitDurationRepository, VisitPurposeRepository
@@ -384,6 +386,34 @@ async def create_invitation(
         tenant_schema=tenant.schema_name,
         invitation_id=str(invitation.id),
     )
+
+    # Staff-facing push, additional to the visitor email/SMS above
+    # (specs/invitations/spec.md "Invitation Submission Notifies the
+    # Approval Workflow's First Approver(s) via Push"). An auto-approved
+    # invitation never has approval steps, so `current_step` is always None
+    # on that path and no push fires — matching "Auto-Approved Invitations
+    # Do Not Trigger a Submission Push".
+    if not auto_approved:
+        current_step = await InvitationApprovalStepRepository(tenant_db).get_current_pending(
+            invitation.id
+        )
+        if current_step is not None:
+            title, body, data = push_notifications.step_awaiting_approval(created)
+            await notifications_service.notify_step_approver(
+                tenant_db,
+                tenant_schema=tenant.schema_name,
+                approver_user_id=current_step.approver_user_id,
+                approver_role_id=current_step.approver_role_id,
+                branch_id=invitation.branch_id,
+                title=title,
+                body=body,
+                data=data,
+            )
+        else:
+            # No resolved host and no active workflow rules — nobody to
+            # notify (proposal.md's "no push recipient" case).
+            logger.warning("push_notify_no_approval_step", invitation_id=str(invitation.id))
+
     return created
 
 
@@ -440,6 +470,15 @@ async def approve_invitation(
         tenant_schema=tenant.schema_name,
         invitation_id=str(updated.id),
     )
+    if updated.host_id is not None:
+        title, body, data = push_notifications.approved(updated)
+        await notifications_service.notify_user(
+            tenant_schema=tenant.schema_name,
+            user_id=updated.host_id,
+            title=title,
+            body=body,
+            data=data,
+        )
     return updated
 
 
@@ -472,18 +511,36 @@ async def deny_invitation(
         tenant_schema=tenant.schema_name,
         invitation_id=str(updated.id),
     )
+    if updated.host_id is not None:
+        title, body, data = push_notifications.denied(updated)
+        await notifications_service.notify_user(
+            tenant_schema=tenant.schema_name,
+            user_id=updated.host_id,
+            title=title,
+            body=body,
+            data=data,
+        )
     return updated
 
 
-async def check_in_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID
+async def _perform_check_in(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    actor_user_id: uuid.UUID | None,
+    tenant: Tenant,
 ) -> Invitation:
     """spec.md "An Approved Invitation Can Be Checked In" /
-    "A Watchlist-Flagged Invitation Blocks Check-In Until Overridden". The
+    "A Watchlist-Flagged Invitation Blocks Check-In Until Overridden" /
+    "An Approved Invitation Can Be Publicly Checked In By Tracking ID". The
     pre-check below gives a caller a specific reason for the 409 (flagged vs.
     wrong status); the repository's atomic `WHERE` clause re-checks both
     conditions so a race with a concurrent flag/status change can't slip a
     check-in through between this read and the write.
+
+    `actor_user_id` is `None` for the public, tracking-ID-keyed check-in path
+    (there is no authenticated caller to record) — `checked_in_by_user_id` is
+    nullable at the model level for exactly this case.
     """
     if invitation.watchlist_flagged:
         raise HTTPException(
@@ -493,7 +550,7 @@ async def check_in_invitation(
     if invitation.status != "approved":
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
     updated = await InvitationRepository(tenant_db).check_in_if_eligible(
-        invitation.id, user_id=user_id
+        invitation.id, user_id=actor_user_id
     )
     if updated is None:
         raise HTTPException(
@@ -501,11 +558,43 @@ async def check_in_invitation(
             detail="Invitation is no longer eligible for check-in",
         )
     await tenant_db.commit()
+    if updated.host_id is not None:
+        title, body, data = push_notifications.checked_in(updated)
+        await notifications_service.notify_user(
+            tenant_schema=tenant.schema_name,
+            user_id=updated.host_id,
+            title=title,
+            body=body,
+            data=data,
+        )
     return updated
 
 
+async def check_in_invitation(
+    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID, tenant: Tenant
+) -> Invitation:
+    """`PATCH /api/v1/invitations/{id}/check-in` — staff-authenticated,
+    UUID-keyed. See `_perform_check_in` for the shared transition logic.
+    """
+    return await _perform_check_in(tenant_db, invitation, actor_user_id=user_id, tenant=tenant)
+
+
+async def check_in_invitation_by_tracking_id(
+    tenant_db: AsyncSession, tracking_id: str, *, tenant: Tenant
+) -> Invitation:
+    """`PATCH /api/v2/invitations/{trackingId}/check-in` — public,
+    unauthenticated, tracking-ID-keyed (spec.md "An Approved Invitation Can
+    Be Publicly Checked In By Tracking ID"). No authenticated caller, so no
+    branch authorization check and no human actor recorded.
+    """
+    invitation = await InvitationRepository(tenant_db).get_by_tracking_id(tracking_id)
+    if invitation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    return await _perform_check_in(tenant_db, invitation, actor_user_id=None, tenant=tenant)
+
+
 async def check_out_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID
+    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID, tenant: Tenant
 ) -> Invitation:
     updated = await InvitationRepository(tenant_db).check_out_if_checked_in(
         invitation.id, user_id=user_id
@@ -513,6 +602,15 @@ async def check_out_invitation(
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not checked in")
     await tenant_db.commit()
+    if updated.host_id is not None:
+        title, body, data = push_notifications.checked_out(updated)
+        await notifications_service.notify_user(
+            tenant_schema=tenant.schema_name,
+            user_id=updated.host_id,
+            title=title,
+            body=body,
+            data=data,
+        )
     return updated
 
 
@@ -552,6 +650,15 @@ async def reschedule_invitation(
         tenant_schema=tenant.schema_name,
         invitation_id=str(updated.id),
     )
+    if updated.host_id is not None:
+        title, body, data = push_notifications.rescheduled(updated)
+        await notifications_service.notify_user(
+            tenant_schema=tenant.schema_name,
+            user_id=updated.host_id,
+            title=title,
+            body=body,
+            data=data,
+        )
     return updated
 
 
@@ -683,6 +790,7 @@ async def get_current_approval_step(
         approver_role_id=current.approver_role_id,
         approver_user_id=current.approver_user_id,
         total_steps=total_steps,
+        delegated_to_user_id=current.delegated_to_user_id,
     )
 
 
@@ -705,7 +813,8 @@ async def track_by_email(tenant_db: AsyncSession, email: str) -> list[Invitation
 async def list_invitations_page(
     tenant_db: AsyncSession,
     *,
-    branch_scope: BranchScope,
+    branch_scope: BranchScope | None,
+    relevant_to_user_id: uuid.UUID | None = None,
     status: str | None,
     registration_type: str | None,
     source: str | None,
@@ -716,6 +825,7 @@ async def list_invitations_page(
 ) -> tuple[list[Invitation], int]:
     return await InvitationRepository(tenant_db).list_page(
         branch_scope=branch_scope,
+        relevant_to_user_id=relevant_to_user_id,
         status=status,
         registration_type=registration_type,
         source=source,

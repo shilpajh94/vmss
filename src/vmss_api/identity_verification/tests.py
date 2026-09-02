@@ -94,6 +94,64 @@ async def test_request_and_verify_otp_over_email_success(
     assert claims["tenant_id"] == str(tenant.id)
 
 
+# --- Real dispatch verification (against DDEV's Mailpit, not a fake sender) ---
+#
+# The test above proves the endpoint *calls* the sender correctly, not that a
+# real email is deliverable — see
+# `invitations/tests.py::test_send_approval_notification_delivers_email_
+# with_qr_via_mailpit` for the established pattern this mirrors. Highest
+# priority of the Mailpit additions (proposal.md finding #2): OTP-over-email
+# is the one channel with an actual live dev-server incident history
+# (`diagnose-otp-email-delivery-failure`).
+
+_MAILPIT_BASE_URL = "http://localhost:8025/api/v1"
+_MAILPIT_API_URL = f"{_MAILPIT_BASE_URL}/messages"
+
+
+async def test_request_and_verify_otp_over_email_delivers_real_email_via_mailpit(
+    client: AsyncClient, tenant: Tenant
+) -> None:
+    """`senders.email_sender` is left as the real `SmtpEmailSender` (the
+    module default) here, unlike every other OTP test in this file — a real
+    SMTP send goes out for Mailpit to capture, and the verification code
+    used to complete `/otp/verify` is read back from the *received* message,
+    not from an in-process recorder.
+    """
+    identifier = _unique_email()
+
+    response = await client.post(
+        "/api/v1/identity-verification/otp/request",
+        json={"identifier": identifier, "channel": "email"},
+    )
+    assert response.status_code == 200, response.text
+
+    async with AsyncClient() as mailpit:
+        list_response = await mailpit.get(_MAILPIT_API_URL, params={"limit": 50})
+        assert list_response.status_code == 200
+        matches = [
+            m
+            for m in list_response.json()["messages"]
+            if any(to["Address"] == identifier for to in m["To"])
+        ]
+        assert len(matches) == 1, (
+            f"expected exactly one Mailpit message to {identifier}, found {len(matches)}"
+        )
+        detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{matches[0]['ID']}")
+        assert detail_response.status_code == 200
+        detail = detail_response.json()
+        assert detail["Subject"] == "Your verification code"
+        code = _extract_code(detail["Text"])
+
+    verify_response = await client.post(
+        "/api/v1/identity-verification/otp/verify",
+        json={"identifier": identifier, "channel": "email", "code": code},
+    )
+    assert verify_response.status_code == 200, verify_response.text
+    data = verify_response.json()["data"]
+    assert data["identifier"] == identifier
+    assert data["channel"] == "email"
+
+
 # --- SMS: real dispatch via a mocked Twilio client (9.2a) -------------------
 
 

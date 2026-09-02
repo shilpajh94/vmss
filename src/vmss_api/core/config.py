@@ -237,6 +237,14 @@ class Settings(BaseSettings):
     sso_exchange_code_ttl_seconds: int = Field(default=60, alias="SSO_EXCHANGE_CODE_TTL_SECONDS")
     sso_state_ttl_seconds: int = Field(default=600, alias="SSO_STATE_TTL_SECONDS")
 
+    # Firebase Cloud Messaging — the push provider for both web and the
+    # Flutter app (add-invitation-push-notifications/design.md Decision 4).
+    # Points at a service-account key file (the Admin SDK's own credential
+    # format); left unset by default, same "not configured" posture as
+    # `sms_gateway_*`/`twilio_*` above — `notifications/fcm.py` fails loudly
+    # rather than silently no-op'ing when a push is actually attempted.
+    fcm_credentials_path: str | None = Field(default=None, alias="FCM_CREDENTIALS_PATH")
+
 
 @lru_cache
 def get_settings() -> Settings:

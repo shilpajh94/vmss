@@ -25,8 +25,17 @@ web_extra_daemons:
   # sends. `-A vmss_api.core.celery_app:celery_app` must name the Celery
   # instance explicitly; it isn't named `app`, Celery's convention-based
   # default for bare `-A <module>`.
+  # `-Q vmss_api,notifications,cron_jobs` must list every queue named in
+  # `core/celery_app.py`'s `task_routes` (plus the default `vmss_api` queue)
+  # — without it, a bare `worker` with no `-Q` only drains the default
+  # queue, and every invitations/notifications task (routed to
+  # "notifications") or reports task (routed to "cron_jobs") sits in Redis
+  # forever with nothing consuming it, even though the worker itself shows
+  # RUNNING. Deployed environments intentionally split these across
+  # dedicated worker processes (see `core/celery_app.py`'s own comment); this
+  # single local worker instead has to cover all of them at once.
   - name: "vmss-api-celery-worker"
-    command: "uv run celery -A vmss_api.core.celery_app:celery_app worker --loglevel=info"
+    command: "uv run celery -A vmss_api.core.celery_app:celery_app worker --loglevel=info -Q vmss_api,notifications,cron_jobs"
     directory: /var/www/html
   # Beat only enqueues scheduled tasks (e.g. `reports/tasks.py`'s daily
   # rollup-snapshot dispatch, `core/celery_app.py`'s `beat_schedule`) — the

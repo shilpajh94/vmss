@@ -71,6 +71,20 @@ class InvitationApprovalStepRepository(TenantScopedRepository[InvitationApproval
         )
         return (await self.session.execute(stmt)).scalar_one_or_none() is not None
 
+    async def get_by_step_order(
+        self, invitation_id: uuid.UUID, step_order: int
+    ) -> InvitationApprovalStep | None:
+        """Looks up an invitation's step by its `step_order` rather than its
+        id — used to find the host-identified `stepOrder` 0 step when
+        validating a delegation request (`approvals/service.py::delegate_step`).
+        """
+        stmt = select(InvitationApprovalStep).where(
+            InvitationApprovalStep.invitation_id == invitation_id,
+            InvitationApprovalStep.step_order == step_order,
+            InvitationApprovalStep.deleted_at.is_(None),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def get_by_id_for_invitation(
         self, invitation_id: uuid.UUID, step_id: uuid.UUID
     ) -> InvitationApprovalStep | None:
@@ -114,6 +128,38 @@ class InvitationApprovalStepRepository(TenantScopedRepository[InvitationApproval
             update(InvitationApprovalStep)
             .where(InvitationApprovalStep.id == step_id, InvitationApprovalStep.status == "pending")
             .values(status="rejected", acted_by_user_id=user_id, acted_at=datetime.now(UTC))
+            .returning(InvitationApprovalStep)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def delegate_if_eligible(
+        self,
+        step_id: uuid.UUID,
+        *,
+        delegated_to_user_id: uuid.UUID,
+        delegated_by_user_id: uuid.UUID,
+    ) -> InvitationApprovalStep | None:
+        """Atomic conditional transition, same race-safety rationale as
+        `approve_if_pending`: two concurrent delegate requests for the same
+        step can't both pass the "not already delegated" check and both
+        record a delegation. `None` means the step was no longer `pending`
+        or already had a delegate assigned by the time this ran — the
+        caller (`approvals/service.py::delegate_step`) treats that as 409,
+        the same terminal-state rejection `approve_if_pending`'s own `None`
+        case gets.
+        """
+        stmt = (
+            update(InvitationApprovalStep)
+            .where(
+                InvitationApprovalStep.id == step_id,
+                InvitationApprovalStep.status == "pending",
+                InvitationApprovalStep.delegated_to_user_id.is_(None),
+            )
+            .values(
+                delegated_to_user_id=delegated_to_user_id,
+                delegated_by_user_id=delegated_by_user_id,
+                delegated_at=datetime.now(UTC),
+            )
             .returning(InvitationApprovalStep)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
