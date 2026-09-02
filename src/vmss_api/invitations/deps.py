@@ -15,6 +15,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.core.database import get_db, tenant_session_scope
 from vmss_api.core.logging import logger
 from vmss_api.core.tenancy import DefaultTenantUnresolved, resolve_default_tenant
+from vmss_api.tenant.models import Tenant
+
+
+async def track_default_tenant(db: Annotated[AsyncSession, Depends(get_db)]) -> Tenant:
+    """Same `default_tenant_slug` resolution as `track_default_tenant_db`
+    below, but returns the `Tenant` itself rather than a session bound to
+    its schema — for callers that need `tenant.id`/`tenant.schema_name`
+    directly (e.g. an idempotency cache key or an audit-log call) alongside
+    a separately-injected `track_default_tenant_db` session, rather than a
+    session with no way to recover which tenant it's bound to.
+    """
+    try:
+        return await resolve_default_tenant(db)
+    except DefaultTenantUnresolved as exc:
+        logger.error("invitations_track_default_tenant_unconfigured", reason=exc.reason)
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="Tenant not found or inactive"
+        ) from exc
 
 
 async def track_default_tenant_db(

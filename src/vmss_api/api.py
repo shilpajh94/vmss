@@ -5,6 +5,7 @@ from vmss_api.audit_trail.router import router as audit_trail_router
 from vmss_api.auth.router import router as auth_router
 from vmss_api.identity_verification.router import router as identity_verification_router
 from vmss_api.invitations.router import router as invitations_router
+from vmss_api.invitations.router import router_v2 as invitations_router_v2
 from vmss_api.notifications.router import router as notifications_router
 from vmss_api.org_structure.router import router as org_structure_router
 from vmss_api.platform.router import router as platform_router
@@ -30,3 +31,10 @@ api_router.include_router(identity_verification_router)
 api_router.include_router(sso_router)
 api_router.include_router(visit_info_router)
 api_router.include_router(notifications_router)
+
+# --- add-public-checkin-endpoint: minimal /api/v2 mount ----------------------
+# Scoped to this one endpoint, not a wholesale re-exposure of every v1 route
+# under v2 (design.md Goals/Non-Goals). Future breaking changes to other
+# resources make their own versioning decision rather than defaulting here.
+api_router_v2 = APIRouter()
+api_router_v2.include_router(invitations_router_v2)

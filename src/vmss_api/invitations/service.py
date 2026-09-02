@@ -523,15 +523,24 @@ async def deny_invitation(
     return updated
 
 
-async def check_in_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID, tenant: Tenant
+async def _perform_check_in(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    actor_user_id: uuid.UUID | None,
+    tenant: Tenant,
 ) -> Invitation:
     """spec.md "An Approved Invitation Can Be Checked In" /
-    "A Watchlist-Flagged Invitation Blocks Check-In Until Overridden". The
+    "A Watchlist-Flagged Invitation Blocks Check-In Until Overridden" /
+    "An Approved Invitation Can Be Publicly Checked In By Tracking ID". The
     pre-check below gives a caller a specific reason for the 409 (flagged vs.
     wrong status); the repository's atomic `WHERE` clause re-checks both
     conditions so a race with a concurrent flag/status change can't slip a
     check-in through between this read and the write.
+
+    `actor_user_id` is `None` for the public, tracking-ID-keyed check-in path
+    (there is no authenticated caller to record) — `checked_in_by_user_id` is
+    nullable at the model level for exactly this case.
     """
     if invitation.watchlist_flagged:
         raise HTTPException(
@@ -541,7 +550,7 @@ async def check_in_invitation(
     if invitation.status != "approved":
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
     updated = await InvitationRepository(tenant_db).check_in_if_eligible(
-        invitation.id, user_id=user_id
+        invitation.id, user_id=actor_user_id
     )
     if updated is None:
         raise HTTPException(
@@ -559,6 +568,29 @@ async def check_in_invitation(
             data=data,
         )
     return updated
+
+
+async def check_in_invitation(
+    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID, tenant: Tenant
+) -> Invitation:
+    """`PATCH /api/v1/invitations/{id}/check-in` — staff-authenticated,
+    UUID-keyed. See `_perform_check_in` for the shared transition logic.
+    """
+    return await _perform_check_in(tenant_db, invitation, actor_user_id=user_id, tenant=tenant)
+
+
+async def check_in_invitation_by_tracking_id(
+    tenant_db: AsyncSession, tracking_id: str, *, tenant: Tenant
+) -> Invitation:
+    """`PATCH /api/v2/invitations/{trackingId}/check-in` — public,
+    unauthenticated, tracking-ID-keyed (spec.md "An Approved Invitation Can
+    Be Publicly Checked In By Tracking ID"). No authenticated caller, so no
+    branch authorization check and no human actor recorded.
+    """
+    invitation = await InvitationRepository(tenant_db).get_by_tracking_id(tracking_id)
+    if invitation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    return await _perform_check_in(tenant_db, invitation, actor_user_id=None, tenant=tenant)
 
 
 async def check_out_invitation(

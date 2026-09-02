@@ -102,7 +102,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def check_in_if_eligible(
-        self, id_: uuid.UUID, *, user_id: uuid.UUID
+        self, id_: uuid.UUID, *, user_id: uuid.UUID | None
     ) -> Invitation | None:
         """Only transitions a row that is both `approved` and not
         watchlist-flagged (spec.md "A Watchlist-Flagged Invitation Blocks
@@ -110,6 +110,11 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         same atomic `UPDATE` so a concurrent override/check-in pair can't
         race past a read-then-write gap the way `approve_if_submitted`'s
         docstring already explains for the approve case.
+
+        `user_id` is `None` for the public, tracking-ID-keyed check-in path
+        (spec.md "An Approved Invitation Can Be Publicly Checked In By
+        Tracking ID") — `checked_in_by_user_id` is nullable at the model
+        level for exactly this case.
         """
         stmt = (
             update(Invitation)

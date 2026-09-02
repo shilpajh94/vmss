@@ -32,7 +32,7 @@ from factories import (
     VisitPurposeFactory,
 )
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
-from vmss_api.auth.models import Permission, User, UserBranchRole
+from vmss_api.auth.models import AuditLog, Permission, User, UserBranchRole
 from vmss_api.auth.repository import RoleRepository
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
@@ -2701,6 +2701,141 @@ async def test_check_in_invitation_requires_permission(
 
     await db_session.refresh(invitation)
     assert invitation.status == "approved"
+
+
+# --- add-public-checkin-endpoint: PATCH /api/v2/invitations/{trackingId}/check-in --
+
+
+async def test_public_check_in_by_tracking_id_success(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "checked_in"
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_in"
+    assert invitation.checked_in_at is not None
+    assert invitation.checked_in_by_user_id is None
+
+
+async def test_public_check_in_non_approved_rejected(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+
+
+async def test_public_check_in_watchlist_flagged_blocked(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+
+async def test_public_check_in_unknown_tracking_id_not_found(
+    client: AsyncClient, tenant: Tenant
+) -> None:
+    response = await client.patch("/api/v2/invitations/INV-DEADBEEF/check-in")
+    assert response.status_code == 404
+
+
+async def test_public_check_in_idempotency_key_replay(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    headers = {"Idempotency-Key": "public-checkin-key-1"}
+    first = await client.patch(
+        f"/api/v2/invitations/{invitation.tracking_id}/check-in", headers=headers
+    )
+    second = await client.patch(
+        f"/api/v2/invitations/{invitation.tracking_id}/check-in", headers=headers
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+
+
+async def test_public_check_in_rate_limit_trips(
+    client: AsyncClient, tenant: Tenant, monkeypatch
+) -> None:
+    """Mirrors `test_track_rate_limit_trips` — `slowapi`'s `Limiter` is
+    disabled in the test environment (`core/rate_limit.py`), flipped on here
+    for just this one test.
+    """
+    monkeypatch.setattr(limiter, "enabled", True)
+    responses = [await client.patch("/api/v2/invitations/INV-DEADBEEF/check-in") for _ in range(25)]
+    assert any(r.status_code == 429 for r in responses)
+
+
+async def test_public_check_in_writes_audit_entry_with_no_actor(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+
+    audit_stmt = select(AuditLog).where(
+        AuditLog.action == "invitation_checked_in_public",
+        AuditLog.entity_id == invitation.id,
+    )
+    [entry] = (await db_session.execute(audit_stmt)).scalars().all()
+    assert entry.actor_user_id is None
+    assert entry.entity_type == "Invitation"
+
+
+async def test_check_in_invitation_v1_response_carries_deprecation_header(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.headers["deprecation"] == "true"
 
 
 # --- PATCH /invitations/{id}/check-out ------------------------------------------

@@ -8,7 +8,7 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.api import api_router
+from vmss_api.api import api_router, api_router_v2
 from vmss_api.core.config import settings
 from vmss_api.core.database import get_db, tenant_session_scope
 from vmss_api.core.logging import configure_logging
@@ -194,6 +194,7 @@ def create_app(environment: str | None = None) -> FastAPI:
     )
 
     app.include_router(api_router, prefix="/api/v1")
+    app.include_router(api_router_v2, prefix="/api/v2")
 
     @app.get("/health", tags=["health"], response_model=Envelope[HealthStatus])
     async def health() -> JSONResponse:
