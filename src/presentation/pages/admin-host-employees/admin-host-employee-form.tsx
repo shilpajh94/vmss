@@ -205,6 +205,7 @@ export function AdminHostEmployeeFormPage() {
                     <div className="flex-1">
                       <TextField
                         label="Employee Code"
+                        placeholder="e.g. EMP-1024"
                         required
                         value={createValues.employeeCode}
                         onChange={(employeeCode) => updateCreateField('employeeCode', employeeCode)}

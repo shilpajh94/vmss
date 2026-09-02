@@ -53,10 +53,14 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
   async create(input: HostEmployeeCreateInput): Promise<HostEmployee> {
     const existing = await this.list()
 
+    // Employees synced in before employee codes were required may have no
+    // code at all. Defaulting every one of them to the same '' would collide
+    // in the batch (the backend rejects duplicate codes within one sync), so
+    // fall back to a per-employee value derived from their unique id instead.
     const existingItems: EmployeeSyncItem[] = existing.map((employee) => ({
       email: employee.email,
       fullName: employee.fullName,
-      employeeCode: employee.employeeCode ?? '',
+      employeeCode: employee.employeeCode ?? `EMP-${employee.id}`,
       phoneNumber: employee.phoneNumber ?? null,
       designation: employee.designation ?? null,
       departmentId: employee.departmentId ?? null,
