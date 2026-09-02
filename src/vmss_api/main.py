@@ -39,6 +39,14 @@ _TAGS_METADATA = [
     },
     {"name": "tenants", "description": "The tenant the authenticated caller belongs to."},
     {
+        "name": "audit-trail",
+        "description": (
+            "Tenant-wide, filterable listing and detail view of every recorded "
+            "audit log action, plus asynchronous CSV/PDF report generation and "
+            "time-boxed download."
+        ),
+    },
+    {
         "name": "org-structure",
         "description": (
             "Branches/locations — the unit RBAC and per-request access "

@@ -216,6 +216,8 @@ ADMIN_PERMISSION_CODES = [
     "roles:manage",
     "sso-config:view",
     "sso-config:manage",
+    "audit-logs:view",
+    "audit-logs:export",
 ]
 
 

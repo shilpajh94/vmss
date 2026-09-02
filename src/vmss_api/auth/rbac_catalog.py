@@ -60,6 +60,8 @@ PERMISSION_CODES = [
     "roles:view",
     "sso-config:manage",
     "sso-config:view",
+    "audit-logs:view",
+    "audit-logs:export",
 ]
 
 # The five standard roles per security-architecture.md §1. Admin is granted

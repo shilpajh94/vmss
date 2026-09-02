@@ -31,7 +31,8 @@ arbitrary:
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
 from vmss_api.approvals.models import InvitationApprovalStep
-from vmss_api.auth.models import Permission, Role, User, UserBranchRole
+from vmss_api.audit_trail.models import AuditReportJob
+from vmss_api.auth.models import AuditLog, Permission, Role, User, UserBranchRole
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
 from vmss_api.notifications.models import DeviceToken
 from vmss_api.org_structure.models import (
@@ -91,6 +92,20 @@ class UserBranchRoleFactory(SQLAlchemyFactory[UserBranchRole]):
 
 class DeviceTokenFactory(SQLAlchemyFactory[DeviceToken]):
     __model__ = DeviceToken
+
+
+class AuditLogFactory(SQLAlchemyFactory[AuditLog]):
+    __model__ = AuditLog
+
+
+class AuditReportJobFactory(SQLAlchemyFactory[AuditReportJob]):
+    __model__ = AuditReportJob
+    status = "pending"
+    csv_storage_key = None
+    pdf_storage_key = None
+    error_message = None
+    completed_at = None
+    deleted_at = None
 
 
 class CompanyFactory(SQLAlchemyFactory[Company]):

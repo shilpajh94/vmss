@@ -45,11 +45,12 @@ from factories import UserFactory, VisitorCategoryFactory
 from vmss_api.auth.models import Role, UserBranchRole
 from vmss_api.core.config import settings
 from vmss_api.core.database import get_db, tenant_session_scope
-from vmss_api.core.security import decode_token, hash_password
+from vmss_api.core.security import create_access_token, decode_token, hash_password
 from vmss_api.core.tenancy import get_tenant_db
 from vmss_api.identity_verification import senders as otp_senders
 from vmss_api.invitations import tasks
 from vmss_api.main import app
+from vmss_api.notifications import tasks as notifications_tasks
 from vmss_api.platform.models import SuperAdmin, TenantUserIndex
 from vmss_api.registrations.models import RegistrationDeviceKey
 
@@ -162,10 +163,15 @@ def _visit_details(**catalog_ids: str) -> dict:
     return details
 
 
-def _invitation_payload(full_name: str, **catalog_ids: str) -> dict:
+def _invitation_payload(
+    full_name: str,
+    *,
+    visitor_category_id: uuid.UUID = _DEFAULT_VISITOR_CATEGORY_ID,
+    **catalog_ids: str,
+) -> dict:
     return {
         "registrationType": "individual",
-        "visitorCategoryId": str(_DEFAULT_VISITOR_CATEGORY_ID),
+        "visitorCategoryId": str(visitor_category_id),
         "primaryContact": {
             "fullName": full_name,
             "email": f"{full_name.lower().replace(' ', '.')}@example.com",
@@ -427,6 +433,148 @@ async def _run_workflow_after_provisioning(
         assert approve_response.json()["data"]["status"] == "approved"
         assert len(approval_calls) == 1
         assert approval_calls[0]["invitation_id"] == invitation_a["id"]
+
+        # --- Delegation + relevantToMe (invitation-relevant-to-me-and-
+        # delegation): a host-and-role-chain invitation under the
+        # "Interview Candidate" category's workflow rule, the host
+        # delegating the role-identified step following their own to the
+        # Branch A staff member who already holds that role, and the
+        # delegate — not just any holder of the role — acting on it via
+        # their personal `relevantToMe` worklist. Push notifications are
+        # captured the same monkeypatch-`.delay` way as the email/SMS tasks
+        # above, confirming both channels still fire correctly together and
+        # that delegation itself triggers no notification of its own
+        # (approvals/service.py::delegate_step sends none — see this
+        # change's design.md Decision 3). ---------------------------------
+        push_calls: list[dict] = []
+
+        def _record_push(**kwargs) -> None:
+            push_calls.append(kwargs)
+
+        original_push_delay = notifications_tasks.send_push.delay
+        notifications_tasks.send_push.delay = _record_push
+        try:
+            admin_user_id = decode_token(admin_headers["Authorization"].removeprefix("Bearer "))[
+                "sub"
+            ]
+
+            create_delegatable_response = await client.post(
+                "/api/v1/invitations",
+                data={
+                    "payload": json.dumps(
+                        _invitation_payload(
+                            "Dana Delegate Host",
+                            visitor_category_id=uuid.UUID(visitor_category_id),
+                            hostId=admin_user_id,
+                        )
+                    )
+                },
+                files=[("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))],
+                headers={**admin_headers, "X-Branch-ID": branch_a_id},
+            )
+            assert create_delegatable_response.status_code == 201, create_delegatable_response.text
+            delegatable_invitation = create_delegatable_response.json()["data"]
+            assert delegatable_invitation["status"] == "submitted"
+            # Submission's implicit host step (stepOrder 0) is current — one
+            # push to the host (specs/invitations/spec.md "Invitation
+            # Submission Notifies the Approval Workflow's First Approver(s)
+            # via Push").
+            assert len(push_calls) == 1
+
+            invitation_detail_response = await client.get(
+                f"/api/v1/invitations/{delegatable_invitation['id']}", headers=admin_headers
+            )
+            assert invitation_detail_response.status_code == 200
+            host_step_id = invitation_detail_response.json()["data"]["currentApprovalStep"]["id"]
+
+            approve_host_step_response = await client.post(
+                f"/api/v1/invitations/{delegatable_invitation['id']}/approval-steps/"
+                f"{host_step_id}/approve",
+                headers=admin_headers,
+            )
+            assert approve_host_step_response.status_code == 200, approve_host_step_response.text
+            role_step = approve_host_step_response.json()["data"]["currentApprovalStep"]
+            assert role_step is not None
+            assert role_step["approverRoleId"] == reception_role_id
+            assert role_step["delegatedToUserId"] is None
+            role_step_id = role_step["id"]
+            # The role-identified step becoming current broadcasts a second
+            # push to every reception-role holder at Branch A, including
+            # `staff_user_id` below (approvals/service.py::_activate_next_step).
+            assert len(push_calls) == 2
+
+            delegate_response = await client.post(
+                f"/api/v1/invitations/{delegatable_invitation['id']}/approval-steps/"
+                f"{role_step_id}/delegate",
+                json={"delegateUserId": staff_user_id},
+                headers=admin_headers,
+            )
+            assert delegate_response.status_code == 200, delegate_response.text
+            delegated_step = delegate_response.json()["data"]["currentApprovalStep"]
+            assert delegated_step["delegatedToUserId"] == staff_user_id
+            # Delegation itself sends no notification of its own — the
+            # delegate, by construction, already held the role at Branch A
+            # and so was already in the broadcast set above.
+            assert len(push_calls) == 2
+
+            delegate_token = create_access_token(uuid.UUID(staff_user_id), tenant_id)
+            relevant_to_me_response = await client.get(
+                "/api/v1/invitations",
+                params={"relevantToMe": "true"},
+                headers=_bearer(delegate_token),
+            )
+            assert relevant_to_me_response.status_code == 200, relevant_to_me_response.text
+            relevant_tracking_ids = {
+                i["trackingId"] for i in relevant_to_me_response.json()["data"]
+            }
+            assert delegatable_invitation["trackingId"] in relevant_tracking_ids
+
+            delegate_approve_response = await client.post(
+                f"/api/v1/invitations/{delegatable_invitation['id']}/approval-steps/"
+                f"{role_step_id}/approve",
+                headers=_bearer(delegate_token),
+            )
+            assert delegate_approve_response.status_code == 200, delegate_approve_response.text
+            assert delegate_approve_response.json()["data"]["status"] == "approved"
+            # The role step was the workflow's last one — finalizing the
+            # invitation dispatches the same visitor-facing approval
+            # notification as `invitation_a`'s direct approval above
+            # (`approval_calls`), plus a third push telling the host their
+            # invitation was approved (`invitations/service.py::
+            # approve_invitation`'s own `notify_user` call — unrelated to
+            # delegation itself, no further push fires for the step chain
+            # since there is no next step to activate).
+            assert len(approval_calls) == 2
+            assert len(push_calls) == 3
+            assert push_calls[2]["title"] == "Invitation approved"
+        finally:
+            notifications_tasks.send_push.delay = original_push_delay
+
+        # --- Audit trail: the delegation action performed above is
+        # retrievable through its own history-tracking API, closing the
+        # write (`record_audit_log`, a `BackgroundTasks` job on the
+        # `delegate_step` call above) / read loop
+        # (verify-audit-trail-and-delegation-full-suite/design.md
+        # Decision 2 — a same-purpose spot-check here, in addition to the
+        # dedicated `audit_trail/tests.py` integration test). --------------
+        audit_trail_response = await client.get(
+            "/api/v1/audit-trail",
+            params={"entityId": role_step_id, "action": "invitation_approval_step_delegated"},
+            headers=admin_headers,
+        )
+        assert audit_trail_response.status_code == 200, audit_trail_response.text
+        audit_entries = audit_trail_response.json()["data"]
+        assert len(audit_entries) == 1
+        audit_entry = audit_entries[0]
+        assert audit_entry["entityType"] == "InvitationApprovalStep"
+        assert audit_entry["entityId"] == role_step_id
+        assert audit_entry["actorUserId"] == admin_user_id
+
+        audit_detail_response = await client.get(
+            f"/api/v1/audit-trail/{audit_entry['id']}", headers=admin_headers
+        )
+        assert audit_detail_response.status_code == 200, audit_detail_response.text
+        assert audit_detail_response.json()["data"]["diff"] == {"delegatedToUserId": staff_user_id}
 
         # --- Walk-in registration at Branch B, fed real visit_info lookups -
         device_key = await _provision_device_key(

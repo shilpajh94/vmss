@@ -27,6 +27,15 @@ _ALLOWED_CONTENT_TYPES = {
     "application/pdf": ".pdf",
 }
 
+# Extensions `save()` accepts in addition to `_ALLOWED_CONTENT_TYPES`, for
+# server-generated files (e.g. `audit_trail`'s CSV report export) that never
+# pass through `validate_upload` — kept separate from the allow-list above so
+# a client upload still can't smuggle a CSV in as an "ID proof" file; only
+# `save()`'s extension lookup is widened, not what `validate_upload` accepts.
+_GENERATED_FILE_EXTENSIONS = {
+    "text/csv": ".csv",
+}
+
 
 class UnsupportedFileTypeError(ValueError):
     """Raised when an upload's real content isn't in the allow-list."""
@@ -87,7 +96,7 @@ async def save(tenant_id: uuid.UUID, category: str, content: bytes, content_type
     store and pass to `url_for` — which physical backend actually persisted
     it (`settings.storage_backend`) is invisible from here on.
     """
-    extension = _ALLOWED_CONTENT_TYPES[content_type]
+    extension = {**_ALLOWED_CONTENT_TYPES, **_GENERATED_FILE_EXTENSIONS}[content_type]
     key = f"vmss:{tenant_id}:{category}:{uuid.uuid4()}{extension}"
     if settings.storage_backend == "s3":
         await _s3_save(key, content, content_type)
