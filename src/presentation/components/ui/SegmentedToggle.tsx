@@ -24,8 +24,8 @@ export function SegmentedToggle({ options, value, onChange, variant = 'inline' }
             key={option.value}
             type="button"
             onClick={() => onChange(option.value)}
-            className={`flex h-full flex-1 items-center justify-center rounded-md text-sm font-semibold ${
-              value === option.value ? 'bg-secondary-accent text-white' : 'text-text-muted'
+            className={`flex h-full flex-1 items-center justify-center rounded-md text-sm font-semibold transition-colors ${
+              value === option.value ? 'bg-secondary-accent text-white' : 'text-text-muted hover:bg-secondary-accent/10 hover:text-text'
             }`}
           >
             {option.label}

@@ -21,8 +21,20 @@ import { useVisitorOtp } from './hooks/use-visitor-otp'
 import { useVisitorRequestWizard, type VisitorRequestWizardInitialData } from './hooks/use-visitor-request-wizard'
 
 function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardInitialData }) {
-  const { currentStep, formState, setFormState, errors, goNext, goBack, uploadFile, submissionStatus, trackingId, submissionError, submit } =
-    useVisitorRequestWizard(initial)
+  const {
+    currentStep,
+    formState,
+    setFormState,
+    errors,
+    goNext,
+    goBack,
+    goToStep,
+    uploadFile,
+    submissionStatus,
+    trackingId,
+    submissionError,
+    submit,
+  } = useVisitorRequestWizard(initial)
 
   const { listVisitorCategoriesUseCase, searchHostsUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase } =
     useAppDependencies()
@@ -71,7 +83,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
 
   return (
     <div className="flex w-full flex-1 gap-8 px-12 py-10">
-      <StepSidebar currentStep={currentStep} />
+      <StepSidebar currentStep={currentStep} onStepSelect={goToStep} />
       <div className="flex-1 rounded-2xl border border-border bg-surface p-8">
         {currentStep === 0 && (
           <VisitorInfoStep

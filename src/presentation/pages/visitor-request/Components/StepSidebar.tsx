@@ -2,9 +2,10 @@ import { WIZARD_STEPS } from '../types'
 
 interface StepSidebarProps {
   currentStep: number
+  onStepSelect: (index: number) => void
 }
 
-export function StepSidebar({ currentStep }: StepSidebarProps) {
+export function StepSidebar({ currentStep, onStepSelect }: StepSidebarProps) {
   return (
     <nav className="flex w-[220px] flex-col gap-4">
       {WIZARD_STEPS.map((label, index) => {
@@ -13,7 +14,13 @@ export function StepSidebar({ currentStep }: StepSidebarProps) {
         const isComplete = index < currentStep
 
         return (
-          <div key={label} className="flex items-center gap-3">
+          <button
+            key={label}
+            type="button"
+            onClick={() => onStepSelect(index)}
+            disabled={!isComplete}
+            className={`flex items-center gap-3 text-left ${isComplete ? 'cursor-pointer' : 'cursor-default'}`}
+          >
             <span
               className={`flex size-7 shrink-0 items-center justify-center rounded-full text-caption font-semibold ${
                 isActive || isComplete ? 'bg-secondary-accent text-white' : 'bg-border text-text-muted'
@@ -22,7 +29,7 @@ export function StepSidebar({ currentStep }: StepSidebarProps) {
               {stepNumber}
             </span>
             <span className={`text-body ${isActive ? 'font-semibold text-text' : 'text-text-muted'}`}>{label}</span>
-          </div>
+          </button>
         )
       })}
     </nav>
