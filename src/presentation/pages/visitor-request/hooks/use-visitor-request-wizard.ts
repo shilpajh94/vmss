@@ -47,6 +47,7 @@ function validateStep(step: number, formState: VisitRequestFormState): Record<st
     const { visitInfo } = formState
     if (!visitInfo.purpose) errors.purpose = 'Purpose of visit is required.'
     if (!visitInfo.hostNameOrEmail) errors.hostNameOrEmail = 'Host name or email is required.'
+    else if (!visitInfo.hostId) errors.hostNameOrEmail = 'Please select a host from the list.'
     if (!visitInfo.preferredDate) errors.preferredDate = 'Preferred visit date is required.'
     if (!visitInfo.preferredTime) errors.preferredTime = 'Preferred visit time is required.'
     if (!visitInfo.expectedDuration) errors.expectedDuration = 'Expected duration is required.'

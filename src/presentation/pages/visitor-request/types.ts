@@ -32,6 +32,7 @@ export function createEmptyVisitorFormEntry(): VisitorFormEntry {
 export interface VisitInfoFormState {
   purpose: string
   hostNameOrEmail: string
+  hostId: string
   preferredDate: string
   preferredTime: string
   expectedDuration: string
@@ -70,6 +71,7 @@ export function createInitialFormState(): VisitRequestFormState {
     visitInfo: {
       purpose: '',
       hostNameOrEmail: '',
+      hostId: '',
       preferredDate: '',
       preferredTime: '',
       expectedDuration: '',
@@ -109,6 +111,7 @@ export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
     visitDetails: {
       purposeOfVisit: formState.visitInfo.purpose,
       hostNameOrEmail: formState.visitInfo.hostNameOrEmail,
+      hostId: formState.visitInfo.hostId,
       preferredVisitDate: formState.visitInfo.preferredDate,
       preferredVisitTime: formState.visitInfo.preferredTime,
       expectedDuration: formState.visitInfo.expectedDuration,

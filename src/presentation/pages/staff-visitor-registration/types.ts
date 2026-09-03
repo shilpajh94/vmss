@@ -43,6 +43,7 @@ export function createInitialStaffFormState(): StaffVisitRequestFormState {
     visitInfo: {
       purpose: '',
       hostNameOrEmail: '',
+      hostId: '',
       preferredDate: '',
       preferredTime: '',
       expectedDuration: '',
@@ -82,6 +83,7 @@ export function toStaffVisitRequest(formState: StaffVisitRequestFormState): Staf
     visitDetails: {
       purposeOfVisit: formState.visitInfo.purpose,
       hostNameOrEmail: formState.visitInfo.hostNameOrEmail,
+      hostId: formState.visitInfo.hostId,
       preferredVisitDate: formState.visitInfo.preferredDate,
       preferredVisitTime: formState.visitInfo.preferredTime,
       expectedDuration: formState.visitInfo.expectedDuration,

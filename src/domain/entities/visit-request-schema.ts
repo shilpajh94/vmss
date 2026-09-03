@@ -12,6 +12,7 @@ export const VisitRequestSchema = z.object({
   visitDetails: z.object({
     purposeOfVisit: z.string().min(1),
     hostNameOrEmail: z.string().min(1),
+    hostId: z.string().min(1),
     preferredVisitDate: z.string().min(1),
     preferredVisitTime: z.string().min(1),
     expectedDuration: z.string().min(1),

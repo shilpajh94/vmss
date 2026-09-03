@@ -34,6 +34,7 @@ export function VisitInfoStep({ value, onChange, errors, onSearchHosts, branches
     return results.map((host) => ({
       value: host.email,
       label: host.department ? `${host.name} (${host.email}) — ${host.department}` : `${host.name} (${host.email})`,
+      id: host.id,
     }))
   }
 
@@ -66,7 +67,8 @@ export function VisitInfoStep({ value, onChange, errors, onSearchHosts, branches
           label="Host Name or Email"
           placeholder="Search by host name or email"
           value={value.hostNameOrEmail}
-          onChange={(hostNameOrEmail) => onChange({ ...value, hostNameOrEmail })}
+          onChange={(hostNameOrEmail) => onChange({ ...value, hostNameOrEmail, hostId: '' })}
+          onSelect={(option) => onChange({ ...value, hostNameOrEmail: option.value, hostId: option.id ?? '' })}
           onSearch={handleHostSearch}
           error={errors.hostNameOrEmail}
           required
