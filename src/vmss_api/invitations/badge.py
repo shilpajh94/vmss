@@ -48,14 +48,19 @@ def _composite(
 
 
 async def render_badge_png(
-    *, tracking_id: str, primary_contact_full_name: str, expires_at: datetime
+    *, tracking_id: str, primary_contact_full_name: str, expires_at: datetime, qr_token: str
 ) -> bytes:
     """Renders (or re-renders, for a reprint) the current badge image from
     live invitation data — spec.md "Reprint reflects data changed since
     original issuance" is why callers pass the invitation's *current*
     `expires_at` rather than a value captured at first issuance.
+
+    The embedded QR encodes `qr_token` — the same encrypted check-in token
+    issued at approval (`add-qr-checkin-security/design.md`), not the
+    printed `tracking_id` — so scanning the physical badge and scanning the
+    emailed QR check in the same invitation the same way.
     """
-    qr_png = await generate_qr_png(tracking_id)
+    qr_png = await generate_qr_png(qr_token)
     return await anyio.to_thread.run_sync(
         lambda: _composite(
             tracking_id=tracking_id,

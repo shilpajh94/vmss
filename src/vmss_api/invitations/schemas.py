@@ -379,6 +379,47 @@ class WatchlistOverrideRequest(CamelModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class InvitationQrCheckInOut(CamelModel):
+    """Response for `PATCH /api/v2/invitations/qr/{token}/check-in`
+    (`qr-checkin-full-registration-detail` — spec.md "QR Check-In Response
+    Surfaces Full Invitation Detail") — everything captured at
+    registration, matching `InvitationTrackingOut`'s shape, plus the
+    QR-specific fields that lookup doesn't carry (`id`, `checkInStatus`,
+    the check-in/out timestamps, primary contact email/phone, `hostId`).
+    Deliberately a separate schema from `InvitationOut`: that one carries
+    none of this detail at all, and this endpoint's whole point is
+    surfacing it without a follow-up lookup.
+    """
+
+    id: uuid.UUID
+    tracking_id: str
+    status: str
+    check_in_status: str
+    registration_type: str
+    source: str
+    visitor_category_id: uuid.UUID | None
+    primary_contact_full_name: str
+    primary_contact_email: str | None
+    primary_contact_phone: str | None
+    host_id: uuid.UUID | None = None
+    host_name_or_email: str | None
+    purpose_of_visit: str | None
+    department_to_visit: str | None
+    preferred_visit_date: date | None
+    preferred_visit_time: time | None
+    expected_duration: str | None
+    additional_notes: str | None
+    carried_items: list[str]
+    carried_items_description: str | None
+    submitted_at: datetime | None
+    approved_at: datetime | None
+    checked_in_at: datetime | None
+    checked_out_at: datetime | None
+    expires_at: datetime
+    visitors: list[InvitationVisitorOut]
+    vehicles: list[InvitationVehicleOut]
+
+
 class BadgeOut(CamelModel):
     badge_number: str
     badge_url: str

@@ -45,6 +45,7 @@ from vmss_api.invitations.schemas import (
     InvitationListItemOut,
     InvitationOut,
     InvitationPrimaryContactCreate,
+    InvitationQrCheckInOut,
     InvitationRescheduleRequest,
     InvitationSortableField,
     InvitationTrackingOut,
@@ -268,6 +269,56 @@ def to_invitation_out(
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
         current_approval_step=current_approval_step,
+    )
+
+
+def _to_qr_check_in_out(invitation) -> InvitationQrCheckInOut:
+    return InvitationQrCheckInOut(
+        id=invitation.id,
+        tracking_id=invitation.tracking_id,
+        status=invitation.status,
+        check_in_status=invitation.check_in_status,
+        registration_type=invitation.registration_type,
+        source=invitation.source,
+        visitor_category_id=invitation.visitor_category_id,
+        primary_contact_full_name=invitation.primary_contact_full_name,
+        primary_contact_email=invitation.primary_contact_email,
+        primary_contact_phone=invitation.primary_contact_phone,
+        host_id=invitation.host_id,
+        host_name_or_email=invitation.host_name_or_email,
+        purpose_of_visit=invitation.purpose_of_visit,
+        department_to_visit=invitation.department_to_visit,
+        preferred_visit_date=invitation.preferred_visit_date,
+        preferred_visit_time=invitation.preferred_visit_time,
+        expected_duration=invitation.expected_duration,
+        additional_notes=invitation.additional_notes,
+        carried_items=invitation.carried_items,
+        carried_items_description=invitation.carried_items_description,
+        submitted_at=invitation.submitted_at,
+        approved_at=invitation.approved_at,
+        checked_in_at=invitation.checked_in_at,
+        checked_out_at=invitation.checked_out_at,
+        expires_at=invitation.expires_at,
+        visitors=[
+            InvitationVisitorOut(
+                id=v.id,
+                full_name=v.full_name,
+                email=v.email,
+                phone=v.phone,
+                id_proof_type=v.id_proof_type,
+            )
+            for v in invitation.visitors
+        ],
+        vehicles=[
+            InvitationVehicleOut(
+                id=v.id,
+                vehicle_type=v.vehicle_type,
+                license_plate=v.license_plate,
+                make_model=v.make_model,
+                color=v.color,
+            )
+            for v in invitation.vehicles
+        ],
     )
 
 
@@ -724,6 +775,67 @@ async def check_in_invitation_by_tracking_id(
         entity_id=invitation.id,
     )
     response = success_response(data=to_invitation_out(invitation))
+    await _cache_response(tenant.id, idempotency_key, response)
+    return response
+
+
+@router_v2.patch(
+    "/qr/{token}/check-in",
+    response_model=Envelope[InvitationQrCheckInOut],
+)
+@limiter.limit("20/minute")
+async def check_in_by_qr_token(
+    request: Request,
+    token: str,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(track_default_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            description=(
+                "Required in practice, not just optional retry-dedup safety: "
+                "the same QR token drives both the entry and exit scan, so a "
+                "fresh key per physical scan keeps a network retry of one "
+                "scan from being deduped against the other. See "
+                "api-conventions.md §3."
+            ),
+        ),
+    ] = None,
+) -> JSONResponse:
+    """Public, unauthenticated QR check-in
+    (`add-qr-checkin-security/design.md`) — scanning an invitation's
+    encrypted check-in token toggles its `checkInStatus`: `unused` or
+    `checked_out` (currently outside) -> `checked_in` on a valid scan,
+    `checked_in` -> `checked_out` on the next scan of that same token.
+    Cycles for as many entry/exit round trips as the visitor makes during
+    their visit (e.g. leaving for lunch and returning) — `checked_out` is
+    not a dead end, and expiry is enforced on every entry, including a
+    re-entry. Distinct from
+    `PATCH /api/v2/invitations/{trackingId}/check-in` — that route stays
+    the manual desk fallback, keyed by the human-readable tracking ID and
+    unaffected by this one.
+    """
+    cached = await _cached_response(tenant.id, idempotency_key)
+    if cached is not None:
+        return cached
+
+    invitation, message = await service.check_in_by_qr_token(tenant_db, token, tenant=tenant)
+    action = (
+        "invitation_qr_checked_in"
+        if invitation.check_in_status == "checked_in"
+        else ("invitation_qr_checked_out")
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=None,
+        action=action,
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    response = success_response(data=_to_qr_check_in_out(invitation), message=message)
     await _cache_response(tenant.id, idempotency_key, response)
     return response
 

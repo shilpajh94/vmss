@@ -180,6 +180,15 @@ class Settings(BaseSettings):
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
     invitation_max_group_visitors: int = 20
 
+    # QR check-in token encryption (add-qr-checkin-security) — a dedicated
+    # key, deliberately not shared with `sso_encryption_key` even though
+    # both go through `core/encryption.py`'s Fernet pattern: rotating one
+    # secret for a security incident shouldn't silently invalidate the
+    # other. Left unset by default, same "fails loudly when actually used"
+    # posture as `sso_encryption_key`. Generate one with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    qr_token_encryption_key: str | None = Field(default=None, alias="QR_TOKEN_ENCRYPTION_KEY")
+
     # `registrations` feature config (API-13, add-walkin-visitor-registration).
     # Fallback tenant/branch for `POST /registrations/walk-in` when the
     # caller sends no `X-Device-Key` (registrations/deps.py::get_registration_device) —

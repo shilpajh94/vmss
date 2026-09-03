@@ -17,7 +17,14 @@ from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.storage import FileTooLargeError, UnsupportedFileTypeError, validate_upload
 from vmss_api.core.storage import save as storage_save
 from vmss_api.invitations import badge, push_notifications, tasks
-from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
+from vmss_api.invitations.models import (
+    Invitation,
+    InvitationQRCode,
+    InvitationVehicle,
+    InvitationVisitor,
+)
+from vmss_api.invitations.qr import generate_qr_png
+from vmss_api.invitations.qr_token import decrypt_invitation_token, encrypt_invitation_token
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.invitations.schemas import (
     InvitationCreate,
@@ -58,6 +65,38 @@ async def _generate_unique_badge_number(repo: InvitationRepository) -> str:
 
 def _current_request_id() -> str:
     return structlog.contextvars.get_contextvars().get("request_id", "")
+
+
+async def _issue_qr_code(
+    tenant_db: AsyncSession, invitation: Invitation, *, tenant: Tenant
+) -> InvitationQRCode:
+    """Idempotent get-or-create: returns the invitation's existing
+    `InvitationQRCode` row if one was already issued, otherwise generates
+    a fresh encrypted token, renders and persists its QR image, and
+    persists the row — called once, at the moment an invitation becomes
+    `approved` (spec.md "QR Check-In Token Is Encrypted and Tamper-Evident"
+    — "Token is generated once at approval"). Also the reuse point for
+    badge issuance/reprint (`4.4`): calling this again for an
+    already-issued invitation is a cheap no-op (no storage write), so the
+    badge's embedded QR and the emailed QR always encode the same token.
+    """
+    repo = InvitationRepository(tenant_db)
+    existing = await repo.get_qr_code(invitation.id)
+    if existing is not None:
+        return existing
+    token = encrypt_invitation_token(invitation.id)
+    qr_png = await generate_qr_png(token)
+    storage_key = await storage_save(
+        tenant.id, f"invitations/{invitation.id}/qr", qr_png, "image/png"
+    )
+    qr_code = InvitationQRCode(
+        id=uuid.uuid4(),
+        invitation_id=invitation.id,
+        qr_token=token,
+        image_storage_key=storage_key,
+    )
+    repo.add_qr_code(qr_code)
+    return qr_code
 
 
 def _validate_id_proof(content: bytes, max_size: int) -> str:
@@ -373,19 +412,31 @@ async def create_invitation(
                 _build_approval_steps(rules, invitation_id=invitation.id, now=now, host_id=host_id)
             )
 
+    # Generated in the same transaction as the invitation itself when it's
+    # already `approved` (design.md "Token generation moves to approval
+    # time, persisted") — never for a `submitted` invitation, matching
+    # "a QR code is never included until the invitation is approved".
+    qr_code = await _issue_qr_code(tenant_db, invitation, tenant=tenant) if auto_approved else None
+
     await tenant_db.commit()
 
     created = await repo.get_with_children(invitation.id)
     assert created is not None  # just committed; guaranteed to exist
 
-    notification_task = (
-        tasks.send_approval_notification if auto_approved else tasks.send_tracking_notification
-    )
-    notification_task.delay(
-        request_id=_current_request_id(),
-        tenant_schema=tenant.schema_name,
-        invitation_id=str(invitation.id),
-    )
+    if auto_approved:
+        assert qr_code is not None
+        tasks.send_approval_notification.delay(
+            request_id=_current_request_id(),
+            tenant_schema=tenant.schema_name,
+            invitation_id=str(invitation.id),
+            qr_token=qr_code.qr_token,
+        )
+    else:
+        tasks.send_tracking_notification.delay(
+            request_id=_current_request_id(),
+            tenant_schema=tenant.schema_name,
+            invitation_id=str(invitation.id),
+        )
 
     # Staff-facing push, additional to the visitor email/SMS above
     # (specs/invitations/spec.md "Invitation Submission Notifies the
@@ -464,11 +515,13 @@ async def approve_invitation(
     updated = await InvitationRepository(tenant_db).approve_if_submitted(invitation.id)
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not awaiting approval")
+    qr_code = await _issue_qr_code(tenant_db, updated, tenant=tenant)
     await tenant_db.commit()
     tasks.send_approval_notification.delay(
         request_id=_current_request_id(),
         tenant_schema=tenant.schema_name,
         invitation_id=str(updated.id),
+        qr_token=qr_code.qr_token,
     )
     if updated.host_id is not None:
         title, body, data = push_notifications.approved(updated)
@@ -593,6 +646,85 @@ async def check_in_invitation_by_tracking_id(
     return await _perform_check_in(tenant_db, invitation, actor_user_id=None, tenant=tenant)
 
 
+async def check_in_by_qr_token(
+    tenant_db: AsyncSession, token: str, *, tenant: Tenant
+) -> tuple[Invitation, str]:
+    """`PATCH /api/v2/invitations/qr/{token}/check-in` — public,
+    unauthenticated, driven by the encrypted QR token rather than the
+    tracking ID (spec.md "QR Check-In Token Is Encrypted and
+    Tamper-Evident" / "QR Check-In Drives a Cycling
+    Checked-In/Checked-Out Lifecycle" / "QR Check-In Enforces Invitation
+    Expiry on Every Entry").
+
+    A single token drives every entry and exit transition, cycling for as
+    many round trips as the visitor makes during their visit (leaving for
+    lunch, moving between buildings) — `checked_out` is not a dead end,
+    every `checkInStatus` value has a defined next transition
+    (design.md "checkInStatus cycles indefinitely; checked_out is not
+    terminal"). An invalid/tampered token and an invitation that doesn't
+    exist are folded into the same rejection (`invalid token`) so neither
+    response reveals which failure actually occurred.
+
+    Returns `(invitation, message)` — `message` is the human-readable
+    outcome the caller surfaces directly ("Verification passed" /
+    "Checked out successfully"), matching the confirmed frontend spec's
+    response contract.
+    """
+    invitation_id = decrypt_invitation_token(token)
+    invitation = (
+        await InvitationRepository(tenant_db).get_with_children(invitation_id)
+        if invitation_id
+        else None
+    )
+    if invitation is None:
+        logger.warning("qr_check_in_invalid_token", tenant_id=str(tenant.id))
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="Verification failed — invalid token"
+        )
+
+    if invitation.check_in_status in ("unused", "checked_out"):
+        if invitation.status not in ("approved", "checked_in", "checked_out"):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, detail="Verification failed — invitation not approved"
+            )
+        if invitation.watchlist_flagged:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail="Invitation is watchlist-flagged; override required before check-in",
+            )
+        if invitation.expires_at <= datetime.now(UTC):
+            raise HTTPException(
+                status.HTTP_410_GONE, detail="Verification failed — visit window expired"
+            )
+        updated = await InvitationRepository(tenant_db).check_in_by_qr_if_eligible(invitation.id)
+        if updated is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, detail="Invitation is no longer eligible for check-in"
+            )
+        message = "Verification passed"
+        push_builder = push_notifications.checked_in
+    else:
+        updated = await InvitationRepository(tenant_db).check_out_by_qr_if_eligible(invitation.id)
+        if updated is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, detail="Invitation is no longer eligible for check-out"
+            )
+        message = "Checked out successfully"
+        push_builder = push_notifications.checked_out
+
+    await tenant_db.commit()
+    if updated.host_id is not None:
+        title, body, data = push_builder(updated)
+        await notifications_service.notify_user(
+            tenant_schema=tenant.schema_name,
+            user_id=updated.host_id,
+            title=title,
+            body=body,
+            data=data,
+        )
+    return updated, message
+
+
 async def check_out_invitation(
     tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID, tenant: Tenant
 ) -> Invitation:
@@ -700,10 +832,12 @@ async def issue_badge(
         )
     repo = InvitationRepository(tenant_db)
     badge_number = await _generate_unique_badge_number(repo)
+    qr_code = await _issue_qr_code(tenant_db, invitation, tenant=tenant)
     png = await badge.render_badge_png(
         tracking_id=invitation.tracking_id,
         primary_contact_full_name=invitation.primary_contact_full_name,
         expires_at=invitation.expires_at,
+        qr_token=qr_code.qr_token,
     )
     storage_key = await storage_save(tenant.id, "invitations/badges", png, "image/png")
     updated = await repo.issue_badge_if_eligible(
@@ -729,10 +863,12 @@ async def reprint_badge(
             status.HTTP_409_CONFLICT,
             detail="No badge has been issued for this invitation yet; use the issuance endpoint",
         )
+    qr_code = await _issue_qr_code(tenant_db, invitation, tenant=tenant)
     png = await badge.render_badge_png(
         tracking_id=invitation.tracking_id,
         primary_contact_full_name=invitation.primary_contact_full_name,
         expires_at=invitation.expires_at,
+        qr_token=qr_code.qr_token,
     )
     storage_key = await storage_save(tenant.id, "invitations/badges", png, "image/png")
     updated = await InvitationRepository(tenant_db).reprint_badge_if_issued(

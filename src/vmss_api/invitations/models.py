@@ -29,11 +29,11 @@ class Invitation(Base, TimestampMixin):
     `add-invitation-lifecycle-actions/design.md`. `pending` is no longer
     produced by any code path.
 
-    No tracking-token column here: the QR payload handed back at
-    confirmation is the plain, human-readable `tracking_id` below
-    (`INV-XXXXXXXX`) — API-12 also accepts it for lookup. There is no signed
-    token to verify anymore, since there is no unauthenticated write
-    endpoint left that needed one to resolve tenancy.
+    `tracking_id` below (`INV-XXXXXXXX`) is the human-readable identity
+    API-12 accepts for lookup and manual desk entry. The QR *scanned* at
+    check-in is a separate, encrypted token — see `InvitationQRCode` below
+    and `invitations/qr_token.py` — not this column
+    (`add-qr-checkin-security/design.md`).
     """
 
     __tablename__ = "invitations"
@@ -132,6 +132,18 @@ class Invitation(Base, TimestampMixin):
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     checked_out_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
 
+    # --- Lifecycle: QR check-in scan state (add-qr-checkin-security) -----------
+    # Deliberately parallel to, not derived from, `status` above: `status`
+    # keeps carrying its existing `checked_in`/`checked_out` values for the
+    # staff-authenticated and tracking-ID check-in paths unchanged, while
+    # `check_in_status` is the gate condition the QR scan endpoint reads and
+    # writes — both are updated together by that endpoint so nothing reading
+    # `status` (e.g. the "who's inside" emergency report) needs to change.
+    # `unused` -> `checked_in` -> `checked_out`, never backward. Plain string
+    # column, same rationale as `status`'s own docstring (avoids an
+    # `ALTER TYPE` migration for a native Postgres enum).
+    check_in_status: Mapped[str] = mapped_column(String(20), default="unused")
+
     # --- Lifecycle: badge ------------------------------------------------------
     # `badge_number` identifies the visit, not a single physical printout —
     # a reprint keeps it and only changes `badge_storage_key` (design.md
@@ -177,6 +189,28 @@ class InvitationVisitor(Base, TimestampMixin):
     phone: Mapped[str | None] = mapped_column(String(50))
     id_proof_type: Mapped[str] = mapped_column(String(50))
     id_proof_storage_key: Mapped[str] = mapped_column(String(500))
+
+
+class InvitationQRCode(Base, TimestampMixin):
+    """The encrypted check-in token issued for an invitation, and where its
+    rendered QR image was persisted (`add-qr-checkin-security/design.md`).
+    One row per invitation, generated once at the moment it becomes
+    `approved` and reused for any later resend/reprint — never regenerated
+    on each notification send the way the plain-tracking-ID QR used to be.
+
+    No `expires_at` here — expiry is always read live from
+    `Invitation.expires_at` at scan time, so there is exactly one place
+    that value can drift out of sync (deliberately avoided; see design.md).
+    """
+
+    __tablename__ = "invitation_qr_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    invitation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("invitations.id"), unique=True, index=True
+    )
+    qr_token: Mapped[str] = mapped_column(String(500))
+    image_storage_key: Mapped[str] = mapped_column(String(500))
 
 
 class InvitationVehicle(Base, TimestampMixin):

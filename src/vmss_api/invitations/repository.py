@@ -8,7 +8,12 @@ from sqlalchemy.orm import selectinload
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import BranchScope, SortOrder
-from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
+from vmss_api.invitations.models import (
+    Invitation,
+    InvitationQRCode,
+    InvitationVehicle,
+    InvitationVisitor,
+)
 
 
 def _branch_filter(branch_scope: BranchScope) -> Any | None:
@@ -50,6 +55,15 @@ def _order_clause(column: Any, sort_order: SortOrder) -> Any:
 # and badge issuance operate on.
 _RESCHEDULABLE_STATUSES = ("submitted", "approved")
 _ACTIVE_STATUSES = ("approved", "checked_in")
+# add-qr-checkin-security/design.md "checkInStatus cycles indefinitely":
+# once an invitation is validly approved, `status` mirrors whichever of
+# these three a QR/tracking-ID check-in transition last set it to — a
+# re-entry scan must not be blocked just because `status` currently reads
+# `checked_out` from an earlier cycle. `check_in_status` (not `status`)
+# is what actually decides entry-vs-exit for the QR gate; this tuple only
+# excludes an invitation that was never validly approved (`submitted`/
+# `denied`).
+_QR_ENTRY_ELIGIBLE_STATUSES = ("approved", "checked_in", "checked_out")
 
 
 class InvitationRepository(TenantScopedRepository[Invitation]):
@@ -127,6 +141,62 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 status="checked_in",
                 checked_in_at=datetime.now(UTC),
                 checked_in_by_user_id=user_id,
+            )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def check_in_by_qr_if_eligible(self, id_: uuid.UUID) -> Invitation | None:
+        """The `unused`/`checked_out` -> `checked_in` transition driven by
+        a QR scan (spec.md "QR Check-In Drives a Cycling
+        Checked-In/Checked-Out Lifecycle" / "QR Check-In Enforces
+        Invitation Expiry on Every Entry"). `unused` and `checked_out` are
+        both "currently outside" — a visitor may have multiple entry
+        points during one visit (e.g. leaving for lunch and returning), so
+        this admits from either, not just the very first entry
+        (design.md "checkInStatus cycles indefinitely; checked_out is not
+        terminal"). Every eligibility condition — approved, not
+        watchlist-flagged, currently outside, not expired — is folded into
+        the one atomic `UPDATE`'s `WHERE` clause, same race-safety
+        reasoning as `check_in_if_eligible` above. Mirrors the transition
+        into `status` too, in the same statement, so the existing
+        tracking-ID/staff check-in paths and anything reading `status`
+        (the "who's inside" emergency report) see a QR-driven check-in
+        exactly like any other (design.md "check_in_status kept parallel
+        to status, not merged"). There is no authenticated actor on this
+        path, so `checked_in_by_user_id` is left at its default (`None`).
+        """
+        stmt = (
+            update(Invitation)
+            .where(
+                Invitation.id == id_,
+                Invitation.check_in_status.in_(("unused", "checked_out")),
+                Invitation.status.in_(_QR_ENTRY_ELIGIBLE_STATUSES),
+                Invitation.watchlist_flagged.is_(False),
+                Invitation.expires_at > datetime.now(UTC),
+            )
+            .values(
+                check_in_status="checked_in",
+                status="checked_in",
+                checked_in_at=datetime.now(UTC),
+            )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def check_out_by_qr_if_eligible(self, id_: uuid.UUID) -> Invitation | None:
+        """The `checked_in` -> `checked_out` transition driven by a second
+        scan of the same QR token — deliberately not subject to the expiry
+        check `check_in_by_qr_if_eligible` applies on entry (spec.md "QR
+        Check-In Enforces Invitation Expiry on Entry Only").
+        """
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_, Invitation.check_in_status == "checked_in")
+            .values(
+                check_in_status="checked_out",
+                status="checked_out",
+                checked_out_at=datetime.now(UTC),
             )
             .returning(Invitation)
         )
@@ -303,6 +373,13 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             order_by=_order_clause(column, sort_order),
             filters=filters,
         )
+
+    async def get_qr_code(self, invitation_id: uuid.UUID) -> InvitationQRCode | None:
+        stmt = select(InvitationQRCode).where(InvitationQRCode.invitation_id == invitation_id)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    def add_qr_code(self, qr_code: InvitationQRCode) -> None:
+        self.session.add(qr_code)
 
     def add_visitors(self, visitors: list[InvitationVisitor]) -> None:
         """One `session.add_all` for every co-visitor row from a single
