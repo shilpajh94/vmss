@@ -38,8 +38,9 @@ from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.schemas import SortOrder
 from vmss_api.core.security import hash_password
-from vmss_api.invitations import notifications, tasks
+from vmss_api.invitations import notifications, qr_token, tasks
 from vmss_api.invitations import service as invitations_service
+from vmss_api.invitations.models import InvitationQRCode
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.models import Branch, Department
@@ -361,6 +362,35 @@ async def test_create_invitation_auto_approve_enabled_is_approved_immediately(
     assert data["approvedAt"] is not None
     assert len(approval_calls) == 1  # the QR-bearing notification, not the tracking-only one
     assert tracking_calls == []
+
+
+async def test_create_invitation_auto_approve_issues_qr_code_with_matching_token(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """add-qr-checkin-security spec.md "Token is generated once at
+    approval" — the token persisted in `InvitationQRCode` is exactly the
+    one handed to the approval-notification task, and it decrypts back to
+    the invitation it was issued for.
+    """
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), auto_approve_pre_registered_visitors=True))
+    await db_session.commit()
+
+    approval_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_approval_notification, "delay", lambda **kw: approval_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    data = await _create_invitation_success(client, token, branch, payload=_individual_payload())
+    invitation_id = uuid.UUID(data["id"])
+
+    qr_row = (
+        await db_session.execute(
+            select(InvitationQRCode).where(InvitationQRCode.invitation_id == invitation_id)
+        )
+    ).scalar_one()
+    assert qr_token.decrypt_invitation_token(qr_row.qr_token) == invitation_id
+    assert approval_calls[0]["qr_token"] == qr_row.qr_token
 
 
 async def test_create_invitation_auto_approve_disabled_is_awaiting_approval(
@@ -1591,6 +1621,7 @@ async def test_send_approval_notification_skips_when_invitation_missing(monkeypa
             "request_id": "test",
             "tenant_schema": "tenant_acme_test",
             "invitation_id": str(uuid.uuid4()),
+            "qr_token": "fake-qr-token",
         },
     )
     result.get(propagate=True)
@@ -1624,6 +1655,7 @@ async def test_send_approval_notification_exhausted_retries_logs_error(monkeypat
             "request_id": "test",
             "tenant_schema": "tenant_acme_test",
             "invitation_id": str(uuid.uuid4()),
+            "qr_token": "fake-qr-token",
         },
     )
     assert result.failed()
@@ -1698,6 +1730,7 @@ async def test_send_approval_notification_delivers_email_with_qr_via_mailpit(mon
             "request_id": "test",
             "tenant_schema": "tenant_acme_test",
             "invitation_id": str(uuid.uuid4()),
+            "qr_token": "fake-qr-token",
         },
     )
     result.get(propagate=True)
@@ -2818,6 +2851,304 @@ async def test_public_check_in_writes_audit_entry_with_no_actor(
     [entry] = (await db_session.execute(audit_stmt)).scalars().all()
     assert entry.actor_user_id is None
     assert entry.entity_type == "Invitation"
+
+
+# --- add-qr-checkin-security: token encryption -------------------------------
+# Unit-style, no database — mirrors core/tests.py's coverage of
+# core/encryption.py's own Fernet round-trip/tamper/not-configured cases
+# (testing-standards.md §3).
+
+
+def test_qr_token_round_trips() -> None:
+    invitation_id = uuid.uuid4()
+    token = qr_token.encrypt_invitation_token(invitation_id)
+    assert token != str(invitation_id)
+    assert qr_token.decrypt_invitation_token(token) == invitation_id
+
+
+def test_qr_token_tampered_token_returns_none() -> None:
+    token = qr_token.encrypt_invitation_token(uuid.uuid4())
+    tampered = token[:-4] + ("A" if token[-4] != "A" else "B") + token[-3:]
+    assert qr_token.decrypt_invitation_token(tampered) is None
+
+
+def test_qr_token_malformed_input_returns_none() -> None:
+    assert qr_token.decrypt_invitation_token("not-a-real-token") is None
+
+
+def test_qr_token_without_key_configured_raises_loudly(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "qr_token_encryption_key", None)
+    qr_token._fernet.cache_clear()
+    with pytest.raises(qr_token.QrTokenEncryptionKeyNotConfigured):
+        qr_token.encrypt_invitation_token(uuid.uuid4())
+
+
+# --- add-qr-checkin-security: QR check-in ------------------------------------
+# The encrypted token doesn't need a persisted `InvitationQRCode` row to be
+# scanned — `service.check_in_by_qr_token` decrypts straight to an
+# `invitation_id` and looks it up directly — so these tests build the
+# invitation via the usual factory and derive the token with
+# `qr_token.encrypt_invitation_token` directly, the same way the
+# tracking-ID tests above use `invitation.tracking_id` directly.
+
+
+def _approved_invitation(db_session: AsyncSession, branch_id: uuid.UUID, **overrides):
+    overrides.setdefault("status", "approved")
+    overrides.setdefault("approved_at", datetime.now(UTC))
+    overrides.setdefault("check_in_status", "unused")
+    overrides.setdefault("expires_at", datetime.now(UTC) + timedelta(hours=1))
+    return _build_invitation(db_session, branch_id, **overrides)
+
+
+async def test_qr_check_in_full_lifecycle(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    check_in = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert check_in.status_code == 200
+    body = check_in.json()
+    assert body["message"] == "Verification passed"
+    assert body["data"]["checkInStatus"] == "checked_in"
+    assert body["data"]["primaryContactFullName"] == invitation.primary_contact_full_name
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "checked_in"
+    assert invitation.status == "checked_in"  # mirrored, per design.md "kept parallel"
+    assert invitation.checked_in_at is not None
+
+    check_out = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert check_out.status_code == 200
+    assert check_out.json()["message"] == "Checked out successfully"
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "checked_out"
+    assert invitation.status == "checked_out"
+    assert invitation.checked_out_at is not None
+
+    # `checked_out` is not a dead end — a visitor may have multiple entry
+    # points during one visit (design.md "checkInStatus cycles
+    # indefinitely"), so a further scan re-admits rather than rejecting.
+    re_entry = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert re_entry.status_code == 200
+    assert re_entry.json()["message"] == "Verification passed"
+    assert re_entry.json()["data"]["checkInStatus"] == "checked_in"
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "checked_in"
+    assert invitation.status == "checked_in"
+
+    second_exit = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert second_exit.status_code == 200
+    assert second_exit.json()["message"] == "Checked out successfully"
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "checked_out"
+    assert invitation.status == "checked_out"
+
+
+async def test_qr_check_in_entry_after_expiry_rejected(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _approved_invitation(
+        db_session, branch.id, expires_at=datetime.now(UTC) - timedelta(hours=1)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 410
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "unused"
+
+
+async def test_qr_check_in_re_entry_after_expiry_rejected(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "QR Check-In Enforces Invitation Expiry on Every Entry" —
+    the expiry check applies to a re-entry from `checked_out` exactly the
+    same way it applies to the very first entry from `unused`.
+    """
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        status="checked_out",
+        check_in_status="checked_out",
+        checked_in_at=datetime.now(UTC) - timedelta(hours=2),
+        checked_out_at=datetime.now(UTC) - timedelta(hours=1, minutes=30),
+        expires_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 410
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "checked_out"
+
+
+async def test_qr_check_in_exit_after_expiry_still_succeeds(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        check_in_status="checked_in",
+        checked_in_at=datetime.now(UTC),
+        expires_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+    assert response.json()["message"] == "Checked out successfully"
+
+
+async def test_qr_check_in_tampered_token_rejected(client: AsyncClient, tenant: Tenant) -> None:
+    token = qr_token.encrypt_invitation_token(uuid.uuid4())
+    tampered = token[:-4] + ("A" if token[-4] != "A" else "B") + token[-3:]
+
+    response = await client.patch(f"/api/v2/invitations/qr/{tampered}/check-in")
+    assert response.status_code == 400
+
+
+async def test_qr_check_in_valid_token_unknown_invitation_rejected(
+    client: AsyncClient, tenant: Tenant
+) -> None:
+    """Decryption succeeds (this token was genuinely issued by this key) but
+    no such invitation exists — folded into the same 400 as a tampered
+    token (spec.md "with no invitation detail disclosed"), not a 404 that
+    would confirm the id was well-formed but absent.
+    """
+    token = qr_token.encrypt_invitation_token(uuid.uuid4())
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 400
+
+
+async def test_qr_check_in_watchlist_flagged_blocked(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _approved_invitation(db_session, branch.id, watchlist_flagged=True)
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "unused"
+
+
+async def test_qr_check_in_not_yet_approved_rejected(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="submitted",
+        check_in_status="unused",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 400
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "unused"
+
+
+async def test_qr_check_in_idempotency_key_replay(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    headers = {"Idempotency-Key": "qr-checkin-key-1"}
+    first = await client.patch(f"/api/v2/invitations/qr/{token}/check-in", headers=headers)
+    second = await client.patch(f"/api/v2/invitations/qr/{token}/check-in", headers=headers)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+
+    await db_session.refresh(invitation)
+    # The replay must not have advanced past the cached entry response.
+    assert invitation.check_in_status == "checked_in"
+
+
+async def test_qr_check_in_rate_limit_trips(
+    client: AsyncClient, tenant: Tenant, monkeypatch
+) -> None:
+    monkeypatch.setattr(limiter, "enabled", True)
+    bogus_token = qr_token.encrypt_invitation_token(uuid.uuid4())
+    responses = [
+        await client.patch(f"/api/v2/invitations/qr/{bogus_token}/check-in") for _ in range(25)
+    ]
+    assert any(r.status_code == 429 for r in responses)
+
+
+async def test_qr_check_in_writes_audit_entry_with_no_actor(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+
+    audit_stmt = select(AuditLog).where(
+        AuditLog.action == "invitation_qr_checked_in",
+        AuditLog.entity_id == invitation.id,
+    )
+    [entry] = (await db_session.execute(audit_stmt)).scalars().all()
+    assert entry.actor_user_id is None
+    assert entry.entity_type == "Invitation"
+
+
+async def test_qr_check_in_repository_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    """testing-standards.md §2 — the QR endpoint itself doesn't carry a
+    tenant claim yet (design.md's confirmed Non-Goal), so this exercises
+    the repository method directly: a session bound to a different
+    tenant's schema must not see this invitation, the same guarantee the
+    tracking-ID path's own isolation test already covers.
+    """
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_qr_checkin"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).check_in_by_qr_if_eligible(
+            invitation.id
+        )
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "unused"
 
 
 async def test_check_in_invitation_v1_response_carries_deprecation_header(

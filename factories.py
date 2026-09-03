@@ -216,6 +216,10 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     watchlist_override_at = None
     watchlist_override_reason = None
     watchlist_override_by_user_id = None
+    # add-qr-checkin-security: a fresh `submitted` row has no QR scan history
+    # yet, same "nothing has happened yet" reasoning as the check-in/check-out
+    # fields above — kept parallel to (not derived from) `status`.
+    check_in_status = "unused"
 
 
 class InvitationApprovalStepFactory(SQLAlchemyFactory[InvitationApprovalStep]):

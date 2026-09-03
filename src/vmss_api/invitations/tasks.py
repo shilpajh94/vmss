@@ -12,6 +12,14 @@ once an invitation is actually `approved` — at creation when the tenant
 auto-approves, or later via `POST /invitations/{id}/approve`.
 `send_tracking_notification` (tracking ID only, no QR) is enqueued when
 creation instead leaves the invitation `submitted` (awaiting approval).
+
+`send_approval_notification` takes the already-encrypted `qr_token` as an
+explicit argument rather than deriving it itself
+(`add-qr-checkin-security/design.md`) — the token is generated and
+persisted once, at approval time, by the service layer (which already has
+a real tenant-bound session in hand); the task only ever renders the QR
+image from it and attaches it, with no database read of its own for the
+token.
 """
 
 import asyncio
@@ -36,11 +44,11 @@ _RETRY_KWARGS = {
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
 def send_approval_notification(
-    self, *, request_id: str, tenant_schema: str, invitation_id: str
+    self, *, request_id: str, tenant_schema: str, invitation_id: str, qr_token: str
 ) -> None:
     structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
     try:
-        asyncio.run(_send_approval_notification(tenant_schema, invitation_id))
+        asyncio.run(_send_approval_notification(tenant_schema, invitation_id, qr_token))
     except Exception:
         if self.request.retries >= self.max_retries:
             logger.error(
@@ -51,7 +59,9 @@ def send_approval_notification(
         raise
 
 
-async def _send_approval_notification(tenant_schema: str, invitation_id: str) -> None:
+async def _send_approval_notification(
+    tenant_schema: str, invitation_id: str, qr_token: str
+) -> None:
     try:
         async with tenant_session_scope(tenant_schema) as session:
             invitation = await session.get(Invitation, uuid.UUID(invitation_id))
@@ -71,7 +81,7 @@ async def _send_approval_notification(tenant_schema: str, invitation_id: str) ->
                 f"Your registration is confirmed. Tracking ID: {invitation.tracking_id}.\n"
                 "Present the attached QR code at check-in."
             )
-            qr_png = await generate_qr_png(invitation.tracking_id)
+            qr_png = await generate_qr_png(qr_token)
             await _dispatch(
                 invitation,
                 subject=subject,

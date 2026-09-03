@@ -17,6 +17,7 @@ os.environ["DB_NAME"] = "vmss_test"
 
 import pytest
 import pytest_asyncio
+from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
@@ -35,6 +36,7 @@ from vmss_api.core.config import settings
 from vmss_api.core.database import Base, GlobalBase, get_db
 from vmss_api.core.security import create_access_token, hash_password
 from vmss_api.core.tenancy import get_tenant_db
+from vmss_api.invitations import qr_token
 from vmss_api.main import app
 from vmss_api.org_structure.models import Branch
 from vmss_api.platform.models import SuperAdmin, TenantUserIndex
@@ -84,6 +86,18 @@ async def _test_database() -> AsyncGenerator[None]:
     await _create_schema_and_tables(test_engine, _TENANT_SCHEMA)
     await test_engine.dispose()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _qr_token_encryption_key(monkeypatch) -> None:
+    """QR-token generation is now part of the core invitation-approval path
+    (`add-qr-checkin-security`), not an opt-in feature the way SSO's own
+    `sso_encryption_key` is — so, unlike `sso/tests.py`'s per-test
+    `monkeypatch.setattr`, this needs to be configured for every test by
+    default, not just the ones that exercise it directly.
+    """
+    monkeypatch.setattr(settings, "qr_token_encryption_key", Fernet.generate_key().decode())
+    qr_token._fernet.cache_clear()
 
 
 @pytest_asyncio.fixture

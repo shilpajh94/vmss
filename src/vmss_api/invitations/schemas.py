@@ -379,6 +379,33 @@ class WatchlistOverrideRequest(CamelModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class InvitationQrCheckInOut(CamelModel):
+    """Response for `PATCH /api/v2/invitations/qr/{token}/check-in`
+    (`add-qr-checkin-security` — spec.md "QR Check-In Response Surfaces
+    Full Invitation Detail") — enough for a scanning client to display the
+    visit without a follow-up lookup. Deliberately a separate schema from
+    `InvitationOut`: that one carries no visitor/host/check-in timeline
+    detail at all, and this endpoint's whole point is surfacing it.
+    """
+
+    id: uuid.UUID
+    tracking_id: str
+    status: str
+    check_in_status: str
+    primary_contact_full_name: str
+    primary_contact_email: str | None
+    primary_contact_phone: str | None
+    host_id: uuid.UUID | None = None
+    host_name_or_email: str | None
+    purpose_of_visit: str | None
+    department_to_visit: str | None
+    submitted_at: datetime | None
+    approved_at: datetime | None
+    checked_in_at: datetime | None
+    checked_out_at: datetime | None
+    expires_at: datetime
+
+
 class BadgeOut(CamelModel):
     badge_number: str
     badge_url: str

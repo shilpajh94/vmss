@@ -35,7 +35,8 @@ branch from the request body via the same `authorize_branch_id` helper.
 | GET | `/api/v1/invitations/{id}` | `invitations:view` at the invitation's branch | — | Authenticated, staff-facing single-invitation detail view (`InvitationDetailOut`) — branch/source/creator plus every lifecycle field below. 404 unknown id, 403 (not 404) if the caller lacks branch access. See "Lifecycle actions" below. |
 | PATCH | `/api/v1/invitations/{id}/deny` | `invitations:deny` at the invitation's branch | — | Transitions a `submitted` invitation to `denied`, with a mandatory `reason`, and dispatches a denial notification. 409 if not currently `submitted`. |
 | PATCH | `/api/v1/invitations/{id}/check-in` | `invitations:checkin` at the invitation's branch | — | **Deprecated** — see the public `/api/v2` route below. Transitions an `approved` invitation to `checked_in`. 409 if not `approved`, or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key`. Response carries a `Deprecation: true` header. Target removal date: TBD (see `openspec/changes/add-public-checkin-endpoint/design.md` Open Questions) — not yet removed, still fully functional. |
-| PATCH | `/api/v2/invitations/{trackingId}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated check-in by the invitation's `tracking_id` (`INV-XXXXXXXX`) — for a kiosk or the visitor's own device checking in from the QR/badge code, with no staff bearer token. Same transition/409/404 rules as the `v1` route; no branch-authorization check since there's no authenticated caller. Audit entries for this path use `actor_user_id = null` and `action = "invitation_checked_in_public"`, distinguishing self/kiosk check-ins from staff-performed ones. Accepts `Idempotency-Key`. First (and, as of this writing, only) route mounted under `/api/v2` — see "The tracking ID is a plain, human-readable identifier" below for how tenancy resolves with no bearer token. |
+| PATCH | `/api/v2/invitations/{trackingId}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated check-in by the invitation's `tracking_id` (`INV-XXXXXXXX`) — the manual desk fallback for when a camera isn't available. Same transition/409/404 rules as the `v1` route; no branch-authorization check since there's no authenticated caller. Audit entries for this path use `actor_user_id = null` and `action = "invitation_checked_in_public"`. Accepts `Idempotency-Key`. See "The tracking ID is a plain, human-readable identifier" below for how tenancy resolves with no bearer token. |
+| PATCH | `/api/v2/invitations/qr/{token}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated QR scan check-in (`add-qr-checkin-security`) — `token` is the encrypted, tamper-evident check-in token encoded in the invitation's QR image (see "QR check-in: encrypted token and the `checkInStatus` lifecycle" below), not the tracking ID. The same token drives every direction, cycling for as many entry/exit round trips as the visitor makes: a scan while outside (`unused`/`checked_out`) checks the visitor in, a scan while `checked_in` checks them out — `checked_out` is never a dead end. 400 for an invalid/tampered token or a not-yet-approved invitation, 409 for a watchlist block, 410 if scanned for entry (first or repeat) after `expiresAt` has passed (the exit scan is never expiry-blocked). Audit entries use `action = "invitation_qr_checked_in"`/`"invitation_qr_checked_out"`, one per scan. Accepts `Idempotency-Key` — a scanning client must mint a fresh key per physical scan, not reuse one across scans. |
 | PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. |
 | PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`, and dispatches a reschedule notification to the primary contact. 409 once `checked_in`/`checked_out`/`denied`. |
 | PATCH | `/api/v1/invitations/{id}/extend` | `invitations:extend` at the invitation's branch | — | Pushes `expiresAt` forward while `approved` or `checked_in`. 422 if the new expiry isn't strictly later than the current one; 409 if ineligible. |
@@ -206,6 +207,14 @@ submitted ──deny──> denied
 submitted ──approve──> approved ──check-in──> checked_in ──check-out──> checked_out
 ```
 
+- **`checkInStatus`** (`add-qr-checkin-security`) is a second, parallel
+  lifecycle field — `unused` → `checked_in` → `checked_out` — driven only
+  by the QR endpoint above. `status` keeps transitioning exactly as shown
+  in the diagram for the `v1`/`v2` tracking-ID routes; the QR endpoint
+  updates both fields together in the same transaction, so anything
+  reading `status` (the "who's inside" emergency report, in particular)
+  sees a QR-driven check-in exactly like any other. The two fields are
+  deliberately not merged — see "QR check-in" below.
 - **Reschedule** (`preferredVisitDate`/`preferredVisitTime`) and **extend**
   (`expiresAt`) operate on different status windows: reschedule only while
   `submitted`/`approved` (before check-in); extend only while
@@ -213,13 +222,16 @@ submitted ──approve──> approved ──check-in──> checked_in ──c
   expiry be strictly later than the current one (422 otherwise).
 - **Badge** issuance/reprint requires `approved`/`checked_in`. Issuance
   generates a `BDG-XXXXXXXX` number and a rendered PNG (visitor name,
-  tracking ID, a QR code encoding it, and the expiry — `invitations/badge.py`,
-  reusing `qr.py`'s QR generation, composited with Pillow, no new
-  dependency), saved via `core/storage.py`'s existing save/`url_for`
-  interface. Reprint re-renders from the invitation's *current* data (so a
-  reprint after a reschedule/extension reflects the new values) and
-  increments `badgeReprintCount`; it keeps the same `badgeNumber` — that
-  identifies the visit, not one physical printout.
+  tracking ID, the expiry, and a QR code — `invitations/badge.py`, reusing
+  `qr.py`'s QR generation, composited with Pillow, no new dependency),
+  saved via `core/storage.py`'s existing save/`url_for` interface. The
+  embedded QR encodes the same encrypted check-in token issued at approval
+  (`_issue_qr_code` — see "QR check-in" below), not the tracking ID, so
+  scanning the physical badge and scanning the emailed QR check in the
+  invitation the same way. Reprint re-renders from the invitation's
+  *current* data (so a reprint after a reschedule/extension reflects the
+  new values) and increments `badgeReprintCount`; it keeps the same
+  `badgeNumber` — that identifies the visit, not one physical printout.
 - **Watchlist override**: `watchlistFlagged` is a new column, but **nothing
   in this codebase sets it to `true` yet** — there is no automatic
   watchlist/blacklist matching built. It exists so `POST
@@ -304,10 +316,11 @@ tenant via the shared `core.tenancy.resolve_default_tenant`
 (`invitations/deps.py::track_default_tenant_db`). This is a known
 limitation once a second tenant exists: a real multi-tenant deployment would
 resolve this from the request's hostname/subdomain, which nothing in this
-codebase does yet. There is no signed token anywhere in this feature
-anymore — the confirmation QR code encodes the plain `tracking_id`, since
-there is no unauthenticated write endpoint left that needed a signed token
-to resolve tenancy.
+codebase does yet. The `GET /invitations/track` lookup itself carries no
+token at all — a caller who lost their tracking ID is exactly who needs
+this endpoint — and the manual check-in routes (`v1`/`v2`) are keyed by
+this same plain `tracking_id`, not a token. The QR *scan* path is
+different — see below.
 
 If the default tenant doesn't exist or is inactive, this is a server-side
 misconfiguration, not a caller error: it's logged at `ERROR` as
@@ -316,6 +329,48 @@ tenant" from "tenant inactive" so an operator can tell the fix from the log
 alone, consistent with `registrations`' equivalent fallback
 (`docs/features/registrations.md`). The client-facing response is
 unchanged — still 404 `"Tenant not found or inactive"`.
+
+## QR check-in: encrypted token and the `checkInStatus` lifecycle
+
+`add-qr-checkin-security` closes a gap the plain-tracking-ID QR had: a
+photographed or forwarded code stayed valid indefinitely, and check-in
+never checked `expiresAt`.
+
+- **Token**: the QR image encodes a Fernet-encrypted token of the
+  invitation's internal `id` — never the tracking ID, never the id in
+  cleartext (`invitations/qr_token.py`, mirroring `core/encryption.py`'s
+  own "encrypt now, decrypt later" pattern rather than a new crypto
+  primitive, keyed by its own `QR_TOKEN_ENCRYPTION_KEY` setting —
+  deliberately not shared with `SSO_ENCRYPTION_KEY`). A tampered or
+  malformed token decrypts to nothing and is rejected 400, with no
+  invitation detail disclosed either way.
+- **Issued once, at approval**: `service.py::_issue_qr_code` runs inside
+  the same transaction that transitions an invitation to `approved`
+  (auto-approve at creation, or `POST /invitations/{id}/approve`),
+  persisting the token and its rendered PNG (`invitation_qr_codes` table,
+  via `core/storage.py`) rather than regenerating on every notification
+  send the way the old plain-tracking-ID QR did. It's get-or-create, so a
+  later badge issuance/reprint reuses the same token instead of minting a
+  new one.
+- **Lifecycle**: `checkInStatus` — `unused`/`checked_out` (currently
+  outside) toggling with `checked_in` (currently inside) — is a field
+  parallel to (not merged with) `status`; see "Lifecycle actions" above
+  for why. Scanning drives the transition directly: no separate
+  preview/confirm step. `checked_out` is **not** a dead end — a visitor
+  may have multiple entry points during one visit (e.g. leaving for lunch
+  and returning, or moving between buildings on a multi-building site),
+  so a scan while `checked_out` re-admits exactly like a scan while
+  `unused`. `unused` and `checked_out` are kept as distinct values only
+  for what they record (never entered vs. entered-and-left at least
+  once) — the gate treats them identically.
+- **Expiry**: checked on every transition *into* `checked_in` — the first
+  entry from `unused` and any later re-entry from `checked_out` alike. A
+  visit still `checked_in` past `expiresAt` can still be checked out — the
+  expiry gates entry, not how long someone already inside can stay.
+- No tenant claim in the token yet — this endpoint resolves tenancy the
+  same way the tracking-ID `v2` route does (`track_default_tenant`, the
+  single-configured-tenant shortcut described above). Revisit once a
+  second tenant exists.
 
 ## Minimal disclosure on the email-based tracking lookup
 
@@ -331,7 +386,10 @@ via the other lookup form.
 Invitation creation (and manual approval) dispatches exactly one of two
 notifications via Celery, never inline in the request path
 (`background-jobs.md` §5): `invitations/tasks.py::send_approval_notification`
-(tracking ID + QR code — sent for an `approved` invitation) or
+(tracking ID + QR code — sent for an `approved` invitation, taking the
+already-issued `qr_token` as an explicit argument rather than deriving it
+itself, since the token is generated and persisted by the service layer
+at approval time — see "QR check-in" above) or
 `send_tracking_notification` (tracking ID only, no QR — sent for a
 `submitted` one). See "Auto-approve vs. manual approval" above for which
 one a given creation/approval triggers. Denial (`send_denial_notification`)
@@ -390,6 +448,7 @@ table for the S3 connection settings.
 | `INVITATION_MAX_UPLOAD_SIZE_BYTES` | `5242880` (5 MB) | Max ID-proof file size. |
 | `INVITATION_MAX_GROUP_VISITORS` | `20` | Cap on co-visitors in one group submission. |
 | `STORAGE_ROOT` | `./var/storage` | Local-disk root for uploaded files in dev. |
+| `QR_TOKEN_ENCRYPTION_KEY` | unset | Fernet key encrypting/decrypting QR check-in tokens. Fails loudly the first time a token is generated or scanned without it — never a silent no-op. Generate one the same way as `SSO_ENCRYPTION_KEY`; deliberately a separate key from it. |
 | `MAIL_HOST`/`MAIL_PORT`/`MAIL_USERNAME`/`MAIL_PASSWORD`/`MAIL_USE_TLS`/`MAIL_FROM_ADDRESS` | local dev mail-catcher | Outbound email for visit confirmations. See `docs/features/configuration.md`. |
 | `SMS_GATEWAY_BASE_URL`/`SMS_GATEWAY_API_KEY`/`SMS_FROM_NUMBER` | unset | Placeholders — no SMS gateway has been chosen yet. |
 
