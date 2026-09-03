@@ -46,8 +46,11 @@ function describeApprovalOutcome(
 
 // Shared Kanban-board data/actions behind the staff dashboard and the admin
 // invitations board — same columns, same approve/reschedule/step-progress
-// behavior, differing only in where an unauthenticated visitor is redirected.
-export function useInvitationsBoard(loginRedirectPath: string) {
+// behavior, differing in where an unauthenticated visitor is redirected and
+// in scope: the staff dashboard asks the API for only the requests where the
+// current user is the host or a delegate (`relevantToMe=true`), while the
+// admin board keeps its organisation-wide view.
+export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | 'all' = 'all') {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const {
@@ -100,7 +103,7 @@ export function useInvitationsBoard(loginRedirectPath: string) {
       try {
         const [user, requests, roles, employees] = await Promise.all([
           getCurrentStaffUserUseCase.execute(),
-          listVisitRequestsUseCase.execute(),
+          listVisitRequestsUseCase.execute(scope === 'mine'),
           listRolesUseCase.execute(),
           listHostEmployeesUseCase.execute(),
         ])
@@ -122,7 +125,7 @@ export function useInvitationsBoard(loginRedirectPath: string) {
         }
       }
     },
-    [getCurrentStaffUserUseCase, listVisitRequestsUseCase, listRolesUseCase, listHostEmployeesUseCase, toast],
+    [getCurrentStaffUserUseCase, listVisitRequestsUseCase, listRolesUseCase, listHostEmployeesUseCase, scope, toast],
   )
 
   useEffect(() => {
