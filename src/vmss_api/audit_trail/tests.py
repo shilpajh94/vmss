@@ -371,6 +371,119 @@ async def test_generate_audit_report_end_to_end_via_polling(
     assert body["pdfDownloadUrl"] is not None
 
 
+# --- Report download --------------------------------------------------------
+
+
+async def test_download_audit_report_returns_generated_file(
+    client: AsyncClient,
+    user: User,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token,
+    monkeypatch,
+) -> None:
+    await _seed_audit_log(db_session, actor_user_id=user.id)
+    monkeypatch.setattr(tasks.generate_audit_report, "delay", lambda **kw: None)
+
+    token = issue_token(user)
+    create_response = await client.post(
+        "/api/v1/audit-trail/reports",
+        json={"formats": ["csv", "pdf"]},
+        headers=_auth_headers(token),
+    )
+    job_id = create_response.json()["data"]["id"]
+    await tasks._generate_audit_report(job_id, str(tenant.id), tenant.schema_name)
+
+    response = await client.get(
+        f"/api/v1/audit-trail/reports/{job_id}/download",
+        params={"format": "csv"},
+        headers=_auth_headers(token),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment" in response.headers["content-disposition"]
+    assert str(user.id) in response.text
+
+
+async def test_download_audit_report_requires_export_permission(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, issue_token
+) -> None:
+    view_only_user = await _build_user_with_permissions(
+        db_session,
+        tenant,
+        email="view-only-download@acme-test.example",
+        permission_codes=["audit-logs:view"],
+    )
+    token = issue_token(view_only_user)
+    response = await client.get(
+        f"/api/v1/audit-trail/reports/{uuid.uuid4()}/download",
+        params={"format": "csv"},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 403
+
+
+async def test_download_audit_report_not_found(
+    client: AsyncClient, user: User, issue_token
+) -> None:
+    token = issue_token(user)
+    response = await client.get(
+        f"/api/v1/audit-trail/reports/{uuid.uuid4()}/download",
+        params={"format": "csv"},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 404
+
+
+async def test_download_audit_report_format_not_generated(
+    client: AsyncClient,
+    user: User,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token,
+    monkeypatch,
+) -> None:
+    """The job only ever generated a CSV — asking this same, now-`ready` job
+    for the PDF it never produced is a 404, not a 200 with stale/wrong
+    content.
+    """
+    await _seed_audit_log(db_session, actor_user_id=user.id)
+    monkeypatch.setattr(tasks.generate_audit_report, "delay", lambda **kw: None)
+
+    token = issue_token(user)
+    create_response = await client.post(
+        "/api/v1/audit-trail/reports", json={"formats": ["csv"]}, headers=_auth_headers(token)
+    )
+    job_id = create_response.json()["data"]["id"]
+    await tasks._generate_audit_report(job_id, str(tenant.id), tenant.schema_name)
+
+    response = await client.get(
+        f"/api/v1/audit-trail/reports/{job_id}/download",
+        params={"format": "pdf"},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 404
+
+
+async def test_download_audit_report_not_ready_yet(
+    client: AsyncClient, user: User, issue_token, monkeypatch
+) -> None:
+    monkeypatch.setattr(tasks.generate_audit_report, "delay", lambda **kw: None)
+    token = issue_token(user)
+    create_response = await client.post(
+        "/api/v1/audit-trail/reports", json={"formats": ["csv"]}, headers=_auth_headers(token)
+    )
+    job_id = create_response.json()["data"]["id"]
+
+    response = await client.get(
+        f"/api/v1/audit-trail/reports/{job_id}/download",
+        params={"format": "csv"},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 404
+
+
 async def test_generate_audit_report_reflects_filtered_data(
     db_session: AsyncSession, user: User, tenant: Tenant
 ) -> None:

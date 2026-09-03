@@ -137,6 +137,15 @@ _TAGS_METADATA = [
             "approver is notified of an action awaiting or affecting them."
         ),
     },
+    {
+        "name": "dashboard",
+        "description": (
+            "Admin-portal dashboard: overview summary counts and an "
+            "upcoming-visitors preview, the check-in action triggered from "
+            "that preview, a paginated check-ins log, and topbar visitor "
+            "search — all read from the `invitations` capability's data."
+        ),
+    },
 ]
 
 

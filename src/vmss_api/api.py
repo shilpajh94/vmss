@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from vmss_api.approvals.router import router as approvals_router
 from vmss_api.audit_trail.router import router as audit_trail_router
 from vmss_api.auth.router import router as auth_router
+from vmss_api.dashboard.router import router as dashboard_router
 from vmss_api.identity_verification.router import router as identity_verification_router
 from vmss_api.invitations.router import router as invitations_router
 from vmss_api.invitations.router import router_v2 as invitations_router_v2
@@ -31,6 +32,7 @@ api_router.include_router(identity_verification_router)
 api_router.include_router(sso_router)
 api_router.include_router(visit_info_router)
 api_router.include_router(notifications_router)
+api_router.include_router(dashboard_router)
 
 # --- add-public-checkin-endpoint: minimal /api/v2 mount ----------------------
 # Scoped to this one endpoint, not a wholesale re-exposure of every v1 route
