@@ -261,6 +261,41 @@ class InvitationVehicleOut(CamelModel):
     color: str | None
 
 
+class InvitationCheckInOut(CamelModel):
+    """Response for `PATCH /api/v1/invitations/{id}/check-in`
+    (`add-invitation-details-to-checkin-response` — spec.md "Staff Check-In
+    Response Surfaces Full Invitation Detail") — every field `InvitationOut`
+    already carries, plus everything captured at registration that the
+    public tracking lookup (`InvitationTrackingOut`) also returns. No
+    branch/creator/badge/watchlist internals — those stay exclusive to
+    `InvitationDetailOut` (`GET /invitations/{id}`).
+    """
+
+    id: uuid.UUID
+    tracking_id: str
+    registration_type: RegistrationType
+    source: RegistrationSource
+    status: str
+    visitor_category_id: uuid.UUID | None
+    host_id: uuid.UUID | None = None
+    expires_at: datetime
+    submitted_at: datetime | None
+    approved_at: datetime | None
+    current_approval_step: CurrentApprovalStepOut | None = None
+    primary_contact_full_name: str
+    purpose_of_visit: str | None
+    host_name_or_email: str | None
+    preferred_visit_date: date | None
+    preferred_visit_time: time | None
+    expected_duration: str | None
+    department_to_visit: str | None
+    additional_notes: str | None
+    carried_items: list[str]
+    carried_items_description: str | None
+    visitors: list[InvitationVisitorOut]
+    vehicles: list[InvitationVehicleOut]
+
+
 class InvitationTrackingOut(CamelModel):
     """Full detail, returned only for a lookup by tracking ID (spec.md
     "Tracking Lookup by ID Returns Everything Captured at Creation") — never

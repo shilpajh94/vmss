@@ -38,6 +38,7 @@ from vmss_api.invitations.schemas import (
     BadgeOut,
     CarriedItemsSubmit,
     ConsentsSubmit,
+    InvitationCheckInOut,
     InvitationCreate,
     InvitationDenyRequest,
     InvitationDetailOut,
@@ -384,6 +385,54 @@ def _to_tracking_out(
     )
 
 
+def _to_check_in_out(
+    invitation, current_approval_step: CurrentApprovalStepOut | None = None
+) -> InvitationCheckInOut:
+    return InvitationCheckInOut(
+        id=invitation.id,
+        tracking_id=invitation.tracking_id,
+        registration_type=RegistrationType(invitation.registration_type),
+        source=RegistrationSource(invitation.source),
+        status=invitation.status,
+        visitor_category_id=invitation.visitor_category_id,
+        host_id=invitation.host_id,
+        expires_at=invitation.expires_at,
+        submitted_at=invitation.submitted_at,
+        approved_at=invitation.approved_at,
+        current_approval_step=current_approval_step,
+        primary_contact_full_name=invitation.primary_contact_full_name,
+        purpose_of_visit=invitation.purpose_of_visit,
+        host_name_or_email=invitation.host_name_or_email,
+        preferred_visit_date=invitation.preferred_visit_date,
+        preferred_visit_time=invitation.preferred_visit_time,
+        expected_duration=invitation.expected_duration,
+        department_to_visit=invitation.department_to_visit,
+        additional_notes=invitation.additional_notes,
+        carried_items=invitation.carried_items,
+        carried_items_description=invitation.carried_items_description,
+        visitors=[
+            InvitationVisitorOut(
+                id=v.id,
+                full_name=v.full_name,
+                email=v.email,
+                phone=v.phone,
+                id_proof_type=v.id_proof_type,
+            )
+            for v in invitation.visitors
+        ],
+        vehicles=[
+            InvitationVehicleOut(
+                id=v.id,
+                vehicle_type=v.vehicle_type,
+                license_plate=v.license_plate,
+                make_model=v.make_model,
+                color=v.color,
+            )
+            for v in invitation.vehicles
+        ],
+    )
+
+
 def _to_invitation_detail_out(
     invitation, current_approval_step: CurrentApprovalStepOut | None = None
 ) -> InvitationDetailOut:
@@ -666,7 +715,7 @@ async def deny_invitation(
 
 @router.patch(
     "/{invitation_id}/check-in",
-    response_model=Envelope[InvitationOut],
+    response_model=Envelope[InvitationCheckInOut],
 )
 async def check_in_invitation(
     invitation_id: uuid.UUID,
@@ -701,7 +750,7 @@ async def check_in_invitation(
     if cached is not None:
         return cached
 
-    invitation = await service.get_invitation(tenant_db, invitation_id)
+    invitation = await service.get_invitation_detail(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:checkin", invitation.branch_id)
     invitation = await service.check_in_invitation(
         tenant_db, invitation, user_id=user.id, tenant=tenant
@@ -714,7 +763,7 @@ async def check_in_invitation(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    response = success_response(data=to_invitation_out(invitation))
+    response = success_response(data=_to_check_in_out(invitation))
     await _cache_response(tenant.id, idempotency_key, response)
     return mark_deprecated(response)
 

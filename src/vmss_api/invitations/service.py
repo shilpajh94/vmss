@@ -539,7 +539,10 @@ async def get_invitation_detail(tenant_db: AsyncSession, invitation_id: uuid.UUI
     """Eager-loaded counterpart of `get_invitation` — backs
     `GET /invitations/{id}`, whose response schema (`InvitationDetailOut`)
     serializes `visitors`/`vehicles` the same way `InvitationTrackingOut`
-    does.
+    does, and `PATCH /api/v1/invitations/{id}/check-in`, which needs the
+    same eager-loaded relationships populated in the session's identity map
+    before its own `UPDATE ... RETURNING` transition runs (see
+    `check_in_invitation`).
     """
     invitation = await InvitationRepository(tenant_db).get_with_children(invitation_id)
     if invitation is None:

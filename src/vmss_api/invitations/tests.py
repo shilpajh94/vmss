@@ -2738,6 +2738,188 @@ async def test_check_in_invitation_requires_permission(
     assert invitation.status == "approved"
 
 
+# --- add-invitation-details-to-checkin-response: full detail on v1 check-in --
+
+
+async def test_check_in_invitation_response_includes_full_invitation_detail(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-invitation-details-to-checkin-response spec.md "Successful
+    check-in response includes visitor and host detail" — the response
+    matches the public tracking lookup's field set, not just the
+    original thin `InvitationOut` shape.
+    """
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["primaryContactFullName"] == invitation.primary_contact_full_name
+    assert data["hostNameOrEmail"] == invitation.host_name_or_email
+    assert data["purposeOfVisit"] == invitation.purpose_of_visit
+    assert data["departmentToVisit"] == invitation.department_to_visit
+    assert data["expectedDuration"] == invitation.expected_duration
+    assert data["additionalNotes"] == invitation.additional_notes
+    assert data["carriedItems"] == invitation.carried_items
+    # Already-present fields are unchanged by the expansion.
+    assert data["id"] == str(invitation.id)
+    assert data["trackingId"] == invitation.tracking_id
+    assert data["status"] == "checked_in"
+
+
+async def test_check_in_invitation_response_includes_group_co_visitors(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        registration_type="group",
+    )
+    db_session.add(invitation)
+    await db_session.flush()
+    co_visitor = InvitationVisitorFactory.build(
+        id=uuid.uuid4(), invitation_id=invitation.id, full_name="Alexander Pierce"
+    )
+    db_session.add(co_visitor)
+    await db_session.commit()
+    # `get_tenant_db` is overridden in tests to hand back this exact
+    # session (unlike the public v2/QR routes' `track_default_tenant_db`,
+    # which opens a genuinely separate one) — `expire_on_commit=False`
+    # means `invitation.visitors` (populated as `[]` by the factory before
+    # `co_visitor` existed) would otherwise stay stale for the same
+    # in-memory object the endpoint's `selectinload` re-resolves to.
+    db_session.expire(invitation, attribute_names=["visitors"])
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    visitors = response.json()["data"]["visitors"]
+    assert len(visitors) == 1
+    assert visitors[0]["fullName"] == "Alexander Pierce"
+
+
+async def test_check_in_invitation_response_includes_declared_vehicles(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.flush()
+    vehicle = InvitationVehicleFactory.build(
+        id=uuid.uuid4(), invitation_id=invitation.id, license_plate="KA-01-AB-1234"
+    )
+    db_session.add(vehicle)
+    await db_session.commit()
+    # See the co-visitors test above for why this is needed: `get_tenant_db`
+    # hands the endpoint this exact session, so the factory's `vehicles=[]`
+    # default would otherwise stay stale for the same in-memory object.
+    db_session.expire(invitation, attribute_names=["vehicles"])
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    vehicles = response.json()["data"]["vehicles"]
+    assert len(vehicles) == 1
+    assert vehicles[0]["licensePlate"] == "KA-01-AB-1234"
+
+
+async def test_check_in_invitation_individual_registration_has_empty_visitor_list(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        registration_type="individual",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["visitors"] == []
+    assert data["vehicles"] == []
+
+
+async def test_check_in_invitation_response_omits_staff_only_internals(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-invitation-details-to-checkin-response spec.md "Response omits
+    staff-only internals" — branch/creator/badge/watchlist fields stay
+    exclusive to `GET /invitations/{id}`.
+    """
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    for staff_only_field in (
+        "branchId",
+        "createdByUserId",
+        "badgeNumber",
+        "badgeIssuedAt",
+        "badgeReprintCount",
+        "watchlistFlagged",
+        "watchlistOverrideAt",
+        "watchlistOverrideReason",
+        "watchlistOverrideByUserId",
+    ):
+        assert staff_only_field not in data
+
+
+async def test_check_in_invitation_rejected_response_discloses_no_invitation_detail(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-invitation-details-to-checkin-response spec.md "Rejected
+    check-in discloses no invitation detail" — a 409 (not currently
+    `approved`) carries only the existing generic failure message.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+    body = response.json()
+    assert "data" not in body
+    assert body["success"] is False
+
+
 # --- add-public-checkin-endpoint: PATCH /api/v2/invitations/{trackingId}/check-in --
 
 
