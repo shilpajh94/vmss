@@ -4,6 +4,11 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: false,
   },
+  SEARCH_HOSTS: {
+    endpoint: "/hosts/search",
+    method: "GET",
+    hasToken: false,
+  },
   TRACK_VISIT_REQUEST: {
     endpoint: "/invitations/track",
     method: "GET",

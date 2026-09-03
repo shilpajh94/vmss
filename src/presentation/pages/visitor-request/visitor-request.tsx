@@ -6,7 +6,6 @@ import { useAppDependencies } from '../../context/app-dependencies-context'
 import type { Branch } from '../../../domain/entities/branch-schema'
 import type { Building } from '../../../domain/entities/building-schema'
 import type { Department } from '../../../domain/entities/department-schema'
-import type { EmployeeDirectoryEntry } from '../../../domain/entities/employee-directory-schema'
 import type { VisitorCategory } from '../../../domain/entities/visitor-category-schema'
 import { OtpRequestScreen } from './Components/otp/OtpRequestScreen'
 import { OtpScreenLayout } from './Components/otp/OtpScreenLayout'
@@ -25,10 +24,9 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
   const { currentStep, formState, setFormState, errors, goNext, goBack, uploadFile, submissionStatus, trackingId, submissionError, submit } =
     useVisitorRequestWizard(initial)
 
-  const { listVisitorCategoriesUseCase, listEmployeeDirectoryUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase } =
+  const { listVisitorCategoriesUseCase, searchHostsUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase } =
     useAppDependencies()
   const [visitorCategories, setVisitorCategories] = useState<VisitorCategory[] | undefined>(undefined)
-  const [hostEmployees, setHostEmployees] = useState<EmployeeDirectoryEntry[] | undefined>(undefined)
   const [branches, setBranches] = useState<Branch[] | undefined>(undefined)
   const [buildings, setBuildings] = useState<Building[] | undefined>(undefined)
   const [departments, setDepartments] = useState<Department[] | undefined>(undefined)
@@ -41,15 +39,11 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     }
   }, [listVisitorCategoriesUseCase])
 
+  const handleSearchHosts = useCallback((query: string) => searchHostsUseCase.execute(query), [searchHostsUseCase])
+
   // Each call is caught independently — a Promise.all would let one rejection
   // block every field's data.
   const loadVisitInfoMasterData = useCallback(() => {
-    listEmployeeDirectoryUseCase
-      .execute()
-      .then(setHostEmployees)
-      .catch(() => {
-        // Falls back to a free-text Host Name or Email field.
-      })
     listBranchesUseCase
       .execute()
       .then(setBranches)
@@ -68,7 +62,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
       .catch(() => {
         // Falls back to a free-text Department to Visit field.
       })
-  }, [listEmployeeDirectoryUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase])
+  }, [listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase])
 
   useEffect(() => {
     void loadVisitorCategories()
@@ -97,7 +91,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             value={formState.visitInfo}
             onChange={(visitInfo) => setFormState({ ...formState, visitInfo })}
             errors={errors}
-            hostEmployees={hostEmployees}
+            onSearchHosts={handleSearchHosts}
             branches={branches}
             buildings={buildings}
             departments={departments}

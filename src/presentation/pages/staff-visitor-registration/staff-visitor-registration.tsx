@@ -6,6 +6,7 @@ import type { Branch } from '../../../domain/entities/branch-schema'
 import type { Building } from '../../../domain/entities/building-schema'
 import type { Department } from '../../../domain/entities/department-schema'
 import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
+import type { HostSearchResult } from '../../../domain/entities/host-search-schema'
 import type { StaffUser } from '../../../domain/entities/staff-user-schema'
 import type { VisitorCategory } from '../../../domain/entities/visitor-category-schema'
 import { CarriedItemsStep } from '../visitor-request/Components/steps/CarriedItemsStep'
@@ -78,6 +79,29 @@ export function StaffVisitorRegistrationPage() {
     }
   }, [listHostEmployeesUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase, listVisitorCategoriesUseCase])
 
+  // Staff wizard already loads the full (authenticated) host roster up front,
+  // so search here is a client-side filter rather than a call to the public
+  // /hosts/search endpoint the kiosk-facing walk-in wizard uses.
+  const handleSearchHosts = useCallback(
+    async (query: string): Promise<HostSearchResult[]> => {
+      const normalizedQuery = query.trim().toLowerCase()
+      if (!normalizedQuery || !hostEmployees) return []
+
+      return hostEmployees
+        .filter(
+          (employee) => employee.fullName.toLowerCase().includes(normalizedQuery) || employee.email.toLowerCase().includes(normalizedQuery),
+        )
+        .slice(0, 10)
+        .map((employee) => ({
+          id: employee.id,
+          name: employee.fullName,
+          email: employee.email,
+          department: departments?.find((department) => department.id === employee.departmentId)?.name,
+        }))
+    },
+    [hostEmployees, departments],
+  )
+
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
       navigate('/staff/login', { replace: true })
@@ -126,7 +150,7 @@ export function StaffVisitorRegistrationPage() {
                 value={formState.visitInfo}
                 onChange={(visitInfo) => setFormState({ ...formState, visitInfo })}
                 errors={errors}
-                hostEmployees={hostEmployees}
+                onSearchHosts={handleSearchHosts}
                 branches={branches}
                 buildings={buildings}
                 departments={departments}

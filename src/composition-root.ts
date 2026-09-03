@@ -15,6 +15,7 @@ import type { FloorRepository } from './data/repositories/floor-repository'
 import type { DashboardRepository } from './data/repositories/dashboard-repository'
 import type { HostEmployeeRepository } from './data/repositories/host-employee-repository'
 import type { EmployeeDirectoryRepository } from './data/repositories/employee-directory-repository'
+import type { HostSearchRepository } from './data/repositories/host-search-repository'
 import type { ReceptionDeskRepository } from './data/repositories/reception-desk-repository'
 import type { SecurityGateRepository } from './data/repositories/security-gate-repository'
 import type { VisitorCategoryRepository } from './data/repositories/visitor-category-repository'
@@ -62,6 +63,7 @@ import { GetDashboardOverviewUseCase } from './data/use-cases/get-dashboard-over
 import { ListRecentCheckinsUseCase } from './data/use-cases/list-recent-checkins'
 import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
 import { ListEmployeeDirectoryUseCase } from './data/use-cases/list-employee-directory'
+import { SearchHostsUseCase } from './data/use-cases/search-hosts'
 import { CreateHostEmployeeUseCase } from './data/use-cases/create-host-employee'
 import { ListRolesUseCase } from './data/use-cases/list-roles'
 import { ListPermissionsUseCase } from './data/use-cases/list-permissions'
@@ -102,6 +104,7 @@ import { HttpFloorRepository } from './infrastructure/floor-repository'
 import { HttpDashboardRepository } from './infrastructure/dashboard-repository'
 import { HttpHostEmployeeRepository } from './infrastructure/host-employee-repository'
 import { HttpEmployeeDirectoryRepository } from './infrastructure/employee-directory-repository'
+import { HttpHostSearchRepository } from './infrastructure/host-search-repository'
 import { HttpReceptionDeskRepository } from './infrastructure/reception-desk-repository'
 import { HttpSecurityGateRepository } from './infrastructure/security-gate-repository'
 import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category-repository'
@@ -152,6 +155,7 @@ export interface AppDependencies {
   listRecentCheckinsUseCase: ListRecentCheckinsUseCase
   listHostEmployeesUseCase: ListHostEmployeesUseCase
   listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase
+  searchHostsUseCase: SearchHostsUseCase
   createHostEmployeeUseCase: CreateHostEmployeeUseCase
   listRolesUseCase: ListRolesUseCase
   listPermissionsUseCase: ListPermissionsUseCase
@@ -238,6 +242,8 @@ export function createApp(): AppDependencies {
   let listHostEmployeesUseCase: ListHostEmployeesUseCase | undefined
   let employeeDirectoryRepository: EmployeeDirectoryRepository | undefined
   let listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase | undefined
+  let hostSearchRepository: HostSearchRepository | undefined
+  let searchHostsUseCase: SearchHostsUseCase | undefined
   let createHostEmployeeUseCase: CreateHostEmployeeUseCase | undefined
   let listRolesUseCase: ListRolesUseCase | undefined
   let listPermissionsUseCase: ListPermissionsUseCase | undefined
@@ -564,6 +570,16 @@ export function createApp(): AppDependencies {
     return listEmployeeDirectoryUseCase
   }
 
+  const resolveHostSearchRepository = (): HostSearchRepository => {
+    hostSearchRepository ??= new HttpHostSearchRepository(resolveApiClient())
+    return hostSearchRepository
+  }
+
+  const resolveSearchHostsUseCase = (): SearchHostsUseCase => {
+    searchHostsUseCase ??= new SearchHostsUseCase(resolveHostSearchRepository())
+    return searchHostsUseCase
+  }
+
   const resolveCreateHostEmployeeUseCase = (): CreateHostEmployeeUseCase => {
     createHostEmployeeUseCase ??= new CreateHostEmployeeUseCase(resolveHostEmployeeRepository())
     return createHostEmployeeUseCase
@@ -843,6 +859,9 @@ export function createApp(): AppDependencies {
     },
     get listEmployeeDirectoryUseCase() {
       return resolveListEmployeeDirectoryUseCase()
+    },
+    get searchHostsUseCase() {
+      return resolveSearchHostsUseCase()
     },
     get createHostEmployeeUseCase() {
       return resolveCreateHostEmployeeUseCase()
