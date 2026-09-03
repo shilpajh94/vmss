@@ -671,7 +671,11 @@ async def check_in_by_qr_token(
     response contract.
     """
     invitation_id = decrypt_invitation_token(token)
-    invitation = await InvitationRepository(tenant_db).get(invitation_id) if invitation_id else None
+    invitation = (
+        await InvitationRepository(tenant_db).get_with_children(invitation_id)
+        if invitation_id
+        else None
+    )
     if invitation is None:
         logger.warning("qr_check_in_invalid_token", tenant_id=str(tenant.id))
         raise HTTPException(

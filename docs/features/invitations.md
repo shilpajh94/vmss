@@ -367,6 +367,18 @@ never checked `expiresAt`.
   entry from `unused` and any later re-entry from `checked_out` alike. A
   visit still `checked_in` past `expiresAt` can still be checked out — the
   expiry gates entry, not how long someone already inside can stay.
+- **Response** (`qr-checkin-full-registration-detail`): a successful scan
+  returns everything captured at registration — the same shape
+  `GET /invitations/track?trackingId=` (`InvitationTrackingOut`) already
+  returns, including `registrationType`/`source`, preferred visit
+  date/time and expected duration, additional notes, carried items, the
+  full co-visitor list (`visitors`), and the full vehicle list
+  (`vehicles`) — plus the QR-specific fields that lookup doesn't carry
+  (`id`, `checkInStatus`, `checkedInAt`/`checkedOutAt`, primary contact
+  email/phone, `hostId`). `currentApprovalStep` is deliberately omitted —
+  a QR token only ever exists post-approval, so it would always be
+  `null`. A rejected scan discloses none of this, only a generic failure
+  message.
 - No tenant claim in the token yet — this endpoint resolves tenancy the
   same way the tracking-ID `v2` route does (`track_default_tenant`, the
   single-configured-tenant shortcut described above). Revisit once a

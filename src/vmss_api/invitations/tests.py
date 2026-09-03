@@ -24,6 +24,8 @@ from factories import (
     DepartmentFactory,
     InvitationApprovalStepFactory,
     InvitationFactory,
+    InvitationVehicleFactory,
+    InvitationVisitorFactory,
     PermissionFactory,
     RoleFactory,
     UserFactory,
@@ -2948,6 +2950,72 @@ async def test_qr_check_in_full_lifecycle(
     await db_session.refresh(invitation)
     assert invitation.check_in_status == "checked_out"
     assert invitation.status == "checked_out"
+
+
+async def test_qr_check_in_response_includes_group_co_visitors(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """qr-checkin-full-registration-detail spec.md "A group registration's
+    co-visitors are all present" — the success response's visitor list
+    isn't just the primary contact.
+    """
+    invitation = _approved_invitation(db_session, branch.id, registration_type="group")
+    db_session.add(invitation)
+    await db_session.flush()
+    co_visitor = InvitationVisitorFactory.build(
+        id=uuid.uuid4(), invitation_id=invitation.id, full_name="Alexander Pierce"
+    )
+    db_session.add(co_visitor)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+    visitors = response.json()["data"]["visitors"]
+    assert len(visitors) == 1
+    assert visitors[0]["fullName"] == "Alexander Pierce"
+
+
+async def test_qr_check_in_response_includes_declared_vehicles(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """qr-checkin-full-registration-detail spec.md "Declared vehicles are
+    present".
+    """
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.flush()
+    vehicle = InvitationVehicleFactory.build(
+        id=uuid.uuid4(), invitation_id=invitation.id, license_plate="KA-01-AB-1234"
+    )
+    db_session.add(vehicle)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+    vehicles = response.json()["data"]["vehicles"]
+    assert len(vehicles) == 1
+    assert vehicles[0]["licensePlate"] == "KA-01-AB-1234"
+
+
+async def test_qr_check_in_individual_registration_has_empty_visitor_list(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """qr-checkin-full-registration-detail: an individual registration
+    (the common case, no co-visitors) gets an empty list, not an error
+    and not an omitted field.
+    """
+    invitation = _approved_invitation(db_session, branch.id, registration_type="individual")
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["visitors"] == []
+    assert data["vehicles"] == []
 
 
 async def test_qr_check_in_entry_after_expiry_rejected(

@@ -278,6 +278,9 @@ def _to_qr_check_in_out(invitation) -> InvitationQrCheckInOut:
         tracking_id=invitation.tracking_id,
         status=invitation.status,
         check_in_status=invitation.check_in_status,
+        registration_type=invitation.registration_type,
+        source=invitation.source,
+        visitor_category_id=invitation.visitor_category_id,
         primary_contact_full_name=invitation.primary_contact_full_name,
         primary_contact_email=invitation.primary_contact_email,
         primary_contact_phone=invitation.primary_contact_phone,
@@ -285,11 +288,37 @@ def _to_qr_check_in_out(invitation) -> InvitationQrCheckInOut:
         host_name_or_email=invitation.host_name_or_email,
         purpose_of_visit=invitation.purpose_of_visit,
         department_to_visit=invitation.department_to_visit,
+        preferred_visit_date=invitation.preferred_visit_date,
+        preferred_visit_time=invitation.preferred_visit_time,
+        expected_duration=invitation.expected_duration,
+        additional_notes=invitation.additional_notes,
+        carried_items=invitation.carried_items,
+        carried_items_description=invitation.carried_items_description,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
         checked_in_at=invitation.checked_in_at,
         checked_out_at=invitation.checked_out_at,
         expires_at=invitation.expires_at,
+        visitors=[
+            InvitationVisitorOut(
+                id=v.id,
+                full_name=v.full_name,
+                email=v.email,
+                phone=v.phone,
+                id_proof_type=v.id_proof_type,
+            )
+            for v in invitation.visitors
+        ],
+        vehicles=[
+            InvitationVehicleOut(
+                id=v.id,
+                vehicle_type=v.vehicle_type,
+                license_plate=v.license_plate,
+                make_model=v.make_model,
+                color=v.color,
+            )
+            for v in invitation.vehicles
+        ],
     )
 
 
