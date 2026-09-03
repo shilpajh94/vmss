@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 interface AutocompleteOption {
   value: string
   label: string
+  id?: string
 }
 
 interface AutocompleteFieldProps {
@@ -10,6 +11,9 @@ interface AutocompleteFieldProps {
   value: string
   onChange: (value: string) => void
   onSearch: (query: string) => Promise<AutocompleteOption[]>
+  // Fired only when the user picks a suggestion (not on free-text typing) —
+  // use this to capture fields like `option.id` that free text can't provide.
+  onSelect?: (option: AutocompleteOption) => void
   placeholder?: string
   error?: string
   required?: boolean
@@ -26,6 +30,7 @@ export function AutocompleteField({
   value,
   onChange,
   onSearch,
+  onSelect,
   placeholder,
   error,
   required,
@@ -72,6 +77,7 @@ export function AutocompleteField({
   const handleSelect = (option: AutocompleteOption) => {
     setQuery(option.label)
     onChange(option.value)
+    onSelect?.(option)
     setIsOpen(false)
   }
 
