@@ -18,14 +18,14 @@ The system SHALL check for a staff auth token before rendering the Organisation 
 - **THEN** the system renders the Organisation Configs page
 
 ### Requirement: Admin sidebar renders all admin navigation sections with "Organisation Configs" active
-The system SHALL render, for an authenticated session, a sidebar with the brand mark and navigation items — Dashboard, Organisation Configs, Branches, Departments, Buildings, Floors, Reception Desks, Security Gates, Host Employees, Visitor Categories — with "Organisation Configs" shown as the active item.
+The system SHALL render, for an authenticated session, a sidebar with the brand mark and navigation items — Dashboard, Organisation Configs, Branches, Departments, Buildings, Floors, Reception Desks, Security Gates, Employees, Visitor Categories — with "Organisation Configs" shown as the active item.
 
 #### Scenario: Admin views the Organisation Configs page
 - **WHEN** an authenticated admin's Organisation Configs page finishes loading
 - **THEN** the sidebar shows all ten navigation items with "Organisation Configs" marked active
 
 ### Requirement: Only "Organisation Configs" sidebar navigation is functional
-The system SHALL render the other nine sidebar navigation items (Dashboard, Branches, Departments, Buildings, Floors, Reception Desks, Security Gates, Host Employees, Visitor Categories) per the design, but SHALL NOT navigate anywhere when any of them is activated.
+The system SHALL render the other nine sidebar navigation items (Dashboard, Branches, Departments, Buildings, Floors, Reception Desks, Security Gates, Employees, Visitor Categories) per the design, but SHALL NOT navigate anywhere when any of them is activated.
 
 #### Scenario: Inert nav item activated
 - **WHEN** an admin activates a sidebar navigation item other than "Organisation Configs"
@@ -38,12 +38,16 @@ The system SHALL display, in the top bar, the title "Organization Admin" with it
 - **WHEN** the Organisation Configs page loads and the current-staff-user request succeeds
 - **THEN** the top bar displays that staff member's name and role
 
-### Requirement: Top bar search and notification affordances are presented but not yet functional
-The system SHALL render the workspace search field and the notification indicator per the design, but SHALL NOT perform a search or show notifications when either is activated.
+### Requirement: Top bar notification affordance is presented but not yet functional
+The system SHALL render the notification indicator in the top bar per the design, but SHALL NOT show notifications when it is activated. The top bar SHALL NOT render a workspace search field.
 
-#### Scenario: Workspace search activated
-- **WHEN** an admin types into the workspace search field or activates the notification indicator
+#### Scenario: Notification indicator activated
+- **WHEN** an admin activates the notification indicator
 - **THEN** the visible page content does not change
+
+#### Scenario: No workspace search field rendered
+- **WHEN** the Organisation Configs page loads
+- **THEN** the top bar does not show a workspace search field
 
 ### Requirement: Filters affordance is presented but not yet functional
 The system SHALL display the "Filters" control per the design, but SHALL NOT apply any filtering when it is activated.
@@ -53,7 +57,7 @@ The system SHALL display the "Filters" control per the design, but SHALL NOT app
 - **THEN** the page content does not change
 
 ### Requirement: Organisation configuration loads on page entry
-The system SHALL, when the Organisation Configs page loads, fetch the current organisation configuration — organisation name, logo, default timezone, auto-approve setting, and pass badge expiry duration — and populate the form with the retrieved values.
+The system SHALL, when the Organisation Configs page loads, fetch the current organisation configuration — organisation name, logo, default timezone, and auto-approve setting — and populate the form with the retrieved values.
 
 #### Scenario: Configuration loads successfully
 - **WHEN** the Organisation Configs page loads and the fetch succeeds
@@ -92,16 +96,16 @@ The system SHALL let an admin upload a PNG or JPG organisation logo up to 5MB, S
 - **WHEN** an admin uploads a PNG or JPG file larger than 5MB
 - **THEN** the system shows an inline error and does not change the logo preview
 
-### Requirement: Visitor Policy & Security section captures auto-approve and badge expiry
-The system SHALL let an admin toggle "Auto-approve pre-registered visitors" on or off and choose the pass badge expiry duration from a list of available durations.
+### Requirement: Visitor Policy & Security section captures auto-approve setting
+The system SHALL let an admin toggle "Auto-approve pre-registered visitors" on or off. The system SHALL NOT display a pass badge expiry duration control in this section.
 
 #### Scenario: Admin toggles auto-approve
 - **WHEN** an admin activates the "Auto-approve pre-registered visitors" toggle
 - **THEN** the toggle reflects the new on/off state as unsaved
 
-#### Scenario: Admin changes badge expiry duration
-- **WHEN** an admin selects a different value from the "Pass Badge Expiry Duration" list
-- **THEN** the field reflects the newly selected duration as unsaved
+#### Scenario: No badge expiry control shown
+- **WHEN** the Organisation Configs page loads
+- **THEN** the Visitor Policy & Security section does not show a "Pass Badge Expiry Duration" field
 
 ### Requirement: Cancel Changes discards unsaved edits
 The system SHALL, when "Cancel Changes" is activated, revert every field to the organisation configuration last successfully loaded or saved, discarding any unsaved edits.
@@ -115,7 +119,7 @@ The system SHALL, when "Save Configs" is activated, submit the current form valu
 
 #### Scenario: Save succeeds
 - **WHEN** an admin activates "Save Configs" and the update succeeds
-- **THEN** the system persists the edited organisation name, logo, default timezone, auto-approve setting, and pass badge expiry duration, and triggers a success notification
+- **THEN** the system persists the edited organisation name, logo, default timezone, and auto-approve setting, and triggers a success notification
 
 ### Requirement: Save failure is reported without discarding the admin's edits
 The system SHALL, when saving the organisation configuration fails, trigger an error notification and SHALL leave the admin's edited field values in place.

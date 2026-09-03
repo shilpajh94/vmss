@@ -5,6 +5,7 @@ import { PlusIcon, SlidersIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { LoadingState } from '../../components/ui/LoadingState'
+import { SelectField } from '../../components/ui/SelectField'
 import { FloorsTable } from './Components/FloorsTable'
 import { useAdminFloors } from './hooks/use-admin-floors'
 
@@ -13,10 +14,22 @@ export function AdminFloorsPage() {
   const {
     currentUser,
     floors,
+    hasAnyFloors,
     departmentNamesByFloorId,
     isLoading,
     errorMessage,
     retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    buildingOptions,
+    buildingFilter,
+    setBuildingFilter,
+    accessLevelFilter,
+    setAccessLevelFilter,
+    statusFilter,
+    setStatusFilter,
+    clearFilters,
+    isFiltering,
     pendingDelete,
     isDeleting,
     requestDelete,
@@ -42,6 +55,7 @@ export function AdminFloorsPage() {
             <div className="flex items-center gap-3">
               <button
                 type="button"
+                onClick={toggleFilterPanel}
                 className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
               >
                 <SlidersIcon className="size-3.5" />
@@ -58,6 +72,44 @@ export function AdminFloorsPage() {
             </div>
           </div>
 
+          {isFilterPanelOpen && (
+            <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-4">
+              <div className="w-48">
+                <SelectField label="Building" value={buildingFilter} onChange={setBuildingFilter} placeholder="All" options={buildingOptions} />
+              </div>
+              <div className="w-48">
+                <SelectField
+                  label="Access Level"
+                  value={accessLevelFilter}
+                  onChange={setAccessLevelFilter}
+                  placeholder="All"
+                  options={[
+                    { value: 'public', label: 'Public' },
+                    { value: 'restricted', label: 'Restricted' },
+                    { value: 'secure', label: 'Secure' },
+                  ]}
+                />
+              </div>
+              <div className="w-48">
+                <SelectField
+                  label="Status"
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  placeholder="All"
+                  options={[
+                    { value: 'active', label: 'Active' },
+                    { value: 'inactive', label: 'Inactive' },
+                  ]}
+                />
+              </div>
+              {isFiltering && (
+                <button type="button" onClick={clearFilters} className="font-body text-[13px] font-semibold text-admin-accent">
+                  Clear filters
+                </button>
+              )}
+            </div>
+          )}
+
           {errorMessage ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
               <p className="font-body text-sm text-danger">{errorMessage}</p>
@@ -69,7 +121,11 @@ export function AdminFloorsPage() {
             <LoadingState label="Loading floors…" className="flex-1" />
           ) : floors.length === 0 ? (
             <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
-              <EmptyState message="No floors yet." action={{ label: 'Add Floor', onClick: goToAddFloor }} />
+              {hasAnyFloors ? (
+                <EmptyState message="No floors match these filters." />
+              ) : (
+                <EmptyState message="No floors yet." action={{ label: 'Add Floor', onClick: goToAddFloor }} />
+              )}
             </div>
           ) : (
             <FloorsTable floors={floors} departmentNamesByFloorId={departmentNamesByFloorId} onDelete={requestDelete} />

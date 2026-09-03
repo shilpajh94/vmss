@@ -3,7 +3,6 @@ import { LoadingState } from '../../components/ui/LoadingState'
 import { ActivityTable } from './Components/ActivityTable'
 import { AuditFilterBar } from './Components/AuditFilterBar'
 import { Pagination } from './Components/Pagination'
-import { SummaryStatCard } from './Components/SummaryStatCard'
 import { WorkspaceHeader } from './Components/WorkspaceHeader'
 import { useStaffAuditTrail } from './hooks/use-staff-audit-trail'
 import { PAGE_SIZE } from './types'
@@ -13,20 +12,20 @@ export function StaffAuditTrailPage() {
     currentUser,
     dateRange,
     activityType,
-    search,
     page,
     entries,
     total,
-    stats,
+    employeeNameById,
     isLoading,
     errorMessage,
     changeDateRange,
     changeActivityType,
-    changeSearch,
     goToNextPage,
     goToPrevPage,
     retry,
     signOut,
+    downloadingFormat,
+    downloadReport,
   } = useStaffAuditTrail()
 
   return (
@@ -48,22 +47,16 @@ export function StaffAuditTrailPage() {
             <LoadingState label="Loading audit trail…" className="flex-1" />
           ) : (
             <>
-              <div className="flex w-full items-start gap-4">
-                <SummaryStatCard label="Total Check-ins" value={stats?.totalCheckIns ?? 0} />
-                <SummaryStatCard label="Denied Entries" value={stats?.deniedEntries ?? 0} />
-                <SummaryStatCard label="Overstayed Visits" value={stats?.overstayedVisits ?? 0} />
-              </div>
-
               <AuditFilterBar
                 dateRange={dateRange}
                 onDateRangeChange={changeDateRange}
                 activityType={activityType}
                 onActivityTypeChange={changeActivityType}
-                search={search}
-                onSearchChange={changeSearch}
+                downloadingFormat={downloadingFormat}
+                onDownload={(format) => void downloadReport(format)}
               />
 
-              <ActivityTable entries={entries} />
+              <ActivityTable entries={entries} employeeNameById={employeeNameById} />
 
               <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
             </>

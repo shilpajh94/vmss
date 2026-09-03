@@ -28,6 +28,7 @@ export function useAdminBuildingForm() {
   const {
     getCurrentStaffUserUseCase,
     listBranchesUseCase,
+    listBuildingsUseCase,
     createBuildingUseCase,
     updateBuildingUseCase,
     listFloorsUseCase,
@@ -70,7 +71,20 @@ export function useAdminBuildingForm() {
       setDepartments(departmentList)
 
       if (isEditMode) {
-        const buildingFloors = await listFloorsUseCase.execute(id)
+        const [buildings, buildingFloors] = await Promise.all([listBuildingsUseCase.execute(), listFloorsUseCase.execute(id)])
+        const building = buildings.find((candidate) => candidate.id === id)
+        if (!building) {
+          setErrorMessage('That building could not be found.')
+          toast.error('That building could not be found.')
+          return
+        }
+        setDetails({
+          name: building.name,
+          branchId: building.branchId,
+          code: building.code,
+          address: building.address,
+          isActive: building.isActive,
+        })
         setFloors(buildingFloors)
       } else {
         setDetails(EMPTY_DETAILS)
@@ -82,7 +96,16 @@ export function useAdminBuildingForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listBranchesUseCase, listDepartmentsUseCase, listFloorsUseCase, isEditMode, id, toast])
+  }, [
+    getCurrentStaffUserUseCase,
+    listBranchesUseCase,
+    listBuildingsUseCase,
+    listDepartmentsUseCase,
+    listFloorsUseCase,
+    isEditMode,
+    id,
+    toast,
+  ])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {

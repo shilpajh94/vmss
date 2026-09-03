@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
@@ -19,6 +19,10 @@ export function useAdminDepartments() {
 
   const [pendingDelete, setPendingDelete] = useState<Department | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [branchFilter, setBranchFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
 
   const loadDepartments = useCallback(async () => {
     setIsLoading(true)
@@ -78,13 +82,46 @@ export function useAdminDepartments() {
     }
   }, [pendingDelete, deleteDepartmentUseCase, toast])
 
+  const branchOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const department of departments) {
+      if (!seen.has(department.branchId)) seen.set(department.branchId, department.branchName)
+    }
+    return [...seen.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))
+  }, [departments])
+
+  const filteredDepartments = useMemo(() => {
+    return departments.filter((department) => {
+      if (branchFilter && department.branchId !== branchFilter) return false
+      if (statusFilter && (statusFilter === 'active') !== department.isActive) return false
+      return true
+    })
+  }, [departments, branchFilter, statusFilter])
+
+  const isFiltering = branchFilter !== '' || statusFilter !== ''
+  const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+  const clearFilters = useCallback(() => {
+    setBranchFilter('')
+    setStatusFilter('')
+  }, [])
+
   return {
     currentUser,
-    departments,
+    departments: filteredDepartments,
+    hasAnyDepartments: departments.length > 0,
     employees,
     isLoading,
     errorMessage,
     retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    branchOptions,
+    branchFilter,
+    setBranchFilter,
+    statusFilter,
+    setStatusFilter,
+    clearFilters,
+    isFiltering,
     pendingDelete,
     isDeleting,
     requestDelete,

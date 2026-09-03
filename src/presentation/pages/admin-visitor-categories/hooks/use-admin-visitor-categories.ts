@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
@@ -17,6 +17,11 @@ export function useAdminVisitorCategories() {
 
   const [pendingDelete, setPendingDelete] = useState<VisitorCategory | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [badgeColorFilter, setBadgeColorFilter] = useState('')
+  const [ndaRequirementFilter, setNdaRequirementFilter] = useState('')
+  const [escortRequirementFilter, setEscortRequirementFilter] = useState('')
 
   const loadVisitorCategories = useCallback(async () => {
     setIsLoading(true)
@@ -47,6 +52,23 @@ export function useAdminVisitorCategories() {
     void loadVisitorCategories()
   }, [loadVisitorCategories])
 
+  const filteredVisitorCategories = useMemo(() => {
+    return visitorCategories.filter((category) => {
+      if (badgeColorFilter && category.badgeColor !== badgeColorFilter) return false
+      if (ndaRequirementFilter && category.ndaRequirement !== ndaRequirementFilter) return false
+      if (escortRequirementFilter && category.escortRequirement !== escortRequirementFilter) return false
+      return true
+    })
+  }, [visitorCategories, badgeColorFilter, ndaRequirementFilter, escortRequirementFilter])
+
+  const isFiltering = badgeColorFilter !== '' || ndaRequirementFilter !== '' || escortRequirementFilter !== ''
+  const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+  const clearFilters = useCallback(() => {
+    setBadgeColorFilter('')
+    setNdaRequirementFilter('')
+    setEscortRequirementFilter('')
+  }, [])
+
   const requestDelete = useCallback((visitorCategory: VisitorCategory) => {
     setPendingDelete(visitorCategory)
   }, [])
@@ -73,10 +95,21 @@ export function useAdminVisitorCategories() {
 
   return {
     currentUser,
-    visitorCategories,
+    visitorCategories: filteredVisitorCategories,
+    hasAnyVisitorCategories: visitorCategories.length > 0,
     isLoading,
     errorMessage,
     retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    badgeColorFilter,
+    setBadgeColorFilter,
+    ndaRequirementFilter,
+    setNdaRequirementFilter,
+    escortRequirementFilter,
+    setEscortRequirementFilter,
+    clearFilters,
+    isFiltering,
     pendingDelete,
     isDeleting,
     requestDelete,

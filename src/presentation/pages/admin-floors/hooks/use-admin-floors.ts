@@ -27,6 +27,11 @@ export function useAdminFloors() {
   const [pendingDelete, setPendingDelete] = useState<FloorRow | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
 
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [buildingFilter, setBuildingFilter] = useState('')
+  const [accessLevelFilter, setAccessLevelFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+
   const loadFloors = useCallback(async () => {
     setIsLoading(true)
     setErrorMessage(undefined)
@@ -81,6 +86,28 @@ export function useAdminFloors() {
     return map
   }, [departments])
 
+  const buildingOptions = useMemo(
+    () => buildings.map((building) => ({ value: building.id, label: building.name })).sort((a, b) => a.label.localeCompare(b.label)),
+    [buildings],
+  )
+
+  const filteredFloors = useMemo(() => {
+    return floors.filter((floor) => {
+      if (buildingFilter && floor.buildingId !== buildingFilter) return false
+      if (accessLevelFilter && floor.accessLevel !== accessLevelFilter) return false
+      if (statusFilter && (statusFilter === 'active') !== floor.isActive) return false
+      return true
+    })
+  }, [floors, buildingFilter, accessLevelFilter, statusFilter])
+
+  const isFiltering = buildingFilter !== '' || accessLevelFilter !== '' || statusFilter !== ''
+  const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+  const clearFilters = useCallback(() => {
+    setBuildingFilter('')
+    setAccessLevelFilter('')
+    setStatusFilter('')
+  }, [])
+
   const requestDelete = useCallback((floor: FloorRow) => setPendingDelete(floor), [])
   const cancelDelete = useCallback(() => setPendingDelete(undefined), [])
 
@@ -102,11 +129,23 @@ export function useAdminFloors() {
 
   return {
     currentUser,
-    floors,
+    floors: filteredFloors,
+    hasAnyFloors: floors.length > 0,
     departmentNamesByFloorId,
     isLoading,
     errorMessage,
     retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    buildingOptions,
+    buildingFilter,
+    setBuildingFilter,
+    accessLevelFilter,
+    setAccessLevelFilter,
+    statusFilter,
+    setStatusFilter,
+    clearFilters,
+    isFiltering,
     pendingDelete,
     isDeleting,
     requestDelete,

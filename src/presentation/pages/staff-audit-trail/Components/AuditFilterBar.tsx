@@ -1,31 +1,47 @@
-import { CalendarIcon, SearchGlyphIcon, SlidersIcon } from '../../../components/icons'
+import { CalendarIcon, SlidersIcon } from '../../../components/icons'
 import { ACTIVITY_TYPE_OPTIONS, DATE_RANGE_OPTIONS } from '../types'
 import { DropdownFilter } from './DropdownFilter'
+import type { AuditReportFormat } from '../../../../data/repositories/audit-trail-repository'
 
 interface AuditFilterBarProps {
   dateRange: string
   onDateRangeChange: (value: string) => void
   activityType: string
   onActivityTypeChange: (value: string) => void
-  search: string
-  onSearchChange: (value: string) => void
+  downloadingFormat: AuditReportFormat | undefined
+  onDownload: (format: AuditReportFormat) => void
 }
 
-export function AuditFilterBar({ dateRange, onDateRangeChange, activityType, onActivityTypeChange, search, onSearchChange }: AuditFilterBarProps) {
+export function AuditFilterBar({
+  dateRange,
+  onDateRangeChange,
+  activityType,
+  onActivityTypeChange,
+  downloadingFormat,
+  onDownload,
+}: AuditFilterBarProps) {
   return (
     <div className="flex w-full items-center gap-3 rounded-xl border border-border bg-surface p-4">
       <DropdownFilter icon={CalendarIcon} value={dateRange} options={DATE_RANGE_OPTIONS} onChange={onDateRangeChange} ariaLabel="Date range" />
       <DropdownFilter icon={SlidersIcon} value={activityType} options={ACTIVITY_TYPE_OPTIONS} onChange={onActivityTypeChange} ariaLabel="Activity type" />
 
-      <div className="flex flex-1 items-center gap-2 rounded-lg border border-[#cbd5e1] bg-surface px-3 py-2.5">
-        <SearchGlyphIcon className="size-4 shrink-0 text-text-faint" />
-        <input
-          type="text"
-          value={search}
-          onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="Search visitor name..."
-          className="flex-1 bg-transparent font-body text-[13px] text-text placeholder:text-text-faint focus:outline-none"
-        />
+      <div className="ml-auto flex items-center gap-2">
+        <button
+          type="button"
+          disabled={downloadingFormat !== undefined}
+          onClick={() => onDownload('csv')}
+          className="rounded-lg border border-border bg-surface px-3.5 py-2 font-body text-[13px] font-semibold text-text disabled:opacity-60"
+        >
+          {downloadingFormat === 'csv' ? 'Preparing…' : 'Download CSV'}
+        </button>
+        <button
+          type="button"
+          disabled={downloadingFormat !== undefined}
+          onClick={() => onDownload('pdf')}
+          className="rounded-lg border border-border bg-surface px-3.5 py-2 font-body text-[13px] font-semibold text-text disabled:opacity-60"
+        >
+          {downloadingFormat === 'pdf' ? 'Preparing…' : 'Download PDF'}
+        </button>
       </div>
     </div>
   )

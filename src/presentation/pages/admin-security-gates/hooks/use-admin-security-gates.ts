@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
@@ -17,6 +17,11 @@ export function useAdminSecurityGates() {
 
   const [pendingDelete, setPendingDelete] = useState<SecurityGate | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [buildingFilter, setBuildingFilter] = useState('')
+  const [gateTypeFilter, setGateTypeFilter] = useState('')
+  const [securityLevelFilter, setSecurityLevelFilter] = useState('')
 
   const loadSecurityGates = useCallback(async () => {
     setIsLoading(true)
@@ -47,6 +52,31 @@ export function useAdminSecurityGates() {
     void loadSecurityGates()
   }, [loadSecurityGates])
 
+  const buildingOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const gate of securityGates) {
+      if (!seen.has(gate.buildingId)) seen.set(gate.buildingId, gate.buildingName)
+    }
+    return [...seen.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))
+  }, [securityGates])
+
+  const filteredSecurityGates = useMemo(() => {
+    return securityGates.filter((gate) => {
+      if (buildingFilter && gate.buildingId !== buildingFilter) return false
+      if (gateTypeFilter && gate.gateType !== gateTypeFilter) return false
+      if (securityLevelFilter && (securityLevelFilter === 'high') !== gate.highSecurity) return false
+      return true
+    })
+  }, [securityGates, buildingFilter, gateTypeFilter, securityLevelFilter])
+
+  const isFiltering = buildingFilter !== '' || gateTypeFilter !== '' || securityLevelFilter !== ''
+  const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+  const clearFilters = useCallback(() => {
+    setBuildingFilter('')
+    setGateTypeFilter('')
+    setSecurityLevelFilter('')
+  }, [])
+
   const requestDelete = useCallback((securityGate: SecurityGate) => {
     setPendingDelete(securityGate)
   }, [])
@@ -73,10 +103,22 @@ export function useAdminSecurityGates() {
 
   return {
     currentUser,
-    securityGates,
+    securityGates: filteredSecurityGates,
+    hasAnySecurityGates: securityGates.length > 0,
     isLoading,
     errorMessage,
     retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    buildingOptions,
+    buildingFilter,
+    setBuildingFilter,
+    gateTypeFilter,
+    setGateTypeFilter,
+    securityLevelFilter,
+    setSecurityLevelFilter,
+    clearFilters,
+    isFiltering,
     pendingDelete,
     isDeleting,
     requestDelete,

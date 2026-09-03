@@ -1,14 +1,47 @@
 import type { AuditLogEntry } from '../../../../domain/entities/audit-log-entry-schema'
 import { EmptyState } from '../../../components/ui/EmptyState'
-import { StatusPill } from './StatusPill'
 
 interface ActivityTableProps {
   entries: AuditLogEntry[]
+  employeeNameById: Record<string, string>
 }
 
-const COLUMN_LABELS = ['Timestamp', 'Activity', 'Visitor', 'Description', 'Zone', 'Method', 'Status']
+const COLUMN_LABELS = ['Timestamp', 'Action', 'Actor', 'Entity Type']
 
-export function ActivityTable({ entries }: ActivityTableProps) {
+// Curated labels for the actions surfaced in the activity-type filter, plus a
+// few other common ones seen in real data — anything else falls back to a
+// generic snake_case -> Title Case conversion so unrecognized actions still
+// render legibly.
+const ACTION_LABELS: Record<string, string> = {
+  invitation_created: 'Invitation Created',
+  walk_in_registration_created: 'Walk-in Registered',
+  invitation_approved: 'Invitation Approved',
+  invitation_approval_step_approved: 'Approval Step Approved',
+  invitation_checked_in_public: 'Checked In',
+  invitation_rescheduled: 'Rescheduled',
+  login: 'Staff Login',
+  branch_role_assigned: 'Role Assigned',
+  employee_directory_synced: 'Employee Directory Synced',
+  role_permissions_resynced: 'Permissions Resynced',
+}
+
+function humanizeAction(action: string): string {
+  return (
+    ACTION_LABELS[action] ??
+    action
+      .split('_')
+      .map((word) => (word.length > 0 ? word[0].toUpperCase() + word.slice(1) : word))
+      .join(' ')
+  )
+}
+
+function formatTimestamp(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+export function ActivityTable({ entries, employeeNameById }: ActivityTableProps) {
   if (entries.length === 0) {
     return (
       <EmptyState
@@ -21,13 +54,10 @@ export function ActivityTable({ entries }: ActivityTableProps) {
   return (
     <div className="flex w-full flex-1 flex-col overflow-hidden rounded-xl border border-border bg-surface">
       <div className="flex w-full items-center gap-3 border-b border-border bg-border-subtle px-4 py-3">
-        <p className="w-[140px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[0]}</p>
-        <p className="w-[120px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[1]}</p>
-        <p className="w-[160px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[2]}</p>
-        <p className="min-w-0 flex-1 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[3]}</p>
-        <p className="w-[100px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[4]}</p>
-        <p className="w-[90px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[5]}</p>
-        <p className="w-[120px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[6]}</p>
+        <p className="w-[160px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[0]}</p>
+        <p className="w-[200px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[1]}</p>
+        <p className="min-w-0 flex-1 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[2]}</p>
+        <p className="w-[140px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[3]}</p>
       </div>
 
       {entries.map((entry, index) => (
@@ -35,15 +65,12 @@ export function ActivityTable({ entries }: ActivityTableProps) {
           key={entry.id}
           className={`flex w-full items-center gap-3 px-4 py-3 ${index < entries.length - 1 ? 'border-b border-border' : ''}`}
         >
-          <p className="w-[140px] shrink-0 font-body text-[13px] text-text">{entry.timestamp}</p>
-          <p className="w-[120px] shrink-0 font-body text-[13px] font-semibold text-text">{entry.activity}</p>
-          <p className="w-[160px] shrink-0 font-body text-[13px] text-text">{entry.visitorName}</p>
-          <p className="min-w-0 flex-1 truncate font-body text-[13px] text-text-muted">{entry.description}</p>
-          <p className="w-[100px] shrink-0 font-body text-[13px] text-text">{entry.zone}</p>
-          <p className="w-[90px] shrink-0 font-body text-[13px] text-text">{entry.method}</p>
-          <div className="flex w-[120px] shrink-0 items-center">
-            <StatusPill status={entry.status} />
-          </div>
+          <p className="w-[160px] shrink-0 font-body text-[13px] text-text">{formatTimestamp(entry.createdAt)}</p>
+          <p className="w-[200px] shrink-0 font-body text-[13px] font-semibold text-text">{humanizeAction(entry.action)}</p>
+          <p className="min-w-0 flex-1 truncate font-body text-[13px] text-text-muted">
+            {entry.actorUserId ? (employeeNameById[entry.actorUserId] ?? 'Unknown') : 'System'}
+          </p>
+          <p className="w-[140px] shrink-0 font-body text-[13px] text-text">{entry.entityType}</p>
         </div>
       ))}
     </div>

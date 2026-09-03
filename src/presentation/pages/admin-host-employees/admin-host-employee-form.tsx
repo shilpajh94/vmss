@@ -60,7 +60,7 @@ export function AdminHostEmployeeFormPage() {
                 <ChevronLeftIcon className="size-4" />
               </button>
               <div className="flex flex-col gap-0.5">
-                <h1 className="font-display text-2xl font-bold text-text">{isEditMode ? 'Manage Host Employee Access' : 'Add Host Employee'}</h1>
+                <h1 className="font-display text-2xl font-bold text-text">{isEditMode ? 'Manage Employee Access' : 'Add Employee'}</h1>
                 <p className="font-body text-sm text-text-muted">
                   {isEditMode
                     ? 'View and manage this employee’s role and branch assignments'
@@ -278,7 +278,7 @@ export function AdminHostEmployeeFormPage() {
                     disabled={isSaving}
                     className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-white disabled:opacity-50"
                   >
-                    {isSaving ? 'Saving…' : 'Save Host Employee'}
+                    {isSaving ? 'Saving…' : 'Save Employee'}
                   </button>
                 </div>
               </div>

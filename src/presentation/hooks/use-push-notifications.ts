@@ -7,8 +7,11 @@ import { useAppDependencies } from '../context/app-dependencies-context'
 // in a new tab/session rather than persisting across browser restarts.
 export const FCM_TOKEN_STORAGE_KEY = 'fcmToken'
 
-// Register/unregister are called explicitly from sign-in and sign-out call sites
-// (not run as a mount effect) so the device lifecycle stays easy to trace.
+// Register is also re-run on mount, on an interval, and on tab focus for an
+// already-signed-in device (see PushNotificationsProvider) so a rotated FCM
+// token gets re-registered without a full reload, since there is no persistent
+// onTokenRefresh-equivalent listener. Unregister is only called explicitly from
+// the sign-out call site.
 export function usePushNotifications() {
   const { registerDeviceUseCase, unregisterDeviceUseCase } = useAppDependencies()
 

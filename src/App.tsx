@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes } from 'react-router'
 import { AppDependenciesProvider } from './presentation/context/app-dependencies-context'
 import { ToastProvider } from './presentation/components/toast/toast-context'
 import { PushNotificationsProvider } from './presentation/components/push-notifications/PushNotificationsProvider'
+import { SessionExpiryListener } from './presentation/components/session/SessionExpiryListener'
 import { NotificationCenterProvider } from './presentation/context/notification-center-context'
 import { VisitorPortalLandingPage } from './presentation/pages/visitor-portal-landing/visitor-portal-landing'
 import { VisitorRequestPage } from './presentation/pages/visitor-request/visitor-request'
@@ -40,6 +41,7 @@ function RootLayout() {
     <ToastProvider>
       <AppDependenciesProvider>
         <NotificationCenterProvider>
+          <SessionExpiryListener />
           <PushNotificationsProvider>
             <Routes>
               <Route path="/" element={<VisitorPortalLandingPage />} />

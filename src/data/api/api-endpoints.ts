@@ -85,7 +85,22 @@ export const API_ENDPOINTS = {
     hasToken: true,
   },
   LIST_AUDIT_TRAIL: {
-    endpoint: "/staff/audit-trail",
+    endpoint: "/audit-trail",
+    method: "GET",
+    hasToken: true,
+  },
+  LIST_DASHBOARD_CHECKINS: {
+    endpoint: "/admin/dashboard/checkins",
+    method: "GET",
+    hasToken: true,
+  },
+  REQUEST_AUDIT_REPORT: {
+    endpoint: "/audit-trail/reports",
+    method: "POST",
+    hasToken: true,
+  },
+  GET_AUDIT_REPORT: {
+    endpoint: "/audit-trail/reports/:jobId",
     method: "GET",
     hasToken: true,
   },
@@ -188,11 +203,6 @@ export const API_ENDPOINTS = {
   GET_ADMIN_DASHBOARD_OVERVIEW: {
     endpoint: "/admin/dashboard/overview",
     method: "GET",
-    hasToken: true,
-  },
-  CHECK_IN_UPCOMING_VISITOR: {
-    endpoint: "/admin/dashboard/upcoming-visitors",
-    method: "PATCH",
     hasToken: true,
   },
   LIST_HOST_EMPLOYEES: {

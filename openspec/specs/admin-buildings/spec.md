@@ -119,11 +119,15 @@ The system SHALL, when creating a building fails, trigger an error notification 
 - **THEN** the system triggers an error notification and the admin remains on the page with the entered values retained
 
 ### Requirement: Editing a building opens the same page pre-filled with its current details
-The system SHALL, when a row's "Edit" action is activated, navigate to the Edit Building page pre-filled with that building's current name, branch, street address, status, floors, and each floor's checkpoints.
+The system SHALL, when a row's "Edit" action is activated, navigate to the Edit Building page, fetch that building's current details, and pre-fill the page with its name, branch, code, street address, status, floors, and each floor's checkpoints.
 
 #### Scenario: Edit opened
 - **WHEN** an admin activates a building row's "Edit" action
-- **THEN** the system navigates to the Edit Building page pre-filled with that building's current details, floors, and checkpoints
+- **THEN** the system navigates to the Edit Building page pre-filled with that building's current name, branch, code, street address, status, floors, and checkpoints
+
+#### Scenario: Building details cannot be found
+- **WHEN** the Edit Building page loads for a building id that cannot be found
+- **THEN** the system shows an error message on the page instead of rendering a blank or default-valued form
 
 ### Requirement: Submitting a valid building edit updates the list
 The system SHALL, when the Edit Building page is submitted with all required fields present, update the building, navigate back to the Buildings list, reflect the updated details in the table, and trigger a success notification.
@@ -161,9 +165,28 @@ The system SHALL, when the admin confirms deletion, delete the building, remove 
 - **WHEN** an admin confirms deletion of a building and the deletion fails
 - **THEN** the system triggers an error notification and the building remains in the table
 
-### Requirement: Filters affordance is presented but not yet functional
-The system SHALL display the "Filters" control per the design, but SHALL NOT apply any filtering when it is activated.
+### Requirement: Building list can be filtered by branch and status
+The system SHALL, when "Filters" is activated, show a filter panel offering Branch and Status fields (each defaulting to "All"), and SHALL narrow the visible buildings to those matching every selected filter as soon as a filter changes, without a separate confirm step. The system SHALL let an admin clear all active filters back to "All" in one action.
 
 #### Scenario: Filters activated
 - **WHEN** an admin activates "Filters"
-- **THEN** the visible buildings do not change
+- **THEN** the system shows the Branch and Status filter fields
+
+#### Scenario: Filter selected narrows the list
+- **WHEN** an admin selects a specific Branch or Status value
+- **THEN** the table immediately shows only buildings matching every currently selected filter
+
+#### Scenario: Multiple filters combine
+- **WHEN** an admin has selected values for both Branch and Status
+- **THEN** the table shows only buildings matching both selected filters at once
+
+#### Scenario: Filters cleared
+- **WHEN** an admin activates "Clear filters"
+- **THEN** every filter resets to "All" and the table shows the full building list again
+
+### Requirement: No filter matches shows a distinct empty state
+The system SHALL, when one or more filters are active and no building matches them, show a message indicating no buildings match the current filters, distinct from the message shown when the organisation has zero buildings at all.
+
+#### Scenario: No matches for active filters
+- **WHEN** one or more filters are active and no building matches them
+- **THEN** the system shows a "no buildings match these filters" message instead of the zero-buildings empty state

@@ -73,7 +73,7 @@ export function useAdminHostEmployeeForm() {
         const hostEmployees = await listHostEmployeesUseCase.execute()
         const found = hostEmployees.find((candidate) => candidate.id === id)
         if (!found) {
-          setErrorMessage('That host employee could not be found.')
+          setErrorMessage('That employee could not be found.')
           return
         }
         setEmployee(found)
@@ -132,10 +132,10 @@ export function useAdminHostEmployeeForm() {
         email: createValues.email.trim(),
         employeeCode: createValues.employeeCode.trim(),
       })
-      toast.success('Host employee created.')
+      toast.success('Employee created.')
       navigate('/admin/host-employees')
     } catch {
-      toast.error('Something went wrong creating the host employee. Please try again.')
+      toast.error('Something went wrong creating the employee. Please try again.')
     } finally {
       setIsSaving(false)
     }

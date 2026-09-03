@@ -32,11 +32,25 @@ interface MultipartRequestOptions<T> {
   parserSchema: ZodType<T>
 }
 
+export const SESSION_EXPIRED_EVENT = 'auth:session-expired'
+
 export class ApiClient {
   private readonly baseUrl: string
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
+  }
+
+  // A 401/403 means the stored token is dead — clear it and signal the app shell
+  // (via a plain browser event, since `data/` cannot import `presentation/`) so a
+  // single top-level listener can redirect to login, instead of letting the error
+  // body fail Zod parsing with an unrelated-looking validation error.
+  private handleAuthFailure(response: Response): void {
+    if (response.status !== 401 && response.status !== 403) return
+
+    sessionStorage.removeItem('token')
+    window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
+    throw new Error('Session expired')
   }
 
   // Exposed for adapters that need to build a full-page-navigation URL (e.g. an
@@ -85,6 +99,7 @@ export class ApiClient {
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
+    this.handleAuthFailure(response)
 
     if (response.status === 204) {
       return parserSchema.parse(undefined)
@@ -115,6 +130,7 @@ export class ApiClient {
       headers,
       body: formData,
     })
+    this.handleAuthFailure(response)
 
     return parserSchema.parse(await response.json())
   }
@@ -140,6 +156,7 @@ export class ApiClient {
       headers,
       body: formData,
     })
+    this.handleAuthFailure(response)
 
     return parserSchema.parse(await response.json())
   }

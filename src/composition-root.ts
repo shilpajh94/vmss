@@ -23,6 +23,8 @@ import type { NotificationRepository } from './data/repositories/notification-re
 import { SubmitVisitRequestUseCase } from './data/use-cases/submit-visit-request'
 import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-visit-request'
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
+import { RequestAuditReportUseCase } from './data/use-cases/request-audit-report'
+import { GetAuditReportUseCase } from './data/use-cases/get-audit-report'
 import { TrackVisitRequestUseCase } from './data/use-cases/track-visit-request'
 import { RequestVisitorOtpUseCase } from './data/use-cases/request-visitor-otp'
 import { VerifyVisitorOtpUseCase } from './data/use-cases/verify-visitor-otp'
@@ -57,7 +59,7 @@ import { CreateFloorUseCase } from './data/use-cases/create-floor'
 import { UpdateFloorUseCase } from './data/use-cases/update-floor'
 import { DeleteFloorUseCase } from './data/use-cases/delete-floor'
 import { GetDashboardOverviewUseCase } from './data/use-cases/get-dashboard-overview'
-import { CheckInUpcomingVisitorUseCase } from './data/use-cases/check-in-upcoming-visitor'
+import { ListRecentCheckinsUseCase } from './data/use-cases/list-recent-checkins'
 import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
 import { ListEmployeeDirectoryUseCase } from './data/use-cases/list-employee-directory'
 import { CreateHostEmployeeUseCase } from './data/use-cases/create-host-employee'
@@ -126,6 +128,8 @@ export interface AppDependencies {
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
   getAuditTrailUseCase: GetAuditTrailUseCase
+  requestAuditReportUseCase: RequestAuditReportUseCase
+  getAuditReportUseCase: GetAuditReportUseCase
   getOrganisationConfigUseCase: GetOrganisationConfigUseCase
   updateOrganisationConfigUseCase: UpdateOrganisationConfigUseCase
   listBranchesUseCase: ListBranchesUseCase
@@ -145,7 +149,7 @@ export interface AppDependencies {
   updateFloorUseCase: UpdateFloorUseCase
   deleteFloorUseCase: DeleteFloorUseCase
   getDashboardOverviewUseCase: GetDashboardOverviewUseCase
-  checkInUpcomingVisitorUseCase: CheckInUpcomingVisitorUseCase
+  listRecentCheckinsUseCase: ListRecentCheckinsUseCase
   listHostEmployeesUseCase: ListHostEmployeesUseCase
   listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase
   createHostEmployeeUseCase: CreateHostEmployeeUseCase
@@ -202,6 +206,8 @@ export function createApp(): AppDependencies {
   let submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase | undefined
   let auditTrailRepository: AuditTrailRepository | undefined
   let getAuditTrailUseCase: GetAuditTrailUseCase | undefined
+  let requestAuditReportUseCase: RequestAuditReportUseCase | undefined
+  let getAuditReportUseCase: GetAuditReportUseCase | undefined
   let organisationConfigRepository: OrganisationConfigRepository | undefined
   let getOrganisationConfigUseCase: GetOrganisationConfigUseCase | undefined
   let updateOrganisationConfigUseCase: UpdateOrganisationConfigUseCase | undefined
@@ -227,7 +233,7 @@ export function createApp(): AppDependencies {
   let deleteFloorUseCase: DeleteFloorUseCase | undefined
   let dashboardRepository: DashboardRepository | undefined
   let getDashboardOverviewUseCase: GetDashboardOverviewUseCase | undefined
-  let checkInUpcomingVisitorUseCase: CheckInUpcomingVisitorUseCase | undefined
+  let listRecentCheckinsUseCase: ListRecentCheckinsUseCase | undefined
   let hostEmployeeRepository: HostEmployeeRepository | undefined
   let listHostEmployeesUseCase: ListHostEmployeesUseCase | undefined
   let employeeDirectoryRepository: EmployeeDirectoryRepository | undefined
@@ -397,6 +403,16 @@ export function createApp(): AppDependencies {
     return getAuditTrailUseCase
   }
 
+  const resolveRequestAuditReportUseCase = (): RequestAuditReportUseCase => {
+    requestAuditReportUseCase ??= new RequestAuditReportUseCase(resolveAuditTrailRepository())
+    return requestAuditReportUseCase
+  }
+
+  const resolveGetAuditReportUseCase = (): GetAuditReportUseCase => {
+    getAuditReportUseCase ??= new GetAuditReportUseCase(resolveAuditTrailRepository())
+    return getAuditReportUseCase
+  }
+
   const resolveOrganisationConfigRepository = (): OrganisationConfigRepository => {
     organisationConfigRepository ??= new HttpOrganisationConfigRepository(resolveApiClient())
     return organisationConfigRepository
@@ -523,9 +539,9 @@ export function createApp(): AppDependencies {
     return getDashboardOverviewUseCase
   }
 
-  const resolveCheckInUpcomingVisitorUseCase = (): CheckInUpcomingVisitorUseCase => {
-    checkInUpcomingVisitorUseCase ??= new CheckInUpcomingVisitorUseCase(resolveDashboardRepository())
-    return checkInUpcomingVisitorUseCase
+  const resolveListRecentCheckinsUseCase = (): ListRecentCheckinsUseCase => {
+    listRecentCheckinsUseCase ??= new ListRecentCheckinsUseCase(resolveDashboardRepository())
+    return listRecentCheckinsUseCase
   }
 
   const resolveHostEmployeeRepository = (): HostEmployeeRepository => {
@@ -756,6 +772,12 @@ export function createApp(): AppDependencies {
     get getAuditTrailUseCase() {
       return resolveGetAuditTrailUseCase()
     },
+    get requestAuditReportUseCase() {
+      return resolveRequestAuditReportUseCase()
+    },
+    get getAuditReportUseCase() {
+      return resolveGetAuditReportUseCase()
+    },
     get getOrganisationConfigUseCase() {
       return resolveGetOrganisationConfigUseCase()
     },
@@ -813,8 +835,8 @@ export function createApp(): AppDependencies {
     get getDashboardOverviewUseCase() {
       return resolveGetDashboardOverviewUseCase()
     },
-    get checkInUpcomingVisitorUseCase() {
-      return resolveCheckInUpcomingVisitorUseCase()
+    get listRecentCheckinsUseCase() {
+      return resolveListRecentCheckinsUseCase()
     },
     get listHostEmployeesUseCase() {
       return resolveListHostEmployeesUseCase()

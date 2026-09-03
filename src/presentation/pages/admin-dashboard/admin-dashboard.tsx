@@ -1,12 +1,9 @@
-import { useNavigate } from 'react-router'
 import { AdminSidebar } from '../../components/AdminSidebar'
 import { AdminTopBar } from '../../components/AdminTopBar'
 import { CalendarIcon } from '../../components/icons'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { KpiRow } from './Components/KpiRow'
-import { VisitorTrafficChart } from './Components/VisitorTrafficChart'
 import { RecentCheckinsCard } from './Components/RecentCheckinsCard'
-import { DepartmentBreakdownCard } from './Components/DepartmentBreakdownCard'
 import { UpcomingVisitorsCard } from './Components/UpcomingVisitorsCard'
 import { useAdminDashboard } from './hooks/use-admin-dashboard'
 
@@ -19,13 +16,10 @@ function greetingForHour(hour: number): string {
 const TODAY_LABEL = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }).format(new Date())
 
 export function AdminDashboardPage() {
-  const navigate = useNavigate()
-  const { currentUser, overview, isLoading, errorMessage, retry, checkingInIds, checkInVisitor } = useAdminDashboard()
+  const { currentUser, overview, kpis, recentCheckins, employeeNameById, isLoading, errorMessage, retry } = useAdminDashboard()
 
   const firstName = currentUser?.name.split(' ')[0] ?? ''
   const greeting = greetingForHour(new Date().getHours())
-
-  const goToPreRegister = () => navigate('/staff/visitors/new')
 
   return (
     <div className="flex min-h-screen w-full items-stretch bg-bg">
@@ -59,27 +53,11 @@ export function AdminDashboardPage() {
                 </div>
               </div>
 
-              <KpiRow kpis={overview.kpis} />
+              <KpiRow kpis={kpis} />
 
-              <div className="flex w-full flex-col gap-5 rounded-2xl border border-border bg-surface p-6">
-                <div className="flex flex-col gap-0.5">
-                  <h2 className="font-display text-lg font-bold text-text">Visitor Traffic</h2>
-                  <p className="font-body text-sm text-text-faint">Overall counts and check-in volumes for the past 7 days</p>
-                </div>
-                <VisitorTrafficChart points={overview.trafficSeries} />
-              </div>
+              <RecentCheckinsCard checkins={recentCheckins} employeeNameById={employeeNameById} />
 
-              <div className="flex w-full flex-col gap-6 lg:flex-row">
-                <RecentCheckinsCard checkins={overview.recentCheckins} />
-                <DepartmentBreakdownCard departments={overview.departmentBreakdown} activeDepartmentCount={overview.activeDepartmentCount} />
-              </div>
-
-              <UpcomingVisitorsCard
-                visitors={overview.upcomingVisitors}
-                checkingInIds={checkingInIds}
-                onCheckIn={(id) => void checkInVisitor(id)}
-                onPreRegister={goToPreRegister}
-              />
+              <UpcomingVisitorsCard visitors={overview.upcomingVisitors} employeeNameById={employeeNameById} />
             </>
           )}
         </main>
