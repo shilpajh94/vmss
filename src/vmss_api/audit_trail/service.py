@@ -10,7 +10,8 @@ from vmss_api.audit_trail.repository import AuditLogRepository, AuditReportJobRe
 from vmss_api.audit_trail.schemas import AuditReportJobOut
 from vmss_api.auth.models import AuditLog
 from vmss_api.core.schemas import SortOrder
-from vmss_api.core.storage import url_for as storage_url_for
+from vmss_api.core.storage import content_type_for as storage_content_type_for
+from vmss_api.core.storage import load as storage_load
 
 
 class ReportJobNotFoundError(Exception):
@@ -20,6 +21,14 @@ class ReportJobNotFoundError(Exception):
     resolvable against this session's schema, never a leak
     (specs/audit-trail/spec.md "Report from another tenant is not
     downloadable").
+    """
+
+
+class ReportFileNotAvailableError(Exception):
+    """Raised when the requested format's file isn't ready yet — the job
+    hasn't reached `ready`, or it reached `ready` without ever generating
+    that particular format (a `formats=["csv"]` request has no PDF to
+    download).
     """
 
 
@@ -109,9 +118,21 @@ async def get_report_job(tenant_db: AsyncSession, id_: uuid.UUID) -> AuditReport
     return await to_report_job_out(job)
 
 
+def _download_url(job_id: uuid.UUID, key: str | None, fmt: str) -> str | None:
+    """The report-download endpoint's own URL, not a direct storage
+    reference — `core/storage.py::url_for`'s `local` variant is a bare
+    filesystem path with no HTTP route serving it, so the client fetches the
+    file through this API instead (permission- and tenant-scoped, and
+    time-boxed by the caller's access token, matching
+    specs/audit-trail/spec.md's "time-boxed download reference tied to the
+    report job" requirement) rather than a storage backend URL directly.
+    """
+    if key is None:
+        return None
+    return f"/api/v1/audit-trail/reports/{job_id}/download?format={fmt}"
+
+
 async def to_report_job_out(job: AuditReportJob) -> AuditReportJobOut:
-    csv_url = await storage_url_for(job.csv_storage_key) if job.csv_storage_key else None
-    pdf_url = await storage_url_for(job.pdf_storage_key) if job.pdf_storage_key else None
     return AuditReportJobOut(
         id=job.id,
         status=job.status,
@@ -119,6 +140,26 @@ async def to_report_job_out(job: AuditReportJob) -> AuditReportJobOut:
         requested_at=job.created_at,
         completed_at=job.completed_at,
         error_message=job.error_message,
-        csv_download_url=csv_url,
-        pdf_download_url=pdf_url,
+        csv_download_url=_download_url(job.id, job.csv_storage_key, "csv"),
+        pdf_download_url=_download_url(job.id, job.pdf_storage_key, "pdf"),
     )
+
+
+async def get_report_file(
+    tenant_db: AsyncSession, id_: uuid.UUID, fmt: str
+) -> tuple[bytes, str, str]:
+    """Returns `(content, content_type, filename)` for a ready report job's
+    generated file in the requested format. Raises `ReportJobNotFoundError`
+    if the job id doesn't resolve in this tenant's schema, or
+    `ReportFileNotAvailableError` if it isn't `ready` yet or that format was
+    never generated for it.
+    """
+    job = await AuditReportJobRepository(tenant_db).get(id_)
+    if job is None:
+        raise ReportJobNotFoundError
+    key = job.csv_storage_key if fmt == "csv" else job.pdf_storage_key
+    if job.status != "ready" or key is None:
+        raise ReportFileNotAvailableError
+    content = await storage_load(key)
+    content_type = storage_content_type_for(key)
+    return content, content_type, f"audit-report-{job.id}.{fmt}"

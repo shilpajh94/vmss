@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Query, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.audit_trail import service
@@ -25,8 +25,9 @@ from vmss_api.audit_trail.schemas import (
     AuditLogSortableField,
     AuditReportJobOut,
     AuditReportRequest,
+    ReportFormat,
 )
-from vmss_api.audit_trail.service import ReportJobNotFoundError
+from vmss_api.audit_trail.service import ReportFileNotAvailableError, ReportJobNotFoundError
 from vmss_api.auth.models import User
 from vmss_api.core.deps import get_pagination, get_tenant, get_tenant_db, require_permission
 from vmss_api.core.logging import logger
@@ -172,13 +173,37 @@ async def get_audit_report(
         job_out = await service.get_report_job(tenant_db, job_id)
     except ReportJobNotFoundError:
         return error_response(message="Report job not found", status_code=status.HTTP_404_NOT_FOUND)
-    if job_out.status == "ready":
-        # The closest observable "download" event from the API's own side —
-        # the actual file bytes are fetched directly from the storage
-        # backend via the presigned/local URL this response hands back, not
-        # through this API (design.md Decision 2).
-        logger.info("audit_report_download_url_issued", job_id=str(job_id))
     return success_response(data=job_out)
+
+
+@router.get(
+    "/reports/{job_id}/download",
+    dependencies=[Depends(require_permission("audit-logs:export"))],
+)
+async def download_audit_report(
+    job_id: uuid.UUID,
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    fmt: Annotated[ReportFormat, Query(alias="format")],
+) -> Response:
+    """Streams a `ready` report job's generated file. Not JSON, so it's the
+    documented exception to `fastapi-architecture.md` §5's
+    `success_response`/`error_response` rule (a raw file response) — error
+    cases below still use `error_response` since those *are* JSON.
+    """
+    try:
+        content, content_type, filename = await service.get_report_file(tenant_db, job_id, fmt)
+    except ReportJobNotFoundError:
+        return error_response(message="Report job not found", status_code=status.HTTP_404_NOT_FOUND)
+    except ReportFileNotAvailableError:
+        return error_response(
+            message="Report file is not available", status_code=status.HTTP_404_NOT_FOUND
+        )
+    logger.info("audit_report_downloaded", job_id=str(job_id), format=fmt)
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get(
