@@ -15,9 +15,22 @@ interface SelectFieldProps {
   required?: boolean
   disabled?: boolean
   labelClassName?: string
+  /** Set when the placeholder itself is a valid, reselectable choice (e.g. "All branches"), not just a prompt. */
+  placeholderSelectable?: boolean
 }
 
-export function SelectField({ label, value, onChange, options, placeholder, error, required, disabled, labelClassName }: SelectFieldProps) {
+export function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder,
+  error,
+  required,
+  disabled,
+  labelClassName,
+  placeholderSelectable,
+}: SelectFieldProps) {
   const selectId = useId()
 
   return (
@@ -36,7 +49,7 @@ export function SelectField({ label, value, onChange, options, placeholder, erro
           error ? 'border-danger' : 'border-border'
         }`}
       >
-        <option value="" disabled>
+        <option value="" disabled={!placeholderSelectable}>
           {placeholder ?? 'Select'}
         </option>
         {options.map((option) => (

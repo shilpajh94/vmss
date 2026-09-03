@@ -110,6 +110,14 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     setCurrentStep((step) => Math.max(step - 1, 0))
   }
 
+  // Jumping to an already-completed step (e.g. via the sidebar) never needs
+  // re-validation — only forward movement via goNext does.
+  const goToStep = (step: number) => {
+    if (step >= currentStep) return
+    setErrors({})
+    setCurrentStep(step)
+  }
+
   const submit = async () => {
     const primaryContactIdProofFile = formState.primaryContact.idProofFileRef
       ? fileRegistry.current.get(formState.primaryContact.idProofFileRef)
@@ -146,6 +154,7 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     errors,
     goNext,
     goBack,
+    goToStep,
     uploadFile,
     submissionStatus,
     trackingId,

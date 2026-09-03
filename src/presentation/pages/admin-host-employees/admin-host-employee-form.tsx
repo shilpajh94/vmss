@@ -159,6 +159,7 @@ export function AdminHostEmployeeFormPage() {
                         onChange={setAssignBranchId}
                         options={branchOptions}
                         placeholder="All branches"
+                        placeholderSelectable
                         labelClassName={fieldLabelClassName}
                       />
                     </div>
@@ -262,6 +263,7 @@ export function AdminHostEmployeeFormPage() {
                         onChange={(branchId) => updateCreateField('branchId', branchId || undefined)}
                         options={branchOptions}
                         placeholder="All branches"
+                        placeholderSelectable
                         labelClassName={fieldLabelClassName}
                       />
                     </div>
