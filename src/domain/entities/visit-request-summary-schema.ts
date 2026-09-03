@@ -12,6 +12,8 @@ export const VisitRequestSummarySchema = z.object({
   submittedAt: z.string().min(1),
   approvedAt: z.string().nullable(),
   expiresAt: z.string().min(1),
+  preferredVisitDate: z.string().nullish(),
+  preferredVisitTime: z.string().nullish(),
 })
 
 export type VisitRequestSummary = z.infer<typeof VisitRequestSummarySchema>

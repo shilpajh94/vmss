@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
-import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
 import { VisitRequestCard } from './VisitRequestCard'
 import { UserIcon } from '../icons'
 import { EmptyState } from '../ui/EmptyState'
@@ -31,11 +30,8 @@ interface KanbanColumnProps {
   loadingDetailId?: string
   roleNameById?: Record<string, string>
   employeeNameById?: Record<string, string>
-  onReschedule?: (id: string, preferredVisitDate: string, preferredVisitTime: string) => void
-  reschedulingId?: string
-  hostEmployees?: HostEmployee[]
-  onDelegate?: (id: string, delegateUserId: string) => void
-  delegatingId?: string
+  onRescheduleClick?: (id: string) => void
+  onDelegateClick?: (id: string) => void
 }
 
 export function KanbanColumn({
@@ -51,11 +47,8 @@ export function KanbanColumn({
   loadingDetailId,
   roleNameById,
   employeeNameById,
-  onReschedule,
-  reschedulingId,
-  hostEmployees,
-  onDelegate,
-  delegatingId,
+  onRescheduleClick,
+  onDelegateClick,
 }: KanbanColumnProps) {
   const accent = ACCENT_CLASSES[status]
   const [isDragOver, setIsDragOver] = useState(false)
@@ -112,11 +105,8 @@ export function KanbanColumn({
               isLoadingDetail={loadingDetailId === request.id}
               roleNameById={roleNameById}
               employeeNameById={employeeNameById}
-              onReschedule={onReschedule}
-              isRescheduling={reschedulingId === request.id}
-              hostEmployees={hostEmployees}
-              onDelegate={onDelegate}
-              isDelegating={delegatingId === request.id}
+              onRescheduleClick={onRescheduleClick}
+              onDelegateClick={onDelegateClick}
             />
           ))}
         </div>

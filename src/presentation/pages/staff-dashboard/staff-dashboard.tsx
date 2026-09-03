@@ -2,6 +2,8 @@ import { DashboardSidebar } from '../../components/DashboardSidebar'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
+import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
+import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
 import { SearchActionBar } from './Components/SearchActionBar'
 import { WorkspaceHeader } from './Components/WorkspaceHeader'
 import { useStaffDashboard } from './hooks/use-staff-dashboard'
@@ -41,6 +43,13 @@ export function StaffDashboardPage() {
     cancelDeny,
     confirmDeny,
     denyingId,
+    pendingRescheduleId,
+    requestReschedule,
+    cancelReschedule,
+    pendingDelegateId,
+    requestDelegate,
+    cancelDelegate,
+    pendingDelegateDetail,
   } = useStaffDashboard()
 
   return (
@@ -77,11 +86,8 @@ export function StaffDashboardPage() {
                 loadingDetailId={loadingDetailId}
                 roleNameById={roleNameById}
                 employeeNameById={employeeNameById}
-                onReschedule={reschedule}
-                reschedulingId={reschedulingId}
-                hostEmployees={hostEmployees}
-                onDelegate={delegate}
-                delegatingId={delegatingId}
+                onRescheduleClick={requestReschedule}
+                onDelegateClick={requestDelegate}
               />
             ))}
           </div>
@@ -89,6 +95,25 @@ export function StaffDashboardPage() {
       </main>
 
       <DenyInvitationModal isOpen={pendingDenyId !== undefined} isDenying={denyingId !== undefined} onConfirm={confirmDeny} onCancel={cancelDeny} />
+
+      <RescheduleInvitationModal
+        isOpen={pendingRescheduleId !== undefined}
+        isRescheduling={reschedulingId !== undefined}
+        onConfirm={(preferredVisitDate, preferredVisitTime) =>
+          pendingRescheduleId && reschedule(pendingRescheduleId, preferredVisitDate, preferredVisitTime)
+        }
+        onCancel={cancelReschedule}
+      />
+
+      <DelegateInvitationModal
+        isOpen={pendingDelegateId !== undefined}
+        isDelegating={delegatingId !== undefined}
+        approverRoleId={pendingDelegateDetail?.currentApprovalStep?.approverRoleId}
+        roleNameById={roleNameById}
+        hostEmployees={hostEmployees}
+        onConfirm={(delegateUserId) => pendingDelegateId && delegate(pendingDelegateId, delegateUserId)}
+        onCancel={cancelDelegate}
+      />
     </div>
   )
 }
