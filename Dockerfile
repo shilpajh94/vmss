@@ -1,4 +1,3 @@
-# ─── Stage 1: Builder ────────────────────────────────────────────────────────
 FROM pitsdevops.azurecr.io/pits-linux-base AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -22,7 +21,6 @@ COPY src/ ./src/
 RUN uv sync --frozen --no-dev --no-editable
 
 
-# ─── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM pitsdevops.azurecr.io/pits-linux-base AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -32,11 +30,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Python + virtual environment
 COPY --from=builder /opt/python /opt/python
 COPY --from=builder /app/.venv /app/.venv
 
-# Application
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./alembic.ini
@@ -44,13 +40,13 @@ COPY alembic_tenant/ ./alembic_tenant/
 COPY alembic_tenant.ini ./alembic_tenant.ini
 COPY scripts/ ./scripts/
 
-# Firebase credential is kept inside the image outside the PVC mount.
-# The entrypoint will copy it to /var/storage after Kubernetes mounts the PVC.
 COPY .secrets/firebase-adminsdk.json /app/.secrets/firebase-adminsdk.json
 
-# Entrypoint
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh 
+COPY entrypoint.sh /entrypoint.sh
+
+# Remove Windows CRLF if present and make executable
+RUN sed -i 's/\r$//' /entrypoint.sh \
+    && chmod 755 /entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
@@ -58,6 +54,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 EXPOSE 8000
 
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
 
 CMD ["uvicorn", "vmss_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
