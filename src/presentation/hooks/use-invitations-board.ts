@@ -81,6 +81,8 @@ export function useInvitationsBoard(loginRedirectPath: string) {
   const [delegatingId, setDelegatingId] = useState<string | undefined>(undefined)
   const [pendingDenyId, setPendingDenyId] = useState<string | undefined>(undefined)
   const [denyingId, setDenyingId] = useState<string | undefined>(undefined)
+  const [pendingRescheduleId, setPendingRescheduleId] = useState<string | undefined>(undefined)
+  const [pendingDelegateId, setPendingDelegateId] = useState<string | undefined>(undefined)
 
   const loadDashboard = useCallback(async () => {
     setIsLoading(true)
@@ -239,6 +241,7 @@ export function useInvitationsBoard(loginRedirectPath: string) {
 
       try {
         await rescheduleInvitationUseCase.execute(id, preferredVisitDate, preferredVisitTime)
+        setPendingRescheduleId(undefined)
         toast.success('Visit request rescheduled.')
         await loadDashboard()
       } catch (error) {
@@ -250,6 +253,14 @@ export function useInvitationsBoard(loginRedirectPath: string) {
     },
     [rescheduleInvitationUseCase, loadDashboard, toast],
   )
+
+  const requestReschedule = useCallback((id: string) => {
+    setPendingRescheduleId(id)
+  }, [])
+
+  const cancelReschedule = useCallback(() => {
+    setPendingRescheduleId(undefined)
+  }, [])
 
   // Reassigns the current pending approval step to a different person — the
   // delegate target is always a specific host/employee, whether picked
@@ -267,6 +278,7 @@ export function useInvitationsBoard(loginRedirectPath: string) {
         await delegateInvitationStepUseCase.execute(id, detail.currentApprovalStep.id, delegateUserId)
         const updatedDetail = await getInvitationDetailUseCase.execute(id)
         setInvitationDetails((previous) => ({ ...previous, [id]: updatedDetail }))
+        setPendingDelegateId(undefined)
 
         const approverLabel = employeeNameById[delegateUserId] ?? 'the selected host'
         toast.success(`Delegated level ${detail.currentApprovalStep.stepOrder} of ${detail.currentApprovalStep.totalSteps} to ${approverLabel}.`)
@@ -281,6 +293,16 @@ export function useInvitationsBoard(loginRedirectPath: string) {
     },
     [delegateInvitationStepUseCase, getInvitationDetailUseCase, loadDashboard, loadDetail, employeeNameById, toast],
   )
+
+  const requestDelegate = useCallback((id: string) => {
+    setPendingDelegateId(id)
+  }, [])
+
+  const cancelDelegate = useCallback(() => {
+    setPendingDelegateId(undefined)
+  }, [])
+
+  const pendingDelegateDetail = pendingDelegateId ? invitationDetails[pendingDelegateId] : undefined
 
   const requestDeny = useCallback((id: string) => {
     setPendingDenyId(id)
@@ -369,5 +391,12 @@ export function useInvitationsBoard(loginRedirectPath: string) {
     cancelDeny,
     confirmDeny,
     denyingId,
+    pendingRescheduleId,
+    requestReschedule,
+    cancelReschedule,
+    pendingDelegateId,
+    requestDelegate,
+    cancelDelegate,
+    pendingDelegateDetail,
   }
 }

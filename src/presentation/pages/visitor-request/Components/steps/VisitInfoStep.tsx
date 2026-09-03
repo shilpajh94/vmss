@@ -1,18 +1,12 @@
+import { AutocompleteField } from '../../../../components/ui/AutocompleteField'
 import { SelectField } from '../../../../components/ui/SelectField'
 import { TextField } from '../../../../components/ui/TextField'
 import { TextareaField } from '../../../../components/ui/TextareaField'
 import type { Branch } from '../../../../../domain/entities/branch-schema'
 import type { Building } from '../../../../../domain/entities/building-schema'
 import type { Department } from '../../../../../domain/entities/department-schema'
+import type { HostSearchResult } from '../../../../../domain/entities/host-search-schema'
 import type { VisitInfoFormState } from '../../types'
-
-// Accepts either the staff-only HostEmployee (with email) or the public,
-// PII-trimmed EmployeeDirectoryEntry (fullName only) — whichever master-data
-// source the caller has access to.
-interface HostOption {
-  fullName: string
-  email?: string
-}
 
 const PURPOSE_OPTIONS = [
   { value: 'business-meeting', label: 'Business Meeting' },
@@ -36,13 +30,21 @@ interface VisitInfoStepProps {
   value: VisitInfoFormState
   onChange: (value: VisitInfoFormState) => void
   errors: Record<string, string>
-  hostEmployees?: HostOption[]
+  onSearchHosts: (query: string) => Promise<HostSearchResult[]>
   branches?: Branch[]
   buildings?: Building[]
   departments?: Department[]
 }
 
-export function VisitInfoStep({ value, onChange, errors, hostEmployees, branches, buildings, departments }: VisitInfoStepProps) {
+export function VisitInfoStep({ value, onChange, errors, onSearchHosts, branches, buildings, departments }: VisitInfoStepProps) {
+  const handleHostSearch = async (query: string) => {
+    const results = await onSearchHosts(query)
+    return results.map((host) => ({
+      value: host.email,
+      label: host.department ? `${host.name} (${host.email}) — ${host.department}` : `${host.name} (${host.email})`,
+    }))
+  }
+
   const selectedBranch = branches?.find((branch) => branch.name === value.location)
   const buildingOptions = (selectedBranch ? buildings?.filter((building) => building.branchId === selectedBranch.id) : buildings)?.map(
     (building) => ({ value: building.name, label: building.name }),
@@ -68,29 +70,15 @@ export function VisitInfoStep({ value, onChange, errors, hostEmployees, branches
           error={errors.purpose}
           required
         />
-        {hostEmployees ? (
-          <SelectField
-            label="Host Name or Email"
-            placeholder="Select host"
-            options={hostEmployees.map((employee) => ({
-              value: employee.email ?? employee.fullName,
-              label: employee.email ? `${employee.fullName} (${employee.email})` : employee.fullName,
-            }))}
-            value={value.hostNameOrEmail}
-            onChange={(hostNameOrEmail) => onChange({ ...value, hostNameOrEmail })}
-            error={errors.hostNameOrEmail}
-            required
-          />
-        ) : (
-          <TextField
-            label="Host Name or Email"
-            placeholder="Enter host name or email"
-            value={value.hostNameOrEmail}
-            onChange={(hostNameOrEmail) => onChange({ ...value, hostNameOrEmail })}
-            error={errors.hostNameOrEmail}
-            required
-          />
-        )}
+        <AutocompleteField
+          label="Host Name or Email"
+          placeholder="Search by host name or email"
+          value={value.hostNameOrEmail}
+          onChange={(hostNameOrEmail) => onChange({ ...value, hostNameOrEmail })}
+          onSearch={handleHostSearch}
+          error={errors.hostNameOrEmail}
+          required
+        />
         <TextField
           label="Preferred Visit Date"
           type="date"
