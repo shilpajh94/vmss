@@ -1,6 +1,6 @@
 import { CalendarIcon, SlidersIcon } from '../../../components/icons'
 import { ACTIVITY_TYPE_OPTIONS, DATE_RANGE_OPTIONS } from '../types'
-import { DropdownFilter } from './DropdownFilter'
+import { DropdownFilter } from '../../../components/ui/DropdownFilter'
 import type { AuditReportFormat } from '../../../../data/repositories/audit-trail-repository'
 
 interface AuditFilterBarProps {

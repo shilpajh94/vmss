@@ -63,6 +63,22 @@ export class ApiClient {
     }
   }
 
+  // 401/403 get their own handling above; every other non-2xx (400, 404, 422, 500…)
+  // still carries a JSON body, but it's an error shape, not the success schema —
+  // parsing it with `parserSchema` would throw an opaque ZodError and bury the
+  // backend's actual message. Surface that message instead.
+  private async ensureOk(response: Response): Promise<void> {
+    this.handleAuthFailure(response)
+    if (response.ok) return
+
+    const body: unknown = await response.json().catch(() => undefined)
+    const message =
+      body && typeof body === 'object' && 'message' in body && typeof body.message === 'string'
+        ? body.message
+        : `Request failed with status ${response.status}`
+    throw new Error(message)
+  }
+
   // Exposed for adapters that need to build a full-page-navigation URL (e.g. an
   // SSO redirect) rather than issue a `fetch` through makeRequest.
   getBaseUrl(): string {
@@ -109,7 +125,7 @@ export class ApiClient {
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
-    this.handleAuthFailure(response)
+    await this.ensureOk(response)
 
     if (response.status === 204) {
       return parserSchema.parse(undefined)
@@ -140,7 +156,7 @@ export class ApiClient {
       headers,
       body: formData,
     })
-    this.handleAuthFailure(response)
+    await this.ensureOk(response)
 
     return parserSchema.parse(await response.json())
   }
@@ -166,7 +182,7 @@ export class ApiClient {
       headers,
       body: formData,
     })
-    this.handleAuthFailure(response)
+    await this.ensureOk(response)
 
     return parserSchema.parse(await response.json())
   }

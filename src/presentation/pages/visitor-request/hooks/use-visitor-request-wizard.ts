@@ -133,8 +133,8 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
       })
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')
-    } catch {
-      setSubmissionError('Something went wrong submitting your request. Please try again.')
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : 'Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
     }
   }
