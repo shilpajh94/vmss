@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-STORAGE_DIR="/var/storage"
+STORAGE_DIR="/app/var/storage"
 FIREBASE_SOURCE="/app/.secrets/firebase-adminsdk.json"
 FIREBASE_TARGET="${STORAGE_DIR}/firebase-adminsdk.json"
 
