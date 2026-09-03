@@ -23,7 +23,12 @@ build/
 
 var/
 
+.secrets/
+.env
 
+celerybeat-schedule
+celerybeat-schedule-shm
+celerybeat-schedule-wal
 
 
 
