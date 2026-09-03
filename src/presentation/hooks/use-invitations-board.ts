@@ -8,6 +8,7 @@ import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entities/invitation-detail-schema'
 import type { RoleOut } from '../../domain/entities/role-out-schema'
 import type { HostEmployee } from '../../domain/entities/host-employee-schema'
+import { PURPOSE_OF_VISIT_OPTIONS } from '../utils/purpose-of-visit-options'
 
 export const BOARD_STATUS_COLUMNS = [
   { status: 'requested', label: 'Requested' },
@@ -73,6 +74,8 @@ export function useInvitationsBoard(loginRedirectPath: string) {
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
   const [search, setSearch] = useState('')
+  const [purposeFilter, setPurposeFilter] = useState('all')
+  const [registrationTypeFilter, setRegistrationTypeFilter] = useState('all')
   const [approvingId, setApprovingId] = useState<string | undefined>(undefined)
   const [expandedId, setExpandedId] = useState<string | undefined>(undefined)
   const [invitationDetails, setInvitationDetails] = useState<Record<string, InvitationDetail>>({})
@@ -83,32 +86,44 @@ export function useInvitationsBoard(loginRedirectPath: string) {
   const [denyingId, setDenyingId] = useState<string | undefined>(undefined)
   const [pendingRescheduleId, setPendingRescheduleId] = useState<string | undefined>(undefined)
   const [pendingDelegateId, setPendingDelegateId] = useState<string | undefined>(undefined)
+  const [visitorInfoId, setVisitorInfoId] = useState<string | undefined>(undefined)
 
-  const loadDashboard = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadDashboard = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
 
-    try {
-      const [user, requests, roles, employees] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listVisitRequestsUseCase.execute(),
-        listRolesUseCase.execute(),
-        listHostEmployeesUseCase.execute(),
-      ])
-      setCurrentUser(user)
-      setVisitRequests(requests)
-      setRoles(roles)
-      setRoleNameById(Object.fromEntries(roles.map((role: RoleOut) => [role.id, role.name])))
-      setHostEmployees(employees)
-      setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
-    } catch (error) {
-      console.error('Failed to load dashboard', error)
-      setErrorMessage('Something went wrong loading the dashboard. Please try again.')
-      toast.error('Something went wrong loading the dashboard. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listVisitRequestsUseCase, listRolesUseCase, listHostEmployeesUseCase, toast])
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+
+      try {
+        const [user, requests, roles, employees] = await Promise.all([
+          getCurrentStaffUserUseCase.execute(),
+          listVisitRequestsUseCase.execute(),
+          listRolesUseCase.execute(),
+          listHostEmployeesUseCase.execute(),
+        ])
+        setCurrentUser(user)
+        setVisitRequests(requests)
+        setRoles(roles)
+        setRoleNameById(Object.fromEntries(roles.map((role: RoleOut) => [role.id, role.name])))
+        setHostEmployees(employees)
+        setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
+      } catch (error) {
+        console.error('Failed to load dashboard', error)
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the dashboard. Please try again.')
+        }
+        toast.error('Something went wrong loading the dashboard. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listVisitRequestsUseCase, listRolesUseCase, listHostEmployeesUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -121,6 +136,29 @@ export function useInvitationsBoard(loginRedirectPath: string) {
 
   const refresh = useCallback(() => {
     void loadDashboard()
+  }, [loadDashboard])
+
+  // Tracks whether a deny/reschedule/delegate action or its dialog is in
+  // progress, so the auto-refresh tick below can skip a fetch that would
+  // otherwise disrupt it.
+  const actionInProgressRef = useRef(false)
+  useEffect(() => {
+    actionInProgressRef.current =
+      pendingDenyId !== undefined ||
+      pendingRescheduleId !== undefined ||
+      pendingDelegateId !== undefined ||
+      denyingId !== undefined ||
+      reschedulingId !== undefined ||
+      delegatingId !== undefined
+  }, [pendingDenyId, pendingRescheduleId, pendingDelegateId, denyingId, reschedulingId, delegatingId])
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      if (actionInProgressRef.current) return
+      void loadDashboard({ silent: true })
+    }, 30_000)
+
+    return () => clearInterval(intervalId)
   }, [loadDashboard])
 
   // Preloads approval-step detail for pending requests so the "Level X/Y"
@@ -163,6 +201,24 @@ export function useInvitationsBoard(loginRedirectPath: string) {
     },
     [invitationDetails, getInvitationDetailUseCase],
   )
+
+  // Opens the "Visitor Info" popup for a card, fetching the full invitation
+  // detail (GET /invitations/:id) the same way an approval-progress expand
+  // does, so a repeat click reuses the cached detail instead of refetching.
+  const viewVisitorInfo = useCallback(
+    (id: string) => {
+      setVisitorInfoId(id)
+      void loadDetail(id).catch((error: unknown) => {
+        console.error('Failed to load visitor info', error)
+        toast.error('Could not load visitor info for this request.')
+      })
+    },
+    [loadDetail, toast],
+  )
+
+  const closeVisitorInfo = useCallback(() => {
+    setVisitorInfoId(undefined)
+  }, [])
 
   const toggleExpand = useCallback(
     (id: string) => {
@@ -344,16 +400,25 @@ export function useInvitationsBoard(loginRedirectPath: string) {
     [pendingDenyId, denyInvitationUseCase, rejectInvitationStepUseCase, loadDashboard, loadDetail, toast],
   )
 
+  const purposeOptions = useMemo(
+    () => [{ value: 'all', label: 'All purposes' }, ...PURPOSE_OF_VISIT_OPTIONS],
+    [],
+  )
+
   const filteredRequests = useMemo(() => {
     const query = search.trim().toLowerCase()
-    if (!query) return visitRequests
 
-    return visitRequests.filter(
-      (request) =>
+    return visitRequests.filter((request) => {
+      const matchesSearch =
+        !query ||
         request.primaryContactFullName.toLowerCase().includes(query) ||
-        request.trackingId.toLowerCase().includes(query),
-    )
-  }, [visitRequests, search])
+        request.trackingId.toLowerCase().includes(query)
+      const matchesPurpose = purposeFilter === 'all' || request.purposeOfVisit === purposeFilter
+      const matchesRegistrationType = registrationTypeFilter === 'all' || request.registrationType === registrationTypeFilter
+
+      return matchesSearch && matchesPurpose && matchesRegistrationType
+    })
+  }, [visitRequests, search, purposeFilter, registrationTypeFilter])
 
   const columns = useMemo(
     () =>
@@ -371,6 +436,11 @@ export function useInvitationsBoard(loginRedirectPath: string) {
     errorMessage,
     search,
     setSearch,
+    purposeFilter,
+    setPurposeFilter,
+    purposeOptions,
+    registrationTypeFilter,
+    setRegistrationTypeFilter,
     refresh,
     approve,
     approvingId,
@@ -398,5 +468,8 @@ export function useInvitationsBoard(loginRedirectPath: string) {
     requestDelegate,
     cancelDelegate,
     pendingDelegateDetail,
+    visitorInfoId,
+    viewVisitorInfo,
+    closeVisitorInfo,
   }
 }

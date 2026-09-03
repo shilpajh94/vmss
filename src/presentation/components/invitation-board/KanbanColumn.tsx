@@ -32,6 +32,7 @@ interface KanbanColumnProps {
   employeeNameById?: Record<string, string>
   onRescheduleClick?: (id: string) => void
   onDelegateClick?: (id: string) => void
+  onVisitorInfoClick?: (id: string) => void
 }
 
 export function KanbanColumn({
@@ -49,6 +50,7 @@ export function KanbanColumn({
   employeeNameById,
   onRescheduleClick,
   onDelegateClick,
+  onVisitorInfoClick,
 }: KanbanColumnProps) {
   const accent = ACCENT_CLASSES[status]
   const [isDragOver, setIsDragOver] = useState(false)
@@ -107,6 +109,7 @@ export function KanbanColumn({
               employeeNameById={employeeNameById}
               onRescheduleClick={onRescheduleClick}
               onDelegateClick={onDelegateClick}
+              onVisitorInfoClick={onVisitorInfoClick}
             />
           ))}
         </div>

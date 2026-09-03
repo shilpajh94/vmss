@@ -1,7 +1,6 @@
-export interface DropdownOption {
-  value: string
-  label: string
-}
+import type { DropdownOption } from '../../components/ui/DropdownFilter'
+
+export type { DropdownOption }
 
 export const PAGE_SIZE = 8
 

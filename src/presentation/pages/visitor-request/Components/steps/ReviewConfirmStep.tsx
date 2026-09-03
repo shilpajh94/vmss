@@ -41,8 +41,8 @@ function SummarySection({ title, rows }: { title: string; rows: [string, string]
     <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface p-4">
       <h4 className="text-body font-semibold text-text">{title}</h4>
       <dl className="grid grid-cols-2 gap-2 text-body">
-        {rows.map(([label, value]) => (
-          <div key={label} className="flex flex-col">
+        {rows.map(([label, value], index) => (
+          <div key={`${label}-${index}`} className="flex flex-col">
             <dt className="text-caption text-text-muted">{label}</dt>
             <dd className="text-text">{value || '—'}</dd>
           </div>

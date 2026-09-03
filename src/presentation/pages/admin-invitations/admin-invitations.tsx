@@ -4,6 +4,7 @@ import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
+import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { RefreshCcwIcon, SearchGlyphIcon } from '../../components/icons'
 import { useAdminInvitations } from './hooks/use-admin-invitations'
@@ -49,6 +50,9 @@ export function AdminInvitationsPage() {
     requestDelegate,
     cancelDelegate,
     pendingDelegateDetail,
+    visitorInfoId,
+    viewVisitorInfo,
+    closeVisitorInfo,
   } = useAdminInvitations()
 
   return (
@@ -111,6 +115,7 @@ export function AdminInvitationsPage() {
                   employeeNameById={employeeNameById}
                   onRescheduleClick={requestReschedule}
                   onDelegateClick={requestDelegate}
+                  onVisitorInfoClick={viewVisitorInfo}
                 />
               ))}
             </div>
@@ -137,6 +142,13 @@ export function AdminInvitationsPage() {
         hostEmployees={hostEmployees}
         onConfirm={(delegateUserId) => pendingDelegateId && delegate(pendingDelegateId, delegateUserId)}
         onCancel={cancelDelegate}
+      />
+
+      <VisitorInfoModal
+        isOpen={visitorInfoId !== undefined}
+        isLoading={visitorInfoId !== undefined && !invitationDetails[visitorInfoId]}
+        detail={visitorInfoId ? invitationDetails[visitorInfoId] : undefined}
+        onClose={closeVisitorInfo}
       />
     </div>
   )

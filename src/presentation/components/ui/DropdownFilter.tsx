@@ -1,6 +1,10 @@
 import type { ComponentType, SVGProps } from 'react'
-import { ChevronDownIcon } from '../../../components/icons'
-import type { DropdownOption } from '../types'
+import { ChevronDownIcon } from '../icons'
+
+export interface DropdownOption {
+  value: string
+  label: string
+}
 
 interface DropdownFilterProps {
   icon: ComponentType<SVGProps<SVGSVGElement>>

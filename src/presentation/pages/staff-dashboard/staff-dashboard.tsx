@@ -4,6 +4,7 @@ import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
+import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
 import { SearchActionBar } from './Components/SearchActionBar'
 import { WorkspaceHeader } from './Components/WorkspaceHeader'
 import { useStaffDashboard } from './hooks/use-staff-dashboard'
@@ -23,6 +24,11 @@ export function StaffDashboardPage() {
     errorMessage,
     search,
     setSearch,
+    purposeFilter,
+    setPurposeFilter,
+    purposeOptions,
+    registrationTypeFilter,
+    setRegistrationTypeFilter,
     refresh,
     signOut,
     approve,
@@ -50,6 +56,9 @@ export function StaffDashboardPage() {
     requestDelegate,
     cancelDelegate,
     pendingDelegateDetail,
+    visitorInfoId,
+    viewVisitorInfo,
+    closeVisitorInfo,
   } = useStaffDashboard()
 
   return (
@@ -58,7 +67,15 @@ export function StaffDashboardPage() {
 
       <main className="flex flex-1 flex-col gap-6 p-8">
         <WorkspaceHeader currentUser={currentUser} onRefresh={refresh} onSignOut={signOut} />
-        <SearchActionBar search={search} onSearchChange={setSearch} onRefresh={refresh} />
+        <SearchActionBar
+          search={search}
+          onSearchChange={setSearch}
+          purposeFilter={purposeFilter}
+          onPurposeFilterChange={setPurposeFilter}
+          purposeOptions={purposeOptions}
+          registrationTypeFilter={registrationTypeFilter}
+          onRegistrationTypeFilterChange={setRegistrationTypeFilter}
+        />
 
         {errorMessage ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
@@ -88,6 +105,7 @@ export function StaffDashboardPage() {
                 employeeNameById={employeeNameById}
                 onRescheduleClick={requestReschedule}
                 onDelegateClick={requestDelegate}
+                onVisitorInfoClick={viewVisitorInfo}
               />
             ))}
           </div>
@@ -113,6 +131,13 @@ export function StaffDashboardPage() {
         hostEmployees={hostEmployees}
         onConfirm={(delegateUserId) => pendingDelegateId && delegate(pendingDelegateId, delegateUserId)}
         onCancel={cancelDelegate}
+      />
+
+      <VisitorInfoModal
+        isOpen={visitorInfoId !== undefined}
+        isLoading={visitorInfoId !== undefined && !invitationDetails[visitorInfoId]}
+        detail={visitorInfoId ? invitationDetails[visitorInfoId] : undefined}
+        onClose={closeVisitorInfo}
       />
     </div>
   )

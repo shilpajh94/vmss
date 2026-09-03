@@ -29,6 +29,7 @@ interface VisitRequestCardProps {
   employeeNameById?: Record<string, string>
   onRescheduleClick?: (id: string) => void
   onDelegateClick?: (id: string) => void
+  onVisitorInfoClick?: (id: string) => void
 }
 
 export function VisitRequestCard({
@@ -43,6 +44,7 @@ export function VisitRequestCard({
   employeeNameById,
   onRescheduleClick,
   onDelegateClick,
+  onVisitorInfoClick,
 }: VisitRequestCardProps) {
   const canReschedule = Boolean(onRescheduleClick) && RESCHEDULABLE_STATUSES.has(request.status)
   const canDelegate = Boolean(onDelegateClick) && Boolean(detail?.currentApprovalStep)
@@ -103,13 +105,22 @@ export function VisitRequestCard({
         </div>
       ) : null}
 
-      {canReschedule || canDelegate ? (
-        <div className="flex w-full items-center gap-2" onClick={(event) => event.stopPropagation()}>
+      {canReschedule || canDelegate || onVisitorInfoClick ? (
+        <div className="flex w-full flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
+          {onVisitorInfoClick ? (
+            <button
+              type="button"
+              onClick={() => onVisitorInfoClick(request.id)}
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+            >
+              Visitor Info
+            </button>
+          ) : null}
           {canReschedule ? (
             <button
               type="button"
               onClick={() => onRescheduleClick?.(request.id)}
-              className="flex-1 rounded-md border border-border bg-surface px-2 py-1.5 font-body text-xs font-semibold text-text"
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
             >
               Reschedule
             </button>
@@ -118,7 +129,7 @@ export function VisitRequestCard({
             <button
               type="button"
               onClick={() => onDelegateClick?.(request.id)}
-              className="flex-1 rounded-md border border-border bg-surface px-2 py-1.5 font-body text-xs font-semibold text-text"
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
             >
               Delegate
             </button>
@@ -126,24 +137,28 @@ export function VisitRequestCard({
         </div>
       ) : null}
 
-      <div className="h-px w-full bg-border-subtle" />
+      {(request.preferredVisitDate && request.preferredVisitTime) || isApproving ? (
+        <>
+          <div className="h-px w-full bg-border-subtle" />
 
-      <div className="flex w-full flex-col gap-1">
-        {request.preferredVisitDate && request.preferredVisitTime ? (
-          <div className="flex w-full items-center gap-1.5">
-            <CalendarClockIcon className="size-3 shrink-0 text-text-faint" />
-            <span className="font-body text-[11px] whitespace-nowrap text-text-faint">
-              Scheduled: {request.preferredVisitDate} {request.preferredVisitTime}
-            </span>
+          <div className="flex w-full flex-col gap-1">
+            {request.preferredVisitDate && request.preferredVisitTime ? (
+              <div className="flex w-full items-center gap-1.5">
+                <CalendarClockIcon className="size-3 shrink-0 text-text-faint" />
+                <span className="font-body text-[11px] whitespace-nowrap text-text-faint">
+                  Scheduled: {request.preferredVisitDate} {request.preferredVisitTime}
+                </span>
+              </div>
+            ) : null}
+            {isApproving ? (
+              <div className="flex w-full items-center gap-1.5">
+                <CalendarClockIcon className="size-3 shrink-0 text-text-faint" />
+                <span className="font-body text-[11px] whitespace-nowrap text-text-faint">Approving…</span>
+              </div>
+            ) : null}
           </div>
-        ) : null}
-        <div className="flex w-full items-center gap-1.5">
-          <CalendarClockIcon className="size-3 shrink-0 text-text-faint" />
-          <span className="font-body text-[11px] whitespace-nowrap text-text-faint">
-            {isApproving ? 'Approving…' : `Submitted: ${request.submittedAt}`}
-          </span>
-        </div>
-      </div>
+        </>
+      ) : null}
     </div>
   )
 }

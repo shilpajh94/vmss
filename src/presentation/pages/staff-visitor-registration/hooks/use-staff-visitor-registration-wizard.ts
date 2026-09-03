@@ -136,10 +136,11 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')
       toast.success('Visitor registered successfully.')
-    } catch {
-      setSubmissionError('Something went wrong submitting your request. Please try again.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Something went wrong submitting your request. Please try again.'
+      setSubmissionError(message)
       setSubmissionStatus('error')
-      toast.error('Something went wrong submitting your request. Please try again.')
+      toast.error(message)
     }
   }
 

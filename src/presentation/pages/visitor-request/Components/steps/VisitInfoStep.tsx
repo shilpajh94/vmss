@@ -7,15 +7,7 @@ import type { Building } from '../../../../../domain/entities/building-schema'
 import type { Department } from '../../../../../domain/entities/department-schema'
 import type { HostSearchResult } from '../../../../../domain/entities/host-search-schema'
 import type { VisitInfoFormState } from '../../types'
-
-const PURPOSE_OPTIONS = [
-  { value: 'business-meeting', label: 'Business Meeting' },
-  { value: 'interview', label: 'Interview' },
-  { value: 'delivery', label: 'Delivery' },
-  { value: 'personal-visit', label: 'Personal Visit' },
-  { value: 'vendor-contractor', label: 'Vendor / Contractor' },
-  { value: 'other', label: 'Other' },
-]
+import { PURPOSE_OF_VISIT_OPTIONS as PURPOSE_OPTIONS } from '../../../../utils/purpose-of-visit-options'
 
 const DURATION_OPTIONS = [
   { value: '30-minutes', label: '30 minutes' },
