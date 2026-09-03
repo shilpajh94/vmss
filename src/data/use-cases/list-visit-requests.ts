@@ -8,7 +8,7 @@ export class ListVisitRequestsUseCase {
     this.visitRequestSummaryRepository = visitRequestSummaryRepository
   }
 
-  async execute(): Promise<VisitRequestSummary[]> {
-    return this.visitRequestSummaryRepository.list()
+  async execute(relevantToMe?: boolean): Promise<VisitRequestSummary[]> {
+    return this.visitRequestSummaryRepository.list({ relevantToMe })
   }
 }

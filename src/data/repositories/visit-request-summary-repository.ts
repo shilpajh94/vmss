@@ -2,7 +2,7 @@ import type { VisitRequestSummary } from '../../domain/entities/visit-request-su
 import type { InvitationDetail } from '../../domain/entities/invitation-detail-schema'
 
 export interface VisitRequestSummaryRepository {
-  list(): Promise<VisitRequestSummary[]>
+  list(params?: { relevantToMe?: boolean }): Promise<VisitRequestSummary[]>
   approve(id: string): Promise<void>
   getDetail(id: string): Promise<InvitationDetail>
   reschedule(id: string, preferredVisitDate: string, preferredVisitTime: string): Promise<void>

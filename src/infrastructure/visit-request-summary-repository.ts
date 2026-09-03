@@ -21,9 +21,10 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
     this.apiClient = apiClient
   }
 
-  async list(): Promise<VisitRequestSummary[]> {
+  async list(params?: { relevantToMe?: boolean }): Promise<VisitRequestSummary[]> {
     const response = await this.apiClient.makeRequest<VisitRequestSummaryListResponse>({
       endpointConfig: API_ENDPOINTS.LIST_VISIT_REQUESTS,
+      queryParams: { relevantToMe: params?.relevantToMe ? true : undefined },
       parserSchema: VisitRequestSummaryListResponseSchema,
     })
 
