@@ -1,5 +1,4 @@
 #!/bin/sh
-
 set -e
 
 STORAGE_DIR="/var/storage"
@@ -10,9 +9,8 @@ echo "Initializing storage directory: ${STORAGE_DIR}"
 
 mkdir -p "${STORAGE_DIR}"
 
-# Copy Firebase credentials to the mounted PVC if they don't already exist.
 if [ -f "${FIREBASE_SOURCE}" ] && [ ! -f "${FIREBASE_TARGET}" ]; then
-    echo "Copying Firebase credentials to ${FIREBASE_TARGET}"
+    echo "Copying Firebase credentials..."
     cp "${FIREBASE_SOURCE}" "${FIREBASE_TARGET}"
 fi
 
