@@ -50,6 +50,10 @@ COPY alembic_tenant/ ./alembic_tenant/
 COPY alembic_tenant.ini ./alembic_tenant.ini
 COPY scripts/ ./scripts/
 
+# Copy Firebase Admin SDK credentials
+RUN mkdir -p /var/storage
+COPY .secrets/firebase-adminsdk.json /var/storage/firebase-adminsdk.json
+
 # Ensure the venv binaries are on PATH
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
