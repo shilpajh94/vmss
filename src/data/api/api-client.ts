@@ -41,16 +41,26 @@ export class ApiClient {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
   }
 
-  // A 401/403 means the stored token is dead — clear it and signal the app shell
+  // A 401 means the stored token is dead — clear it and signal the app shell
   // (via a plain browser event, since `data/` cannot import `presentation/`) so a
   // single top-level listener can redirect to login, instead of letting the error
   // body fail Zod parsing with an unrelated-looking validation error.
+  //
+  // A 403 is different: the token is still valid, the caller just lacks
+  // permission for this endpoint. Treating it the same as a 401 forces a
+  // sign-out on a permission-gated route the user is otherwise legitimately
+  // logged into — throw a plain error instead and let the caller's normal
+  // error handling (load-failure message, toast, etc.) take over.
   private handleAuthFailure(response: Response): void {
-    if (response.status !== 401 && response.status !== 403) return
+    if (response.status === 401) {
+      sessionStorage.removeItem('token')
+      window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
+      throw new Error('Session expired')
+    }
 
-    sessionStorage.removeItem('token')
-    window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
-    throw new Error('Session expired')
+    if (response.status === 403) {
+      throw new Error('You do not have permission to perform this action')
+    }
   }
 
   // Exposed for adapters that need to build a full-page-navigation URL (e.g. an
