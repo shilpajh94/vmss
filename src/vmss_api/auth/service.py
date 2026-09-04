@@ -527,7 +527,12 @@ async def list_employees(
 
 
 async def list_employee_directory(
-    tenant_db: AsyncSession, *, page: int, page_size: int
+    tenant_db: AsyncSession,
+    *,
+    page: int,
+    page_size: int,
+    sort_by: EmployeeSortableField,
+    sort_order: SortOrder,
 ) -> tuple[list[User], int]:
     """Backs the public host-directory listing
     (`router.py::list_employee_directory`) — every active employee holding
@@ -535,7 +540,9 @@ async def list_employee_directory(
     someone a visitor can be pre-registered against). Not branch/department
     scoped — see `UserRepository.list_hosts_page`.
     """
-    return await UserRepository(tenant_db).list_hosts_page(page=page, page_size=page_size)
+    return await UserRepository(tenant_db).list_hosts_page(
+        page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+    )
 
 
 _AVATAR_CONTENT_TYPES = {"image/jpeg", "image/png"}

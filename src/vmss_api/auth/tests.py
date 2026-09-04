@@ -3,7 +3,9 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from httpx import AsyncClient
 from PIL import Image
 from sqlalchemy import func, select, update
@@ -23,7 +25,9 @@ from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core import storage
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
+from vmss_api.core.schemas import SortOrder
 from vmss_api.core.security import hash_password
+from vmss_api.core.tenancy import get_current_user
 from vmss_api.org_structure.models import Branch, Department
 from vmss_api.platform.models import TenantUserIndex
 from vmss_api.tenant.models import Tenant
@@ -373,6 +377,20 @@ async def test_create_user_requires_permission(
     assert body["success"] is False
     assert "detail" not in body
     assert body["message"]
+
+
+async def test_get_by_email_tenant_schema_isolation(
+    user: User, make_tenant_schema, open_tenant_session
+) -> None:
+    """`UserRepository.get_by_email` backs `POST /auth/users`'s
+    already-registered-email check — see testing-standards.md §2.
+    """
+    other_schema = "tenant_other_test_user_email"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        found = await UserRepository(other_session).get_by_email(user.email)
+        assert found is None
 
 
 async def test_assign_branch_role_scopes_access_to_that_branch(
@@ -751,6 +769,35 @@ async def test_sync_employee_directory_requires_permission(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
+
+
+async def test_get_by_emails_and_deactivate_employees_not_in_tenant_schema_isolation(
+    db_session: AsyncSession, make_tenant_schema, open_tenant_session
+) -> None:
+    """`UserRepository.get_by_emails`/`.deactivate_employees_not_in` back
+    `POST /auth/employees/sync`'s batch reconciliation — see
+    testing-standards.md §2.
+    """
+    employee = UserFactory.build(
+        id=uuid.uuid4(),
+        email="isolated-employee@acme-test.example",
+        employee_code="ISO-EMP-1",
+    )
+    db_session.add(employee)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_employee_batch"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        found = await UserRepository(other_session).get_by_emails([employee.email])
+        assert found == []
+
+        deactivated = await UserRepository(other_session).deactivate_employees_not_in([])
+        assert deactivated == []
+
+    await db_session.refresh(employee)
+    assert employee.is_active is True
 
 
 async def test_create_employee_success(
@@ -1441,6 +1488,34 @@ async def test_list_employee_directory_excludes_inactive_and_non_host_roles(
     assert names == {"Alice Host"}
 
 
+async def test_list_hosts_page_tenant_schema_isolation(
+    db_session: AsyncSession, tenant: Tenant, make_tenant_schema, open_tenant_session
+) -> None:
+    """`UserRepository.list_hosts_page` backs `GET /auth/employees/directory`
+    — see testing-standards.md §2.
+    """
+    host_role = RoleFactory.build(id=uuid.uuid4(), name="host", permissions=[])
+    db_session.add(host_role)
+    await db_session.commit()
+    await _make_role_user(
+        db_session,
+        tenant,
+        host_role,
+        email="isolated-host@acme-test.example",
+        full_name="Isolated Host",
+    )
+
+    other_schema = "tenant_other_test_hosts"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        hosts, total = await UserRepository(other_session).list_hosts_page(
+            page=1, page_size=100, sort_by="name", sort_order=SortOrder.asc
+        )
+        assert hosts == []
+        assert total == 0
+
+
 # --- Permission catalog ------------------------------------------------------
 
 
@@ -1609,6 +1684,27 @@ async def test_list_roles_pagination(client: AsyncClient, user: User) -> None:
     assert first_ids.isdisjoint(second_ids)
 
 
+async def test_role_list_page_tenant_schema_isolation(
+    db_session: AsyncSession, make_tenant_schema, open_tenant_session
+) -> None:
+    """`RoleRepository.list_page` backs `GET /auth/roles` — see
+    testing-standards.md §2.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name="Listed Role", permissions=[])
+    db_session.add(role)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_role_list"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        roles, total = await RoleRepository(other_session).list_page(
+            page=1, page_size=100, sort_by="name", sort_order=SortOrder.asc
+        )
+        assert roles == []
+        assert total == 0
+
+
 async def test_get_role_success(client: AsyncClient, user: User) -> None:
     token = await _login(client, user.email)
     headers = {"Authorization": f"Bearer {token}"}
@@ -1773,6 +1869,24 @@ async def test_verify_role_name_requires_permission(
     assert response.status_code == 403
 
 
+async def test_get_by_name_case_insensitive_tenant_schema_isolation(
+    db_session: AsyncSession, make_tenant_schema, open_tenant_session
+) -> None:
+    """`RoleRepository.get_by_name_case_insensitive` backs `POST /auth/roles`
+    and `GET /auth/roles/verify` — see testing-standards.md §2.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name="Isolated Role", permissions=[])
+    db_session.add(role)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_role_name"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        found = await RoleRepository(other_session).get_by_name_case_insensitive("isolated role")
+        assert found is None
+
+
 async def test_rename_standard_role_rejected(client: AsyncClient, user: User) -> None:
     """The `user` fixture seeds a role literally named "admin" — standing in
     for one of the five seeded standard roles (`rbac_catalog.STANDARD_ROLE_NAMES`)
@@ -1819,6 +1933,45 @@ async def test_delete_role_with_active_grant_conflict(
 
     response = await client.delete(f"/api/v1/auth/roles/{role_id}", headers=headers)
     assert response.status_code == 409
+
+
+# --- Field-length validation hardening (verify-full-api-test-and-validation-coverage) ---
+
+
+async def test_login_password_exceeds_max_length_rejected(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "whoever@acme-test.example", "password": "x" * 129},
+    )
+    assert response.status_code == 422
+
+
+async def test_create_user_password_exceeds_max_length_rejected(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/users",
+        json={
+            "email": "over-length@acme-test.example",
+            "password": "x" * 129,
+            "fullName": "Over Length",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
+async def test_create_role_permission_code_exceeds_max_length_rejected(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/roles",
+        json={"name": "Over Length Codes", "permissionCodes": ["x" * 101]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
 
 
 # --- Resync standard roles against the catalog (add-invitation-approval-flow-and-role-resync) ---
@@ -1914,6 +2067,40 @@ async def test_resync_role_permissions_requires_permission(
     assert response.status_code == 403
 
 
+async def test_resync_role_permissions_tenant_schema_isolation(
+    client: AsyncClient,
+    user: User,
+    db_session: AsyncSession,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """`POST /auth/roles/resync-permissions`'s bulk `seed_default_roles`
+    write path must only ever touch the tenant schema the caller's session is
+    bound to — a role it creates/updates in that schema must not appear in a
+    different tenant's schema. See testing-standards.md §2.
+    """
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    reception = await RoleRepository(db_session).get_by_name("reception")
+    assert reception is not None
+    reception.permissions = [p for p in reception.permissions if p.code != "invitations:view"]
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_resync"
+    await make_tenant_schema(other_schema)
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/roles/resync-permissions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+
+    async with open_tenant_session(other_schema) as other_session:
+        found = await RoleRepository(other_session).get_by_name("reception")
+        assert found is None
+
+
 async def test_role_repository_tenant_schema_isolation(
     make_tenant_schema, open_tenant_session, db_session: AsyncSession
 ) -> None:
@@ -1993,6 +2180,24 @@ async def test_revoke_branch_role_not_found(
     assert response.status_code == 404
 
 
+async def test_get_branch_role_assignment_tenant_schema_isolation(
+    user: User, make_tenant_schema, open_tenant_session
+) -> None:
+    """`UserRepository.get_branch_role_assignment` backs
+    `DELETE /auth/users/{id}/branch-roles/{id}` — see testing-standards.md §2.
+    """
+    assignment_id = user.branch_roles[0].id
+
+    other_schema = "tenant_other_test_branch_role_assignment"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        found = await UserRepository(other_session).get_branch_role_assignment(
+            user.id, assignment_id
+        )
+        assert found is None
+
+
 # --- Logout (API-19, audit-only — no token revocation) ------------------------
 
 
@@ -2015,6 +2220,31 @@ async def test_logout_writes_audit_entry(
 async def test_logout_requires_authentication(client: AsyncClient) -> None:
     response = await client.post("/api/v1/auth/logout")
     assert response.status_code == 401
+
+
+async def test_get_current_user_tenant_schema_isolation(
+    user: User, tenant: Tenant, make_tenant_schema, open_tenant_session
+) -> None:
+    """`get_current_user` (`core/tenancy.py`) issues its own raw
+    `select(User)` against whatever session `get_tenant_db` resolves to —
+    the dependency behind both `GET /auth/me` and `POST /auth/logout`. The
+    `client` fixture routes every request's `get_tenant_db` through the one
+    shared `db_session` regardless of the token's tenant claim
+    (conftest.py's `client` fixture), so an HTTP-level test through `client`
+    can't actually exercise cross-schema resolution here — this calls the
+    dependency directly against a session bound to a *different* tenant's
+    schema instead, the same way `invitations/tests.py` exercises a service
+    function directly with `pytest.raises(HTTPException)`.
+    """
+    other_schema = "tenant_other_test_current_user"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(
+                {"sub": str(user.id), "tenant_id": str(tenant.id)}, other_session
+            )
+        assert exc_info.value.status_code == 401
 
 
 # --- list_user_ids_holding_role_at_branch (add-invitation-push-notifications) -

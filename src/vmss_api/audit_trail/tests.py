@@ -176,6 +176,14 @@ async def test_get_audit_trail_entry_not_found(
     assert response.status_code == 404
 
 
+async def test_get_audit_trail_entry_requires_permission(
+    client: AsyncClient, user_without_permissions: User, issue_token
+) -> None:
+    token = issue_token(user_without_permissions)
+    response = await client.get(f"/api/v1/audit-trail/{uuid.uuid4()}", headers=_auth_headers(token))
+    assert response.status_code == 403
+
+
 # --- Write/read integration (verify-audit-trail-and-delegation-full-suite) --
 
 
@@ -299,6 +307,30 @@ async def test_request_audit_report_enqueues_job(
     assert job is not None and job.status == "pending"
 
 
+async def test_request_audit_report_action_filter_too_long_rejected(
+    client: AsyncClient, user: User, issue_token
+) -> None:
+    token = issue_token(user)
+    response = await client.post(
+        "/api/v1/audit-trail/reports",
+        json={"formats": ["csv"], "action": "a" * 101},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_request_audit_report_entity_type_filter_too_long_rejected(
+    client: AsyncClient, user: User, issue_token
+) -> None:
+    token = issue_token(user)
+    response = await client.post(
+        "/api/v1/audit-trail/reports",
+        json={"formats": ["csv"], "entityType": "a" * 101},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 422
+
+
 async def test_request_audit_report_idempotency_key_replay(
     client: AsyncClient, user: User, db_session: AsyncSession, issue_token, monkeypatch
 ) -> None:
@@ -330,6 +362,26 @@ async def test_get_report_job_not_found(client: AsyncClient, user: User, issue_t
         f"/api/v1/audit-trail/reports/{uuid.uuid4()}", headers=_auth_headers(token)
     )
     assert response.status_code == 404
+
+
+async def test_get_report_job_requires_export_permission(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, issue_token
+) -> None:
+    """A caller holding only the view permission (not export) cannot poll a
+    report job's status either — same gate as
+    `test_request_audit_report_requires_export_permission`.
+    """
+    view_only_user = await _build_user_with_permissions(
+        db_session,
+        tenant,
+        email="view-only-poll@acme-test.example",
+        permission_codes=["audit-logs:view"],
+    )
+    token = issue_token(view_only_user)
+    response = await client.get(
+        f"/api/v1/audit-trail/reports/{uuid.uuid4()}", headers=_auth_headers(token)
+    )
+    assert response.status_code == 403
 
 
 # --- Report generation (Celery task, invoked directly per reports/tests.py's

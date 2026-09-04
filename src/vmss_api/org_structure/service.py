@@ -1,4 +1,6 @@
 import uuid
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -111,6 +113,77 @@ async def _resolve_floor_branch_id_tolerant(
     if floor is None:
         return None
     return await _resolve_building_branch_id_tolerant(tenant_db, floor.building_id)
+
+
+# --- Shared get/update/delete skeleton ------------------------------------
+#
+# `get_building`/`get_department`/`get_reception_desk`/`get_floor`/
+# `get_security_gate` all fetch-then-authorize the same way: a caller with
+# no `permission_code` grant at the entity's own branch sees exactly the
+# same 404 as a genuinely missing id (never 403), so a branch-scoped caller
+# can't distinguish "doesn't exist" from "exists, but in a branch you can't
+# see" (same posture `get_branch` uses at the branch level). The one thing
+# that differs per entity is *how* that branch id is obtained: a direct
+# column read for Building/Department/SecurityGate, versus an async walk up
+# to a parent (`_resolve_building_branch_id_tolerant`/
+# `_resolve_floor_branch_id_tolerant`) for Floor/ReceptionDesk — so each
+# `get_X` resolves its own `branch_id` and hands the result to `_get_scoped`.
+#
+# Their `update_X`/`delete_X` siblings share a further tail once that fetch
+# is done: an exclude-unset field loop + commit-or-conflict + refresh for
+# update, a soft-delete + commit for delete. Each entity's own uniqueness
+# recheck and any entity-specific validation (branch/floor cross-checks,
+# enum-value extraction) still runs in `update_X` itself, via
+# `_reject_if_taken` and inline code, before handing the now-validated
+# `changes` dict to `_apply_changes_or_conflict`.
+
+
+async def _get_scoped(
+    entity: Any,
+    branch_id: uuid.UUID | None,
+    user: User,
+    permission_code: str,
+    not_found_msg: str,
+) -> Any:
+    if (
+        entity is None
+        or branch_id is None
+        or not user.has_permission(permission_code, branch_id=branch_id)
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=not_found_msg)
+    return entity
+
+
+async def _reject_if_taken(
+    new_value: Any,
+    current_value: Any,
+    lookup: Callable[[Any], Awaitable[Any | None]],
+    conflict_detail: str,
+) -> None:
+    """Only re-validates uniqueness when the field actually changed — the
+    same `new_value is not None and new_value != current_value` short-circuit
+    every entity's update already applied before touching the database.
+    """
+    if new_value is not None and new_value != current_value and await lookup(new_value) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=conflict_detail)
+
+
+async def _apply_changes_or_conflict(
+    tenant_db: AsyncSession,
+    entity: Any,
+    changes: dict[str, Any],
+    conflict_detail: str,
+) -> Any:
+    for field, value in changes.items():
+        setattr(entity, field, value)
+    await _commit_or_conflict(tenant_db, conflict_detail)
+    await tenant_db.refresh(entity)
+    return entity
+
+
+async def _soft_delete_and_commit(tenant_db: AsyncSession, repo: Any, entity: Any) -> None:
+    await repo.soft_delete(entity)
+    await tenant_db.commit()
 
 
 # --- Company (singleton) -----------------------------------------------
@@ -487,9 +560,8 @@ async def get_building(
     tenant_db: AsyncSession, building_id: uuid.UUID, user: User, permission_code: str
 ) -> Building:
     building = await BuildingRepository(tenant_db).get(building_id)
-    if building is None or not user.has_permission(permission_code, branch_id=building.branch_id):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Building not found")
-    return building
+    branch_id = building.branch_id if building is not None else None
+    return await _get_scoped(building, branch_id, user, permission_code, "Building not found")
 
 
 async def update_building(
@@ -501,25 +573,21 @@ async def update_building(
     repo = BuildingRepository(tenant_db)
     building = await get_building(tenant_db, building_id, user, "buildings:manage")
     changes = payload.model_dump(exclude_unset=True)
-    new_code = changes.get("code")
-    if (
-        new_code is not None
-        and new_code != building.code
-        and await repo.get_by_code(building.branch_id, new_code) is not None
-    ):
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="Building code already exists")
-    for field, value in changes.items():
-        setattr(building, field, value)
-    await _commit_or_conflict(tenant_db, "Building code already exists")
-    await tenant_db.refresh(building)
-    return building
+    await _reject_if_taken(
+        changes.get("code"),
+        building.code,
+        lambda v: repo.get_by_code(building.branch_id, v),
+        "Building code already exists",
+    )
+    return await _apply_changes_or_conflict(
+        tenant_db, building, changes, "Building code already exists"
+    )
 
 
 async def delete_building(tenant_db: AsyncSession, building_id: uuid.UUID, user: User) -> None:
     repo = BuildingRepository(tenant_db)
     building = await get_building(tenant_db, building_id, user, "buildings:manage")
-    await repo.soft_delete(building)
-    await tenant_db.commit()
+    await _soft_delete_and_commit(tenant_db, repo, building)
 
 
 # --- Floor --------------------------------------------------------------
@@ -570,12 +638,12 @@ async def get_floor(
     tenant_db: AsyncSession, floor_id: uuid.UUID, user: User, permission_code: str
 ) -> Floor:
     floor = await FloorRepository(tenant_db).get(floor_id)
-    if floor is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
-    branch_id = await _resolve_building_branch_id_tolerant(tenant_db, floor.building_id)
-    if branch_id is None or not user.has_permission(permission_code, branch_id=branch_id):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
-    return floor
+    branch_id = (
+        await _resolve_building_branch_id_tolerant(tenant_db, floor.building_id)
+        if floor is not None
+        else None
+    )
+    return await _get_scoped(floor, branch_id, user, permission_code, "Floor not found")
 
 
 async def update_floor(
@@ -587,29 +655,25 @@ async def update_floor(
     repo = FloorRepository(tenant_db)
     floor = await get_floor(tenant_db, floor_id, user, "floors:manage")
     changes = payload.model_dump(exclude_unset=True)
-    new_number = changes.get("floor_number")
-    if (
-        new_number is not None
-        and new_number != floor.floor_number
-        and await repo.get_by_number(floor.building_id, new_number) is not None
-    ):
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="Floor number already exists")
+    await _reject_if_taken(
+        changes.get("floor_number"),
+        floor.floor_number,
+        lambda v: repo.get_by_number(floor.building_id, v),
+        "Floor number already exists",
+    )
     if changes.get("capacity_type") is not None:
         changes["capacity_type"] = changes["capacity_type"].value
     if changes.get("access_level") is not None:
         changes["access_level"] = changes["access_level"].value
-    for field, value in changes.items():
-        setattr(floor, field, value)
-    await _commit_or_conflict(tenant_db, "Floor number already exists")
-    await tenant_db.refresh(floor)
-    return floor
+    return await _apply_changes_or_conflict(
+        tenant_db, floor, changes, "Floor number already exists"
+    )
 
 
 async def delete_floor(tenant_db: AsyncSession, floor_id: uuid.UUID, user: User) -> None:
     repo = FloorRepository(tenant_db)
     floor = await get_floor(tenant_db, floor_id, user, "floors:manage")
-    await repo.soft_delete(floor)
-    await tenant_db.commit()
+    await _soft_delete_and_commit(tenant_db, repo, floor)
 
 
 # --- Department --------------------------------------------------------------
@@ -654,11 +718,8 @@ async def get_department(
     tenant_db: AsyncSession, department_id: uuid.UUID, user: User, permission_code: str
 ) -> Department:
     department = await DepartmentRepository(tenant_db).get(department_id)
-    if department is None or not user.has_permission(
-        permission_code, branch_id=department.branch_id
-    ):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Department not found")
-    return department
+    branch_id = department.branch_id if department is not None else None
+    return await _get_scoped(department, branch_id, user, permission_code, "Department not found")
 
 
 async def update_department(
@@ -670,30 +731,26 @@ async def update_department(
     repo = DepartmentRepository(tenant_db)
     department = await get_department(tenant_db, department_id, user, "departments:manage")
     changes = payload.model_dump(exclude_unset=True)
-    new_code = changes.get("code")
-    if (
-        new_code is not None
-        and new_code != department.code
-        and await repo.get_by_code(department.branch_id, new_code) is not None
-    ):
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="Department code already exists")
+    await _reject_if_taken(
+        changes.get("code"),
+        department.code,
+        lambda v: repo.get_by_code(department.branch_id, v),
+        "Department code already exists",
+    )
     new_floor_id = changes.get("floor_id")
     if new_floor_id is not None:
         floor_branch_id = await resolve_floor_branch_id(tenant_db, new_floor_id)
         if floor_branch_id != department.branch_id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Floor not found")
-    for field, value in changes.items():
-        setattr(department, field, value)
-    await _commit_or_conflict(tenant_db, "Department code already exists")
-    await tenant_db.refresh(department)
-    return department
+    return await _apply_changes_or_conflict(
+        tenant_db, department, changes, "Department code already exists"
+    )
 
 
 async def delete_department(tenant_db: AsyncSession, department_id: uuid.UUID, user: User) -> None:
     repo = DepartmentRepository(tenant_db)
     department = await get_department(tenant_db, department_id, user, "departments:manage")
-    await repo.soft_delete(department)
-    await tenant_db.commit()
+    await _soft_delete_and_commit(tenant_db, repo, department)
 
 
 # --- Reception Desk --------------------------------------------------------------
@@ -741,12 +798,12 @@ async def get_reception_desk(
     tenant_db: AsyncSession, desk_id: uuid.UUID, user: User, permission_code: str
 ) -> ReceptionDesk:
     desk = await ReceptionDeskRepository(tenant_db).get(desk_id)
-    if desk is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Desk not found")
-    branch_id = await _resolve_floor_branch_id_tolerant(tenant_db, desk.floor_id)
-    if branch_id is None or not user.has_permission(permission_code, branch_id=branch_id):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Desk not found")
-    return desk
+    branch_id = (
+        await _resolve_floor_branch_id_tolerant(tenant_db, desk.floor_id)
+        if desk is not None
+        else None
+    )
+    return await _get_scoped(desk, branch_id, user, permission_code, "Desk not found")
 
 
 async def update_reception_desk(
@@ -758,27 +815,21 @@ async def update_reception_desk(
     repo = ReceptionDeskRepository(tenant_db)
     desk = await get_reception_desk(tenant_db, desk_id, user, "desks:manage")
     changes = payload.model_dump(exclude_unset=True)
-    new_code = changes.get("code")
-    if (
-        new_code is not None
-        and new_code != desk.code
-        and await repo.get_by_code(desk.floor_id, new_code) is not None
-    ):
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="Desk code already exists")
+    await _reject_if_taken(
+        changes.get("code"),
+        desk.code,
+        lambda v: repo.get_by_code(desk.floor_id, v),
+        "Desk code already exists",
+    )
     if "status" in changes and changes["status"] is not None:
         changes["status"] = changes["status"].value
-    for field, value in changes.items():
-        setattr(desk, field, value)
-    await _commit_or_conflict(tenant_db, "Desk code already exists")
-    await tenant_db.refresh(desk)
-    return desk
+    return await _apply_changes_or_conflict(tenant_db, desk, changes, "Desk code already exists")
 
 
 async def delete_reception_desk(tenant_db: AsyncSession, desk_id: uuid.UUID, user: User) -> None:
     repo = ReceptionDeskRepository(tenant_db)
     desk = await get_reception_desk(tenant_db, desk_id, user, "desks:manage")
-    await repo.soft_delete(desk)
-    await tenant_db.commit()
+    await _soft_delete_and_commit(tenant_db, repo, desk)
 
 
 # --- Security Gate --------------------------------------------------------------
@@ -827,9 +878,8 @@ async def get_security_gate(
     tenant_db: AsyncSession, gate_id: uuid.UUID, user: User, permission_code: str
 ) -> SecurityGate:
     gate = await SecurityGateRepository(tenant_db).get(gate_id)
-    if gate is None or not user.has_permission(permission_code, branch_id=gate.branch_id):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Gate not found")
-    return gate
+    branch_id = gate.branch_id if gate is not None else None
+    return await _get_scoped(gate, branch_id, user, permission_code, "Gate not found")
 
 
 async def update_security_gate(
@@ -841,28 +891,22 @@ async def update_security_gate(
     repo = SecurityGateRepository(tenant_db)
     gate = await get_security_gate(tenant_db, gate_id, user, "gates:manage")
     changes = payload.model_dump(exclude_unset=True)
-    new_code = changes.get("code")
-    if (
-        new_code is not None
-        and new_code != gate.code
-        and await repo.get_by_code(gate.branch_id, new_code) is not None
-    ):
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="Gate code already exists")
+    await _reject_if_taken(
+        changes.get("code"),
+        gate.code,
+        lambda v: repo.get_by_code(gate.branch_id, v),
+        "Gate code already exists",
+    )
     if changes.get("building_id") is not None:
         building_branch_id = await resolve_building_branch_id(tenant_db, changes["building_id"])
         if building_branch_id != gate.branch_id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Building not found")
     if "gate_type" in changes and changes["gate_type"] is not None:
         changes["gate_type"] = changes["gate_type"].value
-    for field, value in changes.items():
-        setattr(gate, field, value)
-    await _commit_or_conflict(tenant_db, "Gate code already exists")
-    await tenant_db.refresh(gate)
-    return gate
+    return await _apply_changes_or_conflict(tenant_db, gate, changes, "Gate code already exists")
 
 
 async def delete_security_gate(tenant_db: AsyncSession, gate_id: uuid.UUID, user: User) -> None:
     repo = SecurityGateRepository(tenant_db)
     gate = await get_security_gate(tenant_db, gate_id, user, "gates:manage")
-    await repo.soft_delete(gate)
-    await tenant_db.commit()
+    await _soft_delete_and_commit(tenant_db, repo, gate)

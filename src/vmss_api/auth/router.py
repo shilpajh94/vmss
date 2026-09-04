@@ -373,6 +373,8 @@ async def list_employee_directory(
     request: Request,
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    sort_by: Annotated[EmployeeSortableField, Query(alias="sortBy")] = "name",
+    sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
     """Public — no bearer token, no permission check
     (security-architecture.md §2's public-endpoint posture, same rationale
@@ -388,7 +390,7 @@ async def list_employee_directory(
     """
     page, page_size = pagination
     employees, total = await service.list_employee_directory(
-        tenant_db, page=page, page_size=page_size
+        tenant_db, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
     )
     directory_outs = [await _to_employee_directory_out(e) for e in employees]
     return paginated_response(data=directory_outs, page=page, page_size=page_size, total=total)

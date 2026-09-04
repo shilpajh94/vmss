@@ -418,3 +418,45 @@ async def test_notify_step_approver_unresolvable_role_dispatches(
 
     assert len(role_calls) == 1
     assert role_calls[0]["role_id"] == unknown_role_id
+
+
+# --- notify_role_at_branch's own zero-holders no-op path ----------------------
+
+
+async def test_notify_role_at_branch_zero_holders_logs_warning_and_skips_dispatch(
+    db_session: AsyncSession, tenant: Tenant, branch: Branch, monkeypatch
+) -> None:
+    """proposal.md task 9.3 — every test above that could reach
+    `notify_role_at_branch`'s zero-holders branch (e.g.
+    `test_notify_step_approver_non_admin_role_dispatches`) monkeypatches the
+    function itself out to a fake, so its own real body has never been
+    called directly. This calls `service.notify_role_at_branch` for real,
+    against a role with no `UserBranchRole` row granting it at `branch`
+    (or company-wide), and asserts both halves of the no-op: no push is
+    enqueued, and the `WARNING`-level `push_notify_role_no_holders` log
+    fires with the role/branch ids.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name="no-holders-role", permissions=[])
+    db_session.add(role)
+    await db_session.commit()
+
+    delay_calls: list[dict] = []
+    monkeypatch.setattr(tasks.send_push, "delay", lambda **kwargs: delay_calls.append(kwargs))
+    logged_warning: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        service.logger, "warning", lambda event, **kw: logged_warning.append((event, kw))
+    )
+
+    await service.notify_role_at_branch(
+        db_session,
+        tenant_schema=tenant.schema_name,
+        role_id=role.id,
+        branch_id=branch.id,
+        title="Title",
+        body="Body",
+    )
+
+    assert delay_calls == []
+    assert logged_warning and logged_warning[0][0] == "push_notify_role_no_holders"
+    assert logged_warning[0][1]["role_id"] == str(role.id)
+    assert logged_warning[0][1]["branch_id"] == str(branch.id)

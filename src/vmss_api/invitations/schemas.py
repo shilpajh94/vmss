@@ -19,6 +19,26 @@ class RegistrationType(StrEnum):
     group = "group"
 
 
+class InvitationStatus(StrEnum):
+    """The closed set of values `Invitation.status` is ever written by
+    application code — `models.py`'s state-machine writes (`create_invitation`,
+    `approve_if_submitted`, `deny_if_submitted`, `check_in_if_eligible`/
+    `check_in_by_qr_if_eligible`, `check_out_if_checked_in`/
+    `check_out_by_qr_if_eligible`, `service.py`'s `initial_status`). `pending`
+    is the column's DB-level default but is never produced by any code path
+    (see `models.py::Invitation`'s own docstring) — deliberately excluded so
+    `GET /invitations?status=` can't be used to fish for a state that no row
+    can actually be in. `api-conventions.md` §1's real-enum-filter rule,
+    matching `RegistrationType`/`RegistrationSource` above.
+    """
+
+    submitted = "submitted"
+    approved = "approved"
+    denied = "denied"
+    checked_in = "checked_in"
+    checked_out = "checked_out"
+
+
 class RegistrationSource(StrEnum):
     """Which channel created the `Invitation` row — an employee's advance
     pre-registration (API-09) or a visitor's own walk-in registration
