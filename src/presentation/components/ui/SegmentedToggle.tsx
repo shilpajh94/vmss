@@ -24,7 +24,7 @@ export function SegmentedToggle({ options, value, onChange, variant = 'inline' }
             key={option.value}
             type="button"
             onClick={() => onChange(option.value)}
-            className={`flex h-full flex-1 items-center justify-center rounded-md text-sm font-semibold transition-colors ${
+            className={`flex h-full flex-1 cursor-pointer items-center justify-center rounded-md text-sm font-semibold transition-colors ${
               value === option.value ? 'bg-secondary-accent text-white' : 'text-text-muted hover:bg-secondary-accent/10 hover:text-text'
             }`}
           >
@@ -43,8 +43,8 @@ export function SegmentedToggle({ options, value, onChange, variant = 'inline' }
             key={option.value}
             type="button"
             onClick={() => onChange(option.value)}
-            className={`flex h-full flex-1 items-center justify-center text-[13px] font-semibold ${index > 0 ? 'border-l border-border' : ''} ${
-              value === option.value ? 'bg-secondary-accent text-white' : 'bg-surface text-text'
+            className={`flex h-full flex-1 cursor-pointer items-center justify-center text-[13px] font-semibold transition-colors ${index > 0 ? 'border-l border-border' : ''} ${
+              value === option.value ? 'bg-secondary-accent text-white' : 'bg-surface text-text hover:bg-secondary-accent/10'
             }`}
           >
             {option.label}
@@ -61,8 +61,8 @@ export function SegmentedToggle({ options, value, onChange, variant = 'inline' }
           key={option.value}
           type="button"
           onClick={() => onChange(option.value)}
-          className={`px-4 py-2 text-body font-medium ${
-            value === option.value ? 'bg-secondary-accent text-white' : 'bg-surface text-text'
+          className={`cursor-pointer px-4 py-2 text-body font-medium transition-colors ${
+            value === option.value ? 'bg-secondary-accent text-white' : 'bg-surface text-text hover:bg-secondary-accent/10'
           }`}
         >
           {option.label}

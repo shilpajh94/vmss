@@ -141,6 +141,7 @@ export function ReviewConfirmStep({
           ['Location', formState.visitInfo.location],
           ['Building', formState.visitInfo.building],
           ['Department', formState.visitInfo.department],
+          ['Additional Notes', formState.visitInfo.notes],
         ]}
       />
 

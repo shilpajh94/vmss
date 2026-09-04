@@ -57,7 +57,7 @@ function toTrackingLookupResponse(invitationOut: InvitationTrackOut): TrackingLo
     statusTone: STATUS_TONE[normalizedStatus] ?? 'info',
     requestedDate: invitationOut.preferredVisitDate ?? invitationOut.submittedAt ?? '—',
     assignedHost: invitationOut.hostNameOrEmail ?? 'Unassigned',
-    totalVisitors: invitationOut.visitors && invitationOut.visitors.length > 0 ? invitationOut.visitors.length : 1,
+    totalVisitors: 1 + (invitationOut.visitors?.length ?? 0),
     timelineStage: STATUS_TIMELINE_STAGE[normalizedStatus] ?? 'submitted',
   }
 }
