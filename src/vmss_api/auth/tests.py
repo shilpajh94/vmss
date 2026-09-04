@@ -1,9 +1,11 @@
+import io
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 
 import pytest_asyncio
 from httpx import AsyncClient
+from PIL import Image
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +20,7 @@ from factories import (
 from vmss_api.auth.models import AuditLog, Permission, Role, User, UserBranchRole
 from vmss_api.auth.rbac_catalog import seed_default_roles
 from vmss_api.auth.repository import RoleRepository, UserRepository
+from vmss_api.core import storage
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.security import hash_password
@@ -39,6 +42,12 @@ def _default_tenant_slug_matches_test_tenant(monkeypatch):
 async def _login(client: AsyncClient, email: str, password: str = "correct-password") -> str:
     response = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
     return response.json()["data"]["accessToken"]
+
+
+def _jpeg_bytes() -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (2, 2), color="white").save(buffer, format="JPEG")
+    return buffer.getvalue()
 
 
 async def test_login_success(client: AsyncClient, user: User) -> None:
@@ -142,6 +151,177 @@ async def test_get_my_profile(client: AsyncClient, user: User) -> None:
 async def test_get_my_profile_requires_auth(client: AsyncClient) -> None:
     response = await client.get("/api/v1/auth/me")
     assert response.status_code == 401
+
+
+# --- POST /auth/me/avatar (add-avatar-upload-and-verify-image-storage) -------
+
+
+async def test_upload_avatar_success_and_fetchable_from_profile(
+    client: AsyncClient, user: User
+) -> None:
+    """specs/auth/spec.md "Valid avatar upload succeeds and is retrievable"."""
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    photo_bytes = _jpeg_bytes()
+
+    upload_response = await client.post(
+        "/api/v1/auth/me/avatar",
+        files={"file": ("avatar.jpg", photo_bytes, "image/jpeg")},
+        headers=headers,
+    )
+    assert upload_response.status_code == 200, upload_response.text
+    avatar_url = upload_response.json()["data"]["avatarUrl"]
+    assert avatar_url is not None
+
+    profile_response = await client.get("/api/v1/auth/me", headers=headers)
+    assert profile_response.json()["data"]["avatarUrl"] == avatar_url
+
+    fetched = await client.get(avatar_url)
+    assert fetched.status_code == 200
+    assert fetched.content == photo_bytes
+
+
+async def test_upload_avatar_disguised_content_rejected(client: AsyncClient, user: User) -> None:
+    """specs/auth/spec.md "Disguised executable submitted as an avatar is
+    rejected" — the user's existing avatar (if any) is left unchanged.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    first_upload = await client.post(
+        "/api/v1/auth/me/avatar",
+        files={"file": ("avatar.jpg", _jpeg_bytes(), "image/jpeg")},
+        headers=headers,
+    )
+    original_avatar_url = first_upload.json()["data"]["avatarUrl"]
+
+    disguised_response = await client.post(
+        "/api/v1/auth/me/avatar",
+        files={
+            "file": (
+                "avatar.jpg",
+                b"this is not actually an image, just plain text bytes",
+                "image/jpeg",
+            )
+        },
+        headers=headers,
+    )
+    assert disguised_response.status_code == 422
+
+    profile_response = await client.get("/api/v1/auth/me", headers=headers)
+    assert profile_response.json()["data"]["avatarUrl"] == original_avatar_url
+
+
+async def test_upload_avatar_oversized_rejected(
+    client: AsyncClient, user: User, monkeypatch
+) -> None:
+    """specs/auth/spec.md "Oversized avatar upload is rejected" — rejected
+    before the full upload is buffered into memory
+    (add-avatar-upload-and-verify-image-storage/design.md Decision 3).
+    """
+    monkeypatch.setattr(settings, "avatar_max_upload_size_bytes", 10)
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await client.post(
+        "/api/v1/auth/me/avatar",
+        files={"file": ("avatar.jpg", _jpeg_bytes(), "image/jpeg")},
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+    profile_response = await client.get("/api/v1/auth/me", headers=headers)
+    assert profile_response.json()["data"]["avatarUrl"] is None
+
+
+async def test_upload_avatar_replaces_previous(client: AsyncClient, user: User) -> None:
+    """specs/auth/spec.md "Uploading a new avatar replaces the previous
+    one".
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    first_upload = await client.post(
+        "/api/v1/auth/me/avatar",
+        files={"file": ("first.jpg", _jpeg_bytes(), "image/jpeg")},
+        headers=headers,
+    )
+    first_avatar_url = first_upload.json()["data"]["avatarUrl"]
+
+    second_photo = io.BytesIO()
+    Image.new("RGB", (3, 3), color="black").save(second_photo, format="PNG")
+    second_upload = await client.post(
+        "/api/v1/auth/me/avatar",
+        files={"file": ("second.png", second_photo.getvalue(), "image/png")},
+        headers=headers,
+    )
+    second_avatar_url = second_upload.json()["data"]["avatarUrl"]
+    assert second_avatar_url != first_avatar_url
+
+    profile_response = await client.get("/api/v1/auth/me", headers=headers)
+    assert profile_response.json()["data"]["avatarUrl"] == second_avatar_url
+
+
+async def test_user_with_no_avatar_returns_null_avatar_url(client: AsyncClient, user: User) -> None:
+    """specs/auth/spec.md "A user with no avatar uploaded has no avatar
+    URL".
+    """
+    token = await _login(client, user.email)
+    response = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json()["data"]["avatarUrl"] is None
+
+
+async def test_upload_avatar_requires_auth(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/auth/me/avatar",
+        files={"file": ("avatar.jpg", _jpeg_bytes(), "image/jpeg")},
+    )
+    assert response.status_code == 401
+
+
+async def test_list_employees_surfaces_uploaded_avatar_url(client: AsyncClient, user: User) -> None:
+    """`GET /auth/employees` (`EmployeeOut`) already had an `avatarUrl`
+    field — confirms it's actually populated end to end once an avatar
+    exists, not just present-but-always-null.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    upload_response = await client.post(
+        "/api/v1/auth/me/avatar",
+        files={"file": ("avatar.jpg", _jpeg_bytes(), "image/jpeg")},
+        headers=headers,
+    )
+    avatar_url = upload_response.json()["data"]["avatarUrl"]
+
+    response = await client.get("/api/v1/auth/employees", headers=headers)
+    assert response.status_code == 200
+    row = next(r for r in response.json()["data"] if r["email"] == user.email)
+    assert row["avatarUrl"] == avatar_url
+
+
+async def test_employee_directory_surfaces_avatar_url(
+    db_session: AsyncSession, tenant: Tenant, client: AsyncClient
+) -> None:
+    """specs/auth/spec.md "Employee directory listing surfaces the same
+    avatar field as other employee listings" — `EmployeeDirectoryOut` used
+    to omit `avatarUrl` entirely, unlike `EmployeeOut`.
+    """
+    photo_key = await storage.save(tenant.id, "auth/avatars", _jpeg_bytes(), "image/jpeg")
+    host_role = RoleFactory.build(id=uuid.uuid4(), name="host", permissions=[])
+    db_session.add(host_role)
+    await db_session.commit()
+    host_user = await _make_role_user(
+        db_session, tenant, host_role, email="dana@acme-test.example", full_name="Dana Host"
+    )
+    host_user.avatar_url = photo_key
+    await db_session.commit()
+
+    response = await client.get("/api/v1/auth/employees/directory")
+    assert response.status_code == 200
+    row = next(r for r in response.json()["data"] if r["fullName"] == "Dana Host")
+    assert row["avatarUrl"] is not None
+
+    fetched = await client.get(row["avatarUrl"])
+    assert fetched.status_code == 200
 
 
 async def test_create_user_success(client: AsyncClient, user: User) -> None:

@@ -146,6 +146,14 @@ _TAGS_METADATA = [
             "search — all read from the `invitations` capability's data."
         ),
     },
+    {
+        "name": "file-storage",
+        "description": (
+            "Serves the `local` storage backend's signed, time-boxed URLs — "
+            "the same content an S3 presigned URL would serve when the "
+            "backend is `s3` instead."
+        ),
+    },
 ]
 
 

@@ -31,6 +31,7 @@ class UserOut(CamelModel):
     email: EmailStr
     full_name: str
     is_active: bool
+    avatar_url: str | None = None
     branch_roles: list[BranchRoleOut]
 
 
@@ -149,3 +150,12 @@ class EmployeeDirectoryOut(CamelModel):
     full_name: str
     designation: str | None
     department_id: uuid.UUID | None
+    avatar_url: str | None = None
+
+
+class AvatarUploadOut(CamelModel):
+    """`POST /auth/me/avatar`'s response — just the newly resolved URL, since
+    the caller already knows who they are.
+    """
+
+    avatar_url: str | None

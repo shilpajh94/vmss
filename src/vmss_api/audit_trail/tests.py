@@ -1,7 +1,6 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -13,7 +12,7 @@ from vmss_api.audit_trail.models import AuditReportJob
 from vmss_api.audit_trail.repository import AuditLogRepository, AuditReportJobRepository
 from vmss_api.auth.models import AuditLog, User, UserBranchRole
 from vmss_api.core.security import hash_password
-from vmss_api.core.storage import url_for as storage_url_for
+from vmss_api.core.storage import load as storage_load
 from vmss_api.platform.models import TenantUserIndex
 from vmss_api.tenant.models import Tenant
 
@@ -504,8 +503,7 @@ async def test_generate_audit_report_reflects_filtered_data(
     assert job.status == "ready"
     assert job.csv_storage_key is not None
 
-    csv_path = await storage_url_for(job.csv_storage_key)
-    csv_content = Path(csv_path).read_text()
+    csv_content = (await storage_load(job.csv_storage_key)).decode()
     assert str(matching.id) in csv_content
     assert "invitation_checked_in" not in csv_content
 

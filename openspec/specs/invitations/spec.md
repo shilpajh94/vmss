@@ -123,6 +123,25 @@ written to storage.
 - **THEN** the system rejects the entire request and does not write the
   first visitor's file to storage
 
+### Requirement: Issued Badge Image Is Retrievable as a Fetchable URL
+When a badge is issued or reprinted for an invitation, the response's
+badge URL SHALL be a fetchable HTTP URL an authenticated client can
+retrieve the badge image content from, not merely a non-null string —
+consistent with the `file-storage` capability's requirement that a
+resolved reference is usable by an HTTP client regardless of the active
+storage backend.
+
+#### Scenario: Issued badge URL is fetchable
+- **WHEN** a badge is issued for an approved, checked-in invitation
+- **THEN** the response's badge URL can be fetched by an authenticated
+  client to retrieve the badge image content
+
+#### Scenario: Reprinted badge URL is fetchable
+- **WHEN** an already-issued badge is reprinted
+- **THEN** the response's badge URL can be fetched by an authenticated
+  client to retrieve the badge image content, whether or not it differs
+  from the originally issued badge's URL
+
 ### Requirement: Consent Is Mandatory and Recorded
 An invitation SHALL be created only if the primary contact has accepted
 every required consent (terms and conditions, data processing, and safety

@@ -5,11 +5,11 @@ import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import aiosmtplib
 import pytest
 import pytest_asyncio
+import starlette.datastructures as starlette_datastructures
 from fastapi import HTTPException
 from httpx import AsyncClient, Response
 from PIL import Image
@@ -36,6 +36,7 @@ from factories import (
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import AuditLog, Permission, User, UserBranchRole
 from vmss_api.auth.repository import RoleRepository
+from vmss_api.core import storage
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.schemas import SortOrder
@@ -552,6 +553,36 @@ async def test_create_invitation_oversized_file_rejected(
     token = await _login(client, user.email)
     response = await _create_invitation(client, token, branch, payload=_individual_payload())
     assert response.status_code == 422
+
+
+async def test_create_invitation_oversized_file_read_is_bounded(
+    client: AsyncClient, user: User, branch: Branch, monkeypatch
+) -> None:
+    """add-avatar-upload-and-verify-image-storage design.md Decision 3 — the
+    router bounds each `UploadFile.read()` call to `max_size_bytes + 1`
+    rather than an unbounded read, so an oversized upload is detected
+    without a second, unbounded in-memory buffer beyond what's needed to
+    tell it's too large.
+    """
+    monkeypatch.setattr(settings, "invitation_max_upload_size_bytes", 10)
+    read_sizes: list[int] = []
+    # Starlette's multipart parser instantiates its own
+    # `starlette.datastructures.UploadFile` (not `fastapi.UploadFile`, a
+    # subclass never actually constructed at request-parsing time) — the
+    # spy has to patch the base class the real request objects are.
+    original_read = starlette_datastructures.UploadFile.read
+
+    async def _spy_read(self, size: int = -1) -> bytes:
+        read_sizes.append(size)
+        return await original_read(self, size)
+
+    monkeypatch.setattr(starlette_datastructures.UploadFile, "read", _spy_read)
+
+    token = await _login(client, user.email)
+    response = await _create_invitation(client, token, branch, payload=_individual_payload())
+
+    assert response.status_code == 422
+    assert read_sizes == [11]
 
 
 async def test_create_group_invitation_earlier_visitor_file_not_stored_when_later_invalid(
@@ -2429,6 +2460,36 @@ async def test_get_invitation_detail_success(
     assert data["vehicles"] == []
 
 
+async def test_get_invitation_detail_surfaces_fetchable_primary_contact_photo_url(
+    client: AsyncClient, user: User, branch: Branch, tenant: Tenant, db_session: AsyncSession
+) -> None:
+    """add-avatar-upload-and-verify-image-storage spec.md "Every photo URL
+    returned by any invitation response ... SHALL be a fetchable HTTP URL"
+    — `GET /invitations/{id}`'s own `primaryContactPhotoUrl` specifically
+    (as opposed to a nested visitor's `photoUrl`), fetched end to end.
+    """
+    photo_bytes = _jpeg_bytes()
+    photo_key = await storage.save(tenant.id, "invitations/photos", photo_bytes, "image/jpeg")
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", primary_contact_photo_storage_key=photo_key
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    photo_url = response.json()["data"]["primaryContactPhotoUrl"]
+    assert photo_url is not None
+
+    photo_response = await client.get(photo_url)
+    assert photo_response.status_code == 200
+    assert photo_response.content == photo_bytes
+
+
 async def test_get_invitation_detail_surfaces_resolved_host_as_host_id(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
 ) -> None:
@@ -3781,8 +3842,9 @@ async def test_issue_badge_success(
     await db_session.refresh(invitation)
     assert invitation.badge_number == data["badgeNumber"]
     assert invitation.badge_storage_key is not None
-    badge_bytes = Path(data["badgeUrl"]).read_bytes()
-    assert Image.open(io.BytesIO(badge_bytes)).format == "PNG"
+    badge_response = await client.get(data["badgeUrl"])
+    assert badge_response.status_code == 200
+    assert Image.open(io.BytesIO(badge_response.content)).format == "PNG"
 
 
 async def test_issue_badge_already_issued_rejected(

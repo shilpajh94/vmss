@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.auth.models import User
+from vmss_api.core.config import settings
 from vmss_api.core.deps import get_current_user, get_pagination, get_tenant, get_tenant_db
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.redis import get_redis
@@ -617,8 +618,13 @@ async def create_invitation(
         )
     branch = await authorize_branch_id(tenant_db, user, "invitations:create", branch_id)
 
-    primary_content = await primary_contact_id_proof_file.read()
-    visitor_contents = [await f.read() for f in visitor_id_proof_files]
+    # Bounded reads (file-upload-handling.md §1, add-avatar-upload-and-
+    # verify-image-storage/design.md Decision 3): reject an oversized file
+    # before its full content is buffered into memory, rather than reading
+    # it all and only then checking `len()` in `service.py`'s validation.
+    id_proof_limit = settings.invitation_max_upload_size_bytes + 1
+    primary_content = await primary_contact_id_proof_file.read(id_proof_limit)
+    visitor_contents = [await f.read(id_proof_limit) for f in visitor_id_proof_files]
 
     invitation = await service.create_invitation(
         tenant_db,

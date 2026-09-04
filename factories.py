@@ -84,6 +84,13 @@ class UserFactory(SQLAlchemyFactory[User]):
     designation = None
     phone_number = None
     department_id = None
+    # Same footgun as the other optional String columns above: polyfactory
+    # generates a random non-None string for a plain `String | None` column
+    # by default, and `avatar_url` (add-avatar-upload-and-verify-image-
+    # storage) is now actually surfaced in API responses and resolved as a
+    # storage key — an un-pinned random value there isn't just noise, it
+    # gets treated as a real (bogus) key and turned into a broken URL.
+    avatar_url = None
 
 
 class UserBranchRoleFactory(SQLAlchemyFactory[UserBranchRole]):

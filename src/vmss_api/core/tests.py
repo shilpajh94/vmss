@@ -1,7 +1,6 @@
 import io
 import uuid
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import pytest
 from cryptography.fernet import Fernet
@@ -44,15 +43,55 @@ def test_validate_upload_accepts_allow_listed_content() -> None:
 # --- file-storage capability: local backend -----------------------------------
 
 
-async def test_local_backend_save_and_url_for_round_trip(monkeypatch, tmp_path) -> None:
+async def test_local_backend_save_and_url_for_round_trip(
+    monkeypatch, tmp_path, client: AsyncClient
+) -> None:
+    """`url_for` must return a URL the client can actually fetch
+    (add-avatar-upload-and-verify-image-storage/design.md Decision 1) — not
+    a raw filesystem path, which a browser can never render.
+    """
     monkeypatch.setattr(settings, "storage_backend", "local")
     monkeypatch.setattr(settings, "storage_root", str(tmp_path))
     content = _png_bytes()
 
     key = await storage.save(uuid.uuid4(), "tests/photo", content, "image/png")
-    path = await storage.url_for(key)
+    url = await storage.url_for(key)
 
-    assert Path(path).read_bytes() == content
+    assert url.startswith("/api/v1/files/local/")
+    response = await client.get(url)
+
+    assert response.status_code == 200
+    assert response.content == content
+    assert response.headers["content-type"] == "image/png"
+
+
+async def test_local_backend_url_rejects_tampered_signature(
+    monkeypatch, tmp_path, client: AsyncClient
+) -> None:
+    monkeypatch.setattr(settings, "storage_backend", "local")
+    monkeypatch.setattr(settings, "storage_root", str(tmp_path))
+    key = await storage.save(uuid.uuid4(), "tests/photo", _png_bytes(), "image/png")
+    url = await storage.url_for(key)
+    tampered_url = url[:-1] + ("0" if url[-1] != "0" else "1")
+
+    response = await client.get(tampered_url)
+
+    assert response.status_code == 403
+    assert response.content != _png_bytes()
+
+
+async def test_local_backend_url_rejects_expired_signature(
+    monkeypatch, tmp_path, client: AsyncClient
+) -> None:
+    monkeypatch.setattr(settings, "storage_backend", "local")
+    monkeypatch.setattr(settings, "storage_root", str(tmp_path))
+    monkeypatch.setattr(settings, "storage_local_presigned_url_ttl_seconds", -1)
+    key = await storage.save(uuid.uuid4(), "tests/photo", _png_bytes(), "image/png")
+    url = await storage.url_for(key)
+
+    response = await client.get(url)
+
+    assert response.status_code == 403
 
 
 # --- file-storage capability: S3-compatible backend (API-14) ------------------
