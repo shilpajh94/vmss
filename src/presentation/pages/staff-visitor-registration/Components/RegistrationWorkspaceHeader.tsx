@@ -1,5 +1,6 @@
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { LogOutIcon } from '../../../components/icons'
+import { NotificationBell } from '../../../components/notification-bell/NotificationBell'
 
 interface RegistrationWorkspaceHeaderProps {
   currentUser: StaffUser | undefined
@@ -24,6 +25,8 @@ export function RegistrationWorkspaceHeader({ currentUser, onSignOut }: Registra
       </div>
 
       <div className="flex items-center gap-4">
+        <NotificationBell />
+
         {currentUser && (
           <div className="flex items-center gap-3">
             <span className="flex size-9 shrink-0 items-center justify-center rounded-full border-[1.5px] border-info bg-info/8 font-display text-[13px] font-bold text-info">
