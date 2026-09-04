@@ -1,11 +1,12 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, or_, select, update
-from sqlalchemy.orm import selectinload
+from sqlalchemy import Select, and_, exists, func, or_, select, update
+from sqlalchemy.orm import aliased, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
+from vmss_api.auth.models import UserBranchRole
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.invitations.models import (
@@ -26,13 +27,19 @@ def _branch_filter(branch_scope: BranchScope) -> Any | None:
 
 def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
     """specs/invitations/spec.md "Caller Lists Invitations Relevant to
-    Themselves via relevantToMe": invitations where `user_id` is either the
-    snapshotted host (the `stepOrder` 0 step's `approver_user_id`) or has
-    been delegated any step, regardless of that step's status. A single
-    subquery against `invitation_approval_steps`, not a per-invitation loop
+    Themselves via relevantToMe": invitations where `user_id` is (a) the
+    snapshotted host (the `stepOrder` 0 step's `approver_user_id`), (b) has
+    been delegated any step, regardless of that step's status, or (c)
+    currently holds — via branch-scoped `UserBranchRole` at the invitation's
+    own branch or company-wide — the role of the invitation's current
+    pending, undelegated, role-identified step. (c) closes the gap where a
+    valid role-based approver had no way to find their pending work short of
+    the unfiltered branch-wide list (checkin-approval-workflow-improvements).
+    All three clauses are expressed as (correlated, where needed) subqueries
+    against `invitation_approval_steps`, not a per-invitation loop
     (query-performance.md §2).
     """
-    return Invitation.id.in_(
+    host_or_delegate = Invitation.id.in_(
         select(InvitationApprovalStep.invitation_id).where(
             InvitationApprovalStep.deleted_at.is_(None),
             or_(
@@ -44,6 +51,40 @@ def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
             ),
         )
     )
+
+    # "Current pending step" mirrors
+    # `approvals/repository.py::get_current_pending`: the lowest
+    # `step_order` still `pending` for that invitation. `current_step` is
+    # aliased so this self-referential lookup doesn't collide with the
+    # correlated `min_pending_step_order` subquery below.
+    current_step = aliased(InvitationApprovalStep)
+    min_pending_step_order = (
+        select(func.min(InvitationApprovalStep.step_order))
+        .where(
+            InvitationApprovalStep.invitation_id == current_step.invitation_id,
+            InvitationApprovalStep.status == "pending",
+            InvitationApprovalStep.deleted_at.is_(None),
+        )
+        .scalar_subquery()
+    )
+    current_role_holder = exists(
+        select(current_step.id)
+        .join(UserBranchRole, UserBranchRole.role_id == current_step.approver_role_id)
+        .where(
+            current_step.invitation_id == Invitation.id,
+            current_step.deleted_at.is_(None),
+            current_step.status == "pending",
+            current_step.approver_role_id.is_not(None),
+            current_step.delegated_to_user_id.is_(None),
+            current_step.step_order == min_pending_step_order,
+            UserBranchRole.user_id == user_id,
+            or_(
+                UserBranchRole.branch_id == Invitation.branch_id,
+                UserBranchRole.branch_id.is_(None),
+            ),
+        )
+    )
+    return or_(host_or_delegate, current_role_holder)
 
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
@@ -146,7 +187,9 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def check_in_by_qr_if_eligible(self, id_: uuid.UUID) -> Invitation | None:
+    async def check_in_by_qr_if_eligible(
+        self, id_: uuid.UUID, *, today_local: date
+    ) -> Invitation | None:
         """The `unused`/`checked_out` -> `checked_in` transition driven by
         a QR scan (spec.md "QR Check-In Drives a Cycling
         Checked-In/Checked-Out Lifecycle" / "QR Check-In Enforces
@@ -156,15 +199,19 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         this admits from either, not just the very first entry
         (design.md "checkInStatus cycles indefinitely; checked_out is not
         terminal"). Every eligibility condition — approved, not
-        watchlist-flagged, currently outside, not expired — is folded into
-        the one atomic `UPDATE`'s `WHERE` clause, same race-safety
-        reasoning as `check_in_if_eligible` above. Mirrors the transition
-        into `status` too, in the same statement, so the existing
-        tracking-ID/staff check-in paths and anything reading `status`
-        (the "who's inside" emergency report) see a QR-driven check-in
-        exactly like any other (design.md "check_in_status kept parallel
-        to status, not merged"). There is no authenticated actor on this
-        path, so `checked_in_by_user_id` is left at its default (`None`).
+        watchlist-flagged, currently outside, not before the scheduled
+        visit date, not expired — is folded into the one atomic `UPDATE`'s
+        `WHERE` clause, same race-safety reasoning as `check_in_if_eligible`
+        above. `today_local` is the caller's already-resolved tenant-local
+        calendar date (qr-checkin-scheduling-photo-email/design.md Decision
+        3) — computed once per call, not re-derived per row. Mirrors the
+        transition into `status` too, in the same statement, so the
+        existing tracking-ID/staff check-in paths and anything reading
+        `status` (the "who's inside" emergency report) see a QR-driven
+        check-in exactly like any other (design.md "check_in_status kept
+        parallel to status, not merged"). There is no authenticated actor
+        on this path, so `checked_in_by_user_id` is left at its default
+        (`None`).
         """
         stmt = (
             update(Invitation)
@@ -173,6 +220,10 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 Invitation.check_in_status.in_(("unused", "checked_out")),
                 Invitation.status.in_(_QR_ENTRY_ELIGIBLE_STATUSES),
                 Invitation.watchlist_flagged.is_(False),
+                or_(
+                    Invitation.preferred_visit_date.is_(None),
+                    Invitation.preferred_visit_date <= today_local,
+                ),
                 Invitation.expires_at > datetime.now(UTC),
             )
             .values(

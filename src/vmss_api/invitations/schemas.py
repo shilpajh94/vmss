@@ -236,6 +236,7 @@ class InvitationListItemOut(CamelModel):
     status: str
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
+    primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
     expires_at: datetime
     submitted_at: datetime | None
@@ -251,6 +252,7 @@ class InvitationVisitorOut(CamelModel):
     email: str | None
     phone: str | None
     id_proof_type: str
+    photo_url: str | None = None
 
 
 class InvitationVehicleOut(CamelModel):
@@ -262,13 +264,14 @@ class InvitationVehicleOut(CamelModel):
 
 
 class InvitationCheckInOut(CamelModel):
-    """Response for `PATCH /api/v1/invitations/{id}/check-in`
-    (`add-invitation-details-to-checkin-response` — spec.md "Staff Check-In
-    Response Surfaces Full Invitation Detail") — every field `InvitationOut`
-    already carries, plus everything captured at registration that the
-    public tracking lookup (`InvitationTrackingOut`) also returns. No
-    branch/creator/badge/watchlist internals — those stay exclusive to
-    `InvitationDetailOut` (`GET /invitations/{id}`).
+    """Response for `PATCH /api/v2/invitations/{trackingId}/check-in`, the
+    single staff/desk-facing check-in endpoint (spec.md "Staff Check-In Has
+    One Canonical Endpoint" / "Staff Check-In Response Surfaces Full
+    Invitation Detail") — every field `InvitationOut` already carries, plus
+    everything captured at registration that the public tracking lookup
+    (`InvitationTrackingOut`) also returns. No branch/creator/badge/watchlist
+    internals — those stay exclusive to `InvitationDetailOut`
+    (`GET /invitations/{id}`).
     """
 
     id: uuid.UUID
@@ -283,6 +286,7 @@ class InvitationCheckInOut(CamelModel):
     approved_at: datetime | None
     current_approval_step: CurrentApprovalStepOut | None = None
     primary_contact_full_name: str
+    primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
     host_name_or_email: str | None
     preferred_visit_date: date | None
@@ -310,6 +314,7 @@ class InvitationTrackingOut(CamelModel):
     source: str
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
+    primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
     host_name_or_email: str | None
     preferred_visit_date: date | None
@@ -358,6 +363,7 @@ class InvitationDetailOut(CamelModel):
     registration_type: str
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
+    primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
     host_name_or_email: str | None
     host_id: uuid.UUID | None = None
@@ -434,6 +440,7 @@ class InvitationQrCheckInOut(CamelModel):
     source: str
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
+    primary_contact_photo_url: str | None = None
     primary_contact_email: str | None
     primary_contact_phone: str | None
     host_id: uuid.UUID | None = None

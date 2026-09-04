@@ -89,6 +89,10 @@ class Invitation(Base, TimestampMixin):
     # permission or viewing endpoint exists yet, so this stays write-only
     # until a real requirement (and its own permission) is proposed.
     primary_contact_id_proof_storage_key: Mapped[str | None] = mapped_column(String(500))
+    # Optional profile photo (checkin-approval-workflow-improvements) —
+    # nullable, unlike the ID-proof storage key, since capturing a photo is
+    # never required.
+    primary_contact_photo_storage_key: Mapped[str | None] = mapped_column(String(500))
 
     # --- Visit details (self-registration only) -----------------------------
     purpose_of_visit: Mapped[str | None] = mapped_column(String(255))
@@ -200,6 +204,8 @@ class InvitationVisitor(Base, TimestampMixin):
     # see the matching comment on `Invitation.primary_contact_id_proof_storage_key`
     # above (add-avatar-upload-and-verify-image-storage/design.md Decision 5).
     id_proof_storage_key: Mapped[str] = mapped_column(String(500))
+    # Optional profile photo (checkin-approval-workflow-improvements).
+    photo_storage_key: Mapped[str | None] = mapped_column(String(500))
 
 
 class InvitationQRCode(Base, TimestampMixin):

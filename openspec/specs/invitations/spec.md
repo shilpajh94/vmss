@@ -123,6 +123,59 @@ written to storage.
 - **THEN** the system rejects the entire request and does not write the
   first visitor's file to storage
 
+### Requirement: Visitor and Primary Contact Registration Optionally Captures a Profile Photo
+The system SHALL accept an optional profile photo file for the primary
+contact and for each visitor entry (in both `individual` and `group`
+registrations), submitted as an additional file part alongside the
+existing ID-proof file(s) in the same `multipart/form-data` request,
+order-matched to the visitor list the same way co-visitor ID-proof files
+already are. The system SHALL validate the uploaded photo's actual content
+against an image-only allow-list (JPEG/PNG) — never the client-supplied
+content-type or filename alone — and SHALL enforce a maximum upload size,
+consistent with the existing ID-proof validation rules ("Every Visitor Has
+a Reachable Contact and a Validated ID Proof"). Omitting the photo for the
+primary contact or any visitor SHALL NOT cause the request to be rejected —
+the photo remains optional. Because `POST /registrations/walk-in` accepts
+the identical payload/file contract as `POST /invitations` (see the
+`registrations` capability), this optional photo capture applies to
+walk-in registrations without any separate change to that endpoint. Every
+photo URL returned by any invitation response (creation, detail, tracking,
+check-in, check-out, list) SHALL be a fetchable HTTP URL an authenticated
+client can retrieve the image content from, not merely a non-null string —
+per the `file-storage` capability's requirement that a resolved reference
+is usable by an HTTP client regardless of the active storage backend.
+
+#### Scenario: Photo supplied and valid is stored and returned
+- **WHEN** a creation request includes a valid JPEG or PNG photo for the
+  primary contact
+- **THEN** the request succeeds, the photo is stored, and the invitation's
+  detail responses include a fetchable HTTP URL for it that an
+  authenticated client can retrieve the image content from
+
+#### Scenario: Photo omitted does not affect creation
+- **WHEN** a creation request supplies no photo for the primary contact or
+  any visitor
+- **THEN** the request succeeds exactly as it would today, with no photo
+  recorded for anyone who didn't supply one
+
+#### Scenario: Disguised executable submitted as a photo is rejected
+- **WHEN** an uploaded photo file's real content does not match an allowed
+  image format, regardless of its filename extension or declared content
+  type
+- **THEN** the system rejects the file and the overall request, creating no
+  invitation record
+
+#### Scenario: Oversized photo upload is rejected
+- **WHEN** an uploaded photo file exceeds the configured maximum size
+- **THEN** the system rejects the file before buffering the full upload
+  into memory
+
+#### Scenario: Walk-in registration inherits the same optional photo capture
+- **WHEN** a caller submits `POST /registrations/walk-in` with a photo for
+  the primary contact and/or one or more visitors
+- **THEN** the same validation and storage behavior applies, since it
+  submits the identical payload/file contract as `POST /invitations`
+
 ### Requirement: Issued Badge Image Is Retrievable as a Fetchable URL
 When a badge is issued or reprinted for an invitation, the response's
 badge URL SHALL be a fetchable HTTP URL an authenticated client can
@@ -324,63 +377,102 @@ was invalid.
 - **THEN** the request is rejected as an invalid token, with no invitation
   detail disclosed
 
-### Requirement: QR Check-In Drives a Cycling Checked-In/Checked-Out Lifecycle
+### Requirement: QR Check-In Endpoint Transitions an Eligible Visitor to Checked-In
 An invitation's check-in lifecycle SHALL be tracked by a `checkInStatus`
 value of `unused`, `checked_in`, or `checked_out`, defaulting to `unused`.
-Scanning an invitation's QR check-in token SHALL toggle `checkInStatus`:
-from `unused` or `checked_out` (the visitor is currently outside) to
-`checked_in` on a valid scan, and from `checked_in` to `checked_out` on
-the next valid scan — repeating for as many entry/exit cycles as the
-visitor makes over the course of their visit (e.g. leaving for lunch and
-returning, or moving between buildings on a multi-building site), not
-limited to one round trip. There is no terminal state short of the
-invitation's own expiry: a scan is never rejected merely because the
-visitor has already completed an earlier visit/exit cycle.
+`PATCH /api/v2/invitations/qr/{token}/check-in` SHALL transition an
+invitation whose `checkInStatus` is `unused` or `checked_out` to
+`checked_in`, recording `checkedInAt`, subject to the invitation being
+`approved`, not watchlist-blocked (unless overridden), not scanned before
+its scheduled visit date, and not expired (`expiresAt` has not already
+passed). "Not scanned before its scheduled visit date" means: WHEN the
+invitation has a `preferredVisitDate` set, THEN a scan is rejected if the
+current date (tenant-local calendar day) is earlier than `preferredVisitDate`
+— the comparison is date-only, so a scan is accepted at any time of day on
+or after that date, up until `expiresAt`. WHEN the invitation has no
+`preferredVisitDate` set, THEN this check is skipped entirely and only the
+existing `expiresAt` gate applies. Calling this endpoint for an invitation
+whose `checkInStatus` is already `checked_in` SHALL be rejected with 409 and
+SHALL NOT change `checkInStatus` — the caller MUST call the check-out
+endpoint instead. This endpoint does not toggle between check-in and
+check-out; each action has its own endpoint (see "QR Check-Out Endpoint
+Transitions a Checked-In Visitor to Checked-Out"). Repeated entry/exit
+cycles are otherwise unrestricted — a visitor may enter and exit as many
+times as the visit requires (e.g. leaving for lunch and returning, or moving
+between buildings on a multi-building site); there is no terminal state
+short of the invitation's own expiry.
 
 #### Scenario: First scan checks the visitor in
-- **WHEN** a QR check-in token is scanned for an invitation whose
-  `checkInStatus` is `unused`, and the invitation is otherwise eligible
-- **THEN** `checkInStatus` becomes `checked_in`, `checkedInAt` is
-  recorded, and the response indicates a successful check-in
+- **WHEN** this endpoint is called for an invitation whose `checkInStatus`
+  is `unused`, and the invitation is otherwise eligible
+- **THEN** `checkInStatus` becomes `checked_in`, `checkedInAt` is recorded,
+  and the response indicates a successful check-in
 
-#### Scenario: A scan while checked in checks the visitor out
-- **WHEN** the same QR check-in token is scanned again for an invitation
-  whose `checkInStatus` is `checked_in`
+#### Scenario: Re-entry after a prior check-out succeeds
+- **WHEN** this endpoint is called for an invitation whose `checkInStatus`
+  is `checked_out`, and the invitation is otherwise eligible
+- **THEN** `checkInStatus` becomes `checked_in` again, `checkedInAt` is
+  updated, and the response indicates a successful check-in
+
+#### Scenario: Calling check-in while already checked in is rejected
+- **WHEN** this endpoint is called for an invitation whose `checkInStatus`
+  is already `checked_in`
+- **THEN** the request is rejected with 409, `checkInStatus` is unchanged,
+  and the response indicates the caller must use the check-out endpoint
+  instead
+
+#### Scenario: Entry scan after expiry is rejected
+- **WHEN** this endpoint is called for an invitation whose `checkInStatus`
+  is `unused` or `checked_out` and whose `expires_at` has already passed
+- **THEN** the request is rejected as expired and `checkInStatus` is
+  unchanged
+
+#### Scenario: Entry scan before the scheduled visit date is rejected
+- **WHEN** this endpoint is called for an invitation whose `checkInStatus`
+  is `unused` or `checked_out`, whose `preferredVisitDate` is set, and whose
+  `preferredVisitDate` is later than the current tenant-local calendar date
+- **THEN** the request is rejected as too early, `checkInStatus` is
+  unchanged, and the rejection is distinguishable from the expiry-rejection
+  case
+
+#### Scenario: Entry scan on the scheduled visit date succeeds regardless of time of day
+- **WHEN** this endpoint is called for an invitation whose `preferredVisitDate`
+  equals the current tenant-local calendar date, at any time of day, and the
+  invitation is otherwise eligible
+- **THEN** the check-in succeeds — the scheduled-date check is date-only and
+  does not additionally require a specific time of day
+
+#### Scenario: Entry scan with no scheduled visit date set falls back to expiry-only gating
+- **WHEN** this endpoint is called for an invitation whose `preferredVisitDate`
+  is not set, and the invitation is otherwise eligible and not expired
+- **THEN** the check-in succeeds exactly as it did before this change — the
+  scheduled-date check is skipped entirely
+
+### Requirement: QR Check-Out Endpoint Transitions a Checked-In Visitor to Checked-Out
+`PATCH /api/v2/invitations/qr/{token}/check-out` SHALL transition an
+invitation whose `checkInStatus` is `checked_in` to `checked_out`,
+recording `checkedOutAt`. This transition SHALL NOT be subject to the
+expiry check that governs check-in, so a visit that legitimately continues
+past `expiresAt` can still be closed out. Calling this endpoint for an
+invitation whose `checkInStatus` is `unused` or `checked_out` SHALL be
+rejected with 409 and SHALL NOT change `checkInStatus`.
+
+#### Scenario: Checking out a checked-in visitor succeeds
+- **WHEN** this endpoint is called for an invitation whose `checkInStatus`
+  is `checked_in`
 - **THEN** `checkInStatus` becomes `checked_out`, `checkedOutAt` is
   recorded, and the response indicates a successful check-out
 
-#### Scenario: A later scan re-admits a previously checked-out visitor
-- **WHEN** a QR check-in token is scanned for an invitation whose
-  `checkInStatus` is `checked_out`, and the invitation is otherwise
-  eligible
-- **THEN** `checkInStatus` becomes `checked_in` again, `checkedInAt` is
-  updated, and the response indicates a successful check-in — exactly as
-  it would from `unused`
+#### Scenario: Check-out succeeds even after expiry
+- **WHEN** this endpoint is called for an invitation whose `checkInStatus`
+  is `checked_in` and whose `expires_at` has already passed
+- **THEN** the check-out succeeds exactly as it would before expiry
 
-### Requirement: QR Check-In Enforces Invitation Expiry on Every Entry
-Every transition into `checked_in` — whether from `unused` (the first
-entry) or from `checked_out` (a re-entry) — SHALL be rejected when the
-invitation's `expires_at` has already passed at scan time. The
-`checked_in` → `checked_out` transition SHALL NOT be subject to this
-expiry check, so a visit that legitimately continues past `expires_at`
-can still be closed out.
-
-#### Scenario: First entry scan after expiry is rejected
-- **WHEN** a QR check-in token is scanned for an invitation whose
-  `checkInStatus` is `unused` and whose `expires_at` is in the past
-- **THEN** the request is rejected as expired and `checkInStatus` remains
-  `unused`
-
-#### Scenario: Re-entry scan after expiry is rejected
-- **WHEN** a QR check-in token is scanned for an invitation whose
-  `checkInStatus` is `checked_out` and whose `expires_at` is in the past
-- **THEN** the request is rejected as expired and `checkInStatus` remains
-  `checked_out`
-
-#### Scenario: Exit scan after expiry still succeeds
-- **WHEN** a QR check-in token is scanned for an invitation whose
-  `checkInStatus` is `checked_in` and whose `expires_at` is in the past
-- **THEN** the transition to `checked_out` succeeds
+#### Scenario: Calling check-out on a visitor who isn't checked in is rejected
+- **WHEN** this endpoint is called for an invitation whose `checkInStatus`
+  is `unused` or `checked_out`
+- **THEN** the request is rejected with 409 and `checkInStatus` is
+  unchanged
 
 ### Requirement: QR Check-In Response Surfaces Full Invitation Detail
 A successful QR check-in response SHALL include everything captured
@@ -392,10 +484,13 @@ of visit and department, registration type and source, the preferred
 visit date/time and expected duration, additional notes, carried items,
 every co-visitor on a group registration, every declared vehicle, the
 submitted/approved/checked-in/checked-out timeline, the invitation's
-`expiresAt`, and its current `checkInStatus`. A rejected scan (invalid
-token, not approved, watchlist-blocked, expired, or already completed)
-discloses none of this — only a generic failure message, per the token
-and lifecycle requirements above.
+`expiresAt`, its current `checkInStatus`, and, for the primary contact and
+for each visitor who has one on file, their captured profile photo (see
+"Visitor and Primary Contact Registration Optionally Captures a Profile
+Photo") — null for whichever of them has none. A rejected scan (invalid
+token, not approved, watchlist-blocked, expired, or in a status the
+attempted action doesn't allow) discloses none of this — only a generic
+failure message.
 
 #### Scenario: Successful check-in response includes visitor and host detail
 - **WHEN** a QR check-in scan succeeds
@@ -417,12 +512,49 @@ and lifecycle requirements above.
   one or more vehicles at registration
 - **THEN** the response's vehicle list includes every declared vehicle
 
+#### Scenario: Successful check-out response carries the same detail shape as check-in
+- **WHEN** a QR check-out scan succeeds
+- **THEN** the response includes the same visitor, host, visit, and
+  timeline detail a successful check-in response would, reflecting the
+  invitation's now-`checked_out` state
+
+#### Scenario: Captured photos are included when present
+- **WHEN** a QR check-in or check-out scan succeeds for an invitation
+  whose primary contact and/or one or more visitors have a profile photo
+  on file
+- **THEN** the response includes each of their photos
+
+#### Scenario: Missing photos are represented as null, not omitted or errored
+- **WHEN** a QR check-in or check-out scan succeeds for an invitation
+  where the primary contact or a visitor has no profile photo on file
+- **THEN** that person's photo field is present and null, not omitted
+
+### Requirement: Staff Check-In Has One Canonical Endpoint
+The system SHALL expose exactly one staff/desk-facing endpoint for
+transitioning an invitation into `checked_in` by an authenticated caller:
+`PATCH /api/v2/invitations/{trackingId}/check-in`. The legacy `PATCH
+/api/v1/invitations/{id}/check-in` endpoint SHALL be removed outright, not
+merely deprecated. Staff check-out remains a separate endpoint (`PATCH
+/api/v1/invitations/{id}/check-out`), unchanged by this requirement.
+
+#### Scenario: Legacy v1 check-in route no longer exists
+- **WHEN** a caller sends `PATCH /api/v1/invitations/{id}/check-in` for any
+  invitation
+- **THEN** the system returns 404, since the route itself is removed
+- **AND** the check-in endpoint `PATCH /api/v2/invitations/{trackingId}/check-in` continues to function exactly as it did before this change
+
+#### Scenario: Check-out is unaffected
+- **WHEN** a caller with `invitations:checkin` at the invitation's branch
+  calls `PATCH /api/v1/invitations/{id}/check-out` for a `checked_in`
+  invitation
+- **THEN** the check-out succeeds exactly as it did before this change
+
 ### Requirement: Staff Check-In Response Surfaces Full Invitation Detail
-A successful response from `PATCH /api/v1/invitations/{id}/check-in` SHALL
-include every field the endpoint already returns today (`id`, `trackingId`,
-`registrationType`, `source`, `status`, `visitorCategoryId`, `hostId`,
-`expiresAt`, `submittedAt`, `approvedAt`, `currentApprovalStep`) plus
-everything captured about the invitation at registration that the public
+A successful response from `PATCH /api/v2/invitations/{trackingId}/check-in`
+SHALL include every field the endpoint already returns today (`id`,
+`trackingId`, `registrationType`, `source`, `status`, `visitorCategoryId`,
+`hostId`, `expiresAt`, `submittedAt`, `approvedAt`, `currentApprovalStep`)
+plus everything captured about the invitation at registration that the public
 tracking lookup (`GET /invitations/track?trackingId=`) already returns for
 the same invitation: the primary contact's full name, the resolved host's
 display name, purpose of visit and department, the preferred visit
@@ -432,12 +564,14 @@ NOT include branch, creator, badge, or watchlist-override internals — those
 remain exclusive to the staff detail view (`GET /invitations/{id}`). A
 rejected check-in (invitation not found, not currently `approved`,
 watchlist-blocked and not overridden) discloses none of this — only the
-existing generic failure response.
+existing generic failure response. `PATCH
+/api/v2/invitations/{trackingId}/check-in` is the sole staff/desk-facing
+check-in endpoint — see "Staff Check-In Has One Canonical Endpoint" above.
 
 #### Scenario: Successful check-in response includes visitor and host detail
 - **WHEN** a caller with `invitations:checkin` at the invitation's branch
   successfully checks in an `approved` invitation via
-  `PATCH /api/v1/invitations/{id}/check-in`
+  `PATCH /api/v2/invitations/{trackingId}/check-in`
 - **THEN** the response includes the primary contact's full name, the
   host's display name, purpose of visit, department, preferred visit
   date/time and expected duration, additional notes, carried items, the
@@ -714,9 +848,9 @@ request omitting `X-Branch-ID` SHALL return invitations across every branch
 the caller holds `invitations:view` at, rejected with 403 only if that set
 is empty. Each row in the response SHALL include enough detail to identify
 and triage the invitation (tracking ID, registration type, source, status,
-`visitorCategoryId`, primary contact name, purpose of visit, expiry/
-submission timestamps) without the per-row visitor/vehicle detail the
-single-invitation tracking lookup returns.
+`visitorCategoryId`, primary contact name, primary contact photo URL,
+purpose of visit, expiry/submission timestamps) without the per-row
+visitor/vehicle detail the single-invitation tracking lookup returns.
 
 #### Scenario: Caller with company-wide access lists across all their branches
 - **WHEN** a caller with `invitations:view` granted company-wide requests
@@ -754,30 +888,54 @@ single-invitation tracking lookup returns.
 #### Scenario: List rows omit visitor and vehicle detail
 - **WHEN** a caller lists invitations via `GET /invitations`
 - **THEN** each row includes tracking ID, registration type, source,
-  status, `visitorCategoryId`, primary contact name, purpose of visit, and
-  expiry/submission timestamps, and does not include the per-visitor or
-  per-vehicle detail that `GET /invitations/track` returns for a single
-  invitation
+  status, `visitorCategoryId`, primary contact name, primary contact photo
+  URL, purpose of visit, and expiry/submission timestamps, and does not
+  include the per-visitor or per-vehicle detail that `GET /invitations/track`
+  returns for a single invitation
+
+#### Scenario: List row surfaces the primary contact's photo URL when one was captured
+- **WHEN** a caller lists invitations via `GET /invitations` and an
+  invitation's primary contact has a stored photo
+- **THEN** that row includes a resolvable URL for the photo, matching the
+  URL the tracking/detail endpoints return for the same invitation
+
+#### Scenario: List row omits the photo field when no photo was captured
+- **WHEN** a caller lists invitations via `GET /invitations` and an
+  invitation's primary contact has no stored photo
+- **THEN** that row's photo URL field is null, and the row is otherwise
+  unaffected
 
 ### Requirement: Caller Lists Invitations Relevant to Themselves via relevantToMe
 `GET /invitations` SHALL accept a `relevantToMe` boolean query parameter.
 WHEN `relevantToMe` is true, the system SHALL return invitations where the
-authenticated caller is either (a) the user identified by that invitation's
-`stepOrder` 0 host-identified `InvitationApprovalStep` (i.e. the snapshotted
-host), or (b) the delegate assigned to any of that invitation's approval
-steps (see the `approvals` capability's "Host Delegates the Step Following
-Their Own to a Specific Person" requirement) — regardless of that step's or
-the invitation's current status. This filter SHALL NOT require the caller
-to hold `invitations:view`, and SHALL NOT be scoped by `X-Branch-ID` or the
+authenticated caller is any of:
+(a) the user identified by that invitation's `stepOrder` 0 host-identified
+`InvitationApprovalStep` (i.e. the snapshotted host) — regardless of that
+step's or the invitation's current status;
+(b) the delegate assigned to any of that invitation's approval steps (see
+the `approvals` capability's "Current Step's Authorized Approver Delegates
+It to a Specific Person") — regardless of that step's or the invitation's
+current status; or
+(c) currently authorized, via branch-scoped role assignment at the
+invitation's branch or company-wide, to act on the invitation's current
+pending `InvitationApprovalStep` because that step is role-identified and
+names a role the caller holds, and no delegate has yet been assigned to
+that step — i.e., the caller is one of the role-holders who could act on
+the currently-pending step right now, per the `approvals` capability's
+role-match authorization rule.
+Clause (c) only ever matches while the invitation is `submitted` with an
+un-delegated, role-identified step currently pending; once that step is
+delegated, acted on, or the invitation leaves `submitted`, a caller who
+only ever qualified under (c) (never under (a) or (b)) no longer sees that
+invitation via `relevantToMe`. This filter SHALL NOT require the caller to
+hold `invitations:view`, and SHALL NOT be scoped by `X-Branch-ID` or the
 caller's authorized branches: it is a personal worklist keyed to the
-caller's own identity, not the branch-scoped admin listing the "Employee
-Lists Invitations at Their Authorized Branches" requirement above
-describes. `relevantToMe` SHALL compose with the existing `status`,
-`registrationType`, and `source` filters and with pagination/sorting,
-narrowing the relevant-to-me set the same way those filters narrow the
-branch-scoped list. A caller with no invitations where they are host or
-delegate SHALL receive an empty, successfully-paginated result, not an
-error.
+caller's own identity and current approval authority, not the branch-scoped
+admin listing the "Employee Lists Invitations at Their Authorized Branches"
+requirement above describes. `relevantToMe` SHALL compose with the existing
+`status`, `registrationType`, and `source` filters and with
+pagination/sorting. A caller matching none of (a)/(b)/(c) for any invitation
+SHALL receive an empty, successfully-paginated result, not an error.
 
 #### Scenario: Host sees their own invitation without invitations:view
 - **WHEN** the user identified as the host of an invitation (its
@@ -793,10 +951,33 @@ error.
   holds `invitations:view` at its branch and regardless of that step's
   current status
 
+#### Scenario: A role-holder sees an invitation whose current step needs their role
+- **WHEN** a user who holds, via `UserBranchRole` at an invitation's branch,
+  the `approverRoleId` role of that invitation's current pending
+  role-identified step (and that step has no delegate assigned) requests
+  `GET /invitations` with `relevantToMe=true`
+- **THEN** the response includes that invitation, even though the user is
+  neither the invitation's host nor a delegate — this closes the gap where
+  such a user could only find the invitation via the branch-wide list
+
+#### Scenario: A role-holder no longer sees the invitation once someone else's delegation is assigned
+- **WHEN** an invitation's current pending step (role-identified, matching a
+  role the caller holds) is delegated to a different, specific user
+- **THEN** the caller — who is not that delegate — no longer sees the
+  invitation via `relevantToMe=true`, since clause (c) requires no delegate
+  be assigned
+
+#### Scenario: A role-holder who is not currently authorized on the pending step sees nothing for it
+- **WHEN** a user holds a role that does not match the invitation's current
+  pending step's `approverRoleId` (e.g. the pending step is for a different
+  role, or the invitation is not currently `submitted`)
+- **THEN** that invitation is absent from the user's `relevantToMe=true`
+  response, unless they separately qualify as its host or a delegate
+
 #### Scenario: Caller who is neither host nor delegate sees nothing for that invitation
-- **WHEN** a caller who is not the snapshotted host and has not been
-  delegated any step of a given invitation requests `GET /invitations` with
-  `relevantToMe=true`
+- **WHEN** a caller who is not the snapshotted host, has not been delegated
+  any step, and does not hold the role of any invitation's current pending
+  step requests `GET /invitations` with `relevantToMe=true`
 - **THEN** that invitation is absent from the response, even if the caller
   holds `invitations:view` at its branch
 
@@ -807,7 +988,7 @@ error.
   currently `submitted`
 
 #### Scenario: No relevant invitations returns an empty page, not an error
-- **WHEN** a caller who is neither host nor delegate on any invitation
+- **WHEN** a caller who does not match (a), (b), or (c) for any invitation
   requests `GET /invitations` with `relevantToMe=true`
 - **THEN** the response is a successful, empty, correctly-paginated result
 
@@ -965,6 +1146,51 @@ these actions without failing the triggering request.
   `host_id` never resolved
 - **THEN** the action's own HTTP response is unaffected and no push
   notification is dispatched for that action
+
+### Requirement: Invitation Creation Notifies the Resolved Host via Email
+When an invitation is created and resolves to a host (`hostId` present), the
+system SHALL dispatch an informational email to that host's registered email
+address stating that an invitation naming them as host was received,
+asynchronously and without delaying the creation response, following the
+same retry-with-backoff behavior as the visitor's existing confirmation
+email. This is in addition to, not a replacement for, the existing
+submission push notification sent to the host when they are the first
+approval step (see "Invitation Submission Notifies the Approval Workflow's
+First Approver(s) via Push") — that push only fires when the host is also
+step 0's approver and the invitation is not auto-approved, whereas this
+email fires on every creation with a resolved host regardless of approval
+routing or auto-approve outcome. An invitation with no resolved host SHALL
+skip this email dispatch without failing the creation request.
+
+#### Scenario: Creation with a resolved host sends the host an email
+- **WHEN** an invitation is created and its host resolves to a user with a
+  registered email address
+- **THEN** that host receives an email stating an invitation naming them was
+  received, dispatched asynchronously without delaying the creation response
+
+#### Scenario: Creation response does not wait on the host email
+- **WHEN** an invitation is created with a resolved host
+- **THEN** the API responds with the invitation details before the host
+  email has necessarily been delivered
+
+#### Scenario: No resolved host means no host email, and creation still succeeds
+- **WHEN** an invitation is created and its host does not resolve (no
+  `hostId`)
+- **THEN** creation succeeds exactly as it would today, and no host email is
+  dispatched
+
+#### Scenario: Host email delivery failure is retried and logged, not surfaced to the caller
+- **WHEN** the email provider is unavailable for a host-notification dispatch
+- **THEN** the system retries with backoff and, if retries are exhausted,
+  logs the failure with enough context to identify and manually resend it,
+  without affecting the already-returned creation response
+
+#### Scenario: Auto-approved creation still sends the host email
+- **WHEN** an invitation is created and auto-approved per the Company's
+  auto-approve setting, and it resolves to a host
+- **THEN** the host still receives the creation-notification email, since
+  this email is independent of the submission-push logic that only fires for
+  non-auto-approved, first-step-host invitations
 
 ### Requirement: Invitation Submission Notifies the Approval Workflow's First Approver(s) via Push
 When `create_invitation` leaves an invitation `submitted` (not auto-approved)

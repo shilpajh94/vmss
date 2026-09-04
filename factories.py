@@ -26,8 +26,23 @@ arbitrary:
   explicitly (`UserFactory.build(branch_roles=[...])`), so the factory
   default must be an empty list, not polyfactory recursively fabricating an
   unrelated nested row with dangling foreign keys.
+- `Invitation.tracking_id = Use(...)` — polyfactory's default `String(20)`
+  generator picks a *uniform random length between 0 and 20*, so roughly
+  1 in 20 builds gets a genuinely empty string. That's silently harmless
+  for the many tests that only ever compare `tracking_id` for equality,
+  but `checkin-approval-workflow-improvements` made it load-bearing:
+  the canonical check-in endpoint is now keyed by `tracking_id` in the URL
+  path (`PATCH /api/v2/invitations/{trackingId}/check-in`), and an empty
+  path segment doesn't match that route at all — a 404 in place of the
+  test's actual expected outcome, intermittently, only for factory-built
+  invitations. `Use(...)` pins it to a well-formed, non-empty value
+  instead, matching the shape (`INV-XXXXXXXX`) real invitation creation
+  generates.
 """
 
+from secrets import token_hex
+
+from polyfactory import Use
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
 from vmss_api.approvals.models import InvitationApprovalStep
@@ -190,6 +205,10 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     __model__ = Invitation
     deleted_at = None
     status = "submitted"
+    # See module docstring — polyfactory's default String(20) generator can
+    # produce an empty string, which broke every test keying off tracking_id
+    # in a URL path.
+    tracking_id = Use(lambda: f"INV-{token_hex(4).upper()}")
     approved_at = None
     carried_items: list[str] = []
     visitors: list[InvitationVisitor] = []
@@ -227,6 +246,10 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     # yet, same "nothing has happened yet" reasoning as the check-in/check-out
     # fields above — kept parallel to (not derived from) `status`.
     check_in_status = "unused"
+    # checkin-approval-workflow-improvements: nullable, optional — a
+    # representative row has no photo captured, same "nothing has happened
+    # yet" default as denial_reason/badge_number/etc. above.
+    primary_contact_photo_storage_key = None
 
 
 class InvitationApprovalStepFactory(SQLAlchemyFactory[InvitationApprovalStep]):
@@ -256,6 +279,9 @@ class InvitationApprovalStepFactory(SQLAlchemyFactory[InvitationApprovalStep]):
 class InvitationVisitorFactory(SQLAlchemyFactory[InvitationVisitor]):
     __model__ = InvitationVisitor
     deleted_at = None
+    # checkin-approval-workflow-improvements: nullable, optional — see
+    # InvitationFactory.primary_contact_photo_storage_key above.
+    photo_storage_key = None
 
 
 class InvitationVehicleFactory(SQLAlchemyFactory[InvitationVehicle]):

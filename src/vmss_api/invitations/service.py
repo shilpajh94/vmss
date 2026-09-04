@@ -1,7 +1,9 @@
 import secrets
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 from fastapi import HTTPException, status
@@ -67,6 +69,44 @@ def _current_request_id() -> str:
     return structlog.contextvars.get_contextvars().get("request_id", "")
 
 
+def _resolve_tenant_timezone(tenant: Tenant) -> ZoneInfo:
+    """Mirrors `dashboard/service.py::_resolve_tenant_timezone` — falls back
+    to UTC (logged at `WARNING`) rather than raising when `Tenant.timezone`
+    isn't a real IANA zone name. Kept as a small local duplicate rather than
+    a cross-feature import (qr-checkin-scheduling-photo-email/design.md
+    Decision 1 — no existing import between `invitations` and `dashboard`,
+    and one two-line helper doesn't justify introducing one).
+    """
+    try:
+        return ZoneInfo(tenant.timezone)
+    except ZoneInfoNotFoundError:
+        logger.warning("invitations_invalid_tenant_timezone", tenant_timezone=tenant.timezone)
+        return ZoneInfo("UTC")
+
+
+async def _notify_host(
+    tenant: Tenant,
+    invitation: Invitation,
+    push_builder: Callable[[Invitation], tuple[str, str, dict[str, str]]],
+) -> None:
+    """`project-rules.md` duplication finding — extracted from the identical
+    "notify host via push" block repeated across `approve_invitation`,
+    `deny_invitation`, `_perform_check_in`, `check_in_by_qr_token`,
+    `check_out_invitation`, and `reschedule_invitation`. A no-op when the
+    invitation has no resolved host (`hostId` unset — visit-info-lookup-api),
+    same guard every call site already had.
+    """
+    if invitation.host_id is not None:
+        title, body, data = push_builder(invitation)
+        await notifications_service.notify_user(
+            tenant_schema=tenant.schema_name,
+            user_id=invitation.host_id,
+            title=title,
+            body=body,
+            data=data,
+        )
+
+
 async def _issue_qr_code(
     tenant_db: AsyncSession, invitation: Invitation, *, tenant: Tenant
 ) -> InvitationQRCode:
@@ -109,6 +149,24 @@ def _validate_id_proof(content: bytes, max_size: int) -> str:
         return validate_upload(content, max_size_bytes=max_size)
     except (UnsupportedFileTypeError, FileTooLargeError) as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
+_PHOTO_CONTENT_TYPES = {"image/jpeg", "image/png"}
+
+
+def _validate_photo(content: bytes, max_size: int) -> str:
+    """Same content-sniffing/size approach as `_validate_id_proof`, but
+    image-only (no PDF) — a profile photo, unlike an ID-proof scan, is never
+    a document (checkin-approval-workflow-improvements spec.md "Visitor and
+    Primary Contact Registration Optionally Captures a Profile Photo").
+    """
+    content_type = _validate_id_proof(content, max_size)
+    if content_type not in _PHOTO_CONTENT_TYPES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unsupported photo type: {content_type!r}",
+        )
+    return content_type
 
 
 async def _resolve_visit_detail_ids(
@@ -254,6 +312,8 @@ async def create_invitation(
     tenant: Tenant,
     primary_contact_id_proof_content: bytes,
     visitor_id_proof_contents: list[bytes],
+    primary_contact_photo_content: bytes | None,
+    visitor_photo_contents: list[bytes],
     source: RegistrationSource = RegistrationSource.staff_pre_registration,
 ) -> Invitation:
     """API-09 (and, via `source=visitor_walk_in`, API-13). Creates a fully
@@ -312,15 +372,34 @@ async def create_invitation(
     # Validate every file before persisting any of them (spec.md "Each Visitor
     # Has at Least One Reachable Contact and an ID Proof") — otherwise a later
     # visitor's invalid file would abort the request after an earlier
-    # visitor's file was already written to storage.
+    # visitor's file was already written to storage. Photos (optional) are
+    # validated in the same pass, for the same reason.
+    max_photo_size = settings.invitation_max_photo_size_bytes
     primary_content_type = _validate_id_proof(primary_contact_id_proof_content, max_size)
     visitor_content_types = [
         _validate_id_proof(content, max_size) for content in visitor_id_proof_contents
+    ]
+    primary_photo_content_type = (
+        _validate_photo(primary_contact_photo_content, max_photo_size)
+        if primary_contact_photo_content is not None
+        else None
+    )
+    visitor_photo_content_types = [
+        _validate_photo(content, max_photo_size) for content in visitor_photo_contents
     ]
 
     primary_key = await storage_save(
         tenant.id, "invitations/id-proof", primary_contact_id_proof_content, primary_content_type
     )
+    primary_photo_key = None
+    if primary_contact_photo_content is not None:
+        assert primary_photo_content_type is not None  # validated above, in the same branch
+        primary_photo_key = await storage_save(
+            tenant.id,
+            "invitations/photos",
+            primary_contact_photo_content,
+            primary_photo_content_type,
+        )
 
     invitation = Invitation(
         id=uuid.uuid4(),
@@ -342,6 +421,7 @@ async def create_invitation(
         ),
         primary_contact_id_proof_type=payload.primary_contact.id_proof_type.value,
         primary_contact_id_proof_storage_key=primary_key,
+        primary_contact_photo_storage_key=primary_photo_key,
         purpose_of_visit=visit_details["purpose_of_visit"],
         host_name_or_email=visit_details["host_name_or_email"],
         preferred_visit_date=payload.visit_details.preferred_visit_date,
@@ -373,9 +453,22 @@ async def create_invitation(
             id_proof_storage_key=await storage_save(
                 tenant.id, "invitations/id-proof", content, content_type
             ),
+            # Photos are order-matched but may be shorter than the visitor
+            # list — a visitor beyond the supplied photo count simply has
+            # none.
+            photo_storage_key=(
+                await storage_save(
+                    tenant.id,
+                    "invitations/photos",
+                    visitor_photo_contents[idx],
+                    visitor_photo_content_types[idx],
+                )
+                if idx < len(visitor_photo_contents)
+                else None
+            ),
         )
-        for visitor, content, content_type in zip(
-            payload.visitors, visitor_id_proof_contents, visitor_content_types, strict=True
+        for idx, (visitor, content, content_type) in enumerate(
+            zip(payload.visitors, visitor_id_proof_contents, visitor_content_types, strict=True)
         )
     ]
     vehicle_rows = [
@@ -436,6 +529,19 @@ async def create_invitation(
             request_id=_current_request_id(),
             tenant_schema=tenant.schema_name,
             invitation_id=str(invitation.id),
+        )
+
+    # Informational email to the resolved host, independent of the
+    # auto-approve/submission-push branching above — fires on every
+    # creation with a resolved host, regardless of approval routing
+    # (qr-checkin-scheduling-photo-email/design.md, spec.md "Invitation
+    # Creation Notifies the Resolved Host via Email").
+    if invitation.host_id is not None:
+        tasks.send_host_creation_notification.delay(
+            request_id=_current_request_id(),
+            tenant_schema=tenant.schema_name,
+            invitation_id=str(invitation.id),
+            host_id=str(invitation.host_id),
         )
 
     # Staff-facing push, additional to the visitor email/SMS above
@@ -523,15 +629,7 @@ async def approve_invitation(
         invitation_id=str(updated.id),
         qr_token=qr_code.qr_token,
     )
-    if updated.host_id is not None:
-        title, body, data = push_notifications.approved(updated)
-        await notifications_service.notify_user(
-            tenant_schema=tenant.schema_name,
-            user_id=updated.host_id,
-            title=title,
-            body=body,
-            data=data,
-        )
+    await _notify_host(tenant, updated, push_notifications.approved)
     return updated
 
 
@@ -539,10 +637,7 @@ async def get_invitation_detail(tenant_db: AsyncSession, invitation_id: uuid.UUI
     """Eager-loaded counterpart of `get_invitation` — backs
     `GET /invitations/{id}`, whose response schema (`InvitationDetailOut`)
     serializes `visitors`/`vehicles` the same way `InvitationTrackingOut`
-    does, and `PATCH /api/v1/invitations/{id}/check-in`, which needs the
-    same eager-loaded relationships populated in the session's identity map
-    before its own `UPDATE ... RETURNING` transition runs (see
-    `check_in_invitation`).
+    does.
     """
     invitation = await InvitationRepository(tenant_db).get_with_children(invitation_id)
     if invitation is None:
@@ -567,15 +662,7 @@ async def deny_invitation(
         tenant_schema=tenant.schema_name,
         invitation_id=str(updated.id),
     )
-    if updated.host_id is not None:
-        title, body, data = push_notifications.denied(updated)
-        await notifications_service.notify_user(
-            tenant_schema=tenant.schema_name,
-            user_id=updated.host_id,
-            title=title,
-            body=body,
-            data=data,
-        )
+    await _notify_host(tenant, updated, push_notifications.denied)
     return updated
 
 
@@ -614,25 +701,8 @@ async def _perform_check_in(
             detail="Invitation is no longer eligible for check-in",
         )
     await tenant_db.commit()
-    if updated.host_id is not None:
-        title, body, data = push_notifications.checked_in(updated)
-        await notifications_service.notify_user(
-            tenant_schema=tenant.schema_name,
-            user_id=updated.host_id,
-            title=title,
-            body=body,
-            data=data,
-        )
+    await _notify_host(tenant, updated, push_notifications.checked_in)
     return updated
-
-
-async def check_in_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID, tenant: Tenant
-) -> Invitation:
-    """`PATCH /api/v1/invitations/{id}/check-in` — staff-authenticated,
-    UUID-keyed. See `_perform_check_in` for the shared transition logic.
-    """
-    return await _perform_check_in(tenant_db, invitation, actor_user_id=user_id, tenant=tenant)
 
 
 async def check_in_invitation_by_tracking_id(
@@ -649,29 +719,13 @@ async def check_in_invitation_by_tracking_id(
     return await _perform_check_in(tenant_db, invitation, actor_user_id=None, tenant=tenant)
 
 
-async def check_in_by_qr_token(
+async def _get_invitation_by_qr_token_or_400(
     tenant_db: AsyncSession, token: str, *, tenant: Tenant
-) -> tuple[Invitation, str]:
-    """`PATCH /api/v2/invitations/qr/{token}/check-in` — public,
-    unauthenticated, driven by the encrypted QR token rather than the
-    tracking ID (spec.md "QR Check-In Token Is Encrypted and
-    Tamper-Evident" / "QR Check-In Drives a Cycling
-    Checked-In/Checked-Out Lifecycle" / "QR Check-In Enforces Invitation
-    Expiry on Every Entry").
-
-    A single token drives every entry and exit transition, cycling for as
-    many round trips as the visitor makes during their visit (leaving for
-    lunch, moving between buildings) — `checked_out` is not a dead end,
-    every `checkInStatus` value has a defined next transition
-    (design.md "checkInStatus cycles indefinitely; checked_out is not
-    terminal"). An invalid/tampered token and an invitation that doesn't
-    exist are folded into the same rejection (`invalid token`) so neither
-    response reveals which failure actually occurred.
-
-    Returns `(invitation, message)` — `message` is the human-readable
-    outcome the caller surfaces directly ("Verification passed" /
-    "Checked out successfully"), matching the confirmed frontend spec's
-    response contract.
+) -> Invitation:
+    """Shared by both QR endpoints — an invalid/tampered token and an
+    invitation that doesn't exist are folded into the same rejection
+    (`invalid token`) so neither response reveals which failure actually
+    occurred.
     """
     invitation_id = decrypt_invitation_token(token)
     invitation = (
@@ -684,48 +738,98 @@ async def check_in_by_qr_token(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, detail="Verification failed — invalid token"
         )
+    return invitation
 
-    if invitation.check_in_status in ("unused", "checked_out"):
-        if invitation.status not in ("approved", "checked_in", "checked_out"):
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, detail="Verification failed — invitation not approved"
-            )
-        if invitation.watchlist_flagged:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail="Invitation is watchlist-flagged; override required before check-in",
-            )
-        if invitation.expires_at <= datetime.now(UTC):
-            raise HTTPException(
-                status.HTTP_410_GONE, detail="Verification failed — visit window expired"
-            )
-        updated = await InvitationRepository(tenant_db).check_in_by_qr_if_eligible(invitation.id)
-        if updated is None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, detail="Invitation is no longer eligible for check-in"
-            )
-        message = "Verification passed"
-        push_builder = push_notifications.checked_in
-    else:
-        updated = await InvitationRepository(tenant_db).check_out_by_qr_if_eligible(invitation.id)
-        if updated is None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, detail="Invitation is no longer eligible for check-out"
-            )
-        message = "Checked out successfully"
-        push_builder = push_notifications.checked_out
+
+async def check_in_by_qr_token(
+    tenant_db: AsyncSession, token: str, *, tenant: Tenant
+) -> tuple[Invitation, str]:
+    """`PATCH /api/v2/invitations/qr/{token}/check-in` — public,
+    unauthenticated, driven by the encrypted QR token rather than the
+    tracking ID (spec.md "QR Check-In Token Is Encrypted and
+    Tamper-Evident" / "QR Check-In Endpoint Transitions an Eligible
+    Visitor to Checked-In"). Entry only: `unused`/`checked_out` ->
+    `checked_in`. Rejects with 409 (not toggling to checked-out) when the
+    invitation is already `checked_in` — the caller must use
+    `check_out_by_qr_token` instead. Also rejects a scan attempted before
+    the invitation's `preferred_visit_date` (date-only, tenant-local
+    calendar day) with `425 Too Early`, distinct from the `410 Gone` used
+    for expiry — see qr-checkin-scheduling-photo-email/design.md Decisions
+    1-2. An invitation with no `preferred_visit_date` set skips that check
+    entirely.
+
+    Returns `(invitation, message)` — `message` is the human-readable
+    outcome the caller surfaces directly ("Verification passed"), matching
+    the confirmed frontend spec's response contract.
+    """
+    invitation = await _get_invitation_by_qr_token_or_400(tenant_db, token, tenant=tenant)
+
+    if invitation.check_in_status not in ("unused", "checked_out"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Invitation is already checked in; use check-out instead",
+        )
+    if invitation.status not in ("approved", "checked_in", "checked_out"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="Verification failed — invitation not approved"
+        )
+    if invitation.watchlist_flagged:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Invitation is watchlist-flagged; override required before check-in",
+        )
+    today_local = datetime.now(UTC).astimezone(_resolve_tenant_timezone(tenant)).date()
+    if (
+        invitation.preferred_visit_date is not None
+        and invitation.preferred_visit_date > today_local
+    ):
+        raise HTTPException(
+            status.HTTP_425_TOO_EARLY,
+            detail="Verification failed — visit window not yet open",
+        )
+    if invitation.expires_at <= datetime.now(UTC):
+        raise HTTPException(
+            status.HTTP_410_GONE, detail="Verification failed — visit window expired"
+        )
+    updated = await InvitationRepository(tenant_db).check_in_by_qr_if_eligible(
+        invitation.id, today_local=today_local
+    )
+    if updated is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Invitation is no longer eligible for check-in"
+        )
 
     await tenant_db.commit()
-    if updated.host_id is not None:
-        title, body, data = push_builder(updated)
-        await notifications_service.notify_user(
-            tenant_schema=tenant.schema_name,
-            user_id=updated.host_id,
-            title=title,
-            body=body,
-            data=data,
+    await _notify_host(tenant, updated, push_notifications.checked_in)
+    return updated, "Verification passed"
+
+
+async def check_out_by_qr_token(
+    tenant_db: AsyncSession, token: str, *, tenant: Tenant
+) -> tuple[Invitation, str]:
+    """`PATCH /api/v2/invitations/qr/{token}/check-out` — public,
+    unauthenticated exit counterpart of `check_in_by_qr_token` (spec.md "QR
+    Check-Out Endpoint Transitions a Checked-In Visitor to Checked-Out").
+    Exit only: `checked_in` -> `checked_out`, never subject to the expiry
+    check (a visit that legitimately continues past `expires_at` can still
+    be closed out). Rejects with 409 when the invitation isn't currently
+    `checked_in`.
+    """
+    invitation = await _get_invitation_by_qr_token_or_400(tenant_db, token, tenant=tenant)
+
+    if invitation.check_in_status != "checked_in":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Invitation is not currently checked in"
         )
-    return updated, message
+    updated = await InvitationRepository(tenant_db).check_out_by_qr_if_eligible(invitation.id)
+    if updated is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Invitation is no longer eligible for check-out"
+        )
+
+    await tenant_db.commit()
+    await _notify_host(tenant, updated, push_notifications.checked_out)
+    return updated, "Checked out successfully"
 
 
 async def check_out_invitation(
@@ -737,15 +841,7 @@ async def check_out_invitation(
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not checked in")
     await tenant_db.commit()
-    if updated.host_id is not None:
-        title, body, data = push_notifications.checked_out(updated)
-        await notifications_service.notify_user(
-            tenant_schema=tenant.schema_name,
-            user_id=updated.host_id,
-            title=title,
-            body=body,
-            data=data,
-        )
+    await _notify_host(tenant, updated, push_notifications.checked_out)
     return updated
 
 
@@ -785,15 +881,7 @@ async def reschedule_invitation(
         tenant_schema=tenant.schema_name,
         invitation_id=str(updated.id),
     )
-    if updated.host_id is not None:
-        title, body, data = push_notifications.rescheduled(updated)
-        await notifications_service.notify_user(
-            tenant_schema=tenant.schema_name,
-            user_id=updated.host_id,
-            title=title,
-            body=body,
-            data=data,
-        )
+    await _notify_host(tenant, updated, push_notifications.rescheduled)
     return updated
 
 

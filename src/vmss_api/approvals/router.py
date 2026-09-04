@@ -113,12 +113,14 @@ async def delegate_step(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    """Lets the invitation's host hand the role-identified step immediately
-    following their own to a specific person, once their own step is
-    approved (specs/approvals/spec.md "Host Delegates the Step Following
-    Their Own to a Specific Person"). The delegation itself does not
-    advance the workflow — the delegate still has to separately approve or
-    reject the step via the endpoints above.
+    """Lets whoever is currently authorized to act on the invitation's
+    current pending step hand it to a specific other qualifying person
+    instead, at any step position — including re-delegating a step that
+    already has a delegate (specs/approvals/spec.md "Current Step's
+    Authorized Approver Delegates It to a Specific Person"). The delegation
+    itself does not advance the workflow — the delegate still has to
+    separately approve, reject, or delegate the step onward via the
+    endpoints above.
     """
     invitation = await invitations_service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:approve", invitation.branch_id)

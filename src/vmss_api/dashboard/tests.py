@@ -137,6 +137,34 @@ async def test_overview_success(
     assert [v["id"] for v in body["upcomingVisitors"]] == [str(upcoming.id)]
 
 
+async def test_overview_upcoming_visitor_preview_includes_tracking_id(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Upcoming-visitors preview rows carry trackingId" — needed so
+    the admin portal can call `PATCH /api/v2/invitations/{trackingId}/
+    check-in` directly, now that the dashboard's own check-in mutation is
+    removed.
+    """
+    now = datetime.now(UTC)
+    upcoming = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=now,
+        expires_at=now + timedelta(hours=2),
+    )
+    db_session.add(upcoming)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/admin/dashboard/overview", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200, response.text
+    [row] = response.json()["data"]["upcomingVisitors"]
+    assert row["trackingId"] == upcoming.tracking_id
+
+
 async def test_overview_requires_permission(
     client: AsyncClient, user_without_permissions: User, issue_token
 ) -> None:
@@ -229,10 +257,15 @@ async def test_overview_branch_id_not_authorized_rejected(
     assert response.status_code == 403
 
 
-# --- PATCH /admin/dashboard/upcoming-visitors --------------------------------
+# --- checkin-approval-workflow-improvements: PATCH /admin/dashboard/upcoming-visitors removed --
+# The dashboard's own check-in mutation is gone (spec.md "Check In an
+# Upcoming Visitor From the Dashboard" — REMOVED). The admin portal now
+# calls `PATCH /api/v2/invitations/{trackingId}/check-in` directly, using
+# `trackingId` from the overview's upcoming-visitors preview row — see
+# `test_overview_upcoming_visitor_preview_includes_tracking_id` below.
 
 
-async def test_check_in_upcoming_visitor_success(
+async def test_dashboard_upcoming_visitors_check_in_route_removed(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
 ) -> None:
     invitation = _build_invitation(
@@ -247,115 +280,7 @@ async def test_check_in_upcoming_visitor_success(
         json={"invitationId": str(invitation.id)},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["status"] == "checked_in"
-
-    await db_session.refresh(invitation)
-    assert invitation.status == "checked_in"
-    assert invitation.checked_in_by_user_id == user.id
-
-
-async def test_check_in_upcoming_visitor_non_approved_rejected(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
-) -> None:
-    invitation = _build_invitation(db_session, branch.id, status="submitted")
-    db_session.add(invitation)
-    await db_session.commit()
-
-    token = await _login(client, user.email)
-    response = await client.patch(
-        "/api/v1/admin/dashboard/upcoming-visitors",
-        json={"invitationId": str(invitation.id)},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 409
-
-    await db_session.refresh(invitation)
-    assert invitation.status == "submitted"
-
-
-async def test_check_in_upcoming_visitor_watchlist_flagged_blocked(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
-) -> None:
-    invitation = _build_invitation(
-        db_session,
-        branch.id,
-        status="approved",
-        approved_at=datetime.now(UTC),
-        watchlist_flagged=True,
-    )
-    db_session.add(invitation)
-    await db_session.commit()
-
-    token = await _login(client, user.email)
-    response = await client.patch(
-        "/api/v1/admin/dashboard/upcoming-visitors",
-        json={"invitationId": str(invitation.id)},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 409
-
-    await db_session.refresh(invitation)
-    assert invitation.status == "approved"
-
-
-async def test_check_in_upcoming_visitor_idempotency_key_replay(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
-) -> None:
-    invitation = _build_invitation(
-        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
-    )
-    db_session.add(invitation)
-    await db_session.commit()
-
-    token = await _login(client, user.email)
-    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "dashboard-checkin-key-1"}
-
-    first = await client.patch(
-        "/api/v1/admin/dashboard/upcoming-visitors",
-        json={"invitationId": str(invitation.id)},
-        headers=headers,
-    )
-    second = await client.patch(
-        "/api/v1/admin/dashboard/upcoming-visitors",
-        json={"invitationId": str(invitation.id)},
-        headers=headers,
-    )
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert first.json() == second.json()
-
-
-async def test_check_in_upcoming_visitor_requires_permission(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    tenant: Tenant,
-    branch: Branch,
-    issue_token,
-) -> None:
-    viewer = await _branch_scoped_user(
-        db_session,
-        tenant,
-        branch_ids=[branch.id],
-        permission_code="invitations:view",
-        role_name="viewer-no-checkin",
-    )
-    invitation = _build_invitation(
-        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
-    )
-    db_session.add(invitation)
-    await db_session.commit()
-
-    token = issue_token(viewer)
-    response = await client.patch(
-        "/api/v1/admin/dashboard/upcoming-visitors",
-        json={"invitationId": str(invitation.id)},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 403
-
-    await db_session.refresh(invitation)
-    assert invitation.status == "approved"
+    assert response.status_code == 404
 
 
 # --- GET /admin/dashboard/checkins --------------------------------------------
@@ -612,6 +537,17 @@ async def test_dashboard_repository_tenant_schema_isolation(
 
         results = await repo.search_by_contact_name("all", query="carter", limit=10)
         assert results == []
+
+        preview = await repo.upcoming_visitors_preview("all", now_utc=now, limit=10)
+        assert preview == []
+
+
+# The dashboard's own check-in mutation is removed
+# (checkin-approval-workflow-improvements); check-in tenant-isolation is now
+# covered exclusively by `invitations/tests.py::
+# test_check_in_repository_tenant_schema_isolation`, since check-in is
+# entirely an `invitations` capability concern once the dashboard wrapper is
+# gone.
 
 
 # --- "Today" boundary follows tenant timezone --------------------------------

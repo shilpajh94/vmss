@@ -190,6 +190,10 @@ class Settings(BaseSettings):
     invitation_token_ttl_hours: int = 168
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
     invitation_max_group_visitors: int = 20
+    # checkin-approval-workflow-improvements: sized independently from
+    # invitation_max_upload_size_bytes (a photo capture, not a scanned
+    # document, has different realistic size expectations).
+    invitation_max_photo_size_bytes: int = 2 * 1024 * 1024
 
     # `auth` feature config (add-avatar-upload-and-verify-image-storage) —
     # sized the same as invitation_max_photo_size_bytes since an avatar is

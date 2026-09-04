@@ -27,7 +27,6 @@ from vmss_api.core.rate_limit import limiter
 from vmss_api.core.redis import get_redis
 from vmss_api.core.responses import (
     error_response,
-    mark_deprecated,
     paginated_response,
     success_response,
 )
@@ -82,6 +81,17 @@ _NO_VISITOR_FILES = File(
         "Omit entirely for an individual registration. See "
         "`primaryContactIdProofFile` above for the primary contact's own "
         "upload, which travels as a separate field."
+    ),
+)
+# Same rationale as `_NO_VISITOR_FILES` above (ruff B008) — an optional,
+# order-matched list of co-visitor profile photos, independent of and
+# possibly shorter than `visitor_id_proof_files` (a photo is never required).
+_NO_VISITOR_PHOTOS = File(
+    default_factory=list,
+    description=(
+        "Optional profile photo per co-visitor (JPEG/PNG only), matched to "
+        "`payload.visitors` by order. May be shorter than the visitor list "
+        "— omit an entry for any visitor with no photo."
     ),
 )
 
@@ -274,7 +284,25 @@ def to_invitation_out(
     )
 
 
-def _to_qr_check_in_out(invitation) -> InvitationQrCheckInOut:
+async def _resolve_photo_url(storage_key: str | None) -> str | None:
+    return await storage_url_for(storage_key) if storage_key is not None else None
+
+
+async def _to_visitor_outs(visitors) -> list[InvitationVisitorOut]:
+    return [
+        InvitationVisitorOut(
+            id=v.id,
+            full_name=v.full_name,
+            email=v.email,
+            phone=v.phone,
+            id_proof_type=v.id_proof_type,
+            photo_url=await _resolve_photo_url(v.photo_storage_key),
+        )
+        for v in visitors
+    ]
+
+
+async def _to_qr_check_in_out(invitation) -> InvitationQrCheckInOut:
     return InvitationQrCheckInOut(
         id=invitation.id,
         tracking_id=invitation.tracking_id,
@@ -284,6 +312,9 @@ def _to_qr_check_in_out(invitation) -> InvitationQrCheckInOut:
         source=invitation.source,
         visitor_category_id=invitation.visitor_category_id,
         primary_contact_full_name=invitation.primary_contact_full_name,
+        primary_contact_photo_url=await _resolve_photo_url(
+            invitation.primary_contact_photo_storage_key
+        ),
         primary_contact_email=invitation.primary_contact_email,
         primary_contact_phone=invitation.primary_contact_phone,
         host_id=invitation.host_id,
@@ -301,16 +332,7 @@ def _to_qr_check_in_out(invitation) -> InvitationQrCheckInOut:
         checked_in_at=invitation.checked_in_at,
         checked_out_at=invitation.checked_out_at,
         expires_at=invitation.expires_at,
-        visitors=[
-            InvitationVisitorOut(
-                id=v.id,
-                full_name=v.full_name,
-                email=v.email,
-                phone=v.phone,
-                id_proof_type=v.id_proof_type,
-            )
-            for v in invitation.visitors
-        ],
+        visitors=await _to_visitor_outs(invitation.visitors),
         vehicles=[
             InvitationVehicleOut(
                 id=v.id,
@@ -324,7 +346,7 @@ def _to_qr_check_in_out(invitation) -> InvitationQrCheckInOut:
     )
 
 
-def _to_list_item_out(invitation) -> InvitationListItemOut:
+async def _to_list_item_out(invitation) -> InvitationListItemOut:
     return InvitationListItemOut(
         id=invitation.id,
         tracking_id=invitation.tracking_id,
@@ -333,6 +355,9 @@ def _to_list_item_out(invitation) -> InvitationListItemOut:
         status=invitation.status,
         visitor_category_id=invitation.visitor_category_id,
         primary_contact_full_name=invitation.primary_contact_full_name,
+        primary_contact_photo_url=await _resolve_photo_url(
+            invitation.primary_contact_photo_storage_key
+        ),
         purpose_of_visit=invitation.purpose_of_visit,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
@@ -340,7 +365,7 @@ def _to_list_item_out(invitation) -> InvitationListItemOut:
     )
 
 
-def _to_tracking_out(
+async def _to_tracking_out(
     invitation, current_approval_step: CurrentApprovalStepOut | None = None
 ) -> InvitationTrackingOut:
     return InvitationTrackingOut(
@@ -351,6 +376,9 @@ def _to_tracking_out(
         visitor_category_id=invitation.visitor_category_id,
         current_approval_step=current_approval_step,
         primary_contact_full_name=invitation.primary_contact_full_name,
+        primary_contact_photo_url=await _resolve_photo_url(
+            invitation.primary_contact_photo_storage_key
+        ),
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         preferred_visit_date=invitation.preferred_visit_date,
@@ -363,16 +391,7 @@ def _to_tracking_out(
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
-        visitors=[
-            InvitationVisitorOut(
-                id=v.id,
-                full_name=v.full_name,
-                email=v.email,
-                phone=v.phone,
-                id_proof_type=v.id_proof_type,
-            )
-            for v in invitation.visitors
-        ],
+        visitors=await _to_visitor_outs(invitation.visitors),
         vehicles=[
             InvitationVehicleOut(
                 id=v.id,
@@ -386,7 +405,7 @@ def _to_tracking_out(
     )
 
 
-def _to_check_in_out(
+async def _to_check_in_out(
     invitation, current_approval_step: CurrentApprovalStepOut | None = None
 ) -> InvitationCheckInOut:
     return InvitationCheckInOut(
@@ -402,6 +421,9 @@ def _to_check_in_out(
         approved_at=invitation.approved_at,
         current_approval_step=current_approval_step,
         primary_contact_full_name=invitation.primary_contact_full_name,
+        primary_contact_photo_url=await _resolve_photo_url(
+            invitation.primary_contact_photo_storage_key
+        ),
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         preferred_visit_date=invitation.preferred_visit_date,
@@ -411,16 +433,7 @@ def _to_check_in_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
-        visitors=[
-            InvitationVisitorOut(
-                id=v.id,
-                full_name=v.full_name,
-                email=v.email,
-                phone=v.phone,
-                id_proof_type=v.id_proof_type,
-            )
-            for v in invitation.visitors
-        ],
+        visitors=await _to_visitor_outs(invitation.visitors),
         vehicles=[
             InvitationVehicleOut(
                 id=v.id,
@@ -434,7 +447,7 @@ def _to_check_in_out(
     )
 
 
-def _to_invitation_detail_out(
+async def _to_invitation_detail_out(
     invitation, current_approval_step: CurrentApprovalStepOut | None = None
 ) -> InvitationDetailOut:
     return InvitationDetailOut(
@@ -448,6 +461,9 @@ def _to_invitation_detail_out(
         visitor_category_id=invitation.visitor_category_id,
         current_approval_step=current_approval_step,
         primary_contact_full_name=invitation.primary_contact_full_name,
+        primary_contact_photo_url=await _resolve_photo_url(
+            invitation.primary_contact_photo_storage_key
+        ),
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         host_id=invitation.host_id,
@@ -474,16 +490,7 @@ def _to_invitation_detail_out(
         watchlist_override_at=invitation.watchlist_override_at,
         watchlist_override_reason=invitation.watchlist_override_reason,
         watchlist_override_by_user_id=invitation.watchlist_override_by_user_id,
-        visitors=[
-            InvitationVisitorOut(
-                id=v.id,
-                full_name=v.full_name,
-                email=v.email,
-                phone=v.phone,
-                id_proof_type=v.id_proof_type,
-            )
-            for v in invitation.visitors
-        ],
+        visitors=await _to_visitor_outs(invitation.visitors),
         vehicles=[
             InvitationVehicleOut(
                 id=v.id,
@@ -568,6 +575,16 @@ async def create_invitation(
         ),
     ],
     visitor_id_proof_files: list[UploadFile] = _NO_VISITOR_FILES,
+    primary_contact_photo_file: Annotated[
+        UploadFile | None,
+        File(
+            description=(
+                "Optional profile photo for the primary contact (JPEG/PNG "
+                "only). Omit entirely if no photo is being captured."
+            )
+        ),
+    ] = None,
+    visitor_photo_files: list[UploadFile] = _NO_VISITOR_PHOTOS,
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -623,8 +640,15 @@ async def create_invitation(
     # before its full content is buffered into memory, rather than reading
     # it all and only then checking `len()` in `service.py`'s validation.
     id_proof_limit = settings.invitation_max_upload_size_bytes + 1
+    photo_limit = settings.invitation_max_photo_size_bytes + 1
     primary_content = await primary_contact_id_proof_file.read(id_proof_limit)
     visitor_contents = [await f.read(id_proof_limit) for f in visitor_id_proof_files]
+    primary_photo_content = (
+        await primary_contact_photo_file.read(photo_limit)
+        if primary_contact_photo_file is not None
+        else None
+    )
+    visitor_photo_contents = [await f.read(photo_limit) for f in visitor_photo_files]
 
     invitation = await service.create_invitation(
         tenant_db,
@@ -634,6 +658,8 @@ async def create_invitation(
         tenant=tenant,
         primary_contact_id_proof_content=primary_content,
         visitor_id_proof_contents=visitor_contents,
+        primary_contact_photo_content=primary_photo_content,
+        visitor_photo_contents=visitor_photo_contents,
     )
     background_tasks.add_task(
         record_audit_log,
@@ -719,61 +745,6 @@ async def deny_invitation(
     return success_response(data=to_invitation_out(invitation))
 
 
-@router.patch(
-    "/{invitation_id}/check-in",
-    response_model=Envelope[InvitationCheckInOut],
-)
-async def check_in_invitation(
-    invitation_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
-    tenant: Annotated[Tenant, Depends(get_tenant)],
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
-    user: Annotated[User, Depends(get_current_user)],
-    idempotency_key: Annotated[
-        str | None,
-        Header(
-            alias="Idempotency-Key",
-            description=(
-                "Optional. Omitting it simply forgoes retry-dedup safety — a "
-                "retried request with no key may check in twice. See "
-                "api-conventions.md §3."
-            ),
-        ),
-    ] = None,
-) -> JSONResponse:
-    """Transitions an `approved` invitation to `checked_in` (spec.md "An
-    Approved Invitation Can Be Checked In"), rejected with 409 while
-    `watchlistFlagged` is set and not yet overridden (spec.md "A
-    Watchlist-Flagged Invitation Blocks Check-In Until Overridden").
-
-    **Deprecated** — see `PATCH /api/v2/invitations/{trackingId}/check-in`
-    for the public, tracking-ID-keyed replacement
-    (add-public-checkin-endpoint/design.md). This route stays fully
-    functional during the migration window; api-conventions.md §2 governs
-    its eventual removal.
-    """
-    cached = await _cached_response(tenant.id, idempotency_key)
-    if cached is not None:
-        return cached
-
-    invitation = await service.get_invitation_detail(tenant_db, invitation_id)
-    await authorize_branch_id_tolerant(tenant_db, user, "invitations:checkin", invitation.branch_id)
-    invitation = await service.check_in_invitation(
-        tenant_db, invitation, user_id=user.id, tenant=tenant
-    )
-    background_tasks.add_task(
-        record_audit_log,
-        tenant.schema_name,
-        actor_user_id=user.id,
-        action="invitation_checked_in",
-        entity_type="Invitation",
-        entity_id=invitation.id,
-    )
-    response = success_response(data=_to_check_in_out(invitation))
-    await _cache_response(tenant.id, idempotency_key, response)
-    return mark_deprecated(response)
-
-
 # --- add-public-checkin-endpoint: public check-in by tracking ID ------------
 # A second, minimal router mounted at /api/v2 (see api.py/main.py) — not a
 # wholesale re-exposure of every v1 invitations route under v2, just this one
@@ -784,7 +755,7 @@ router_v2 = APIRouter(prefix="/invitations", tags=["invitations"])
 
 @router_v2.patch(
     "/{tracking_id}/check-in",
-    response_model=Envelope[InvitationOut],
+    response_model=Envelope[InvitationCheckInOut],
 )
 @limiter.limit("20/minute")
 async def check_in_invitation_by_tracking_id(
@@ -805,14 +776,16 @@ async def check_in_invitation_by_tracking_id(
         ),
     ] = None,
 ) -> JSONResponse:
-    """Public, unauthenticated counterpart of
-    `PATCH /api/v1/invitations/{id}/check-in`, keyed by the invitation's
+    """The single staff/desk-facing check-in endpoint (spec.md "Staff
+    Check-In Has One Canonical Endpoint"), keyed by the invitation's
     `tracking_id` instead of its internal UUID `id` (spec.md "An Approved
-    Invitation Can Be Publicly Checked In By Tracking ID") — for a kiosk or
-    the visitor's own device checking in from the QR/badge code, with no
-    staff bearer token. Same 409/404/`Idempotency-Key` behavior as the
-    staff-authenticated route; no branch authorization check, since there is
-    no authenticated caller to check it against.
+    Invitation Can Be Publicly Checked In By Tracking ID") — for a kiosk,
+    the visitor's own device checking in from the QR/badge code, or a staff
+    desk view, with no staff bearer token required. Returns the same full
+    invitation detail the legacy staff-authenticated route used to (spec.md
+    "Staff Check-In Response Surfaces Full Invitation Detail"). No branch
+    authorization check, since there is no authenticated caller to check it
+    against.
     """
     cached = await _cached_response(tenant.id, idempotency_key)
     if cached is not None:
@@ -829,7 +802,7 @@ async def check_in_invitation_by_tracking_id(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    response = success_response(data=to_invitation_out(invitation))
+    response = success_response(data=await _to_check_in_out(invitation))
     await _cache_response(tenant.id, idempotency_key, response)
     return response
 
@@ -859,38 +832,81 @@ async def check_in_by_qr_token(
         ),
     ] = None,
 ) -> JSONResponse:
-    """Public, unauthenticated QR check-in
-    (`add-qr-checkin-security/design.md`) — scanning an invitation's
-    encrypted check-in token toggles its `checkInStatus`: `unused` or
-    `checked_out` (currently outside) -> `checked_in` on a valid scan,
-    `checked_in` -> `checked_out` on the next scan of that same token.
-    Cycles for as many entry/exit round trips as the visitor makes during
-    their visit (e.g. leaving for lunch and returning) — `checked_out` is
-    not a dead end, and expiry is enforced on every entry, including a
-    re-entry. Distinct from
-    `PATCH /api/v2/invitations/{trackingId}/check-in` — that route stays
-    the manual desk fallback, keyed by the human-readable tracking ID and
-    unaffected by this one.
+    """Public, unauthenticated QR check-in (spec.md "QR Check-In Endpoint
+    Transitions an Eligible Visitor to Checked-In") — scanning an
+    invitation's encrypted check-in token transitions `checkInStatus` from
+    `unused`/`checked_out` (currently outside) to `checked_in`. This
+    endpoint no longer toggles: calling it while already `checked_in`
+    returns 409 — use `PATCH /api/v2/invitations/qr/{token}/check-out`
+    instead. Expiry is enforced on every entry, including a re-entry.
+    Distinct from `PATCH /api/v2/invitations/{trackingId}/check-in` — that
+    route stays the manual desk fallback, keyed by the human-readable
+    tracking ID and unaffected by this one.
     """
     cached = await _cached_response(tenant.id, idempotency_key)
     if cached is not None:
         return cached
 
     invitation, message = await service.check_in_by_qr_token(tenant_db, token, tenant=tenant)
-    action = (
-        "invitation_qr_checked_in"
-        if invitation.check_in_status == "checked_in"
-        else ("invitation_qr_checked_out")
-    )
     background_tasks.add_task(
         record_audit_log,
         tenant.schema_name,
         actor_user_id=None,
-        action=action,
+        action="invitation_qr_checked_in",
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    response = success_response(data=_to_qr_check_in_out(invitation), message=message)
+    response = success_response(data=await _to_qr_check_in_out(invitation), message=message)
+    await _cache_response(tenant.id, idempotency_key, response)
+    return response
+
+
+@router_v2.patch(
+    "/qr/{token}/check-out",
+    response_model=Envelope[InvitationQrCheckInOut],
+)
+@limiter.limit("20/minute")
+async def check_out_by_qr_token(
+    request: Request,
+    token: str,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(track_default_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            description=(
+                "Required in practice, not just optional retry-dedup safety: "
+                "a fresh key per physical scan keeps a network retry from "
+                "being deduped against a different scan. See "
+                "api-conventions.md §3."
+            ),
+        ),
+    ] = None,
+) -> JSONResponse:
+    """Public, unauthenticated QR check-out (spec.md "QR Check-Out Endpoint
+    Transitions a Checked-In Visitor to Checked-Out") — exit counterpart of
+    `PATCH /api/v2/invitations/qr/{token}/check-in`. Transitions
+    `checkInStatus` from `checked_in` to `checked_out`; never expiry-blocked
+    (a visit that legitimately continues past `expiresAt` can still be
+    closed out). Rejects with 409 when the invitation isn't currently
+    `checked_in`.
+    """
+    cached = await _cached_response(tenant.id, idempotency_key)
+    if cached is not None:
+        return cached
+
+    invitation, message = await service.check_out_by_qr_token(tenant_db, token, tenant=tenant)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=None,
+        action="invitation_qr_checked_out",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    response = success_response(data=await _to_qr_check_in_out(invitation), message=message)
     await _cache_response(tenant.id, idempotency_key, response)
     return response
 
@@ -1156,7 +1172,7 @@ async def list_invitations(
         sort_order=sort_order,
     )
     return paginated_response(
-        data=[_to_list_item_out(invitation) for invitation in invitations],
+        data=[await _to_list_item_out(invitation) for invitation in invitations],
         page=page,
         page_size=page_size,
         total=total,
@@ -1186,7 +1202,7 @@ async def track_invitation(
     if tracking_id is not None:
         invitation = await service.track_by_tracking_id(tenant_db, tracking_id)
         current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
-        return success_response(data=_to_tracking_out(invitation, current_approval_step))
+        return success_response(data=await _to_tracking_out(invitation, current_approval_step))
 
     assert email is not None  # exactly one of the two is guaranteed set above
     invitations = await service.track_by_email(tenant_db, email)
@@ -1221,4 +1237,4 @@ async def get_invitation_detail(
     invitation = await service.get_invitation_detail(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:view", invitation.branch_id)
     current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
-    return success_response(data=_to_invitation_detail_out(invitation, current_approval_step))
+    return success_response(data=await _to_invitation_detail_out(invitation, current_approval_step))
