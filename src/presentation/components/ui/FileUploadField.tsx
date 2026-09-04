@@ -1,4 +1,6 @@
 import { useId, useState } from 'react'
+import { FileTextIcon } from '../icons'
+import { getFilePreviewKind } from '../../utils/file-preview-kind'
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
 
@@ -11,6 +13,7 @@ interface FileUploadFieldProps {
   onUpload: (file: File) => Promise<string>
   onFileRefChange: (fileRef: string | undefined, fileName: string | undefined) => void
   error?: string
+  required?: boolean
 }
 
 export function FileUploadField({
@@ -22,10 +25,12 @@ export function FileUploadField({
   onUpload,
   onFileRefChange,
   error: externalError,
+  required,
 }: FileUploadFieldProps) {
   const inputId = useId()
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
+  const previewKind = getFilePreviewKind(fileName)
 
   const handleChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -60,14 +65,20 @@ export function FileUploadField({
     <div className="flex flex-col gap-1.5">
       <label htmlFor={inputId} className="text-body font-medium text-text">
         {label}
+        {required && <span className="ml-1 text-danger">*</span>}
       </label>
       <label
         htmlFor={inputId}
         className={`flex cursor-pointer items-center rounded-lg border border-dashed border-border bg-surface px-4 py-4 ${
-          previewUrl ? 'gap-4' : 'flex-col gap-1 text-center py-6'
+          previewUrl && previewKind !== 'none' ? 'gap-4' : 'flex-col gap-1 text-center py-6'
         }`}
       >
-        {previewUrl && <img src={previewUrl} alt="" className="size-12 shrink-0 rounded-lg object-cover" />}
+        {previewUrl && previewKind === 'image' && <img src={previewUrl} alt="" className="size-12 shrink-0 rounded-lg object-cover" />}
+        {previewUrl && previewKind === 'pdf' && (
+          <span className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-danger/10 text-danger">
+            <FileTextIcon className="size-6" />
+          </span>
+        )}
         <span className="flex flex-col gap-0.5">
           <span className="text-body font-semibold text-text">
             {uploading ? 'Uploading…' : fileName ? fileName : 'Click to upload or drag & drop'}

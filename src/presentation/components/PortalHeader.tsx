@@ -24,12 +24,12 @@ export function PortalHeader({ backTo }: PortalHeaderProps) {
           </svg>
         </Link>
       )}
-      <div className="flex items-center gap-2">
+      <Link to="/" className="flex items-center gap-2">
         <div className="flex size-8 items-center justify-center rounded-lg bg-primary">
           <span className="font-display text-[18px] font-extrabold text-white">V</span>
         </div>
         <span className="font-display text-[18px] font-extrabold text-text">VisitorPass</span>
-      </div>
+      </Link>
     </header>
   )
 }

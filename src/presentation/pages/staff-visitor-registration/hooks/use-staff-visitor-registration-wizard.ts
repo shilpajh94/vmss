@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
+import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { SubmissionStatus } from '../../visitor-request/Components/steps/ReviewConfirmStep'
 import {
@@ -15,10 +17,12 @@ function validateStaffVisitorContact(contact: StaffVisitorFormEntry): Record<str
   if (!contact.fullName) errors.fullName = 'Full name is required.'
   if (!contact.email) errors.email = 'Email is required.'
   if (!contact.phone) errors.phone = 'Phone number is required.'
+  else if (!isValidPhoneNumber(contact.phone)) errors.phone = 'Enter a valid phone number.'
   if (!contact.visitorCategory) errors.visitorCategory = 'Visitor category is required.'
   if (!contact.preferredContactMethod) errors.preferredContactMethod = 'Preferred contact method is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
   if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
+  if (!contact.profileImageFileRef) errors.profileImageFileRef = 'Profile image is required.'
   return errors
 }
 
@@ -38,6 +42,7 @@ function validateStep(step: number, formState: StaffVisitRequestFormState): Reco
     if (!visitInfo.hostNameOrEmail) errors.hostNameOrEmail = 'Host name or email is required.'
     else if (!visitInfo.hostId) errors.hostNameOrEmail = 'Please select a host from the list.'
     if (!visitInfo.preferredDate) errors.preferredDate = 'Preferred visit date is required.'
+    else if (visitInfo.preferredDate < todayAsDateInputValue()) errors.preferredDate = 'Preferred visit date cannot be in the past.'
     if (!visitInfo.preferredTime) errors.preferredTime = 'Preferred visit time is required.'
     if (!visitInfo.expectedDuration) errors.expectedDuration = 'Expected duration is required.'
     if (!visitInfo.location) errors.location = 'Location is required.'
@@ -73,11 +78,25 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
   // file a local ref so InlineFileUpload can track/display it; the real File
   // objects are recovered by that ref at submit time below.
   const fileRegistry = useRef(new Map<string, File>())
+  // Object URLs are cached per fileRef so repeated renders (e.g. the Review
+  // step re-rendering) reuse one URL instead of leaking a new one each time.
+  const previewUrlCache = useRef(new Map<string, string>())
 
   const uploadFile = async (file: File): Promise<string> => {
     const fileRef = crypto.randomUUID()
     fileRegistry.current.set(fileRef, file)
     return fileRef
+  }
+
+  const getFilePreviewUrl = (fileRef?: string): string | undefined => {
+    if (!fileRef) return undefined
+    const cached = previewUrlCache.current.get(fileRef)
+    if (cached) return cached
+    const file = fileRegistry.current.get(fileRef)
+    if (!file) return undefined
+    const url = URL.createObjectURL(file)
+    previewUrlCache.current.set(fileRef, url)
+    return url
   }
 
   const updateFormState = (next: StaffVisitRequestFormState) => {
@@ -99,6 +118,14 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
   const goBack = () => {
     setErrors({})
     setCurrentStep((step) => Math.max(step - 1, 0))
+  }
+
+  // Jumping to an already-completed step (e.g. via the stepper) never needs
+  // re-validation — only forward movement via goNext does.
+  const goToStep = (step: number) => {
+    if (step >= currentStep) return
+    setErrors({})
+    setCurrentStep(step)
   }
 
   const reset = () => {
@@ -152,7 +179,9 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     errors,
     goNext,
     goBack,
+    goToStep,
     uploadFile,
+    getFilePreviewUrl,
     submissionStatus,
     trackingId,
     submissionError,

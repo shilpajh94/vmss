@@ -1,4 +1,5 @@
 import type { ZodType } from 'zod'
+import { extractErrorMessage } from './api-error'
 import type { ApiEndpointDefinition } from './api-endpoints'
 
 type QueryParams = Record<string, string | number | boolean | undefined>
@@ -72,11 +73,7 @@ export class ApiClient {
     if (response.ok) return
 
     const body: unknown = await response.json().catch(() => undefined)
-    const message =
-      body && typeof body === 'object' && 'message' in body && typeof body.message === 'string'
-        ? body.message
-        : `Request failed with status ${response.status}`
-    throw new Error(message)
+    throw new Error(extractErrorMessage(body, response.status))
   }
 
   // Exposed for adapters that need to build a full-page-navigation URL (e.g. an

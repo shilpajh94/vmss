@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
+import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import { createEmptyStaffVisitorFormEntry, type StaffVisitorFormEntry } from '../types'
 import { ID_PROOF_ALLOWED_TYPES, ID_PROOF_OPTIONS } from './constants'
 import { InlineFileUpload } from './InlineFileUpload'
@@ -8,17 +9,26 @@ import { InlineFileUpload } from './InlineFileUpload'
 interface AddVisitorFormProps {
   initialValue?: StaffVisitorFormEntry
   uploadFile: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
   onAdd: (visitor: StaffVisitorFormEntry) => void
   onCancel: () => void
 }
 
-export function AddVisitorForm({ initialValue, uploadFile, onAdd, onCancel }: AddVisitorFormProps) {
+export function AddVisitorForm({ initialValue, uploadFile, getFilePreviewUrl, onAdd, onCancel }: AddVisitorFormProps) {
   const [draft, setDraft] = useState<StaffVisitorFormEntry>(initialValue ?? createEmptyStaffVisitorFormEntry())
   const [error, setError] = useState<string | undefined>(undefined)
 
   const handleAdd = () => {
     if (!draft.fullName || !draft.email || !draft.phone || !draft.idProofType) {
       setError('Full name, email, phone, and ID proof type are required.')
+      return
+    }
+    if (!isValidPhoneNumber(draft.phone)) {
+      setError('Enter a valid phone number.')
+      return
+    }
+    if (!draft.idProofFileRef) {
+      setError('ID proof file is required.')
       return
     }
     setError(undefined)
@@ -32,7 +42,7 @@ export function AddVisitorForm({ initialValue, uploadFile, onAdd, onCancel }: Ad
       <div className="grid grid-cols-3 gap-4">
         <TextField label="Full Name" placeholder="Full name" value={draft.fullName} onChange={(fullName) => setDraft({ ...draft, fullName })} />
         <TextField label="Email" placeholder="Email address" type="email" value={draft.email} onChange={(email) => setDraft({ ...draft, email })} />
-        <TextField label="Phone" placeholder="Phone number" value={draft.phone} onChange={(phone) => setDraft({ ...draft, phone })} />
+        <TextField label="Phone" placeholder="Phone number" type="tel" value={draft.phone} onChange={(phone) => setDraft({ ...draft, phone })} />
       </div>
 
       <div className="flex items-end gap-3">
@@ -49,8 +59,10 @@ export function AddVisitorForm({ initialValue, uploadFile, onAdd, onCancel }: Ad
           label="Upload ID File"
           allowedTypes={ID_PROOF_ALLOWED_TYPES}
           fileName={draft.idProofFileName}
+          previewUrl={getFilePreviewUrl?.(draft.idProofFileRef)}
           onUpload={uploadFile}
           onFileRefChange={(idProofFileRef, idProofFileName) => setDraft({ ...draft, idProofFileRef, idProofFileName })}
+          required
         />
       </div>
 

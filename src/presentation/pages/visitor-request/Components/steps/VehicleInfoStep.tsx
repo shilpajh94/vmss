@@ -22,30 +22,34 @@ interface VehicleInfoStepProps {
 export function VehicleInfoStep({ vehicles, onChange, errors }: VehicleInfoStepProps) {
   const [draftVehicle, setDraftVehicle] = useState<Vehicle | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
-  const [draftError, setDraftError] = useState<string | undefined>(undefined)
+  const [draftErrors, setDraftErrors] = useState<Record<string, string>>({})
 
   const startAddVehicle = () => {
     setEditingIndex(null)
-    setDraftError(undefined)
+    setDraftErrors({})
     setDraftVehicle(createEmptyVehicle())
   }
 
   const startEditVehicle = (index: number) => {
     setEditingIndex(index)
-    setDraftError(undefined)
+    setDraftErrors({})
     setDraftVehicle(vehicles[index])
   }
 
   const cancelDraft = () => {
     setDraftVehicle(null)
     setEditingIndex(null)
-    setDraftError(undefined)
+    setDraftErrors({})
   }
 
   const commitDraft = () => {
     if (!draftVehicle) return
-    if (!draftVehicle.licensePlate || !draftVehicle.makeModel || !draftVehicle.color) {
-      setDraftError('License plate, make/model, and color are required.')
+    const errors: Record<string, string> = {}
+    if (!draftVehicle.licensePlate) errors.licensePlate = 'License plate number is required.'
+    if (!draftVehicle.makeModel) errors.makeModel = 'Make / Model is required.'
+    if (!draftVehicle.color) errors.color = 'Color is required.'
+    if (Object.keys(errors).length > 0) {
+      setDraftErrors(errors)
       return
     }
     if (editingIndex === null) {
@@ -55,7 +59,7 @@ export function VehicleInfoStep({ vehicles, onChange, errors }: VehicleInfoStepP
     }
     setDraftVehicle(null)
     setEditingIndex(null)
-    setDraftError(undefined)
+    setDraftErrors({})
   }
 
   const removeVehicle = (index: number) => {
@@ -130,21 +134,26 @@ export function VehicleInfoStep({ vehicles, onChange, errors }: VehicleInfoStepP
               placeholder="Enter plate number"
               value={draftVehicle.licensePlate}
               onChange={(licensePlate) => setDraftVehicle({ ...draftVehicle, licensePlate })}
+              error={draftErrors.licensePlate}
+              required
             />
             <TextField
               label="Make / Model"
               placeholder="e.g. Honda City"
               value={draftVehicle.makeModel}
               onChange={(makeModel) => setDraftVehicle({ ...draftVehicle, makeModel })}
+              error={draftErrors.makeModel}
+              required
             />
             <TextField
               label="Color"
               placeholder="e.g. White"
               value={draftVehicle.color}
               onChange={(color) => setDraftVehicle({ ...draftVehicle, color })}
+              error={draftErrors.color}
+              required
             />
           </div>
-          {draftError && <p className="text-caption text-danger">{draftError}</p>}
           <div className="flex gap-3">
             <button type="button" onClick={commitDraft} className="rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white">
               Add to List

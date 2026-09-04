@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
+import { isValidPhoneNumber } from '../../../../utils/is-valid-phone-number'
 import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
 import { createEmptyVisitorFormEntry, type RegistrationType, type VisitorFormEntry } from '../../types'
 import { VisitorFieldsForm } from './VisitorFieldsForm'
@@ -12,6 +13,7 @@ interface VisitorInfoStepProps {
   additionalVisitors: VisitorFormEntry[]
   onAdditionalVisitorsChange: (visitors: VisitorFormEntry[]) => void
   uploadFile: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
   errors: Record<string, string>
   visitorCategories?: VisitorCategory[]
 }
@@ -24,29 +26,45 @@ export function VisitorInfoStep({
   additionalVisitors,
   onAdditionalVisitorsChange,
   uploadFile,
+  getFilePreviewUrl,
   errors,
   visitorCategories,
 }: VisitorInfoStepProps) {
   const [draftVisitor, setDraftVisitor] = useState<VisitorFormEntry | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
+  const [draftErrors, setDraftErrors] = useState<Record<string, string>>({})
 
   const startAddVisitor = () => {
     setEditingIndex(null)
+    setDraftErrors({})
     setDraftVisitor(createEmptyVisitorFormEntry())
   }
 
   const startEditVisitor = (index: number) => {
     setEditingIndex(index)
+    setDraftErrors({})
     setDraftVisitor(additionalVisitors[index])
   }
 
   const cancelDraft = () => {
     setDraftVisitor(null)
     setEditingIndex(null)
+    setDraftErrors({})
   }
 
   const commitDraft = () => {
     if (!draftVisitor) return
+    const errors: Record<string, string> = {}
+    if (!draftVisitor.fullName) errors.fullName = 'Full name is required.'
+    if (!draftVisitor.email) errors.email = 'Email is required.'
+    if (!draftVisitor.phone) errors.phone = 'Phone number is required.'
+    else if (!isValidPhoneNumber(draftVisitor.phone)) errors.phone = 'Enter a valid phone number.'
+    if (!draftVisitor.idProofType) errors.idProofType = 'ID proof type is required.'
+    if (!draftVisitor.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
+    if (Object.keys(errors).length > 0) {
+      setDraftErrors(errors)
+      return
+    }
     if (editingIndex === null) {
       onAdditionalVisitorsChange([...additionalVisitors, draftVisitor])
     } else {
@@ -54,6 +72,7 @@ export function VisitorInfoStep({
     }
     setDraftVisitor(null)
     setEditingIndex(null)
+    setDraftErrors({})
   }
 
   const removeVisitor = (index: number) => {
@@ -84,6 +103,7 @@ export function VisitorInfoStep({
           onChange={onPrimaryContactChange}
           showContactMethod
           uploadFile={uploadFile}
+          getFilePreviewUrl={getFilePreviewUrl}
           errors={errors}
           visitorCategories={visitorCategories}
         />
@@ -145,7 +165,10 @@ export function VisitorInfoStep({
                 value={draftVisitor}
                 onChange={setDraftVisitor}
                 showContactMethod={false}
+                showExtendedFields={false}
                 uploadFile={uploadFile}
+                getFilePreviewUrl={getFilePreviewUrl}
+                errors={draftErrors}
                 visitorCategories={visitorCategories}
               />
               <div className="flex gap-3">

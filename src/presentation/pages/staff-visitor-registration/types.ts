@@ -11,6 +11,8 @@ export interface StaffVisitorFormEntry {
   idProofType: string
   idProofFileRef?: string
   idProofFileName?: string
+  profileImageFileRef?: string
+  profileImageFileName?: string
 }
 
 export function createEmptyStaffVisitorFormEntry(): StaffVisitorFormEntry {

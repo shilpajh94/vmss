@@ -7,6 +7,7 @@ import type { Building } from '../../../../../domain/entities/building-schema'
 import type { Department } from '../../../../../domain/entities/department-schema'
 import type { HostSearchResult } from '../../../../../domain/entities/host-search-schema'
 import type { VisitInfoFormState } from '../../types'
+import { todayAsDateInputValue } from '../../../../utils/local-date-input-value'
 import { PURPOSE_OF_VISIT_OPTIONS as PURPOSE_OPTIONS } from '../../../../utils/purpose-of-visit-options'
 
 const DURATION_OPTIONS = [
@@ -79,6 +80,7 @@ export function VisitInfoStep({ value, onChange, errors, onSearchHosts, branches
           value={value.preferredDate}
           onChange={(preferredDate) => onChange({ ...value, preferredDate })}
           error={errors.preferredDate}
+          min={todayAsDateInputValue()}
           required
         />
         <TextField

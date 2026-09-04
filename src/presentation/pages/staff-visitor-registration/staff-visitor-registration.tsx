@@ -44,7 +44,9 @@ export function StaffVisitorRegistrationPage() {
     errors,
     goNext,
     goBack,
+    goToStep,
     uploadFile,
+    getFilePreviewUrl,
     submissionStatus,
     trackingId,
     submissionError,
@@ -129,7 +131,7 @@ export function StaffVisitorRegistrationPage() {
         <RegistrationWorkspaceHeader currentUser={currentUser} onSignOut={signOut} />
 
         <div className="flex flex-1 flex-col gap-6 px-10 py-8">
-          <RegistrationStepper steps={STAFF_WIZARD_STEPS} currentStep={currentStep} />
+          <RegistrationStepper steps={STAFF_WIZARD_STEPS} currentStep={currentStep} onStepSelect={goToStep} />
 
           <div className="flex flex-1 flex-col gap-6 rounded-2xl border border-border bg-surface p-6">
             {currentStep === 0 && (
@@ -141,6 +143,7 @@ export function StaffVisitorRegistrationPage() {
                 additionalVisitors={formState.additionalVisitors}
                 onAdditionalVisitorsChange={(additionalVisitors) => setFormState({ ...formState, additionalVisitors })}
                 uploadFile={uploadFile}
+                getFilePreviewUrl={getFilePreviewUrl}
                 errors={errors}
                 visitorCategories={visitorCategories}
               />
@@ -171,6 +174,8 @@ export function StaffVisitorRegistrationPage() {
                 status={submissionStatus}
                 trackingId={trackingId}
                 errorMessage={submissionError}
+                visitorCategories={visitorCategories}
+                getFilePreviewUrl={getFilePreviewUrl}
                 onBack={goBack}
                 onSubmit={submit}
               />
