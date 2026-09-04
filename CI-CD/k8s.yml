@@ -45,8 +45,10 @@ stringData:
   SSO_FRONTEND_CALLBACK_URL: "$(SSO_FRONTEND_CALLBACK_URL)"
   SSO_EXCHANGE_CODE_TTL_SECONDS: "$(SSO_EXCHANGE_CODE_TTL_SECONDS)"
   SSO_STATE_TTL_SECONDS: "$(SSO_STATE_TTL_SECONDS)"
----
+  QR_TOKEN_ENCRYPTION_KEY: "$(QR_TOKEN_ENCRYPTION_KEY)"
+  FCM_CREDENTIALS_PATH: "$(FCM_CREDENTIALS_PATH)"
 
+---
 ############################################
 # PersistentVolumeClaim
 ############################################
@@ -110,12 +112,15 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
+
           envFrom:
             - secretRef:
                 name: $(proj_branch)-secret
+
           volumeMounts:
             - name: storage-volume
               mountPath: $(mount_path)
+
       volumes:
         - name: storage-volume
           persistentVolumeClaim:
@@ -146,7 +151,9 @@ spec:
         - name: celery-worker-cron
           image: docker-registry.dev.displayme.net/$(dockerrepo)
           imagePullPolicy: IfNotPresent
+
           command: ["celery"]
+
           args:
             - "-A"
             - "vmss_api.core.celery_app"
@@ -156,11 +163,13 @@ spec:
             - "--concurrency=2"
             - "-l"
             - "info"
+
           env:
             - name: CELERY_BROKER_URL
               value: $(CELERY_BROKER_URL)
             - name: CELERY_RESULT_BACKEND
               value: $(CELERY_RESULT_BACKEND)
+
           envFrom:
             - secretRef:
                 name: $(proj_branch)-secret
@@ -176,21 +185,27 @@ metadata:
   name: $(proj_branch)-celery-worker-notifications
   labels:
     app: $(proj_branch)-celery-worker-notifications
+
 spec:
   replicas: 1
+
   selector:
     matchLabels:
       app: $(proj_branch)-celery-worker-notifications
+
   template:
     metadata:
       labels:
         app: $(proj_branch)-celery-worker-notifications
+
     spec:
       containers:
         - name: celery-worker-notifications
           image: docker-registry.dev.displayme.net/$(dockerrepo)
           imagePullPolicy: IfNotPresent
+
           command: ["celery"]
+
           args:
             - "-A"
             - "vmss_api.core.celery_app"
@@ -200,14 +215,31 @@ spec:
             - "--concurrency=2"
             - "-l"
             - "info"
+
           env:
             - name: CELERY_BROKER_URL
               value: $(CELERY_BROKER_URL)
             - name: CELERY_RESULT_BACKEND
               value: $(CELERY_RESULT_BACKEND)
+
           envFrom:
             - secretRef:
                 name: $(proj_branch)-secret
+
+          # FIX:
+          # Mount the same shared storage PVC used by the API.
+          # This provides:
+          # /app/var/storage/firebase-adminsdk.json
+          volumeMounts:
+            - name: storage-volume
+              mountPath: $(mount_path)
+
+      # FIX:
+      # Attach the shared PVC to the notifications worker.
+      volumes:
+        - name: storage-volume
+          persistentVolumeClaim:
+            claimName: $(pvc_name)
 
 ---
 ############################################
@@ -234,16 +266,20 @@ spec:
         - name: celery-beat
           image: docker-registry.dev.displayme.net/$(dockerrepo)
           imagePullPolicy: IfNotPresent
+
           command: ["celery"]
+
           args:
             - "-A"
             - "vmss_api.core.celery_app"
             - "beat"
             - "-l"
             - "INFO"
+
           env:
             - name: CELERY_BROKER_URL
               value: $(CELERY_BROKER_URL)
+
           envFrom:
             - secretRef:
                 name: $(proj_branch)-secret
