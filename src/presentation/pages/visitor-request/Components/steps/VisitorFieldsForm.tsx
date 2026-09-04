@@ -33,12 +33,25 @@ interface VisitorFieldsFormProps {
   value: VisitorFormEntry
   onChange: (value: VisitorFormEntry) => void
   showContactMethod: boolean
+  // Visitor Category and Profile Image are primary-contact-only in practice —
+  // group visitor drafts only collect the core identity fields.
+  showExtendedFields?: boolean
   uploadFile: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
   errors?: Record<string, string>
   visitorCategories?: VisitorCategory[]
 }
 
-export function VisitorFieldsForm({ value, onChange, showContactMethod, uploadFile, errors, visitorCategories }: VisitorFieldsFormProps) {
+export function VisitorFieldsForm({
+  value,
+  onChange,
+  showContactMethod,
+  showExtendedFields = true,
+  uploadFile,
+  getFilePreviewUrl,
+  errors,
+  visitorCategories,
+}: VisitorFieldsFormProps) {
   const visitorCategoryOptions = visitorCategories?.length
     ? visitorCategories.map((category) => ({ value: category.id, label: category.name }))
     : VISITOR_CATEGORY_OPTIONS
@@ -65,28 +78,23 @@ export function VisitorFieldsForm({ value, onChange, showContactMethod, uploadFi
       <TextField
         label="Phone Number"
         placeholder="Phone number"
+        type="tel"
         value={value.phone}
         onChange={(phone) => onChange({ ...value, phone })}
         error={errors?.phone}
         required
       />
-      <TextField
-        label="Address"
-        placeholder="Address"
-        value={value.address}
-        onChange={(address) => onChange({ ...value, address })}
-        error={errors?.address}
-        required
-      />
-      <SelectField
-        label="Visitor Category"
-        placeholder="Select category"
-        options={visitorCategoryOptions}
-        value={value.visitorCategory}
-        onChange={(visitorCategory) => onChange({ ...value, visitorCategory })}
-        error={errors?.visitorCategory}
-        required
-      />
+      {showExtendedFields && (
+        <SelectField
+          label="Visitor Category"
+          placeholder="Select category"
+          options={visitorCategoryOptions}
+          value={value.visitorCategory}
+          onChange={(visitorCategory) => onChange({ ...value, visitorCategory })}
+          error={errors?.visitorCategory}
+          required
+        />
+      )}
       {showContactMethod && (
         <div className="flex flex-col gap-1.5">
           <span className="text-body font-medium text-text">Preferred Contact Method</span>
@@ -117,20 +125,27 @@ export function VisitorFieldsForm({ value, onChange, showContactMethod, uploadFi
         helperText="PNG, JPG or PDF (max 5MB)"
         allowedTypes={ID_PROOF_ALLOWED_TYPES}
         fileName={value.idProofFileName}
+        previewUrl={getFilePreviewUrl?.(value.idProofFileRef)}
         onUpload={uploadFile}
         onFileRefChange={(idProofFileRef, idProofFileName) => onChange({ ...value, idProofFileRef, idProofFileName })}
         error={errors?.idProofFileRef}
+        required
       />
-      <FileUploadField
-        label="Profile Image"
-        helperText="PNG or JPG (max 5MB)"
-        allowedTypes={PROFILE_IMAGE_ALLOWED_TYPES}
-        fileName={value.profileImageFileName}
-        onUpload={uploadFile}
-        onFileRefChange={(profileImageFileRef, profileImageFileName) =>
-          onChange({ ...value, profileImageFileRef, profileImageFileName })
-        }
-      />
+      {showExtendedFields && (
+        <FileUploadField
+          label="Profile Image"
+          helperText="PNG or JPG (max 5MB)"
+          allowedTypes={PROFILE_IMAGE_ALLOWED_TYPES}
+          fileName={value.profileImageFileName}
+          previewUrl={getFilePreviewUrl?.(value.profileImageFileRef)}
+          onUpload={uploadFile}
+          onFileRefChange={(profileImageFileRef, profileImageFileName) =>
+            onChange({ ...value, profileImageFileRef, profileImageFileName })
+          }
+          error={errors?.profileImageFileRef}
+          required
+        />
+      )}
     </div>
   )
 }

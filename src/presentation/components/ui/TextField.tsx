@@ -9,9 +9,11 @@ interface TextFieldProps {
   error?: string
   required?: boolean
   labelClassName?: string
+  min?: string
+  max?: string
 }
 
-export function TextField({ label, value, onChange, placeholder, type = 'text', error, required, labelClassName }: TextFieldProps) {
+export function TextField({ label, value, onChange, placeholder, type = 'text', error, required, labelClassName, min, max }: TextFieldProps) {
   const inputId = useId()
 
   return (
@@ -27,6 +29,8 @@ export function TextField({ label, value, onChange, placeholder, type = 'text', 
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         aria-required={required}
+        min={min}
+        max={max}
         className={`rounded-lg border px-3 py-2 text-body text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent ${
           error ? 'border-danger' : 'border-border'
         }`}

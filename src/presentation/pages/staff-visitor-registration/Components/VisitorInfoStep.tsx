@@ -16,6 +16,7 @@ interface VisitorInfoStepProps {
   additionalVisitors: StaffVisitorFormEntry[]
   onAdditionalVisitorsChange: (visitors: StaffVisitorFormEntry[]) => void
   uploadFile: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
   errors: Record<string, string>
   visitorCategories?: VisitorCategory[]
 }
@@ -28,6 +29,7 @@ export function VisitorInfoStep({
   additionalVisitors,
   onAdditionalVisitorsChange,
   uploadFile,
+  getFilePreviewUrl,
   errors,
   visitorCategories,
 }: VisitorInfoStepProps) {
@@ -71,6 +73,7 @@ export function VisitorInfoStep({
         value={primaryContact}
         onChange={onPrimaryContactChange}
         uploadFile={uploadFile}
+        getFilePreviewUrl={getFilePreviewUrl}
         errors={errors}
         visitorCategories={visitorCategories}
       />
@@ -98,6 +101,7 @@ export function VisitorInfoStep({
               key={editingIndex ?? 'new'}
               initialValue={editingIndex !== null ? additionalVisitors[editingIndex] : undefined}
               uploadFile={uploadFile}
+              getFilePreviewUrl={getFilePreviewUrl}
               onAdd={commitVisitor}
               onCancel={cancelAdd}
             />

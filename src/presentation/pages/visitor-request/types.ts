@@ -8,7 +8,6 @@ export interface VisitorFormEntry {
   fullName: string
   email: string
   phone: string
-  address: string
   visitorCategory: string
   preferredContactMethod?: 'email' | 'sms'
   idProofType: string
@@ -23,7 +22,6 @@ export function createEmptyVisitorFormEntry(): VisitorFormEntry {
     fullName: '',
     email: '',
     phone: '',
-    address: '',
     visitorCategory: '',
     idProofType: '',
   }
@@ -97,7 +95,7 @@ export function toVisitor(entry: VisitorFormEntry): Visitor {
 }
 
 // Maps wizard form state onto the `payload` wire contract for
-// POST /registrations/walk-in. `location`/`building`/address/profile image
+// POST /registrations/walk-in. `location`/`building`/profile image
 // aren't part of that contract (yet) and are dropped here; the primary
 // contact's visitor category becomes the invitation-level `visitorCategoryId`
 // (the wire contract has one category per invitation, not per visitor). ID-proof

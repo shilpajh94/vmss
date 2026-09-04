@@ -1,19 +1,22 @@
+import type { ReactNode } from 'react'
 import type { CarriedItemsFormState, ConsentFormState, RegistrationType, VisitInfoFormState } from '../../types'
 import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
+import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
 import { Spinner } from '../../../../components/ui/LoadingState'
+import { FileTextIcon } from '../../../../components/icons'
+import { getFilePreviewKind } from '../../../../utils/file-preview-kind'
 
 export type SubmissionStatus = 'idle' | 'submitting' | 'success' | 'error'
 
-// Self-service visitors additionally provide address/visitorCategory/profileImageFileName;
-// staff-registered visitors do not. Presence of `address` on the primary contact decides
-// which set of rows to render, so both flows share this one component.
 export interface ReviewVisitorSummary {
   fullName: string
   email: string
   phone: string
-  address?: string
   visitorCategory?: string
   idProofType: string
+  idProofFileRef?: string
+  idProofFileName?: string
+  profileImageFileRef?: string
   profileImageFileName?: string
 }
 
@@ -32,17 +35,19 @@ interface ReviewConfirmStepProps {
   status: SubmissionStatus
   trackingId?: string
   errorMessage?: string
+  visitorCategories?: VisitorCategory[]
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
   onBack: () => void
   onSubmit: () => void
 }
 
-function SummarySection({ title, rows }: { title: string; rows: [string, string][] }) {
+function SummarySection({ title, rows }: { title: string; rows: [string, ReactNode][] }) {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface p-4">
-      <h4 className="text-body font-semibold text-text">{title}</h4>
-      <dl className="grid grid-cols-2 gap-2 text-body">
+    <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-6 shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
+      <h4 className="font-display text-base font-semibold text-text">{title}</h4>
+      <dl className="grid grid-cols-2 gap-4 text-body">
         {rows.map(([label, value], index) => (
-          <div key={`${label}-${index}`} className="flex flex-col">
+          <div key={`${label}-${index}`} className="flex flex-col gap-1">
             <dt className="text-caption text-text-muted">{label}</dt>
             <dd className="text-text">{value || '—'}</dd>
           </div>
@@ -52,7 +57,33 @@ function SummarySection({ title, rows }: { title: string; rows: [string, string]
   )
 }
 
-export function ReviewConfirmStep({ formState, status, trackingId, errorMessage, onBack, onSubmit }: ReviewConfirmStepProps) {
+function FilePreviewCell({ fileName, previewUrl }: { fileName?: string; previewUrl?: string }) {
+  if (!fileName) return 'Not uploaded'
+  if (!previewUrl) return fileName
+  const kind = getFilePreviewKind(fileName)
+  return (
+    <a href={previewUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2">
+      {kind === 'image' && <img src={previewUrl} alt={fileName} className="size-10 shrink-0 rounded-lg border border-border object-cover" />}
+      {kind === 'pdf' && (
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-danger/10 text-danger">
+          <FileTextIcon className="size-5" />
+        </span>
+      )}
+      <span className="text-text underline">{fileName}</span>
+    </a>
+  )
+}
+
+export function ReviewConfirmStep({
+  formState,
+  status,
+  trackingId,
+  errorMessage,
+  visitorCategories,
+  getFilePreviewUrl,
+  onBack,
+  onSubmit,
+}: ReviewConfirmStepProps) {
   if (status === 'success') {
     return (
       <div className="flex flex-col items-center gap-3 rounded-lg border border-success bg-surface p-8 text-center">
@@ -64,10 +95,11 @@ export function ReviewConfirmStep({ formState, status, trackingId, errorMessage,
   }
 
   const visitors = [formState.primaryContact, ...formState.additionalVisitors]
-  const showExtendedFields = formState.primaryContact.address !== undefined
+
+  const visitorCategoryName = (id: string) => visitorCategories?.find((category) => category.id === id)?.name ?? id
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
       <h3 className="text-h3 text-text">Review &amp; Confirm</h3>
 
       {status === 'error' && (
@@ -79,14 +111,21 @@ export function ReviewConfirmStep({ formState, status, trackingId, errorMessage,
       <SummarySection
         title={`Visitor Info (${formState.registrationType === 'group' ? `${visitors.length} visitors` : 'Individual'})`}
         rows={visitors.flatMap((visitor, index) => {
-          const rows: [string, string][] = [
+          const rows: [string, ReactNode][] = [
             [visitors.length > 1 ? `Visitor ${index + 1} Name` : 'Full Name', visitor.fullName],
             ['Email', visitor.email],
             ['Phone', visitor.phone],
           ]
-          if (showExtendedFields) rows.push(['Address', visitor.address ?? ''], ['Visitor Category', visitor.visitorCategory ?? ''])
+          rows.push(['Visitor Category', visitor.visitorCategory ? visitorCategoryName(visitor.visitorCategory) : ''])
           rows.push(['ID Proof', visitor.idProofType])
-          if (showExtendedFields) rows.push(['Profile Image', visitor.profileImageFileName ?? 'Not provided'])
+          rows.push([
+            'ID Proof File',
+            <FilePreviewCell key="idProofFile" fileName={visitor.idProofFileName} previewUrl={getFilePreviewUrl?.(visitor.idProofFileRef)} />,
+          ])
+          rows.push([
+            'Profile Image',
+            <FilePreviewCell key="profileImage" fileName={visitor.profileImageFileName} previewUrl={getFilePreviewUrl?.(visitor.profileImageFileRef)} />,
+          ])
           return rows
         })}
       />

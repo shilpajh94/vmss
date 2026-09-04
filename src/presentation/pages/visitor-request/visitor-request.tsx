@@ -30,6 +30,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     goBack,
     goToStep,
     uploadFile,
+    getFilePreviewUrl,
     submissionStatus,
     trackingId,
     submissionError,
@@ -94,6 +95,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             additionalVisitors={formState.additionalVisitors}
             onAdditionalVisitorsChange={(additionalVisitors) => setFormState({ ...formState, additionalVisitors })}
             uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
             errors={errors}
             visitorCategories={visitorCategories}
           />
@@ -124,6 +126,8 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             status={submissionStatus}
             trackingId={trackingId}
             errorMessage={submissionError}
+            visitorCategories={visitorCategories}
+            getFilePreviewUrl={getFilePreviewUrl}
             onBack={goBack}
             onSubmit={submit}
           />

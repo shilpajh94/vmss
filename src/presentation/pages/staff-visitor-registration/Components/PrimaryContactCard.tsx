@@ -1,20 +1,22 @@
+import { FileUploadField } from '../../../components/ui/FileUploadField'
 import { SegmentedToggle } from '../../../components/ui/SegmentedToggle'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffVisitorFormEntry } from '../types'
-import { ID_PROOF_ALLOWED_TYPES, ID_PROOF_OPTIONS } from './constants'
+import { ID_PROOF_ALLOWED_TYPES, ID_PROOF_OPTIONS, PROFILE_IMAGE_ALLOWED_TYPES } from './constants'
 import { InlineFileUpload } from './InlineFileUpload'
 
 interface PrimaryContactCardProps {
   value: StaffVisitorFormEntry
   onChange: (value: StaffVisitorFormEntry) => void
   uploadFile: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
   errors: Record<string, string>
   visitorCategories?: VisitorCategory[]
 }
 
-export function PrimaryContactCard({ value, onChange, uploadFile, errors, visitorCategories }: PrimaryContactCardProps) {
+export function PrimaryContactCard({ value, onChange, uploadFile, getFilePreviewUrl, errors, visitorCategories }: PrimaryContactCardProps) {
   const visitorCategoryOptions = (visitorCategories ?? []).map((category) => ({ value: category.id, label: category.name }))
 
   return (
@@ -45,6 +47,7 @@ export function PrimaryContactCard({ value, onChange, uploadFile, errors, visito
         <TextField
           label="Phone Number"
           placeholder="Phone number"
+          type="tel"
           value={value.phone}
           onChange={(phone) => onChange({ ...value, phone })}
           error={errors.phone}
@@ -91,11 +94,27 @@ export function PrimaryContactCard({ value, onChange, uploadFile, errors, visito
             label="Upload"
             allowedTypes={ID_PROOF_ALLOWED_TYPES}
             fileName={value.idProofFileName}
+            previewUrl={getFilePreviewUrl?.(value.idProofFileRef)}
             onUpload={uploadFile}
             onFileRefChange={(idProofFileRef, idProofFileName) => onChange({ ...value, idProofFileRef, idProofFileName })}
             error={errors.idProofFileRef}
+            required
           />
         </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <FileUploadField
+          label="Profile Image"
+          helperText="PNG or JPG (max 5MB)"
+          allowedTypes={PROFILE_IMAGE_ALLOWED_TYPES}
+          fileName={value.profileImageFileName}
+          previewUrl={getFilePreviewUrl?.(value.profileImageFileRef)}
+          onUpload={uploadFile}
+          onFileRefChange={(profileImageFileRef, profileImageFileName) => onChange({ ...value, profileImageFileRef, profileImageFileName })}
+          error={errors.profileImageFileRef}
+          required
+        />
       </div>
     </div>
   )
