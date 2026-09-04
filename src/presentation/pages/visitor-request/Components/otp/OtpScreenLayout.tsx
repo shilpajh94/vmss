@@ -18,7 +18,7 @@ export function OtpScreenLayout({ onBack, children }: OtpScreenLayoutProps) {
           type="button"
           onClick={onBack}
           aria-label="Back"
-          className="flex size-10 items-center justify-center rounded-full bg-white text-text transition-colors hover:bg-border-subtle"
+          className="flex size-10 cursor-pointer items-center justify-center rounded-full bg-white text-text transition-colors hover:bg-border-subtle"
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path

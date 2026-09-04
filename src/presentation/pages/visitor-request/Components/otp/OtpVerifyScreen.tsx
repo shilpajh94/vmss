@@ -74,7 +74,7 @@ export function OtpVerifyScreen({
       <button
         type="button"
         onClick={onUseDifferentContact}
-        className="text-left text-body font-semibold text-secondary-accent hover:underline"
+        className="cursor-pointer text-left text-body font-semibold text-secondary-accent hover:underline"
       >
         Use a different number or email
       </button>

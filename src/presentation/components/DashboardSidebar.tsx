@@ -24,12 +24,16 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
 
   return (
     <aside className="flex w-[260px] shrink-0 flex-col gap-8 self-stretch bg-primary p-6">
-      <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={() => navigate('/staff/dashboard')}
+        className="flex items-center gap-3 text-left"
+      >
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-secondary-accent">
           <ShieldIcon className="size-[18px] text-white" />
         </span>
         <span className="font-display text-xl font-extrabold whitespace-nowrap text-white">VisitorPass</span>
-      </div>
+      </button>
 
       <nav className="flex flex-col gap-2">
         {NAV_ITEMS.map(({ key, label, icon: ItemIcon }) => (

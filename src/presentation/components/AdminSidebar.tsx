@@ -70,12 +70,16 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
 
   return (
     <aside className="flex w-[280px] shrink-0 flex-col gap-4 self-stretch bg-primary p-6">
-      <div className="flex items-center gap-2 pb-4">
+      <button
+        type="button"
+        onClick={() => navigate('/admin/dashboard')}
+        className="flex items-center gap-2 pb-4 text-left"
+      >
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-admin-accent">
           <ShieldIcon className="size-4 text-white" />
         </span>
         <span className="font-display text-[22px] font-extrabold whitespace-nowrap text-white">VisitorPass</span>
-      </div>
+      </button>
 
       <nav className="flex flex-1 flex-col gap-1.5">
         {NAV_ITEMS.map(({ key, label, icon: ItemIcon }) => (

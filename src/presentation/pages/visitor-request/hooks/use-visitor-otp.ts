@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import type { RegistrationType } from '../types'
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export type OtpPhase = 'request' | 'verify'
 export type OtpRequestStatus = 'idle' | 'requesting' | 'requested' | 'error'
@@ -28,8 +31,17 @@ export function useVisitorOtp({ onVerified }: UseVisitorOtpOptions) {
   const [verifyErrorMessage, setVerifyErrorMessage] = useState<string | undefined>(undefined)
 
   const requestOtp = async () => {
-    if (!contact.trim()) {
+    const trimmedContact = contact.trim()
+
+    if (!trimmedContact) {
       setContactError('Mobile number or email is required.')
+      return
+    }
+
+    const looksLikeEmail = trimmedContact.includes('@')
+    const isValid = looksLikeEmail ? EMAIL_PATTERN.test(trimmedContact) : isValidPhoneNumber(trimmedContact)
+    if (!isValid) {
+      setContactError(looksLikeEmail ? 'Enter a valid email address.' : 'Enter a valid mobile number.')
       return
     }
 
@@ -38,13 +50,14 @@ export function useVisitorOtp({ onVerified }: UseVisitorOtpOptions) {
     setRequestErrorMessage(undefined)
 
     try {
-      await requestVisitorOtpUseCase.execute({ registrationType, contact: contact.trim() })
+      await requestVisitorOtpUseCase.execute({ registrationType, contact: trimmedContact })
       setRequestStatus('requested')
       setPhase('verify')
-    } catch {
-      setRequestErrorMessage('Something went wrong requesting a code. Please try again.')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Something went wrong requesting a code. Please try again.'
+      setRequestErrorMessage(message)
       setRequestStatus('error')
-      toast.error('Something went wrong requesting a code. Please try again.')
+      toast.error(message)
     }
   }
 
