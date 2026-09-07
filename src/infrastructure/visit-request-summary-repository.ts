@@ -1,6 +1,6 @@
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
-import type { VisitRequestSummaryRepository } from '../data/repositories/visit-request-summary-repository'
+import type { EditInvitationFields, VisitRequestSummaryRepository } from '../data/repositories/visit-request-summary-repository'
 import {
   VisitRequestSummaryListResponseSchema,
   InvitationActionResultSchema,
@@ -48,6 +48,19 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
       endpointConfig: API_ENDPOINTS.RESCHEDULE_INVITATION,
       pathParams: { id },
       body: { preferredVisitDate, preferredVisitTime },
+      parserSchema: InvitationActionResultSchema,
+    })
+
+    if (!response.success) {
+      throw new Error(response.message)
+    }
+  }
+
+  async edit(id: string, fields: EditInvitationFields): Promise<void> {
+    const response = await this.apiClient.makeRequest<InvitationActionResult>({
+      endpointConfig: API_ENDPOINTS.EDIT_INVITATION,
+      pathParams: { id },
+      body: fields,
       parserSchema: InvitationActionResultSchema,
     })
 

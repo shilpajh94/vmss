@@ -134,13 +134,11 @@ export function ReviewConfirmStep({
         title="Visit Info"
         rows={[
           ['Purpose', formState.visitInfo.purpose],
-          ['Host', formState.visitInfo.hostNameOrEmail],
           ['Date', formState.visitInfo.preferredDate],
           ['Time', formState.visitInfo.preferredTime],
           ['Duration', formState.visitInfo.expectedDuration],
           ['Location', formState.visitInfo.location],
           ['Building', formState.visitInfo.building],
-          ['Department', formState.visitInfo.department],
           ['Additional Notes', formState.visitInfo.notes],
         ]}
       />

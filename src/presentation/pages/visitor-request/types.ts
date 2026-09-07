@@ -1,8 +1,18 @@
 import type { Vehicle } from '../../../domain/entities/vehicle-schema'
 import type { Visitor } from '../../../domain/entities/visitor-schema'
+import type { VisitorCategory } from '../../../domain/entities/visitor-category-schema'
 import type { VisitRequest } from '../../../domain/entities/visit-request-schema'
 
 export type RegistrationType = 'individual' | 'group'
+
+// Distinguishes "still loading" from "loaded and empty" from "failed" —
+// collapsing all three into `VisitorCategory[] | undefined` is what let a
+// hardcoded fallback list of fake, non-UUID category ids get silently
+// offered and submitted (fix-visitor-category-invalid-id-fallback).
+export interface VisitorCategoriesFieldState {
+  status: 'loading' | 'error' | 'loaded'
+  categories: VisitorCategory[]
+}
 
 export interface VisitorFormEntry {
   fullName: string
@@ -23,20 +33,22 @@ export function createEmptyVisitorFormEntry(): VisitorFormEntry {
     email: '',
     phone: '',
     visitorCategory: '',
+    // Matches the Preferred Contact Method toggle's default visual selection
+    // (see VisitorFieldsForm's `value.preferredContactMethod ?? 'email'`) —
+    // without this, a fresh entry's method is `undefined`, which fails
+    // validation with no visible error and makes "Next" appear dead.
+    preferredContactMethod: 'email',
     idProofType: '',
   }
 }
 
 export interface VisitInfoFormState {
   purpose: string
-  hostNameOrEmail: string
-  hostId: string
   preferredDate: string
   preferredTime: string
   expectedDuration: string
   location: string
   building: string
-  department: string
   notes: string
 }
 
@@ -68,14 +80,11 @@ export function createInitialFormState(): VisitRequestFormState {
     additionalVisitors: [],
     visitInfo: {
       purpose: '',
-      hostNameOrEmail: '',
-      hostId: '',
       preferredDate: '',
       preferredTime: '',
       expectedDuration: '',
       location: '',
       building: '',
-      department: '',
       notes: '',
     },
     carriedItems: { categories: [], description: '' },
@@ -100,6 +109,10 @@ export function toVisitor(entry: VisitorFormEntry): Visitor {
 // contact's visitor category becomes the invitation-level `visitorCategoryId`
 // (the wire contract has one category per invitation, not per visitor). ID-proof
 // files travel separately as multipart file fields, see use-visitor-request-wizard.
+// `hostId`/`hostNameOrEmail`/`departmentToVisit` are no longer collected by
+// the wizard at all (role-based-invitation-workflow) — omitted entirely
+// rather than sent empty; the API resolves the invitation's owning role by
+// default and reception fills in the department later.
 export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
   return {
     registrationType: formState.registrationType,
@@ -108,12 +121,9 @@ export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
     visitors: formState.additionalVisitors.map(toVisitor),
     visitDetails: {
       purposeOfVisit: formState.visitInfo.purpose,
-      hostNameOrEmail: formState.visitInfo.hostNameOrEmail,
-      hostId: formState.visitInfo.hostId,
       preferredVisitDate: formState.visitInfo.preferredDate,
       preferredVisitTime: formState.visitInfo.preferredTime,
       expectedDuration: formState.visitInfo.expectedDuration,
-      departmentToVisit: formState.visitInfo.department,
       additionalNotes: formState.visitInfo.notes,
     },
     carriedItems: {
