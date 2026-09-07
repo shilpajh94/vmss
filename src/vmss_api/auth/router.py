@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 from pydantic import EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from vmss_api.auth.audit import record_audit_log
 from vmss_api.auth.models import Role, User
 from vmss_api.auth.rbac_catalog import STANDARD_ROLE_NAMES
 from vmss_api.auth.schemas import (
+    AvatarUploadOut,
     BranchRoleAssignRequest,
     BranchRoleOut,
     EmployeeCreateRequest,
@@ -31,6 +32,7 @@ from vmss_api.auth.schemas import (
     UserCreateRequest,
     UserOut,
 )
+from vmss_api.core.config import settings
 from vmss_api.core.database import get_db
 from vmss_api.core.deps import (
     get_current_user,
@@ -42,6 +44,7 @@ from vmss_api.core.deps import (
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
+from vmss_api.core.storage import url_for as storage_url_for
 from vmss_api.org_structure.deps import public_branch_scope, public_tenant_db
 from vmss_api.tenant.models import Tenant
 
@@ -97,12 +100,17 @@ async def logout(
     return success_response(data=None)
 
 
-def _to_user_out(user: User) -> UserOut:
+async def _resolve_avatar_url(storage_key: str | None) -> str | None:
+    return await storage_url_for(storage_key) if storage_key is not None else None
+
+
+async def _to_user_out(user: User) -> UserOut:
     return UserOut(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         is_active=user.is_active,
+        avatar_url=await _resolve_avatar_url(user.avatar_url),
         branch_roles=[
             BranchRoleOut(id=a.id, role_name=a.role.name, branch_id=a.branch_id)
             for a in user.branch_roles
@@ -112,7 +120,28 @@ def _to_user_out(user: User) -> UserOut:
 
 @router.get("/me", response_model=Envelope[UserOut])
 async def get_my_profile(user: Annotated[User, Depends(get_current_user)]) -> JSONResponse:
-    return success_response(data=_to_user_out(user))
+    return success_response(data=await _to_user_out(user))
+
+
+@router.post("/me/avatar", response_model=Envelope[AvatarUploadOut])
+async def upload_my_avatar(
+    file: Annotated[UploadFile, File(...)],
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Bounded read (`file-upload-handling.md` §1,
+    add-avatar-upload-and-verify-image-storage/design.md Decision 3) —
+    rejects an oversized file before its full content is buffered into
+    memory, matching `invitations`' upload endpoints.
+    """
+    content = await file.read(settings.avatar_max_upload_size_bytes + 1)
+    updated = await service.upload_avatar(
+        tenant_db, tenant_id=tenant.id, user=actor, content=content
+    )
+    return success_response(
+        data=AvatarUploadOut(avatar_url=await _resolve_avatar_url(updated.avatar_url))
+    )
 
 
 @router.post(
@@ -137,7 +166,7 @@ async def create_user(
         entity_type="User",
         entity_id=new_user.id,
     )
-    return success_response(data=_to_user_out(new_user), status_code=201)
+    return success_response(data=await _to_user_out(new_user), status_code=201)
 
 
 @router.post(
@@ -199,7 +228,7 @@ async def revoke_branch_role(
     )
 
 
-def _to_employee_out(user: User) -> EmployeeOut:
+async def _to_employee_out(user: User) -> EmployeeOut:
     return EmployeeOut(
         id=user.id,
         email=user.email,
@@ -209,7 +238,7 @@ def _to_employee_out(user: User) -> EmployeeOut:
         designation=user.designation,
         department_id=user.department_id,
         is_active=user.is_active,
-        avatar_url=user.avatar_url,
+        avatar_url=await _resolve_avatar_url(user.avatar_url),
         branch_roles=[
             BranchRoleOut(id=a.id, role_name=a.role.name, branch_id=a.branch_id)
             for a in user.branch_roles
@@ -278,7 +307,7 @@ async def create_employee(
         entity_type="User",
         entity_id=new_employee.id,
     )
-    return success_response(data=_to_employee_out(new_employee), status_code=201)
+    return success_response(data=await _to_employee_out(new_employee), status_code=201)
 
 
 @router.get(
@@ -321,17 +350,17 @@ async def list_employees(
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    return paginated_response(
-        data=[_to_employee_out(e) for e in employees], page=page, page_size=page_size, total=total
-    )
+    employee_outs = [await _to_employee_out(e) for e in employees]
+    return paginated_response(data=employee_outs, page=page, page_size=page_size, total=total)
 
 
-def _to_employee_directory_out(user: User) -> EmployeeDirectoryOut:
+async def _to_employee_directory_out(user: User) -> EmployeeDirectoryOut:
     return EmployeeDirectoryOut(
         id=user.id,
         full_name=user.full_name,
         designation=user.designation,
         department_id=user.department_id,
+        avatar_url=await _resolve_avatar_url(user.avatar_url),
     )
 
 
@@ -344,6 +373,8 @@ async def list_employee_directory(
     request: Request,
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    sort_by: Annotated[EmployeeSortableField, Query(alias="sortBy")] = "name",
+    sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
     """Public — no bearer token, no permission check
     (security-architecture.md §2's public-endpoint posture, same rationale
@@ -359,14 +390,10 @@ async def list_employee_directory(
     """
     page, page_size = pagination
     employees, total = await service.list_employee_directory(
-        tenant_db, page=page, page_size=page_size
+        tenant_db, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
     )
-    return paginated_response(
-        data=[_to_employee_directory_out(e) for e in employees],
-        page=page,
-        page_size=page_size,
-        total=total,
-    )
+    directory_outs = [await _to_employee_directory_out(e) for e in employees]
+    return paginated_response(data=directory_outs, page=page, page_size=page_size, total=total)
 
 
 def _to_role_out(role: Role) -> RoleOut:

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from factories import ApprovalWorkflowRuleFactory, RoleFactory, VisitorCategoryFactory
 from vmss_api.auth.models import Role, User
 from vmss_api.core.config import settings
+from vmss_api.core.schemas import SortOrder
 from vmss_api.tenant.models import Tenant
 from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
 from vmss_api.visitors.repository import (
@@ -341,6 +342,29 @@ async def test_create_visitor_category_select_field_without_options_rejected(
     assert response.status_code == 422
 
 
+async def test_create_visitor_category_option_too_long_rejected(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/visitor-categories",
+        json={
+            "name": "Delivery Person",
+            "code": "DELIVERY",
+            "formSchema": [
+                {
+                    "name": "carrier",
+                    "label": "Carrier",
+                    "fieldType": "select",
+                    "options": ["a" * 101],
+                }
+            ],
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
 async def test_visitor_category_repository_tenant_schema_isolation(
     make_tenant_schema, open_tenant_session, visitor_category: VisitorCategory
 ) -> None:
@@ -350,6 +374,41 @@ async def test_visitor_category_repository_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         found = await VisitorCategoryRepository(other_session).get(visitor_category.id)
         assert found is None
+
+
+async def test_visitor_category_list_page_tenant_schema_isolation(
+    make_tenant_schema, open_tenant_session, visitor_category: VisitorCategory
+) -> None:
+    """Covers `GET /visitor-categories`'s `list_page` call —
+    testing-standards.md §2, same shape as
+    `test_visitor_category_repository_tenant_schema_isolation` above but for
+    the paginated listing rather than the single-row `.get()`.
+    """
+    other_schema = "tenant_other_test_visitor_category_list"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        rows, total = await VisitorCategoryRepository(other_session).list_page(
+            page=1, page_size=20, sort_by="name", sort_order=SortOrder.asc
+        )
+        assert rows == []
+        assert total == 0
+
+
+async def test_visitor_category_uniqueness_lookups_tenant_schema_isolation(
+    make_tenant_schema, open_tenant_session, visitor_category: VisitorCategory
+) -> None:
+    """Covers `POST /visitor-categories`'s create-path uniqueness checks
+    (`get_by_code`/`get_by_name`) — a code/name already used in a different
+    tenant's schema must not collide here.
+    """
+    other_schema = "tenant_other_test_visitor_category_uniqueness"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        repo = VisitorCategoryRepository(other_session)
+        assert await repo.get_by_code(visitor_category.code) is None
+        assert await repo.get_by_name(visitor_category.name) is None
 
 
 async def test_create_visitor_category_with_badge_and_policy_fields(
@@ -649,4 +708,44 @@ async def test_approval_workflow_rule_repository_tenant_schema_isolation(
 
     async with open_tenant_session(other_schema) as other_session:
         found = await ApprovalWorkflowRuleRepository(other_session).get(approval_workflow_rule.id)
+        assert found is None
+
+
+async def test_approval_workflow_rule_list_page_tenant_schema_isolation(
+    make_tenant_schema, open_tenant_session, approval_workflow_rule: ApprovalWorkflowRule
+) -> None:
+    """Covers `GET /approval-workflow-rules`'s `list_page` call —
+    testing-standards.md §2, same shape as
+    `test_approval_workflow_rule_repository_tenant_schema_isolation` above
+    but for the paginated listing rather than the single-row `.get()`.
+    """
+    other_schema = "tenant_other_test_workflow_rule_list"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        rows, total = await ApprovalWorkflowRuleRepository(other_session).list_page(
+            visitor_category_id=None,
+            page=1,
+            page_size=20,
+            sort_by="step_order",
+            sort_order=SortOrder.asc,
+        )
+        assert rows == []
+        assert total == 0
+
+
+async def test_approval_workflow_rule_uniqueness_lookup_tenant_schema_isolation(
+    make_tenant_schema, open_tenant_session, approval_workflow_rule: ApprovalWorkflowRule
+) -> None:
+    """Covers `POST /approval-workflow-rules`'s create-path uniqueness check
+    (`get_by_category_and_step`) — a `(visitorCategoryId, stepOrder)` pair
+    already used in a different tenant's schema must not collide here.
+    """
+    other_schema = "tenant_other_test_workflow_rule_uniqueness"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        found = await ApprovalWorkflowRuleRepository(other_session).get_by_category_and_step(
+            approval_workflow_rule.visitor_category_id, approval_workflow_rule.step_order
+        )
         assert found is None

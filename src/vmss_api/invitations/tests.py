@@ -4,12 +4,12 @@ import json
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import UTC, date, datetime, time, timedelta
 
 import aiosmtplib
 import pytest
 import pytest_asyncio
+import starlette.datastructures as starlette_datastructures
 from fastapi import HTTPException
 from httpx import AsyncClient, Response
 from PIL import Image
@@ -33,9 +33,11 @@ from factories import (
     VisitorCategoryFactory,
     VisitPurposeFactory,
 )
+from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import AuditLog, Permission, User, UserBranchRole
 from vmss_api.auth.repository import RoleRepository
+from vmss_api.core import storage
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.schemas import SortOrder
@@ -554,6 +556,36 @@ async def test_create_invitation_oversized_file_rejected(
     assert response.status_code == 422
 
 
+async def test_create_invitation_oversized_file_read_is_bounded(
+    client: AsyncClient, user: User, branch: Branch, monkeypatch
+) -> None:
+    """add-avatar-upload-and-verify-image-storage design.md Decision 3 — the
+    router bounds each `UploadFile.read()` call to `max_size_bytes + 1`
+    rather than an unbounded read, so an oversized upload is detected
+    without a second, unbounded in-memory buffer beyond what's needed to
+    tell it's too large.
+    """
+    monkeypatch.setattr(settings, "invitation_max_upload_size_bytes", 10)
+    read_sizes: list[int] = []
+    # Starlette's multipart parser instantiates its own
+    # `starlette.datastructures.UploadFile` (not `fastapi.UploadFile`, a
+    # subclass never actually constructed at request-parsing time) — the
+    # spy has to patch the base class the real request objects are.
+    original_read = starlette_datastructures.UploadFile.read
+
+    async def _spy_read(self, size: int = -1) -> bytes:
+        read_sizes.append(size)
+        return await original_read(self, size)
+
+    monkeypatch.setattr(starlette_datastructures.UploadFile, "read", _spy_read)
+
+    token = await _login(client, user.email)
+    response = await _create_invitation(client, token, branch, payload=_individual_payload())
+
+    assert response.status_code == 422
+    assert read_sizes == [11]
+
+
 async def test_create_group_invitation_earlier_visitor_file_not_stored_when_later_invalid(
     client: AsyncClient, user: User, branch: Branch, monkeypatch
 ) -> None:
@@ -588,6 +620,136 @@ async def test_create_group_invitation_earlier_visitor_file_not_stored_when_late
 
     assert response.status_code == 422
     assert storage_calls == []
+
+
+# --- Optional profile photo (checkin-approval-workflow-improvements) --------
+
+
+async def test_create_invitation_with_primary_contact_photo_succeeds(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """spec.md "Photo supplied and valid is stored and returned"."""
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    files = [
+        ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+    ]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(_individual_payload())},
+        files=files,
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+
+
+async def test_create_invitation_without_photo_succeeds(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """spec.md "Photo omitted does not affect creation" — the existing,
+    photo-free creation path is unaffected by this addition.
+    """
+    token = await _login(client, user.email)
+    response = await _create_invitation(client, token, branch, payload=_individual_payload())
+    assert response.status_code == 201, response.text
+
+
+async def test_create_invitation_disguised_photo_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """spec.md "Disguised executable submitted as a photo is rejected" —
+    creates no invitation record.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    files = [
+        ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        (
+            "primary_contact_photo_file",
+            ("selfie.jpg", b"this is not actually an image, just plain text bytes", "image/jpeg"),
+        ),
+    ]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(_individual_payload())},
+        files=files,
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+async def test_create_invitation_pdf_photo_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A photo must be image-only — unlike ID-proof uploads, a PDF is not an
+    acceptable content type for a profile photo, even though it would pass
+    the ID-proof allow-list.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    pdf_bytes = b"%PDF-1.4\n%mock pdf content for content-sniffing tests\n"
+    files = [
+        ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("primary_contact_photo_file", ("id.pdf", pdf_bytes, "application/pdf")),
+    ]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(_individual_payload())},
+        files=files,
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+async def test_create_invitation_oversized_photo_rejected(
+    client: AsyncClient, user: User, branch: Branch, monkeypatch
+) -> None:
+    """spec.md "Oversized photo upload is rejected"."""
+    monkeypatch.setattr(settings, "invitation_max_photo_size_bytes", 10)
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    files = [
+        ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+    ]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(_individual_payload())},
+        files=files,
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+async def test_create_group_invitation_with_visitor_photos_returns_photo_urls(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """spec.md "Walk-in registration inherits the same optional photo
+    capture" is exercised in `registrations/tests.py`; here we confirm a
+    group invitation's co-visitor photos are order-matched and returned.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    files = [
+        ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("visitor_id_proof_files", ("v0.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("visitor_id_proof_files", ("v1.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("visitor_photo_files", ("v0-photo.jpg", _jpeg_bytes(), "image/jpeg")),
+    ]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(_group_payload())},
+        files=files,
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    detail_response = await client.get(f"/api/v1/invitations/{invitation_id}", headers=headers)
+    visitors = detail_response.json()["data"]["visitors"]
+    assert visitors[0]["photoUrl"] is not None
+    assert visitors[1]["photoUrl"] is None
 
 
 async def test_create_invitation_idempotency_key_replay(
@@ -1095,12 +1257,46 @@ async def test_list_invitations_success(
         "status",
         "visitorCategoryId",
         "primaryContactFullName",
+        "primaryContactPhotoUrl",
         "purposeOfVisit",
         "expiresAt",
         "submittedAt",
         "approvedAt",
     }
     assert row["visitorCategoryId"] is None
+    assert row["primaryContactPhotoUrl"] is None
+
+
+async def test_list_invitations_surfaces_primary_contact_photo_url(
+    client: AsyncClient, user: User, branch: Branch, tenant: Tenant, db_session: AsyncSession
+) -> None:
+    """qr-checkin-scheduling-photo-email spec.md "List row surfaces the
+    primary contact's photo URL when one was captured" — matches what the
+    tracking/detail endpoints already return for the same invitation.
+
+    add-avatar-upload-and-verify-image-storage spec.md "Every photo URL
+    returned by any invitation response ... SHALL be a fetchable HTTP URL"
+    — asserts the list row's URL is genuinely fetchable, not just non-null.
+    """
+    photo_bytes = _jpeg_bytes()
+    photo_key = await storage.save(tenant.id, "invitations/photos", photo_bytes, "image/jpeg")
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        primary_contact_photo_storage_key=photo_key,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get("/api/v1/invitations", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    row = next(r for r in response.json()["data"] if r["trackingId"] == invitation.tracking_id)
+    assert row["primaryContactPhotoUrl"] is not None
+
+    photo_response = await client.get(row["primaryContactPhotoUrl"])
+    assert photo_response.status_code == 200
+    assert photo_response.content == photo_bytes
 
 
 async def test_list_invitations_requires_permission(
@@ -1218,6 +1414,50 @@ async def test_list_invitations_filters_by_status_registration_type_and_source(
     tracking_ids = {row["trackingId"] for row in response.json()["data"]}
     assert matching.tracking_id in tracking_ids
     assert non_matching.tracking_id not in tracking_ids
+
+
+@pytest.mark.parametrize(
+    "status_value", ["submitted", "approved", "denied", "checked_in", "checked_out"]
+)
+async def test_list_invitations_filters_by_each_status_value(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    status_value: str,
+) -> None:
+    """api-conventions.md §1 — `InvitationStatus` is a closed enum covering
+    every value `Invitation.status`'s state-machine writes ever produce
+    (schemas.py's `InvitationStatus` docstring); this proves each one
+    actually round-trips through the `status` query param, not just
+    "submitted" the way the combined filter test above does.
+    """
+    other_status = "approved" if status_value != "approved" else "submitted"
+    matching = _build_invitation(db_session, branch.id, status=status_value)
+    non_matching = _build_invitation(db_session, branch.id, status=other_status)
+    db_session.add_all([matching, non_matching])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"status": status_value},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert matching.tracking_id in tracking_ids
+    assert non_matching.tracking_id not in tracking_ids
+
+
+async def test_list_invitations_invalid_status_rejected(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"status": "cancelled"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
 
 
 async def test_list_invitations_sort_order(
@@ -1365,6 +1605,232 @@ async def test_list_invitations_relevant_to_me_delegate_sees_delegated_invitatio
     assert response.status_code == 200, response.text
     tracking_ids = {row["trackingId"] for row in response.json()["data"]}
     assert invitation.tracking_id in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_reflects_a_re_delegation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """checkin-approval-workflow-improvements generalizes delegation to
+    support re-delegation (chaining) — `relevantToMe`'s existing delegate
+    clause is per-step and reads the step's *current* `delegatedToUserId`,
+    so it already generalizes correctly: once a step is re-delegated, the
+    new delegate sees the invitation and the superseded one no longer does.
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    first_delegate = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"delegate-1-{uuid.uuid4().hex[:8]}@acme-test.example",
+        full_name="First Delegate",
+    )
+    second_delegate = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"delegate-2-{uuid.uuid4().hex[:8]}@acme-test.example",
+        full_name="Second Delegate",
+    )
+    db_session.add_all([host, first_delegate, second_delegate])
+    await db_session.flush()
+    invitation = await _invitation_with_host_step(db_session, branch.id, host)
+    step = await _delegate_step(db_session, invitation, first_delegate, host)
+
+    await InvitationApprovalStepRepository(db_session).delegate_if_eligible(
+        step.id,
+        delegated_to_user_id=second_delegate.id,
+        delegated_by_user_id=first_delegate.id,
+        expected_current_delegate_id=first_delegate.id,
+    )
+    await db_session.commit()
+
+    second_token = issue_token(second_delegate)
+    second_response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {second_token}"},
+    )
+    assert second_response.status_code == 200, second_response.text
+    assert invitation.tracking_id in {row["trackingId"] for row in second_response.json()["data"]}
+
+    first_token = issue_token(first_delegate)
+    first_response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {first_token}"},
+    )
+    assert first_response.status_code == 200, first_response.text
+    assert invitation.tracking_id not in {
+        row["trackingId"] for row in first_response.json()["data"]
+    }
+
+
+async def _invitation_with_role_step(
+    db_session: AsyncSession, branch_id: uuid.UUID, role, **overrides
+):
+    """A `submitted` invitation whose `stepOrder` 1 step is role-identified
+    for `role`, with no host step and no delegate — the shape spec.md "A
+    role-holder sees an invitation whose current step needs their role"
+    keys off.
+    """
+    overrides.setdefault("status", "submitted")
+    overrides.setdefault("approved_at", None)
+    invitation = _build_invitation(db_session, branch_id, **overrides)
+    db_session.add(invitation)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=1,
+            approver_role_id=role.id,
+            approver_user_id=None,
+        )
+    )
+    await db_session.commit()
+    return invitation
+
+
+def _make_role_holder(db_session: AsyncSession, role, branch_id: uuid.UUID) -> User:
+    """A user holding `role` via `UserBranchRole` at `branch_id` — no
+    permissions attached, mirroring `relevantToMe`'s "no invitations:view
+    required" contract.
+    """
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"role-holder-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Role Holder",
+        branch_roles=[branch_role],
+    )
+    db_session.add(test_user)
+    return test_user
+
+
+async def test_list_invitations_relevant_to_me_role_holder_sees_current_step_invitation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "A role-holder sees an invitation whose
+    current step needs their role" — closes the gap where such a user could
+    only find the invitation via the unfiltered branch-wide list.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"relevant-role-{uuid.uuid4().hex[:8]}")
+    db_session.add(role)
+    await db_session.flush()
+    invitation = await _invitation_with_role_step(db_session, branch.id, role)
+
+    role_holder = _make_role_holder(db_session, role, branch.id)
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=role_holder.email, tenant_id=tenant.id, user_id=role_holder.id)
+    )
+    await db_session.commit()
+
+    token = issue_token(role_holder)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_role_holder_loses_visibility_once_delegated(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "A role-holder no longer sees the
+    invitation once someone else's delegation is assigned" — clause (c)
+    requires no delegate be assigned to the current step.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"relevant-role-{uuid.uuid4().hex[:8]}")
+    db_session.add(role)
+    await db_session.flush()
+    invitation = await _invitation_with_role_step(db_session, branch.id, role)
+
+    role_holder = _make_role_holder(db_session, role, branch.id)
+    delegate = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"delegate-{uuid.uuid4().hex[:8]}@acme-test.example",
+        full_name="Delegate",
+    )
+    db_session.add(delegate)
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=role_holder.email, tenant_id=tenant.id, user_id=role_holder.id)
+    )
+    await db_session.commit()
+
+    step = (
+        await db_session.execute(
+            select(InvitationApprovalStep).where(
+                InvitationApprovalStep.invitation_id == invitation.id
+            )
+        )
+    ).scalar_one()
+    await InvitationApprovalStepRepository(db_session).delegate_if_eligible(
+        step.id, delegated_to_user_id=delegate.id, delegated_by_user_id=role_holder.id
+    )
+    await db_session.commit()
+
+    token = issue_token(role_holder)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id not in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_role_holder_wrong_role_sees_nothing(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "A role-holder who is not currently
+    authorized on the pending step sees nothing for it".
+    """
+    step_role = RoleFactory.build(id=uuid.uuid4(), name=f"step-role-{uuid.uuid4().hex[:8]}")
+    other_role = RoleFactory.build(id=uuid.uuid4(), name=f"other-role-{uuid.uuid4().hex[:8]}")
+    db_session.add_all([step_role, other_role])
+    await db_session.flush()
+    invitation = await _invitation_with_role_step(db_session, branch.id, step_role)
+
+    mismatched_role_holder = _make_role_holder(db_session, other_role, branch.id)
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(
+            email=mismatched_role_holder.email,
+            tenant_id=tenant.id,
+            user_id=mismatched_role_holder.id,
+        )
+    )
+    await db_session.commit()
+
+    token = issue_token(mismatched_role_holder)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id not in tracking_ids
 
 
 async def test_list_invitations_relevant_to_me_excludes_unrelated_caller(
@@ -1515,6 +1981,45 @@ async def test_list_invitations_relevant_to_me_tenant_schema_isolation(
         assert total == 0
 
 
+async def test_list_invitations_relevant_to_me_role_holder_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    """testing-standards.md §2 — the new role-based-current-step-approver
+    clause must not leak across tenant schemas either, even when a
+    same-named role and the same user id happen to exist in both (roles and
+    `UserBranchRole` rows are themselves tenant-scoped tables, per
+    `database-architecture.md` §2 — there is nothing shared for a forged or
+    coincidental id to reach into).
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name="relevant-role-isolation-test")
+    db_session.add(role)
+    await db_session.flush()
+    await _invitation_with_role_step(db_session, branch.id, role)
+    role_holder = _make_role_holder(db_session, role, branch.id)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_relevant_to_me_role"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        rows, total = await InvitationRepository(other_session).list_page(
+            branch_scope=None,
+            relevant_to_user_id=role_holder.id,
+            status=None,
+            registration_type=None,
+            source=None,
+            page=1,
+            page_size=20,
+            sort_by="submitted_at",
+            sort_order=SortOrder.desc,
+        )
+        assert rows == []
+        assert total == 0
+
+
 async def test_invitation_list_page_tenant_schema_isolation(
     make_tenant_schema,
     open_tenant_session,
@@ -1591,18 +2096,34 @@ class _FakeInvitation:
         self.__dict__.update(kwargs)
 
 
+class _FakeScalarResult:
+    def __init__(self, value) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
 class _FakeSession:
-    def __init__(self, invitation) -> None:
+    def __init__(self, invitation, user=None) -> None:
         self._invitation = invitation
+        self._user = user
 
     async def get(self, model, id_):
         return self._invitation
 
+    async def execute(self, stmt):
+        # Only ever called by `UserRepository.get_active` from the
+        # host-creation-email task tests below — every other task test
+        # only exercises `.get()`. Not a real `Select` evaluation, just a
+        # canned result for whichever `_user` the test configured.
+        return _FakeScalarResult(self._user)
 
-def _fake_tenant_session_scope(invitation):
+
+def _fake_tenant_session_scope(invitation, user=None):
     @asynccontextmanager
     async def _scope(schema_name: str):
-        yield _FakeSession(invitation)
+        yield _FakeSession(invitation, user=user)
 
     return _scope
 
@@ -1662,6 +2183,126 @@ async def test_send_approval_notification_exhausted_retries_logs_error(monkeypat
     )
     assert result.failed()
     assert logged and logged[0][0] == "approval_notification_dispatch_exhausted"
+
+
+async def test_send_host_creation_notification_dispatches_email(monkeypatch) -> None:
+    """qr-checkin-scheduling-photo-email spec.md "Creation with a resolved
+    host sends the host an email" — exercised directly against the task
+    (testing-standards.md §3's "unit-style" tier), same fake session/
+    invitation pattern the other task tests above use.
+    """
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        tracking_id="INV-TEST0003",
+        primary_contact_full_name="Meera Krishnan",
+        purpose_of_visit="Interview",
+    )
+    fake_host = UserFactory.build(id=uuid.uuid4(), email="host@acme-test.example", is_active=True)
+    monkeypatch.setattr(
+        tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation, user=fake_host)
+    )
+
+    result = await asyncio.to_thread(
+        tasks.send_host_creation_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "host_id": str(fake_host.id),
+        },
+    )
+    result.get(propagate=True)
+
+    assert len(sent) == 1
+    assert sent[0]["to"] == "host@acme-test.example"
+    assert "INV-TEST0003" in sent[0]["body"]
+
+
+async def test_send_host_creation_notification_skips_when_invitation_missing(monkeypatch) -> None:
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(None))
+
+    result = await asyncio.to_thread(
+        tasks.send_host_creation_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "host_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+    assert sent == []
+
+
+async def test_send_host_creation_notification_skips_when_host_missing(monkeypatch) -> None:
+    """Host deactivated/deleted between enqueue and task execution — no
+    email, no error (background-jobs.md §2 idempotency).
+    """
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(tracking_id="INV-TEST0004")
+    monkeypatch.setattr(
+        tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation, user=None)
+    )
+
+    result = await asyncio.to_thread(
+        tasks.send_host_creation_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "host_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+    assert sent == []
+
+
+async def test_send_host_creation_notification_exhausted_retries_logs_error(monkeypatch) -> None:
+    class _FailingEmailSender:
+        async def send(self, **kwargs):
+            raise RuntimeError("SMTP is down")
+
+    monkeypatch.setattr(notifications, "email_sender", _FailingEmailSender())
+    fake_invitation = _FakeInvitation(tracking_id="INV-TEST0005")
+    fake_host = UserFactory.build(id=uuid.uuid4(), email="host@acme-test.example", is_active=True)
+    monkeypatch.setattr(
+        tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation, user=fake_host)
+    )
+    logged = []
+    monkeypatch.setattr(tasks.logger, "error", lambda event, **kw: logged.append((event, kw)))
+    monkeypatch.setattr(tasks.send_host_creation_notification, "max_retries", 0)
+
+    result = await asyncio.to_thread(
+        tasks.send_host_creation_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "host_id": str(fake_host.id),
+        },
+    )
+    assert result.failed()
+    assert logged and logged[0][0] == "host_creation_notification_dispatch_exhausted"
+    assert logged[0][1]["host_id"] == str(fake_host.id)
 
 
 async def test_smtp_dispatch_failure_logs_host_port_and_exception_type(monkeypatch) -> None:
@@ -1771,6 +2412,56 @@ async def test_send_approval_notification_delivers_email_with_qr_via_mailpit(mon
     # since each run uses a fresh, unique tracking_id/recipient.
 
 
+async def test_send_tracking_notification_delivers_email_via_mailpit(monkeypatch) -> None:
+    """Same real-SMTP-round-trip bar as
+    `test_send_approval_notification_delivers_email_with_qr_via_mailpit`
+    above, extended to the submission tracking notification (task 9.1) — the
+    "your registration is received" email sent when creation leaves an
+    invitation `submitted` rather than immediately `approved`. Unlike the
+    approval email, this one carries no QR attachment.
+    """
+    tracking_id = f"INV-{uuid.uuid4().hex[:8].upper()}"
+    recipient = f"mailpit-check-{uuid.uuid4().hex[:8]}@example.com"
+    fake_invitation = _FakeInvitation(
+        status="submitted",
+        tracking_id=tracking_id,
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email=recipient,
+        primary_contact_phone=None,
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_tracking_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+
+    async with AsyncClient() as mailpit:
+        list_response = await mailpit.get(_MAILPIT_API_URL, params={"limit": 50})
+        assert list_response.status_code == 200
+        matches = [
+            m
+            for m in list_response.json()["messages"]
+            if tracking_id in m["Snippet"] and any(to["Address"] == recipient for to in m["To"])
+        ]
+        assert len(matches) == 1, (
+            f"expected exactly one Mailpit message for {tracking_id}, found {len(matches)}"
+        )
+        message_id = matches[0]["ID"]
+
+        detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{message_id}")
+        assert detail_response.status_code == 200
+        detail = detail_response.json()
+        assert detail["Subject"] == "Your registration is received"
+        assert detail["Attachments"] == []
+        assert tracking_id in detail["Text"]
+
+
 async def test_send_denial_notification_delivers_email_via_mailpit(monkeypatch) -> None:
     """Same real-SMTP-round-trip bar as
     `test_send_approval_notification_delivers_email_with_qr_via_mailpit`
@@ -1859,6 +2550,52 @@ async def test_send_reschedule_notification_delivers_email_via_mailpit(monkeypat
         assert detail_response.json()["Subject"] == "Your visit has been rescheduled"
 
 
+async def test_send_host_creation_notification_delivers_email_via_mailpit(monkeypatch) -> None:
+    """Same real-SMTP-round-trip bar, extended to the new host-creation
+    email (qr-checkin-scheduling-photo-email/design.md Decision 5) —
+    `notifications.email_sender` is deliberately left as the real
+    `SmtpEmailSender` so a genuine `aiosmtplib.send` goes out for Mailpit to
+    actually capture.
+    """
+    tracking_id = f"INV-{uuid.uuid4().hex[:8].upper()}"
+    recipient = f"mailpit-check-{uuid.uuid4().hex[:8]}@example.com"
+    fake_invitation = _FakeInvitation(
+        tracking_id=tracking_id,
+        primary_contact_full_name="Meera Krishnan",
+        purpose_of_visit="Interview",
+    )
+    fake_host = UserFactory.build(id=uuid.uuid4(), email=recipient, is_active=True)
+    monkeypatch.setattr(
+        tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation, user=fake_host)
+    )
+
+    result = await asyncio.to_thread(
+        tasks.send_host_creation_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "host_id": str(fake_host.id),
+        },
+    )
+    result.get(propagate=True)
+
+    async with AsyncClient() as mailpit:
+        list_response = await mailpit.get(_MAILPIT_API_URL, params={"limit": 50})
+        assert list_response.status_code == 200
+        matches = [
+            m
+            for m in list_response.json()["messages"]
+            if tracking_id in m["Snippet"] and any(to["Address"] == recipient for to in m["To"])
+        ]
+        assert len(matches) == 1, (
+            f"expected exactly one Mailpit message for {tracking_id}, found {len(matches)}"
+        )
+        detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{matches[0]['ID']}")
+        assert detail_response.status_code == 200
+        assert detail_response.json()["Subject"] == "New invitation received"
+
+
 # --- visit-info-lookup-api: optional purposeId/hostId/durationId/departmentId -
 
 
@@ -1945,6 +2682,81 @@ async def test_create_invitation_with_ids_overwrites_free_text_with_canonical_va
     assert invitation.host_id == visit_host.id
     assert invitation.duration_id == visit_duration.id
     assert invitation.department_id == visit_department.id
+
+
+async def test_create_invitation_with_resolved_host_enqueues_host_email(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    visit_host: User,
+    monkeypatch,
+) -> None:
+    """qr-checkin-scheduling-photo-email spec.md "Invitation Creation
+    Notifies the Resolved Host via Email" — a resolved `hostId` enqueues the
+    new task, independent of whether the invitation ends up `submitted` or
+    `approved`.
+    """
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_host_creation_notification, "delay", lambda **kw: calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["hostId"] = str(visit_host.id)
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    assert len(calls) == 1
+    assert calls[0]["invitation_id"] == data["id"]
+    assert calls[0]["host_id"] == str(visit_host.id)
+
+
+async def test_create_invitation_without_host_skips_host_email(
+    client: AsyncClient, user: User, branch: Branch, monkeypatch
+) -> None:
+    """spec.md "No resolved host means no host email, and creation still
+    succeeds".
+    """
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_host_creation_notification, "delay", lambda **kw: calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    await _create_invitation_success(client, token, branch, payload=_individual_payload())
+
+    assert calls == []
+
+
+async def test_create_invitation_with_resolved_host_and_auto_approve_still_enqueues_host_email(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    visit_host: User,
+    tenant: Tenant,
+    monkeypatch,
+) -> None:
+    """spec.md "Auto-approved creation still sends the host email" — the
+    host email is independent of the submission-push logic that only fires
+    for a non-auto-approved, first-step-host invitation.
+    """
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), auto_approve_pre_registered_visitors=True))
+    await db_session.commit()
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_host_creation_notification, "delay", lambda **kw: calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["hostId"] = str(visit_host.id)
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    assert data["status"] == "approved"
+    assert len(calls) == 1
+    assert calls[0]["host_id"] == str(visit_host.id)
 
 
 async def test_created_invitation_current_step_id_is_directly_actionable(
@@ -2429,6 +3241,36 @@ async def test_get_invitation_detail_success(
     assert data["vehicles"] == []
 
 
+async def test_get_invitation_detail_surfaces_fetchable_primary_contact_photo_url(
+    client: AsyncClient, user: User, branch: Branch, tenant: Tenant, db_session: AsyncSession
+) -> None:
+    """add-avatar-upload-and-verify-image-storage spec.md "Every photo URL
+    returned by any invitation response ... SHALL be a fetchable HTTP URL"
+    — `GET /invitations/{id}`'s own `primaryContactPhotoUrl` specifically
+    (as opposed to a nested visitor's `photoUrl`), fetched end to end.
+    """
+    photo_bytes = _jpeg_bytes()
+    photo_key = await storage.save(tenant.id, "invitations/photos", photo_bytes, "image/jpeg")
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", primary_contact_photo_storage_key=photo_key
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    photo_url = response.json()["data"]["primaryContactPhotoUrl"]
+    assert photo_url is not None
+
+    photo_response = await client.get(photo_url)
+    assert photo_response.status_code == 200
+    assert photo_response.content == photo_bytes
+
+
 async def test_get_invitation_detail_surfaces_resolved_host_as_host_id(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
 ) -> None:
@@ -2590,155 +3432,12 @@ async def test_deny_invitation_requires_permission(
     assert invitation.status == "submitted"
 
 
-# --- PATCH /invitations/{id}/check-in -------------------------------------------
-
-
-async def test_check_in_invitation_success(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
-) -> None:
-    invitation = _build_invitation(
-        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
-    )
-    db_session.add(invitation)
-    await db_session.commit()
-
-    token = await _login(client, user.email)
-    response = await client.patch(
-        f"/api/v1/invitations/{invitation.id}/check-in",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 200
-    assert response.json()["data"]["status"] == "checked_in"
-
-    await db_session.refresh(invitation)
-    assert invitation.status == "checked_in"
-    assert invitation.checked_in_at is not None
-    assert invitation.checked_in_by_user_id == user.id
-
-
-async def test_check_in_invitation_non_approved_rejected(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
-) -> None:
-    invitation = _build_invitation(db_session, branch.id, status="submitted")
-    db_session.add(invitation)
-    await db_session.commit()
-
-    token = await _login(client, user.email)
-    response = await client.patch(
-        f"/api/v1/invitations/{invitation.id}/check-in",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 409
-
-    await db_session.refresh(invitation)
-    assert invitation.status == "submitted"
-
-
-async def test_check_in_invitation_watchlist_flagged_blocked(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
-) -> None:
-    invitation = _build_invitation(
-        db_session,
-        branch.id,
-        status="approved",
-        approved_at=datetime.now(UTC),
-        watchlist_flagged=True,
-    )
-    db_session.add(invitation)
-    await db_session.commit()
-
-    token = await _login(client, user.email)
-    response = await client.patch(
-        f"/api/v1/invitations/{invitation.id}/check-in",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 409
-
-    await db_session.refresh(invitation)
-    assert invitation.status == "approved"
-
-
-async def test_check_in_invitation_succeeds_after_watchlist_override(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
-) -> None:
-    invitation = _build_invitation(
-        db_session,
-        branch.id,
-        status="approved",
-        approved_at=datetime.now(UTC),
-        watchlist_flagged=True,
-    )
-    db_session.add(invitation)
-    await db_session.commit()
-
-    token = await _login(client, user.email)
-    headers = {"Authorization": f"Bearer {token}"}
-
-    override_response = await client.post(
-        f"/api/v1/invitations/{invitation.id}/watchlist-override",
-        json={"reason": "Confirmed false positive"},
-        headers=headers,
-    )
-    assert override_response.status_code == 200
-
-    check_in_response = await client.patch(
-        f"/api/v1/invitations/{invitation.id}/check-in", headers=headers
-    )
-    assert check_in_response.status_code == 200
-    assert check_in_response.json()["data"]["status"] == "checked_in"
-
-    await db_session.refresh(invitation)
-    assert invitation.watchlist_flagged is False
-    assert invitation.watchlist_override_reason == "Confirmed false positive"
-    assert invitation.watchlist_override_by_user_id == user.id
-    assert invitation.status == "checked_in"
-
-
-async def test_check_in_invitation_idempotency_key_replay(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
-) -> None:
-    invitation = _build_invitation(
-        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
-    )
-    db_session.add(invitation)
-    await db_session.commit()
-
-    token = await _login(client, user.email)
-    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "checkin-key-1"}
-
-    first = await client.patch(f"/api/v1/invitations/{invitation.id}/check-in", headers=headers)
-    second = await client.patch(f"/api/v1/invitations/{invitation.id}/check-in", headers=headers)
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert first.json() == second.json()
-
-
-async def test_check_in_invitation_requires_permission(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    tenant: Tenant,
-    branch: Branch,
-    issue_token: Callable[[User], str],
-) -> None:
-    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
-    invitation = _build_invitation(
-        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
-    )
-    db_session.add(invitation)
-    await db_session.commit()
-
-    token = issue_token(viewer)
-    response = await client.patch(
-        f"/api/v1/invitations/{invitation.id}/check-in",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 403
-
-    await db_session.refresh(invitation)
-    assert invitation.status == "approved"
-
-
 # --- add-public-checkin-endpoint: PATCH /api/v2/invitations/{trackingId}/check-in --
+# checkin-approval-workflow-improvements removed the legacy, staff-
+# authenticated `PATCH /api/v1/invitations/{id}/check-in` outright — this v2,
+# tracking-ID-keyed, public endpoint is now the single canonical staff/desk
+# check-in endpoint (spec.md "Staff Check-In Has One Canonical Endpoint"), so
+# it carries every full-detail-response assertion the old v1 tests used to.
 
 
 async def test_public_check_in_by_tracking_id_success(
@@ -2855,6 +3554,194 @@ async def test_public_check_in_writes_audit_entry_with_no_actor(
     assert entry.entity_type == "Invitation"
 
 
+async def test_public_check_in_succeeds_after_watchlist_override(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """The watchlist-override action itself stays staff-authenticated
+    (`POST /api/v1/invitations/{id}/watchlist-override`, unaffected by this
+    change); check-in now happens through the canonical v2 endpoint.
+    """
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    override_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/watchlist-override",
+        json={"reason": "Confirmed false positive"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert override_response.status_code == 200
+
+    check_in_response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert check_in_response.status_code == 200
+    assert check_in_response.json()["data"]["status"] == "checked_in"
+
+    await db_session.refresh(invitation)
+    assert invitation.watchlist_flagged is False
+    assert invitation.status == "checked_in"
+
+
+async def test_public_check_in_response_includes_full_invitation_detail(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Successful check-in response includes visitor and host
+    detail" — the canonical v2 endpoint's response matches the public
+    tracking lookup's field set, not just the thin `InvitationOut` shape.
+    """
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["primaryContactFullName"] == invitation.primary_contact_full_name
+    assert data["hostNameOrEmail"] == invitation.host_name_or_email
+    assert data["purposeOfVisit"] == invitation.purpose_of_visit
+    assert data["departmentToVisit"] == invitation.department_to_visit
+    assert data["expectedDuration"] == invitation.expected_duration
+    assert data["additionalNotes"] == invitation.additional_notes
+    assert data["carriedItems"] == invitation.carried_items
+    assert data["id"] == str(invitation.id)
+    assert data["trackingId"] == invitation.tracking_id
+    assert data["status"] == "checked_in"
+
+
+async def test_public_check_in_response_includes_group_co_visitors(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        registration_type="group",
+    )
+    db_session.add(invitation)
+    await db_session.flush()
+    co_visitor = InvitationVisitorFactory.build(
+        id=uuid.uuid4(), invitation_id=invitation.id, full_name="Alexander Pierce"
+    )
+    db_session.add(co_visitor)
+    await db_session.commit()
+    db_session.expire(invitation, attribute_names=["visitors"])
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+    visitors = response.json()["data"]["visitors"]
+    assert len(visitors) == 1
+    assert visitors[0]["fullName"] == "Alexander Pierce"
+
+
+async def test_public_check_in_response_includes_declared_vehicles(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.flush()
+    vehicle = InvitationVehicleFactory.build(
+        id=uuid.uuid4(), invitation_id=invitation.id, license_plate="KA-01-AB-1234"
+    )
+    db_session.add(vehicle)
+    await db_session.commit()
+    db_session.expire(invitation, attribute_names=["vehicles"])
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+    vehicles = response.json()["data"]["vehicles"]
+    assert len(vehicles) == 1
+    assert vehicles[0]["licensePlate"] == "KA-01-AB-1234"
+
+
+async def test_public_check_in_individual_registration_has_empty_visitor_list(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        registration_type="individual",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["visitors"] == []
+    assert data["vehicles"] == []
+
+
+async def test_public_check_in_response_omits_staff_only_internals(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Response omits staff-only internals" — branch/creator/
+    badge/watchlist fields stay exclusive to `GET /invitations/{id}`.
+    """
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    for staff_only_field in (
+        "branchId",
+        "createdByUserId",
+        "badgeNumber",
+        "badgeIssuedAt",
+        "badgeReprintCount",
+        "watchlistFlagged",
+        "watchlistOverrideAt",
+        "watchlistOverrideReason",
+        "watchlistOverrideByUserId",
+    ):
+        assert staff_only_field not in data
+
+
+async def test_public_check_in_rejected_response_discloses_no_invitation_detail(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Rejected check-in discloses no invitation detail" — a 409
+    (not currently `approved`) carries only the existing generic failure
+    message.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 409
+    body = response.json()
+    assert "data" not in body
+    assert body["success"] is False
+
+
+async def test_v1_check_in_route_removed(client: AsyncClient, user: User, branch: Branch) -> None:
+    """spec.md "Legacy v1 check-in route no longer exists" —
+    checkin-approval-workflow-improvements removes the route outright."""
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{uuid.uuid4()}/check-in",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
 # --- add-qr-checkin-security: token encryption -------------------------------
 # Unit-style, no database — mirrors core/tests.py's coverage of
 # core/encryption.py's own Fernet round-trip/tamper/not-configured cases
@@ -2899,12 +3786,27 @@ def _approved_invitation(db_session: AsyncSession, branch_id: uuid.UUID, **overr
     overrides.setdefault("approved_at", datetime.now(UTC))
     overrides.setdefault("check_in_status", "unused")
     overrides.setdefault("expires_at", datetime.now(UTC) + timedelta(hours=1))
+    # `InvitationFactory` (no default of its own for this nullable column)
+    # generates a random `preferred_visit_date`, which could land in the
+    # future and spuriously trip the new scheduled-date QR check-in gate
+    # (qr-checkin-scheduling-photo-email) for every test in this module that
+    # doesn't care about that dimension. Pinned to `None` here so those tests
+    # keep exercising expiry-only gating; tests of the new behavior below
+    # override it explicitly.
+    overrides.setdefault("preferred_visit_date", None)
     return _build_invitation(db_session, branch_id, **overrides)
 
 
-async def test_qr_check_in_full_lifecycle(
+async def test_qr_check_in_and_check_out_full_lifecycle(
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
+    """checkin-approval-workflow-improvements split the old toggling
+    endpoint into two explicit ones (spec.md "QR Check-In Endpoint
+    Transitions an Eligible Visitor to Checked-In" / "QR Check-Out
+    Endpoint Transitions a Checked-In Visitor to Checked-Out") — the
+    underlying cycling `checkInStatus` model is unchanged, only the
+    client now states its intent via which URL it calls.
+    """
     invitation = _approved_invitation(db_session, branch.id)
     db_session.add(invitation)
     await db_session.commit()
@@ -2922,7 +3824,7 @@ async def test_qr_check_in_full_lifecycle(
     assert invitation.status == "checked_in"  # mirrored, per design.md "kept parallel"
     assert invitation.checked_in_at is not None
 
-    check_out = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    check_out = await client.patch(f"/api/v2/invitations/qr/{token}/check-out")
     assert check_out.status_code == 200
     assert check_out.json()["message"] == "Checked out successfully"
 
@@ -2943,13 +3845,50 @@ async def test_qr_check_in_full_lifecycle(
     assert invitation.check_in_status == "checked_in"
     assert invitation.status == "checked_in"
 
-    second_exit = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    second_exit = await client.patch(f"/api/v2/invitations/qr/{token}/check-out")
     assert second_exit.status_code == 200
     assert second_exit.json()["message"] == "Checked out successfully"
 
     await db_session.refresh(invitation)
     assert invitation.check_in_status == "checked_out"
     assert invitation.status == "checked_out"
+
+
+async def test_qr_check_in_while_already_checked_in_rejected(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Calling check-in while already checked in is rejected" —
+    the check-in endpoint no longer toggles to checked-out; it 409s and
+    leaves state unchanged, directing the caller to the check-out endpoint.
+    """
+    invitation = _approved_invitation(db_session, branch.id, check_in_status="checked_in")
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "checked_in"
+
+
+async def test_qr_check_out_while_not_checked_in_rejected(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Calling check-out on a visitor who isn't checked in is
+    rejected".
+    """
+    invitation = _approved_invitation(db_session, branch.id, check_in_status="unused")
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-out")
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "unused"
 
 
 async def test_qr_check_in_response_includes_group_co_visitors(
@@ -3018,6 +3957,75 @@ async def test_qr_check_in_individual_registration_has_empty_visitor_list(
     assert data["vehicles"] == []
 
 
+async def test_qr_check_in_response_includes_captured_photos(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Captured photos are included when present" — the primary
+    contact's and a visitor's photo, when captured at registration, are
+    surfaced on the QR check-in response.
+    """
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        registration_type="group",
+        primary_contact_photo_storage_key="vmss:tenant:invitations/photos:primary.jpg",
+    )
+    db_session.add(invitation)
+    await db_session.flush()
+    co_visitor = InvitationVisitorFactory.build(
+        id=uuid.uuid4(),
+        invitation_id=invitation.id,
+        full_name="Alexander Pierce",
+        photo_storage_key="vmss:tenant:invitations/photos:visitor.jpg",
+    )
+    db_session.add(co_visitor)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["primaryContactPhotoUrl"] is not None
+    assert data["visitors"][0]["photoUrl"] is not None
+
+
+async def test_qr_check_in_response_omits_photo_url_when_absent(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Missing photos are represented as null, not omitted or
+    errored".
+    """
+    invitation = _approved_invitation(db_session, branch.id, registration_type="individual")
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+    assert response.json()["data"]["primaryContactPhotoUrl"] is None
+
+
+async def test_qr_check_out_response_includes_captured_photos(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Successful check-out response carries the same detail
+    shape as check-in" — including captured photos.
+    """
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        check_in_status="checked_in",
+        primary_contact_photo_storage_key="vmss:tenant:invitations/photos:primary.jpg",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-out")
+    assert response.status_code == 200
+    assert response.json()["data"]["primaryContactPhotoUrl"] is not None
+
+
 async def test_qr_check_in_entry_after_expiry_rejected(
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
@@ -3062,7 +4070,78 @@ async def test_qr_check_in_re_entry_after_expiry_rejected(
     assert invitation.check_in_status == "checked_out"
 
 
-async def test_qr_check_in_exit_after_expiry_still_succeeds(
+async def test_qr_check_in_before_scheduled_date_rejected(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """qr-checkin-scheduling-photo-email spec.md "Entry scan before the
+    scheduled visit date is rejected" — distinct 425 status, distinguishable
+    from the 410 the expiry check above returns.
+    """
+    invitation = _approved_invitation(
+        db_session, branch.id, preferred_visit_date=date.today() + timedelta(days=1)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 425
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "unused"
+
+
+async def test_qr_check_in_on_scheduled_date_succeeds(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Entry scan on the scheduled visit date succeeds regardless
+    of time of day" — the gate is date-only, so today's date is eligible
+    the moment it arrives, not just after a specific time.
+    """
+    invitation = _approved_invitation(db_session, branch.id, preferred_visit_date=date.today())
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+    assert response.json()["data"]["checkInStatus"] == "checked_in"
+
+
+async def test_qr_check_in_after_scheduled_date_succeeds(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """A scheduled date in the past doesn't block check-in — only a future
+    one does (unchanged behavior once the scheduled date has arrived).
+    """
+    invitation = _approved_invitation(
+        db_session, branch.id, preferred_visit_date=date.today() - timedelta(days=1)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+
+
+async def test_qr_check_in_no_scheduled_date_falls_back_to_expiry_only(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Entry scan with no scheduled visit date set falls back to
+    expiry-only gating" — an invitation with `preferredVisitDate` unset
+    (nullable) is never rejected as too early.
+    """
+    invitation = _approved_invitation(db_session, branch.id, preferred_visit_date=None)
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+
+
+async def test_qr_check_out_after_expiry_still_succeeds(
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
     invitation = _approved_invitation(
@@ -3077,7 +4156,7 @@ async def test_qr_check_in_exit_after_expiry_still_succeeds(
     await db_session.commit()
     token = qr_token.encrypt_invitation_token(invitation.id)
 
-    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-out")
     assert response.status_code == 200
     assert response.json()["message"] == "Checked out successfully"
 
@@ -3190,6 +4269,26 @@ async def test_qr_check_in_writes_audit_entry_with_no_actor(
     assert entry.entity_type == "Invitation"
 
 
+async def test_qr_check_out_writes_audit_entry_with_no_actor(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _approved_invitation(db_session, branch.id, check_in_status="checked_in")
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-out")
+    assert response.status_code == 200
+
+    audit_stmt = select(AuditLog).where(
+        AuditLog.action == "invitation_qr_checked_out",
+        AuditLog.entity_id == invitation.id,
+    )
+    [entry] = (await db_session.execute(audit_stmt)).scalars().all()
+    assert entry.actor_user_id is None
+    assert entry.entity_type == "Invitation"
+
+
 async def test_qr_check_in_repository_tenant_schema_isolation(
     make_tenant_schema,
     open_tenant_session,
@@ -3211,30 +4310,12 @@ async def test_qr_check_in_repository_tenant_schema_isolation(
 
     async with open_tenant_session(other_schema) as other_session:
         updated = await InvitationRepository(other_session).check_in_by_qr_if_eligible(
-            invitation.id
+            invitation.id, today_local=date.today()
         )
         assert updated is None
 
     await db_session.refresh(invitation)
     assert invitation.check_in_status == "unused"
-
-
-async def test_check_in_invitation_v1_response_carries_deprecation_header(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
-) -> None:
-    invitation = _build_invitation(
-        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
-    )
-    db_session.add(invitation)
-    await db_session.commit()
-
-    token = await _login(client, user.email)
-    response = await client.patch(
-        f"/api/v1/invitations/{invitation.id}/check-in",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 200
-    assert response.headers["deprecation"] == "true"
 
 
 # --- PATCH /invitations/{id}/check-out ------------------------------------------
@@ -3599,8 +4680,9 @@ async def test_issue_badge_success(
     await db_session.refresh(invitation)
     assert invitation.badge_number == data["badgeNumber"]
     assert invitation.badge_storage_key is not None
-    badge_bytes = Path(data["badgeUrl"]).read_bytes()
-    assert Image.open(io.BytesIO(badge_bytes)).format == "PNG"
+    badge_response = await client.get(data["badgeUrl"])
+    assert badge_response.status_code == 200
+    assert Image.open(io.BytesIO(badge_response.content)).format == "PNG"
 
 
 async def test_issue_badge_already_issued_rejected(
@@ -4198,12 +5280,13 @@ async def test_reschedule_invitation_notifies_host(
 
 
 async def test_check_in_invitation_notifies_host(
-    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession, monkeypatch
 ) -> None:
     """No dual-channel assertion here (unlike submit/approve/deny/reschedule,
-    proposal.md finding #1): `invitations/service.py::check_in_invitation`
-    dispatches only the host push, no visitor-facing email/SMS task — there
-    is nothing on the other channel to assert.
+    proposal.md finding #1): the check-in transition dispatches only the
+    host push, no visitor-facing email/SMS task — there is nothing on the
+    other channel to assert. Check-in now happens through the canonical,
+    public v2 endpoint (checkin-approval-workflow-improvements).
     """
     host = _make_host(db_session)
     db_session.add(host)
@@ -4221,11 +5304,7 @@ async def test_check_in_invitation_notifies_host(
 
     monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
 
-    token = await _login(client, user.email)
-    response = await client.patch(
-        f"/api/v1/invitations/{invitation.id}/check-in",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
     assert response.status_code == 200, response.text
 
     assert len(calls) == 1
@@ -4299,3 +5378,290 @@ async def test_check_in_repository_tenant_schema_isolation(
 
     await db_session.refresh(invitation)
     assert invitation.status == "approved"
+
+
+# --- verify-full-api-test-and-validation-coverage: remaining repository isolation gaps ---
+
+
+async def test_approve_if_submitted_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted", approved_at=None)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_approve"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).approve_if_submitted(invitation.id)
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+    assert invitation.approved_at is None
+
+
+async def test_deny_if_submitted_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_deny"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).deny_if_submitted(
+            invitation.id, reason="Not on the expected list"
+        )
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+
+
+async def test_check_out_if_checked_in_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_checkout"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).check_out_if_checked_in(
+            invitation.id, user_id=uuid.uuid4()
+        )
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_in"
+
+
+async def test_reschedule_if_eligible_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+    original_date = invitation.preferred_visit_date
+
+    other_schema = "tenant_other_test_invitation_reschedule"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).reschedule_if_eligible(
+            invitation.id,
+            preferred_visit_date=date(2026, 12, 1),
+            preferred_visit_time=time(15, 30),
+        )
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.preferred_visit_date == original_date
+
+
+async def test_extend_if_eligible_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    now = datetime.now(UTC)
+    original_expiry = now + timedelta(days=1)
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=now, expires_at=original_expiry
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_extend"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).extend_if_eligible(
+            invitation.id, new_expires_at=now + timedelta(days=7)
+        )
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.expires_at == original_expiry
+
+
+async def test_issue_badge_if_eligible_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_badge_issue"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).issue_badge_if_eligible(
+            invitation.id, badge_number="BDG-DEADBEEF", badge_storage_key="badges/other.png"
+        )
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.badge_number is None
+
+
+async def test_reprint_badge_if_issued_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        badge_number="BDG-11112222",
+        badge_storage_key="badges/original.png",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_badge_reprint"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).reprint_badge_if_issued(
+            invitation.id, badge_storage_key="badges/other-reprint.png"
+        )
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.badge_storage_key == "badges/original.png"
+    assert invitation.badge_reprint_count == 0
+
+
+async def test_override_watchlist_if_flagged_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_watchlist_override"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).override_watchlist_if_flagged(
+            invitation.id, user_id=uuid.uuid4(), reason="Confirmed false positive"
+        )
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.watchlist_flagged is True
+
+
+async def test_list_by_primary_contact_email_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    """Covers the email-lookup path of `GET /invitations/track` — the
+    trackingId path is already covered by
+    `test_invitation_repository_tenant_schema_isolation` above.
+    """
+    email = f"tracked-{uuid.uuid4().hex[:8]}@example.com"
+    invitation = _build_invitation(db_session, branch.id, primary_contact_email=email)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_track_by_email"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        found = await InvitationRepository(other_session).list_by_primary_contact_email(email)
+        assert found == []
+
+
+async def test_get_with_children_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    """Covers `GET /invitations/{id}`'s own repository method."""
+    invitation = _build_invitation(db_session, branch.id, status="approved")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_get_with_children"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        found = await InvitationRepository(other_session).get_with_children(invitation.id)
+        assert found is None
+
+
+async def test_get_invitation_detail_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """testing-standards.md §2 permission-denied case, distinct from
+    `test_get_invitation_detail_denied_for_viewer_scoped_elsewhere` above:
+    that test's caller has zero access to the invitation's own branch at
+    all, which trips `authorize_branch_id_tolerant`'s *first* guard ("No
+    access to this branch"). This caller is correctly scoped to the
+    invitation's own branch (a real `invitations:approve` grant there) but
+    holds no `invitations:view` permission at all — the *second* guard
+    ("Insufficient permission"), the "no permission whatsoever" 403 branch
+    task 3.4 asks for.
+    """
+    caller = await _branch_scoped_invitation_approver(db_session, tenant, branch.id)
+    invitation = _build_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(caller)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403

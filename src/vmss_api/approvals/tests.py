@@ -837,6 +837,40 @@ async def test_approve_step_requires_invitations_approve_permission(
     assert unchanged.status == "pending"
 
 
+async def test_reject_step_requires_invitations_approve_permission(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    invitation, step_one_role, _ = await _two_step_invitation(db_session, branch)
+    # `user_without_permissions` holds no role at all, so even if it were
+    # somehow granted `step_one_role` it still lacks `invitations:approve`
+    # — this asserts the permission dependency chain runs before the
+    # role-match check ever gets a chance to grant access on role alone.
+    branch_role = UserBranchRole(
+        id=uuid.uuid4(),
+        user_id=user_without_permissions.id,
+        role=step_one_role,
+        branch_id=branch.id,
+    )
+    db_session.add(branch_role)
+    await db_session.commit()
+
+    step_one = await _get_step(db_session, invitation.id, 1)
+    token = issue_token(user_without_permissions)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/reject",
+        json={"reason": "Not a valid visit purpose"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    unchanged = await _get_step(db_session, invitation.id, 1)
+    assert unchanged.status == "pending"
+
+
 async def test_approve_step_role_mismatch_without_override_rejected(
     client: AsyncClient,
     branch: Branch,
@@ -1179,15 +1213,16 @@ async def test_delegate_step_before_host_step_approved_rejected(
     assert unchanged.delegated_to_user_id is None
 
 
-async def test_delegate_step_wrong_step_order_rejected(
+async def test_delegate_step_host_delegates_later_role_step_without_holding_its_role(
     client: AsyncClient,
     branch: Branch,
     db_session: AsyncSession,
     issue_token: Callable[[User], str],
 ) -> None:
-    """specs/approvals/spec.md "Delegating a step other than the one
-    immediately following the host's is rejected" — neither `stepOrder` 2
-    of a 3-level workflow, nor `stepOrder` 0 itself, can be delegated.
+    """specs/approvals/spec.md "Host delegates a later role-identified step
+    without holding its role" — the host's delegation privilege is a
+    blanket one, independent of whether the host would otherwise be
+    authorized to act on that specific step (design.md Decision 4).
     """
     invitation, host, _step_one_role, step_two_role = await _host_and_role_invitation(
         db_session,
@@ -1207,24 +1242,245 @@ async def test_delegate_step_wrong_step_order_rejected(
         json={"delegateUserId": str(delegate.id)},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 409
+    assert response.status_code == 200, response.text
+
+    updated_step_two = await _get_step(db_session, invitation.id, 2)
+    assert updated_step_two.delegated_to_user_id == delegate.id
+    assert updated_step_two.delegated_by_user_id == host.id
+
+
+async def test_delegate_step_caller_not_authorized_on_current_step_rejected(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "Caller not currently authorized on the step
+    is rejected" — a caller who is neither the invitation's host, a match
+    for the current step's role, its current delegate, nor an override
+    holder cannot delegate it.
+    """
+    invitation, _host, _step_one_role, step_two_role = await _host_and_role_invitation(
+        db_session,
+        branch,
+        host_step_status="approved",
+        step_one_status="approved",
+        extra_role_step=True,
+    )
+    assert step_two_role is not None
+    unrelated_role = _approve_permission_role(name=f"unrelated-caller-{uuid.uuid4().hex[:8]}")
+    db_session.add(unrelated_role)
+    await db_session.flush()
+    caller = await _user_with_role(db_session, branch.id, role=unrelated_role)
+    delegate = await _user_with_role(db_session, branch.id, role=step_two_role)
+    step_two = await _get_step(db_session, invitation.id, 2)
+
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_two.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
     unchanged_step_two = await _get_step(db_session, invitation.id, 2)
     assert unchanged_step_two.delegated_to_user_id is None
 
-    invitation_two, host_two, step_one_role_two, _ = await _host_and_role_invitation(
+
+async def test_delegate_step_host_delegates_own_step_zero_succeeds(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "Host delegates their own step to another
+    person" — `stepOrder` 0 is now delegable, generalized from the old
+    host-only-next-step-only rule. The delegate must hold
+    `invitations:approve` at the branch (a host-identified step has no
+    role to match against).
+    """
+    invitation, host, _step_one_role, _ = await _host_and_role_invitation(
         db_session, branch, host_step_status="pending", step_one_status="pending"
     )
-    await _grant_approve_permission(db_session, host_two, branch.id)
-    delegate_two = await _user_with_role(db_session, branch.id, role=step_one_role_two)
-    step_zero = await _get_step(db_session, invitation_two.id, 0)
-
-    token_two = issue_token(host_two)
-    response_two = await client.post(
-        f"/api/v1/invitations/{invitation_two.id}/approval-steps/{step_zero.id}/delegate",
-        json={"delegateUserId": str(delegate_two.id)},
-        headers={"Authorization": f"Bearer {token_two}"},
+    await _grant_approve_permission(db_session, host, branch.id)
+    unrelated_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"delegate-target-{uuid.uuid4().hex[:8]}", permissions=[]
     )
-    assert response_two.status_code == 409
+    db_session.add(unrelated_role)
+    await db_session.flush()
+    delegate = await _user_with_role(
+        db_session,
+        branch.id,
+        role=unrelated_role,
+        extra_permission_codes=("invitations:approve",),
+    )
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    token = issue_token(host)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    updated = await _get_step(db_session, invitation.id, 0)
+    assert updated.status == "pending"
+    assert updated.delegated_to_user_id == delegate.id
+    assert updated.delegated_by_user_id == host.id
+
+
+async def test_delegate_step_host_delegate_target_lacking_permission_rejected(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """A host-identified step's delegate must hold `invitations:approve` at
+    the branch — there is no role to check instead, since the step itself
+    names a person, not a role.
+    """
+    invitation, host, _step_one_role, _ = await _host_and_role_invitation(
+        db_session, branch, host_step_status="pending", step_one_status="pending"
+    )
+    await _grant_approve_permission(db_session, host, branch.id)
+    unrelated_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"no-approve-{uuid.uuid4().hex[:8]}", permissions=[]
+    )
+    db_session.add(unrelated_role)
+    await db_session.flush()
+    ineligible_delegate = await _user_with_role(db_session, branch.id, role=unrelated_role)
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    token = issue_token(host)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/delegate",
+        json={"delegateUserId": str(ineligible_delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    unchanged = await _get_step(db_session, invitation.id, 0)
+    assert unchanged.delegated_to_user_id is None
+
+
+async def test_delegate_step_role_holder_delegates_later_step_succeeds(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "A role-holder delegates a later step, not
+    just the one after the host's" — any role-identified step, at any
+    position, is delegable by whoever currently holds its role.
+    """
+    invitation, _host, _step_one_role, step_two_role = await _host_and_role_invitation(
+        db_session,
+        branch,
+        host_step_status="approved",
+        step_one_status="approved",
+        extra_role_step=True,
+    )
+    assert step_two_role is not None
+    caller = await _user_with_role(
+        db_session, branch.id, role=step_two_role, extra_permission_codes=("invitations:approve",)
+    )
+    delegate = await _user_with_role(db_session, branch.id, role=step_two_role)
+    step_two = await _get_step(db_session, invitation.id, 2)
+
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_two.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    updated = await _get_step(db_session, invitation.id, 2)
+    assert updated.delegated_to_user_id == delegate.id
+    assert updated.delegated_by_user_id == caller.id
+
+
+async def test_delegate_step_current_delegate_re_delegates_chaining(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "A delegate re-delegates the step onward,
+    chaining the delegation" — the current delegate, not just the original
+    host, may hand the step to a third person.
+    """
+    invitation, host, step_one_role, _ = await _host_and_role_invitation(db_session, branch)
+    await _grant_approve_permission(db_session, host, branch.id)
+    first_delegate = await _user_with_role(
+        db_session, branch.id, role=step_one_role, extra_permission_codes=("invitations:approve",)
+    )
+    second_delegate = await _user_with_role(db_session, branch.id, role=step_one_role)
+    step_one = await _get_step(db_session, invitation.id, 1)
+
+    host_token = issue_token(host)
+    first_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/delegate",
+        json={"delegateUserId": str(first_delegate.id)},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert first_response.status_code == 200, first_response.text
+
+    delegate_token = issue_token(first_delegate)
+    second_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/delegate",
+        json={"delegateUserId": str(second_delegate.id)},
+        headers={"Authorization": f"Bearer {delegate_token}"},
+    )
+    assert second_response.status_code == 200, second_response.text
+
+    updated = await _get_step(db_session, invitation.id, 1)
+    assert updated.delegated_to_user_id == second_delegate.id
+    assert updated.delegated_by_user_id == first_delegate.id
+
+
+async def test_delegate_step_override_permission_holder_delegates_any_step(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "Override-permission holder delegates any
+    step regardless of role or host match".
+    """
+    invitation, _host, _step_one_role, step_two_role = await _host_and_role_invitation(
+        db_session,
+        branch,
+        host_step_status="approved",
+        step_one_status="approved",
+        extra_role_step=True,
+    )
+    assert step_two_role is not None
+    unrelated_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"override-caller-{uuid.uuid4().hex[:8]}", permissions=[]
+    )
+    db_session.add(unrelated_role)
+    await db_session.flush()
+    override_caller = await _user_with_role(
+        db_session,
+        branch.id,
+        role=unrelated_role,
+        extra_permission_codes=("invitations:approve", "invitations:approve-override"),
+    )
+    delegate = await _user_with_role(db_session, branch.id, role=step_two_role)
+    step_two = await _get_step(db_session, invitation.id, 2)
+
+    token = issue_token(override_caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_two.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    updated = await _get_step(db_session, invitation.id, 2)
+    assert updated.delegated_to_user_id == delegate.id
+    assert updated.delegated_by_user_id == override_caller.id
 
 
 async def test_delegate_step_delegate_lacking_role_rejected(
@@ -1258,14 +1514,16 @@ async def test_delegate_step_delegate_lacking_role_rejected(
     assert unchanged.delegated_to_user_id is None
 
 
-async def test_delegate_step_already_delegated_rejected(
+async def test_delegate_step_host_re_delegates_an_already_delegated_step(
     client: AsyncClient,
     branch: Branch,
     db_session: AsyncSession,
     issue_token: Callable[[User], str],
 ) -> None:
-    """specs/approvals/spec.md "Re-delegating an already-delegated step is
-    rejected" — the original delegation is left unchanged.
+    """The host's delegation privilege is blanket and persists even after
+    the step has already been delegated to someone else — the host stays
+    in control of routing their own invitation's approval throughout, not
+    just at the moment a step first becomes current (design.md Decision 4).
     """
     invitation, host, step_one_role, _ = await _host_and_role_invitation(db_session, branch)
     await _grant_approve_permission(db_session, host, branch.id)
@@ -1286,10 +1544,11 @@ async def test_delegate_step_already_delegated_rejected(
         json={"delegateUserId": str(second_delegate.id)},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert second_response.status_code == 409
+    assert second_response.status_code == 200, second_response.text
 
-    unchanged = await _get_step(db_session, invitation.id, 1)
-    assert unchanged.delegated_to_user_id == first_delegate.id
+    updated = await _get_step(db_session, invitation.id, 1)
+    assert updated.delegated_to_user_id == second_delegate.id
+    assert updated.delegated_by_user_id == host.id
 
 
 async def test_delegate_step_already_acted_on_rejected(
@@ -1645,6 +1904,8 @@ async def test_category_with_no_active_rules_creates_no_steps(
         tenant=tenant,
         primary_contact_id_proof_content=_jpeg_bytes(),
         visitor_id_proof_contents=[],
+        primary_contact_photo_content=None,
+        visitor_photo_contents=[],
     )
     steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation.id)
     assert steps == []
@@ -1707,6 +1968,8 @@ async def test_resolved_host_with_no_active_rules_creates_single_host_step(
         tenant=tenant,
         primary_contact_id_proof_content=_jpeg_bytes(),
         visitor_id_proof_contents=[],
+        primary_contact_photo_content=None,
+        visitor_photo_contents=[],
     )
     assert invitation.host_id == host.id
 
@@ -1790,6 +2053,8 @@ async def test_resolved_host_with_configured_rules_creates_host_step_ahead_of_ro
         tenant=tenant,
         primary_contact_id_proof_content=_jpeg_bytes(),
         visitor_id_proof_contents=[],
+        primary_contact_photo_content=None,
+        visitor_photo_contents=[],
     )
 
     steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation.id)

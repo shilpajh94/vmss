@@ -275,6 +275,48 @@ async def test_walk_in_registration_oversized_file_rejected(
     assert response.status_code == 422
 
 
+# --- Optional profile photo (checkin-approval-workflow-improvements) --------
+# spec.md "Walk-in registration inherits the same optional photo capture" —
+# `POST /registrations/walk-in` accepts the identical file-part contract
+# `POST /invitations` does; validation itself is covered exhaustively by
+# `invitations/tests.py`, so this only confirms the pass-through works.
+
+
+async def test_walk_in_registration_with_primary_contact_photo_succeeds(
+    client: AsyncClient, registration_device_raw_key: str
+) -> None:
+    files = [
+        ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+    ]
+    response = await client.post(
+        "/api/v1/registrations/walk-in",
+        data={"payload": json.dumps(_individual_payload())},
+        files=files,
+        headers={"X-Device-Key": registration_device_raw_key},
+    )
+    assert response.status_code == 201, response.text
+
+
+async def test_walk_in_registration_disguised_photo_rejected(
+    client: AsyncClient, registration_device_raw_key: str
+) -> None:
+    files = [
+        ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        (
+            "primary_contact_photo_file",
+            ("selfie.jpg", b"this is not actually an image, just plain text bytes", "image/jpeg"),
+        ),
+    ]
+    response = await client.post(
+        "/api/v1/registrations/walk-in",
+        data={"payload": json.dumps(_individual_payload())},
+        files=files,
+        headers={"X-Device-Key": registration_device_raw_key},
+    )
+    assert response.status_code == 422
+
+
 # --- Device-auth-denied (testing-standards.md §2's permission-denied case) ---
 
 

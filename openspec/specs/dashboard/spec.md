@@ -22,7 +22,11 @@ local time. The endpoint SHALL accept an optional `branchId` query
 parameter: when supplied, the caller SHALL hold `invitations:view` at that
 branch and the response SHALL be scoped to it alone; when omitted, the
 response SHALL aggregate across every branch the caller holds
-`invitations:view` at.
+`invitations:view` at. Each row in the upcoming-visitors preview SHALL
+include that invitation's `trackingId`, so the caller can act on it (e.g.
+check it in) directly through the canonical invitation endpoint
+(`PATCH /api/v2/invitations/{trackingId}/check-in` — see the `invitations`
+capability) without a separate lookup.
 
 #### Scenario: Overview scoped to one branch via branchId
 - **WHEN** a caller holding `invitations:view` at Branch A requests the
@@ -55,47 +59,9 @@ response SHALL aggregate across every branch the caller holds
 - **THEN** the "visits created today" count reflects the tenant's local
   calendar date, not UTC's
 
-### Requirement: Check In an Upcoming Visitor From the Dashboard
-The system SHALL provide `PATCH /admin/dashboard/upcoming-visitors`, taking
-an `invitationId` in the request body, applying the same business rule as
-checking in an invitation directly: only an `approved` invitation may
-transition to `checked_in`; an invitation with `watchlistFlagged` set and not
-yet overridden SHALL be rejected with 409. The caller SHALL hold
-`invitations:checkin` at the invitation's branch. The endpoint SHALL accept
-an optional `Idempotency-Key` header; a retried request with the same key
-SHALL return the original response without checking the visitor in again.
-Every successful check-in through this endpoint SHALL produce the same audit
-trail record as checking in through the invitation-scoped endpoint.
-
-#### Scenario: Approved invitation is checked in
-- **WHEN** a caller holding `invitations:checkin` at the invitation's branch
-  submits `invitationId` for an `approved`, non-watchlisted invitation
-- **THEN** the invitation's status becomes `checked_in`, `checkedInAt` and
-  `checkedInByUserId` are set, and an audit log entry is recorded
-
-#### Scenario: Non-approved invitation is rejected
-- **WHEN** the named invitation's status is not `approved` (e.g. already
-  `checked_in`, or still `submitted`)
-- **THEN** the system rejects the request with 409 and the invitation's
-  status is unchanged
-
-#### Scenario: Watchlist-flagged invitation blocks check-in
-- **WHEN** the named invitation has `watchlistFlagged` set and has not been
-  overridden
-- **THEN** the system rejects the request with 409 and does not check the
-  visitor in
-
-#### Scenario: Caller lacks permission at the invitation's branch
-- **WHEN** a caller without `invitations:checkin` at the invitation's branch
-  submits a check-in request
-- **THEN** the system returns 403 and the invitation's status is unchanged
-
-#### Scenario: Retried request with the same Idempotency-Key does not double check-in
-- **WHEN** a request that already succeeded is retried with the same
-  `Idempotency-Key` value
-- **THEN** the system returns the original response and does not re-run the
-  check-in (no duplicate audit entry, invitation state unchanged by the
-  retry)
+#### Scenario: Upcoming-visitors preview rows carry trackingId
+- **WHEN** the overview's upcoming-visitors preview is returned
+- **THEN** every row includes that invitation's `trackingId`
 
 ### Requirement: Paginated Check-Ins Log
 The system SHALL provide `GET /admin/dashboard/checkins`, a paginated list

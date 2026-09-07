@@ -22,7 +22,11 @@ class CompanyCreate(CamelModel):
     logo_url: str | None = Field(default=None, max_length=500)
     default_timezone: str | None = Field(default=None, max_length=50)
     auto_approve_pre_registered_visitors: bool = False
-    badge_expiry_duration_minutes: int | None = None
+    # Upper bound is a generous week-in-minutes ceiling — a badge that's
+    # still "valid" a week after issue isn't really expiring at all — while
+    # `ge=1` rules out a zero/negative duration a client could otherwise send
+    # to make every badge expire instantly.
+    badge_expiry_duration_minutes: int | None = Field(default=None, ge=1, le=10_080)
 
 
 class CompanyUpdate(CamelModel):
@@ -36,7 +40,7 @@ class CompanyUpdate(CamelModel):
     is_active: bool | None = None
     default_timezone: str | None = Field(default=None, max_length=50)
     auto_approve_pre_registered_visitors: bool | None = None
-    badge_expiry_duration_minutes: int | None = None
+    badge_expiry_duration_minutes: int | None = Field(default=None, ge=1, le=10_080)
 
 
 class CompanyOut(CamelModel):
@@ -134,20 +138,30 @@ class FloorAccessLevel(StrEnum):
     secure = "secure"
 
 
+# Bounds are physically-plausible, not database-derived (`floor_number`/
+# `capacity` have no DB-side limit of their own — see `models.py`): a handful
+# of basement levels below ground, a generous upper bound no real building
+# comes close to, and a per-floor headcount ceiling that would already be an
+# extraordinary building if reached.
+_FLOOR_NUMBER_MIN = -20
+_FLOOR_NUMBER_MAX = 200
+_FLOOR_CAPACITY_MAX = 100_000
+
+
 class FloorCreate(CamelModel):
     building_id: uuid.UUID
     name: str = Field(max_length=255)
-    floor_number: int
-    capacity: int | None = None
+    floor_number: int = Field(ge=_FLOOR_NUMBER_MIN, le=_FLOOR_NUMBER_MAX)
+    capacity: int | None = Field(default=None, ge=0, le=_FLOOR_CAPACITY_MAX)
     capacity_type: FloorCapacityType | None = None
     access_level: FloorAccessLevel | None = None
 
 
 class FloorUpdate(CamelModel):
     name: str | None = Field(default=None, max_length=255)
-    floor_number: int | None = None
+    floor_number: int | None = Field(default=None, ge=_FLOOR_NUMBER_MIN, le=_FLOOR_NUMBER_MAX)
     is_active: bool | None = None
-    capacity: int | None = None
+    capacity: int | None = Field(default=None, ge=0, le=_FLOOR_CAPACITY_MAX)
     capacity_type: FloorCapacityType | None = None
     access_level: FloorAccessLevel | None = None
 
@@ -288,7 +302,7 @@ class ProvisionSecurityGate(CamelModel):
 
 class ProvisionFloor(CamelModel):
     name: str = Field(max_length=255)
-    floor_number: int
+    floor_number: int = Field(ge=_FLOOR_NUMBER_MIN, le=_FLOOR_NUMBER_MAX)
     departments: list[ProvisionDepartment] = Field(default_factory=list)
     reception_desks: list[ProvisionReceptionDesk] = Field(default_factory=list)
 

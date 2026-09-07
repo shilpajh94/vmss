@@ -22,6 +22,39 @@ from vmss_api.tenant.repository import TenantRepository
 _optional_bearer_scheme = HTTPBearer(auto_error=False)
 
 
+def _authorize_branch(
+    branch: Branch | None, user: User, permission_code: str | None = None
+) -> Branch:
+    """Shared not-found/inactive, branch-access, and (when given a
+    `permission_code`) permission checks behind `get_branch_context`,
+    `authorize_branch_id`, and `authorize_branch_id_tolerant`. The three
+    differ only in how `branch` itself gets fetched before being handed
+    here — `BranchRepository.get` vs `.get_including_deleted`, or resolved
+    from an `X-Branch-ID` header rather than a body-supplied id — and in
+    whether a permission check applies at all: `get_branch_context` resolves
+    branch *context* only (the permission check happens separately, once a
+    route knows which permission it needs, via `require_branch_permission`),
+    so it calls this with no `permission_code` and that check is skipped,
+    exactly as before this extraction.
+    """
+    if branch is None or not branch.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found")
+    if not user.has_branch_access(branch.id):
+        logger.warning("branch_access_denied", branch_id=str(branch.id))
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="No access to this branch"
+        )
+    if permission_code is not None and not user.has_permission(
+        permission_code, branch_id=branch.id
+    ):
+        logger.warning(
+            "permission_denied", permission_code=permission_code, branch_id=str(branch.id)
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permission")
+    structlog.contextvars.bind_contextvars(branch_id=str(branch.id))
+    return branch
+
+
 async def get_branch_context(
     x_branch_id: Annotated[uuid.UUID, Header(alias="X-Branch-ID")],
     user: Annotated[User, Depends(get_current_user)],
@@ -34,15 +67,7 @@ async def get_branch_context(
     `auth/models.py::User.has_branch_access`.
     """
     branch = await BranchRepository(tenant_db).get(x_branch_id)
-    if branch is None or not branch.is_active:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found")
-    if not user.has_branch_access(branch.id):
-        logger.warning("branch_access_denied", branch_id=str(branch.id))
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="No access to this branch"
-        )
-    structlog.contextvars.bind_contextvars(branch_id=str(branch.id))
-    return branch
+    return _authorize_branch(branch, user)
 
 
 def require_branch_permission(permission_code: str):
@@ -82,20 +107,7 @@ async def authorize_branch_id(
     `X-Branch-ID` at all (design.md Decision 2).
     """
     branch = await BranchRepository(tenant_db).get(branch_id)
-    if branch is None or not branch.is_active:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found")
-    if not user.has_branch_access(branch.id):
-        logger.warning("branch_access_denied", branch_id=str(branch.id))
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="No access to this branch"
-        )
-    if not user.has_permission(permission_code, branch_id=branch.id):
-        logger.warning(
-            "permission_denied", permission_code=permission_code, branch_id=str(branch.id)
-        )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permission")
-    structlog.contextvars.bind_contextvars(branch_id=str(branch.id))
-    return branch
+    return _authorize_branch(branch, user, permission_code)
 
 
 async def authorize_branch_id_tolerant(
@@ -111,20 +123,7 @@ async def authorize_branch_id_tolerant(
     `authorize_branch_id`.
     """
     branch = await BranchRepository(tenant_db).get_including_deleted(branch_id)
-    if branch is None or not branch.is_active:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found")
-    if not user.has_branch_access(branch.id):
-        logger.warning("branch_access_denied", branch_id=str(branch.id))
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="No access to this branch"
-        )
-    if not user.has_permission(permission_code, branch_id=branch.id):
-        logger.warning(
-            "permission_denied", permission_code=permission_code, branch_id=str(branch.id)
-        )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permission")
-    structlog.contextvars.bind_contextvars(branch_id=str(branch.id))
-    return branch
+    return _authorize_branch(branch, user, permission_code)
 
 
 def require_branch_scope(permission_code: str):

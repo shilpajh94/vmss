@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import User, UserBranchRole
+from vmss_api.auth.repository import UserRepository
 from vmss_api.invitations import push_notifications
 from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.models import Invitation
@@ -34,6 +35,33 @@ async def _user_holds_role_at_branch(
     return (await tenant_db.execute(stmt)).scalar_one_or_none() is not None
 
 
+async def _caller_matches_step(
+    tenant_db: AsyncSession, user: User, invitation: Invitation, step: InvitationApprovalStep
+) -> bool:
+    """Does `user` match this step's assigned approver — delegate, host, or
+    role-holder — independent of the `invitations:approve-override` bypass?
+    Shared by `_authorize_step_action` (acting) and `delegate_step`
+    (delegating): "whoever is currently authorized to act on a step may
+    delegate it instead" (specs/approvals/spec.md "Current Step's
+    Authorized Approver Delegates It to a Specific Person").
+
+    A host-identified step (`approver_user_id` set) is authorized for that
+    specific person only, regardless of their assigned role — it is not
+    role-matched at all. A role-identified step (`approver_role_id` set)
+    keeps the role-match check, unless it has been delegated
+    (`delegated_to_user_id` set), in which case only the delegate matches,
+    not just-any holder of the role.
+    """
+    if step.delegated_to_user_id is not None:
+        return user.id == step.delegated_to_user_id
+    if step.approver_user_id is not None:
+        return user.id == step.approver_user_id
+    assert step.approver_role_id is not None  # DB CHECK: exactly one of the two is set
+    return await _user_holds_role_at_branch(
+        tenant_db, user.id, step.approver_role_id, invitation.branch_id
+    )
+
+
 async def _authorize_step_action(
     tenant_db: AsyncSession, user: User, invitation: Invitation, step: InvitationApprovalStep
 ) -> None:
@@ -41,31 +69,11 @@ async def _authorize_step_action(
     Matching Role, or an Explicit Override" — the caller's own
     `invitations:approve` permission is already checked by the router's
     `Depends()` chain before this is called (design.md Decision 4); this
-    covers the role-match/host-match/override half only.
-
-    A host-identified step (`approver_user_id` set — add-approval-step-id-
-    and-host-routing/design.md) is authorized for that specific person
-    only, regardless of their assigned role — it is not role-matched at
-    all. A role-identified step (`approver_role_id` set) keeps the
-    pre-existing role-match check, unless the host has delegated it
-    (`delegated_to_user_id` set — invitation-relevant-to-me-and-delegation/
-    design.md "_authorize_step_action checks the delegate before falling
-    back to the role match"), in which case only the delegate matches, not
-    just-any holder of the role. Either way, `invitations:approve-override`
-    bypasses the match entirely.
+    covers the role-match/host-match/delegate-match half (`_caller_matches_
+    step`) plus the `invitations:approve-override` bypass.
     """
-    if step.delegated_to_user_id is not None:
-        if user.id == step.delegated_to_user_id:
-            return
-    elif step.approver_user_id is not None:
-        if user.id == step.approver_user_id:
-            return
-    else:
-        assert step.approver_role_id is not None  # DB CHECK: exactly one of the two is set
-        if await _user_holds_role_at_branch(
-            tenant_db, user.id, step.approver_role_id, invitation.branch_id
-        ):
-            return
+    if await _caller_matches_step(tenant_db, user, invitation, step):
+        return
     if user.has_permission("invitations:approve-override", branch_id=invitation.branch_id):
         return
     raise HTTPException(
@@ -220,58 +228,72 @@ async def delegate_step(
     *,
     delegate_user_id: uuid.UUID,
 ) -> InvitationApprovalStep:
-    """specs/approvals/spec.md "Host Delegates the Step Following Their Own
-    to a Specific Person". Only the invitation's host — the same user
-    identified by its `stepOrder` 0 step's `approver_user_id` — may
-    delegate, only once that host step is `approved`, and only the
-    role-identified step immediately following it (`stepOrder` 1, the now-
-    current pending step). The delegate must hold that step's
-    `approver_role_id` role at the invitation's branch (or company-wide),
-    checked with the same `_user_holds_role_at_branch` a role-identified
-    step action is authorized with (design.md "Delegation eligibility check
-    reuses `_user_holds_role_at_branch`").
+    """specs/approvals/spec.md "Current Step's Authorized Approver Delegates
+    It to a Specific Person". Three independent ways to be authorized to
+    delegate the invitation's current pending step, at any `stepOrder`: (1)
+    the caller is the invitation's host — a blanket privilege regardless of
+    whether the host would otherwise be authorized to act on that specific
+    step (design.md Decision 4 explains why this is not just a reuse of the
+    acting-authorization predicate: the host's whole reason to delegate a
+    role-identified step is that they don't hold that role); (2) the caller
+    otherwise matches the current step directly (role match, an existing
+    delegate re-delegating); or (3) `invitations:approve-override`. The
+    named delegate must satisfy the step's own kind: hold `approverRoleId`
+    at the invitation's branch (or company-wide) for a role-identified
+    step, or hold `invitations:approve` at the invitation's branch for the
+    host-identified `stepOrder` 0 step.
     """
     repo = InvitationApprovalStepRepository(tenant_db)
     named_step, current = await _resolve_current_step(tenant_db, invitation.id, step_id)
     _require_is_current(named_step, current)
 
     host_step = await repo.get_by_step_order(invitation.id, 0)
-    if host_step is None or host_step.approver_user_id is None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail="This invitation has no host-identified step to delegate from",
-        )
-    if user.id != host_step.approver_user_id:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            detail="Only the invitation's host may delegate this step",
-        )
-    if named_step.step_order != host_step.step_order + 1:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail="Only the step immediately following the host's own step can be delegated",
-        )
-    if host_step.status != "approved":
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail="The host's own step must be approved before delegating the next one",
-        )
-    assert named_step.approver_role_id is not None  # DB CHECK: exactly one of role/user is set
-    if not await _user_holds_role_at_branch(
-        tenant_db, delegate_user_id, named_step.approver_role_id, invitation.branch_id
+    is_invitation_host = (
+        host_step is not None
+        and host_step.approver_user_id is not None
+        and user.id == host_step.approver_user_id
+    )
+    if (
+        not is_invitation_host
+        and not await _caller_matches_step(tenant_db, user, invitation, named_step)
+        and not user.has_permission("invitations:approve-override", branch_id=invitation.branch_id)
     ):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Delegate does not hold this step's approver role at the invitation's branch",
+            status.HTTP_403_FORBIDDEN,
+            detail="Caller is not authorized to delegate this step",
         )
 
+    if named_step.approver_role_id is not None:
+        if not await _user_holds_role_at_branch(
+            tenant_db, delegate_user_id, named_step.approver_role_id, invitation.branch_id
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "Delegate does not hold this step's approver role at the invitation's branch"
+                ),
+            )
+    else:
+        assert named_step.approver_user_id is not None  # DB CHECK: exactly one of role/user is set
+        delegate_user = await UserRepository(tenant_db).get_by_id(delegate_user_id)
+        if delegate_user is None or not delegate_user.has_permission(
+            "invitations:approve", branch_id=invitation.branch_id
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Delegate does not hold invitations:approve at the invitation's branch",
+            )
+
     updated_step = await repo.delegate_if_eligible(
-        step_id, delegated_to_user_id=delegate_user_id, delegated_by_user_id=user.id
+        step_id,
+        delegated_to_user_id=delegate_user_id,
+        delegated_by_user_id=user.id,
+        expected_current_delegate_id=named_step.delegated_to_user_id,
     )
     if updated_step is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            detail="This step has already been delegated or is no longer pending",
+            detail="This step is not currently pending",
         )
     await tenant_db.commit()
     return updated_step

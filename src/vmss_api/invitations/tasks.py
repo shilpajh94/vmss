@@ -27,6 +27,7 @@ import uuid
 
 import structlog
 
+from vmss_api.auth.repository import UserRepository
 from vmss_api.core.celery_app import celery_app
 from vmss_api.core.database import engine, tenant_session_scope
 from vmss_api.core.logging import logger
@@ -211,6 +212,60 @@ async def _send_reschedule_notification(tenant_schema: str, invitation_id: str) 
                 f"{invitation.tracking_id}."
             )
             await _dispatch(invitation, subject=subject, body=body)
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_host_creation_notification(
+    self, *, request_id: str, tenant_schema: str, invitation_id: str, host_id: str
+) -> None:
+    """Emails the resolved host that an invitation naming them was received
+    (qr-checkin-scheduling-photo-email/design.md Decision 5) — a distinct
+    task from the visitor confirmation dispatch above, since the recipient
+    (the host, resolved via `UserRepository`) and their email address are
+    unrelated to the primary contact's own `preferred_contact_method`.
+    `host_id` is passed explicitly (resolved by the caller before
+    enqueueing) rather than re-derived from `invitation.host_id` here, so
+    an exhausted-retries log always names which host went unnotified even
+    if the invitation itself has since changed.
+    """
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(_send_host_creation_notification(tenant_schema, invitation_id, host_id))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "host_creation_notification_dispatch_exhausted",
+                tenant_schema=tenant_schema,
+                invitation_id=invitation_id,
+                host_id=host_id,
+            )
+        raise
+
+
+async def _send_host_creation_notification(
+    tenant_schema: str, invitation_id: str, host_id: str
+) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            # Idempotent against redelivery (background-jobs.md §2): a
+            # missing invitation or a host who's since been deactivated/
+            # deleted has nothing left to notify.
+            if invitation is None:
+                return
+            host = await UserRepository(session).get_active(uuid.UUID(host_id))
+            if host is None:
+                return
+            subject = "New invitation received"
+            body = (
+                "An invitation naming you as host was received.\n"
+                f"Tracking ID: {invitation.tracking_id}\n"
+                f"Visitor: {invitation.primary_contact_full_name}\n"
+                f"Purpose: {invitation.purpose_of_visit or 'Not specified'}"
+            )
+            await notifications.email_sender.send(to=host.email, subject=subject, body=body)
     finally:
         await engine.dispose()
 

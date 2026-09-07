@@ -26,6 +26,7 @@ from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.router import (
     _INVITATION_PAYLOAD_EXAMPLES,
     _NO_VISITOR_FILES,
+    _NO_VISITOR_PHOTOS,
     to_invitation_out,
 )
 from vmss_api.invitations.router import _PAYLOAD_DESCRIPTION as _INVITATION_PAYLOAD_DESCRIPTION
@@ -105,6 +106,16 @@ async def create_walk_in_registration(
         ),
     ],
     visitor_id_proof_files: list[UploadFile] = _NO_VISITOR_FILES,
+    primary_contact_photo_file: Annotated[
+        UploadFile | None,
+        File(
+            description=(
+                "Optional profile photo for the primary contact (JPEG/PNG "
+                "only). Omit entirely if no photo is being captured."
+            )
+        ),
+    ] = None,
+    visitor_photo_files: list[UploadFile] = _NO_VISITOR_PHOTOS,
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -137,6 +148,10 @@ async def create_walk_in_registration(
 
     primary_content = await primary_contact_id_proof_file.read()
     visitor_contents = [await f.read() for f in visitor_id_proof_files]
+    primary_photo_content = (
+        await primary_contact_photo_file.read() if primary_contact_photo_file is not None else None
+    )
+    visitor_photo_contents = [await f.read() for f in visitor_photo_files]
 
     invitation = await service.create_walk_in_registration(
         tenant_db,
@@ -145,6 +160,8 @@ async def create_walk_in_registration(
         tenant=device.tenant,
         primary_contact_id_proof_content=primary_content,
         visitor_id_proof_contents=visitor_contents,
+        primary_contact_photo_content=primary_photo_content,
+        visitor_photo_contents=visitor_photo_contents,
     )
     background_tasks.add_task(
         record_audit_log,

@@ -1,6 +1,6 @@
 import uuid
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -33,7 +33,11 @@ class FormFieldDefinition(CamelModel):
     label: str = Field(max_length=255)
     field_type: FormFieldType
     required: bool = False
-    options: list[str] | None = Field(default=None, max_length=50)
+    # Per-item `max_length=100` matches this file's own `name`/`FormFieldDefinition`
+    # string-length convention — no backing DB column of its own (`options`
+    # lives inside `VisitorCategory.form_schema`'s JSONB), same idiom as
+    # `auth.schemas.RoleCreateRequest.permission_codes` (security-architecture.md §4).
+    options: list[Annotated[str, Field(max_length=100)]] | None = Field(default=None, max_length=50)
     help_text: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")

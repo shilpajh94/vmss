@@ -33,15 +33,6 @@ class DashboardOverviewOut(CamelModel):
     upcoming_visitors: list[UpcomingVisitorOut]
 
 
-class DashboardCheckInRequest(CamelModel):
-    """Body of `PATCH /admin/dashboard/upcoming-visitors` — the path itself
-    carries no id, so the target invitation is named here instead (design.md
-    Decision 4).
-    """
-
-    invitation_id: uuid.UUID
-
-
 class DashboardCheckInListItemOut(CamelModel):
     """One row of `GET /admin/dashboard/checkins`."""
 
