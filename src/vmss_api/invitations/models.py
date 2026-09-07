@@ -80,7 +80,19 @@ class Invitation(Base, TimestampMixin):
     primary_contact_phone: Mapped[str | None] = mapped_column(String(50))
     primary_contact_preferred_contact_method: Mapped[str] = mapped_column(String(10))
     primary_contact_id_proof_type: Mapped[str | None] = mapped_column(String(50))
+    # Deliberately never resolved to a URL or exposed on any response schema
+    # (add-avatar-upload-and-verify-image-storage/design.md Decision 5) —
+    # unlike the photo/badge/QR image keys elsewhere in this file, an ID-proof
+    # scan is the most sensitive document this system stores. Per
+    # security-architecture.md §4, "access to raw document images is itself a
+    # permission, not implied by can view visitor record" — no such
+    # permission or viewing endpoint exists yet, so this stays write-only
+    # until a real requirement (and its own permission) is proposed.
     primary_contact_id_proof_storage_key: Mapped[str | None] = mapped_column(String(500))
+    # Optional profile photo (checkin-approval-workflow-improvements) —
+    # nullable, unlike the ID-proof storage key, since capturing a photo is
+    # never required.
+    primary_contact_photo_storage_key: Mapped[str | None] = mapped_column(String(500))
 
     # --- Visit details (self-registration only) -----------------------------
     purpose_of_visit: Mapped[str | None] = mapped_column(String(255))
@@ -188,7 +200,12 @@ class InvitationVisitor(Base, TimestampMixin):
     email: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(50))
     id_proof_type: Mapped[str] = mapped_column(String(50))
+    # Deliberately never resolved to a URL or exposed on any response schema —
+    # see the matching comment on `Invitation.primary_contact_id_proof_storage_key`
+    # above (add-avatar-upload-and-verify-image-storage/design.md Decision 5).
     id_proof_storage_key: Mapped[str] = mapped_column(String(500))
+    # Optional profile photo (checkin-approval-workflow-improvements).
+    photo_storage_key: Mapped[str | None] = mapped_column(String(500))
 
 
 class InvitationQRCode(Base, TimestampMixin):

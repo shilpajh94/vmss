@@ -1,5 +1,5 @@
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import EmailStr, Field
 
@@ -11,7 +11,10 @@ RoleSortableField = Literal["name", "created_at"]
 
 class LoginRequest(CamelModel):
     email: EmailStr
-    password: str
+    # `max_length=128` is a DoS guard on the Argon2-hashing input, not a
+    # legitimate-passphrase restriction — see security-architecture.md §4 and
+    # design.md Decision 2. No stored/truncated value is involved.
+    password: str = Field(max_length=128)
 
 
 class TokenResponse(CamelModel):
@@ -31,13 +34,17 @@ class UserOut(CamelModel):
     email: EmailStr
     full_name: str
     is_active: bool
+    avatar_url: str | None = None
     branch_roles: list[BranchRoleOut]
 
 
 class RoleCreateRequest(CamelModel):
     name: str = Field(max_length=100)
     description: str | None = Field(default=None, max_length=255)
-    permission_codes: list[str] = Field(
+    # Per-item `max_length=100` matches `Permission.code`'s backing column
+    # (`String(100)`, auth/models.py) — see database-architecture.md §4 and
+    # design.md Decision 2.
+    permission_codes: list[Annotated[str, Field(max_length=100)]] = Field(
         default_factory=list, examples=[["visitors:checkin", "invitations:create"]]
     )
 
@@ -45,7 +52,7 @@ class RoleCreateRequest(CamelModel):
 class RoleUpdateRequest(CamelModel):
     name: str | None = Field(default=None, max_length=100)
     description: str | None = Field(default=None, max_length=255)
-    permission_codes: list[str] | None = Field(
+    permission_codes: list[Annotated[str, Field(max_length=100)]] | None = Field(
         default=None, examples=[["visitors:checkin", "invitations:create"]]
     )
 
@@ -87,7 +94,7 @@ class RoleVerifyResponse(CamelModel):
 
 class UserCreateRequest(CamelModel):
     email: EmailStr
-    password: str = Field(min_length=8)
+    password: str = Field(min_length=8, max_length=128)
     full_name: str = Field(max_length=255)
 
 
@@ -149,3 +156,12 @@ class EmployeeDirectoryOut(CamelModel):
     full_name: str
     designation: str | None
     department_id: uuid.UUID | None
+    avatar_url: str | None = None
+
+
+class AvatarUploadOut(CamelModel):
+    """`POST /auth/me/avatar`'s response — just the newly resolved URL, since
+    the caller already knows who they are.
+    """
+
+    avatar_url: str | None

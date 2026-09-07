@@ -1016,6 +1016,34 @@ async def test_create_company_invalid_email_rejected(client: AsyncClient, user: 
     assert response.status_code == 422
 
 
+async def test_create_company_badge_expiry_duration_out_of_bounds_rejected(
+    client: AsyncClient, user: User
+) -> None:
+    """`badgeExpiryDurationMinutes` is bounded to a physically sensible
+    expiry window (1 minute to 1 week) — see `schemas.py::CompanyCreate`.
+    """
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/company",
+        json={"legalName": "Bad Expiry Co", "badgeExpiryDurationMinutes": 10_081},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
+async def test_update_company_badge_expiry_duration_zero_rejected(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    await client.post("/api/v1/company", json={"legalName": "Expiry Co"}, headers=headers)
+
+    response = await client.put(
+        "/api/v1/company", json={"badgeExpiryDurationMinutes": 0}, headers=headers
+    )
+    assert response.status_code == 422
+
+
 async def test_company_repository_tenant_schema_isolation(
     make_tenant_schema, open_tenant_session, db_session: AsyncSession
 ) -> None:
@@ -1178,6 +1206,44 @@ async def test_list_buildings_without_branch_header_includes_every_branch(
     codes = {b["code"] for b in response.json()["data"]}
     assert building.code in codes
     assert other_building.code in codes
+
+
+async def test_list_buildings_tenant_isolation(
+    client: AsyncClient,
+    make_tenant_schema,
+    open_tenant_session,
+    tenant: Tenant,
+    building: Building,
+) -> None:
+    """The tenant-isolation case `testing-standards.md` §2 requires for any
+    changed endpoint — a row that only exists in a different tenant's
+    schema must never surface in the public listing, which always resolves
+    to `settings.default_tenant_slug`'s schema. Matches
+    `test_list_branches_tenant_isolation`/`test_list_departments_tenant_isolation`'s
+    pattern, driving a real request through the public listing's own
+    `public_tenant_db` tenant-resolution dependency.
+    """
+    other_schema = "tenant_bld_isolation_test_org"
+    suffix = uuid.uuid4().hex[:8]
+    other_branch_code = f"OTHER-TENANT-BR-{suffix}"
+    other_building_code = f"OTHER-TENANT-BLD-{suffix}"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_branch = Branch(id=uuid.uuid4(), name="Other Tenant Branch", code=other_branch_code)
+        other_session.add(other_branch)
+        await other_session.flush()
+        other_session.add(
+            BuildingFactory.build(
+                id=uuid.uuid4(), branch_id=other_branch.id, code=other_building_code
+            )
+        )
+        await other_session.commit()
+
+    response = await client.get("/api/v1/buildings")
+    assert response.status_code == 200
+    codes = {b["code"] for b in response.json()["data"]}
+    assert building.code in codes
+    assert other_building_code not in codes
 
 
 async def test_get_building_success(client: AsyncClient, user: User, building: Building) -> None:
@@ -1413,6 +1479,51 @@ async def test_create_floor_denied_for_user_scoped_elsewhere(
     assert response.status_code == 403
 
 
+async def test_create_floor_number_out_of_bounds_rejected(
+    client: AsyncClient, user: User, building: Building
+) -> None:
+    """`floorNumber` is bounded to a physically plausible range (a handful
+    of basement levels through a generous upper ceiling) — see
+    `schemas.py::FloorCreate`.
+    """
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/floors",
+        json={"buildingId": str(building.id), "name": "Way Too High", "floorNumber": 201},
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
+    )
+    assert response.status_code == 422
+
+
+async def test_create_floor_capacity_negative_rejected(
+    client: AsyncClient, user: User, building: Building
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/floors",
+        json={
+            "buildingId": str(building.id),
+            "name": "Negative Capacity",
+            "floorNumber": 2,
+            "capacity": -1,
+        },
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
+    )
+    assert response.status_code == 422
+
+
+async def test_update_floor_number_out_of_bounds_rejected(
+    client: AsyncClient, user: User, floor: Floor, building: Building
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.put(
+        f"/api/v1/floors/{floor.id}",
+        json={"floorNumber": -21},
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(building.branch_id)},
+    )
+    assert response.status_code == 422
+
+
 async def test_list_floors_no_auth_header_succeeds(
     client: AsyncClient, tenant: Tenant, floor: Floor, building: Building
 ) -> None:
@@ -1463,6 +1574,44 @@ async def test_list_floors_without_branch_header_includes_every_branch(
     ids = {f["id"] for f in response.json()["data"]}
     assert str(floor.id) in ids
     assert str(other_floor.id) in ids
+
+
+async def test_list_floors_tenant_isolation(
+    client: AsyncClient,
+    make_tenant_schema,
+    open_tenant_session,
+    tenant: Tenant,
+    floor: Floor,
+) -> None:
+    """See `test_list_buildings_tenant_isolation`. `floor_number` alone isn't
+    a safe uniqueness signal across branches/buildings (0 is a very common
+    ground-floor value), so this asserts on `id` rather than a field value.
+    """
+    other_schema = "tenant_flr_isolation_test_org"
+    suffix = uuid.uuid4().hex[:8]
+    other_floor_id = uuid.uuid4()
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_branch = Branch(
+            id=uuid.uuid4(), name="Other Tenant Branch", code=f"OTHER-TENANT-BR-{suffix}"
+        )
+        other_session.add(other_branch)
+        await other_session.flush()
+        other_building = BuildingFactory.build(
+            id=uuid.uuid4(), branch_id=other_branch.id, code=f"OTHER-TENANT-BLD-{suffix}"
+        )
+        other_session.add(other_building)
+        await other_session.flush()
+        other_session.add(
+            FloorFactory.build(id=other_floor_id, building_id=other_building.id, floor_number=99)
+        )
+        await other_session.commit()
+
+    response = await client.get("/api/v1/floors")
+    assert response.status_code == 200
+    ids = {f["id"] for f in response.json()["data"]}
+    assert str(floor.id) in ids
+    assert str(other_floor_id) not in ids
 
 
 async def test_get_floor_success(
@@ -2087,6 +2236,48 @@ async def test_list_reception_desks_without_branch_header_includes_every_branch(
     assert other_desk.code in codes
 
 
+async def test_list_reception_desks_tenant_isolation(
+    client: AsyncClient,
+    make_tenant_schema,
+    open_tenant_session,
+    tenant: Tenant,
+    reception_desk: ReceptionDesk,
+) -> None:
+    """See `test_list_buildings_tenant_isolation`."""
+    other_schema = "tenant_desk_isolation_test_org"
+    suffix = uuid.uuid4().hex[:8]
+    other_desk_code = f"OTHER-TENANT-DESK-{suffix}"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_branch = Branch(
+            id=uuid.uuid4(), name="Other Tenant Branch", code=f"OTHER-TENANT-BR-{suffix}"
+        )
+        other_session.add(other_branch)
+        await other_session.flush()
+        other_building = BuildingFactory.build(
+            id=uuid.uuid4(), branch_id=other_branch.id, code=f"OTHER-TENANT-BLD-{suffix}"
+        )
+        other_session.add(other_building)
+        await other_session.flush()
+        other_floor = FloorFactory.build(
+            id=uuid.uuid4(), building_id=other_building.id, floor_number=1
+        )
+        other_session.add(other_floor)
+        await other_session.flush()
+        other_session.add(
+            ReceptionDeskFactory.build(
+                id=uuid.uuid4(), floor_id=other_floor.id, code=other_desk_code
+            )
+        )
+        await other_session.commit()
+
+    response = await client.get("/api/v1/reception-desks")
+    assert response.status_code == 200
+    codes = {d["code"] for d in response.json()["data"]}
+    assert reception_desk.code in codes
+    assert other_desk_code not in codes
+
+
 async def test_get_reception_desk_success(
     client: AsyncClient, user: User, reception_desk: ReceptionDesk, building: Building
 ) -> None:
@@ -2421,6 +2612,42 @@ async def test_list_security_gates_without_branch_header_includes_every_branch(
     codes = {g["code"] for g in response.json()["data"]}
     assert security_gate.code in codes
     assert other_gate.code in codes
+
+
+async def test_list_security_gates_tenant_isolation(
+    client: AsyncClient,
+    make_tenant_schema,
+    open_tenant_session,
+    tenant: Tenant,
+    security_gate: SecurityGate,
+) -> None:
+    """See `test_list_buildings_tenant_isolation`."""
+    other_schema = "tenant_gate_isolation_test_org"
+    suffix = uuid.uuid4().hex[:8]
+    other_gate_code = f"OTHER-TENANT-GATE-{suffix}"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_branch = Branch(
+            id=uuid.uuid4(), name="Other Tenant Branch", code=f"OTHER-TENANT-BR-{suffix}"
+        )
+        other_session.add(other_branch)
+        await other_session.flush()
+        other_session.add(
+            SecurityGateFactory.build(
+                id=uuid.uuid4(),
+                branch_id=other_branch.id,
+                building_id=None,
+                code=other_gate_code,
+                gate_type="entry",
+            )
+        )
+        await other_session.commit()
+
+    response = await client.get("/api/v1/security-gates")
+    assert response.status_code == 200
+    codes = {g["code"] for g in response.json()["data"]}
+    assert security_gate.code in codes
+    assert other_gate_code not in codes
 
 
 async def test_get_security_gate_success(

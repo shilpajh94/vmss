@@ -153,6 +153,17 @@ class Settings(BaseSettings):
     # is "s3" — irrelevant for "local", which returns a plain path.
     storage_s3_presigned_url_ttl_seconds: int = 300
 
+    # add-avatar-upload-and-verify-image-storage: HMAC key signing a
+    # `local`-backend `url_for` URL, mirroring the S3 presigned-URL model so
+    # a client can actually fetch the file over HTTP. Falls back to
+    # `jwt_secret_key` when unset so a fresh checkout doesn't need a new
+    # required `.env` entry to keep working — set a dedicated value in every
+    # real environment (rotating one secret shouldn't invalidate the other).
+    storage_local_url_secret: str | None = Field(default=None, alias="STORAGE_LOCAL_URL_SECRET")
+    storage_local_presigned_url_ttl_seconds: int = Field(
+        default=300, alias="STORAGE_LOCAL_PRESIGNED_URL_TTL_SECONDS"
+    )
+
     # Mail settings for `core/emailing.py`'s `SmtpEmailSender` — shared by
     # `invitations/notifications.py` and `reports/tasks.py` (see
     # add-pre-registration/design.md Decision 4 and
@@ -179,6 +190,15 @@ class Settings(BaseSettings):
     invitation_token_ttl_hours: int = 168
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
     invitation_max_group_visitors: int = 20
+    # checkin-approval-workflow-improvements: sized independently from
+    # invitation_max_upload_size_bytes (a photo capture, not a scanned
+    # document, has different realistic size expectations).
+    invitation_max_photo_size_bytes: int = 2 * 1024 * 1024
+
+    # `auth` feature config (add-avatar-upload-and-verify-image-storage) —
+    # sized the same as invitation_max_photo_size_bytes since an avatar is
+    # the same kind of capture (a photo, not a scanned document).
+    avatar_max_upload_size_bytes: int = 2 * 1024 * 1024
 
     # QR check-in token encryption (add-qr-checkin-security) — a dedicated
     # key, deliberately not shared with `sso_encryption_key` even though

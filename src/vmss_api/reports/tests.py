@@ -12,10 +12,11 @@ from factories import (
     DepartmentFactory,
     FloorFactory,
     ReceptionDeskFactory,
+    RoleFactory,
     SecurityGateFactory,
     UserFactory,
 )
-from vmss_api.auth.models import User
+from vmss_api.auth.models import User, UserBranchRole
 from vmss_api.core.database import AsyncSessionLocal
 from vmss_api.core.security import hash_password
 from vmss_api.org_structure.models import Branch, Building, Department
@@ -336,3 +337,82 @@ async def test_dispatch_daily_rollup_snapshots_enqueues_every_active_tenant(
 
     assert str(second_tenant.id) in enqueued
     assert str(tenant.id) not in enqueued
+
+
+# --- Real dispatch verification (against DDEV's Mailpit, not a fake sender) ---
+#
+# Every task test above monkeypatches `tasks.email_sender` with
+# `_RecordingEmailSender`/`_FailingEmailSender` — proving the task *calls*
+# the sender correctly, not that a real message is actually deliverable.
+# This test leaves `email_sender` as the real `SmtpEmailSender` so a genuine
+# `aiosmtplib.send` goes out over the loopback SMTP port DDEV intercepts,
+# then asks Mailpit's own HTTP API whether the message actually arrived —
+# same pattern as
+# `invitations/tests.py::test_send_approval_notification_delivers_email_with_qr_via_mailpit`.
+
+_MAILPIT_BASE_URL = "http://localhost:8025/api/v1"
+_MAILPIT_API_URL = f"{_MAILPIT_BASE_URL}/messages"
+
+
+async def test_reports_snapshot_delivers_email_via_mailpit(
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch_with_org_chart: tuple[Building, Department],
+) -> None:
+    """Closes proposal.md task 9.2 — the daily admin rollup email
+    (`reports/tasks.py::_send_tenant_rollup_snapshot`) previously only had
+    stub-based coverage (the four tests above). This proves a real send
+    actually lands: content is read back from Mailpit's dev-capture API,
+    not asserted against a recording fake.
+
+    A dedicated Admin-role user with a unique, uuid-suffixed email is
+    created here rather than reusing the `user` fixture (fixed at
+    `admin@acme-test.example`) — the rollup's subject line is a constant
+    ("Daily branch rollup snapshot"), so matching by recipient address is
+    what keeps this test's Mailpit query from colliding with leftover
+    messages from a prior run of this same test.
+    """
+    recipient = f"mailpit-check-{uuid.uuid4().hex[:8]}@acme-test.example"
+    admin_role = RoleFactory.build(id=uuid.uuid4(), name="admin", permissions=[])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=admin_role, branch_id=None)
+    admin_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=recipient,
+        hashed_password=hash_password("correct-password"),
+        full_name="Mailpit Admin",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([admin_role, admin_user])
+    await db_session.commit()
+
+    expected = await get_cross_branch_rollup(db_session)
+
+    # `tasks.email_sender` deliberately left untouched (unlike every test
+    # above) so this goes out through the real `SmtpEmailSender`.
+    await tasks._send_tenant_rollup_snapshot(str(tenant.id), tenant.schema_name)
+
+    async with AsyncClient() as mailpit:
+        list_response = await mailpit.get(_MAILPIT_API_URL, params={"limit": 50})
+        assert list_response.status_code == 200
+        matches = [
+            m
+            for m in list_response.json()["messages"]
+            if any(to["Address"] == recipient for to in m["To"])
+        ]
+        assert len(matches) == 1, (
+            f"expected exactly one Mailpit message to {recipient}, found {len(matches)}"
+        )
+        message_id = matches[0]["ID"]
+
+        detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{message_id}")
+        assert detail_response.status_code == 200
+        detail = detail_response.json()
+        assert detail["Subject"] == "Daily branch rollup snapshot"
+        assert any(to["Address"] == recipient for to in detail["To"])
+        body_text = detail["Text"]
+        assert f"{expected.total_branches} branch(es)" in body_text
+        assert f"{expected.total_buildings} building(s)" in body_text
+        assert f"{expected.total_active_employees} active employee(s)" in body_text
+    # Deliberately not deleted from Mailpit afterward, matching
+    # invitations/tests.py's Mailpit test — harmless to accumulate since
+    # each run uses a fresh, unique recipient address.

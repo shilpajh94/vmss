@@ -1,13 +1,16 @@
 import uuid
+from typing import Literal
 
 from pydantic import EmailStr, Field
 
 from vmss_api.core.schemas import CamelModel
 
+TenantSortableField = Literal["name", "slug", "created_at"]
+
 
 class PlatformLoginRequest(CamelModel):
     email: EmailStr
-    password: str
+    password: str = Field(max_length=128)
 
 
 class PlatformTokenResponse(CamelModel):

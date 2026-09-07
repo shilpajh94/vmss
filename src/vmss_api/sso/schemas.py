@@ -1,8 +1,11 @@
 import uuid
+from typing import Literal
 
 from pydantic import Field
 
 from vmss_api.core.schemas import CamelModel
+
+SsoRoleMappingSortableField = Literal["idp_group_claim_value", "created_at"]
 
 
 class SsoProviderConfigIn(CamelModel):
@@ -51,4 +54,7 @@ class SsoRoleMappingOut(CamelModel):
 
 
 class SsoExchangeRequest(CamelModel):
-    code: str
+    code: str = Field(
+        max_length=512,
+        examples=["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."],
+    )

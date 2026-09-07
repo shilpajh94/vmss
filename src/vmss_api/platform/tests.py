@@ -30,6 +30,21 @@ async def test_platform_login_wrong_password(client: AsyncClient, superadmin: Su
     assert response.status_code == 401
 
 
+async def test_platform_login_password_too_long_rejected(
+    client: AsyncClient, superadmin: SuperAdmin
+) -> None:
+    """`PlatformLoginRequest.password`'s `max_length=128` bound
+    (`security-architecture.md` §4) — a DoS guard on the Argon2-hashing
+    input, not a restriction on legitimate passphrases; `superadmin`'s own
+    fixture password ("correct-password") is far under this.
+    """
+    response = await client.post(
+        "/api/v1/platform/auth/login",
+        json={"email": superadmin.email, "password": "a" * 129},
+    )
+    assert response.status_code == 422
+
+
 async def test_platform_login_rate_limit_trips(
     client: AsyncClient, superadmin: SuperAdmin, monkeypatch
 ) -> None:

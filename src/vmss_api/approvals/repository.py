@@ -138,22 +138,28 @@ class InvitationApprovalStepRepository(TenantScopedRepository[InvitationApproval
         *,
         delegated_to_user_id: uuid.UUID,
         delegated_by_user_id: uuid.UUID,
+        expected_current_delegate_id: uuid.UUID | None = None,
     ) -> InvitationApprovalStep | None:
         """Atomic conditional transition, same race-safety rationale as
-        `approve_if_pending`: two concurrent delegate requests for the same
-        step can't both pass the "not already delegated" check and both
-        record a delegation. `None` means the step was no longer `pending`
-        or already had a delegate assigned by the time this ran — the
-        caller (`approvals/service.py::delegate_step`) treats that as 409,
-        the same terminal-state rejection `approve_if_pending`'s own `None`
-        case gets.
+        `approve_if_pending`: the `WHERE` clause is a compare-and-swap on
+        the step's *current* delegate (`expected_current_delegate_id` —
+        `None` for "not yet delegated", the first-delegation case) as well
+        as its `pending` status, so two concurrent delegate/re-delegate
+        requests for the same step can't both pass the caller's
+        authorization check (evaluated against the delegate value read just
+        before this call) and both silently record a delegation — the
+        loser's CAS fails and it observes `None`. `None` also covers "no
+        longer pending" — the caller (`approvals/service.py::delegate_step`)
+        treats either case as 409.
         """
         stmt = (
             update(InvitationApprovalStep)
             .where(
                 InvitationApprovalStep.id == step_id,
                 InvitationApprovalStep.status == "pending",
-                InvitationApprovalStep.delegated_to_user_id.is_(None),
+                InvitationApprovalStep.delegated_to_user_id.is_(None)
+                if expected_current_delegate_id is None
+                else InvitationApprovalStep.delegated_to_user_id == expected_current_delegate_id,
             )
             .values(
                 delegated_to_user_id=delegated_to_user_id,

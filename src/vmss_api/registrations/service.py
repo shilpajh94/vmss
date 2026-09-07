@@ -16,6 +16,8 @@ async def create_walk_in_registration(
     tenant: Tenant,
     primary_contact_id_proof_content: bytes,
     visitor_id_proof_contents: list[bytes],
+    primary_contact_photo_content: bytes | None,
+    visitor_photo_contents: list[bytes],
 ) -> Invitation:
     """API-13. A visitor registering on arrival, with no staff creator and no
     prior invitation. Everything else about record creation — validation,
@@ -23,7 +25,8 @@ async def create_walk_in_registration(
     is identical to staff pre-registration (API-09), so it is delegated to
     `invitations.service.create_invitation` rather than reimplemented (see
     add-walkin-visitor-registration/design.md Decision 2). This feature owns
-    no `Invitation` repository of its own.
+    no `Invitation` repository of its own. Optional profile photo capture
+    (checkin-approval-workflow-improvements) is inherited the same way.
     """
     return await invitations_service.create_invitation(
         tenant_db,
@@ -33,5 +36,7 @@ async def create_walk_in_registration(
         tenant=tenant,
         primary_contact_id_proof_content=primary_contact_id_proof_content,
         visitor_id_proof_contents=visitor_id_proof_contents,
+        primary_contact_photo_content=primary_contact_photo_content,
+        visitor_photo_contents=visitor_photo_contents,
         source=RegistrationSource.visitor_walk_in,
     )

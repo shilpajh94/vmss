@@ -1059,6 +1059,15 @@ async def test_exchange_code_wrong_type_rejected(client: AsyncClient, user: User
     assert response.status_code == 401
 
 
+async def test_exchange_code_too_long_rejected(client: AsyncClient) -> None:
+    """`SsoExchangeRequest.code`'s `max_length=512` bound
+    (`security-architecture.md` §4) — a real exchange code/JWT is well
+    under this, so only a pathological payload should ever hit it.
+    """
+    response = await client.post("/api/v1/auth/sso/exchange", json={"code": "a" * 513})
+    assert response.status_code == 422
+
+
 # --- No lockout: password login unaffected by SSO -----------------------------
 
 

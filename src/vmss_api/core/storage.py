@@ -7,9 +7,13 @@ add-walkin-visitor-registration/design.md Decision 4; callers never branch on
 which backend is active, they only ever handle the opaque key `save` returns.
 """
 
+import hashlib
+import hmac
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 import aioboto3
 import anyio
@@ -52,6 +56,38 @@ class StorageBackendError(RuntimeError):
     (file-storage capability spec.md "Backend unreachable or
     misconfigured").
     """
+
+
+def _local_url_secret() -> bytes:
+    secret = settings.storage_local_url_secret or settings.jwt_secret_key
+    return secret.encode("utf-8")
+
+
+def _local_url_signature(key: str, expires_at: int) -> str:
+    message = f"{key}:{expires_at}".encode()
+    return hmac.new(_local_url_secret(), message, hashlib.sha256).hexdigest()
+
+
+async def _local_presigned_url(key: str) -> str:
+    """Signed, time-boxed URL for the `local` backend, mirroring the `s3`
+    backend's presigned-URL model (add-avatar-upload-and-verify-image-
+    storage/design.md Decision 1) — the signature is the authorization, a
+    caller fetching it needs no separate permission check.
+    """
+    expires_at = int(time.time()) + settings.storage_local_presigned_url_ttl_seconds
+    signature = _local_url_signature(key, expires_at)
+    return f"/api/v1/files/local/{quote(key, safe='')}?exp={expires_at}&sig={signature}"
+
+
+def verify_local_url(key: str, expires_at: int, signature: str) -> bool:
+    """Verifies a local-backend signed URL's signature and expiry. Returns
+    `False` on tamper or expiry rather than raising, so the serving route can
+    respond with a uniform rejection regardless of which check failed.
+    """
+    if expires_at < int(time.time()):
+        return False
+    expected = _local_url_signature(key, expires_at)
+    return hmac.compare_digest(expected, signature)
 
 
 _s3_session = aioboto3.Session()
@@ -110,28 +146,24 @@ async def save(tenant_id: uuid.UUID, category: str, content: bytes, content_type
 
 
 async def url_for(key: str) -> str:
-    """A usable retrieval reference for `key` — a pre-signed, time-boxed URL
-    for the `s3` backend, a plain filesystem path for `local`. Either way,
-    the caller never branches on which backend produced it.
-
-    The `local` variant is a bare filesystem path, not an HTTP-reachable
-    URL — fine for a caller that only needs to read the file back
-    server-side (e.g. a test), but never hand it to a client. A caller that
-    must let a client fetch the content over HTTP should use `load()`
-    behind its own authenticated route instead (see `audit_trail/router.py`'s
-    report-download endpoint).
+    """A client-fetchable, pre-signed, time-boxed URL for `key` — via S3's
+    own presigned-URL mechanism for the `s3` backend, via a locally signed
+    URL served by `core/storage_router.py` for `local`
+    (add-avatar-upload-and-verify-image-storage/design.md Decision 1). Either
+    way, the caller never branches on which backend produced it, and the
+    result is always safe to place directly in a client-facing response
+    field — never a raw server-side filesystem path.
     """
     if settings.storage_backend == "s3":
         return await _s3_presigned_url(key)
-    return str(_path_for(key))
+    return await _local_presigned_url(key)
 
 
 async def load(key: str) -> bytes:
-    """Reads back the bytes stored under `key`, for a caller that must serve
-    the content itself from behind its own auth check rather than handing
-    out a direct storage reference via `url_for` — e.g. `local`'s bare
-    filesystem path from `url_for` is not HTTP-reachable, so a route like
-    `audit_trail`'s report download proxies the bytes through this instead.
+    """Reads back the raw bytes stored under `key`, for a caller that serves
+    content itself from behind its own check rather than handing out a
+    `url_for` reference — used by `audit_trail`'s report download and by
+    `core/storage_router.py`'s local-URL-serving route.
     """
     if settings.storage_backend == "s3":
         return await _s3_load(key)

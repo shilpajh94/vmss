@@ -19,6 +19,26 @@ class RegistrationType(StrEnum):
     group = "group"
 
 
+class InvitationStatus(StrEnum):
+    """The closed set of values `Invitation.status` is ever written by
+    application code — `models.py`'s state-machine writes (`create_invitation`,
+    `approve_if_submitted`, `deny_if_submitted`, `check_in_if_eligible`/
+    `check_in_by_qr_if_eligible`, `check_out_if_checked_in`/
+    `check_out_by_qr_if_eligible`, `service.py`'s `initial_status`). `pending`
+    is the column's DB-level default but is never produced by any code path
+    (see `models.py::Invitation`'s own docstring) — deliberately excluded so
+    `GET /invitations?status=` can't be used to fish for a state that no row
+    can actually be in. `api-conventions.md` §1's real-enum-filter rule,
+    matching `RegistrationType`/`RegistrationSource` above.
+    """
+
+    submitted = "submitted"
+    approved = "approved"
+    denied = "denied"
+    checked_in = "checked_in"
+    checked_out = "checked_out"
+
+
 class RegistrationSource(StrEnum):
     """Which channel created the `Invitation` row — an employee's advance
     pre-registration (API-09) or a visitor's own walk-in registration
@@ -236,6 +256,7 @@ class InvitationListItemOut(CamelModel):
     status: str
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
+    primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
     expires_at: datetime
     submitted_at: datetime | None
@@ -251,6 +272,7 @@ class InvitationVisitorOut(CamelModel):
     email: str | None
     phone: str | None
     id_proof_type: str
+    photo_url: str | None = None
 
 
 class InvitationVehicleOut(CamelModel):
@@ -259,6 +281,43 @@ class InvitationVehicleOut(CamelModel):
     license_plate: str
     make_model: str | None
     color: str | None
+
+
+class InvitationCheckInOut(CamelModel):
+    """Response for `PATCH /api/v2/invitations/{trackingId}/check-in`, the
+    single staff/desk-facing check-in endpoint (spec.md "Staff Check-In Has
+    One Canonical Endpoint" / "Staff Check-In Response Surfaces Full
+    Invitation Detail") — every field `InvitationOut` already carries, plus
+    everything captured at registration that the public tracking lookup
+    (`InvitationTrackingOut`) also returns. No branch/creator/badge/watchlist
+    internals — those stay exclusive to `InvitationDetailOut`
+    (`GET /invitations/{id}`).
+    """
+
+    id: uuid.UUID
+    tracking_id: str
+    registration_type: RegistrationType
+    source: RegistrationSource
+    status: str
+    visitor_category_id: uuid.UUID | None
+    host_id: uuid.UUID | None = None
+    expires_at: datetime
+    submitted_at: datetime | None
+    approved_at: datetime | None
+    current_approval_step: CurrentApprovalStepOut | None = None
+    primary_contact_full_name: str
+    primary_contact_photo_url: str | None = None
+    purpose_of_visit: str | None
+    host_name_or_email: str | None
+    preferred_visit_date: date | None
+    preferred_visit_time: time | None
+    expected_duration: str | None
+    department_to_visit: str | None
+    additional_notes: str | None
+    carried_items: list[str]
+    carried_items_description: str | None
+    visitors: list[InvitationVisitorOut]
+    vehicles: list[InvitationVehicleOut]
 
 
 class InvitationTrackingOut(CamelModel):
@@ -275,6 +334,7 @@ class InvitationTrackingOut(CamelModel):
     source: str
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
+    primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
     host_name_or_email: str | None
     preferred_visit_date: date | None
@@ -323,6 +383,7 @@ class InvitationDetailOut(CamelModel):
     registration_type: str
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
+    primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
     host_name_or_email: str | None
     host_id: uuid.UUID | None = None
@@ -399,6 +460,7 @@ class InvitationQrCheckInOut(CamelModel):
     source: str
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
+    primary_contact_photo_url: str | None = None
     primary_contact_email: str | None
     primary_contact_phone: str | None
     host_id: uuid.UUID | None = None

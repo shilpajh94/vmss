@@ -17,7 +17,7 @@ change that collapsed it into the single-call contract described below.
 
 | Method | Path | Auth | Rate limit | Description |
 |---|---|---|---|---|
-| POST | `/api/v1/invitations` | `invitations:create` at the resolved branch | — | An employee creates a fully completed single or group invitation in one call: `visitorCategoryId` (required — must resolve to an active `VisitorCategory` in the tenant), primary contact, co-visitors, visit details, carried items, vehicles, and consent, each visitor (including the primary contact) with their own ID-proof upload. Multipart: a JSON `payload` part (camelCased fields, matching `InvitationCreate`) plus `primary_contact_id_proof_file`/`visitor_id_proof_files` file parts — multipart field *names* are the literal Python parameter names, not camelCased, since they aren't part of a JSON body. Returns a tracking ID with the invitation's status resolved from `Company.autoApprovePreRegisteredVisitors` — `approved` immediately, or `submitted` (awaiting approval) — see "Auto-approve vs. manual approval" below. If the invitation submits `submitted` and its category has an active approval workflow, the response's `currentApprovalStep` shows the first step immediately — see "Per-category multi-step approval" below. Accepts an optional `Idempotency-Key` header (`api-conventions.md` §3) — a retried request with the same key and tenant returns the original response instead of creating a second invitation. **BREAKING**: `visitorCategoryId` is a new required field — existing callers must be updated to send it. See "Finding the payload shape in Swagger" below for where to actually see the `individual`/`group` JSON examples in `/docs`. |
+| POST | `/api/v1/invitations` | `invitations:create` at the resolved branch | — | An employee creates a fully completed single or group invitation in one call: `visitorCategoryId` (required — must resolve to an active `VisitorCategory` in the tenant), primary contact, co-visitors, visit details, carried items, vehicles, and consent, each visitor (including the primary contact) with their own ID-proof upload. Multipart: a JSON `payload` part (camelCased fields, matching `InvitationCreate`) plus `primary_contact_id_proof_file`/`visitor_id_proof_files` file parts, and, optionally, `primary_contact_photo_file`/`visitor_photo_files` (`checkin-approval-workflow-improvements` — see "Optional profile photo" below) — multipart field *names* are the literal Python parameter names, not camelCased, since they aren't part of a JSON body. Returns a tracking ID with the invitation's status resolved from `Company.autoApprovePreRegisteredVisitors` — `approved` immediately, or `submitted` (awaiting approval) — see "Auto-approve vs. manual approval" below. If the invitation submits `submitted` and its category has an active approval workflow, the response's `currentApprovalStep` shows the first step immediately — see "Per-category multi-step approval" below. Accepts an optional `Idempotency-Key` header (`api-conventions.md` §3) — a retried request with the same key and tenant returns the original response instead of creating a second invitation. **BREAKING**: `visitorCategoryId` is a new required field — existing callers must be updated to send it. See "Finding the payload shape in Swagger" below for where to actually see the `individual`/`group` JSON examples in `/docs`. |
 | POST | `/api/v1/invitations/{id}/approve` | `invitations:approve` at the invitation's branch | — | Transitions a `submitted` invitation to `approved` and dispatches the QR-bearing approval notification at that point. 409 if the invitation isn't currently `submitted`, **or if it still has a pending approval step** (a workflow-backed invitation must be approved through `POST /invitations/{id}/approval-steps/{stepId}/approve` instead — see "Per-category multi-step approval" below); 404 for an unknown id; 403 (not 404) if the caller lacks branch access to an invitation that does exist. |
 | POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/approve` | `invitations:approve` at the invitation's branch, **and** the caller's assigned role must match the step's `approverRoleId` (or hold `invitations:approve-override`) | — | Approves the invitation's current pending step. The last step's approval flips the invitation to `approved` and fires the same QR/notification dispatch the blanket endpoint does; any earlier step unlocks the next one instead. 409 if `stepId` isn't the current pending step; 404 for an unknown invitation/step id (or a step belonging to a different invitation); 403 if the caller's role doesn't match and they lack the override permission. Registered by the `approvals` feature — see `docs/features/approvals.md`. |
 | POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/reject` | Same as the approve variant above | — | Rejects the current pending step (mandatory `reason`) — terminal: immediately denies the whole invitation (same `denied` state `POST /invitations/{id}/deny` produces) regardless of how many steps remain, which stay `pending`/unactioned. Same 409/404/403 conditions as the approve variant. |
@@ -34,9 +34,9 @@ branch from the request body via the same `authorize_branch_id` helper.
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
 | GET | `/api/v1/invitations/{id}` | `invitations:view` at the invitation's branch | — | Authenticated, staff-facing single-invitation detail view (`InvitationDetailOut`) — branch/source/creator plus every lifecycle field below. 404 unknown id, 403 (not 404) if the caller lacks branch access. See "Lifecycle actions" below. |
 | PATCH | `/api/v1/invitations/{id}/deny` | `invitations:deny` at the invitation's branch | — | Transitions a `submitted` invitation to `denied`, with a mandatory `reason`, and dispatches a denial notification. 409 if not currently `submitted`. |
-| PATCH | `/api/v1/invitations/{id}/check-in` | `invitations:checkin` at the invitation's branch | — | **Deprecated** — see the public `/api/v2` route below. Transitions an `approved` invitation to `checked_in`. 409 if not `approved`, or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key`. Response carries a `Deprecation: true` header. Target removal date: TBD (see `openspec/changes/add-public-checkin-endpoint/design.md` Open Questions) — not yet removed, still fully functional. |
-| PATCH | `/api/v2/invitations/{trackingId}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated check-in by the invitation's `tracking_id` (`INV-XXXXXXXX`) — the manual desk fallback for when a camera isn't available. Same transition/409/404 rules as the `v1` route; no branch-authorization check since there's no authenticated caller. Audit entries for this path use `actor_user_id = null` and `action = "invitation_checked_in_public"`. Accepts `Idempotency-Key`. See "The tracking ID is a plain, human-readable identifier" below for how tenancy resolves with no bearer token. |
-| PATCH | `/api/v2/invitations/qr/{token}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated QR scan check-in (`add-qr-checkin-security`) — `token` is the encrypted, tamper-evident check-in token encoded in the invitation's QR image (see "QR check-in: encrypted token and the `checkInStatus` lifecycle" below), not the tracking ID. The same token drives every direction, cycling for as many entry/exit round trips as the visitor makes: a scan while outside (`unused`/`checked_out`) checks the visitor in, a scan while `checked_in` checks them out — `checked_out` is never a dead end. 400 for an invalid/tampered token or a not-yet-approved invitation, 409 for a watchlist block, 410 if scanned for entry (first or repeat) after `expiresAt` has passed (the exit scan is never expiry-blocked). Audit entries use `action = "invitation_qr_checked_in"`/`"invitation_qr_checked_out"`, one per scan. Accepts `Idempotency-Key` — a scanning client must mint a fresh key per physical scan, not reuse one across scans. |
+| PATCH | `/api/v2/invitations/{trackingId}/check-in` | None (public) | 20/minute per IP | **The single staff/desk-facing check-in endpoint** — the legacy `PATCH /api/v1/invitations/{id}/check-in` route has been removed outright (`checkin-approval-workflow-improvements`). Public, unauthenticated check-in by the invitation's `tracking_id` (`INV-XXXXXXXX`). Transitions an `approved` invitation to `checked_in`; 409 if not `approved`, or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key`. No branch-authorization check since there's no authenticated caller. Audit entries for this path use `actor_user_id = null` and `action = "invitation_checked_in_public"`. Success response (`InvitationCheckInOut`) matches the public tracking lookup's field set — primary contact name, host display name, purpose of visit, department, preferred visit date/time, expected duration, additional notes, carried items, co-visitors, and vehicles — alongside the id/trackingId/status fields it already carried. It does not carry `branchId`/`createdByUserId`/badge/watchlist-override internals; those stay exclusive to `GET /invitations/{id}`. See "The tracking ID is a plain, human-readable identifier" below for how tenancy resolves with no bearer token. |
+| PATCH | `/api/v2/invitations/qr/{token}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated QR scan check-in — `token` is the encrypted, tamper-evident check-in token encoded in the invitation's QR image (see "QR check-in: encrypted token and the `checkInStatus` lifecycle" below), not the tracking ID. **No longer toggles** (`checkin-approval-workflow-improvements`): entry only, `unused`/`checked_out` → `checked_in`; 409 (not a silent toggle to checked-out) if already `checked_in` — use the check-out endpoint below instead. 400 for an invalid/tampered token or a not-yet-approved invitation, 409 for a watchlist block or already-checked-in, 425 if scanned before `preferredVisitDate` (`qr-checkin-scheduling-photo-email`), 410 if scanned after `expiresAt` has passed. Audit entries use `action = "invitation_qr_checked_in"`. Accepts `Idempotency-Key` — a scanning client must mint a fresh key per physical scan, not reuse one across scans. |
+| PATCH | `/api/v2/invitations/qr/{token}/check-out` | None (public) | 20/minute per IP | Exit counterpart of the QR check-in route above, added by `checkin-approval-workflow-improvements` to replace its old check-in-URL toggle. `checked_in` → `checked_out`; 409 if not currently `checked_in`. Never expiry-blocked — a visit that legitimately continues past `expiresAt` can still be closed out. Audit entries use `action = "invitation_qr_checked_out"`. Accepts `Idempotency-Key`. |
 | PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. |
 | PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`, and dispatches a reschedule notification to the primary contact. 409 once `checked_in`/`checked_out`/`denied`. |
 | PATCH | `/api/v1/invitations/{id}/extend` | `invitations:extend` at the invitation's branch | — | Pushes `expiresAt` forward while `approved` or `checked_in`. 422 if the new expiry isn't strictly later than the current one; 409 if ineligible. |
@@ -96,6 +96,29 @@ submitted, byte-for-byte the pre-existing behavior — this was an additive
 change, not a breaking one. `POST /registrations/walk-in` inherits the same
 behavior automatically, since it submits the identical `VisitDetailsSubmit`
 shape.
+
+### Optional profile photo (`checkin-approval-workflow-improvements`)
+
+Alongside each visitor's required ID-proof upload, `POST /invitations`
+accepts an optional profile photo: `primary_contact_photo_file` (single) for
+the primary contact, and `visitor_photo_files` (list) for co-visitors,
+order-matched to `payload.visitors` the same way `visitor_id_proof_files`
+is. The photo list may be **shorter** than the visitor list — a visitor
+beyond the supplied photo count simply has none; there is no way to skip a
+photo for an early visitor while supplying one for a later one in the same
+request, since multipart file lists have no concept of a sparse/null entry.
+
+Validated the same way ID-proof uploads are (real content/magic-byte
+sniffing, never the client's declared content type or filename) but with a
+narrower, **image-only** allow-list — JPEG/PNG, no PDF — and its own size
+limit, `INVITATION_MAX_PHOTO_SIZE_BYTES` (default 2 MB, independent of
+`INVITATION_MAX_UPLOAD_SIZE_BYTES`). Omitting a photo never blocks
+creation. The stored photo is surfaced back as `photoUrl` on each visitor
+entry and `primaryContactPhotoUrl` on the invitation, in every response
+that already carries visitor detail (`GET /invitations/{id}`, the tracking
+lookup, the canonical check-in response, and the QR check-in/check-out
+response — see "QR check-in" below) — null when no photo was captured.
+`POST /registrations/walk-in` accepts the identical two file parts.
 
 ## Auto-approve vs. manual approval
 
@@ -280,8 +303,11 @@ Query params:
 | `relevantToMe` | bool | `false` | See "Relevant to me" below — a different filter mode entirely, not a narrower branch scope. |
 
 Each row is an `InvitationListItemOut` — tracking ID, registration type,
-source, status, `visitorCategoryId`, primary contact name, purpose of visit,
-and expiry/submission timestamps — deliberately narrower than
+source, status, `visitorCategoryId`, primary contact name,
+`primaryContactPhotoUrl` (`qr-checkin-scheduling-photo-email` — null when no
+photo was captured, resolved via the same storage-key-to-URL helper the
+detail/tracking responses already use), purpose of visit, and
+expiry/submission timestamps — deliberately narrower than
 `InvitationTrackingOut`: it carries no per-visitor/vehicle detail, and no
 `currentApprovalStep` either, so the underlying query never needs to
 eager-load a child collection or run the extra current-step lookup for a
@@ -353,32 +379,51 @@ never checked `expiresAt`.
   later badge issuance/reprint reuses the same token instead of minting a
   new one.
 - **Lifecycle**: `checkInStatus` — `unused`/`checked_out` (currently
-  outside) toggling with `checked_in` (currently inside) — is a field
-  parallel to (not merged with) `status`; see "Lifecycle actions" above
-  for why. Scanning drives the transition directly: no separate
-  preview/confirm step. `checked_out` is **not** a dead end — a visitor
-  may have multiple entry points during one visit (e.g. leaving for lunch
-  and returning, or moving between buildings on a multi-building site),
-  so a scan while `checked_out` re-admits exactly like a scan while
-  `unused`. `unused` and `checked_out` are kept as distinct values only
-  for what they record (never entered vs. entered-and-left at least
-  once) — the gate treats them identically.
+  outside) transitioning to `checked_in` (currently inside) and back — is a
+  field parallel to (not merged with) `status`; see "Lifecycle actions"
+  above for why. **Two explicit endpoints, not a toggle**
+  (`checkin-approval-workflow-improvements`): the client calls
+  `.../check-in` to enter and `.../check-out` to exit — the server no
+  longer infers which one from current state, and calling the wrong one for
+  the current state is rejected 409 rather than silently doing the other
+  action. `checked_out` is **not** a dead end — a visitor may have multiple
+  entry points during one visit (e.g. leaving for lunch and returning, or
+  moving between buildings on a multi-building site), so calling check-in
+  while `checked_out` re-admits exactly like calling it while `unused`.
+  `unused` and `checked_out` are kept as distinct values only for what they
+  record (never entered vs. entered-and-left at least once) — the gate
+  treats them identically.
 - **Expiry**: checked on every transition *into* `checked_in` — the first
   entry from `unused` and any later re-entry from `checked_out` alike. A
   visit still `checked_in` past `expiresAt` can still be checked out — the
   expiry gates entry, not how long someone already inside can stay.
-- **Response** (`qr-checkin-full-registration-detail`): a successful scan
-  returns everything captured at registration — the same shape
-  `GET /invitations/track?trackingId=` (`InvitationTrackingOut`) already
-  returns, including `registrationType`/`source`, preferred visit
-  date/time and expected duration, additional notes, carried items, the
-  full co-visitor list (`visitors`), and the full vehicle list
-  (`vehicles`) — plus the QR-specific fields that lookup doesn't carry
-  (`id`, `checkInStatus`, `checkedInAt`/`checkedOutAt`, primary contact
-  email/phone, `hostId`). `currentApprovalStep` is deliberately omitted —
-  a QR token only ever exists post-approval, so it would always be
-  `null`. A rejected scan discloses none of this, only a generic failure
-  message.
+- **Scheduled visit date** (`qr-checkin-scheduling-photo-email`): entry is
+  additionally gated on `preferredVisitDate`, the same date the visitor's
+  registration/reschedule already captures — a scan attempted before that
+  date is rejected `425 Too Early`, distinct from the `410 Gone` expiry
+  rejection so a client can branch on status code alone. The comparison is
+  date-only (tenant-local calendar day, via `Tenant.timezone`), so a scan
+  succeeds at any time of day once the scheduled date arrives, up until
+  `expiresAt`. An invitation with no `preferredVisitDate` set (still
+  possible — the field is optional at registration) skips this check
+  entirely and falls back to expiry-only gating, exactly as before. Like
+  expiry, this only gates entry — check-out is never blocked by it.
+- **Response** (`qr-checkin-full-registration-detail`, same shape for both
+  check-in and check-out): a successful scan returns everything captured
+  at registration — the same shape `GET /invitations/track?trackingId=`
+  (`InvitationTrackingOut`) already returns, including
+  `registrationType`/`source`, preferred visit date/time and expected
+  duration, additional notes, carried items, the full co-visitor list
+  (`visitors`), and the full vehicle list (`vehicles`) — plus the
+  QR-specific fields that lookup doesn't carry (`id`, `checkInStatus`,
+  `checkedInAt`/`checkedOutAt`, primary contact email/phone, `hostId`),
+  and, for the primary contact and each visitor who has one on file, their
+  captured profile photo (`primaryContactPhotoUrl`/`photoUrl` — null when
+  none was captured; see "Optional profile photo" above,
+  `checkin-approval-workflow-improvements`). `currentApprovalStep` is
+  deliberately omitted — a QR token only ever exists post-approval, so it
+  would always be `null`. A rejected scan discloses none of this, only a
+  generic failure message.
 - No tenant claim in the token yet — this endpoint resolves tenancy the
   same way the tracking-ID `v2` route does (`track_default_tenant`, the
   single-configured-tenant shortcut described above). Revisit once a
@@ -424,6 +469,19 @@ approver(s) (host or role-at-branch); the other five push the invitation's
 host, if one resolved. See `docs/features/notifications.md` for the
 dispatch primitive and recipient-resolution rules.
 
+**Host creation email** (`qr-checkin-scheduling-photo-email`): independent of
+the above, creation also enqueues `send_host_creation_notification` whenever
+`hostId` resolves — an email (not a push) telling the host an invitation
+naming them was received, dispatched asynchronously without delaying the
+creation response. This fires on *every* creation with a resolved host,
+regardless of auto-approve outcome or approval-step routing — unlike the
+submission push above, which only fires when the host is also the first
+(`stepOrder` 0) approval step's approver on a non-auto-approved invitation.
+The host's email is resolved via `UserRepository.get_active(hostId)` inside
+the task itself (not passed from the request), so a host deactivated between
+creation and task execution simply results in no email, not an error. No
+resolved host means no dispatch, and creation succeeds exactly as before.
+
 **No Celery worker runs by default in this DDEV dev environment** — a
 created invitation's notification task will sit queued in Redis until
 something consumes it. To manually verify dispatch outside the automated
@@ -459,6 +517,7 @@ table for the S3 connection settings.
 | `INVITATION_TOKEN_TTL_HOURS` | `168` (7 days) | How long a created invitation's tracking record stays within its validity window. |
 | `INVITATION_MAX_UPLOAD_SIZE_BYTES` | `5242880` (5 MB) | Max ID-proof file size. |
 | `INVITATION_MAX_GROUP_VISITORS` | `20` | Cap on co-visitors in one group submission. |
+| `INVITATION_MAX_PHOTO_SIZE_BYTES` | `2097152` (2 MB) | Max optional profile-photo file size — independent of the ID-proof limit above. |
 | `STORAGE_ROOT` | `./var/storage` | Local-disk root for uploaded files in dev. |
 | `QR_TOKEN_ENCRYPTION_KEY` | unset | Fernet key encrypting/decrypting QR check-in tokens. Fails loudly the first time a token is generated or scanned without it — never a silent no-op. Generate one the same way as `SSO_ENCRYPTION_KEY`; deliberately a separate key from it. |
 | `MAIL_HOST`/`MAIL_PORT`/`MAIL_USERNAME`/`MAIL_PASSWORD`/`MAIL_USE_TLS`/`MAIL_FROM_ADDRESS` | local dev mail-catcher | Outbound email for visit confirmations. See `docs/features/configuration.md`. |

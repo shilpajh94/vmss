@@ -203,7 +203,9 @@ class UserRepository(TenantScopedRepository[User]):
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def list_hosts_page(self, *, page: int, page_size: int) -> tuple[list[User], int]:
+    async def list_hosts_page(
+        self, *, page: int, page_size: int, sort_by: str, sort_order: SortOrder
+    ) -> tuple[list[User], int]:
         """Backs the public host-directory listing
         (`router.py::list_employee_directory`) — every active user holding
         the `host` role, full stop. Deliberately not branch/department
@@ -214,6 +216,8 @@ class UserRepository(TenantScopedRepository[User]):
         `sync_employee_directory`, so `employee_code`/`department_id` are
         often unset here).
         """
+        column: Any = {"name": User.full_name, "created_at": User.created_at}[sort_by]
+        order = column.desc() if sort_order == SortOrder.desc else column.asc()
         conditions: list[Any] = [
             User.deleted_at.is_(None),
             User.is_active.is_(True),
@@ -229,7 +233,7 @@ class UserRepository(TenantScopedRepository[User]):
         stmt = (
             select(User)
             .where(*conditions)
-            .order_by(User.full_name.asc())
+            .order_by(order)
             .limit(page_size)
             .offset((page - 1) * page_size)
         )

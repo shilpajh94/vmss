@@ -36,8 +36,10 @@ class AuditReportRequest(CamelModel):
     """
 
     actor_user_id: uuid.UUID | None = None
-    action: str | None = None
-    entity_type: str | None = None
+    # Bound matches `AuditLog.action`/`.entity_type`'s own `String(100)`
+    # columns (auth/models.py) — security-architecture.md §4.
+    action: str | None = Field(default=None, max_length=100)
+    entity_type: str | None = Field(default=None, max_length=100)
     entity_id: uuid.UUID | None = None
     created_after: datetime | None = None
     created_before: datetime | None = None

@@ -13,7 +13,7 @@ from vmss_api.core.database import get_db
 from vmss_api.core.deps import get_current_user, get_tenant, get_tenant_db, require_permission
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import success_response
-from vmss_api.core.schemas import Envelope
+from vmss_api.core.schemas import Envelope, SortOrder
 from vmss_api.sso import service
 from vmss_api.sso.models import SsoProvider, SsoRoleMapping
 from vmss_api.sso.schemas import (
@@ -24,6 +24,7 @@ from vmss_api.sso.schemas import (
     SsoProviderTestResult,
     SsoRoleMappingIn,
     SsoRoleMappingOut,
+    SsoRoleMappingSortableField,
 )
 from vmss_api.tenant.models import Tenant
 
@@ -104,8 +105,29 @@ async def test_config(payload: SsoProviderTestRequest) -> JSONResponse:
 )
 async def list_role_mappings(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    sort_by: Annotated[
+        SsoRoleMappingSortableField, Query(alias="sortBy")
+    ] = "idp_group_claim_value",
+    sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
+    """No pagination here — deliberately deferred, not an oversight. Per
+    `api-conventions.md` §2, wrapping today's flat `data: [...]` in a
+    pagination envelope changes the response shape for existing clients,
+    which is a breaking change; `design.md`'s Decision 3 keeps this
+    unpaginated in `v1` and reports it as a follow-up instead. `sort_by`/
+    `sort_order` are purely additive optional params, so they're safe to
+    add without that same concern. The mapping set is bounded by
+    `service.list_role_mappings`'s own `limit=1000` cap, so sorting the
+    already-materialized list in Python (rather than pushing `ORDER BY`
+    into `SsoRoleMappingRepository`) avoids widening this change's touched
+    files for a list this small.
+    """
     mappings = await service.list_role_mappings(tenant_db)
+    reverse = sort_order == SortOrder.desc
+    if sort_by == "created_at":
+        mappings = sorted(mappings, key=lambda m: m.created_at, reverse=reverse)
+    else:
+        mappings = sorted(mappings, key=lambda m: m.idp_group_claim_value.lower(), reverse=reverse)
     return success_response(data=[_to_mapping_out(m) for m in mappings])
 
 

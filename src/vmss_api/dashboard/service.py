@@ -1,10 +1,8 @@
-import uuid
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.auth.models import User
 from vmss_api.core.logging import logger
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.dashboard.repository import DashboardRepository
@@ -14,9 +12,7 @@ from vmss_api.dashboard.schemas import (
     DashboardSearchResultOut,
     UpcomingVisitorOut,
 )
-from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.models import Invitation
-from vmss_api.org_structure.deps import authorize_branch_id_tolerant
 from vmss_api.tenant.models import Tenant
 
 _UPCOMING_PREVIEW_LIMIT = 10
@@ -99,21 +95,6 @@ async def get_overview(
     return DashboardOverviewOut(
         upcoming_visitors=[_to_upcoming_visitor_out(invitation) for invitation in upcoming],
         **counts,
-    )
-
-
-async def check_in_upcoming_visitor(
-    tenant_db: AsyncSession, invitation_id: uuid.UUID, *, user: User, tenant: Tenant
-) -> Invitation:
-    """Delegates to the existing check-in business rule (design.md
-    Decision 4) rather than reimplementing the status transition/watchlist
-    gate — `invitations.service.check_in_invitation` already raises the same
-    404/409s `PATCH /invitations/{id}/check-in` does.
-    """
-    invitation = await invitations_service.get_invitation(tenant_db, invitation_id)
-    await authorize_branch_id_tolerant(tenant_db, user, "invitations:checkin", invitation.branch_id)
-    return await invitations_service.check_in_invitation(
-        tenant_db, invitation, user_id=user.id, tenant=tenant
     )
 
 

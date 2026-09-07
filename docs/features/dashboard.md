@@ -1,9 +1,8 @@
 # Dashboard
 
 Backs the admin portal's dashboard page: overview summary counts and an
-upcoming-visitors preview, the check-in action triggered from that preview, a
-paginated check-ins log, and topbar visitor search. Owns no table — it reads
-(and, for the check-in action, writes) `invitations`' `Invitation` rows the
+upcoming-visitors preview, a paginated check-ins log, and topbar visitor
+search. Owns no table — it reads `invitations`' `Invitation` rows the
 same way `reports/repository.py::BranchRollupRepository` reads across
 `org_structure`/`auth` without owning a table
 (`fastapi-architecture.md`'s layering still applies:
@@ -14,10 +13,17 @@ same way `reports/repository.py::BranchRollupRepository` reads across
 
 | Method | Path | Permission | Description |
 |---|---|---|---|
-| GET | `/api/v1/admin/dashboard/overview` | `invitations:view` | Visits-today/checked-in/pending-approval/upcoming-visitor counts plus a bounded (10) upcoming-visitors preview. |
-| PATCH | `/api/v1/admin/dashboard/upcoming-visitors` | `invitations:checkin` | Checks in one invitation (`invitationId` in the body) — the dashboard's row-level counterpart to `PATCH /invitations/{id}/check-in`. |
+| GET | `/api/v1/admin/dashboard/overview` | `invitations:view` | Visits-today/checked-in/pending-approval/upcoming-visitor counts plus a bounded (10) upcoming-visitors preview. Each preview row includes `trackingId`, so the "check in" action calls `PATCH /api/v2/invitations/{trackingId}/check-in` directly — see "Check-in is done through the canonical invitation endpoint" below. |
 | GET | `/api/v1/admin/dashboard/checkins` | `invitations:view` | Paginated "View All" list of every invitation that has been checked in at least once (`checked_in` or `checked_out`). |
 | GET | `/api/v1/admin/dashboard/search` | `invitations:view` | Topbar search — case-insensitive partial match on the primary contact's full name, capped at 10 results. |
+
+**Removed** (`checkin-approval-workflow-improvements`): `PATCH
+/api/v1/admin/dashboard/upcoming-visitors` — this duplicated
+`PATCH /invitations/{id}/check-in`'s business rule through a second,
+body-keyed contract. The dashboard's "check in" action now calls the
+canonical `PATCH /api/v2/invitations/{trackingId}/check-in` endpoint
+directly, using the `trackingId` already present on each upcoming-visitors
+preview row.
 
 ## `branchId` query param, not `X-Branch-ID` header
 
@@ -35,21 +41,17 @@ Decision 2.
 ## Reused permission codes
 
 No new permission codes exist for this feature. `invitations:view` covers the
-three read endpoints; `invitations:checkin` covers the check-in action — both
-already exist in `auth/rbac_catalog.py` and are already granted to whichever
-roles can see/act on invitations elsewhere.
+three read endpoints — already granted to whichever roles can see invitations
+elsewhere via `auth/rbac_catalog.py`.
 
-## Check-in action delegates to `invitations`
+## Check-in is done through the canonical invitation endpoint
 
-`PATCH /admin/dashboard/upcoming-visitors` doesn't reimplement the check-in
-business rule: it resolves the invitation, authorizes via
-`authorize_branch_id_tolerant`, then calls
-`invitations.service.check_in_invitation` directly — the same 404/409s (not
-approved, watchlist-flagged) and audit trail entry (`invitation_checked_in`)
-as `PATCH /invitations/{id}/check-in`. It has its own small
-`Idempotency-Key` cache/response pair (same Redis convention,
-`vmss:{tenant_id}:dashboard:idempotency:{key}` — `database-architecture.md`
-§6), rather than sharing `invitations/router.py`'s private helpers.
+The dashboard no longer exposes its own check-in mutation. The admin portal's
+"check in" action on an upcoming-visitors preview row calls
+`PATCH /api/v2/invitations/{trackingId}/check-in` directly, using that row's
+`trackingId` (see `docs/features/invitations.md`) — the same endpoint every
+other staff/desk check-in flow uses. `Idempotency-Key` and the resulting
+audit-trail entry behave exactly as they do for that endpoint.
 
 ## "Today" follows the tenant's configured timezone
 
