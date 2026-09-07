@@ -38,9 +38,12 @@ from vmss_api.invitations.schemas import (
     BadgeOut,
     CarriedItemsSubmit,
     ConsentsSubmit,
+    InvitationBranchOut,
+    InvitationBuildingOut,
     InvitationCheckInOut,
     InvitationCreate,
     InvitationDenyRequest,
+    InvitationDepartmentOut,
     InvitationDetailOut,
     InvitationEditRequest,
     InvitationExtendRequest,
@@ -54,6 +57,7 @@ from vmss_api.invitations.schemas import (
     InvitationTrackingOut,
     InvitationTrackingSummaryOut,
     InvitationVehicleOut,
+    InvitationVisitorDetailOut,
     InvitationVisitorOut,
     RegistrationSource,
     RegistrationType,
@@ -67,6 +71,7 @@ from vmss_api.org_structure.deps import (
     authorize_branch_id_tolerant,
     require_branch_scope,
 )
+from vmss_api.org_structure.models import Branch, Building, Department
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/invitations", tags=["invitations"])
@@ -290,7 +295,20 @@ async def _resolve_photo_url(storage_key: str | None) -> str | None:
     return await storage_url_for(storage_key) if storage_key is not None else None
 
 
+async def _resolve_document_url(storage_key: str | None) -> str | None:
+    """Same resolution as `_resolve_photo_url`, kept as a separate function
+    so every call site is a visible, greppable instance of "this resolves a
+    raw ID-proof document" — callers MUST only invoke this once the caller
+    is confirmed to hold `documents:view` (enrich-invitation-checkin-and-
+    detail-views/design.md Decision 4); never call it unconditionally.
+    """
+    return await storage_url_for(storage_key) if storage_key is not None else None
+
+
 async def _to_visitor_outs(visitors) -> list[InvitationVisitorOut]:
+    """Used by every response except the staff detail view — deliberately
+    produces `InvitationVisitorOut`, which has no ID-proof document field
+    at all (see that schema's docstring)."""
     return [
         InvitationVisitorOut(
             id=v.id,
@@ -304,7 +322,57 @@ async def _to_visitor_outs(visitors) -> list[InvitationVisitorOut]:
     ]
 
 
-async def _to_qr_check_in_out(invitation) -> InvitationQrCheckInOut:
+async def _to_visitor_detail_outs(
+    visitors, *, include_documents: bool
+) -> list[InvitationVisitorDetailOut]:
+    """Staff detail view (`GET /invitations/{id}`) only. `include_documents`
+    is the caller's already-resolved `documents:view` grant — when `False`,
+    `id_proof_url` is left `None` without ever calling
+    `_resolve_document_url` (no storage lookup for a document the caller
+    can't see)."""
+    return [
+        InvitationVisitorDetailOut(
+            id=v.id,
+            full_name=v.full_name,
+            email=v.email,
+            phone=v.phone,
+            id_proof_type=v.id_proof_type,
+            id_proof_url=(
+                await _resolve_document_url(v.id_proof_storage_key) if include_documents else None
+            ),
+            photo_url=await _resolve_photo_url(v.photo_storage_key),
+        )
+        for v in visitors
+    ]
+
+
+def _to_location_outs(
+    branch: Branch, department: Department | None, building: Building | None
+) -> tuple[InvitationBranchOut, InvitationBuildingOut | None, InvitationDepartmentOut | None]:
+    branch_out = InvitationBranchOut(
+        id=branch.id,
+        name=branch.name,
+        code=branch.code,
+        address=branch.address,
+        city=branch.city,
+    )
+    building_out = (
+        InvitationBuildingOut(id=building.id, name=building.name, code=building.code)
+        if building is not None
+        else None
+    )
+    department_out = (
+        InvitationDepartmentOut(id=department.id, name=department.name, code=department.code)
+        if department is not None
+        else None
+    )
+    return branch_out, building_out, department_out
+
+
+async def _to_qr_check_in_out(
+    invitation, *, branch: Branch, department: Department | None, building: Building | None
+) -> InvitationQrCheckInOut:
+    branch_out, building_out, department_out = _to_location_outs(branch, department, building)
     return InvitationQrCheckInOut(
         id=invitation.id,
         tracking_id=invitation.tracking_id,
@@ -313,10 +381,14 @@ async def _to_qr_check_in_out(invitation) -> InvitationQrCheckInOut:
         registration_type=invitation.registration_type,
         source=invitation.source,
         visitor_category_id=invitation.visitor_category_id,
+        branch=branch_out,
+        building=building_out,
+        department=department_out,
         primary_contact_full_name=invitation.primary_contact_full_name,
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
         ),
+        primary_contact_id_proof_type=invitation.primary_contact_id_proof_type,
         primary_contact_email=invitation.primary_contact_email,
         primary_contact_phone=invitation.primary_contact_phone,
         host_id=invitation.host_id,
@@ -450,11 +522,21 @@ async def _to_check_in_out(
 
 
 async def _to_invitation_detail_out(
-    invitation, current_approval_step: CurrentApprovalStepOut | None = None
+    invitation,
+    current_approval_step: CurrentApprovalStepOut | None = None,
+    *,
+    branch: Branch,
+    department: Department | None,
+    building: Building | None,
+    include_documents: bool,
 ) -> InvitationDetailOut:
+    branch_out, building_out, department_out = _to_location_outs(branch, department, building)
     return InvitationDetailOut(
         id=invitation.id,
         branch_id=invitation.branch_id,
+        branch=branch_out,
+        building=building_out,
+        department=department_out,
         source=RegistrationSource(invitation.source),
         created_by_user_id=invitation.created_by_user_id,
         tracking_id=invitation.tracking_id,
@@ -465,6 +547,12 @@ async def _to_invitation_detail_out(
         primary_contact_full_name=invitation.primary_contact_full_name,
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
+        ),
+        primary_contact_id_proof_type=invitation.primary_contact_id_proof_type,
+        primary_contact_id_proof_url=(
+            await _resolve_document_url(invitation.primary_contact_id_proof_storage_key)
+            if include_documents
+            else None
         ),
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
@@ -492,7 +580,9 @@ async def _to_invitation_detail_out(
         watchlist_override_at=invitation.watchlist_override_at,
         watchlist_override_reason=invitation.watchlist_override_reason,
         watchlist_override_by_user_id=invitation.watchlist_override_by_user_id,
-        visitors=await _to_visitor_outs(invitation.visitors),
+        visitors=await _to_visitor_detail_outs(
+            invitation.visitors, include_documents=include_documents
+        ),
         vehicles=[
             InvitationVehicleOut(
                 id=v.id,
@@ -576,16 +666,18 @@ async def create_invitation(
             )
         ),
     ],
-    visitor_id_proof_files: list[UploadFile] = _NO_VISITOR_FILES,
     primary_contact_photo_file: Annotated[
-        UploadFile | None,
+        UploadFile,
         File(
             description=(
-                "Optional profile photo for the primary contact (JPEG/PNG "
-                "only). Omit entirely if no photo is being captured."
+                "Required profile photo for the primary contact (JPEG/PNG "
+                "only) — paired with `payload.primaryContact`. See "
+                "`visitorPhotoFiles` below for the (optional) co-visitor "
+                "equivalent."
             )
         ),
-    ] = None,
+    ],
+    visitor_id_proof_files: list[UploadFile] = _NO_VISITOR_FILES,
     visitor_photo_files: list[UploadFile] = _NO_VISITOR_PHOTOS,
     idempotency_key: Annotated[
         str | None,
@@ -645,11 +737,7 @@ async def create_invitation(
     photo_limit = settings.invitation_max_photo_size_bytes + 1
     primary_content = await primary_contact_id_proof_file.read(id_proof_limit)
     visitor_contents = [await f.read(id_proof_limit) for f in visitor_id_proof_files]
-    primary_photo_content = (
-        await primary_contact_photo_file.read(photo_limit)
-        if primary_contact_photo_file is not None
-        else None
-    )
+    primary_photo_content = await primary_contact_photo_file.read(photo_limit)
     visitor_photo_contents = [await f.read(photo_limit) for f in visitor_photo_files]
 
     invitation = await service.create_invitation(
@@ -858,7 +946,13 @@ async def check_in_by_qr_token(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    response = success_response(data=await _to_qr_check_in_out(invitation), message=message)
+    branch, department, building = await service.get_invitation_location(tenant_db, invitation)
+    response = success_response(
+        data=await _to_qr_check_in_out(
+            invitation, branch=branch, department=department, building=building
+        ),
+        message=message,
+    )
     await _cache_response(tenant.id, idempotency_key, response)
     return response
 
@@ -908,7 +1002,13 @@ async def check_out_by_qr_token(
         entity_type="Invitation",
         entity_id=invitation.id,
     )
-    response = success_response(data=await _to_qr_check_in_out(invitation), message=message)
+    branch, department, building = await service.get_invitation_location(tenant_db, invitation)
+    response = success_response(
+        data=await _to_qr_check_in_out(
+            invitation, branch=branch, department=department, building=building
+        ),
+        message=message,
+    )
     await _cache_response(tenant.id, idempotency_key, response)
     return response
 
@@ -1273,4 +1373,15 @@ async def get_invitation_detail(
     invitation = await service.get_invitation_detail(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:view", invitation.branch_id)
     current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
-    return success_response(data=await _to_invitation_detail_out(invitation, current_approval_step))
+    branch, department, building = await service.get_invitation_location(tenant_db, invitation)
+    include_documents = user.has_permission("documents:view", invitation.branch_id)
+    return success_response(
+        data=await _to_invitation_detail_out(
+            invitation,
+            current_approval_step,
+            branch=branch,
+            department=department,
+            building=building,
+            include_documents=include_documents,
+        )
+    )

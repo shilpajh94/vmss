@@ -165,6 +165,16 @@ payload shape" section) and previously had no grant for them at all, not
 even at their own branch, so those screens 403'd outright rather than
 resolving to an empty/scoped list the way `branches:view` does.
 
+`documents:view` (Reception and Security only — not Host) gates access to a
+resolved ID-proof document image on the invitation check-in/detail
+responses, kept separate from `invitations:view`/`invitations:checkin` per
+`security-architecture.md` §4 ("access to raw document images is itself a
+permission, not implied by can view visitor record") — see
+`docs/features/invitations.md`. A tenant provisioned before this permission
+existed needs `POST /auth/roles/resync-permissions` run once to backfill it
+onto its existing Reception/Security roles, same as any other catalog
+addition (see "Resyncing stale roles against the catalog" below).
+
 "Visitor" exists in the catalog only to satisfy the five-role requirement
 literally — it grants zero permissions, and `assign_branch_role`
 (`auth/service.py`) rejects with 409 any attempt to grant it to a `User`.

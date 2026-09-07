@@ -15,6 +15,7 @@ from vmss_api.invitations.models import (
     InvitationVehicle,
     InvitationVisitor,
 )
+from vmss_api.org_structure.models import Branch, Building, Department, Floor
 
 
 def _branch_filter(branch_scope: BranchScope) -> Any | None:
@@ -125,6 +126,41 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
     async def get_with_children(self, id_: uuid.UUID) -> Invitation | None:
         stmt = self._with_children().where(Invitation.id == id_, Invitation.deleted_at.is_(None))
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_location(
+        self, *, branch_id: uuid.UUID, department_id: uuid.UUID | None
+    ) -> tuple[Branch, Department | None, Building | None]:
+        """Resolves an invitation's branch and, when it has a
+        `department_id` on file, that department's building via
+        `Department.floor_id -> Floor.building_id` — one query with outer
+        joins, mirroring `auth/repository.py::list_employees_page`'s
+        established cross-package join pattern. `invitations` has no ORM
+        `relationship()` onto `org_structure` models (same convention as
+        `auth.models.User.department_id`), so this is an explicit join, not
+        a `selectinload`/`joinedload` option (query-performance.md §1).
+
+        `deleted_at` is deliberately not filtered on any of the three
+        tables here: an invitation shows the branch/department/building it
+        actually resolved to at the time, even if one of them has since
+        been soft-deleted, rather than silently going blank.
+
+        `branch_id` is a required, FK-enforced column, so the branch row
+        is always found — `department_id` is optional and, when `None`,
+        the join condition below evaluates to `Department.id IS NULL`,
+        correctly yielding no `Department`/`Building` match.
+        """
+        stmt = (
+            select(Branch, Department, Building)
+            .select_from(Branch)
+            .outerjoin(Department, Department.id == department_id)
+            .outerjoin(Floor, Department.floor_id == Floor.id)
+            .outerjoin(Building, Floor.building_id == Building.id)
+            .where(Branch.id == branch_id)
+        )
+        row = (await self.session.execute(stmt)).first()
+        assert row is not None, f"Invitation references a nonexistent branch {branch_id}"
+        branch, department, building = row
+        return branch, department, building
 
     async def approve_if_submitted(self, id_: uuid.UUID) -> Invitation | None:
         """Atomic conditional transition: the `UPDATE` only affects a row

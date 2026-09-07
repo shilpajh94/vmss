@@ -35,6 +35,7 @@ from vmss_api.invitations.schemas import (
     VisitDetailsSubmit,
 )
 from vmss_api.notifications import service as notifications_service
+from vmss_api.org_structure.models import Branch, Building, Department
 from vmss_api.org_structure.repository import CompanyRepository, DepartmentRepository
 from vmss_api.org_structure.service import get_default_host_role
 from vmss_api.tenant.models import Tenant
@@ -307,7 +308,7 @@ async def create_invitation(
     tenant: Tenant,
     primary_contact_id_proof_content: bytes,
     visitor_id_proof_contents: list[bytes],
-    primary_contact_photo_content: bytes | None,
+    primary_contact_photo_content: bytes,
     visitor_photo_contents: list[bytes],
     source: RegistrationSource = RegistrationSource.staff_pre_registration,
 ) -> Invitation:
@@ -374,11 +375,7 @@ async def create_invitation(
     visitor_content_types = [
         _validate_id_proof(content, max_size) for content in visitor_id_proof_contents
     ]
-    primary_photo_content_type = (
-        _validate_photo(primary_contact_photo_content, max_photo_size)
-        if primary_contact_photo_content is not None
-        else None
-    )
+    primary_photo_content_type = _validate_photo(primary_contact_photo_content, max_photo_size)
     visitor_photo_content_types = [
         _validate_photo(content, max_photo_size) for content in visitor_photo_contents
     ]
@@ -386,15 +383,9 @@ async def create_invitation(
     primary_key = await storage_save(
         tenant.id, "invitations/id-proof", primary_contact_id_proof_content, primary_content_type
     )
-    primary_photo_key = None
-    if primary_contact_photo_content is not None:
-        assert primary_photo_content_type is not None  # validated above, in the same branch
-        primary_photo_key = await storage_save(
-            tenant.id,
-            "invitations/photos",
-            primary_contact_photo_content,
-            primary_photo_content_type,
-        )
+    primary_photo_key = await storage_save(
+        tenant.id, "invitations/photos", primary_contact_photo_content, primary_photo_content_type
+    )
 
     invitation = Invitation(
         id=uuid.uuid4(),
@@ -633,6 +624,19 @@ async def get_invitation_detail(tenant_db: AsyncSession, invitation_id: uuid.UUI
     if invitation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Invitation not found")
     return invitation
+
+
+async def get_invitation_location(
+    tenant_db: AsyncSession, invitation: Invitation
+) -> tuple[Branch, Department | None, Building | None]:
+    """Resolves `invitation`'s branch and, when it has a `department_id` on
+    file, that department's building — backs the `branch`/`building`/
+    `department` fields on `InvitationDetailOut` and `InvitationQrCheckInOut`
+    (enrich-invitation-checkin-and-detail-views/design.md Decision 5).
+    """
+    return await InvitationRepository(tenant_db).get_location(
+        branch_id=invitation.branch_id, department_id=invitation.department_id
+    )
 
 
 async def deny_invitation(

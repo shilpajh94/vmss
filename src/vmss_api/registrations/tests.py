@@ -132,7 +132,10 @@ async def _create_walk_in(
         headers["X-Device-Key"] = device_key
     if idempotency_key is not None:
         headers["Idempotency-Key"] = idempotency_key
-    files = [("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))]
+    files = [
+        ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+    ]
     files += [
         ("visitor_id_proof_files", (f"v{i}.jpg", _jpeg_bytes(), "image/jpeg"))
         for i in range(visitor_file_count)
@@ -266,13 +269,13 @@ async def test_walk_in_registration_disguised_file_rejected(
     response = await client.post(
         "/api/v1/registrations/walk-in",
         data={"payload": json.dumps(_individual_payload())},
-        files={
-            "primary_contact_id_proof_file": (
-                "id.jpg",
-                b"this is not actually an image, just plain text bytes",
-                "image/jpeg",
-            )
-        },
+        files=[
+            (
+                "primary_contact_id_proof_file",
+                ("id.jpg", b"this is not actually an image, just plain text bytes", "image/jpeg"),
+            ),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
         headers={"X-Device-Key": registration_device_raw_key},
     )
     assert response.status_code == 422
@@ -309,6 +312,22 @@ async def test_walk_in_registration_with_primary_contact_photo_succeeds(
         headers={"X-Device-Key": registration_device_raw_key},
     )
     assert response.status_code == 201, response.text
+
+
+async def test_walk_in_registration_without_primary_contact_photo_rejected(
+    client: AsyncClient, registration_device_raw_key: str
+) -> None:
+    """require-primary-contact-photo spec.md "Missing primary contact photo
+    is rejected", inherited via the identical file-part contract
+    `POST /invitations` uses.
+    """
+    response = await client.post(
+        "/api/v1/registrations/walk-in",
+        data={"payload": json.dumps(_individual_payload())},
+        files=[("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))],
+        headers={"X-Device-Key": registration_device_raw_key},
+    )
+    assert response.status_code == 422
 
 
 async def test_walk_in_registration_disguised_photo_rejected(

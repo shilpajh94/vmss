@@ -20,8 +20,10 @@ from structlog.testing import capture_logs
 
 from factories import (
     ApprovalWorkflowRuleFactory,
+    BuildingFactory,
     CompanyFactory,
     DepartmentFactory,
+    FloorFactory,
     InvitationApprovalStepFactory,
     InvitationFactory,
     InvitationVehicleFactory,
@@ -164,7 +166,10 @@ async def _create_invitation(
     headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
     if idempotency_key is not None:
         headers["Idempotency-Key"] = idempotency_key
-    files = [("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))]
+    files = [
+        ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+    ]
     files += [
         ("visitor_id_proof_files", (f"v{i}.jpg", _jpeg_bytes(), "image/jpeg"))
         for i in range(visitor_file_count)
@@ -492,7 +497,10 @@ async def test_create_invitation_without_branch_header_or_payload_rejected(
     response = await client.post(
         "/api/v1/invitations",
         data={"payload": json.dumps(_individual_payload())},
-        files=[("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))],
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 400
@@ -510,7 +518,10 @@ async def test_create_invitation_branch_id_in_payload_used_when_header_omitted(
     response = await client.post(
         "/api/v1/invitations",
         data={"payload": json.dumps(payload)},
-        files=[("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))],
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 201
@@ -548,13 +559,13 @@ async def test_create_invitation_disguised_file_rejected(
     response = await client.post(
         "/api/v1/invitations",
         data={"payload": json.dumps(_individual_payload())},
-        files={
-            "primary_contact_id_proof_file": (
-                "id.jpg",
-                b"this is not actually an image, just plain text bytes",
-                "image/jpeg",
-            )
-        },
+        files=[
+            (
+                "primary_contact_id_proof_file",
+                ("id.jpg", b"this is not actually an image, just plain text bytes", "image/jpeg"),
+            ),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
     )
     assert response.status_code == 422
@@ -596,7 +607,14 @@ async def test_create_invitation_oversized_file_read_is_bounded(
     response = await _create_invitation(client, token, branch, payload=_individual_payload())
 
     assert response.status_code == 422
-    assert read_sizes == [11]
+    # The primary contact's ID-proof file is read first, bounded to the
+    # (monkeypatched, tiny) `invitation_max_upload_size_bytes + 1` — the
+    # oversized read is detected there and the request is rejected before
+    # any visitor file would be read. The now-mandatory primary contact
+    # photo file is still read (unconditionally, per
+    # require-primary-contact-photo), bounded to its own, unpatched
+    # `invitation_max_photo_size_bytes + 1` limit.
+    assert read_sizes == [11, settings.invitation_max_photo_size_bytes + 1]
 
 
 async def test_create_group_invitation_earlier_visitor_file_not_stored_when_later_invalid(
@@ -621,6 +639,7 @@ async def test_create_group_invitation_earlier_visitor_file_not_stored_when_late
     headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
     files = [
         ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
         ("visitor_id_proof_files", ("v0.jpg", _jpeg_bytes(), "image/jpeg")),
         ("visitor_id_proof_files", ("v1.txt", b"not actually an image", "image/jpeg")),
     ]
@@ -657,15 +676,21 @@ async def test_create_invitation_with_primary_contact_photo_succeeds(
     assert response.status_code == 201, response.text
 
 
-async def test_create_invitation_without_photo_succeeds(
+async def test_create_invitation_without_primary_contact_photo_rejected(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
-    """spec.md "Photo omitted does not affect creation" — the existing,
-    photo-free creation path is unaffected by this addition.
+    """require-primary-contact-photo spec.md "Missing primary contact photo
+    is rejected" — a request that omits `primaryContactPhotoFile` entirely
+    is rejected and creates no invitation record.
     """
     token = await _login(client, user.email)
-    response = await _create_invitation(client, token, branch, payload=_individual_payload())
-    assert response.status_code == 201, response.text
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(_individual_payload())},
+        files=[("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))],
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 422
 
 
 async def test_create_invitation_disguised_photo_rejected(
@@ -746,6 +771,7 @@ async def test_create_group_invitation_with_visitor_photos_returns_photo_urls(
     headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
     files = [
         ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+        ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
         ("visitor_id_proof_files", ("v0.jpg", _jpeg_bytes(), "image/jpeg")),
         ("visitor_id_proof_files", ("v1.jpg", _jpeg_bytes(), "image/jpeg")),
         ("visitor_photo_files", ("v0-photo.jpg", _jpeg_bytes(), "image/jpeg")),
@@ -1229,6 +1255,37 @@ async def _branch_scoped_invitation_viewer(
         branch_roles=[branch_role],
     )
     db_session.add_all([permission, role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+async def _branch_scoped_invitation_and_documents_viewer(
+    db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
+) -> User:
+    """Same as `_branch_scoped_invitation_viewer` but additionally holds
+    `documents:view` at `branch_id` —
+    enrich-invitation-checkin-and-detail-views spec.md "Primary Contact and
+    Visitor ID-Proof Documents Are Surfaced Only to Callers Holding
+    documents:view".
+    """
+    permissions = [
+        PermissionFactory.build(id=uuid.uuid4(), code=code, description=code)
+        for code in ("invitations:view", "documents:view")
+    ]
+    role = RoleFactory.build(id=uuid.uuid4(), name="documents-viewer", permissions=permissions)
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"docs-viewer-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Documents Viewer",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([*permissions, role, test_user])
     await db_session.flush()
     db_session.add(
         TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
@@ -3340,6 +3397,201 @@ async def test_get_invitation_detail_surfaces_resolved_host_as_host_id(
     assert response.json()["data"]["hostId"] is None
 
 
+async def test_get_invitation_detail_includes_resolved_branch_detail(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """enrich-invitation-checkin-and-detail-views spec.md "QR Check-In,
+    Check-Out, and Detail Responses Surface Resolved Branch, Building, and
+    Department" — branch detail is always present, in addition to the
+    existing raw `branchId`.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="approved")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["branchId"] == str(branch.id)
+    assert data["branch"] == {
+        "id": str(branch.id),
+        "name": branch.name,
+        "code": branch.code,
+        "address": branch.address,
+        "city": branch.city,
+    }
+
+
+async def test_get_invitation_detail_includes_building_and_department_when_resolvable(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    building = BuildingFactory.build(id=uuid.uuid4(), branch_id=branch.id)
+    db_session.add(building)
+    await db_session.flush()
+    floor = FloorFactory.build(id=uuid.uuid4(), building_id=building.id, floor_number=1)
+    db_session.add(floor)
+    await db_session.flush()
+    department = DepartmentFactory.build(id=uuid.uuid4(), branch_id=branch.id, floor_id=floor.id)
+    db_session.add(department)
+    await db_session.flush()
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", department_id=department.id
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["building"] == {
+        "id": str(building.id),
+        "name": building.name,
+        "code": building.code,
+    }
+    assert data["department"] == {
+        "id": str(department.id),
+        "name": department.name,
+        "code": department.code,
+    }
+
+
+async def test_get_invitation_detail_building_and_department_null_when_no_department_id(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", department_to_visit="Finance", department_id=None
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["building"] is None
+    assert data["department"] is None
+    assert data["departmentToVisit"] == "Finance"
+
+
+async def test_get_invitation_detail_building_null_when_department_has_no_floor(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    department = DepartmentFactory.build(id=uuid.uuid4(), branch_id=branch.id, floor_id=None)
+    db_session.add(department)
+    await db_session.flush()
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", department_id=department.id
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["building"] is None
+    assert data["department"] == {
+        "id": str(department.id),
+        "name": department.name,
+        "code": department.code,
+    }
+
+
+async def test_get_invitation_detail_includes_id_proof_url_with_documents_view(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """enrich-invitation-checkin-and-detail-views spec.md "Primary Contact
+    and Visitor ID-Proof Documents Are Surfaced Only to Callers Holding
+    documents:view" — a caller holding both `invitations:view` and
+    `documents:view` sees `idProofUrl` for the primary contact and every
+    visitor.
+    """
+    viewer = await _branch_scoped_invitation_and_documents_viewer(db_session, tenant, branch.id)
+    co_visitor = InvitationVisitorFactory.build(id=uuid.uuid4())
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        registration_type="group",
+        visitors=[co_visitor],
+        primary_contact_id_proof_type="Passport",
+        primary_contact_id_proof_storage_key="vmss:tenant:invitations/id_proofs:primary.jpg",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["primaryContactIdProofType"] == invitation.primary_contact_id_proof_type
+    assert data["primaryContactIdProofUrl"] is not None
+    [visitor_out] = data["visitors"]
+    assert visitor_out["idProofType"] == co_visitor.id_proof_type
+    assert visitor_out["idProofUrl"] is not None
+
+
+async def test_get_invitation_detail_omits_id_proof_url_without_documents_view(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Counterpart of the test above — a caller holding `invitations:view`
+    but not `documents:view` succeeds with `idProofUrl` `null` for the
+    primary contact and every visitor, while `idProofType` (not gated) is
+    still present.
+    """
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    co_visitor = InvitationVisitorFactory.build(id=uuid.uuid4())
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        registration_type="group",
+        visitors=[co_visitor],
+        primary_contact_id_proof_type="Passport",
+        primary_contact_id_proof_storage_key="vmss:tenant:invitations/id_proofs:primary.jpg",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.get(
+        f"/api/v1/invitations/{invitation.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["primaryContactIdProofType"] == invitation.primary_contact_id_proof_type
+    assert data["primaryContactIdProofUrl"] is None
+    [visitor_out] = data["visitors"]
+    assert visitor_out["idProofType"] == co_visitor.id_proof_type
+    assert visitor_out["idProofUrl"] is None
+
+
 async def test_get_invitation_detail_unknown_id_not_found(client: AsyncClient, user: User) -> None:
     token = await _login(client, user.email)
     response = await client.get(
@@ -3649,6 +3901,55 @@ async def test_public_check_in_response_includes_full_invitation_detail(
     assert data["id"] == str(invitation.id)
     assert data["trackingId"] == invitation.tracking_id
     assert data["status"] == "checked_in"
+
+
+async def test_public_check_in_response_omits_out_of_scope_new_fields(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """enrich-invitation-checkin-and-detail-views proposal.md "Out of
+    scope, unchanged": `PATCH /api/v2/invitations/{trackingId}/check-in`
+    is public/unauthenticated with no permission to gate anything by, so
+    it must never gain `branch`/`building`/`department` or an ID-proof
+    document field — those are exclusive to `GET /invitations/{id}` (and,
+    for branch/building/department only, the QR check-in/check-out
+    responses).
+    """
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    for key in ("branch", "building", "department", "primaryContactIdProofType"):
+        assert key not in data
+    for visitor_out in data["visitors"]:
+        assert "idProofUrl" not in visitor_out
+
+
+async def test_track_by_tracking_id_omits_out_of_scope_new_fields(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """Same scope guard as the check-in test above, for the public
+    tracking lookup (`GET /invitations/track`).
+    """
+    invitation = _build_invitation(
+        db_session, branch.id, status="approved", approved_at=datetime.now(UTC)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/v1/invitations/track", params={"trackingId": invitation.tracking_id}
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    for key in ("branch", "building", "department", "primaryContactIdProofType"):
+        assert key not in data
+    for visitor_out in data["visitors"]:
+        assert "idProofUrl" not in visitor_out
 
 
 async def test_public_check_in_response_includes_group_co_visitors(
@@ -4061,6 +4362,85 @@ async def test_qr_check_out_response_includes_captured_photos(
     assert response.json()["data"]["primaryContactPhotoUrl"] is not None
 
 
+async def test_qr_check_in_response_includes_id_proof_type_but_never_a_document_url(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """enrich-invitation-checkin-and-detail-views spec.md "QR Check-In
+    Response Surfaces Full Invitation Detail" — `idProofType` is present
+    for the primary contact and every visitor, but no ID-proof document
+    image/URL field is present anywhere in the response, since this
+    endpoint has no authenticated caller to check `documents:view` against.
+    Asserts the *key* is absent, not just `null`, to catch a schema
+    regression (design.md Decision 3/Risk).
+    """
+    invitation = _approved_invitation(db_session, branch.id, registration_type="group")
+    db_session.add(invitation)
+    await db_session.flush()
+    co_visitor = InvitationVisitorFactory.build(id=uuid.uuid4(), invitation_id=invitation.id)
+    db_session.add(co_visitor)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["primaryContactIdProofType"] == invitation.primary_contact_id_proof_type
+    assert "primaryContactIdProofUrl" not in data
+    [visitor_out] = data["visitors"]
+    assert visitor_out["idProofType"] == co_visitor.id_proof_type
+    assert "idProofUrl" not in visitor_out
+
+
+async def test_qr_check_in_and_check_out_response_include_resolved_branch_building_department(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """enrich-invitation-checkin-and-detail-views spec.md "QR Check-In,
+    Check-Out, and Detail Responses Surface Resolved Branch, Building, and
+    Department".
+    """
+    building = BuildingFactory.build(id=uuid.uuid4(), branch_id=branch.id)
+    db_session.add(building)
+    await db_session.flush()
+    floor = FloorFactory.build(id=uuid.uuid4(), building_id=building.id, floor_number=2)
+    db_session.add(floor)
+    await db_session.flush()
+    department = DepartmentFactory.build(id=uuid.uuid4(), branch_id=branch.id, floor_id=floor.id)
+    db_session.add(department)
+    await db_session.flush()
+    invitation = _approved_invitation(db_session, branch.id, department_id=department.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["branch"] == {
+        "id": str(branch.id),
+        "name": branch.name,
+        "code": branch.code,
+        "address": branch.address,
+        "city": branch.city,
+    }
+    assert data["building"] == {
+        "id": str(building.id),
+        "name": building.name,
+        "code": building.code,
+    }
+    assert data["department"] == {
+        "id": str(department.id),
+        "name": department.name,
+        "code": department.code,
+    }
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-out")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["branch"]["id"] == str(branch.id)
+    assert data["building"]["id"] == str(building.id)
+    assert data["department"]["id"] == str(department.id)
+
+
 async def test_qr_check_in_entry_after_expiry_rejected(
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
@@ -4351,6 +4731,37 @@ async def test_qr_check_in_repository_tenant_schema_isolation(
 
     await db_session.refresh(invitation)
     assert invitation.check_in_status == "unused"
+
+
+async def test_get_location_repository_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    """testing-standards.md §2 — `InvitationRepository.get_location` must
+    resolve `Branch` (and, transitively, `Department`/`Building`) against
+    the session's own bound tenant schema, never a different one, even
+    when the same id exists as a row in both (`enrich-invitation-checkin-
+    and-detail-views/design.md` Decision 5). Also guards the `documents:view`
+    permission gate's underlying data: a resolved `idProofUrl` is only ever
+    built from data the caller's own tenant session can see in the first
+    place.
+    """
+    other_schema = "tenant_other_test_invitation_get_location"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        other_branch = Branch(id=branch.id, name="Other Tenant Branch", code="OTHER-LOC")
+        other_session.add(other_branch)
+        await other_session.commit()
+
+        resolved_branch, resolved_department, resolved_building = await InvitationRepository(
+            other_session
+        ).get_location(branch_id=branch.id, department_id=None)
+        assert resolved_branch.name == "Other Tenant Branch"
+        assert resolved_department is None
+        assert resolved_building is None
 
 
 # --- PATCH /invitations/{id}/check-out ------------------------------------------

@@ -173,7 +173,10 @@ async def test_invitation_created_visitor_workflow_end_to_end(
     create_response = await client.post(
         "/api/v1/invitations",
         data={"payload": json.dumps(_individual_payload("Meera Krishnan"))},
-        files=[("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))],
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
     )
     assert create_response.status_code == 201, create_response.text
@@ -227,7 +230,10 @@ async def test_walk_in_visitor_workflow_end_to_end(
     walk_in_response = await client.post(
         "/api/v1/registrations/walk-in",
         data={"payload": json.dumps(_individual_payload("Walk In Visitor"))},
-        files=[("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))],
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
         headers={"X-Device-Key": registration_device_raw_key},
     )
     assert walk_in_response.status_code == 201, walk_in_response.text

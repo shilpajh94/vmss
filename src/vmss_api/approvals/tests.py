@@ -2181,7 +2181,7 @@ async def test_category_with_no_active_rules_creates_only_the_ownership_step(
         tenant=tenant,
         primary_contact_id_proof_content=_jpeg_bytes(),
         visitor_id_proof_contents=[],
-        primary_contact_photo_content=None,
+        primary_contact_photo_content=_jpeg_bytes(),
         visitor_photo_contents=[],
     )
     reception_role = await RoleRepository(db_session).get_by_name("reception")
@@ -2263,7 +2263,7 @@ async def test_category_with_configured_rules_creates_ownership_step_ahead_of_ro
         tenant=tenant,
         primary_contact_id_proof_content=_jpeg_bytes(),
         visitor_id_proof_contents=[],
-        primary_contact_photo_content=None,
+        primary_contact_photo_content=_jpeg_bytes(),
         visitor_photo_contents=[],
     )
     reception_role = await RoleRepository(db_session).get_by_name("reception")
