@@ -14,6 +14,7 @@ export class HttpVisitRequestRepository implements VisitRequestRepository {
     const formData = new FormData()
     formData.append('payload', JSON.stringify(request))
     formData.append('primary_contact_id_proof_file', files.primaryContactIdProofFile)
+    formData.append('primary_contact_photo_file', files.primaryContactPhotoFile)
     for (const file of files.visitorIdProofFiles) {
       formData.append('visitor_id_proof_files', file)
     }

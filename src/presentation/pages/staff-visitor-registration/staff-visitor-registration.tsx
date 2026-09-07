@@ -60,8 +60,9 @@ export function StaffVisitorRegistrationPage() {
       setBranches(branchList)
       setBuildings(buildingList)
       setVisitorCategories(categoryList)
-    } catch {
+    } catch (error) {
       // Visit Info step falls back to free-text fields if master data can't be loaded.
+      console.error('Failed to load visit info master data', error)
     }
   }, [listBranchesUseCase, listBuildingsUseCase, listVisitorCategoriesUseCase])
 
@@ -137,6 +138,8 @@ export function StaffVisitorRegistrationPage() {
                 getFilePreviewUrl={getFilePreviewUrl}
                 onBack={goBack}
                 onSubmit={submit}
+                onGoHome={cancelRegistration}
+                homeLabel="Back to Dashboard"
               />
             )}
           </div>
@@ -145,12 +148,18 @@ export function StaffVisitorRegistrationPage() {
             <button
               type="button"
               onClick={cancelRegistration}
-              className="rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary"
+              title="Cancel this registration"
+              className="cursor-pointer rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary transition-colors hover:bg-primary/10"
             >
               Cancel
             </button>
             {currentStep < 5 && (
-              <button type="button" onClick={goNext} className="rounded-lg bg-primary px-7 py-3 text-body font-semibold text-white">
+              <button
+                type="button"
+                onClick={goNext}
+                title="Continue to the next step"
+                className="cursor-pointer rounded-lg bg-primary px-7 py-3 text-body font-semibold text-white transition-colors hover:opacity-90"
+              >
                 Next: {STAFF_WIZARD_STEPS[currentStep + 1]} →
               </button>
             )}

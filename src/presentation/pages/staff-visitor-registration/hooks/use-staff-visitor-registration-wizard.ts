@@ -144,8 +144,11 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     const primaryContactIdProofFile = formState.primaryContact.idProofFileRef
       ? fileRegistry.current.get(formState.primaryContact.idProofFileRef)
       : undefined
+    const primaryContactPhotoFile = formState.primaryContact.profileImageFileRef
+      ? fileRegistry.current.get(formState.primaryContact.profileImageFileRef)
+      : undefined
     const branchId = branches?.find((branch) => branch.name === formState.visitInfo.location)?.id
-    if (!primaryContactIdProofFile || !branchId) {
+    if (!primaryContactIdProofFile || !primaryContactPhotoFile || !branchId) {
       setSubmissionError('Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
       toast.error('Something went wrong submitting your request. Please try again.')
@@ -155,16 +158,13 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     const visitorIdProofFiles = formState.additionalVisitors
       .map((visitor) => (visitor.idProofFileRef ? fileRegistry.current.get(visitor.idProofFileRef) : undefined))
       .filter((file): file is File => file !== undefined)
-    const primaryContactPhotoFile = formState.primaryContact.profileImageFileRef
-      ? fileRegistry.current.get(formState.primaryContact.profileImageFileRef)
-      : undefined
 
     setSubmissionStatus('submitting')
     setSubmissionError(undefined)
     try {
       const response = await submitStaffVisitRequestUseCase.execute(
         toStaffVisitRequest(formState),
-        { primaryContactIdProofFile, visitorIdProofFiles, primaryContactPhotoFile },
+        { primaryContactIdProofFile, primaryContactPhotoFile, visitorIdProofFiles },
         branchId,
       )
       setTrackingId(response.trackingId)

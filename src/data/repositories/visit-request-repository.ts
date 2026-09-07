@@ -4,6 +4,7 @@ import type { VisitRequest, VisitRequestResponse } from '../../domain/entities/v
 // walk-in) — each ID-proof travels as a raw multipart file, not a pre-uploaded ref.
 export interface InvitationSubmissionFiles {
   primaryContactIdProofFile: File
+  primaryContactPhotoFile: File
   visitorIdProofFiles: File[]
   primaryContactPhotoFile?: File
 }

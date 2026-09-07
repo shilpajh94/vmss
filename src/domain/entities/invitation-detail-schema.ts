@@ -20,6 +20,8 @@ export const InvitationVisitorSchema = z.object({
   email: z.string().nullable(),
   phone: z.string().nullable(),
   idProofType: z.string().nullable(),
+  photoUrl: z.string().nullish(),
+  idProofUrl: z.string().nullish(),
 })
 
 export type InvitationVisitor = z.infer<typeof InvitationVisitorSchema>
@@ -34,6 +36,9 @@ export const InvitationDetailSchema = z.object({
   registrationType: z.enum(["individual", "group"]),
   visitorCategoryId: z.string().nullable(),
   primaryContactFullName: z.string().min(1),
+  primaryContactPhotoUrl: z.string().nullish(),
+  primaryContactIdProofType: z.string().nullish(),
+  primaryContactIdProofUrl: z.string().nullish(),
   purposeOfVisit: z.string().min(1),
   hostNameOrEmail: z.string().nullable(),
   hostId: z.string().nullable(),
