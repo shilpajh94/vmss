@@ -5,6 +5,7 @@ import type { VisitRequest, VisitRequestResponse } from '../../domain/entities/v
 export interface InvitationSubmissionFiles {
   primaryContactIdProofFile: File
   visitorIdProofFiles: File[]
+  primaryContactPhotoFile?: File
 }
 
 export interface VisitRequestRepository {
