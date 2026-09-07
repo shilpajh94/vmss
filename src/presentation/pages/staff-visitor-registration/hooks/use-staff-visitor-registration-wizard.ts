@@ -22,6 +22,7 @@ function validateStaffVisitorContact(contact: StaffVisitorFormEntry): Record<str
   if (!contact.preferredContactMethod) errors.preferredContactMethod = 'Preferred contact method is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
   if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
+  if (!contact.profileImageFileRef) errors.profileImageFileRef = 'Profile image is required.'
   return errors
 }
 
@@ -140,8 +141,11 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     const primaryContactIdProofFile = formState.primaryContact.idProofFileRef
       ? fileRegistry.current.get(formState.primaryContact.idProofFileRef)
       : undefined
+    const primaryContactPhotoFile = formState.primaryContact.profileImageFileRef
+      ? fileRegistry.current.get(formState.primaryContact.profileImageFileRef)
+      : undefined
     const branchId = branches?.find((branch) => branch.name === formState.visitInfo.location)?.id
-    if (!primaryContactIdProofFile || !branchId) {
+    if (!primaryContactIdProofFile || !primaryContactPhotoFile || !branchId) {
       setSubmissionError('Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
       toast.error('Something went wrong submitting your request. Please try again.')
@@ -157,7 +161,7 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     try {
       const response = await submitStaffVisitRequestUseCase.execute(
         toStaffVisitRequest(formState),
-        { primaryContactIdProofFile, visitorIdProofFiles },
+        { primaryContactIdProofFile, primaryContactPhotoFile, visitorIdProofFiles },
         branchId,
       )
       setTrackingId(response.trackingId)

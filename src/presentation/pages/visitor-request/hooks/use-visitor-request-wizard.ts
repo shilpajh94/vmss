@@ -32,6 +32,7 @@ function validateVisitorContact(contact: VisitorFormEntry): Record<string, strin
   if (!contact.visitorCategory) errors.visitorCategory = 'Visitor category is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
   if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
+  if (!contact.profileImageFileRef) errors.profileImageFileRef = 'Profile image is required.'
   return errors
 }
 
@@ -140,7 +141,10 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     const primaryContactIdProofFile = formState.primaryContact.idProofFileRef
       ? fileRegistry.current.get(formState.primaryContact.idProofFileRef)
       : undefined
-    if (!primaryContactIdProofFile) {
+    const primaryContactPhotoFile = formState.primaryContact.profileImageFileRef
+      ? fileRegistry.current.get(formState.primaryContact.profileImageFileRef)
+      : undefined
+    if (!primaryContactIdProofFile || !primaryContactPhotoFile) {
       setSubmissionError('Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
       return
@@ -155,6 +159,7 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     try {
       const response = await submitVisitRequestUseCase.execute(toVisitRequest(formState), {
         primaryContactIdProofFile,
+        primaryContactPhotoFile,
         visitorIdProofFiles,
       })
       setTrackingId(response.trackingId)
