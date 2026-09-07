@@ -143,7 +143,6 @@ export function VisitorFieldsForm({
             onChange({ ...value, profileImageFileRef, profileImageFileName })
           }
           error={errors?.profileImageFileRef}
-          required
         />
       )}
     </div>

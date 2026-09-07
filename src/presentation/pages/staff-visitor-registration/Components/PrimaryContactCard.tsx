@@ -113,7 +113,6 @@ export function PrimaryContactCard({ value, onChange, uploadFile, getFilePreview
           onUpload={uploadFile}
           onFileRefChange={(profileImageFileRef, profileImageFileName) => onChange({ ...value, profileImageFileRef, profileImageFileName })}
           error={errors.profileImageFileRef}
-          required
         />
       </div>
     </div>
