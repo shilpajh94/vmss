@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import quote_plus
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -69,8 +70,11 @@ class Settings(BaseSettings):
             )
         driver = _DB_DRIVERS[self.db_connection]
         return (
-            f"{driver}://{self.db_username}:{self.db_password}"
-            f"@{self.db_host}:{self.db_port}/{self.db_database}"
+            f"postgresql+asyncpg://"
+            f"{quote_plus(self.db_username)}:"
+            f"{quote_plus(self.db_password)}@"
+            f"{self.db_host}:{self.db_port}/"
+            f"{self.db_database}"
         )
 
     # Redis — one instance, one logical DB index per purpose (cache, Celery
