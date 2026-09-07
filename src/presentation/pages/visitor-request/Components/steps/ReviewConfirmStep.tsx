@@ -39,6 +39,8 @@ interface ReviewConfirmStepProps {
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
   onBack: () => void
   onSubmit: () => void
+  onGoHome?: () => void
+  homeLabel?: string
 }
 
 function SummarySection({ title, rows }: { title: string; rows: [string, ReactNode][] }) {
@@ -83,6 +85,8 @@ export function ReviewConfirmStep({
   getFilePreviewUrl,
   onBack,
   onSubmit,
+  onGoHome,
+  homeLabel = 'Back to Home',
 }: ReviewConfirmStepProps) {
   if (status === 'success') {
     return (
@@ -90,6 +94,16 @@ export function ReviewConfirmStep({
         <h3 className="text-h3 text-text">Request Submitted</h3>
         <p className="text-body text-text-muted">Your visit request has been received. You can reference this tracking ID for any follow-up.</p>
         <p className="text-h2 text-primary">{trackingId}</p>
+        {onGoHome && (
+          <button
+            type="button"
+            onClick={onGoHome}
+            title={homeLabel}
+            className="mt-2 cursor-pointer rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white transition-colors hover:opacity-90"
+          >
+            {homeLabel}
+          </button>
+        )}
       </div>
     )
   }
@@ -172,14 +186,21 @@ export function ReviewConfirmStep({
       />
 
       <div className="flex gap-3">
-        <button type="button" onClick={onBack} disabled={status === 'submitting'} className="rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary">
+        <button
+          type="button"
+          onClick={onBack}
+          disabled={status === 'submitting'}
+          title="Go back to the previous step"
+          className="cursor-pointer rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary transition-colors enabled:hover:bg-primary/10 disabled:cursor-not-allowed"
+        >
           ← Back
         </button>
         <button
           type="button"
           onClick={onSubmit}
           disabled={status === 'submitting'}
-          className="flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white disabled:opacity-60"
+          title="Submit your visit request"
+          className="flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white transition-colors enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {status === 'submitting' && <Spinner className="size-4 border-white/40 border-t-white" />}
           {status === 'submitting' ? 'Submitting…' : 'Submit Request'}

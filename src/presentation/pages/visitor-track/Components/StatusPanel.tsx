@@ -34,17 +34,19 @@ export function StatusPanel({ response }: StatusPanelProps) {
       </div>
 
       <div className="grid grid-cols-3 gap-4 border-t border-border-subtle pt-4">
-        <div>
+        <div className="min-w-0">
           <p className="text-overline text-text-muted">Requested Date</p>
-          <p className="text-body text-text">{response.requestedDate}</p>
+          <p className="truncate text-body text-text">{response.requestedDate}</p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-overline text-text-muted">Assigned Host</p>
-          <p className="text-body text-text">{response.assignedHost}</p>
+          <p className="truncate text-body text-text" title={response.assignedHost}>
+            {response.assignedHost}
+          </p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-overline text-text-muted">Total Visitors</p>
-          <p className="text-body text-text">{response.totalVisitors} Registrants</p>
+          <p className="truncate text-body text-text">{response.totalVisitors} Registrants</p>
         </div>
       </div>
 
