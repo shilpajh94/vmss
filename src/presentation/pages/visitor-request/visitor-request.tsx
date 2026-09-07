@@ -37,6 +37,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     submit,
   } = useVisitorRequestWizard(initial)
 
+  const navigate = useNavigate()
   const { listVisitorCategoriesUseCase, searchHostsUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase } =
     useAppDependencies()
   const [visitorCategories, setVisitorCategories] = useState<VisitorCategory[] | undefined>(undefined)
@@ -47,8 +48,9 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
   const loadVisitorCategories = useCallback(async () => {
     try {
       setVisitorCategories(await listVisitorCategoriesUseCase.execute())
-    } catch {
+    } catch (error) {
       // Falls back to no options; the field stays empty if this fails.
+      console.error('Failed to load visitor categories', error)
     }
   }, [listVisitorCategoriesUseCase])
 
@@ -130,6 +132,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             getFilePreviewUrl={getFilePreviewUrl}
             onBack={goBack}
             onSubmit={submit}
+            onGoHome={() => navigate('/')}
           />
         )}
 
@@ -139,11 +142,17 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
               type="button"
               onClick={goBack}
               disabled={currentStep === 0}
-              className="rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary disabled:opacity-0"
+              title="Go back to the previous step"
+              className="cursor-pointer rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary transition-colors enabled:hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-0"
             >
               ← Back
             </button>
-            <button type="button" onClick={goNext} className="rounded-lg bg-secondary-accent px-6 py-3 text-body font-semibold text-white">
+            <button
+              type="button"
+              onClick={goNext}
+              title="Continue to the next step"
+              className="cursor-pointer rounded-lg bg-secondary-accent px-6 py-3 text-body font-semibold text-white transition-colors hover:opacity-90"
+            >
               Next
             </button>
           </div>

@@ -5,7 +5,10 @@ export const VisitorCategoryOutSchema = z.object({
   name: z.string(),
   code: z.string(),
   description: z.string().nullable(),
-  badgeColor: z.enum(["blue", "orange", "gold", "grey"]),
+  // Falls back to "blue" instead of rejecting the whole list: the backend has
+  // pre-existing records with free-text/hex values (e.g. "#FFD700") that predate
+  // this enum, and one non-conforming record must not sink every category.
+  badgeColor: z.enum(["blue", "orange", "gold", "grey"]).catch("blue"),
   ndaRequirement: z.enum(["digital", "signed_pdf", "optional", "none"]).nullable(),
   escortRequirement: z.enum(["self_escort", "access_logs_only", "always_required", "gate_check_in_only"]).nullable(),
   maxDurationMinutes: z.number().nullable(),

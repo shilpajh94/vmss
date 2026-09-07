@@ -1,6 +1,7 @@
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import { Modal } from '../ui/Modal'
 import { CalendarClockIcon, ShieldIcon, TagIcon } from '../icons'
+import { formatDateTime } from '../../utils/format-time'
 
 interface VisitorInfoModalProps {
   isOpen: boolean
@@ -34,6 +35,57 @@ function initialsFor(fullName: string): string {
   return ((parts[0]?.[0] ?? '') + (parts[parts.length - 1]?.[0] ?? '')).toUpperCase()
 }
 
+function Avatar({
+  fullName,
+  photoUrl,
+  sizeClassName,
+  toneClassName,
+}: {
+  fullName: string
+  photoUrl?: string | null
+  sizeClassName: string
+  toneClassName: string
+}) {
+  if (photoUrl) {
+    return (
+      <img
+        src={photoUrl}
+        alt={fullName}
+        className={`shrink-0 rounded-full object-cover ${sizeClassName}`}
+      />
+    )
+  }
+
+  return (
+    <span className={`flex shrink-0 items-center justify-center rounded-full font-display font-bold ${sizeClassName} ${toneClassName}`}>
+      {initialsFor(fullName)}
+    </span>
+  )
+}
+
+function IdProofField({ label, type, url }: { label: string; type?: string | null; url?: string | null }) {
+  if (!type && !url) return null
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-overline text-text-faint">{label}</span>
+      <span className="flex items-center gap-2 font-body text-[13px] font-medium text-text">
+        {type ?? '—'}
+        {url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="font-body text-[12px] font-semibold text-secondary-accent hover:underline"
+          >
+            View
+          </a>
+        ) : null}
+      </span>
+    </div>
+  )
+}
+
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
@@ -59,9 +111,12 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
         <div className="flex flex-col gap-5">
           <div className="flex items-start justify-between gap-3 rounded-xl border border-border-subtle bg-bg p-4">
             <div className="flex items-center gap-3">
-              <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-secondary-accent/12 font-display text-sm font-bold text-secondary-accent">
-                {initialsFor(detail.primaryContactFullName)}
-              </span>
+              <Avatar
+                fullName={detail.primaryContactFullName}
+                photoUrl={detail.primaryContactPhotoUrl}
+                sizeClassName="size-11 text-sm"
+                toneClassName="bg-secondary-accent/12 text-secondary-accent"
+              />
               <div className="flex flex-col gap-0.5">
                 <p className="font-display text-base font-bold text-text">{detail.primaryContactFullName}</p>
                 <p className="font-body text-[11px] font-semibold text-text-faint">{detail.trackingId}</p>
@@ -90,6 +145,7 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
                 <Field label="Scheduled" value={`${detail.preferredVisitDate} ${detail.preferredVisitTime}`} />
               ) : null}
               {detail.carriedItems.length > 0 ? <Field label="Carried items" value={detail.carriedItems.join(', ')} /> : null}
+              <IdProofField label="ID proof" type={detail.primaryContactIdProofType} url={detail.primaryContactIdProofUrl} />
               {detail.additionalNotes ? (
                 <div className="col-span-2">
                   <Field label="Notes" value={detail.additionalNotes} />
@@ -104,9 +160,12 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
               <div className="flex flex-col gap-2">
                 {detail.visitors.map((visitor) => (
                   <div key={visitor.id} className="flex items-center gap-3 rounded-xl border border-border-subtle p-3">
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-neutral-subtle font-display text-xs font-bold text-text">
-                      {initialsFor(visitor.fullName)}
-                    </span>
+                    <Avatar
+                      fullName={visitor.fullName}
+                      photoUrl={visitor.photoUrl}
+                      sizeClassName="size-8 text-xs"
+                      toneClassName="bg-neutral-subtle text-text"
+                    />
                     <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-3 gap-y-0.5">
                       <p className="col-span-2 truncate font-body text-[13px] font-semibold text-text">{visitor.fullName}</p>
                       <p className="truncate font-body text-[11px] text-text-muted">{visitor.email ?? '—'}</p>
@@ -118,6 +177,16 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
                         {visitor.idProofType}
                       </span>
                     ) : null}
+                    {visitor.idProofUrl ? (
+                      <a
+                        href={visitor.idProofUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="shrink-0 font-body text-[11px] font-semibold whitespace-nowrap text-secondary-accent hover:underline"
+                      >
+                        View ID
+                      </a>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -127,12 +196,12 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
           <div className="flex flex-col gap-3">
             <SectionLabel>Timeline</SectionLabel>
             <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
-              <Field label="Submitted" value={detail.submittedAt} />
-              <Field label="Expires" value={detail.expiresAt} />
-              {detail.approvedAt ? <Field label="Approved" value={detail.approvedAt} /> : null}
-              {detail.checkedInAt ? <Field label="Checked in" value={detail.checkedInAt} /> : null}
-              {detail.checkedOutAt ? <Field label="Checked out" value={detail.checkedOutAt} /> : null}
-              {detail.deniedAt ? <Field label="Denied" value={detail.deniedAt} /> : null}
+              <Field label="Submitted" value={formatDateTime(detail.submittedAt)} />
+              <Field label="Expires" value={formatDateTime(detail.expiresAt)} />
+              {detail.approvedAt ? <Field label="Approved" value={formatDateTime(detail.approvedAt)} /> : null}
+              {detail.checkedInAt ? <Field label="Checked in" value={formatDateTime(detail.checkedInAt)} /> : null}
+              {detail.checkedOutAt ? <Field label="Checked out" value={formatDateTime(detail.checkedOutAt)} /> : null}
+              {detail.deniedAt ? <Field label="Denied" value={formatDateTime(detail.deniedAt)} /> : null}
               {detail.denialReason ? (
                 <div className="col-span-2">
                   <Field label="Denial reason" value={detail.denialReason} />
@@ -146,7 +215,7 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
               <CalendarClockIcon className="size-4 shrink-0 text-text-faint" />
               <div className="flex flex-1 flex-wrap gap-x-6 gap-y-2">
                 <Field label="Badge number" value={detail.badgeNumber} />
-                {detail.badgeIssuedAt ? <Field label="Badge issued" value={detail.badgeIssuedAt} /> : null}
+                {detail.badgeIssuedAt ? <Field label="Badge issued" value={formatDateTime(detail.badgeIssuedAt)} /> : null}
                 {detail.badgeReprintCount > 0 ? <Field label="Badge reprints" value={String(detail.badgeReprintCount)} /> : null}
               </div>
             </div>
