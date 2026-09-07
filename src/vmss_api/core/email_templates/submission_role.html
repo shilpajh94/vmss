@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block subject %}New invitation awaiting triage{% endblock %}
+{% block content %}
+<h2 style="margin-top:0; color:#1f2933;">New invitation awaiting triage</h2>
+<p>A new invitation has been submitted and awaits your team's triage.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px; font-size:14px;">
+  <tr><td style="padding:4px 0; color:#6b7280; width:160px;">Tracking ID</td><td style="padding:4px 0; font-weight:bold;">{{ tracking_id }}</td></tr>
+  <tr><td style="padding:4px 0; color:#6b7280;">Visitor</td><td style="padding:4px 0;">{{ visitor_name }}</td></tr>
+  {% if purpose %}<tr><td style="padding:4px 0; color:#6b7280;">Purpose</td><td style="padding:4px 0;">{{ purpose }}</td></tr>{% endif %}
+</table>
+{% endblock %}

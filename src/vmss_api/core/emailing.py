@@ -22,7 +22,13 @@ class Attachment(Protocol):
 
 class EmailSender(Protocol):
     async def send(
-        self, *, to: str, subject: str, body: str, attachment: "Attachment | None" = None
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        html_body: str | None = None,
+        attachment: "Attachment | None" = None,
     ) -> None: ...
 
 
@@ -45,13 +51,27 @@ class SmtpEmailSender:
     """
 
     async def send(
-        self, *, to: str, subject: str, body: str, attachment: "Attachment | None" = None
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        html_body: str | None = None,
+        attachment: "Attachment | None" = None,
     ) -> None:
         message = EmailMessage()
         message["From"] = settings.smtp_from_address
         message["To"] = to
         message["Subject"] = subject
         message.set_content(body)
+        if html_body is not None:
+            # `set_content` above becomes the `text/plain` part of a
+            # `multipart/alternative` message; `add_alternative` adds the
+            # `text/html` part a capable mail client prefers to render
+            # (role-based-invitation-workflow, `email-notifications`
+            # capability's "every rendered email SHALL also carry a
+            # plain-text fallback part").
+            message.add_alternative(html_body, subtype="html")
         if attachment is not None:
             maintype, _, subtype = attachment.mime_type.partition("/")
             message.add_attachment(

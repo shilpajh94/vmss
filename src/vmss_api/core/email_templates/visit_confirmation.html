@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block subject %}Your visit is confirmed{% endblock %}
+{% block content %}
+<h2 style="margin-top:0; color:#1f2933;">Your visit is confirmed</h2>
+<p>Your registration is confirmed. Present the attached QR code at check-in.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px; font-size:14px;">
+  <tr><td style="padding:4px 0; color:#6b7280; width:160px;">Tracking ID</td><td style="padding:4px 0; font-weight:bold;">{{ tracking_id }}</td></tr>
+  {% if purpose %}<tr><td style="padding:4px 0; color:#6b7280;">Purpose</td><td style="padding:4px 0;">{{ purpose }}</td></tr>{% endif %}
+  {% if visit_date %}<tr><td style="padding:4px 0; color:#6b7280;">Visit date</td><td style="padding:4px 0;">{{ visit_date }}{% if visit_time %} at {{ visit_time }}{% endif %}</td></tr>{% endif %}
+  {% if duration %}<tr><td style="padding:4px 0; color:#6b7280;">Expected duration</td><td style="padding:4px 0;">{{ duration }}</td></tr>{% endif %}
+  {% if department %}<tr><td style="padding:4px 0; color:#6b7280;">Department</td><td style="padding:4px 0;">{{ department }}</td></tr>{% endif %}
+</table>
+<div style="margin-top:20px; padding:16px; background-color:#f4f5f7; border-radius:6px;">
+  <p style="margin:0 0 4px 0; font-weight:bold; color:#1f2933;">Your point of contact</p>
+  {% if host_name %}
+    <p style="margin:0;">{{ host_name }}{% if host_contact %} — {{ host_contact }}{% endif %}</p>
+  {% else %}
+    <p style="margin:0;">{{ front_desk_contact | default('Please contact the front desk on arrival.') }}</p>
+  {% endif %}
+</div>
+{% endblock %}
