@@ -123,6 +123,26 @@ def test_protected_routes_declare_bearer_security() -> None:
         ("BranchOut", {"id", "name", "code", "address", "isActive"}),
         ("UserOut", {"id", "email", "fullName", "isActive", "branchRoles"}),
         ("BranchRoleOut", {"roleName", "branchId"}),
+        ("InvitationBranchOut", {"id", "name", "code", "address", "city"}),
+        (
+            "InvitationVisitorDetailOut",
+            {"id", "fullName", "idProofType", "idProofUrl", "photoUrl"},
+        ),
+        (
+            "InvitationDetailOut",
+            {
+                "branchId",
+                "branch",
+                "building",
+                "department",
+                "primaryContactIdProofType",
+                "primaryContactIdProofUrl",
+            },
+        ),
+        (
+            "InvitationQrCheckInOut",
+            {"checkInStatus", "branch", "building", "department", "primaryContactIdProofType"},
+        ),
     ],
 )
 def test_response_schemas_render_camel_case(schema_name: str, expected_camel_props: set) -> None:

@@ -267,12 +267,61 @@ class InvitationListItemOut(CamelModel):
 
 
 class InvitationVisitorOut(CamelModel):
+    """Shared visitor shape for every response *except* the staff detail
+    view: public tracking lookup, public tracking-ID check-in
+    (`InvitationCheckInOut`), and public QR check-in/check-out
+    (`InvitationQrCheckInOut`). Deliberately carries no ID-proof document
+    field at all — none of those endpoints has an authenticated caller a
+    `documents:view` permission could be checked against, so there must be
+    no field here for a future change to accidentally start populating
+    (see `enrich-invitation-checkin-and-detail-views/design.md` Decision 3).
+    The staff detail view uses `InvitationVisitorDetailOut` instead, which
+    adds exactly that field, gated by `documents:view`.
+    """
+
     id: uuid.UUID
     full_name: str
     email: str | None
     phone: str | None
     id_proof_type: str
     photo_url: str | None = None
+
+
+class InvitationVisitorDetailOut(CamelModel):
+    """`GET /invitations/{id}`-only visitor shape — everything
+    `InvitationVisitorOut` has, plus `id_proof_url`, resolved only when the
+    requesting caller holds `documents:view` (`null` otherwise). See
+    `InvitationVisitorOut`'s docstring for why every other response uses
+    that schema instead of this one.
+    """
+
+    id: uuid.UUID
+    full_name: str
+    email: str | None
+    phone: str | None
+    id_proof_type: str
+    id_proof_url: str | None = None
+    photo_url: str | None = None
+
+
+class InvitationBranchOut(CamelModel):
+    id: uuid.UUID
+    name: str
+    code: str
+    address: str | None
+    city: str | None
+
+
+class InvitationBuildingOut(CamelModel):
+    id: uuid.UUID
+    name: str
+    code: str
+
+
+class InvitationDepartmentOut(CamelModel):
+    id: uuid.UUID
+    name: str
+    code: str
 
 
 class InvitationVehicleOut(CamelModel):
@@ -376,6 +425,9 @@ class InvitationDetailOut(CamelModel):
 
     id: uuid.UUID
     branch_id: uuid.UUID
+    branch: InvitationBranchOut
+    building: InvitationBuildingOut | None = None
+    department: InvitationDepartmentOut | None = None
     source: RegistrationSource
     created_by_user_id: uuid.UUID | None
     tracking_id: str
@@ -384,6 +436,8 @@ class InvitationDetailOut(CamelModel):
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
+    primary_contact_id_proof_type: str | None = None
+    primary_contact_id_proof_url: str | None = None
     purpose_of_visit: str | None
     host_name_or_email: str | None
     host_id: uuid.UUID | None = None
@@ -411,7 +465,7 @@ class InvitationDetailOut(CamelModel):
     watchlist_override_at: datetime | None
     watchlist_override_reason: str | None
     watchlist_override_by_user_id: uuid.UUID | None
-    visitors: list[InvitationVisitorOut]
+    visitors: list[InvitationVisitorDetailOut]
     vehicles: list[InvitationVehicleOut]
 
 
@@ -459,8 +513,12 @@ class InvitationQrCheckInOut(CamelModel):
     registration_type: str
     source: str
     visitor_category_id: uuid.UUID | None
+    branch: InvitationBranchOut
+    building: InvitationBuildingOut | None = None
+    department: InvitationDepartmentOut | None = None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
+    primary_contact_id_proof_type: str | None = None
     primary_contact_email: str | None
     primary_contact_phone: str | None
     host_id: uuid.UUID | None = None
