@@ -44,3 +44,16 @@ def checked_in(invitation: Invitation) -> tuple[str, str, dict[str, str]]:
 
 def checked_out(invitation: Invitation) -> tuple[str, str, dict[str, str]]:
     return _build(invitation, title="Visitor checked out", action="checked_out")
+
+
+def edited(invitation: Invitation) -> tuple[str, str, dict[str, str]]:
+    return _build(invitation, title="Visit details updated", action="edited")
+
+
+def host_assigned(invitation: Invitation) -> tuple[str, str, dict[str, str]]:
+    """role-based-invitation-workflow: sent to whoever the invitation's
+    ownership step is delegated to — the newly resolved host, distinct from
+    `step_awaiting_approval` (sent to every holder of the owning role before
+    anyone has been named).
+    """
+    return _build(invitation, title="You've been named host", action="host_assigned")

@@ -11,8 +11,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
-from factories import VisitorCategoryFactory
+from factories import RoleFactory, VisitorCategoryFactory
+from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import AuditLog
+from vmss_api.auth.repository import RoleRepository
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.security import hash_password
@@ -35,6 +37,17 @@ async def _default_visitor_category(db_session: AsyncSession) -> None:
             id=_DEFAULT_VISITOR_CATEGORY_ID, name="Default Walk-in Category", code="WALKIN-DEFAULT"
         )
     )
+    await db_session.commit()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _default_host_role(db_session: AsyncSession) -> None:
+    """`create_invitation` (shared verbatim by walk-in registration) now
+    always resolves the tenant's default host role
+    (role-based-invitation-workflow) — same rationale as
+    `invitations/tests.py::_default_host_role`.
+    """
+    db_session.add(RoleFactory.build(id=uuid.uuid4(), name="reception", permissions=[]))
     await db_session.commit()
 
 
@@ -315,6 +328,72 @@ async def test_walk_in_registration_disguised_photo_rejected(
         headers={"X-Device-Key": registration_device_raw_key},
     )
     assert response.status_code == 422
+
+
+# --- Role-based invitation ownership (role-based-invitation-workflow) --------
+# Walk-in registration shares `create_invitation` verbatim with `POST
+# /invitations` (see `invitations/tests.py`'s equivalent coverage), but as a
+# separate, unauthenticated caller it gets its own explicit test evidence
+# rather than relying on the shared service function alone.
+
+
+async def test_walk_in_registration_snapshots_role_owned_ownership_step(
+    client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession
+) -> None:
+    """role-based-invitation-workflow spec.md "Every New Invitation Is Owned
+    by the Tenant's Default Host Role at Creation" — the walk-in channel must
+    snapshot the same unconditional, role-identified `stepOrder` 0 ownership
+    step as `POST /invitations` does, not a host-identified one.
+    """
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
+
+    data = await _create_walk_in_success(
+        client, registration_device_raw_key, payload=_individual_payload()
+    )
+    steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(
+        uuid.UUID(data["id"])
+    )
+    step_zero = next(s for s in steps if s.step_order == 0)
+    assert step_zero.approver_role_id == reception_role.id
+    assert step_zero.approver_user_id is None
+
+
+async def test_walk_in_registration_ignores_supplied_host_fields(
+    client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession
+) -> None:
+    """role-based-invitation-workflow spec.md "A supplied hostId or
+    hostNameOrEmail is silently ignored" — `_individual_payload()` still
+    carries a `hostNameOrEmail` (an un-updated kiosk client's habit); it must
+    not resolve a host on the created invitation.
+    """
+    data = await _create_walk_in_success(
+        client, registration_device_raw_key, payload=_individual_payload()
+    )
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.host_id is None
+    assert invitation.host_name_or_email is None
+
+
+async def test_walk_in_registration_dispatches_tracking_notification(
+    client: AsyncClient, registration_device_raw_key: str, monkeypatch
+) -> None:
+    """Confirms the branded tracking/creation email dispatch (template
+    content itself is covered generically by
+    `invitations/tests.py::test_every_notification_template_renders_without_error`)
+    actually fires for the walk-in channel, exactly as it does for the other
+    two invitation-creation callers.
+    """
+    calls: list[dict] = []
+    monkeypatch.setattr(tasks.send_tracking_notification, "delay", lambda **kw: calls.append(kw))
+
+    data = await _create_walk_in_success(
+        client, registration_device_raw_key, payload=_individual_payload()
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["invitation_id"] == data["id"]
 
 
 # --- Device-auth-denied (testing-standards.md §2's permission-denied case) ---
@@ -611,3 +690,24 @@ async def test_walk_in_registration_with_department_id_overwrites_free_text(
     assert invitation is not None
     assert invitation.department_to_visit == department.name
     assert invitation.department_id == department.id
+
+
+async def test_walk_in_registration_with_no_department_succeeds_and_leaves_it_unset(
+    client: AsyncClient,
+    registration_device_raw_key: str,
+    db_session: AsyncSession,
+) -> None:
+    """allow-optional-department-at-creation spec.md "Submission with no
+    department succeeds and leaves it unset" — same behavior as
+    `invitations/tests.py`'s equivalent, confirmed through the walk-in
+    endpoint since it shares the identical `VisitDetailsSubmit` schema.
+    """
+    payload = _individual_payload()
+    del payload["visitDetails"]["departmentToVisit"]
+
+    data = await _create_walk_in_success(client, registration_device_raw_key, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.department_to_visit is None
+    assert invitation.department_id is None

@@ -3,6 +3,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+import pytest_asyncio
 from httpx import AsyncClient
 from PIL import Image
 from sqlalchemy import select
@@ -19,6 +20,7 @@ from factories import (
 )
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
+from vmss_api.auth.repository import RoleRepository
 from vmss_api.invitations import tasks
 from vmss_api.invitations.models import Invitation
 from vmss_api.notifications import service as notifications_service
@@ -30,6 +32,17 @@ def _jpeg_bytes() -> bytes:
     buffer = io.BytesIO()
     Image.new("RGB", (2, 2), color="white").save(buffer, format="JPEG")
     return buffer.getvalue()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _default_host_role(db_session: AsyncSession) -> None:
+    """`create_invitation` now always resolves the tenant's default host
+    role (role-based-invitation-workflow) — this module exercises it
+    directly (not just through the HTTP layer), same rationale as
+    `invitations/tests.py::_default_host_role`.
+    """
+    db_session.add(RoleFactory.build(id=uuid.uuid4(), name="reception", permissions=[]))
+    await db_session.commit()
 
 
 async def _get_or_create_permission(db_session: AsyncSession, code: str) -> Permission:
@@ -1755,6 +1768,270 @@ async def test_delegate_step_requires_invitations_approve_permission(
     assert unchanged.delegated_to_user_id is None
 
 
+# --- Ownership step (stepOrder 0) delegation (role-based-invitation-workflow) --
+
+
+async def _role_owned_invitation(
+    db_session: AsyncSession, branch: Branch
+) -> tuple[Invitation, Role]:
+    """A `submitted` invitation with a role-identified `stepOrder` 0
+    ownership step — the shape every newly submitted invitation now gets
+    (replacing the old host-identified-at-creation step). No host is
+    resolved yet (`Invitation.host_id` is null). Returns
+    `(invitation, owning_role)`.
+    """
+    owning_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"owning-role-{uuid.uuid4().hex[:8]}", permissions=[]
+    )
+    db_session.add(owning_role)
+    await db_session.flush()
+
+    invitation = _build_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=0,
+            approver_role_id=owning_role.id,
+            approver_user_id=None,
+        )
+    )
+    await db_session.commit()
+    return invitation, owning_role
+
+
+async def test_delegate_ownership_step_to_non_role_holder_succeeds(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "A holder of the owning role delegates the
+    ownership step to the real host" — the named delegate need not hold the
+    step's own `approverRoleId`, only `invitations:approve` at the branch,
+    since the real host is normally not a front-office employee.
+    """
+    invitation, owning_role = await _role_owned_invitation(db_session, branch)
+    caller = await _user_with_role(
+        db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
+    )
+    delegate_permission = await _get_or_create_permission(db_session, "invitations:approve")
+    delegate_role = RoleFactory.build(
+        id=uuid.uuid4(), name="real-host-role", permissions=[delegate_permission]
+    )
+    db_session.add(delegate_role)
+    await db_session.flush()
+    delegate = await _user_with_role(db_session, branch.id, role=delegate_role)
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    updated = await _get_step(db_session, invitation.id, 0)
+    assert updated.status == "pending"
+    assert updated.delegated_to_user_id == delegate.id
+
+
+async def test_delegate_ownership_step_lacking_approve_permission_rejected(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """The relaxed "no role required" rule for `stepOrder` 0 does not waive
+    `invitations:approve` itself — a named delegate without it is still
+    rejected.
+    """
+    invitation, owning_role = await _role_owned_invitation(db_session, branch)
+    caller = await _user_with_role(
+        db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
+    )
+    no_permission_role = RoleFactory.build(id=uuid.uuid4(), name="no-permission-role")
+    db_session.add(no_permission_role)
+    await db_session.flush()
+    delegate = await _user_with_role(db_session, branch.id, role=no_permission_role)
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    unchanged = await _get_step(db_session, invitation.id, 0)
+    assert unchanged.delegated_to_user_id is None
+
+
+async def test_delegate_ownership_step_resolves_invitation_host_and_notifies(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    """specs/approvals/spec.md "Delegating the Ownership Step Also Resolves
+    the Invitation's Host" — the invitation's `hostId`/`hostNameOrEmail` are
+    set to the delegate, and they're notified (push + email), which
+    delegation dispatches nothing for today.
+    """
+    invitation, owning_role = await _role_owned_invitation(db_session, branch)
+    caller = await _user_with_role(
+        db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
+    )
+    delegate_permission = await _get_or_create_permission(db_session, "invitations:approve")
+    delegate_role = RoleFactory.build(
+        id=uuid.uuid4(), name="real-host-role-2", permissions=[delegate_permission]
+    )
+    db_session.add(delegate_role)
+    await db_session.flush()
+    delegate = await _user_with_role(db_session, branch.id, role=delegate_role)
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    push_calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        push_calls.append(kwargs)
+
+    email_calls: list[dict] = []
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+    monkeypatch.setattr(
+        tasks.send_host_creation_notification, "delay", lambda **kw: email_calls.append(kw)
+    )
+
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["hostId"] == str(delegate.id)
+
+    await db_session.refresh(invitation)
+    assert invitation.host_id == delegate.id
+    assert invitation.host_name_or_email == delegate.full_name
+    assert len(push_calls) == 1
+    assert push_calls[0]["user_id"] == delegate.id
+    assert len(email_calls) == 1
+    assert email_calls[0]["host_id"] == str(delegate.id)
+
+
+async def test_redelegate_ownership_step_updates_resolved_host(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Re-delegating an already-delegated ownership step updates the
+    invitation's resolved host to the new delegate. Once step 0 is
+    delegated, only the resolved host themselves (or an override-permission
+    holder) may re-delegate it — the original front-office caller no longer
+    qualifies (their role-match no longer applies once a delegate is
+    assigned, and they are not the resolved host) — so the second
+    delegation here is issued by `first_delegate`, not the original caller.
+    """
+    invitation, owning_role = await _role_owned_invitation(db_session, branch)
+    caller = await _user_with_role(
+        db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
+    )
+    delegate_permission = await _get_or_create_permission(db_session, "invitations:approve")
+    delegate_role = RoleFactory.build(
+        id=uuid.uuid4(), name="real-host-role-3", permissions=[delegate_permission]
+    )
+    db_session.add(delegate_role)
+    await db_session.flush()
+    first_delegate = await _user_with_role(db_session, branch.id, role=delegate_role)
+    second_delegate = await _user_with_role(db_session, branch.id, role=delegate_role)
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    caller_token = issue_token(caller)
+    await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/delegate",
+        json={"delegateUserId": str(first_delegate.id)},
+        headers={"Authorization": f"Bearer {caller_token}"},
+    )
+    host_token = issue_token(first_delegate)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/delegate",
+        json={"delegateUserId": str(second_delegate.id)},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["hostId"] == str(second_delegate.id)
+
+    await db_session.refresh(invitation)
+    assert invitation.host_id == second_delegate.id
+
+
+async def test_redelegate_ownership_step_notifies_only_new_host(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    """Re-delegating an already-delegated ownership step notifies only the
+    newly assigned host — the previous delegate receives no notification for
+    a re-delegation that supersedes them. Same scenario as
+    `test_redelegate_ownership_step_updates_resolved_host`, extended with
+    notification-dispatch assertions (`design.md`'s Decisions: re-delegation
+    edge case is what this task group actually needed to add).
+    """
+    invitation, owning_role = await _role_owned_invitation(db_session, branch)
+    caller = await _user_with_role(
+        db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
+    )
+    delegate_permission = await _get_or_create_permission(db_session, "invitations:approve")
+    delegate_role = RoleFactory.build(
+        id=uuid.uuid4(), name="real-host-role-4", permissions=[delegate_permission]
+    )
+    db_session.add(delegate_role)
+    await db_session.flush()
+    first_delegate = await _user_with_role(db_session, branch.id, role=delegate_role)
+    second_delegate = await _user_with_role(db_session, branch.id, role=delegate_role)
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    caller_token = issue_token(caller)
+    await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/delegate",
+        json={"delegateUserId": str(first_delegate.id)},
+        headers={"Authorization": f"Bearer {caller_token}"},
+    )
+
+    push_calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        push_calls.append(kwargs)
+
+    email_calls: list[dict] = []
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+    monkeypatch.setattr(
+        tasks.send_host_creation_notification, "delay", lambda **kw: email_calls.append(kw)
+    )
+
+    host_token = issue_token(first_delegate)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/delegate",
+        json={"delegateUserId": str(second_delegate.id)},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert len(push_calls) == 1
+    assert push_calls[0]["user_id"] == second_delegate.id
+    assert len(email_calls) == 1
+    assert email_calls[0]["host_id"] == str(second_delegate.id)
+
+
 # --- Tenant isolation (testing-standards.md §2) ------------------------------
 
 
@@ -1849,16 +2126,17 @@ async def test_delegate_step_tenant_schema_isolation(
     assert found_in_own_schema.delegated_to_user_id == delegate.id
 
 
-# --- Category-with-no-workflow fallback (cross-check with invitations/tests.py) --
+# --- Unconditional ownership step (role-based-invitation-workflow) ---------
 
 
-async def test_category_with_no_active_rules_creates_no_steps(
+async def test_category_with_no_active_rules_creates_only_the_ownership_step(
     tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
-    """specs/approvals/spec.md "A category with no active rules creates no
-    steps" — exercised directly at the service layer (testing-standards.md
-    §3), complementing `invitations/tests.py`'s endpoint-level coverage of
-    the same fallback.
+    """specs/approvals/spec.md "A category with no active rules still
+    snapshots the ownership step" — replaces the old "creates no steps"
+    behavior: every submitted invitation now gets at least the `stepOrder`
+    0 ownership step, role-identified for the tenant's default host role
+    (`reception`, seeded by this module's `_default_host_role` fixture).
     """
     from datetime import date, time
 
@@ -1886,7 +2164,6 @@ async def test_category_with_no_active_rules_creates_no_steps(
         ),
         visit_details=VisitDetailsSubmit(
             purpose_of_visit="Test",
-            host_name_or_email="host@example.com",
             preferred_visit_date=date(2026, 9, 1),
             preferred_visit_time=time(10, 0, 0),
             expected_duration="< 1 hour",
@@ -1907,86 +2184,26 @@ async def test_category_with_no_active_rules_creates_no_steps(
         primary_contact_photo_content=None,
         visitor_photo_contents=[],
     )
-    steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation.id)
-    assert steps == []
-
-
-# --- Host-as-step-0 snapshotting (add-approval-step-id-and-host-routing) ----
-
-
-async def test_resolved_host_with_no_active_rules_creates_single_host_step(
-    tenant: Tenant, branch: Branch, db_session: AsyncSession
-) -> None:
-    """specs/approvals/spec.md "A resolved host with no configured rules
-    creates a single host-approval step".
-    """
-    from datetime import date, time
-
-    from vmss_api.invitations import service as invitations_service
-    from vmss_api.invitations.schemas import (
-        ConsentsSubmit,
-        IdProofType,
-        InvitationCreate,
-        InvitationPrimaryContactCreate,
-        RegistrationType,
-        VisitDetailsSubmit,
-    )
-
-    host = UserFactory.build(
-        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
-    )
-    category = VisitorCategoryFactory.build(id=uuid.uuid4(), name="Host Only", code="HOST-ONLY")
-    db_session.add_all([host, category])
-    await db_session.commit()
-
-    payload = InvitationCreate(
-        registration_type=RegistrationType.individual,
-        visitor_category_id=category.id,
-        primary_contact=InvitationPrimaryContactCreate(
-            full_name="Test Visitor",
-            email="test.visitor@example.com",
-            id_proof_type=IdProofType.passport,
-        ),
-        visit_details=VisitDetailsSubmit(
-            purpose_of_visit="Test",
-            host_name_or_email="ignored@example.com",
-            host_id=host.id,
-            preferred_visit_date=date(2026, 9, 1),
-            preferred_visit_time=time(10, 0, 0),
-            expected_duration="< 1 hour",
-            department_to_visit="Test",
-        ),
-        consents=ConsentsSubmit(
-            terms_accepted=True, data_processing_accepted=True, safety_guidelines_accepted=True
-        ),
-    )
-    invitation = await invitations_service.create_invitation(
-        db_session,
-        payload,
-        branch_id=branch.id,
-        created_by_user_id=None,
-        tenant=tenant,
-        primary_contact_id_proof_content=_jpeg_bytes(),
-        visitor_id_proof_contents=[],
-        primary_contact_photo_content=None,
-        visitor_photo_contents=[],
-    )
-    assert invitation.host_id == host.id
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
 
     steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation.id)
     assert len(steps) == 1
     assert steps[0].step_order == 0
-    assert steps[0].approver_user_id == host.id
-    assert steps[0].approver_role_id is None
+    assert steps[0].approver_role_id == reception_role.id
+    assert steps[0].approver_user_id is None
     assert steps[0].status == "pending"
+    assert invitation.host_id is None
 
 
-async def test_resolved_host_with_configured_rules_creates_host_step_ahead_of_role_chain(
+async def test_category_with_configured_rules_creates_ownership_step_ahead_of_role_chain(
     tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
-    """specs/approvals/spec.md "A resolved host with configured rules
-    creates a host step ahead of the role chain" — host is `stepOrder` 0,
+    """specs/approvals/spec.md "A category with three active rules
+    snapshots four ordered steps" — the ownership step is `stepOrder` 0,
     the three configured rules keep their own `stepOrder` 1/2/3 unchanged.
+    Replaces the old host-as-step-0 test now that a client can no longer
+    supply a host at creation at all.
     """
     from datetime import date, time
 
@@ -2000,16 +2217,11 @@ async def test_resolved_host_with_configured_rules_creates_host_step_ahead_of_ro
         VisitDetailsSubmit,
     )
 
-    host = UserFactory.build(
-        id=uuid.uuid4(),
-        email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example",
-        full_name="Host With Workflow",
-    )
     category = VisitorCategoryFactory.build(
-        id=uuid.uuid4(), name="Host And Workflow", code="HOST-AND-WORKFLOW"
+        id=uuid.uuid4(), name="Configured Workflow", code="CONFIGURED-WORKFLOW"
     )
     role = RoleFactory.build(id=uuid.uuid4(), name="workflow-role", permissions=[])
-    db_session.add_all([host, category, role])
+    db_session.add_all([category, role])
     await db_session.flush()
     db_session.add_all(
         [
@@ -2034,8 +2246,6 @@ async def test_resolved_host_with_configured_rules_creates_host_step_ahead_of_ro
         ),
         visit_details=VisitDetailsSubmit(
             purpose_of_visit="Test",
-            host_name_or_email="ignored@example.com",
-            host_id=host.id,
             preferred_visit_date=date(2026, 9, 1),
             preferred_visit_time=time(10, 0, 0),
             expected_duration="< 1 hour",
@@ -2056,14 +2266,17 @@ async def test_resolved_host_with_configured_rules_creates_host_step_ahead_of_ro
         primary_contact_photo_content=None,
         visitor_photo_contents=[],
     )
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
 
     steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation.id)
     assert len(steps) == 4
     by_order = {s.step_order: s for s in steps}
-    assert by_order[0].approver_user_id == host.id
-    assert by_order[0].approver_role_id is None
+    assert by_order[0].approver_role_id == reception_role.id
+    assert by_order[0].approver_user_id is None
     assert by_order[0].status == "pending"
     for step_order in (1, 2, 3):
         assert by_order[step_order].approver_role_id == role.id
         assert by_order[step_order].approver_user_id is None
         assert by_order[step_order].status == "pending"
+    assert invitation.host_id is None

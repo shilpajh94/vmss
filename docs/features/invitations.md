@@ -39,6 +39,7 @@ branch from the request body via the same `authorize_branch_id` helper.
 | PATCH | `/api/v2/invitations/qr/{token}/check-out` | None (public) | 20/minute per IP | Exit counterpart of the QR check-in route above, added by `checkin-approval-workflow-improvements` to replace its old check-in-URL toggle. `checked_in` → `checked_out`; 409 if not currently `checked_in`. Never expiry-blocked — a visit that legitimately continues past `expiresAt` can still be closed out. Audit entries use `action = "invitation_qr_checked_out"`. Accepts `Idempotency-Key`. |
 | PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. |
 | PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`, and dispatches a reschedule notification to the primary contact. 409 once `checked_in`/`checked_out`/`denied`. |
+| PATCH | `/api/v1/invitations/{id}/edit` | `invitations:edit` at the invitation's branch | — | (`role-based-invitation-workflow`) Edits any subset of `purposeOfVisit`/`purposeId`, `preferredVisitDate`, `preferredVisitTime`, `expectedDuration`/`durationId`, `departmentToVisit`/`departmentId`, `additionalNotes` while `submitted` or `approved` — the same eligible-status window as reschedule/extend, additive alongside them rather than replacing either. Never accepts the visitor's own personal fields, `visitorCategoryId`, or `hostId`/`hostNameOrEmail` — any of those in the request body is rejected with a validation error (`extra="forbid"`); host reassignment stays exclusively the delegation endpoint's job (see "Every invitation starts owned by a role" below). Dispatches an email to the primary contact describing what changed, and a push to the resolved host (if any). 409 once ineligible. |
 | PATCH | `/api/v1/invitations/{id}/extend` | `invitations:extend` at the invitation's branch | — | Pushes `expiresAt` forward while `approved` or `checked_in`. 422 if the new expiry isn't strictly later than the current one; 409 if ineligible. |
 | POST | `/api/v1/invitations/{id}/badge` | `invitations:badge` at the invitation's branch | — | Issues a printable badge (PNG) for an `approved`/`checked_in` invitation. 409 if ineligible or already issued (use reprint). Accepts `Idempotency-Key`. |
 | POST | `/api/v1/invitations/{id}/badge/reprint` | `invitations:badge` at the invitation's branch | — | Re-renders an already-issued badge from current data and increments its reprint count. 409 if none issued yet. |
@@ -80,22 +81,39 @@ transient `pending`/shell state for a caller to observe.
 
 ### Optional catalog ids on visit details
 
-`visitDetails` accepts four new *optional* fields alongside its existing
-free-text ones: `purposeId`, `hostId`, `durationId`, `departmentId` — see
+`visitDetails` accepts *optional* fields alongside its existing free-text
+ones: `purposeId`, `durationId`, `departmentId` — see
 `docs/features/visit_info.md` for where those ids come from
-(`GET /hosts/search`, `GET /visit-info/departments`,
-`GET /visit-info/options`). When one is supplied, the service resolves it
-against the corresponding catalog/`Department`/`User` row (rejecting the
-request with `422` if it doesn't resolve to an existing, active row in this
-tenant's schema) and overwrites the paired free-text field
-(`purposeOfVisit`/`hostNameOrEmail`/`expectedDuration`/`departmentToVisit`)
+(`GET /visit-info/departments`, `GET /visit-info/options`). When one is
+supplied, the service resolves it against the corresponding catalog/
+`Department` row (rejecting the request with `422` if it doesn't resolve to
+an existing, active row in this tenant's schema) and overwrites the paired
+free-text field (`purposeOfVisit`/`expectedDuration`/`departmentToVisit`)
 with that row's canonical display value before persisting — the
 client-supplied free-text value for that field, if any, is discarded in favor
-of it. Omitting all four ids leaves every free-text field stored exactly as
+of it. Omitting all three ids leaves every free-text field stored exactly as
 submitted, byte-for-byte the pre-existing behavior — this was an additive
 change, not a breaking one. `POST /registrations/walk-in` inherits the same
 behavior automatically, since it submits the identical `VisitDetailsSubmit`
 shape.
+
+**`hostId`/`hostNameOrEmail` are no longer resolved at creation**
+(`role-based-invitation-workflow`, **BREAKING**): a client may still send
+either field on the wire (for backward compatibility with an un-updated
+caller), but both are silently ignored — never validated, never used to set
+the invitation's host. See "Every invitation starts owned by a role, not a
+person" below for how the host is established instead.
+
+**`departmentToVisit` is optional at creation**
+(`allow-optional-department-at-creation`): a visitor or a staff member
+creating an invitation on a visitor's behalf often doesn't know the
+receiving organisation's internal department structure. Both
+`departmentToVisit` and `departmentId` may be omitted entirely — the
+invitation is created with `departmentToVisit` null rather than rejected —
+and filled in later via `PATCH /invitations/{id}/edit` once someone (e.g.
+reception, after triage) knows the actual answer. `purposeOfVisit` and
+`expectedDuration` remain required free-text fields; only `departmentToVisit`
+changed.
 
 ### Optional profile photo (`checkin-approval-workflow-improvements`)
 
@@ -155,18 +173,25 @@ If `visitorCategoryId`'s category has one or more active
 `submitted` invitation is created, the system snapshots them into ordered
 `InvitationApprovalStep` rows on that invitation — a point-in-time copy, so
 editing the category's workflow later never changes an invitation already
-in flight. A category with no active rules, and no resolved host (see
-below), gets no steps, and that invitation keeps exactly the single-approve
-behavior described above.
+in flight.
 
-**The invitation's own host is always the first approver, when resolved.**
-Whenever `hostId` resolves to an active user at submission (see "Optional
-catalog ids on visit details" above), an additional step is prepended at
-`stepOrder` 0, ahead of any role-based steps — unconditionally, whether or
-not the category has any configured rules. See `docs/features/approvals.md`
-"Host as step 0" for the full composition rules and authorization details;
-in short: this step is authorized for that specific person (or
-`invitations:approve-override`), not by role match.
+**Every invitation starts owned by a role, not a person**
+(`role-based-invitation-workflow`, **BREAKING** — replaces the old
+"host resolves at creation, if a client supplied one" behavior).
+Unconditionally — regardless of whether the category has any configured
+rules, and regardless of anything the client submitted — `stepOrder` 0 is
+role-identified for the tenant's *default host role* (the standard
+`reception` role unless a tenant has reconfigured it via `Company.
+defaultHostRoleId`), ahead of any role-based steps the category's own chain
+configures. The blanket `POST /invitations/{id}/approve` endpoint is
+therefore never reachable for a newly created invitation — every one now
+has at least this one snapshotted step. The invitation's actual host is
+established later, not at snapshot time: whoever holds the default host
+role delegates `stepOrder` 0 to a specific person (see
+`docs/features/approvals.md` "The ownership step (`stepOrder` 0)" for the
+full delegation-eligibility rules), and that delegation is what sets
+`hostId`/`hostNameOrEmail` — see "`hostId` reflects the resolved host, not
+the original creator's input" below.
 
 - **Approving/rejecting a step**: `POST /invitations/{id}/approval-steps
   /{stepId}/approve` and `.../reject` (see the endpoints table above) act
@@ -200,9 +225,12 @@ in short: this step is authorized for that specific person (or
   client can render "waiting on: Manager, step 2 of 3" without a second
   call, and call the approve/reject endpoints directly using `id` as
   `stepId`.
-- **`hostId`** (the invitation's resolved host user id, or `null`) is
-  included on `InvitationOut` and `InvitationDetailOut` alongside the
-  existing free-text `hostNameOrEmail`.
+- **`hostId` reflects the resolved host, not the original creator's
+  input** (the invitation's resolved host user id, or `null` before a
+  delegation resolves one) — included on `InvitationOut` and
+  `InvitationDetailOut` alongside the existing free-text
+  `hostNameOrEmail`. Both stay `null` until `stepOrder` 0 is delegated to a
+  specific person; nothing set at creation ever populates them anymore.
 - **Escalation/auto-approve timestamps exist but aren't enforced yet.**
   Each step carries `escalatesAt`/`autoApprovesAt`, computed from the
   snapshotted rule's `escalationMinutes`/`autoApproveMinutes` relative to
@@ -317,11 +345,14 @@ list view that doesn't render either (`query-performance.md` §1-2).
 
 `GET /invitations?relevantToMe=true` is a personal worklist, not a narrower
 branch scope: it returns invitations where the caller is either the
-snapshotted host (the `stepOrder` 0 `InvitationApprovalStep`'s
-`approverUserId` — see `docs/features/approvals.md`) or has been delegated
-one of that invitation's approval steps (`docs/features/approvals.md`'s
-"Host delegation"), regardless of that step's or the invitation's current
-status.
+invitation's currently resolved host (`hostId` — set once `stepOrder` 0 has
+been delegated to them, see `docs/features/approvals.md`), has been
+delegated one of that invitation's approval steps (`docs/features/
+approvals.md`'s "Delegation"), or currently holds the role that the
+invitation's current pending, undelegated step names (e.g. every holder of
+the default host role sees a freshly submitted invitation before anyone
+delegates it) — regardless of that step's or the invitation's current
+status for the first two clauses.
 
 This deliberately **bypasses** `invitations:view` and `X-Branch-ID`
 entirely — a host or delegate with no branch-level view permission still
@@ -461,26 +492,42 @@ context if retries are exhausted. Email goes out over SMTP
 yet (`UnconfiguredSmsSender` raises loudly rather than pretending to send —
 this is a known open item, not an oversight).
 
-Submission (if it snapshots at least one approval step), approval, denial,
-reschedule, check-in, and check-out each also dispatch a **staff-facing
-push notification** — additional to, and dispatched independently from, the
-visitor email/SMS above. Submission pushes the current approval step's
-approver(s) (host or role-at-branch); the other five push the invitation's
-host, if one resolved. See `docs/features/notifications.md` for the
-dispatch primitive and recipient-resolution rules.
+**Every email is now a branded HTML template**
+(`role-based-invitation-workflow`, `email-notifications` capability —
+replaces the old plain-text `f-string` bodies): `core/email_rendering.py`
+renders `core/email_templates/*.html` (one shared `base.html` layout — logo,
+header/footer — plus one template per notification type) into a
+`(subject, html_body)` pair, sent alongside the existing plain-text body as
+a `multipart/alternative` message (`core/emailing.py::SmtpEmailSender`). A
+template failing to render (logged at `ERROR`) falls back to the existing
+plain-text body alone rather than failing the dispatch outright. The
+approval email specifically now includes the full visit detail (date/time,
+duration, department, purpose) plus the resolved host's name and a contact
+channel — falling back to the tenant's own `Company.phone`/`Company.email`
+when no host has been resolved by approval time.
 
-**Host creation email** (`qr-checkin-scheduling-photo-email`): independent of
-the above, creation also enqueues `send_host_creation_notification` whenever
-`hostId` resolves — an email (not a push) telling the host an invitation
-naming them was received, dispatched asynchronously without delaying the
-creation response. This fires on *every* creation with a resolved host,
-regardless of auto-approve outcome or approval-step routing — unlike the
-submission push above, which only fires when the host is also the first
-(`stepOrder` 0) approval step's approver on a non-auto-approved invitation.
-The host's email is resolved via `UserRepository.get_active(hostId)` inside
-the task itself (not passed from the request), so a host deactivated between
-creation and task execution simply results in no email, not an error. No
-resolved host means no dispatch, and creation succeeds exactly as before.
+Submission (every non-auto-approved invitation now snapshots at least the
+ownership step), approval, denial, reschedule, edit, check-in, and check-out
+each also dispatch a **staff-facing push notification** — additional to, and
+dispatched independently from, the visitor email/SMS above. Submission
+pushes every holder of the invitation's default host role at the branch
+(role-based-invitation-workflow — previously the host, when one had been
+supplied); the other actions push the invitation's resolved host, if one has
+been delegated. See `docs/features/notifications.md` for the dispatch
+primitive, the `assignedRoleId`/`assignedUserId`/`reason` addressing
+metadata every payload now carries, and recipient-resolution rules.
+
+**Owning-role email fan-out** (`role-based-invitation-workflow`, replaces
+the old "host creation email"): submission also enqueues
+`send_submission_role_email_notification`, emailing every active user
+holding the default host role at the branch — the email counterpart of the
+submission push above, additive to it, not a replacement. **Host-assignment
+email**: `approvals`' `delegate_step`, when delegating `stepOrder` 0,
+additionally enqueues `send_host_creation_notification` (same task as
+before, repurposed — see `docs/features/approvals.md`) to the newly
+resolved host, telling them they've been named host. Neither of these
+existed before this change fired anything at creation for an un-resolved
+host; both are asynchronous and never delay their triggering request.
 
 **No Celery worker runs by default in this DDEV dev environment** — a
 created invitation's notification task will sit queued in Redis until

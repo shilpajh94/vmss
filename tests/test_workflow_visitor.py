@@ -27,7 +27,7 @@ from httpx import AsyncClient
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from factories import VisitorCategoryFactory
+from factories import RoleFactory, VisitorCategoryFactory
 from vmss_api.auth.models import User
 from vmss_api.core.config import settings
 from vmss_api.identity_verification import senders
@@ -56,6 +56,17 @@ async def _default_visitor_category(db_session: AsyncSession) -> None:
             code="WORKFLOW-TEST-DEFAULT",
         )
     )
+    await db_session.commit()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _default_host_role(db_session: AsyncSession) -> None:
+    """`create_invitation` now always resolves the tenant's default host
+    role (role-based-invitation-workflow) — same rationale as
+    `invitations/tests.py::_default_host_role`; this file builds its own
+    copy for the same reason `_default_visitor_category` above does.
+    """
+    db_session.add(RoleFactory.build(id=uuid.uuid4(), name="reception", permissions=[]))
     await db_session.commit()
 
 

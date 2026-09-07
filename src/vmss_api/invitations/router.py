@@ -42,6 +42,7 @@ from vmss_api.invitations.schemas import (
     InvitationCreate,
     InvitationDenyRequest,
     InvitationDetailOut,
+    InvitationEditRequest,
     InvitationExtendRequest,
     InvitationListItemOut,
     InvitationOut,
@@ -987,6 +988,40 @@ async def reschedule_invitation(
         action="invitation_rescheduled",
         entity_type="Invitation",
         entity_id=invitation.id,
+    )
+    return success_response(data=to_invitation_out(invitation))
+
+
+@router.patch(
+    "/{invitation_id}/edit",
+    response_model=Envelope[InvitationOut],
+)
+async def edit_invitation(
+    invitation_id: uuid.UUID,
+    payload: InvitationEditRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Edits an invitation's non-personal visit details — purpose, date/
+    time, duration, department, notes — while it is `submitted` or
+    `approved` (role-based-invitation-workflow, spec.md "Authorized Caller
+    Edits Non-Personal Invitation Details"). Never accepts the visitor's own
+    personal fields, `visitorCategoryId`, or the host — host reassignment
+    stays exclusively the `approvals` capability's delegation endpoint's job.
+    """
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(tenant_db, user, "invitations:edit", invitation.branch_id)
+    invitation = await service.edit_invitation(tenant_db, invitation, payload, tenant=tenant)
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_edited",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+        diff=payload.model_dump(exclude_unset=True, mode="json"),
     )
     return success_response(data=to_invitation_out(invitation))
 

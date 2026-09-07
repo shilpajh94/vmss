@@ -6,8 +6,10 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.auth.models import User
+from vmss_api.auth.models import Role, User
+from vmss_api.auth.repository import RoleRepository
 from vmss_api.core.config import settings
+from vmss_api.core.logging import logger
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.org_structure.models import (
     Branch,
@@ -210,6 +212,33 @@ async def get_company(tenant_db: AsyncSession) -> Company:
     if company is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Company not configured yet")
     return company
+
+
+async def get_default_host_role(tenant_db: AsyncSession) -> Role:
+    """role-based-invitation-workflow/design.md Decision D1: resolves which
+    `Role` a newly submitted invitation's `stepOrder` 0 ownership step is
+    created for. Falls back to the tenant's standard `reception` role when
+    `Company.default_host_role_id` is unset, or when it's set but points at
+    a role that's since been deleted — a tenant should never be left with no
+    resolvable owning role. `reception` is seeded for every tenant
+    (`auth/rbac_catalog.py::seed_default_roles`), so its absence is a
+    provisioning bug, not a client-facing condition — logged at `ERROR` and
+    surfaced as 500 rather than silently producing an invitation with no
+    ownership step at all.
+    """
+    company = await CompanyRepository(tenant_db).get_singleton()
+    if company is not None and company.default_host_role_id is not None:
+        role = await RoleRepository(tenant_db).get(company.default_host_role_id)
+        if role is not None:
+            return role
+    role = await RoleRepository(tenant_db).get_by_name("reception")
+    if role is None:
+        logger.error("default_host_role_not_seeded")
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Tenant has no resolvable default host role",
+        )
+    return role
 
 
 async def update_company(tenant_db: AsyncSession, payload: CompanyUpdate) -> Company:

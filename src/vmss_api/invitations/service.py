@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
-from vmss_api.auth.repository import UserRepository
 from vmss_api.core.config import settings
 from vmss_api.core.logging import logger
 from vmss_api.core.schemas import BranchScope, SortOrder
@@ -30,12 +29,14 @@ from vmss_api.invitations.qr_token import decrypt_invitation_token, encrypt_invi
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.invitations.schemas import (
     InvitationCreate,
+    InvitationEditRequest,
     InvitationSortableField,
     RegistrationSource,
     VisitDetailsSubmit,
 )
 from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.repository import CompanyRepository, DepartmentRepository
+from vmss_api.org_structure.service import get_default_host_role
 from vmss_api.tenant.models import Tenant
 from vmss_api.visit_info.repository import VisitDurationRepository, VisitPurposeRepository
 from vmss_api.visitors.repository import ApprovalWorkflowRuleRepository, VisitorCategoryRepository
@@ -173,19 +174,25 @@ async def _resolve_visit_detail_ids(
     tenant_db: AsyncSession, visit_details: VisitDetailsSubmit
 ) -> dict[str, Any]:
     """spec.md "Visit Details Optionally Accept Catalog IDs Alongside Free
-    Text": each of `purposeId`/`hostId`/`durationId`/`departmentId`, if
-    supplied, must resolve to an existing, active row in this tenant's
-    schema — its canonical display value then overwrites the paired
-    free-text field, never the other way round. Omitted ids leave their
-    paired free-text field untouched, identical to today's behavior.
+    Text": each of `purposeId`/`durationId`/`departmentId`, if supplied, must
+    resolve to an existing, active row in this tenant's schema — its
+    canonical display value then overwrites the paired free-text field,
+    never the other way round. Omitted ids leave their paired free-text
+    field untouched, identical to today's behavior.
+
+    `hostId`/`hostNameOrEmail` are deliberately never resolved here anymore
+    (role-based-invitation-workflow) — an invitation's host is established
+    exclusively by delegating its `stepOrder` 0 ownership step (see the
+    `approvals` capability), never by anything submitted at creation. Both
+    fields are still accepted on the wire (for an un-updated client) but
+    are silently ignored: `host_name_or_email` is always `None` at creation,
+    `host_id` is always `None` until a delegation resolves it.
     """
     resolved: dict[str, Any] = {
         "purpose_of_visit": visit_details.purpose_of_visit,
-        "host_name_or_email": visit_details.host_name_or_email,
         "expected_duration": visit_details.expected_duration,
         "department_to_visit": visit_details.department_to_visit,
         "purpose_id": None,
-        "host_id": None,
         "duration_id": None,
         "department_id": None,
     }
@@ -195,12 +202,6 @@ async def _resolve_visit_detail_ids(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown purposeId")
         resolved["purpose_id"] = purpose.id
         resolved["purpose_of_visit"] = purpose.name
-    if visit_details.host_id is not None:
-        host = await UserRepository(tenant_db).get_active(visit_details.host_id)
-        if host is None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown hostId")
-        resolved["host_id"] = host.id
-        resolved["host_name_or_email"] = host.full_name
     if visit_details.duration_id is not None:
         duration = await VisitDurationRepository(tenant_db).get_active(visit_details.duration_id)
         if duration is None:
@@ -235,71 +236,65 @@ async def _resolve_active_category(
 
 
 def _build_approval_steps(
-    rules: list[Any], *, invitation_id: uuid.UUID, now: datetime, host_id: uuid.UUID | None
+    rules: list[Any], *, invitation_id: uuid.UUID, owning_role_id: uuid.UUID
 ) -> list[InvitationApprovalStep]:
     """Snapshots a category's active `ApprovalWorkflowRule`s (already
     ordered by `step_order`) into `InvitationApprovalStep` rows — a
-    point-in-time copy, not a live reference (design.md Decision 1). When
-    `host_id` is not None, an implicit host-identified step is prepended at
-    `step_order` 0, ahead of the role-identified steps (specs/approvals/
-    spec.md "Submission Snapshots the Category's Active Workflow Into
-    Ordered Steps" — add-approval-step-id-and-host-routing). Only the step
-    that is current the moment this snapshot is taken — the host step if
-    one was prepended, else the first rule step — has its
-    `escalates_at`/`auto_approves_at` computed here, relative to `now` (the
-    submission timestamp); every later step's pair is computed when it
-    becomes the current pending step, i.e. when the step before it is
-    approved (`approvals/service.py::approve_step`), per specs/approvals/
-    spec.md "Escalation and Auto-Approve Timestamps". The host step never
-    has escalation/auto-approve minutes to compute from — no
-    `ApprovalWorkflowRule` backs it — so its pair stays null
-    (add-approval-step-id-and-host-routing/design.md).
+    point-in-time copy, not a live reference (design.md Decision 1) — behind
+    an unconditional `step_order` 0 ownership step, role-identified for
+    `owning_role_id` (the tenant's default host role), ahead of the
+    role-identified steps (specs/approvals/spec.md "Submission Snapshots the
+    Category's Workflow Plus an Unconditional Ownership Step" —
+    role-based-invitation-workflow). Unlike the host-identified step it
+    replaces, this step is always created, regardless of whether the
+    category has any active rules, and regardless of anything supplied at
+    creation — an invitation's actual host is established later, by
+    delegating this step to a specific person
+    (`approvals/service.py::delegate_step`).
+
+    Only the step that is current the moment this snapshot is taken — always
+    the ownership step now — could have `escalates_at`/`auto_approves_at`
+    computed here; it never does, since no `ApprovalWorkflowRule` backs it.
+    Every rule-backed step's pair is instead computed when it becomes the
+    current pending step, i.e. when the step before it is approved
+    (`approvals/service.py::approve_step`/`_activate_next_step`), per
+    specs/approvals/spec.md "Escalation and Auto-Approve Timestamps".
     """
-    steps: list[InvitationApprovalStep] = []
-    if host_id is not None:
-        steps.append(
-            InvitationApprovalStep(
-                id=uuid.uuid4(),
-                invitation_id=invitation_id,
-                step_order=0,
-                approver_role_id=None,
-                approver_user_id=host_id,
-                is_mandatory=True,
-                status="pending",
-                escalation_minutes=None,
-                auto_approve_minutes=None,
-                escalates_at=None,
-                auto_approves_at=None,
-            )
+    steps: list[InvitationApprovalStep] = [
+        InvitationApprovalStep(
+            id=uuid.uuid4(),
+            invitation_id=invitation_id,
+            step_order=0,
+            approver_role_id=owning_role_id,
+            approver_user_id=None,
+            is_mandatory=True,
+            status="pending",
+            escalation_minutes=None,
+            auto_approve_minutes=None,
+            escalates_at=None,
+            auto_approves_at=None,
         )
-    for index, rule in enumerate(rules):
-        is_first = index == 0 and host_id is None
-        steps.append(
-            InvitationApprovalStep(
-                id=uuid.uuid4(),
-                invitation_id=invitation_id,
-                step_order=rule.step_order,
-                approver_role_id=rule.approver_role_id,
-                approver_user_id=None,
-                is_mandatory=rule.is_mandatory,
-                status="pending",
-                escalation_minutes=rule.escalation_minutes,
-                auto_approve_minutes=rule.auto_approve_minutes,
-                # Only the first step is current the moment it's snapshotted
-                # — every later step's pair is computed when it becomes
-                # current instead (`approvals/service.py::_advance_step_clock`).
-                escalates_at=(
-                    now + timedelta(minutes=rule.escalation_minutes)
-                    if is_first and rule.escalation_minutes is not None
-                    else None
-                ),
-                auto_approves_at=(
-                    now + timedelta(minutes=rule.auto_approve_minutes)
-                    if is_first and rule.auto_approve_minutes is not None
-                    else None
-                ),
-            )
+    ]
+    steps.extend(
+        InvitationApprovalStep(
+            id=uuid.uuid4(),
+            invitation_id=invitation_id,
+            step_order=rule.step_order,
+            approver_role_id=rule.approver_role_id,
+            approver_user_id=None,
+            is_mandatory=rule.is_mandatory,
+            status="pending",
+            escalation_minutes=rule.escalation_minutes,
+            auto_approve_minutes=rule.auto_approve_minutes,
+            # Never the current step the moment it's snapshotted — the
+            # ownership step above always is — so its pair is always
+            # computed later, when it becomes current instead
+            # (`approvals/service.py::_activate_next_step`).
+            escalates_at=None,
+            auto_approves_at=None,
         )
+        for rule in rules
+    )
     return steps
 
 
@@ -423,14 +418,17 @@ async def create_invitation(
         primary_contact_id_proof_storage_key=primary_key,
         primary_contact_photo_storage_key=primary_photo_key,
         purpose_of_visit=visit_details["purpose_of_visit"],
-        host_name_or_email=visit_details["host_name_or_email"],
+        # Never client-supplied at creation anymore — see
+        # `_resolve_visit_detail_ids`. Established later, exclusively by
+        # delegating the ownership step (`approvals/service.py::delegate_step`).
+        host_name_or_email=None,
         preferred_visit_date=payload.visit_details.preferred_visit_date,
         preferred_visit_time=payload.visit_details.preferred_visit_time,
         expected_duration=visit_details["expected_duration"],
         department_to_visit=visit_details["department_to_visit"],
         additional_notes=payload.visit_details.additional_notes,
         purpose_id=visit_details["purpose_id"],
-        host_id=visit_details["host_id"],
+        host_id=None,
         duration_id=visit_details["duration_id"],
         department_id=visit_details["department_id"],
         carried_items=[item.value for item in payload.carried_items.items],
@@ -485,25 +483,22 @@ async def create_invitation(
     repo.add_visitors(visitor_rows)
     repo.add_vehicles(vehicle_rows)
 
-    # Snapshot the category's active workflow rules into ordered steps
-    # (specs/approvals/spec.md "Submission Snapshots the Category's Active
-    # Workflow Into Ordered Steps") — only for a `submitted` (not
-    # auto-approved) invitation, and only once, in the same transaction as
-    # the `Invitation` insert above (design.md Decision 1). A resolved host
-    # additionally gets an implicit step 0 ahead of the role chain
-    # (add-approval-step-id-and-host-routing/design.md) — unconditional
-    # whenever the host resolves, regardless of whether the category has
-    # any active rules. Neither a host nor any active rules: no steps,
-    # today's single-approve behavior.
+    # Snapshot the category's active workflow rules into ordered steps,
+    # behind an unconditional stepOrder-0 ownership step for the tenant's
+    # default host role (specs/approvals/spec.md "Submission Snapshots the
+    # Category's Workflow Plus an Unconditional Ownership Step") — only for
+    # a `submitted` (not auto-approved) invitation, and only once, in the
+    # same transaction as the `Invitation` insert above (design.md Decision
+    # 1). Unlike before, this always creates at least the ownership step,
+    # regardless of whether the category has any active rules.
     if not auto_approved:
         rules = await ApprovalWorkflowRuleRepository(tenant_db).list_active_for_category(
             visitor_category_id
         )
-        host_id = visit_details["host_id"]
-        if rules or host_id is not None:
-            InvitationApprovalStepRepository(tenant_db).add_steps(
-                _build_approval_steps(rules, invitation_id=invitation.id, now=now, host_id=host_id)
-            )
+        owning_role = await get_default_host_role(tenant_db)
+        InvitationApprovalStepRepository(tenant_db).add_steps(
+            _build_approval_steps(rules, invitation_id=invitation.id, owning_role_id=owning_role.id)
+        )
 
     # Generated in the same transaction as the invitation itself when it's
     # already `approved` (design.md "Token generation moves to approval
@@ -531,19 +526,6 @@ async def create_invitation(
             invitation_id=str(invitation.id),
         )
 
-    # Informational email to the resolved host, independent of the
-    # auto-approve/submission-push branching above — fires on every
-    # creation with a resolved host, regardless of approval routing
-    # (qr-checkin-scheduling-photo-email/design.md, spec.md "Invitation
-    # Creation Notifies the Resolved Host via Email").
-    if invitation.host_id is not None:
-        tasks.send_host_creation_notification.delay(
-            request_id=_current_request_id(),
-            tenant_schema=tenant.schema_name,
-            invitation_id=str(invitation.id),
-            host_id=str(invitation.host_id),
-        )
-
     # Staff-facing push, additional to the visitor email/SMS above
     # (specs/invitations/spec.md "Invitation Submission Notifies the
     # Approval Workflow's First Approver(s) via Push"). An auto-approved
@@ -566,6 +548,14 @@ async def create_invitation(
                 body=body,
                 data=data,
             )
+            if current_step.approver_role_id is not None:
+                tasks.send_submission_role_email_notification.delay(
+                    request_id=_current_request_id(),
+                    tenant_schema=tenant.schema_name,
+                    invitation_id=str(invitation.id),
+                    role_id=str(current_step.approver_role_id),
+                    branch_id=str(invitation.branch_id),
+                )
         else:
             # No resolved host and no active workflow rules — nobody to
             # notify (proposal.md's "no push recipient" case).
@@ -885,6 +875,83 @@ async def reschedule_invitation(
     return updated
 
 
+async def _resolve_edit_changes(
+    tenant_db: AsyncSession, payload: InvitationEditRequest
+) -> dict[str, Any]:
+    """Same catalog-id-overwrites-free-text resolution
+    `_resolve_visit_detail_ids` applies at creation, scoped to whichever
+    fields the caller actually supplied (`exclude_unset`) — an omitted field
+    is left alone, not reset to null.
+    """
+    changes: dict[str, Any] = payload.model_dump(
+        exclude_unset=True,
+        include={
+            "purpose_of_visit",
+            "preferred_visit_date",
+            "preferred_visit_time",
+            "expected_duration",
+            "department_to_visit",
+            "additional_notes",
+        },
+    )
+    if payload.purpose_id is not None:
+        purpose = await VisitPurposeRepository(tenant_db).get_active(payload.purpose_id)
+        if purpose is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown purposeId")
+        changes["purpose_id"] = purpose.id
+        changes["purpose_of_visit"] = purpose.name
+    if payload.duration_id is not None:
+        duration = await VisitDurationRepository(tenant_db).get_active(payload.duration_id)
+        if duration is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown durationId")
+        changes["duration_id"] = duration.id
+        changes["expected_duration"] = duration.name
+    if payload.department_id is not None:
+        department = await DepartmentRepository(tenant_db).get_active(payload.department_id)
+        if department is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown departmentId"
+            )
+        changes["department_id"] = department.id
+        changes["department_to_visit"] = department.name
+    return changes
+
+
+async def edit_invitation(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    payload: InvitationEditRequest,
+    *,
+    tenant: Tenant,
+) -> Invitation:
+    """spec.md "Authorized Caller Edits Non-Personal Invitation Details" —
+    changes only the visit-detail fields the caller supplied; the visitor's
+    own personal fields, `visitorCategoryId`, and the host are never
+    accepted by `InvitationEditRequest` in the first place (rejected at the
+    schema level via `extra="forbid"`). Same eligible-status set as
+    `reschedule_invitation`. Notifies the primary contact by email
+    describing the change, and the resolved host (if any) by push — the
+    same `_notify_host` no-op-when-unresolved guard every other lifecycle
+    action already uses.
+    """
+    if invitation.status not in _RESCHEDULABLE_STATUSES:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
+    changes = await _resolve_edit_changes(tenant_db, payload)
+    if not changes:
+        return invitation
+    updated = await InvitationRepository(tenant_db).edit_if_eligible(invitation.id, **changes)
+    if updated is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
+    await tenant_db.commit()
+    tasks.send_edit_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(updated.id),
+    )
+    await _notify_host(tenant, updated, push_notifications.edited)
+    return updated
+
+
 async def extend_invitation(
     tenant_db: AsyncSession, invitation: Invitation, *, new_expires_at: datetime
 ) -> Invitation:
@@ -1003,6 +1070,17 @@ async def get_current_approval_step(
     steps, or one that is no longer `submitted`
     (specs/invitations/spec.md "Non-workflow invitation omits step
     progress").
+
+    Every caller invokes this as a trailing read *after* its own mutation
+    has already committed — role-based-invitation-workflow made this read
+    path reachable for every submitted invitation (previously only
+    workflow-backed ones), which surfaced a latent issue: a plain `SELECT`
+    still opens an implicit transaction, and nothing after this point
+    commits it, leaving the caller's session `idle in transaction` for the
+    rest of a test (or an unusually long-lived request). Committing here —
+    a pure read, so there's nothing to lose by doing so — closes that
+    transaction out immediately rather than leaving it open until whatever
+    eventually closes the session.
     """
     if invitation.status != "submitted":
         return None
@@ -1011,6 +1089,7 @@ async def get_current_approval_step(
     if current is None:
         return None
     total_steps = await repo.count_for_invitation(invitation.id)
+    await tenant_db.commit()
     return CurrentApprovalStepOut(
         id=current.id,
         step_order=current.step_order,

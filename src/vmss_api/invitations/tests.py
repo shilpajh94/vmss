@@ -47,7 +47,7 @@ from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.models import InvitationQRCode
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.notifications import service as notifications_service
-from vmss_api.org_structure.models import Branch, Department
+from vmss_api.org_structure.models import Branch, Company, Department
 from vmss_api.platform.models import TenantUserIndex
 from vmss_api.tenant.models import Tenant
 from vmss_api.visit_info.models import VisitDuration, VisitPurpose
@@ -212,6 +212,19 @@ async def _default_visitor_category(db_session: AsyncSession) -> None:
             id=_DEFAULT_VISITOR_CATEGORY_ID, name="Default Test Category", code="DEFAULT-TEST"
         )
     )
+    await db_session.commit()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _default_host_role(db_session: AsyncSession) -> None:
+    """`create_invitation` now always resolves the tenant's default host
+    role (role-based-invitation-workflow) — a real tenant gets this from
+    `auth/rbac_catalog.py::seed_default_roles` at provisioning time, but
+    this module's fixtures don't go through that flow, so a `reception` role
+    is seeded here for every test instead — same rationale as
+    `_default_visitor_category` above.
+    """
+    db_session.add(RoleFactory.build(id=uuid.uuid4(), name="reception", permissions=[]))
     await db_session.commit()
 
 
@@ -1008,15 +1021,22 @@ async def test_track_by_tracking_id_group_success(
     assert body["carriedItemsDescription"] == "2 laptops"
 
 
-async def test_track_by_tracking_id_omits_current_step_for_non_workflow_invitation(
-    client: AsyncClient, user: User, branch: Branch
+async def test_track_by_tracking_id_omits_current_step_for_auto_approved_invitation(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
 ) -> None:
-    """invitation-multi-step-approval spec.md "Non-workflow invitation omits
-    step progress" — the default test category has no configured
-    `ApprovalWorkflowRule`s.
+    """spec.md "Non-workflow invitation omits step progress" — an
+    auto-approved invitation is never `submitted` and has no snapshotted
+    steps at all (role-based-invitation-workflow: every *submitted*
+    invitation now gets an unconditional ownership step, but an
+    auto-approved one skips snapshotting entirely — see "Auto-Approved
+    Invitations Are Never Snapshotted").
     """
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), auto_approve_pre_registered_visitors=True))
+    await db_session.commit()
+
     token = await _login(client, user.email)
     data = await _create_invitation_success(client, token, branch, payload=_individual_payload())
+    assert data["status"] == "approved"
 
     response = await client.get(
         "/api/v1/invitations/track", params={"trackingId": data["trackingId"]}
@@ -1030,8 +1050,10 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
 ) -> None:
     """invitation-multi-step-approval spec.md "Workflow-backed invitation
     exposes current step progress" — a category with two active rules
-    snapshots two steps at submission; the tracking lookup surfaces the
-    first one as current.
+    snapshots two steps at submission, behind the unconditional `stepOrder`
+    0 ownership step (role-based-invitation-workflow); the tracking lookup
+    surfaces that ownership step as current, since it's always the first to
+    become pending.
     """
     category = VisitorCategoryFactory.build(
         id=uuid.uuid4(), name="Workflow Category", code="WORKFLOW-CAT"
@@ -1056,6 +1078,8 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
         ]
     )
     await db_session.commit()
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
 
     token = await _login(client, user.email)
     payload = _individual_payload()
@@ -1064,13 +1088,13 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
     steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(
         uuid.UUID(data["id"])
     )
-    step_one = next(s for s in steps if s.step_order == 1)
+    step_zero = next(s for s in steps if s.step_order == 0)
     assert data["currentApprovalStep"] == {
-        "id": str(step_one.id),
-        "stepOrder": 1,
-        "approverRoleId": str(approver_role.id),
+        "id": str(step_zero.id),
+        "stepOrder": 0,
+        "approverRoleId": str(reception_role.id),
         "approverUserId": None,
-        "totalSteps": 2,
+        "totalSteps": 3,
         "delegatedToUserId": None,
     }
 
@@ -1079,11 +1103,11 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
     )
     assert response.status_code == 200
     assert response.json()["data"]["currentApprovalStep"] == {
-        "id": str(step_one.id),
-        "stepOrder": 1,
-        "approverRoleId": str(approver_role.id),
+        "id": str(step_zero.id),
+        "stepOrder": 0,
+        "approverRoleId": str(reception_role.id),
         "approverUserId": None,
-        "totalSteps": 2,
+        "totalSteps": 3,
         "delegatedToUserId": None,
     }
 
@@ -2095,6 +2119,15 @@ class _FakeInvitation:
     def __init__(self, **kwargs) -> None:
         self.__dict__.update(kwargs)
 
+    def __getattr__(self, name: str):
+        # Falls back to `None` for any attribute a test didn't explicitly
+        # set — every real `Invitation` column this module's email-template
+        # rendering now reads (`host_id`, `purpose_of_visit`, etc.) is
+        # nullable, so `None` is a safe default rather than requiring every
+        # existing `_FakeInvitation(...)` call site in this file to list
+        # every field it doesn't care about.
+        return None
+
 
 class _FakeScalarResult:
     def __init__(self, value) -> None:
@@ -2105,25 +2138,30 @@ class _FakeScalarResult:
 
 
 class _FakeSession:
-    def __init__(self, invitation, user=None) -> None:
+    def __init__(self, invitation, user=None, company=None) -> None:
         self._invitation = invitation
         self._user = user
+        self._company = company
 
     async def get(self, model, id_):
         return self._invitation
 
     async def execute(self, stmt):
-        # Only ever called by `UserRepository.get_active` from the
-        # host-creation-email task tests below — every other task test
-        # only exercises `.get()`. Not a real `Select` evaluation, just a
-        # canned result for whichever `_user` the test configured.
+        # Not a real `Select` evaluation — a canned result keyed off which
+        # entity the statement targets, so `UserRepository.get_active`
+        # (host-creation-email tests) and `CompanyRepository.get_singleton`
+        # (every notification task's new branding-context lookup) each get
+        # back the fake row the test actually configured, not each other's.
+        entity = stmt.column_descriptions[0]["entity"]
+        if entity is Company:
+            return _FakeScalarResult(self._company)
         return _FakeScalarResult(self._user)
 
 
-def _fake_tenant_session_scope(invitation, user=None):
+def _fake_tenant_session_scope(invitation, user=None, company=None):
     @asynccontextmanager
     async def _scope(schema_name: str):
-        yield _FakeSession(invitation, user=user)
+        yield _FakeSession(invitation, user=user, company=company)
 
     return _scope
 
@@ -2593,7 +2631,7 @@ async def test_send_host_creation_notification_delivers_email_via_mailpit(monkey
         )
         detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{matches[0]['ID']}")
         assert detail_response.status_code == 200
-        assert detail_response.json()["Subject"] == "New invitation received"
+        assert detail_response.json()["Subject"] == "You've been named host"
 
 
 # --- visit-info-lookup-api: optional purposeId/hostId/durationId/departmentId -
@@ -2651,22 +2689,22 @@ async def test_create_invitation_with_ids_overwrites_free_text_with_canonical_va
     branch: Branch,
     db_session: AsyncSession,
     visit_purpose: VisitPurpose,
-    visit_host: User,
     visit_duration: VisitDuration,
     visit_department: Department,
 ) -> None:
     """spec.md "Submission with an id overwrites free text with the catalog
     value" — a mismatched free-text string is discarded in favor of the
-    referenced row's canonical name.
+    referenced row's canonical name. `hostId`/`durationId`/`departmentId`
+    used to include a host id too, but the host is never client-resolved
+    anymore (role-based-invitation-workflow) — see the dedicated
+    `test_create_invitation_ignores_supplied_host_fields` below for that.
     """
     token = await _login(client, user.email)
     payload = _individual_payload()
     payload["visitDetails"]["purposeOfVisit"] = "does not match the catalog row"
-    payload["visitDetails"]["hostNameOrEmail"] = "does not match either"
     payload["visitDetails"]["expectedDuration"] = "nor this"
     payload["visitDetails"]["departmentToVisit"] = "nor this either"
     payload["visitDetails"]["purposeId"] = str(visit_purpose.id)
-    payload["visitDetails"]["hostId"] = str(visit_host.id)
     payload["visitDetails"]["durationId"] = str(visit_duration.id)
     payload["visitDetails"]["departmentId"] = str(visit_department.id)
 
@@ -2675,75 +2713,73 @@ async def test_create_invitation_with_ids_overwrites_free_text_with_canonical_va
     invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
     assert invitation is not None
     assert invitation.purpose_of_visit == visit_purpose.name
-    assert invitation.host_name_or_email == visit_host.full_name
     assert invitation.expected_duration == visit_duration.name
     assert invitation.department_to_visit == visit_department.name
     assert invitation.purpose_id == visit_purpose.id
-    assert invitation.host_id == visit_host.id
     assert invitation.duration_id == visit_duration.id
     assert invitation.department_id == visit_department.id
 
 
-async def test_create_invitation_with_resolved_host_enqueues_host_email(
-    client: AsyncClient,
-    user: User,
-    branch: Branch,
-    visit_host: User,
-    monkeypatch,
-) -> None:
-    """qr-checkin-scheduling-photo-email spec.md "Invitation Creation
-    Notifies the Resolved Host via Email" — a resolved `hostId` enqueues the
-    new task, independent of whether the invitation ends up `submitted` or
-    `approved`.
-    """
-    calls: list[dict] = []
-    monkeypatch.setattr(
-        tasks.send_host_creation_notification, "delay", lambda **kw: calls.append(kw)
-    )
-
-    token = await _login(client, user.email)
-    payload = _individual_payload()
-    payload["visitDetails"]["hostId"] = str(visit_host.id)
-    data = await _create_invitation_success(client, token, branch, payload=payload)
-
-    assert len(calls) == 1
-    assert calls[0]["invitation_id"] == data["id"]
-    assert calls[0]["host_id"] == str(visit_host.id)
-
-
-async def test_create_invitation_without_host_skips_host_email(
-    client: AsyncClient, user: User, branch: Branch, monkeypatch
-) -> None:
-    """spec.md "No resolved host means no host email, and creation still
-    succeeds".
-    """
-    calls: list[dict] = []
-    monkeypatch.setattr(
-        tasks.send_host_creation_notification, "delay", lambda **kw: calls.append(kw)
-    )
-
-    token = await _login(client, user.email)
-    await _create_invitation_success(client, token, branch, payload=_individual_payload())
-
-    assert calls == []
-
-
-async def test_create_invitation_with_resolved_host_and_auto_approve_still_enqueues_host_email(
+async def test_create_invitation_ignores_supplied_host_fields(
     client: AsyncClient,
     user: User,
     branch: Branch,
     db_session: AsyncSession,
     visit_host: User,
-    tenant: Tenant,
+) -> None:
+    """spec.md "A supplied hostId or hostNameOrEmail is silently ignored" —
+    an un-updated client supplying either field no longer resolves a host or
+    fails the request; the invitation is created with no host at all.
+    """
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["hostId"] = str(visit_host.id)
+    payload["visitDetails"]["hostNameOrEmail"] = visit_host.full_name
+
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.host_id is None
+    assert invitation.host_name_or_email is None
+
+
+async def test_create_invitation_with_no_department_succeeds_and_leaves_it_unset(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """allow-optional-department-at-creation spec.md "Submission with no
+    department succeeds and leaves it unset" — a visitor or staff member
+    creating an invitation often doesn't know the receiving organisation's
+    internal department, so omitting both `departmentToVisit` and
+    `departmentId` no longer fails the request.
+    """
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    del payload["visitDetails"]["departmentToVisit"]
+
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.department_to_visit is None
+    assert invitation.department_id is None
+
+
+async def test_create_invitation_never_enqueues_host_email(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    visit_host: User,
     monkeypatch,
 ) -> None:
-    """spec.md "Auto-approved creation still sends the host email" — the
-    host email is independent of the submission-push logic that only fires
-    for a non-auto-approved, first-step-host invitation.
+    """REMOVED spec.md requirement "Invitation Creation Notifies the
+    Resolved Host via Email" (role-based-invitation-workflow) — a host is
+    never resolved at creation anymore, whether or not a client still
+    supplies `hostId`, so this dispatch never fires at creation. See the
+    `approvals` capability's "Delegating the Ownership Step Also Resolves
+    the Invitation's Host" for the email the actual host now receives
+    instead, once delegated.
     """
-    db_session.add(CompanyFactory.build(id=uuid.uuid4(), auto_approve_pre_registered_visitors=True))
-    await db_session.commit()
-
     calls: list[dict] = []
     monkeypatch.setattr(
         tasks.send_host_creation_notification, "delay", lambda **kw: calls.append(kw)
@@ -2752,11 +2788,9 @@ async def test_create_invitation_with_resolved_host_and_auto_approve_still_enque
     token = await _login(client, user.email)
     payload = _individual_payload()
     payload["visitDetails"]["hostId"] = str(visit_host.id)
-    data = await _create_invitation_success(client, token, branch, payload=payload)
+    await _create_invitation_success(client, token, branch, payload=payload)
 
-    assert data["status"] == "approved"
-    assert len(calls) == 1
-    assert calls[0]["host_id"] == str(visit_host.id)
+    assert calls == []
 
 
 async def test_created_invitation_current_step_id_is_directly_actionable(
@@ -2769,40 +2803,41 @@ async def test_created_invitation_current_step_id_is_directly_actionable(
 ) -> None:
     """add-approval-step-id-and-host-routing — `currentApprovalStep.id` on
     the creation response is the same id `POST /invitations/{id}/approval-
-    steps/{stepId}/approve` expects, with no separate lookup needed. A
-    resolved `hostId` with no configured workflow rules snapshots exactly
-    one host-identified step, so the host is the current approver.
+    steps/{stepId}/approve` expects, with no separate lookup needed. Every
+    newly created invitation's ownership step is role-identified for the
+    tenant's default host role (role-based-invitation-workflow), so a
+    holder of that role is the current approver — no resolved `hostId` at
+    creation anymore.
     """
-    # Reuse the existing global `invitations:approve` permission row (the
-    # `user` fixture already seeded it — `conftest.py`'s standard admin
-    # permission set) rather than inserting a second one with the same
-    # unique `code`.
+    # `_default_host_role` (this module's autouse fixture) seeds "reception"
+    # with no permissions attached — enough for snapshot logic, not enough
+    # to actually approve — so this test grants `invitations:approve` on it
+    # explicitly, reusing the global permission row the `user` fixture's
+    # own admin permission set already created.
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
     permission = (
         await db_session.execute(select(Permission).where(Permission.code == "invitations:approve"))
     ).scalar_one()
-    role = RoleFactory.build(id=uuid.uuid4(), name="host-approver-role", permissions=[permission])
-    db_session.add(role)
-    await db_session.flush()
+    reception_role.permissions.append(permission)
     # Append in-memory too, not just `session.add()` — see
     # `approvals/tests.py::_grant_approve_permission`'s docstring for why
     # the test session's `expire_on_commit=False` makes this necessary.
     branch_role = UserBranchRole(
-        id=uuid.uuid4(), user_id=visit_host.id, role=role, branch_id=branch.id
+        id=uuid.uuid4(), user_id=visit_host.id, role_id=reception_role.id, branch_id=branch.id
     )
     visit_host.branch_roles.append(branch_role)
     db_session.add(branch_role)
     await db_session.commit()
 
     token = await _login(client, user.email)
-    payload = _individual_payload()
-    payload["visitDetails"]["hostId"] = str(visit_host.id)
-    data = await _create_invitation_success(client, token, branch, payload=payload)
+    data = await _create_invitation_success(client, token, branch, payload=_individual_payload())
 
-    assert data["hostId"] == str(visit_host.id)
+    assert data["hostId"] is None
     assert data["currentApprovalStep"] is not None
     step_id = data["currentApprovalStep"]["id"]
-    assert data["currentApprovalStep"]["approverUserId"] == str(visit_host.id)
-    assert data["currentApprovalStep"]["approverRoleId"] is None
+    assert data["currentApprovalStep"]["approverRoleId"] == str(reception_role.id)
+    assert data["currentApprovalStep"]["approverUserId"] is None
 
     host_token = issue_token(visit_host)
     response = await client.post(
@@ -4655,6 +4690,247 @@ async def test_extend_invitation_requires_permission(
     assert response.status_code == 403
 
 
+# --- PATCH /invitations/{id}/edit (role-based-invitation-workflow) --------------
+
+
+async def test_edit_invitation_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """spec.md "Authorized edit changes multiple visit-detail fields at
+    once".
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    email_calls: list[dict] = []
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: email_calls.append(kw))
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={
+            "preferredVisitDate": "2026-10-01",
+            "expectedDuration": "2-3 hours",
+            "additionalNotes": "Bring a laptop",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    await db_session.refresh(invitation)
+    assert str(invitation.preferred_visit_date) == "2026-10-01"
+    assert invitation.expected_duration == "2-3 hours"
+    assert invitation.additional_notes == "Bring a laptop"
+    assert len(email_calls) == 1
+    assert email_calls[0]["invitation_id"] == str(invitation.id)
+
+
+async def test_edit_invitation_resolves_catalog_ids(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    visit_purpose: VisitPurpose,
+    visit_duration: VisitDuration,
+    visit_department: Department,
+    monkeypatch,
+) -> None:
+    """Same catalog-id-overwrites-free-text behavior creation already has,
+    scoped to just the fields supplied.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: None)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={
+            "purposeId": str(visit_purpose.id),
+            "durationId": str(visit_duration.id),
+            "departmentId": str(visit_department.id),
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    await db_session.refresh(invitation)
+    assert invitation.purpose_id == visit_purpose.id
+    assert invitation.purpose_of_visit == visit_purpose.name
+    assert invitation.duration_id == visit_duration.id
+    assert invitation.expected_duration == visit_duration.name
+    assert invitation.department_id == visit_department.id
+    assert invitation.department_to_visit == visit_department.name
+
+
+async def test_edit_invitation_sets_a_previously_unset_department(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    """allow-optional-department-at-creation spec.md "An unset department is
+    later filled in via edit" — an invitation created with no department
+    (per this change) can have it set afterward through the existing edit
+    endpoint, exactly like any other eligible invitation.
+    """
+    invitation = _build_invitation(
+        db_session, branch.id, status="submitted", department_to_visit=None, department_id=None
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: None)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"departmentToVisit": "Human Resources"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    await db_session.refresh(invitation)
+    assert invitation.department_to_visit == "Human Resources"
+
+
+async def test_edit_invitation_rejects_visitor_personal_fields(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Visitor personal fields and visitor category are rejected"."""
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"primaryContactFullName": "Someone Else"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.primary_contact_full_name != "Someone Else"
+
+
+async def test_edit_invitation_rejects_visitor_category_id(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"visitorCategoryId": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
+async def test_edit_invitation_rejects_host_fields(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Host fields are rejected" — host reassignment must go
+    through the delegation endpoint instead.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"hostId": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.host_id is None
+
+
+async def test_edit_invitation_ineligible_status_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="denied")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"additionalNotes": "Too late"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_edit_invitation_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(viewer)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"additionalNotes": "Not allowed"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+async def test_edit_invitation_unknown_id_not_found(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{uuid.uuid4()}/edit",
+        json={"additionalNotes": "Anything"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
+async def test_edit_invitation_notifies_resolved_host(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """spec.md "Edit while a host is resolved also notifies the host"."""
+    host = _make_host(db_session)
+    db_session.add(host)
+    await db_session.flush()
+    invitation = _build_invitation(db_session, branch.id, status="submitted", host_id=host.id)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: None)
+    push_calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        push_calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"additionalNotes": "Updated"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert len(push_calls) == 1
+    assert push_calls[0]["user_id"] == host.id
+
+
 # --- POST /invitations/{id}/badge and /badge/reprint ----------------------------
 
 
@@ -4971,12 +5247,20 @@ def _make_host(db_session: AsyncSession) -> User:
     )
 
 
-async def test_create_invitation_submission_notifies_host_step_approver(
-    client: AsyncClient, user: User, branch: Branch, visit_host: User, monkeypatch
+async def test_create_invitation_submission_notifies_owning_role(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    visit_host: User,
+    monkeypatch,
 ) -> None:
-    """specs/invitations/spec.md "Invitation Submission Notifies the
-    Approval Workflow's First Approver(s) via Push" — a resolved host gets
-    an implicit host-identified step 0, which is pushed at submission.
+    """specs/invitations/spec.md "Submission Notifies the Owning Role via
+    Push" (role-based-invitation-workflow) — every submitted invitation's
+    `stepOrder` 0 ownership step is role-identified for the tenant's default
+    host role (`reception`), pushed at submission regardless of any
+    `hostId` a client still supplies (now ignored — see
+    `test_create_invitation_ignores_supplied_host_fields`).
     """
     calls: list[dict] = []
     email_calls: list[dict] = []
@@ -4989,15 +5273,18 @@ async def test_create_invitation_submission_notifies_host_step_approver(
         tasks.send_tracking_notification, "delay", lambda **kw: email_calls.append(kw)
     )
 
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
+
     token = await _login(client, user.email)
     payload = _individual_payload()
     payload["visitDetails"]["hostId"] = str(visit_host.id)
     created = await _create_invitation_success(client, token, branch, payload=payload)
 
-    # Push to the host-identified step approver ...
+    # Push to the ownership step's role, not the (ignored) supplied host ...
     assert len(calls) == 1
-    assert calls[0]["approver_user_id"] == visit_host.id
-    assert calls[0]["approver_role_id"] is None
+    assert calls[0]["approver_role_id"] == reception_role.id
+    assert calls[0]["approver_user_id"] is None
     assert calls[0]["branch_id"] == branch.id
     # ... and, for the same submission, the visitor's own tracking email/SMS
     # (proposal.md finding #1 — both channels must fire for the same request,
@@ -5006,13 +5293,13 @@ async def test_create_invitation_submission_notifies_host_step_approver(
     assert email_calls[0]["invitation_id"] == created["id"]
 
 
-async def test_create_invitation_non_admin_role_identified_step_notifies_role(
+async def test_create_invitation_configured_chain_does_not_preempt_ownership_push(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
 ) -> None:
-    """specs/invitations/spec.md "Submission with a role-identified first
-    step" (exclude-admin-role-only-from-push) — no resolved host, and the
-    category's workflow gives it a role-identified step 0 for a role other
-    than `admin`. That role's holders still get pushed.
+    """A category's own configured `ApprovalWorkflowRule` chain no longer
+    determines which step gets pushed at submission — the unconditional
+    `stepOrder` 0 ownership step is always current first, regardless of what
+    role a category's own chain configures at `stepOrder` 1+.
     """
     category = VisitorCategoryFactory.build(
         id=uuid.uuid4(), name="Role Workflow Category", code="ROLE-WORKFLOW-CAT"
@@ -5039,60 +5326,42 @@ async def test_create_invitation_non_admin_role_identified_step_notifies_role(
 
     monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify_role_at_branch)
 
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
+
     token = await _login(client, user.email)
     payload = _individual_payload()
     payload["visitorCategoryId"] = str(category.id)
     await _create_invitation_success(client, token, branch, payload=payload)
 
     assert len(role_calls) == 1
-    assert role_calls[0]["role_id"] == approver_role.id
+    assert role_calls[0]["role_id"] == reception_role.id
     assert role_calls[0]["branch_id"] == branch.id
 
 
-async def test_create_invitation_admin_role_identified_step_sends_no_push(
+async def test_create_invitation_admin_owning_role_sends_no_push(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
 ) -> None:
-    """specs/invitations/spec.md "Submission with an Admin-role first step
-    sends no push" — no resolved host, and the category's workflow gives it
-    a role-identified step 0 for the tenant's standard `admin` role
-    (already seeded by the `user` fixture). No push is dispatched to anyone.
+    """specs/invitations/spec.md "Submission with an Admin-role owning role
+    sends no push" — a tenant that has reconfigured its default host role to
+    the standard `admin` role gets no push on submission, via the same
+    admin-exclusion rule `notify_step_approver` already applies generically.
     """
     admin_role = await RoleRepository(db_session).get_by_name("admin")
     assert admin_role is not None  # seeded by the `user` fixture
-
-    category = VisitorCategoryFactory.build(
-        id=uuid.uuid4(), name="Admin Workflow Category", code="ADMIN-WORKFLOW-CAT"
-    )
-    db_session.add(category)
-    await db_session.flush()
-    db_session.add(
-        ApprovalWorkflowRuleFactory.build(
-            id=uuid.uuid4(),
-            visitor_category_id=category.id,
-            step_order=1,
-            approver_role_id=admin_role.id,
-        )
-    )
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), default_host_role_id=admin_role.id))
     await db_session.commit()
 
-    user_calls: list[dict] = []
     role_calls: list[dict] = []
-
-    async def _fake_notify_user(**kwargs):
-        user_calls.append(kwargs)
 
     async def _fake_notify_role_at_branch(tenant_db, **kwargs):
         role_calls.append(kwargs)
 
-    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
     monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify_role_at_branch)
 
     token = await _login(client, user.email)
-    payload = _individual_payload()
-    payload["visitorCategoryId"] = str(category.id)
-    await _create_invitation_success(client, token, branch, payload=payload)
+    await _create_invitation_success(client, token, branch, payload=_individual_payload())
 
-    assert user_calls == []
     assert role_calls == []
 
 
@@ -5118,13 +5387,15 @@ async def test_create_invitation_auto_approve_skips_submission_push(
     assert calls == []
 
 
-async def test_create_invitation_hostless_no_rules_skips_push(
-    client: AsyncClient, user: User, branch: Branch, monkeypatch
+async def test_create_invitation_notifies_owning_role_even_with_no_configured_rules(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
 ) -> None:
-    """No resolved host, and the default test category
-    (`_default_visitor_category`) has no active workflow rules — zero
-    approval steps, so nothing to push (proposal.md's "no push recipient"
-    case).
+    """Replaces the old "hostless, no rules -> nothing to push" behavior —
+    the default test category (`_default_visitor_category`) has no
+    configured workflow rules, but every submitted invitation now gets an
+    unconditional `stepOrder` 0 ownership step for the tenant's default host
+    role (role-based-invitation-workflow), so there is always someone to
+    push to.
     """
     calls: list[dict] = []
 
@@ -5133,10 +5404,15 @@ async def test_create_invitation_hostless_no_rules_skips_push(
 
     monkeypatch.setattr(notifications_service, "notify_step_approver", _fake_notify_step_approver)
 
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
+
     token = await _login(client, user.email)
     await _create_invitation_success(client, token, branch, payload=_individual_payload())
 
-    assert calls == []
+    assert len(calls) == 1
+    assert calls[0]["approver_role_id"] == reception_role.id
+    assert calls[0]["approver_user_id"] is None
 
 
 async def test_approve_invitation_notifies_host(
@@ -5665,3 +5941,262 @@ async def test_get_invitation_detail_requires_permission(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
+
+
+# --- Email templates (email-notifications capability) -----------------------
+
+
+async def test_every_notification_template_renders_without_error() -> None:
+    """spec.md "Every Notification Email Is Rendered From a Branded HTML
+    Template" — each template renders given a representative context,
+    without raising.
+    """
+    from vmss_api.core.email_rendering import render_email_html
+
+    representative_context = {
+        "company_name": "Acme Test Co",
+        "logo_url": None,
+        "tracking_id": "INV-TEST0001",
+        "visitor_name": "Meera Krishnan",
+        "purpose": "Interview",
+        "visit_date": "2026-10-01",
+        "visit_time": "10:00",
+        "duration": "1 hour",
+        "department": "Engineering",
+        "denial_reason": "Not expected",
+        "host_name": "Rahul Nair",
+        "host_contact": "rahul@example.com",
+        "front_desk_contact": None,
+    }
+    for template_name in (
+        "tracking_only",
+        "visit_confirmation",
+        "denial",
+        "reschedule",
+        "edit",
+        "submission_role",
+        "host_assigned",
+    ):
+        subject, html = render_email_html(template_name, representative_context)
+        assert subject
+        assert "<html" in html
+        assert "INV-TEST0001" in html
+
+
+async def test_template_rendering_failure_falls_back_to_plain_text(monkeypatch) -> None:
+    """spec.md "Template Rendering Failure Falls Back to a Minimal
+    Plain-Text Email" — a forced rendering failure still results in a
+    deliverable (plain-text-only) email, logged at `ERROR`.
+    """
+    from vmss_api.core.email_rendering import TemplateRenderError
+
+    def _raise(*args, **kwargs):
+        raise TemplateRenderError("forced failure")
+
+    monkeypatch.setattr(tasks, "render_email_html", _raise)
+    logged: list[tuple[str, dict]] = []
+    monkeypatch.setattr(tasks.logger, "error", lambda event, **kw: logged.append((event, kw)))
+
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        tracking_id="INV-TEST0006",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email="visitor@example.com",
+        primary_contact_phone=None,
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_tracking_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+
+    assert len(sent) == 1
+    assert sent[0]["html_body"] is None
+    assert "INV-TEST0006" in sent[0]["body"]
+    assert logged and logged[0][0] == "email_template_render_failed"
+
+
+async def test_approval_email_includes_resolved_host_contact(monkeypatch) -> None:
+    """spec.md "Approval email with a resolved host includes their contact
+    details".
+    """
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        status="approved",
+        tracking_id="INV-TEST0007",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email="visitor@example.com",
+        primary_contact_phone=None,
+        host_id=uuid.uuid4(),
+    )
+    fake_host = UserFactory.build(
+        id=fake_invitation.host_id,
+        full_name="Rahul Nair",
+        phone_number="+91 90000 11122",
+        is_active=True,
+    )
+    monkeypatch.setattr(
+        tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation, user=fake_host)
+    )
+
+    result = await asyncio.to_thread(
+        tasks.send_approval_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "qr_token": "fake-qr-token",
+        },
+    )
+    result.get(propagate=True)
+
+    assert len(sent) == 1
+    assert sent[0]["html_body"] is not None
+    assert "Rahul Nair" in sent[0]["html_body"]
+    assert "+91 90000 11122" in sent[0]["html_body"]
+
+
+async def test_approval_email_falls_back_to_front_desk_contact_when_no_host(monkeypatch) -> None:
+    """spec.md "Approval email with no resolved host falls back to the
+    front-desk contact".
+    """
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        status="approved",
+        tracking_id="INV-TEST0008",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email="visitor@example.com",
+        primary_contact_phone=None,
+    )
+    fake_company = CompanyFactory.build(
+        id=uuid.uuid4(), phone="+91 80000 22233", email="frontdesk@acme-test.example"
+    )
+    monkeypatch.setattr(
+        tasks,
+        "tenant_session_scope",
+        _fake_tenant_session_scope(fake_invitation, company=fake_company),
+    )
+
+    result = await asyncio.to_thread(
+        tasks.send_approval_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "qr_token": "fake-qr-token",
+        },
+    )
+    result.get(propagate=True)
+
+    assert len(sent) == 1
+    assert sent[0]["html_body"] is not None
+    assert "+91 80000 22233" in sent[0]["html_body"]
+
+
+# --- Owning-role email fan-out (role-based-invitation-workflow) -------------
+
+
+async def test_create_invitation_enqueues_owning_role_email_notification(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """spec.md "Submission emails every holder of the owning role" — the
+    submission enqueues the role-fan-out email task with the ownership
+    step's role and the invitation's branch. `.delay()` only enqueues to a
+    real Celery/Redis broker — it does not run the task body inline — so
+    this test asserts what the request itself is responsible for (the
+    enqueue), the same way every other task-dispatch test in this module
+    does; `test_send_submission_role_email_notification_emails_every_role_
+    holder_with_usable_email` below exercises the task body itself.
+    """
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_submission_role_email_notification, "delay", lambda **kw: calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    data = await _create_invitation_success(client, token, branch, payload=_individual_payload())
+
+    assert len(calls) == 1
+    assert calls[0]["invitation_id"] == data["id"]
+    assert calls[0]["role_id"] == str(reception_role.id)
+    assert calls[0]["branch_id"] == str(branch.id)
+
+
+async def test_send_submission_role_email_notification_emails_every_role_holder_with_usable_email(
+    monkeypatch,
+) -> None:
+    """spec.md "Submission emails every holder of the owning role" —
+    exercised directly against the task body (testing-standards.md §3's
+    "unit-style" tier), since `.delay()` itself only enqueues.
+    """
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        tracking_id="INV-TEST0009",
+        primary_contact_full_name="Meera Krishnan",
+        purpose_of_visit="Interview",
+    )
+    role_id = uuid.uuid4()
+    branch_id = uuid.uuid4()
+    first_user = UserFactory.build(id=uuid.uuid4(), email="reception1@acme-test.example")
+    second_user = UserFactory.build(id=uuid.uuid4(), email="reception2@acme-test.example")
+
+    class _FakeUserRepository:
+        def __init__(self, session):
+            pass
+
+        async def list_users_holding_role_at_branch(self, role_id_arg, branch_id_arg):
+            assert role_id_arg == role_id
+            assert branch_id_arg == branch_id
+            return [first_user, second_user]
+
+    monkeypatch.setattr(tasks, "UserRepository", _FakeUserRepository)
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_submission_role_email_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "role_id": str(role_id),
+            "branch_id": str(branch_id),
+        },
+    )
+    result.get(propagate=True)
+
+    recipients = {call["to"] for call in sent}
+    assert recipients == {"reception1@acme-test.example", "reception2@acme-test.example"}
+    assert all("INV-TEST0009" in call["body"] for call in sent)

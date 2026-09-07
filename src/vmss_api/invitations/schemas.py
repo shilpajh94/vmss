@@ -3,7 +3,7 @@ from datetime import date, datetime, time
 from enum import StrEnum
 from typing import Literal, Self
 
-from pydantic import EmailStr, Field, model_validator
+from pydantic import ConfigDict, EmailStr, Field, model_validator
 
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.core.schemas import CamelModel
@@ -121,11 +121,21 @@ class VisitorSubmit(CamelModel):
 
 class VisitDetailsSubmit(CamelModel):
     purpose_of_visit: str = Field(max_length=255)
-    host_name_or_email: str = Field(max_length=255)
+    # Never client-supplied for routing purposes anymore
+    # (role-based-invitation-workflow) — the invitation's host is resolved
+    # exclusively by delegating its ownership step (see the `approvals`
+    # capability), never by anything submitted here. Both fields are still
+    # accepted, for backward compatibility with an un-updated client, but
+    # silently ignored by the service layer rather than rejected.
+    host_name_or_email: str | None = Field(default=None, max_length=255)
     preferred_visit_date: date
     preferred_visit_time: time
     expected_duration: str = Field(max_length=50)
-    department_to_visit: str = Field(max_length=255)
+    # Optional (allow-optional-department-at-creation) — a visitor or the
+    # staff member creating an invitation on their behalf often doesn't know
+    # the receiving organisation's internal department structure. Left
+    # unset, it's filled in later via `PATCH /invitations/{id}/edit`.
+    department_to_visit: str | None = Field(default=None, max_length=255)
     additional_notes: str | None = Field(default=None, max_length=2000)
     # Optional catalog ids (visit-info-lookup-api) — when supplied, the
     # service layer validates each against its catalog/`Department`/`User`
@@ -434,6 +444,31 @@ class InvitationExtendRequest(CamelModel):
         if self.expires_at.tzinfo is None:
             raise ValueError("expiresAt must include a timezone offset")
         return self
+
+
+class InvitationEditRequest(CamelModel):
+    """`PATCH /invitations/{id}/edit` (role-based-invitation-workflow) —
+    every field is optional; a caller supplies only the ones changing.
+    Deliberately excludes the visitor/co-visitor personal fields,
+    `visitorCategoryId`, and the host (`hostId`/`hostNameOrEmail`) — host
+    reassignment stays exclusively the `approvals` capability's delegation
+    endpoint's job. Unlike creation's accept-but-ignore posture for an
+    un-updated client, `extra="forbid"` rejects any of those fields outright
+    with a validation error rather than silently ignoring them, since no
+    existing client depends on this new endpoint's shape yet.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    purpose_of_visit: str | None = Field(default=None, max_length=255)
+    purpose_id: uuid.UUID | None = None
+    preferred_visit_date: date | None = None
+    preferred_visit_time: time | None = None
+    expected_duration: str | None = Field(default=None, max_length=50)
+    duration_id: uuid.UUID | None = None
+    department_to_visit: str | None = Field(default=None, max_length=255)
+    department_id: uuid.UUID | None = None
+    additional_notes: str | None = Field(default=None, max_length=2000)
 
 
 class WatchlistOverrideRequest(CamelModel):

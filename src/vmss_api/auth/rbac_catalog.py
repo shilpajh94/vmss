@@ -54,6 +54,7 @@ PERMISSION_CODES = [
     "invitations:checkout",
     "invitations:reschedule",
     "invitations:extend",
+    "invitations:edit",
     "invitations:badge",
     "invitations:watchlist-override",
     "roles:manage",
@@ -84,6 +85,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:deny",
         "invitations:reschedule",
         "invitations:extend",
+        "invitations:edit",
         "invitations:badge",
     ],
     "security": [
@@ -108,6 +110,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:deny",
         "invitations:reschedule",
         "invitations:extend",
+        "invitations:edit",
     ],
     # Exists only so the catalog literally lists all five names API-02
     # requires. Visitors never authenticate through this JWT/RBAC system

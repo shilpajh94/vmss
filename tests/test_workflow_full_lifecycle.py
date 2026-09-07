@@ -426,8 +426,17 @@ async def _run_workflow_after_provisioning(
         assert invitation_a["status"] == "submitted"
         assert len(tracking_calls) == 1
 
+        # role-based-invitation-workflow: every submitted invitation now
+        # gets an unconditional stepOrder-0 ownership step (role-identified
+        # for the tenant's default host role), so the blanket
+        # `POST /invitations/{id}/approve` endpoint always 409s now —
+        # approval goes through the step endpoint instead, same as any
+        # other workflow-backed invitation.
+        assert invitation_a["currentApprovalStep"] is not None
+        current_step_id = invitation_a["currentApprovalStep"]["id"]
         approve_response = await client.post(
-            f"/api/v1/invitations/{invitation_a['id']}/approve", headers=admin_headers
+            f"/api/v1/invitations/{invitation_a['id']}/approval-steps/{current_step_id}/approve",
+            headers=admin_headers,
         )
         assert approve_response.status_code == 200, approve_response.text
         assert approve_response.json()["data"]["status"] == "approved"
@@ -458,6 +467,13 @@ async def _run_workflow_after_provisioning(
                 "sub"
             ]
 
+            # role-based-invitation-workflow: `hostId` is no longer accepted
+            # at creation — every submitted invitation's ownership step
+            # (stepOrder 0) starts role-identified for the tenant's default
+            # host role (reception), not host-identified. The admin (who
+            # already holds every reception permission via override) first
+            # delegates that step to themselves as the real host, then the
+            # scenario continues exactly as before.
             create_delegatable_response = await client.post(
                 "/api/v1/invitations",
                 data={
@@ -465,7 +481,6 @@ async def _run_workflow_after_provisioning(
                         _invitation_payload(
                             "Dana Delegate Host",
                             visitor_category_id=uuid.UUID(visitor_category_id),
-                            hostId=admin_user_id,
                         )
                     )
                 },
@@ -475,21 +490,38 @@ async def _run_workflow_after_provisioning(
             assert create_delegatable_response.status_code == 201, create_delegatable_response.text
             delegatable_invitation = create_delegatable_response.json()["data"]
             assert delegatable_invitation["status"] == "submitted"
-            # Submission's implicit host step (stepOrder 0) is current — one
-            # push to the host (specs/invitations/spec.md "Invitation
-            # Submission Notifies the Approval Workflow's First Approver(s)
-            # via Push").
+            assert delegatable_invitation["hostId"] is None
+            # Submission's ownership step (stepOrder 0) is current — one
+            # push to every holder of the tenant's default host role at the
+            # branch (specs/invitations/spec.md "Submission Notifies the
+            # Owning Role via Push").
             assert len(push_calls) == 1
 
             invitation_detail_response = await client.get(
                 f"/api/v1/invitations/{delegatable_invitation['id']}", headers=admin_headers
             )
             assert invitation_detail_response.status_code == 200
-            host_step_id = invitation_detail_response.json()["data"]["currentApprovalStep"]["id"]
+            ownership_step_id = invitation_detail_response.json()["data"]["currentApprovalStep"][
+                "id"
+            ]
+
+            delegate_host_response = await client.post(
+                f"/api/v1/invitations/{delegatable_invitation['id']}/approval-steps/"
+                f"{ownership_step_id}/delegate",
+                json={"delegateUserId": admin_user_id},
+                headers=admin_headers,
+            )
+            assert delegate_host_response.status_code == 200, delegate_host_response.text
+            assert delegate_host_response.json()["data"]["hostId"] == admin_user_id
+            # Delegating the ownership step resolves the invitation's host
+            # and notifies them (approvals capability's "Delegating the
+            # Ownership Step Also Resolves the Invitation's Host") — a
+            # second push.
+            assert len(push_calls) == 2
 
             approve_host_step_response = await client.post(
                 f"/api/v1/invitations/{delegatable_invitation['id']}/approval-steps/"
-                f"{host_step_id}/approve",
+                f"{ownership_step_id}/approve",
                 headers=admin_headers,
             )
             assert approve_host_step_response.status_code == 200, approve_host_step_response.text
@@ -498,10 +530,10 @@ async def _run_workflow_after_provisioning(
             assert role_step["approverRoleId"] == reception_role_id
             assert role_step["delegatedToUserId"] is None
             role_step_id = role_step["id"]
-            # The role-identified step becoming current broadcasts a second
+            # The role-identified step becoming current broadcasts a third
             # push to every reception-role holder at Branch A, including
             # `staff_user_id` below (approvals/service.py::_activate_next_step).
-            assert len(push_calls) == 2
+            assert len(push_calls) == 3
 
             delegate_response = await client.post(
                 f"/api/v1/invitations/{delegatable_invitation['id']}/approval-steps/"
@@ -512,10 +544,11 @@ async def _run_workflow_after_provisioning(
             assert delegate_response.status_code == 200, delegate_response.text
             delegated_step = delegate_response.json()["data"]["currentApprovalStep"]
             assert delegated_step["delegatedToUserId"] == staff_user_id
-            # Delegation itself sends no notification of its own — the
-            # delegate, by construction, already held the role at Branch A
-            # and so was already in the broadcast set above.
-            assert len(push_calls) == 2
+            # Delegating a later (non-ownership) step sends no notification
+            # of its own and does not change the already-resolved host —
+            # the delegate, by construction, already held the role at
+            # Branch A and so was already in the broadcast set above.
+            assert len(push_calls) == 3
 
             delegate_token = create_access_token(uuid.UUID(staff_user_id), tenant_id)
             relevant_to_me_response = await client.get(
@@ -539,14 +572,14 @@ async def _run_workflow_after_provisioning(
             # The role step was the workflow's last one — finalizing the
             # invitation dispatches the same visitor-facing approval
             # notification as `invitation_a`'s direct approval above
-            # (`approval_calls`), plus a third push telling the host their
-            # invitation was approved (`invitations/service.py::
+            # (`approval_calls`), plus a fourth push telling the resolved
+            # host their invitation was approved (`invitations/service.py::
             # approve_invitation`'s own `notify_user` call — unrelated to
             # delegation itself, no further push fires for the step chain
             # since there is no next step to activate).
             assert len(approval_calls) == 2
-            assert len(push_calls) == 3
-            assert push_calls[2]["title"] == "Invitation approved"
+            assert len(push_calls) == 4
+            assert push_calls[3]["title"] == "Invitation approved"
         finally:
             notifications_tasks.send_push.delay = original_push_delay
 

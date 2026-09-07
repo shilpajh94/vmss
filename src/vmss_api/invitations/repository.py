@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, exists, func, or_, select, update
+from sqlalchemy import Select, exists, func, or_, select, update
 from sqlalchemy.orm import aliased, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
@@ -28,28 +28,30 @@ def _branch_filter(branch_scope: BranchScope) -> Any | None:
 def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
     """specs/invitations/spec.md "Caller Lists Invitations Relevant to
     Themselves via relevantToMe": invitations where `user_id` is (a) the
-    snapshotted host (the `stepOrder` 0 step's `approver_user_id`), (b) has
-    been delegated any step, regardless of that step's status, or (c)
-    currently holds — via branch-scoped `UserBranchRole` at the invitation's
-    own branch or company-wide — the role of the invitation's current
-    pending, undelegated, role-identified step. (c) closes the gap where a
-    valid role-based approver had no way to find their pending work short of
-    the unfiltered branch-wide list (checkin-approval-workflow-improvements).
-    All three clauses are expressed as (correlated, where needed) subqueries
-    against `invitation_approval_steps`, not a per-invitation loop
+    invitation's currently resolved host (`Invitation.host_id`) — set either
+    at snapshot time for a legacy host-identified `stepOrder` 0 step, or by
+    delegating the now-unconditional role-identified ownership step
+    (role-based-invitation-workflow; see the `approvals` capability's
+    "Delegating the Ownership Step Also Resolves the Invitation's Host") —
+    (b) has been delegated any step, regardless of that step's status, or
+    (c) currently holds — via branch-scoped `UserBranchRole` at the
+    invitation's own branch or company-wide — the role of the invitation's
+    current pending, undelegated, role-identified step. (c) closes the gap
+    where a valid role-based approver had no way to find their pending work
+    short of the unfiltered branch-wide list
+    (checkin-approval-workflow-improvements). (b) and (c) are expressed as
+    (correlated, where needed) subqueries against
+    `invitation_approval_steps`, not a per-invitation loop
     (query-performance.md §2).
     """
-    host_or_delegate = Invitation.id.in_(
-        select(InvitationApprovalStep.invitation_id).where(
-            InvitationApprovalStep.deleted_at.is_(None),
-            or_(
-                and_(
-                    InvitationApprovalStep.step_order == 0,
-                    InvitationApprovalStep.approver_user_id == user_id,
-                ),
+    host_or_delegate = or_(
+        Invitation.host_id == user_id,
+        Invitation.id.in_(
+            select(InvitationApprovalStep.invitation_id).where(
+                InvitationApprovalStep.deleted_at.is_(None),
                 InvitationApprovalStep.delegated_to_user_id == user_id,
-            ),
-        )
+            )
+        ),
     )
 
     # "Current pending step" mirrors
@@ -264,6 +266,41 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 checked_out_at=datetime.now(UTC),
                 checked_out_by_user_id=user_id,
             )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def edit_if_eligible(self, id_: uuid.UUID, **changes: Any) -> Invitation | None:
+        """Atomic conditional `UPDATE` backing `PATCH /invitations/{id}/edit`
+        (role-based-invitation-workflow), same eligible-status pattern as
+        `reschedule_if_eligible`/`extend_if_eligible`. `changes` is whatever
+        subset of columns the caller actually supplied — the service layer
+        (`invitations/service.py::edit_invitation`) never calls this with an
+        empty `changes`, so there is always at least one column in `values()`.
+        """
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
+            .values(**changes)
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def set_host_if_exists(
+        self, id_: uuid.UUID, *, host_id: uuid.UUID, host_name_or_email: str
+    ) -> Invitation | None:
+        """Resolves the invitation's host once its ownership step's
+        delegation succeeds (`approvals/service.py::delegate_step`,
+        role-based-invitation-workflow) — no status guard, since delegation
+        can happen while the invitation is still `submitted` regardless of
+        which lifecycle stage the ownership step itself is in, and
+        re-delegating an already-resolved host must still be able to
+        overwrite the prior one.
+        """
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_)
+            .values(host_id=host_id, host_name_or_email=host_name_or_email)
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()

@@ -134,6 +134,11 @@ class CompanyFactory(SQLAlchemyFactory[Company]):
     __model__ = Company
     is_active = True
     deleted_at = None
+    # Same rationale as `BranchFactory.contact_person_user_id = None` below:
+    # a random UUID here would violate the `roles.id` FK unless a real role
+    # happens to exist with that id — and unset is the common case anyway
+    # (falls back to the tenant's `reception` role; role-based-invitation-workflow).
+    default_host_role_id = None
 
 
 class BranchFactory(SQLAlchemyFactory[Branch]):

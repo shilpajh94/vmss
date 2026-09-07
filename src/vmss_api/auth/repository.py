@@ -203,6 +203,26 @@ class UserRepository(TenantScopedRepository[User]):
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def list_users_holding_role_at_branch(
+        self, role_id: uuid.UUID, branch_id: uuid.UUID
+    ) -> list[User]:
+        """Full-row counterpart of `list_user_ids_holding_role_at_branch` —
+        needed wherever a caller needs more than the id (e.g. `.email` for
+        role-based-invitation-workflow's owning-role email fan-out at
+        submission), not just who to push to.
+        """
+        stmt = (
+            select(User)
+            .join(UserBranchRole, UserBranchRole.user_id == User.id)
+            .where(
+                UserBranchRole.role_id == role_id,
+                (UserBranchRole.branch_id == branch_id) | (UserBranchRole.branch_id.is_(None)),
+                User.deleted_at.is_(None),
+            )
+            .distinct()
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def list_hosts_page(
         self, *, page: int, page_size: int, sort_by: str, sort_order: SortOrder
     ) -> tuple[list[User], int]:

@@ -235,6 +235,7 @@ ADMIN_PERMISSION_CODES = [
     "invitations:checkout",
     "invitations:reschedule",
     "invitations:extend",
+    "invitations:edit",
     "invitations:badge",
     "invitations:watchlist-override",
     "roles:view",

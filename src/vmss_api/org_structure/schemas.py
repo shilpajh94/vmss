@@ -27,6 +27,10 @@ class CompanyCreate(CamelModel):
     # `ge=1` rules out a zero/negative duration a client could otherwise send
     # to make every badge expire instantly.
     badge_expiry_duration_minutes: int | None = Field(default=None, ge=1, le=10_080)
+    # Which Role newly submitted invitations default to being owned by
+    # (role-based-invitation-workflow) — omitted/null falls back to the
+    # tenant's standard `reception` role.
+    default_host_role_id: uuid.UUID | None = None
 
 
 class CompanyUpdate(CamelModel):
@@ -41,6 +45,7 @@ class CompanyUpdate(CamelModel):
     default_timezone: str | None = Field(default=None, max_length=50)
     auto_approve_pre_registered_visitors: bool | None = None
     badge_expiry_duration_minutes: int | None = Field(default=None, ge=1, le=10_080)
+    default_host_role_id: uuid.UUID | None = None
 
 
 class CompanyOut(CamelModel):
@@ -56,6 +61,7 @@ class CompanyOut(CamelModel):
     default_timezone: str | None
     auto_approve_pre_registered_visitors: bool
     badge_expiry_duration_minutes: int | None
+    default_host_role_id: uuid.UUID | None = None
 
 
 class BranchCreate(CamelModel):
