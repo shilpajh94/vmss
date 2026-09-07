@@ -32,7 +32,6 @@ function validateVisitorContact(contact: VisitorFormEntry): Record<string, strin
   if (!contact.visitorCategory) errors.visitorCategory = 'Visitor category is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
   if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
-  if (!contact.profileImageFileRef) errors.profileImageFileRef = 'Profile image is required.'
   return errors
 }
 

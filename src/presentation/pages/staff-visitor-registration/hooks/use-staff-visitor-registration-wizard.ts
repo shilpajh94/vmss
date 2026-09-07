@@ -22,7 +22,6 @@ function validateStaffVisitorContact(contact: StaffVisitorFormEntry): Record<str
   if (!contact.preferredContactMethod) errors.preferredContactMethod = 'Preferred contact method is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
   if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
-  if (!contact.profileImageFileRef) errors.profileImageFileRef = 'Profile image is required.'
   return errors
 }
 
