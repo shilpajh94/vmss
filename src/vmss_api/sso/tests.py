@@ -485,6 +485,46 @@ async def test_create_list_delete_role_mapping(
     assert list_after.json()["data"] == []
 
 
+async def test_list_role_mappings_sort_by_idp_group_claim_value(
+    client: AsyncClient, user: User, host_role: Role, security_role: Role
+) -> None:
+    """verify-full-api-test-and-validation-coverage task 7.2/7.4 — the
+    `sortBy`/`sortOrder` params on `GET /auth/sso/role-mappings`
+    (`sso/router.py::list_role_mappings`) are additive-only per
+    `api-conventions.md` §2, but had no HTTP-level test proving they
+    actually reorder the response.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    await client.post(
+        "/api/v1/auth/sso/role-mappings",
+        json={"idpGroupClaimValue": "VMS-Zeta-Team", "roleId": str(security_role.id)},
+        headers=headers,
+    )
+    await client.post(
+        "/api/v1/auth/sso/role-mappings",
+        json={"idpGroupClaimValue": "VMS-Alpha-Team", "roleId": str(host_role.id)},
+        headers=headers,
+    )
+
+    asc_response = await client.get(
+        "/api/v1/auth/sso/role-mappings", params={"sortOrder": "asc"}, headers=headers
+    )
+    assert [m["idpGroupClaimValue"] for m in asc_response.json()["data"]] == [
+        "VMS-Alpha-Team",
+        "VMS-Zeta-Team",
+    ]
+
+    desc_response = await client.get(
+        "/api/v1/auth/sso/role-mappings", params={"sortOrder": "desc"}, headers=headers
+    )
+    assert [m["idpGroupClaimValue"] for m in desc_response.json()["data"]] == [
+        "VMS-Zeta-Team",
+        "VMS-Alpha-Team",
+    ]
+
+
 async def test_create_role_mapping_nonexistent_role_returns_404(
     client: AsyncClient, user: User
 ) -> None:
