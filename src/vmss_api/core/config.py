@@ -157,6 +157,13 @@ class Settings(BaseSettings):
     # is "s3" — irrelevant for "local", which returns a plain path.
     storage_s3_presigned_url_ttl_seconds: int = 300
 
+    # Signs a fetchable URL for the "local" backend (add-avatar-upload-and-
+    # verify-image-storage) — falls back to `jwt_secret_key` when left
+    # genuinely blank, but every real environment should set a dedicated
+    # value (see `.env.example`).
+    storage_local_url_secret: str | None = None
+    storage_local_presigned_url_ttl_seconds: int = 300
+
     # Mail settings for `core/emailing.py`'s `SmtpEmailSender` — shared by
     # `invitations/notifications.py` and `reports/tasks.py` (see
     # add-pre-registration/design.md Decision 4 and
@@ -183,6 +190,15 @@ class Settings(BaseSettings):
     invitation_token_ttl_hours: int = 168
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
     invitation_max_group_visitors: int = 20
+
+    # Optional visitor/primary-contact profile photo
+    # (checkin-approval-workflow-improvements) — a separate, smaller limit
+    # from `invitation_max_upload_size_bytes` (ID proof scans), per
+    # file-upload-handling.md §1's "tune per artifact type".
+    invitation_max_photo_size_bytes: int = 2 * 1024 * 1024
+
+    # User profile picture upload (add-avatar-upload-and-verify-image-storage).
+    avatar_max_upload_size_bytes: int = 2 * 1024 * 1024
 
     # QR check-in token encryption (add-qr-checkin-security) — a dedicated
     # key, deliberately not shared with `sso_encryption_key` even though

@@ -2007,6 +2007,42 @@ async def test_resync_role_permissions_backfills_stale_role(
     assert "invitations:view" in {p.code for p in reception.permissions}
 
 
+async def test_resync_role_permissions_backfills_documents_view(
+    client: AsyncClient, user: User, db_session: AsyncSession
+) -> None:
+    """enrich-invitation-checkin-and-detail-views design.md Decision 6 —
+    the resync endpoint is the rollout path for a tenant provisioned before
+    `documents:view` existed in the catalog: it backfills the permission
+    onto Reception and Security without a manual database edit.
+    """
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    reception = await RoleRepository(db_session).get_by_name("reception")
+    security = await RoleRepository(db_session).get_by_name("security")
+    assert reception is not None
+    assert security is not None
+    reception.permissions = [p for p in reception.permissions if p.code != "documents:view"]
+    security.permissions = [p for p in security.permissions if p.code != "documents:view"]
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/roles/resync-permissions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    granted = {
+        entry["roleName"]: entry["grantedPermissionCodes"] for entry in response.json()["data"]
+    }
+    assert "documents:view" in granted["reception"]
+    assert "documents:view" in granted["security"]
+
+    await db_session.refresh(reception)
+    await db_session.refresh(security)
+    assert "documents:view" in {p.code for p in reception.permissions}
+    assert "documents:view" in {p.code for p in security.permissions}
+
+
 async def test_resync_role_permissions_is_idempotent(
     client: AsyncClient, user: User, db_session: AsyncSession
 ) -> None:

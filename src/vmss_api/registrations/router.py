@@ -105,16 +105,18 @@ async def create_walk_in_registration(
             )
         ),
     ],
-    visitor_id_proof_files: list[UploadFile] = _NO_VISITOR_FILES,
     primary_contact_photo_file: Annotated[
-        UploadFile | None,
+        UploadFile,
         File(
             description=(
-                "Optional profile photo for the primary contact (JPEG/PNG "
-                "only). Omit entirely if no photo is being captured."
+                "Required profile photo for the primary contact (JPEG/PNG "
+                "only) — paired with `payload.primaryContact`. See "
+                "`visitorPhotoFiles` below for the (optional) co-visitor "
+                "equivalent."
             )
         ),
-    ] = None,
+    ],
+    visitor_id_proof_files: list[UploadFile] = _NO_VISITOR_FILES,
     visitor_photo_files: list[UploadFile] = _NO_VISITOR_PHOTOS,
     idempotency_key: Annotated[
         str | None,
@@ -148,9 +150,7 @@ async def create_walk_in_registration(
 
     primary_content = await primary_contact_id_proof_file.read()
     visitor_contents = [await f.read() for f in visitor_id_proof_files]
-    primary_photo_content = (
-        await primary_contact_photo_file.read() if primary_contact_photo_file is not None else None
-    )
+    primary_photo_content = await primary_contact_photo_file.read()
     visitor_photo_contents = [await f.read() for f in visitor_photo_files]
 
     invitation = await service.create_walk_in_registration(

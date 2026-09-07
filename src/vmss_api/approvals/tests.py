@@ -1904,7 +1904,7 @@ async def test_category_with_no_active_rules_creates_no_steps(
         tenant=tenant,
         primary_contact_id_proof_content=_jpeg_bytes(),
         visitor_id_proof_contents=[],
-        primary_contact_photo_content=None,
+        primary_contact_photo_content=_jpeg_bytes(),
         visitor_photo_contents=[],
     )
     steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation.id)
@@ -1968,7 +1968,7 @@ async def test_resolved_host_with_no_active_rules_creates_single_host_step(
         tenant=tenant,
         primary_contact_id_proof_content=_jpeg_bytes(),
         visitor_id_proof_contents=[],
-        primary_contact_photo_content=None,
+        primary_contact_photo_content=_jpeg_bytes(),
         visitor_photo_contents=[],
     )
     assert invitation.host_id == host.id
@@ -2053,7 +2053,7 @@ async def test_resolved_host_with_configured_rules_creates_host_step_ahead_of_ro
         tenant=tenant,
         primary_contact_id_proof_content=_jpeg_bytes(),
         visitor_id_proof_contents=[],
-        primary_contact_photo_content=None,
+        primary_contact_photo_content=_jpeg_bytes(),
         visitor_photo_contents=[],
     )
 

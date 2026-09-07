@@ -237,6 +237,7 @@ ADMIN_PERMISSION_CODES = [
     "invitations:extend",
     "invitations:badge",
     "invitations:watchlist-override",
+    "documents:view",
     "roles:view",
     "roles:manage",
     "sso-config:view",
