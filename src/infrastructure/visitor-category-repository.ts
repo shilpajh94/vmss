@@ -15,7 +15,11 @@ function toVisitorCategory(visitorCategoryOut: VisitorCategoryOut): VisitorCateg
     name: visitorCategoryOut.name,
     code: visitorCategoryOut.code,
     description: visitorCategoryOut.description ?? undefined,
-    badgeColor: visitorCategoryOut.badgeColor,
+    // The backend allows a category to have no badge color; the domain type
+    // doesn't model that (VisitorCategorySchema's own `.default('blue')`),
+    // so a null wire value is defaulted here at the parsing boundary instead
+    // of propagating null through every consumer of `VisitorCategory`.
+    badgeColor: visitorCategoryOut.badgeColor ?? 'blue',
     ndaRequirement: visitorCategoryOut.ndaRequirement ?? undefined,
     escortRequirement: visitorCategoryOut.escortRequirement ?? undefined,
     maxDurationMinutes: visitorCategoryOut.maxDurationMinutes ?? undefined,

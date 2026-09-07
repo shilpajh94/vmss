@@ -5,7 +5,7 @@ export const VisitorCategoryOutSchema = z.object({
   name: z.string(),
   code: z.string(),
   description: z.string().nullable(),
-  badgeColor: z.enum(["blue", "orange", "gold", "grey"]),
+  badgeColor: z.enum(["blue", "orange", "gold", "grey"]).nullable(),
   ndaRequirement: z.enum(["digital", "signed_pdf", "optional", "none"]).nullable(),
   escortRequirement: z.enum(["self_escort", "access_logs_only", "always_required", "gate_check_in_only"]).nullable(),
   maxDurationMinutes: z.number().nullable(),
