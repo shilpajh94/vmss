@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Role, User
+from vmss_api.auth.rbac_catalog import NON_APPROVER_ROLE_NAMES
 from vmss_api.auth.repository import RoleRepository
 from vmss_api.core.config import settings
 from vmss_api.core.logging import logger
@@ -191,6 +192,34 @@ async def _soft_delete_and_commit(tenant_db: AsyncSession, repo: Any, entity: An
 # --- Company (singleton) -----------------------------------------------
 
 
+async def _validate_default_host_role_id(
+    tenant_db: AsyncSession, role_id: uuid.UUID | None
+) -> None:
+    """`Company.default_host_role_id` picks the role a newly submitted
+    invitation's stepOrder-0 ownership step is created for
+    (`get_default_host_role` below) — the same role-identified-approver
+    slot `visitors/service.py`'s `ApprovalWorkflowRuleCreate`/`Update`
+    guards, so it's held to the same restriction: setting it to `host`
+    would broadcast every fresh submission's ownership step to every
+    host-eligible employee company-wide before Reception has delegated to
+    anyone, defeating the entire "Reception approves, then delegates to one
+    person" model.
+    """
+    if role_id is None:
+        return
+    role = await RoleRepository(tenant_db).get(role_id)
+    if role is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Default host role not found")
+    if role.name.lower() in NON_APPROVER_ROLE_NAMES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"'{role.name}' cannot be the default host role — it must be reached only "
+                "via delegation, not assigned as the ownership step's role"
+            ),
+        )
+
+
 async def create_company(tenant_db: AsyncSession, payload: CompanyCreate) -> Company:
     repo = CompanyRepository(tenant_db)
     if await repo.get_singleton() is not None:
@@ -200,6 +229,7 @@ async def create_company(tenant_db: AsyncSession, payload: CompanyCreate) -> Com
         and await repo.get_by_registration_number(payload.registration_number) is not None
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Registration number already exists")
+    await _validate_default_host_role_id(tenant_db, payload.default_host_role_id)
     company = Company(id=uuid.uuid4(), **payload.model_dump())
     tenant_db.add(company)
     await _commit_or_conflict(tenant_db, "Registration number already exists")
@@ -254,6 +284,8 @@ async def update_company(tenant_db: AsyncSession, payload: CompanyUpdate) -> Com
         and await repo.get_by_registration_number(new_registration_number) is not None
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Registration number already exists")
+    if "default_host_role_id" in changes:
+        await _validate_default_host_role_id(tenant_db, changes["default_host_role_id"])
     for field, value in changes.items():
         setattr(company, field, value)
     await _commit_or_conflict(tenant_db, "Registration number already exists")

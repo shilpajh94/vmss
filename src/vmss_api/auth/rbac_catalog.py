@@ -128,6 +128,39 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
 # module docstring above.
 STANDARD_ROLE_NAMES = frozenset(ROLE_PERMISSIONS.keys())
 
+# Roles that must never be `Company.default_host_role_id`
+# (`org_structure/service.py`) — the role stepOrder-0's *ownership* step is
+# created for. `host` is excluded because the ownership step's whole job is
+# to be delegated *to* a host by whoever holds this role (normally
+# Reception); making the ownership step itself host-identified would be
+# circular. `visitor` is excluded for the same reason
+# `auth/service.py::assign_branch_role` already refuses to assign it to a
+# `User` — it's not a real staff role, so it can never legitimately hold or
+# match a workflow step either.
+NON_APPROVER_ROLE_NAMES = frozenset({"host", "visitor"})
+
+# Roles that must never be wired as an `ApprovalWorkflowRule.approver_role_id`
+# (`visitors/service.py`). Unlike `NON_APPROVER_ROLE_NAMES` above, `host` IS
+# allowed here — a workflow's stepOrder 1+ can legitimately be host-identified
+# (e.g. "Reception -> Host -> Manager") — see `DELEGATION_ONLY_ROLE_NAMES`
+# below for how that step's activation is kept from broadcasting to every
+# host-eligible employee. `visitor` stays excluded — not a real staff role.
+NON_WORKFLOW_STEP_ROLE_NAMES = frozenset({"visitor"})
+
+# Roles for which a step must never be actionable (or notified) by "any
+# holder of the role" the way Security/Manager steps are — only by whoever
+# the step is explicitly `delegated_to_user_id` (`approvals/models.py`), by
+# the invitation's already-resolved host, or by an `invitations:approve-
+# override` holder. `host` is the only one today: it is typically held by a
+# large, company-wide set of people, so a fresh host-identified step must
+# wait for Reception (or the previous step's approver) to delegate it to one
+# specific person before anyone can act on it or gets pushed a notification
+# about it (`approvals/service.py::_caller_matches_step`,
+# `notifications/service.py::notify_step_approver`) — otherwise every
+# host-eligible employee would see and be able to act on a request nobody
+# delegated to them.
+DELEGATION_ONLY_ROLE_NAMES = frozenset({"host"})
+
 
 async def seed_default_roles(tenant_db: AsyncSession) -> None:
     """Idempotent: safe to call on a tenant schema that's already seeded

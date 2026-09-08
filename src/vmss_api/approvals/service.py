@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import User, UserBranchRole
-from vmss_api.auth.repository import UserRepository
+from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
+from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.invitations import push_notifications, tasks
 from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.models import Invitation
@@ -56,13 +57,21 @@ async def _caller_matches_step(
     role-matched at all. A role-identified step (`approver_role_id` set)
     keeps the role-match check, unless it has been delegated
     (`delegated_to_user_id` set), in which case only the delegate matches,
-    not just-any holder of the role.
+    not just-any holder of the role — or unless the role is one of
+    `DELEGATION_ONLY_ROLE_NAMES` (`host`), in which case *no* holder matches
+    until it has been delegated: `host` is typically held by a large,
+    company-wide set of people, so an undelegated host-identified step must
+    wait for Reception (or the previous step's approver) to name one
+    specific person before anyone can act on it.
     """
     if step.delegated_to_user_id is not None:
         return user.id == step.delegated_to_user_id
     if step.approver_user_id is not None:
         return user.id == step.approver_user_id
     assert step.approver_role_id is not None  # DB CHECK: exactly one of the two is set
+    role = await RoleRepository(tenant_db).get(step.approver_role_id)
+    if role is not None and role.name.lower() in DELEGATION_ONLY_ROLE_NAMES:
+        return False
     return await _user_holds_role_at_branch(
         tenant_db, user.id, step.approver_role_id, invitation.branch_id
     )
