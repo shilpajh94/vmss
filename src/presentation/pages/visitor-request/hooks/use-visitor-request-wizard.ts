@@ -141,7 +141,10 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     const primaryContactIdProofFile = formState.primaryContact.idProofFileRef
       ? fileRegistry.current.get(formState.primaryContact.idProofFileRef)
       : undefined
-    if (!primaryContactIdProofFile) {
+    const primaryContactPhotoFile = formState.primaryContact.profileImageFileRef
+      ? fileRegistry.current.get(formState.primaryContact.profileImageFileRef)
+      : undefined
+    if (!primaryContactIdProofFile || !primaryContactPhotoFile) {
       setSubmissionError('Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
       return
@@ -156,6 +159,7 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     try {
       const response = await submitVisitRequestUseCase.execute(toVisitRequest(formState), {
         primaryContactIdProofFile,
+        primaryContactPhotoFile,
         visitorIdProofFiles,
       })
       setTrackingId(response.trackingId)

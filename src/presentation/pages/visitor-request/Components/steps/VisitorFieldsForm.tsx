@@ -5,18 +5,6 @@ import { TextField } from '../../../../components/ui/TextField'
 import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
 import type { VisitorFormEntry } from '../../types'
 
-// Fallback when the visitor-categories master data can't be loaded (e.g. no
-// staff session token available for an anonymous public visitor).
-const VISITOR_CATEGORY_OPTIONS = [
-  { value: 'general-visitor', label: 'General Visitor' },
-  { value: 'contractor', label: 'Contractor' },
-  { value: 'vendor', label: 'Vendor' },
-  { value: 'interview-candidate', label: 'Interview Candidate' },
-  { value: 'delivery', label: 'Delivery' },
-  { value: 'vip', label: 'VIP' },
-  { value: 'other', label: 'Other' },
-]
-
 // Values must match the backend's `idProofType` enum for
 // POST /registrations/walk-in exactly (validated server-side against these 4 strings).
 const ID_PROOF_OPTIONS = [
@@ -52,9 +40,12 @@ export function VisitorFieldsForm({
   errors,
   visitorCategories,
 }: VisitorFieldsFormProps) {
-  const visitorCategoryOptions = visitorCategories?.length
-    ? visitorCategories.map((category) => ({ value: category.id, label: category.name }))
-    : VISITOR_CATEGORY_OPTIONS
+  // No hardcoded fallback here: a category's `id` must be a real backend UUID
+  // (it's submitted verbatim as `visitorCategoryId`), so an empty list while
+  // master data is loading/unavailable must leave the field unselectable
+  // rather than offer values that are guaranteed to fail server validation.
+  const visitorCategoryOptions = (visitorCategories ?? []).map((category) => ({ value: category.id, label: category.name }))
+  const visitorCategoriesUnavailable = visitorCategoryOptions.length === 0
 
   return (
     <div className="grid grid-cols-2 gap-4">
@@ -87,11 +78,12 @@ export function VisitorFieldsForm({
       {showExtendedFields && (
         <SelectField
           label="Visitor Category"
-          placeholder="Select category"
+          placeholder={visitorCategoriesUnavailable ? 'Unable to load categories — please retry' : 'Select category'}
           options={visitorCategoryOptions}
           value={value.visitorCategory}
           onChange={(visitorCategory) => onChange({ ...value, visitorCategory })}
           error={errors?.visitorCategory}
+          disabled={visitorCategoriesUnavailable}
           required
         />
       )}

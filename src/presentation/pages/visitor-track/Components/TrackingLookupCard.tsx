@@ -32,7 +32,8 @@ export function TrackingLookupCard({ trackingId, onTrackingIdChange, onSubmit, l
         type="button"
         onClick={onSubmit}
         disabled={loading}
-        className="rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white disabled:opacity-60"
+        title="Look up the status of your visit using your tracking ID"
+        className="cursor-pointer rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white transition-colors enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {loading ? 'Tracking…' : 'Track Request'}
       </button>
