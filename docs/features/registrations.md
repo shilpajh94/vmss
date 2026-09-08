@@ -19,7 +19,7 @@ of by JWT.
 
 | Method | Path | Auth | Rate limit | Description |
 |---|---|---|---|---|
-| POST | `/api/v1/registrations/walk-in` | `X-Device-Key` (no bearer token) | 20/minute per IP | A visitor registers themselves on arrival: primary contact, co-visitors, visit details, carried items, vehicles, and consent — identical multipart shape to `POST /invitations` (JSON `payload` Form field + ID-proof file parts, plus the same optional profile-photo file parts — see "Optional profile photo" below). Creates the same kind of `Invitation` record pre-registration does, tagged `source: "visitorWalkIn"`, immediately `status: "submitted"`. Accepts an optional `Idempotency-Key` header, same semantics as `POST /invitations`. |
+| POST | `/api/v1/registrations/walk-in` | `X-Device-Key` (no bearer token) | 20/minute per IP | A visitor registers themselves on arrival: primary contact, co-visitors, visit details, carried items, vehicles, and consent — identical multipart shape to `POST /invitations` (JSON `payload` Form field + ID-proof file parts, plus the same primary-contact profile-photo file part, now mandatory — see "Primary contact profile photo" below). Creates the same kind of `Invitation` record pre-registration does, tagged `source: "visitorWalkIn"`, immediately `status: "submitted"`. Accepts an optional `Idempotency-Key` header, same semantics as `POST /invitations`. |
 
 No separate tracking-lookup endpoint here — a walk-in registration's tracking
 ID works with the existing `GET /invitations/track` (both lookup forms),
@@ -123,17 +123,22 @@ this yet — direct DB update, or a future management endpoint).
 - **No approval-workflow evaluation.** Same posture `invitations` has today —
   the not-yet-built `approvals` feature's job.
 
-### Optional profile photo (`checkin-approval-workflow-improvements`)
+### Primary contact profile photo (`require-primary-contact-photo`)
 
-`POST /registrations/walk-in` accepts the same optional
-`primary_contact_photo_file`/`visitor_photo_files` parts `POST /invitations`
-does — its own router declares these file parameters independently (its
-multipart file contract is not automatically inherited the way the JSON
-`payload` schema is), but the validation, storage, and response shape
-(`photoUrl`/`primaryContactPhotoUrl`) are identical: image-only
-(JPEG/PNG), `INVITATION_MAX_PHOTO_SIZE_BYTES` (default 2 MB), optional
-throughout. See `docs/features/invitations.md`'s "Optional profile photo"
-section for the full behavior.
+`POST /registrations/walk-in` accepts the same `primary_contact_photo_file`/
+`visitor_photo_files` parts `POST /invitations` does — its own router
+declares these file parameters independently (its multipart file contract
+is not automatically inherited the way the JSON `payload` schema is), but
+the validation, storage, and response shape (`photoUrl`/
+`primaryContactPhotoUrl`) are identical: image-only (JPEG/PNG),
+`INVITATION_MAX_PHOTO_SIZE_BYTES` (default 2 MB). **`primary_contact_photo_file`
+is mandatory** — a request omitting it is rejected with a validation error
+and creates no registration record, the same way an omitted
+`primary_contact_id_proof_file` already is (`require-primary-contact-photo`
+— **BREAKING**, tightened in `v1` directly rather than shipped as a new
+version). Co-visitor (`visitor_photo_files`) entries remain optional. See
+`docs/features/invitations.md`'s "Primary contact profile photo" section
+for the full behavior.
 
 ## File uploads (API-14)
 

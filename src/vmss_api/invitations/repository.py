@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, exists, func, or_, select, update
+from sqlalchemy import Select, exists, func, or_, select, update
 from sqlalchemy.orm import aliased, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
@@ -15,6 +15,7 @@ from vmss_api.invitations.models import (
     InvitationVehicle,
     InvitationVisitor,
 )
+from vmss_api.org_structure.models import Branch, Building, Department, Floor
 
 
 def _branch_filter(branch_scope: BranchScope) -> Any | None:
@@ -28,28 +29,27 @@ def _branch_filter(branch_scope: BranchScope) -> Any | None:
 def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
     """specs/invitations/spec.md "Caller Lists Invitations Relevant to
     Themselves via relevantToMe": invitations where `user_id` is (a) the
-    snapshotted host (the `stepOrder` 0 step's `approver_user_id`), (b) has
-    been delegated any step, regardless of that step's status, or (c)
-    currently holds — via branch-scoped `UserBranchRole` at the invitation's
-    own branch or company-wide — the role of the invitation's current
-    pending, undelegated, role-identified step. (c) closes the gap where a
-    valid role-based approver had no way to find their pending work short of
-    the unfiltered branch-wide list (checkin-approval-workflow-improvements).
-    All three clauses are expressed as (correlated, where needed) subqueries
-    against `invitation_approval_steps`, not a per-invitation loop
-    (query-performance.md §2).
+    invitation's own `host_id` — checked directly rather than via a
+    `stepOrder` 0 `InvitationApprovalStep`, since an auto-approved invitation
+    never gets any approval steps created for it and would otherwise be
+    invisible to its own host — (b) has been delegated any step, regardless
+    of that step's status, or (c) currently holds — via branch-scoped
+    `UserBranchRole` at the invitation's own branch or company-wide — the
+    role of the invitation's current pending, undelegated, role-identified
+    step. (c) closes the gap where a valid role-based approver had no way to
+    find their pending work short of the unfiltered branch-wide list
+    (checkin-approval-workflow-improvements). (b) and (c) are expressed as
+    (correlated, where needed) subqueries against `invitation_approval_steps`,
+    not a per-invitation loop (query-performance.md §2).
     """
-    host_or_delegate = Invitation.id.in_(
-        select(InvitationApprovalStep.invitation_id).where(
-            InvitationApprovalStep.deleted_at.is_(None),
-            or_(
-                and_(
-                    InvitationApprovalStep.step_order == 0,
-                    InvitationApprovalStep.approver_user_id == user_id,
-                ),
+    host_or_delegate = or_(
+        Invitation.host_id == user_id,
+        Invitation.id.in_(
+            select(InvitationApprovalStep.invitation_id).where(
+                InvitationApprovalStep.deleted_at.is_(None),
                 InvitationApprovalStep.delegated_to_user_id == user_id,
-            ),
-        )
+            )
+        ),
     )
 
     # "Current pending step" mirrors
@@ -123,6 +123,41 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
     async def get_with_children(self, id_: uuid.UUID) -> Invitation | None:
         stmt = self._with_children().where(Invitation.id == id_, Invitation.deleted_at.is_(None))
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_location(
+        self, *, branch_id: uuid.UUID, department_id: uuid.UUID | None
+    ) -> tuple[Branch, Department | None, Building | None]:
+        """Resolves an invitation's branch and, when it has a
+        `department_id` on file, that department's building via
+        `Department.floor_id -> Floor.building_id` — one query with outer
+        joins, mirroring `auth/repository.py::list_employees_page`'s
+        established cross-package join pattern. `invitations` has no ORM
+        `relationship()` onto `org_structure` models (same convention as
+        `auth.models.User.department_id`), so this is an explicit join, not
+        a `selectinload`/`joinedload` option (query-performance.md §1).
+
+        `deleted_at` is deliberately not filtered on any of the three
+        tables here: an invitation shows the branch/department/building it
+        actually resolved to at the time, even if one of them has since
+        been soft-deleted, rather than silently going blank.
+
+        `branch_id` is a required, FK-enforced column, so the branch row
+        is always found — `department_id` is optional and, when `None`,
+        the join condition below evaluates to `Department.id IS NULL`,
+        correctly yielding no `Department`/`Building` match.
+        """
+        stmt = (
+            select(Branch, Department, Building)
+            .select_from(Branch)
+            .outerjoin(Department, Department.id == department_id)
+            .outerjoin(Floor, Department.floor_id == Floor.id)
+            .outerjoin(Building, Floor.building_id == Building.id)
+            .where(Branch.id == branch_id)
+        )
+        row = (await self.session.execute(stmt)).first()
+        assert row is not None, f"Invitation references a nonexistent branch {branch_id}"
+        branch, department, building = row
+        return branch, department, building
 
     async def approve_if_submitted(self, id_: uuid.UUID) -> Invitation | None:
         """Atomic conditional transition: the `UPDATE` only affects a row
@@ -271,12 +306,23 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
     async def reschedule_if_eligible(
         self, id_: uuid.UUID, *, preferred_visit_date: Any, preferred_visit_time: Any
     ) -> Invitation | None:
+        """`previous_preferred_visit_date`/`_time` are set from
+        `Invitation.preferred_visit_date`/`_time` in the same `UPDATE` that
+        overwrites those columns — every `SET` clause in one Postgres
+        `UPDATE` reads the pre-update row, so this reliably captures the
+        immediately-prior schedule rather than the just-written new one
+        (`add-reschedule-history/design.md`).
+        """
         stmt = (
             update(Invitation)
             .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
             .values(
+                previous_preferred_visit_date=Invitation.preferred_visit_date,
+                previous_preferred_visit_time=Invitation.preferred_visit_time,
                 preferred_visit_date=preferred_visit_date,
                 preferred_visit_time=preferred_visit_time,
+                rescheduled_at=datetime.now(UTC),
+                reschedule_count=Invitation.reschedule_count + 1,
             )
             .returning(Invitation)
         )

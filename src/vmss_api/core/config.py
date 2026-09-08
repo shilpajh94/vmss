@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import quote_plus
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -69,8 +70,11 @@ class Settings(BaseSettings):
             )
         driver = _DB_DRIVERS[self.db_connection]
         return (
-            f"{driver}://{self.db_username}:{self.db_password}"
-            f"@{self.db_host}:{self.db_port}/{self.db_database}"
+            f"postgresql+asyncpg://"
+            f"{quote_plus(self.db_username)}:"
+            f"{quote_plus(self.db_password)}@"
+            f"{self.db_host}:{self.db_port}/"
+            f"{self.db_database}"
         )
 
     # Redis — one instance, one logical DB index per purpose (cache, Celery
@@ -153,16 +157,12 @@ class Settings(BaseSettings):
     # is "s3" — irrelevant for "local", which returns a plain path.
     storage_s3_presigned_url_ttl_seconds: int = 300
 
-    # add-avatar-upload-and-verify-image-storage: HMAC key signing a
-    # `local`-backend `url_for` URL, mirroring the S3 presigned-URL model so
-    # a client can actually fetch the file over HTTP. Falls back to
-    # `jwt_secret_key` when unset so a fresh checkout doesn't need a new
-    # required `.env` entry to keep working — set a dedicated value in every
-    # real environment (rotating one secret shouldn't invalidate the other).
-    storage_local_url_secret: str | None = Field(default=None, alias="STORAGE_LOCAL_URL_SECRET")
-    storage_local_presigned_url_ttl_seconds: int = Field(
-        default=300, alias="STORAGE_LOCAL_PRESIGNED_URL_TTL_SECONDS"
-    )
+    # Signs a fetchable URL for the "local" backend (add-avatar-upload-and-
+    # verify-image-storage) — falls back to `jwt_secret_key` when left
+    # genuinely blank, but every real environment should set a dedicated
+    # value (see `.env.example`).
+    storage_local_url_secret: str | None = None
+    storage_local_presigned_url_ttl_seconds: int = 300
 
     # Mail settings for `core/emailing.py`'s `SmtpEmailSender` — shared by
     # `invitations/notifications.py` and `reports/tasks.py` (see
@@ -190,14 +190,14 @@ class Settings(BaseSettings):
     invitation_token_ttl_hours: int = 168
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
     invitation_max_group_visitors: int = 20
-    # checkin-approval-workflow-improvements: sized independently from
-    # invitation_max_upload_size_bytes (a photo capture, not a scanned
-    # document, has different realistic size expectations).
+
+    # Optional visitor/primary-contact profile photo
+    # (checkin-approval-workflow-improvements) — a separate, smaller limit
+    # from `invitation_max_upload_size_bytes` (ID proof scans), per
+    # file-upload-handling.md §1's "tune per artifact type".
     invitation_max_photo_size_bytes: int = 2 * 1024 * 1024
 
-    # `auth` feature config (add-avatar-upload-and-verify-image-storage) —
-    # sized the same as invitation_max_photo_size_bytes since an avatar is
-    # the same kind of capture (a photo, not a scanned document).
+    # User profile picture upload (add-avatar-upload-and-verify-image-storage).
     avatar_max_upload_size_bytes: int = 2 * 1024 * 1024
 
     # QR check-in token encryption (add-qr-checkin-security) — a dedicated
@@ -281,3 +281,4 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+ 

@@ -418,7 +418,10 @@ async def _run_workflow_after_provisioning(
         create_invitation_response = await client.post(
             "/api/v1/invitations",
             data={"payload": json.dumps(_invitation_payload("Priya Nair"))},
-            files=[("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))],
+            files=[
+                ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+                ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ],
             headers={**admin_headers, "X-Branch-ID": branch_a_id},
         )
         assert create_invitation_response.status_code == 201, create_invitation_response.text
@@ -469,7 +472,10 @@ async def _run_workflow_after_provisioning(
                         )
                     )
                 },
-                files=[("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))],
+                files=[
+                    ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+                    ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+                ],
                 headers={**admin_headers, "X-Branch-ID": branch_a_id},
             )
             assert create_delegatable_response.status_code == 201, create_delegatable_response.text
@@ -654,7 +660,10 @@ async def _run_workflow_after_provisioning(
                     )
                 )
             },
-            files=[("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg"))],
+            files=[
+                ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+                ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ],
             headers=device_headers,
         )
         assert walk_in_response.status_code == 201, walk_in_response.text
