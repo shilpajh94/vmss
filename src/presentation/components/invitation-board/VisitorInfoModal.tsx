@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import { Modal } from '../ui/Modal'
 import { CalendarClockIcon, ShieldIcon, TagIcon } from '../icons'
@@ -46,11 +47,17 @@ function Avatar({
   sizeClassName: string
   toneClassName: string
 }) {
-  if (photoUrl) {
+  // Photo URLs are short-lived signed links (see use-invitations-board.ts's
+  // forced refetch on open) — if one still fails to load (expired, storage
+  // hiccup), fall back to the initials badge instead of a broken image icon.
+  const [failedToLoad, setFailedToLoad] = useState(false)
+
+  if (photoUrl && !failedToLoad) {
     return (
       <img
         src={photoUrl}
         alt={fullName}
+        onError={() => setFailedToLoad(true)}
         className={`shrink-0 rounded-full object-cover ${sizeClassName}`}
       />
     )
@@ -141,7 +148,26 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
               <Field label="Host" value={detail.hostNameOrEmail ?? '—'} />
               <Field label="Department" value={detail.departmentToVisit ?? '—'} />
               <Field label="Expected duration" value={detail.expectedDuration ?? '—'} />
-              {detail.preferredVisitDate && detail.preferredVisitTime ? (
+              {detail.rescheduleCount > 0 ? (
+                <>
+                  {detail.previousPreferredVisitDate && detail.previousPreferredVisitTime ? (
+                    <Field
+                      label="Originally scheduled"
+                      value={`${detail.previousPreferredVisitDate} ${detail.previousPreferredVisitTime}`}
+                    />
+                  ) : null}
+                  {detail.preferredVisitDate && detail.preferredVisitTime ? (
+                    <Field
+                      label="Rescheduled to"
+                      value={`${detail.preferredVisitDate} ${detail.preferredVisitTime}`}
+                    />
+                  ) : null}
+                  <Field
+                    label="Rescheduled"
+                    value={`${detail.rescheduleCount}${detail.rescheduleCount > 1 ? ' times' : ' time'}${detail.rescheduledAt ? ` · last ${formatDateTime(detail.rescheduledAt)}` : ''}`}
+                  />
+                </>
+              ) : detail.preferredVisitDate && detail.preferredVisitTime ? (
                 <Field label="Scheduled" value={`${detail.preferredVisitDate} ${detail.preferredVisitTime}`} />
               ) : null}
               {detail.carriedItems.length > 0 ? <Field label="Carried items" value={detail.carriedItems.join(', ')} /> : null}
