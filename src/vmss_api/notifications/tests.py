@@ -5,7 +5,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import DeviceTokenFactory, RoleFactory
-from vmss_api.auth.models import User
+from vmss_api.auth.models import User, UserBranchRole
 from vmss_api.notifications import fcm, service, tasks
 from vmss_api.notifications.repository import DeviceTokenRepository
 from vmss_api.org_structure.models import Branch
@@ -460,3 +460,59 @@ async def test_notify_role_at_branch_zero_holders_logs_warning_and_skips_dispatc
     assert logged_warning and logged_warning[0][0] == "push_notify_role_no_holders"
     assert logged_warning[0][1]["role_id"] == str(role.id)
     assert logged_warning[0][1]["branch_id"] == str(branch.id)
+
+
+# --- Addressing metadata (role-based-invitation-workflow) --------------------
+
+
+async def test_notify_user_payload_carries_assigned_user_id_and_reason(
+    tenant: Tenant, user: User, monkeypatch
+) -> None:
+    """specs/notifications/spec.md "Delegation/host-assignment push carries
+    assignedUserId and reason delegated".
+    """
+    delay_calls: list[dict] = []
+    monkeypatch.setattr(tasks.send_push, "delay", lambda **kwargs: delay_calls.append(kwargs))
+
+    await service.notify_user(
+        tenant_schema=tenant.schema_name, user_id=user.id, title="Title", body="Body"
+    )
+
+    assert len(delay_calls) == 1
+    data = delay_calls[0]["data"]
+    assert data["assignedUserId"] == str(user.id)
+    assert data.get("assignedRoleId") is None
+    assert data["reason"] == "delegated"
+
+
+async def test_notify_role_at_branch_payload_carries_assigned_role_id_and_reason(
+    db_session: AsyncSession, tenant: Tenant, branch: Branch, user: User, monkeypatch
+) -> None:
+    """specs/notifications/spec.md "Role-fan-out push carries assignedRoleId
+    and reason role_assigned".
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name="reception-metadata-test", permissions=[])
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add(
+        UserBranchRole(id=uuid.uuid4(), user_id=user.id, role_id=role.id, branch_id=None)
+    )
+    await db_session.commit()
+
+    delay_calls: list[dict] = []
+    monkeypatch.setattr(tasks.send_push, "delay", lambda **kwargs: delay_calls.append(kwargs))
+
+    await service.notify_role_at_branch(
+        db_session,
+        tenant_schema=tenant.schema_name,
+        role_id=role.id,
+        branch_id=branch.id,
+        title="Title",
+        body="Body",
+    )
+
+    assert len(delay_calls) == 1
+    data = delay_calls[0]["data"]
+    assert data["assignedRoleId"] == str(role.id)
+    assert data.get("assignedUserId") is None
+    assert data["reason"] == "role_assigned"

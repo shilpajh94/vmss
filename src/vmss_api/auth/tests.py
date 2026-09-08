@@ -1455,6 +1455,40 @@ async def test_list_employee_directory_no_auth_header_succeeds(
         assert "employeeCode" not in entry
 
 
+async def test_list_employee_directory_sort_by_name(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant
+) -> None:
+    """verify-full-api-test-and-validation-coverage task 7.2/7.4 — the
+    `sortBy`/`sortOrder` params on `GET /auth/employees/directory`
+    (`auth/router.py::list_employee_directory`) are additive-only per
+    `api-conventions.md` §2, but had no HTTP-level test proving they
+    actually reorder the response (`UserRepository.list_hosts_page`'s
+    tenant-isolation test at line ~1491 exercises the same params but not
+    through the endpoint, and doesn't assert ordering).
+    """
+    host_role = RoleFactory.build(id=uuid.uuid4(), name="host", permissions=[])
+    db_session.add(host_role)
+    await db_session.commit()
+    await _make_role_user(
+        db_session, tenant, host_role, email="zed@acme-test.example", full_name="Zed Host"
+    )
+    await _make_role_user(
+        db_session, tenant, host_role, email="anna@acme-test.example", full_name="Anna Host"
+    )
+
+    asc_response = await client.get(
+        "/api/v1/auth/employees/directory", params={"sortBy": "name", "sortOrder": "asc"}
+    )
+    asc_names = [e["fullName"] for e in asc_response.json()["data"]]
+    assert asc_names.index("Anna Host") < asc_names.index("Zed Host")
+
+    desc_response = await client.get(
+        "/api/v1/auth/employees/directory", params={"sortBy": "name", "sortOrder": "desc"}
+    )
+    desc_names = [e["fullName"] for e in desc_response.json()["data"]]
+    assert desc_names.index("Anna Host") > desc_names.index("Zed Host")
+
+
 async def test_list_employee_directory_excludes_inactive_and_non_host_roles(
     client: AsyncClient, db_session: AsyncSession, tenant: Tenant
 ) -> None:

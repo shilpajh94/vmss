@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,11 +10,16 @@ from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import User, UserBranchRole
 from vmss_api.auth.repository import UserRepository
-from vmss_api.invitations import push_notifications
+from vmss_api.invitations import push_notifications, tasks
 from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.models import Invitation
+from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.notifications import service as notifications_service
 from vmss_api.tenant.models import Tenant
+
+
+def _current_request_id() -> str:
+    return structlog.contextvars.get_contextvars().get("request_id", "")
 
 
 async def _user_holds_role_at_branch(
@@ -152,7 +158,13 @@ async def approve_step(
     """specs/approvals/spec.md "Steps Are Approved in Strict Order by the
     Current Pending Step". Approving the last step finalizes the invitation
     by calling `invitations.service.approve_invitation` verbatim (design.md
-    Decision 2) — not reimplemented here.
+    Decision 2) — not reimplemented here. `stepOrder` 0 (the ownership step)
+    is a plain role-identified step like any other: its role-holder (e.g.
+    Reception) may approve it directly, exactly as they would delegate it
+    (`delegate_step` below) — approving it directly just leaves the
+    invitation's `hostId` unresolved unless/until some step is delegated
+    (see "Delegating the Ownership Step Also Resolves the Invitation's
+    Host").
     """
     named_step, current = await _resolve_current_step(tenant_db, invitation.id, step_id)
     _require_is_current(named_step, current)
@@ -227,34 +239,68 @@ async def delegate_step(
     step_id: uuid.UUID,
     *,
     delegate_user_id: uuid.UUID,
+    tenant: Tenant,
 ) -> InvitationApprovalStep:
     """specs/approvals/spec.md "Current Step's Authorized Approver Delegates
     It to a Specific Person". Three independent ways to be authorized to
     delegate the invitation's current pending step, at any `stepOrder`: (1)
-    the caller is the invitation's host — a blanket privilege regardless of
-    whether the host would otherwise be authorized to act on that specific
-    step (design.md Decision 4 explains why this is not just a reuse of the
-    acting-authorization predicate: the host's whole reason to delegate a
-    role-identified step is that they don't hold that role); (2) the caller
-    otherwise matches the current step directly (role match, an existing
-    delegate re-delegating); or (3) `invitations:approve-override`. The
-    named delegate must satisfy the step's own kind: hold `approverRoleId`
-    at the invitation's branch (or company-wide) for a role-identified
-    step, or hold `invitations:approve` at the invitation's branch for the
-    host-identified `stepOrder` 0 step.
+    the caller is the invitation's currently resolved host (`invitation.
+    host_id`) — a blanket privilege regardless of whether the host would
+    otherwise be authorized to act on that specific step (design.md Decision
+    4 explains why this is not just a reuse of the acting-authorization
+    predicate: the host's whole reason to delegate a role-identified step is
+    that they don't hold that role) — this clause simply never matches
+    before a host has been resolved, which is the common case for a freshly
+    submitted invitation now that `stepOrder` 0 starts role-identified
+    rather than host-identified (role-based-invitation-workflow); (2) the
+    caller otherwise matches the current step directly (role match, an
+    existing delegate re-delegating); (3)
+    `invitations:approve-override`; or (4) the caller is the one who
+    actually approved the step immediately preceding this one (`step_order
+    - 1`), regardless of whether they hold this step's own `approverRoleId`
+    — so e.g. Reception, having approved the invitation's `stepOrder` 0
+    ownership step, can hand the next, differently-role-identified step
+    straight to whoever the workflow configures for it, rather than having
+    to wait for one of that role's holders to notice and delegate/act on it
+    themselves (reception-retains-visibility-and-delegation-after-own-step).
+    Clause (4) only ever matches the step immediately following the one the
+    caller acted on — it does not chain further back, and does not apply to
+    `stepOrder` 0 itself (no preceding step exists). The named delegate's
+    own eligibility
+    depends on which step is being delegated: for `stepOrder` 0 (the
+    ownership step), the delegate SHALL hold `invitations:approve` at the
+    invitation's branch — NOT the step's `approverRoleId` role itself, since
+    the real host is normally not a front-office employee (role-based-
+    invitation-workflow's one exception to the general rule). For every
+    other role-identified step, the delegate SHALL hold that step's
+    `approverRoleId` role at the invitation's branch or company-wide,
+    unchanged from before.
+
+    Delegating *any* step — not just `stepOrder` 0 — now resolves/updates
+    the invitation's `hostId`/`hostNameOrEmail` to that step's delegate and
+    sends them the host-assigned notification (extended from the original
+    stepOrder-0-only rule; see
+    "reception-retains-visibility-and-delegation-after-own-step"): the
+    invitation's host always reflects whoever was most recently delegated
+    any step, so a re-delegation later in the chain supersedes an earlier
+    one exactly the way re-delegating `stepOrder` 0 itself already did.
     """
     repo = InvitationApprovalStepRepository(tenant_db)
     named_step, current = await _resolve_current_step(tenant_db, invitation.id, step_id)
     _require_is_current(named_step, current)
 
-    host_step = await repo.get_by_step_order(invitation.id, 0)
-    is_invitation_host = (
-        host_step is not None
-        and host_step.approver_user_id is not None
-        and user.id == host_step.approver_user_id
-    )
+    is_resolved_host = invitation.host_id is not None and user.id == invitation.host_id
+    was_previous_step_approver = False
+    if named_step.step_order > 0:
+        previous_step = await repo.get_by_step_order(invitation.id, named_step.step_order - 1)
+        was_previous_step_approver = (
+            previous_step is not None
+            and previous_step.status == "approved"
+            and previous_step.acted_by_user_id == user.id
+        )
     if (
-        not is_invitation_host
+        not is_resolved_host
+        and not was_previous_step_approver
         and not await _caller_matches_step(tenant_db, user, invitation, named_step)
         and not user.has_permission("invitations:approve-override", branch_id=invitation.branch_id)
     ):
@@ -263,7 +309,21 @@ async def delegate_step(
             detail="Caller is not authorized to delegate this step",
         )
 
-    if named_step.approver_role_id is not None:
+    if named_step.step_order == 0:
+        # The ownership step: any active user with `invitations:approve` may
+        # be nominated as host, regardless of whether they hold the step's
+        # own `approverRoleId` role (usually the tenant's default host role,
+        # e.g. `reception`) — the real host is normally not a front-office
+        # employee.
+        delegate_user = await UserRepository(tenant_db).get_by_id(delegate_user_id)
+        if delegate_user is None or not delegate_user.has_permission(
+            "invitations:approve", branch_id=invitation.branch_id
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Delegate does not hold invitations:approve at the invitation's branch",
+            )
+    elif named_step.approver_role_id is not None:
         if not await _user_holds_role_at_branch(
             tenant_db, delegate_user_id, named_step.approver_role_id, invitation.branch_id
         ):
@@ -295,5 +355,36 @@ async def delegate_step(
             status.HTTP_409_CONFLICT,
             detail="This step is not currently pending",
         )
+
+    # Delegating *any* step now resolves/updates the invitation's host to
+    # that step's delegate (extended from the original stepOrder-0-only rule
+    # — reception-retains-visibility-and-delegation-after-own-step): the
+    # invitation's hostId always reflects whoever the workflow's most recent
+    # delegation named, at any stepOrder, echoed the same way a legacy
+    # host-identified `stepOrder` 0 step's resolved-at-creation host already
+    # was (specs/approvals/spec.md "Delegating the Ownership Step Also
+    # Resolves the Invitation's Host").
+    delegate_user = await UserRepository(tenant_db).get_by_id(delegate_user_id)
+    assert delegate_user is not None  # validated above
+    updated_invitation = await InvitationRepository(tenant_db).set_host_if_exists(
+        invitation.id, host_id=delegate_user.id, host_name_or_email=delegate_user.full_name
+    )
+    assert updated_invitation is not None  # invitation already resolved above
+    invitation = updated_invitation
     await tenant_db.commit()
+    title, body, data = push_notifications.host_assigned(invitation)
+    await notifications_service.notify_user(
+        tenant_schema=tenant.schema_name,
+        user_id=delegate_user.id,
+        title=title,
+        body=body,
+        data=data,
+    )
+    tasks.send_host_creation_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(invitation.id),
+        host_id=str(delegate_user.id),
+    )
+
     return updated_step

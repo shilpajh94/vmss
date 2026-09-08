@@ -1008,40 +1008,72 @@ visitor/vehicle detail the single-invitation tracking lookup returns.
 `GET /invitations` SHALL accept a `relevantToMe` boolean query parameter.
 WHEN `relevantToMe` is true, the system SHALL return invitations where the
 authenticated caller is any of:
-(a) the user identified by that invitation's `stepOrder` 0 host-identified
-`InvitationApprovalStep` (i.e. the snapshotted host) — regardless of that
-step's or the invitation's current status;
+(a) the invitation's resolved host (its `hostId`, once any of its approval
+steps has been delegated to them — see "Invitation Output Surfaces the
+Resolved Host as hostId") — regardless of that step's or the invitation's
+current status;
 (b) the delegate assigned to any of that invitation's approval steps (see
 the `approvals` capability's "Current Step's Authorized Approver Delegates
 It to a Specific Person") — regardless of that step's or the invitation's
 current status; or
-(c) currently authorized, via branch-scoped role assignment at the
-invitation's branch or company-wide, to act on the invitation's current
-pending `InvitationApprovalStep` because that step is role-identified and
-names a role the caller holds, and no delegate has yet been assigned to
-that step — i.e., the caller is one of the role-holders who could act on
-the currently-pending step right now, per the `approvals` capability's
-role-match authorization rule.
-Clause (c) only ever matches while the invitation is `submitted` with an
-un-delegated, role-identified step currently pending; once that step is
-delegated, acted on, or the invitation leaves `submitted`, a caller who
-only ever qualified under (c) (never under (a) or (b)) no longer sees that
-invitation via `relevantToMe`. This filter SHALL NOT require the caller to
-hold `invitations:view`, and SHALL NOT be scoped by `X-Branch-ID` or the
-caller's authorized branches: it is a personal worklist keyed to the
-caller's own identity and current approval authority, not the branch-scoped
-admin listing the "Employee Lists Invitations at Their Authorized Branches"
-requirement above describes. `relevantToMe` SHALL compose with the existing
-`status`, `registrationType`, and `source` filters and with
-pagination/sorting. A caller matching none of (a)/(b)/(c) for any invitation
-SHALL receive an empty, successfully-paginated result, not an error.
+(c) currently holds, via branch-scoped role assignment at the invitation's
+branch or company-wide, the role that the invitation's current pending
+`InvitationApprovalStep` names (that step being role-identified) — i.e.,
+the caller is one of the role-holders who could act on the
+currently-pending step right now if no delegate had been assigned to it,
+per the `approvals` capability's role-match authorization rule. Unlike that
+authorization rule, clause (c) SHALL NOT require the step to be
+undelegated: a role-holder keeps seeing the invitation via `relevantToMe`
+even after the step has been delegated to a specific person, so that (e.g.)
+every holder of the tenant's default host role keeps visibility into an
+invitation after one of them delegates its `stepOrder` 0 step to the
+resolved host, not just whichever one of them actually performed the
+delegation.
+Clause (c) only ever matches while the invitation is `submitted` with a
+role-identified step currently pending; once that step is actually approved
+or rejected (by its delegate or an override-permission holder), or the
+invitation otherwise leaves `submitted`, a caller who only ever qualified
+under (c) (never under (a) or (b)) no longer sees that invitation via
+`relevantToMe`. Since every newly submitted invitation's `stepOrder` 0 step
+is role-identified for the tenant's default host role (rather than
+sometimes host-identified as before), clause (c) is what makes that
+invitation visible to every front-office holder both before anyone
+delegates it and after — clause (a) does not apply until a delegation
+actually happens, but clause (c) keeps working across that transition, only
+dropping off once the step itself is acted on; or
+(d) has personally acted on (approved or rejected, i.e. is the `actedByUserId`
+of) any of the invitation's approval steps, regardless of that step's or
+the invitation's current status. Unlike (c), clause (d) never drops off:
+once a caller has approved or rejected a step, that invitation stays in
+their `relevantToMe` list for its entire lifecycle — e.g. Reception, having
+approved the invitation's `stepOrder` 0 ownership step, keeps seeing it
+through every later, differently-role-identified step and after final
+approval/denial, not just while their own step was current
+(reception-retains-visibility-and-delegation-after-own-step). Clause (d) is
+keyed to the specific person who acted, not to a role: another holder of
+Reception's role who never personally acted on that invitation does not
+gain visibility from (d) — only (c), while their role's step is current,
+covers them. This filter SHALL NOT require the caller to hold `invitations:view`,
+and SHALL NOT be scoped by `X-Branch-ID` or the caller's authorized branches:
+it is a personal worklist keyed to the caller's own identity and current
+approval authority, not the branch-scoped admin listing the "Employee Lists
+Invitations at Their Authorized Branches" requirement above describes.
+`relevantToMe` SHALL compose with the existing `status`, `registrationType`,
+and `source` filters and with pagination/sorting. A caller matching none of
+(a)/(b)/(c)/(d) for any invitation SHALL receive an empty, successfully-paginated
+result, not an error.
 
 #### Scenario: Host sees their own invitation without invitations:view
-- **WHEN** the user identified as the host of an invitation (its
-  `stepOrder` 0 step's `approverUserId`) requests `GET /invitations` with
-  `relevantToMe=true`, and holds no `invitations:view` grant at that
-  invitation's branch
+- **WHEN** the user an invitation's ownership step was delegated to (its
+  resolved `hostId`) requests `GET /invitations` with `relevantToMe=true`,
+  and holds no `invitations:view` grant at that invitation's branch
 - **THEN** the response includes that invitation
+
+#### Scenario: Every front-office holder sees a freshly submitted invitation before anyone delegates it
+- **WHEN** a user who holds the tenant's default host role at an invitation's
+  branch, and to whom that invitation's `stepOrder` 0 step has not yet been
+  delegated, requests `GET /invitations` with `relevantToMe=true`
+- **THEN** the response includes that invitation, via clause (c)
 
 #### Scenario: Delegate sees the invitation they were delegated
 - **WHEN** a user who has been delegated one of an invitation's approval
@@ -1059,12 +1091,44 @@ SHALL receive an empty, successfully-paginated result, not an error.
   neither the invitation's host nor a delegate — this closes the gap where
   such a user could only find the invitation via the branch-wide list
 
-#### Scenario: A role-holder no longer sees the invitation once someone else's delegation is assigned
+#### Scenario: A role-holder keeps seeing the invitation once someone else's delegation is assigned
 - **WHEN** an invitation's current pending step (role-identified, matching a
   role the caller holds) is delegated to a different, specific user
-- **THEN** the caller — who is not that delegate — no longer sees the
-  invitation via `relevantToMe=true`, since clause (c) requires no delegate
-  be assigned
+- **THEN** the caller — though not that delegate, and no longer authorized
+  to act on the step directly — still sees the invitation via
+  `relevantToMe=true`, the same as every other holder of that role
+
+#### Scenario: A role-holder loses visibility once the step is actually approved or rejected, unless they were the one who acted
+- **WHEN** an invitation's current pending step, role-identified for a role
+  the caller holds, is approved or rejected by a different holder of that
+  role (or its delegate, or an override-permission holder)
+- **THEN** the caller — who only ever qualified under clause (c) for that
+  step, never as its host, its delegate, or the one who acted — no longer
+  sees the invitation via `relevantToMe=true`, since that step is no longer
+  the current pending step and clause (d) does not apply to them
+
+#### Scenario: The caller who personally approved a step keeps seeing the invitation forever, via clause (d)
+- **WHEN** a caller personally approves an invitation's current pending,
+  role-identified step, and a later step (role-identified for a different
+  role the caller does not hold) subsequently becomes current, is itself
+  approved, and the invitation is fully approved
+- **THEN** the caller continues to see the invitation via
+  `relevantToMe=true` throughout — while the later step is current, after
+  it is approved, and once the invitation itself is `approved` — because
+  clause (d) does not depend on any step being current or on the
+  invitation's own status
+
+#### Scenario: Approving your own step also grants delegation authority over the very next step
+- **WHEN** the caller from the previous scenario, instead of waiting, calls
+  `POST /invitations/{id}/approval-steps/{stepId}/delegate` on the
+  next step (now current, role-identified for a role the caller does not
+  hold), naming a person who holds that step's role at the invitation's
+  branch
+- **THEN** the delegation succeeds (see the `approvals` capability's
+  "Current Step's Authorized Approver Delegates It to a Specific Person",
+  clause (d)) — the same clause (d) actor privilege that keeps the
+  invitation visible to the caller also lets them route its next step
+  onward
 
 #### Scenario: A role-holder who is not currently authorized on the pending step sees nothing for it
 - **WHEN** a user holds a role that does not match the invitation's current
@@ -1073,10 +1137,11 @@ SHALL receive an empty, successfully-paginated result, not an error.
 - **THEN** that invitation is absent from the user's `relevantToMe=true`
   response, unless they separately qualify as its host or a delegate
 
-#### Scenario: Caller who is neither host nor delegate sees nothing for that invitation
-- **WHEN** a caller who is not the snapshotted host, has not been delegated
-  any step, and does not hold the role of any invitation's current pending
-  step requests `GET /invitations` with `relevantToMe=true`
+#### Scenario: Caller who is neither host, delegate, nor actor sees nothing for that invitation
+- **WHEN** a caller who is not the resolved host, has not been delegated
+  any step, has not personally acted on any step, and does not hold the
+  role of any invitation's current pending step requests
+  `GET /invitations` with `relevantToMe=true`
 - **THEN** that invitation is absent from the response, even if the caller
   holds `invitations:view` at its branch
 
@@ -1087,7 +1152,7 @@ SHALL receive an empty, successfully-paginated result, not an error.
   currently `submitted`
 
 #### Scenario: No relevant invitations returns an empty page, not an error
-- **WHEN** a caller who does not match (a), (b), or (c) for any invitation
+- **WHEN** a caller who does not match (a), (b), (c), or (d) for any invitation
   requests `GET /invitations` with `relevantToMe=true`
 - **THEN** the response is a successful, empty, correctly-paginated result
 
@@ -1127,21 +1192,30 @@ number, or any OTP/credential value.
 
 ### Requirement: Visit Details Optionally Accept Catalog IDs Alongside Free Text
 `VisitDetailsSubmit` (used by both `POST /invitations` and `POST
-/registrations/walk-in`) SHALL accept optional `purposeId`, `hostId`,
-`durationId`, and `departmentId` fields alongside its existing
-`purposeOfVisit`, `hostNameOrEmail`, `expectedDuration`, `departmentToVisit`
-free-text fields. When any id is supplied, the system SHALL validate it
-against the corresponding catalog/`Department`/`User` record, scoped to the
+/registrations/walk-in`) SHALL accept optional `purposeId`, `durationId`, and
+`departmentId` fields alongside its existing `purposeOfVisit`,
+`expectedDuration` free-text fields and its optional `departmentToVisit`
+free-text field. When any id is supplied, the system SHALL validate it
+against the corresponding catalog/`Department` record, scoped to the
 resolved tenant, and SHALL overwrite the paired free-text field with that
 record's canonical display value before persisting, regardless of what
 free-text value the request also supplied for that field. When an id is
 omitted, its paired free-text field is accepted and stored exactly as
-submitted, unchanged from today's behavior.
+submitted, unchanged from today's behavior. `departmentToVisit` SHALL be
+optional — a request may omit it (and `departmentId`) entirely, leaving the
+invitation's department unset at creation, since a visitor or the staff
+member creating the invitation on their behalf often does not yet know
+which internal department is relevant; the field can be filled in later via
+`PATCH /invitations/{id}/edit`. `VisitDetailsSubmit` SHALL NOT accept
+`hostId` or `hostNameOrEmail` from either channel — the host is never
+client-supplied at creation (see "Every New Invitation Is Owned by the
+Tenant's Default Host Role at Creation"); a request that includes either
+field SHALL have it ignored rather than rejected, so an un-updated client
+does not start failing outright.
 
 #### Scenario: Submission with no ids behaves exactly as before
-- **WHEN** a caller submits `purposeOfVisit`, `hostNameOrEmail`,
-  `expectedDuration`, `departmentToVisit` with no `purposeId`/`hostId`/
-  `durationId`/`departmentId`
+- **WHEN** a caller submits `purposeOfVisit`, `expectedDuration`,
+  `departmentToVisit` with no `purposeId`/`durationId`/`departmentId`
 - **THEN** the invitation is created with exactly the submitted free-text
   values, identical to today's behavior
 
@@ -1153,7 +1227,7 @@ submitted, unchanged from today's behavior.
   referenced department's actual name, not the client-supplied string
 
 #### Scenario: Unknown or cross-tenant id is rejected
-- **WHEN** a caller submits an id (`purposeId`, `hostId`, `durationId`, or
+- **WHEN** a caller submits an id (`purposeId`, `durationId`, or
   `departmentId`) that does not resolve to an existing, active row in the
   resolved tenant's schema
 - **THEN** the request is rejected with a validation error and no invitation
@@ -1161,28 +1235,61 @@ submitted, unchanged from today's behavior.
 
 #### Scenario: Walk-in registration inherits the same optional fields
 - **WHEN** a caller submits `POST /registrations/walk-in` with any of
-  `purposeId`/`hostId`/`durationId`/`departmentId`
+  `purposeId`/`durationId`/`departmentId`
 - **THEN** the same validation and free-text overwrite behavior applies,
   since it submits the identical `VisitDetailsSubmit` shape
 
+#### Scenario: A supplied hostId or hostNameOrEmail is silently ignored
+- **WHEN** a caller submits `POST /invitations` or `POST
+  /registrations/walk-in` with `hostId` and/or `hostNameOrEmail` set (e.g. an
+  un-updated client)
+- **THEN** the invitation is created successfully, with those values ignored
+  entirely — the invitation's host is never set from them, and no validation
+  error is raised for supplying them
+
+#### Scenario: Submission with no department succeeds and leaves it unset
+- **WHEN** a caller submits `POST /invitations` or `POST
+  /registrations/walk-in` with neither `departmentToVisit` nor
+  `departmentId` set
+- **THEN** the invitation is created successfully, with `departmentToVisit`
+  null — no validation error is raised for omitting it, and no request-level
+  default or placeholder value is substituted
+
+#### Scenario: An unset department is later filled in via edit
+- **WHEN** an invitation created with no department is subsequently edited
+  via `PATCH /invitations/{id}/edit` to set `departmentToVisit`
+- **THEN** the edit succeeds exactly as it would for any other eligible
+  invitation, per the existing "Authorized Caller Edits Non-Personal
+  Invitation Details" requirement
+
 ### Requirement: Invitation Output Surfaces the Resolved Host as hostId
 `InvitationOut` and `InvitationDetailOut` SHALL include `hostId`, set to the
-invitation's resolved host user id when submission resolved `hostId` or
-`hostNameOrEmail` to an active user, and null when it did not — alongside
-the existing free-text `hostNameOrEmail`, unchanged.
+invitation's resolved host user id once one has been assigned, and null
+before that. A host is assigned exclusively by delegating one of the
+invitation's approval steps — the ownership step (`stepOrder` 0) or any
+later step in its workflow chain — to a specific person, with the most
+recently delegated step (of any `stepOrder`) determining the current
+resolved host; see the `approvals` capability's "Current Step's Authorized
+Approver Delegates It to a Specific Person" and "Delegating Any Step
+Resolves/Updates the Invitation's Host" — never by anything supplied at
+creation. `hostNameOrEmail` continues
+to be surfaced alongside `hostId`, set to that same delegate's display name
+once resolved, and null before that (this capability no longer accepts a
+client-supplied `hostNameOrEmail` at creation to fall back to — see "Visit
+Details Optionally Accept Catalog IDs Alongside Free Text").
 
 #### Scenario: Resolved host is surfaced as hostId
-- **WHEN** an invitation whose host resolved to an active user at
-  submission is fetched via `GET /invitations` (list) or `GET
+- **WHEN** an invitation whose ownership step has been delegated to a
+  specific person is fetched via `GET /invitations` (list) or `GET
   /invitations/{id}` (detail)
-- **THEN** the response includes `hostId` set to that user's id, alongside
-  the existing `hostNameOrEmail`
+- **THEN** the response includes `hostId` set to that person's id, alongside
+  `hostNameOrEmail` set to their display name
 
 #### Scenario: Unresolved host leaves hostId null
-- **WHEN** an invitation created with only a free-text `hostNameOrEmail`
-  that did not resolve to an active user is fetched
-- **THEN** the response includes `hostId` as null, with `hostNameOrEmail`
-  unchanged
+- **WHEN** an invitation whose ownership step has not yet been delegated to
+  a specific person is fetched (still pending for the owning role, or
+  already acted on directly by a role-holder without delegating)
+- **THEN** the response includes `hostId` and `hostNameOrEmail` as null
 
 ### Requirement: Default-Tenant Misconfiguration on Tracking Lookup Is Reported and Logged as a Server Error
 Public lookup by tracking ID resolves a single server-configured default
@@ -1246,79 +1353,175 @@ these actions without failing the triggering request.
 - **THEN** the action's own HTTP response is unaffected and no push
   notification is dispatched for that action
 
-### Requirement: Invitation Creation Notifies the Resolved Host via Email
-When an invitation is created and resolves to a host (`hostId` present), the
-system SHALL dispatch an informational email to that host's registered email
-address stating that an invitation naming them as host was received,
-asynchronously and without delaying the creation response, following the
-same retry-with-backoff behavior as the visitor's existing confirmation
-email. This is in addition to, not a replacement for, the existing
-submission push notification sent to the host when they are the first
-approval step (see "Invitation Submission Notifies the Approval Workflow's
-First Approver(s) via Push") — that push only fires when the host is also
-step 0's approver and the invitation is not auto-approved, whereas this
-email fires on every creation with a resolved host regardless of approval
-routing or auto-approve outcome. An invitation with no resolved host SHALL
-skip this email dispatch without failing the creation request.
+### Requirement: Every New Invitation Is Owned by the Tenant's Default Host Role at Creation
+Every invitation submitted for approval (not auto-approved) SHALL have its
+`stepOrder` 0 approval step created as role-identified for the tenant's
+default host role (the standard `reception` role, unless a tenant has
+reconfigured which role serves this purpose), unconditionally — regardless
+of whether the invitation's category has any configured
+`ApprovalWorkflowRule` rows. This replaces the prior behavior where
+`stepOrder` 0 was host-identified when a client-supplied host resolved to a
+user, and absent entirely when it did not. The category's own configured
+rule chain (if any) keeps its rules' `stepOrder` values unchanged (by
+convention starting at 1), unaffected by this default ownership step. This
+requirement is defined in full in the `approvals` capability's "Submission
+Snapshots the Category's Workflow Plus an Unconditional Ownership Step"; this entry
+exists so the `invitations` capability's own requirements (push/email
+fan-out, `relevantToMe`) can reference it without a forward dependency on
+`approvals`.
 
-#### Scenario: Creation with a resolved host sends the host an email
-- **WHEN** an invitation is created and its host resolves to a user with a
-  registered email address
-- **THEN** that host receives an email stating an invitation naming them was
-  received, dispatched asynchronously without delaying the creation response
+#### Scenario: A newly submitted invitation always has a stepOrder 0 role step
+- **WHEN** any invitation is submitted (not auto-approved), for a category
+  with any number (including zero) of active `ApprovalWorkflowRule` rows
+- **THEN** it has a `stepOrder` 0 `InvitationApprovalStep`, role-identified
+  for the tenant's default host role, `pending`, ahead of any of the
+  category's own configured steps
 
-#### Scenario: Creation response does not wait on the host email
-- **WHEN** an invitation is created with a resolved host
-- **THEN** the API responds with the invitation details before the host
-  email has necessarily been delivered
+### Requirement: Submission Notifies the Owning Role via Push
+WHEN `create_invitation` leaves an invitation `submitted` (not auto-approved),
+the system SHALL dispatch a push notification to the newly-created
+`stepOrder` 0 step's approver(s): every user holding that step's role (the
+tenant's default host role) at the invitation's branch — except when that
+role is the tenant's standard `admin` role (matched by name,
+case-insensitively), which SHALL NOT receive a push notification. Every
+submitted invitation has a `stepOrder` 0 step (see "Every New Invitation Is
+Owned by the Tenant's Default Host Role at Creation"), so this dispatch is
+unconditional for any non-auto-approved invitation.
 
-#### Scenario: No resolved host means no host email, and creation still succeeds
-- **WHEN** an invitation is created and its host does not resolve (no
-  `hostId`)
-- **THEN** creation succeeds exactly as it would today, and no host email is
-  dispatched
+#### Scenario: Submission notifies every holder of the owning role
+- **WHEN** an invitation is submitted
+- **THEN** every user holding the tenant's default host role at the
+  invitation's branch receives a push notification that a new invitation
+  awaits their triage
 
-#### Scenario: Host email delivery failure is retried and logged, not surfaced to the caller
-- **WHEN** the email provider is unavailable for a host-notification dispatch
-- **THEN** the system retries with backoff and, if retries are exhausted,
-  logs the failure with enough context to identify and manually resend it,
-  without affecting the already-returned creation response
+#### Scenario: Submission with an Admin-role owning role sends no push
+- **WHEN** an invitation is submitted and a tenant has reconfigured its
+  default host role to the tenant's standard `admin` role
+- **THEN** no push notification is dispatched to anyone for the `stepOrder`
+  0 step
 
-#### Scenario: Auto-approved creation still sends the host email
+### Requirement: Invitation Submission Notifies the Owning Role via Email
+WHEN an invitation is submitted (not auto-approved), the system SHALL
+dispatch an informational email to every active user holding the tenant's
+default host role at the invitation's branch, stating that a new invitation
+awaits triage — the tracking ID, visitor's name, and purpose of visit — in
+addition to the existing push notification to the same recipients (see
+"Submission Notifies the Owning Role via Push"). This is a new, additive
+email channel: it does not replace or delay the visitor's own existing
+submission/auto-approval notification, and a recipient with no reachable
+email address is simply skipped for this dispatch without failing the
+triggering request.
+
+#### Scenario: Submission emails every holder of the owning role
+- **WHEN** an invitation is submitted, and the tenant's default host role has
+  two active users at the invitation's branch
+- **THEN** both users receive an email stating a new invitation awaits
+  triage, dispatched asynchronously without delaying the creation response
+
+#### Scenario: A role-holder with no email is skipped without failing the dispatch
+- **WHEN** one of the role's holders at the branch has no usable email
+  address
+- **THEN** that user is skipped for this email, the remaining holders still
+  receive it, and the triggering request is unaffected
+
+#### Scenario: Auto-approved creation sends no owning-role email
 - **WHEN** an invitation is created and auto-approved per the Company's
-  auto-approve setting, and it resolves to a host
-- **THEN** the host still receives the creation-notification email, since
-  this email is independent of the submission-push logic that only fires for
-  non-auto-approved, first-step-host invitations
+  auto-approve setting (no approval steps are snapshotted at all)
+- **THEN** no owning-role email is dispatched, consistent with "Auto-Approved
+  Invitations Do Not Trigger a Submission Push"
 
-### Requirement: Invitation Submission Notifies the Approval Workflow's First Approver(s) via Push
-When `create_invitation` leaves an invitation `submitted` (not auto-approved)
-with at least one approval step, the system SHALL dispatch a push
-notification to the newly-created first (`step_order` 0) step's
-approver(s): the resolved host if the step is host-identified, or every
-user holding the step's role at the invitation's branch if role-identified
-— except when that role is the tenant's standard `admin` role (matched by
-name, case-insensitively), which SHALL NOT receive a push notification.
+### Requirement: Authorized Caller Edits Non-Personal Invitation Details
+An authenticated, branch-scoped caller holding a new `invitations:edit`
+permission at the invitation's branch SHALL be able to change, via `PATCH
+/invitations/{id}/edit`, any of: `purposeOfVisit` (and `purposeId`),
+`preferredVisitDate`, `preferredVisitTime`, `expectedDuration` (and
+`durationId`), `departmentToVisit` (and `departmentId`), location/building,
+and `additionalNotes` — on an invitation currently `submitted` or `approved`.
+This endpoint SHALL NOT accept or change: the primary contact's or any
+visitor's personal fields (name, email, phone, ID proof, photo),
+`visitorCategoryId` (locked after creation — changing it would require
+re-deriving the approval workflow, which this change does not support), or
+the host (`hostId`/`hostNameOrEmail`) — host reassignment stays exclusively
+the job of the `approvals` capability's delegation mechanism, so there is
+exactly one way to change who the host is, not two. A request naming an
+invitation that is not currently `submitted` or `approved` SHALL be rejected
+with 409, following the same atomic-conditional-UPDATE pattern as the
+existing `reschedule`/`extend` endpoints, and SHALL NOT change any field. An
+unknown invitation id SHALL be rejected with 404; a caller without branch
+access to an existing invitation SHALL be rejected with 403. A successful
+edit SHALL dispatch a notification to the primary contact (and, if a host is
+currently resolved, to the host) stating which visit details changed — the
+same channel-routing rule (`preferredContactMethod`) the existing reschedule
+notification already follows.
 
-#### Scenario: Submission with a host-identified first step
-- **WHEN** an invitation is submitted and its host resolves, giving it an
-  implicit host-identified step 0
-- **THEN** the host user receives a push notification that a new invitation
-  awaits their approval
+#### Scenario: Authorized edit changes multiple visit-detail fields at once
+- **WHEN** a caller with `invitations:edit` at the invitation's branch edits
+  a `submitted` invitation's `preferredVisitDate`, `expectedDuration`, and
+  `additionalNotes` in one request
+- **THEN** all three fields are updated, the invitation's other fields are
+  unchanged, and the primary contact receives a notification describing the
+  change
 
-#### Scenario: Submission with a role-identified first step
-- **WHEN** an invitation is submitted with no resolved host, and its
-  category's workflow gives it a role-identified step 0 for a role other
-  than the tenant's standard `admin` role (e.g. Reception, Security, or a
-  tenant-defined custom role)
-- **THEN** every user holding that role at the invitation's branch receives
-  a push notification that a new invitation awaits their approval
+#### Scenario: Visitor personal fields and visitor category are rejected
+- **WHEN** a request to `PATCH /invitations/{id}/edit` includes any of the
+  primary contact's or a visitor's name/email/phone/ID-proof/photo fields, or
+  `visitorCategoryId`
+- **THEN** the request is rejected with a validation error and no field is
+  changed
 
-#### Scenario: Submission with an Admin-role first step sends no push
-- **WHEN** an invitation is submitted with no resolved host, and its
-  category's workflow gives it a role-identified step 0 for the tenant's
-  standard `admin` role
-- **THEN** no push notification is dispatched to anyone for that step
+#### Scenario: Host fields are rejected
+- **WHEN** a request to `PATCH /invitations/{id}/edit` includes `hostId` or
+  `hostNameOrEmail`
+- **THEN** the request is rejected with a validation error and no field is
+  changed — host reassignment must go through the delegation endpoint
+  instead
+
+#### Scenario: Edit rejected for an ineligible status
+- **WHEN** a caller attempts to edit an invitation that is `denied`,
+  `checked_in`, or `checked_out`
+- **THEN** the request is rejected with 409 and no field is changed
+
+#### Scenario: Caller lacks invitations:edit
+- **WHEN** a caller without `invitations:edit` at the invitation's branch
+  attempts this endpoint
+- **THEN** the request is rejected with 403 and no field is changed
+
+#### Scenario: Unknown invitation id is rejected with 404
+- **WHEN** a caller names an invitation id that does not exist
+- **THEN** the request is rejected with 404
+
+#### Scenario: Edit while a host is resolved also notifies the host
+- **WHEN** an authorized edit succeeds on an invitation whose ownership step
+  has already been delegated to a specific host
+- **THEN** both the primary contact and the resolved host receive a
+  notification describing the change
+
+### Requirement: Approval Notification Email Includes Full Visit and Host Detail
+The email dispatched when an invitation is approved (directly, as the final
+step of a workflow, or via a resolved-host approval step) SHALL be rendered
+from the new branded HTML template (see the `email-notifications`
+capability) and SHALL include: the tracking ID, visit date/time, expected
+duration, location/building/department to visit, purpose of visit, and — the
+gap this change closes — the resolved host's name and at least one
+point-of-contact channel (the host's phone or email, whichever is on file)
+when a host has been resolved by that point. WHEN no host has been resolved
+by the time of approval (the owning role approved directly without
+delegating), the email SHALL instead surface the branch's general front-desk
+contact channel in the host/point-of-contact section, rather than omitting
+that section or naming no one.
+
+#### Scenario: Approval email with a resolved host includes their contact details
+- **WHEN** an invitation whose ownership step was delegated to a specific
+  host is approved
+- **THEN** the visitor's approval email includes that host's name and at
+  least one reachable contact channel, alongside the full visit detail
+
+#### Scenario: Approval email with no resolved host falls back to the front-desk contact
+- **WHEN** an invitation is approved directly by a holder of the tenant's
+  default host role, without ever being delegated to a specific person
+- **THEN** the visitor's approval email includes the branch's general
+  front-desk contact channel in place of a named host, alongside the full
+  visit detail
 
 ### Requirement: Auto-Approved Invitations Do Not Trigger a Submission Push
 An invitation created while the tenant's Company profile auto-approves

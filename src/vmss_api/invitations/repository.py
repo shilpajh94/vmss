@@ -29,25 +29,49 @@ def _branch_filter(branch_scope: BranchScope) -> Any | None:
 def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
     """specs/invitations/spec.md "Caller Lists Invitations Relevant to
     Themselves via relevantToMe": invitations where `user_id` is (a) the
-    invitation's own `host_id` — checked directly rather than via a
-    `stepOrder` 0 `InvitationApprovalStep`, since an auto-approved invitation
-    never gets any approval steps created for it and would otherwise be
-    invisible to its own host — (b) has been delegated any step, regardless
-    of that step's status, or (c) currently holds — via branch-scoped
-    `UserBranchRole` at the invitation's own branch or company-wide — the
-    role of the invitation's current pending, undelegated, role-identified
-    step. (c) closes the gap where a valid role-based approver had no way to
-    find their pending work short of the unfiltered branch-wide list
-    (checkin-approval-workflow-improvements). (b) and (c) are expressed as
-    (correlated, where needed) subqueries against `invitation_approval_steps`,
-    not a per-invitation loop (query-performance.md §2).
+    invitation's currently resolved host (`Invitation.host_id`) — set either
+    at snapshot time for a legacy host-identified `stepOrder` 0 step, or by
+    delegating the now-unconditional role-identified ownership step
+    (role-based-invitation-workflow; see the `approvals` capability's
+    "Delegating the Ownership Step Also Resolves the Invitation's Host") —
+    (b) has been delegated any step, regardless of that step's status, (c)
+    currently holds — via branch-scoped `UserBranchRole` at the invitation's
+    own branch or company-wide — the role of the invitation's current
+    pending, role-identified step, or (d) has personally acted on
+    (approved or rejected) any of the invitation's steps, regardless of
+    that step's or the invitation's current status. (c) closes the gap
+    where a valid role-based approver had no way to find their pending work
+    short of the unfiltered branch-wide list
+    (checkin-approval-workflow-improvements), and deliberately does NOT
+    require that step be undelegated
+    (invitation-relevant-to-me-retains-role-visibility-after-delegation):
+    every holder of the step's role — e.g. every Reception-role holder, not
+    just whichever one of them actually delegated it — keeps seeing the
+    invitation in their worklist after it's delegated to the resolved host,
+    until the step itself is actually approved or rejected — at which point
+    (d) is what keeps it visible, but only for the specific person who
+    acted, not every role-holder: e.g. Reception, having approved the
+    invitation's ownership step, keeps seeing it (and can act on the
+    delegation-authority extension in "Current Step's Authorized Approver
+    Delegates It to a Specific Person") even once a later, different-role
+    step becomes current
+    (reception-retains-visibility-and-delegation-after-own-step). (b), (c),
+    and (d) are expressed as (correlated, where needed) subqueries against
+    `invitation_approval_steps`, not a per-invitation loop
+    (query-performance.md §2).
     """
-    host_or_delegate = or_(
+    host_or_delegate_or_actor = or_(
         Invitation.host_id == user_id,
         Invitation.id.in_(
             select(InvitationApprovalStep.invitation_id).where(
                 InvitationApprovalStep.deleted_at.is_(None),
                 InvitationApprovalStep.delegated_to_user_id == user_id,
+            )
+        ),
+        Invitation.id.in_(
+            select(InvitationApprovalStep.invitation_id).where(
+                InvitationApprovalStep.deleted_at.is_(None),
+                InvitationApprovalStep.acted_by_user_id == user_id,
             )
         ),
     )
@@ -75,7 +99,6 @@ def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
             current_step.deleted_at.is_(None),
             current_step.status == "pending",
             current_step.approver_role_id.is_not(None),
-            current_step.delegated_to_user_id.is_(None),
             current_step.step_order == min_pending_step_order,
             UserBranchRole.user_id == user_id,
             or_(
@@ -84,7 +107,7 @@ def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
             ),
         )
     )
-    return or_(host_or_delegate, current_role_holder)
+    return or_(host_or_delegate_or_actor, current_role_holder)
 
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
@@ -299,6 +322,41 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 checked_out_at=datetime.now(UTC),
                 checked_out_by_user_id=user_id,
             )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def edit_if_eligible(self, id_: uuid.UUID, **changes: Any) -> Invitation | None:
+        """Atomic conditional `UPDATE` backing `PATCH /invitations/{id}/edit`
+        (role-based-invitation-workflow), same eligible-status pattern as
+        `reschedule_if_eligible`/`extend_if_eligible`. `changes` is whatever
+        subset of columns the caller actually supplied — the service layer
+        (`invitations/service.py::edit_invitation`) never calls this with an
+        empty `changes`, so there is always at least one column in `values()`.
+        """
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
+            .values(**changes)
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def set_host_if_exists(
+        self, id_: uuid.UUID, *, host_id: uuid.UUID, host_name_or_email: str
+    ) -> Invitation | None:
+        """Resolves the invitation's host once its ownership step's
+        delegation succeeds (`approvals/service.py::delegate_step`,
+        role-based-invitation-workflow) — no status guard, since delegation
+        can happen while the invitation is still `submitted` regardless of
+        which lifecycle stage the ownership step itself is in, and
+        re-delegating an already-resolved host must still be able to
+        overwrite the prior one.
+        """
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_)
+            .values(host_id=host_id, host_name_or_email=host_name_or_email)
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()

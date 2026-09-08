@@ -1,7 +1,7 @@
 """invitation reschedule history
 
 Revision ID: 6f3a1c9d4e7b
-Revises: 9a2f5c7e1b3d
+Revises: b4f7a1c9d2e6
 Create Date: 2026-09-08 00:00:00.000001
 
 `add-reschedule-history/design.md`: `PATCH /invitations/{id}/reschedule`
@@ -28,7 +28,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "6f3a1c9d4e7b"
-down_revision: str | None = "9a2f5c7e1b3d"
+down_revision: str | None = "b4f7a1c9d2e6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

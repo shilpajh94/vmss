@@ -24,16 +24,47 @@ token.
 
 import asyncio
 import uuid
+from typing import Any
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.repository import UserRepository
 from vmss_api.core.celery_app import celery_app
 from vmss_api.core.database import engine, tenant_session_scope
+from vmss_api.core.email_rendering import TemplateRenderError, render_email_html
 from vmss_api.core.logging import logger
 from vmss_api.invitations import notifications
 from vmss_api.invitations.models import Invitation
 from vmss_api.invitations.qr import generate_qr_png
+from vmss_api.org_structure.repository import CompanyRepository
+
+
+async def _base_email_context(session: AsyncSession) -> dict[str, Any]:
+    """Shared branding context every template's `base.html` layout reads —
+    resolved once per dispatch, not hardcoded, so a tenant's own Company
+    profile controls its emails' branding.
+    """
+    company = await CompanyRepository(session).get_singleton()
+    return {
+        "company_name": company.legal_name if company is not None else None,
+        "logo_url": company.logo_url if company is not None else None,
+    }
+
+
+def _render_html_or_none(template_name: str, context: dict[str, Any]) -> str | None:
+    """spec.md "Template Rendering Failure Falls Back to a Minimal
+    Plain-Text Email" — `None` tells the caller to send with no `html_body`,
+    which degrades to the plain-text part it already built (that plain text
+    *is* the minimal fallback; there is no separate one to construct).
+    """
+    try:
+        _subject, html_body = render_email_html(template_name, context)
+        return html_body
+    except TemplateRenderError:
+        logger.error("email_template_render_failed", template_name=template_name)
+        return None
+
 
 _RETRY_KWARGS = {
     "autoretry_for": (Exception,),
@@ -82,11 +113,40 @@ async def _send_approval_notification(
                 f"Your registration is confirmed. Tracking ID: {invitation.tracking_id}.\n"
                 "Present the attached QR code at check-in."
             )
+            # spec.md "Approval Notification Email Includes Full Visit and
+            # Host Detail" — the resolved host's name/contact when one
+            # exists by approval time, otherwise the tenant's own Company
+            # contact channel in its place (role-based-invitation-workflow).
+            host_name = None
+            host_contact = None
+            if invitation.host_id is not None:
+                host = await UserRepository(session).get_active(invitation.host_id)
+                if host is not None:
+                    host_name = host.full_name
+                    host_contact = host.phone_number or host.email
+            company = await CompanyRepository(session).get_singleton()
+            front_desk_contact = (company.phone or company.email) if company is not None else None
+            html_body = _render_html_or_none(
+                "visit_confirmation",
+                {
+                    **await _base_email_context(session),
+                    "tracking_id": invitation.tracking_id,
+                    "purpose": invitation.purpose_of_visit,
+                    "visit_date": invitation.preferred_visit_date,
+                    "visit_time": invitation.preferred_visit_time,
+                    "duration": invitation.expected_duration,
+                    "department": invitation.department_to_visit,
+                    "host_name": host_name,
+                    "host_contact": host_contact,
+                    "front_desk_contact": front_desk_contact,
+                },
+            )
             qr_png = await generate_qr_png(qr_token)
             await _dispatch(
                 invitation,
                 subject=subject,
                 body=body,
+                html_body=html_body,
                 attachment=notifications.make_attachment(qr_png, "visit-qr.png", "image/png"),
             )
     finally:
@@ -132,7 +192,17 @@ async def _send_tracking_notification(tenant_schema: str, invitation_id: str) ->
                 f"{invitation.tracking_id}.\n"
                 "You'll receive a check-in QR code once it's approved."
             )
-            await _dispatch(invitation, subject=subject, body=body)
+            html_body = _render_html_or_none(
+                "tracking_only",
+                {
+                    **await _base_email_context(session),
+                    "tracking_id": invitation.tracking_id,
+                    "purpose": invitation.purpose_of_visit,
+                    "visit_date": invitation.preferred_visit_date,
+                    "visit_time": invitation.preferred_visit_time,
+                },
+            )
+            await _dispatch(invitation, subject=subject, body=body, html_body=html_body)
     finally:
         await engine.dispose()
 
@@ -171,7 +241,15 @@ async def _send_denial_notification(tenant_schema: str, invitation_id: str) -> N
                 f"{invitation.tracking_id}.\n"
                 f"Reason: {invitation.denial_reason}"
             )
-            await _dispatch(invitation, subject=subject, body=body)
+            html_body = _render_html_or_none(
+                "denial",
+                {
+                    **await _base_email_context(session),
+                    "tracking_id": invitation.tracking_id,
+                    "denial_reason": invitation.denial_reason,
+                },
+            )
+            await _dispatch(invitation, subject=subject, body=body, html_body=html_body)
     finally:
         await engine.dispose()
 
@@ -211,7 +289,150 @@ async def _send_reschedule_notification(tenant_schema: str, invitation_id: str) 
                 f"{invitation.preferred_visit_time}. Tracking ID: "
                 f"{invitation.tracking_id}."
             )
-            await _dispatch(invitation, subject=subject, body=body)
+            html_body = _render_html_or_none(
+                "reschedule",
+                {
+                    **await _base_email_context(session),
+                    "tracking_id": invitation.tracking_id,
+                    "visit_date": invitation.preferred_visit_date,
+                    "visit_time": invitation.preferred_visit_time,
+                },
+            )
+            await _dispatch(invitation, subject=subject, body=body, html_body=html_body)
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_edit_notification(
+    self, *, request_id: str, tenant_schema: str, invitation_id: str
+) -> None:
+    """role-based-invitation-workflow: structurally identical to
+    `send_reschedule_notification` above — same tenant-scoped session,
+    `request_id` context binding, retry policy, and `_dispatch` helper —
+    only the subject/body differ. Fires on a successful `PATCH
+    /invitations/{id}/edit`, to the primary contact; the resolved host (if
+    any) is separately notified via push (`invitations/service.py::
+    edit_invitation`), not this email.
+    """
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(_send_edit_notification(tenant_schema, invitation_id))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "edit_notification_dispatch_exhausted",
+                tenant_schema=tenant_schema,
+                invitation_id=invitation_id,
+            )
+        raise
+
+
+async def _send_edit_notification(tenant_schema: str, invitation_id: str) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            if invitation is None:
+                return
+            subject = "Your visit details have been updated"
+            body = (
+                "Some details of your upcoming visit have changed. Tracking "
+                f"ID: {invitation.tracking_id}.\n"
+                f"Purpose: {invitation.purpose_of_visit or 'Not specified'}\n"
+                f"Date: {invitation.preferred_visit_date}, time: "
+                f"{invitation.preferred_visit_time}\n"
+                f"Duration: {invitation.expected_duration or 'Not specified'}\n"
+                f"Department: {invitation.department_to_visit or 'Not specified'}"
+            )
+            html_body = _render_html_or_none(
+                "edit",
+                {
+                    **await _base_email_context(session),
+                    "tracking_id": invitation.tracking_id,
+                    "purpose": invitation.purpose_of_visit,
+                    "visit_date": invitation.preferred_visit_date,
+                    "visit_time": invitation.preferred_visit_time,
+                    "duration": invitation.expected_duration,
+                    "department": invitation.department_to_visit,
+                },
+            )
+            await _dispatch(invitation, subject=subject, body=body, html_body=html_body)
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_submission_role_email_notification(
+    self,
+    *,
+    request_id: str,
+    tenant_schema: str,
+    invitation_id: str,
+    role_id: str,
+    branch_id: str,
+) -> None:
+    """role-based-invitation-workflow, spec.md "Invitation Submission
+    Notifies the Owning Role via Email" — additive to the existing
+    submission push (`notifications_service.notify_step_approver`), fired
+    only when the invitation's `stepOrder` 0 ownership step is
+    role-identified (always true for a non-auto-approved invitation now).
+    """
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(
+            _send_submission_role_email_notification(
+                tenant_schema, invitation_id, role_id, branch_id
+            )
+        )
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "submission_role_email_notification_dispatch_exhausted",
+                tenant_schema=tenant_schema,
+                invitation_id=invitation_id,
+                role_id=role_id,
+            )
+        raise
+
+
+async def _send_submission_role_email_notification(
+    tenant_schema: str, invitation_id: str, role_id: str, branch_id: str
+) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            if invitation is None:
+                return
+            users = await UserRepository(session).list_users_holding_role_at_branch(
+                uuid.UUID(role_id), uuid.UUID(branch_id)
+            )
+            subject = "New invitation awaiting triage"
+            body = (
+                "A new invitation awaits your team's triage.\n"
+                f"Tracking ID: {invitation.tracking_id}\n"
+                f"Visitor: {invitation.primary_contact_full_name}\n"
+                f"Purpose: {invitation.purpose_of_visit or 'Not specified'}"
+            )
+            html_body = _render_html_or_none(
+                "submission_role",
+                {
+                    **await _base_email_context(session),
+                    "tracking_id": invitation.tracking_id,
+                    "visitor_name": invitation.primary_contact_full_name,
+                    "purpose": invitation.purpose_of_visit,
+                },
+            )
+            for role_user in users:
+                # Defensive: `User.email` is a required column today, so
+                # this never actually skips anyone — kept so a future schema
+                # change (or a row this repository call somehow returns with
+                # a blank email) degrades to "skip that one recipient"
+                # rather than failing the whole dispatch.
+                if not role_user.email:
+                    continue
+                await notifications.email_sender.send(
+                    to=role_user.email, subject=subject, body=body, html_body=html_body
+                )
     finally:
         await engine.dispose()
 
@@ -220,15 +441,19 @@ async def _send_reschedule_notification(tenant_schema: str, invitation_id: str) 
 def send_host_creation_notification(
     self, *, request_id: str, tenant_schema: str, invitation_id: str, host_id: str
 ) -> None:
-    """Emails the resolved host that an invitation naming them was received
-    (qr-checkin-scheduling-photo-email/design.md Decision 5) — a distinct
-    task from the visitor confirmation dispatch above, since the recipient
-    (the host, resolved via `UserRepository`) and their email address are
-    unrelated to the primary contact's own `preferred_contact_method`.
-    `host_id` is passed explicitly (resolved by the caller before
-    enqueueing) rather than re-derived from `invitation.host_id` here, so
-    an exhausted-retries log always names which host went unnotified even
-    if the invitation itself has since changed.
+    """Emails the newly resolved host that they've been named host of an
+    invitation — a distinct task from the visitor confirmation dispatch
+    above, since the recipient (the host, resolved via `UserRepository`) and
+    their email address are unrelated to the primary contact's own
+    `preferred_contact_method`. Originally fired at creation time when a
+    client-supplied host resolved; now fired instead when the invitation's
+    ownership step is delegated to a specific person
+    (`approvals/service.py::delegate_step`, role-based-invitation-workflow),
+    since a host can no longer resolve at creation. `host_id` is passed
+    explicitly (resolved by the caller before enqueueing) rather than
+    re-derived from `invitation.host_id` here, so an exhausted-retries log
+    always names which host went unnotified even if the invitation itself
+    has since changed.
     """
     structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
     try:
@@ -258,22 +483,44 @@ async def _send_host_creation_notification(
             host = await UserRepository(session).get_active(uuid.UUID(host_id))
             if host is None:
                 return
-            subject = "New invitation received"
+            subject = "You've been named host"
             body = (
-                "An invitation naming you as host was received.\n"
+                "You've been named host of an invitation.\n"
                 f"Tracking ID: {invitation.tracking_id}\n"
                 f"Visitor: {invitation.primary_contact_full_name}\n"
                 f"Purpose: {invitation.purpose_of_visit or 'Not specified'}"
             )
-            await notifications.email_sender.send(to=host.email, subject=subject, body=body)
+            html_body = _render_html_or_none(
+                "host_assigned",
+                {
+                    **await _base_email_context(session),
+                    "tracking_id": invitation.tracking_id,
+                    "visitor_name": invitation.primary_contact_full_name,
+                    "purpose": invitation.purpose_of_visit,
+                    "visit_date": invitation.preferred_visit_date,
+                    "visit_time": invitation.preferred_visit_time,
+                },
+            )
+            await notifications.email_sender.send(
+                to=host.email, subject=subject, body=body, html_body=html_body
+            )
     finally:
         await engine.dispose()
 
 
-async def _dispatch(invitation: Invitation, *, subject: str, body: str, attachment=None) -> None:
+async def _dispatch(
+    invitation: Invitation,
+    *,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    attachment=None,
+) -> None:
     """Routes to email or SMS per the invitation's `preferred_contact_method`
-    — never both. The `assert`s below are a data-integrity check, not
-    optional-narrowing convenience: `schemas.py`'s validators already
+    — never both. `html_body` is ignored on the SMS path (there's no HTML
+    concept for a text message); `body` is always sent as the plain-text
+    part/message regardless. The `assert`s below are a data-integrity check,
+    not optional-narrowing convenience: `schemas.py`'s validators already
     guarantee the contact info for the chosen method is present, so a
     failure here means that guarantee was violated somewhere upstream, and
     it's correct to let this raise loudly rather than silently no-op.
@@ -281,7 +528,11 @@ async def _dispatch(invitation: Invitation, *, subject: str, body: str, attachme
     if invitation.primary_contact_preferred_contact_method == "email":
         assert invitation.primary_contact_email is not None
         await notifications.email_sender.send(
-            to=invitation.primary_contact_email, subject=subject, body=body, attachment=attachment
+            to=invitation.primary_contact_email,
+            subject=subject,
+            body=body,
+            html_body=html_body,
+            attachment=attachment,
         )
     else:
         assert invitation.primary_contact_phone is not None
