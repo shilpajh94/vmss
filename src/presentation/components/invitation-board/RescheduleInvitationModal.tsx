@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Modal } from '../ui/Modal'
+import { TextField } from '../ui/TextField'
 
 interface RescheduleInvitationModalProps {
   isOpen: boolean
@@ -27,24 +28,20 @@ export function RescheduleInvitationModal({ isOpen, isRescheduling, onConfirm, o
   return (
     <Modal isOpen={isOpen} onClose={handleCancel} title="Reschedule Visit">
       <div className="flex flex-col gap-3">
-        <label className="flex flex-col gap-1.5">
-          <span className="font-body text-[13px] font-semibold text-text">New date</span>
-          <input
-            type="date"
-            value={preferredVisitDate}
-            onChange={(event) => setPreferredVisitDate(event.target.value)}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-body text-sm text-text focus:outline-none"
-          />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className="font-body text-[13px] font-semibold text-text">New time</span>
-          <input
-            type="time"
-            value={preferredVisitTime}
-            onChange={(event) => setPreferredVisitTime(event.target.value)}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-body text-sm text-text focus:outline-none"
-          />
-        </label>
+        <TextField
+          label="New date"
+          labelClassName="font-body text-[13px] font-semibold text-text"
+          type="date"
+          value={preferredVisitDate}
+          onChange={setPreferredVisitDate}
+        />
+        <TextField
+          label="New time"
+          labelClassName="font-body text-[13px] font-semibold text-text"
+          type="time"
+          value={preferredVisitTime}
+          onChange={setPreferredVisitTime}
+        />
 
         <div className="flex items-center justify-end gap-3">
           <button
