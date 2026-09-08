@@ -190,8 +190,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   }, [visitRequests, invitationDetails, getInvitationDetailUseCase])
 
   const loadDetail = useCallback(
-    async (id: string): Promise<InvitationDetail> => {
-      if (invitationDetails[id]) return invitationDetails[id]
+    async (id: string, options?: { forceRefresh?: boolean }): Promise<InvitationDetail> => {
+      if (!options?.forceRefresh && invitationDetails[id]) return invitationDetails[id]
 
       setLoadingDetailId(id)
       try {
@@ -206,12 +206,15 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   )
 
   // Opens the "Visitor Info" popup for a card, fetching the full invitation
-  // detail (GET /invitations/:id) the same way an approval-progress expand
-  // does, so a repeat click reuses the cached detail instead of refetching.
+  // detail (GET /invitations/:id). Always forces a fresh fetch (unlike the
+  // approval-progress preload above, which is fine reusing a cached detail):
+  // the response's primary/visitor photo URLs are short-lived signed links
+  // (see visit-tracking-repository.ts's backend counterpart), so a detail
+  // fetched more than a few minutes ago would render broken images if reused.
   const viewVisitorInfo = useCallback(
     (id: string) => {
       setVisitorInfoId(id)
-      void loadDetail(id).catch((error: unknown) => {
+      void loadDetail(id, { forceRefresh: true }).catch((error: unknown) => {
         console.error('Failed to load visitor info', error)
         toast.error('Could not load visitor info for this request.')
       })
