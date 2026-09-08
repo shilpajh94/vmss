@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router'
-import { CheckIcon, ClockIcon, HelpCircleIcon, ShieldIcon, UsersIcon } from './icons'
+import { CheckIcon, ClockIcon, HelpCircleIcon, UsersIcon } from './icons'
+import logoMark from '../../assets/logo-mark.svg'
 
 export type DashboardSidebarActiveItem = 'all-visitors' | 'my-actions' | 'audit-trail'
 
@@ -29,9 +30,7 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
         onClick={() => navigate('/staff/dashboard')}
         className="flex items-center gap-3 text-left"
       >
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-secondary-accent">
-          <ShieldIcon className="size-[18px] text-white" />
-        </span>
+        <img src={logoMark} alt="" className="size-8 shrink-0" />
         <span className="font-display text-xl font-extrabold whitespace-nowrap text-white">VisitorPass</span>
       </button>
 

@@ -19,11 +19,15 @@ export function AddVisitorForm({ initialValue, uploadFile, getFilePreviewUrl, on
   const [error, setError] = useState<string | undefined>(undefined)
 
   const handleAdd = () => {
-    if (!draft.fullName || !draft.email || !draft.phone || !draft.idProofType) {
-      setError('Full name, email, phone, and ID proof type are required.')
+    if (!draft.fullName || !draft.idProofType) {
+      setError('Full name and ID proof type are required.')
       return
     }
-    if (!isValidPhoneNumber(draft.phone)) {
+    if (!draft.email && !draft.phone) {
+      setError('Either email or phone is required.')
+      return
+    }
+    if (draft.phone && !isValidPhoneNumber(draft.phone)) {
       setError('Enter a valid phone number.')
       return
     }

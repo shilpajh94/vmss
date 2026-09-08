@@ -44,14 +44,11 @@ export function createInitialStaffFormState(): StaffVisitRequestFormState {
     additionalVisitors: [],
     visitInfo: {
       purpose: '',
-      hostNameOrEmail: '',
-      hostId: '',
       preferredDate: '',
       preferredTime: '',
       expectedDuration: '',
       location: '',
       building: '',
-      department: '',
       notes: '',
     },
     carriedItems: { categories: [], description: '' },
@@ -84,12 +81,9 @@ export function toStaffVisitRequest(formState: StaffVisitRequestFormState): Staf
     visitors: formState.additionalVisitors.map(toStaffVisitor),
     visitDetails: {
       purposeOfVisit: formState.visitInfo.purpose,
-      hostNameOrEmail: formState.visitInfo.hostNameOrEmail,
-      hostId: formState.visitInfo.hostId,
       preferredVisitDate: formState.visitInfo.preferredDate,
       preferredVisitTime: formState.visitInfo.preferredTime,
       expectedDuration: formState.visitInfo.expectedDuration,
-      departmentToVisit: formState.visitInfo.department,
       additionalNotes: formState.visitInfo.notes,
     },
     carriedItems: {

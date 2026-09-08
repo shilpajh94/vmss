@@ -4,11 +4,6 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: false,
   },
-  SEARCH_HOSTS: {
-    endpoint: "/hosts/search",
-    method: "GET",
-    hasToken: false,
-  },
   TRACK_VISIT_REQUEST: {
     endpoint: "/invitations/track",
     method: "GET",
@@ -66,6 +61,11 @@ export const API_ENDPOINTS = {
   },
   RESCHEDULE_INVITATION: {
     endpoint: "/invitations/:id/reschedule",
+    method: "PATCH",
+    hasToken: true,
+  },
+  EDIT_INVITATION: {
+    endpoint: "/invitations/:id/edit",
     method: "PATCH",
     hasToken: true,
   },

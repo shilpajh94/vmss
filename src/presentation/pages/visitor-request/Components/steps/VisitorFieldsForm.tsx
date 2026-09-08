@@ -2,8 +2,7 @@ import { FileUploadField } from '../../../../components/ui/FileUploadField'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
 import { SelectField } from '../../../../components/ui/SelectField'
 import { TextField } from '../../../../components/ui/TextField'
-import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
-import type { VisitorFormEntry } from '../../types'
+import type { VisitorCategoriesFieldState, VisitorFormEntry } from '../../types'
 
 // Values must match the backend's `idProofType` enum for
 // POST /registrations/walk-in exactly (validated server-side against these 4 strings).
@@ -27,7 +26,8 @@ interface VisitorFieldsFormProps {
   uploadFile: (file: File) => Promise<string>
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
   errors?: Record<string, string>
-  visitorCategories?: VisitorCategory[]
+  visitorCategoriesState: VisitorCategoriesFieldState
+  onRetryVisitorCategories?: () => void
 }
 
 export function VisitorFieldsForm({
@@ -38,14 +38,20 @@ export function VisitorFieldsForm({
   uploadFile,
   getFilePreviewUrl,
   errors,
-  visitorCategories,
+  visitorCategoriesState,
+  onRetryVisitorCategories,
 }: VisitorFieldsFormProps) {
-  // No hardcoded fallback here: a category's `id` must be a real backend UUID
-  // (it's submitted verbatim as `visitorCategoryId`), so an empty list while
-  // master data is loading/unavailable must leave the field unselectable
-  // rather than offer values that are guaranteed to fail server validation.
-  const visitorCategoryOptions = (visitorCategories ?? []).map((category) => ({ value: category.id, label: category.name }))
-  const visitorCategoriesUnavailable = visitorCategoryOptions.length === 0
+  // A category can only ever come from the real, API-loaded catalog — never
+  // a hardcoded placeholder (fix-visitor-category-invalid-id-fallback), since
+  // any fake id would fail the backend's UUID validation on submission.
+  const visitorCategoryOptions = visitorCategoriesState.categories.map((category) => ({
+    value: category.id,
+    label: category.name,
+  }))
+  const isCategoryLoading = visitorCategoriesState.status === 'loading'
+  const isCategoryUnavailable =
+    visitorCategoriesState.status === 'error' ||
+    (visitorCategoriesState.status === 'loaded' && visitorCategoriesState.categories.length === 0)
 
   return (
     <div className="grid grid-cols-2 gap-4">
@@ -64,7 +70,7 @@ export function VisitorFieldsForm({
         value={value.email}
         onChange={(email) => onChange({ ...value, email })}
         error={errors?.email}
-        required
+        required={showContactMethod ? (value.preferredContactMethod ?? 'email') === 'email' : undefined}
       />
       <TextField
         label="Phone Number"
@@ -73,19 +79,35 @@ export function VisitorFieldsForm({
         value={value.phone}
         onChange={(phone) => onChange({ ...value, phone })}
         error={errors?.phone}
-        required
+        required={showContactMethod ? value.preferredContactMethod === 'sms' : undefined}
       />
       {showExtendedFields && (
-        <SelectField
-          label="Visitor Category"
-          placeholder={visitorCategoriesUnavailable ? 'Unable to load categories — please retry' : 'Select category'}
-          options={visitorCategoryOptions}
-          value={value.visitorCategory}
-          onChange={(visitorCategory) => onChange({ ...value, visitorCategory })}
-          error={errors?.visitorCategory}
-          disabled={visitorCategoriesUnavailable}
-          required
-        />
+        <div className="flex flex-col gap-1.5">
+          <SelectField
+            label="Visitor Category"
+            placeholder={
+              isCategoryLoading ? 'Loading categories…' : isCategoryUnavailable ? 'Unable to load categories' : 'Select category'
+            }
+            options={visitorCategoryOptions}
+            value={value.visitorCategory}
+            onChange={(visitorCategory) => onChange({ ...value, visitorCategory })}
+            error={errors?.visitorCategory}
+            required
+            disabled={isCategoryLoading || isCategoryUnavailable}
+          />
+          {isCategoryUnavailable && (
+            <div className="flex items-center gap-2">
+              <p className="text-caption text-danger">Couldn't load visitor categories.</p>
+              <button
+                type="button"
+                onClick={onRetryVisitorCategories}
+                className="text-caption font-semibold text-secondary-accent underline"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
       )}
       {showContactMethod && (
         <div className="flex flex-col gap-1.5">
@@ -101,6 +123,7 @@ export function VisitorFieldsForm({
             }
             variant="divided"
           />
+          {errors?.preferredContactMethod && <p className="text-caption text-danger">{errors.preferredContactMethod}</p>}
         </div>
       )}
       <SelectField

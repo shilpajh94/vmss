@@ -17,12 +17,38 @@ interface NotificationRowProps {
   onSelect: () => void
 }
 
+// Distinguishes a push sent to every holder of a role from one delegated to
+// this viewer personally (role-based-invitation-workflow) — same addressing
+// metadata the API attaches to the payload, already folded into the message
+// text itself by PushNotificationsProvider; this badge repeats it visually
+// so it's still obvious after the item scrolls out of the toast.
+function AddressingBadge({ reason }: { reason: NotificationCenterItem['reason'] }) {
+  if (reason === 'role_assigned') {
+    return (
+      <span className="inline-flex shrink-0 items-center rounded-full bg-info/10 px-1.5 py-0.5 font-body text-[10px] font-semibold whitespace-nowrap text-info">
+        Role
+      </span>
+    )
+  }
+  if (reason === 'delegated') {
+    return (
+      <span className="inline-flex shrink-0 items-center rounded-full bg-secondary-accent/10 px-1.5 py-0.5 font-body text-[10px] font-semibold whitespace-nowrap text-secondary-accent">
+        Delegated to you
+      </span>
+    )
+  }
+  return null
+}
+
 function NotificationRow({ item, onSelect }: NotificationRowProps) {
   const content = (
     <>
       {!item.read && <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-admin-accent" />}
       <span className={`min-w-0 flex-1 ${item.read ? 'pl-3.5' : ''}`}>
-        <span className="block truncate font-body text-[13px] text-text">{item.message}</span>
+        <span className="flex items-center gap-1.5">
+          <span className="min-w-0 flex-1 truncate font-body text-[13px] text-text">{item.message}</span>
+          <AddressingBadge reason={item.reason} />
+        </span>
         <span className="block font-body text-[11px] text-text-faint">{formatRelativeTime(item.receivedAt)}</span>
       </span>
     </>

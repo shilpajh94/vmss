@@ -4,6 +4,7 @@ import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
+import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
 import { SearchActionBar } from './Components/SearchActionBar'
 import { WorkspaceHeader } from './Components/WorkspaceHeader'
@@ -44,6 +45,12 @@ export function StaffDashboardPage() {
     reschedulingId,
     delegate,
     delegatingId,
+    edit,
+    editingId,
+    requestEdit,
+    cancelEdit,
+    pendingEditId,
+    pendingEditDetail,
     pendingDenyId,
     requestDeny,
     cancelDeny,
@@ -105,6 +112,7 @@ export function StaffDashboardPage() {
                 employeeNameById={employeeNameById}
                 onRescheduleClick={requestReschedule}
                 onDelegateClick={requestDelegate}
+                onEditClick={requestEdit}
                 onVisitorInfoClick={viewVisitorInfo}
               />
             ))}
@@ -127,10 +135,19 @@ export function StaffDashboardPage() {
         isOpen={pendingDelegateId !== undefined}
         isDelegating={delegatingId !== undefined}
         approverRoleId={pendingDelegateDetail?.currentApprovalStep?.approverRoleId}
+        stepOrder={pendingDelegateDetail?.currentApprovalStep?.stepOrder}
         roleNameById={roleNameById}
         hostEmployees={hostEmployees}
         onConfirm={(delegateUserId) => pendingDelegateId && delegate(pendingDelegateId, delegateUserId)}
         onCancel={cancelDelegate}
+      />
+
+      <EditInvitationModal
+        isOpen={pendingEditId !== undefined}
+        isSaving={editingId !== undefined}
+        detail={pendingEditDetail}
+        onConfirm={(fields) => pendingEditId && edit(pendingEditId, fields)}
+        onCancel={cancelEdit}
       />
 
       <VisitorInfoModal
