@@ -6,7 +6,6 @@ export interface InvitationSubmissionFiles {
   primaryContactIdProofFile: File
   primaryContactPhotoFile: File
   visitorIdProofFiles: File[]
-  primaryContactPhotoFile?: File
 }
 
 export interface VisitRequestRepository {

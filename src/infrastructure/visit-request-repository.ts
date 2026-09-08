@@ -18,9 +18,6 @@ export class HttpVisitRequestRepository implements VisitRequestRepository {
     for (const file of files.visitorIdProofFiles) {
       formData.append('visitor_id_proof_files', file)
     }
-    if (files.primaryContactPhotoFile) {
-      formData.append('primary_contact_photo_file', files.primaryContactPhotoFile)
-    }
 
     const envelope = await this.apiClient.makeMultipartRequest({
       endpointConfig: API_ENDPOINTS.CREATE_VISIT_REQUEST,
