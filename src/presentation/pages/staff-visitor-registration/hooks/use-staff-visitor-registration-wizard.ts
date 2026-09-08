@@ -29,6 +29,9 @@ function validateStaffVisitorContact(contact: StaffVisitorFormEntry): Record<str
   if (!contact.visitorCategory) errors.visitorCategory = 'Visitor category is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
   if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
+  // Profile image is only collected for the primary contact (PrimaryContactCard),
+  // not the additional-visitor draft form, so it's only enforced here.
+  if (!contact.profileImageFileRef) errors.profileImageFileRef = 'Profile image is required.'
   return errors
 }
 

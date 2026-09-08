@@ -46,6 +46,10 @@ function validateVisitorContact(contact: VisitorFormEntry, isPrimary: boolean): 
   if (!contact.visitorCategory) errors.visitorCategory = 'Visitor category is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
   if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
+  // Profile image is only collected for the primary contact (VisitorFieldsForm
+  // only renders it when showExtendedFields is set, which the additional-visitor
+  // draft form disables), so only enforce it there.
+  if (isPrimary && !contact.profileImageFileRef) errors.profileImageFileRef = 'Profile image is required.'
   return errors
 }
 
@@ -163,9 +167,6 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     const visitorIdProofFiles = formState.additionalVisitors
       .map((visitor) => (visitor.idProofFileRef ? fileRegistry.current.get(visitor.idProofFileRef) : undefined))
       .filter((file): file is File => file !== undefined)
-    const primaryContactPhotoFile = formState.primaryContact.profileImageFileRef
-      ? fileRegistry.current.get(formState.primaryContact.profileImageFileRef)
-      : undefined
 
     setSubmissionStatus('submitting')
     setSubmissionError(undefined)
@@ -174,7 +175,6 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
         primaryContactIdProofFile,
         primaryContactPhotoFile,
         visitorIdProofFiles,
-        primaryContactPhotoFile,
       })
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')
