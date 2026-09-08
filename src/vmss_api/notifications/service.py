@@ -3,6 +3,7 @@ import uuid
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
 from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core.logging import logger
 from vmss_api.notifications import tasks
@@ -125,9 +126,14 @@ async def notify_step_approver(
     so it's a reliable cross-tenant identifier), which SHALL NOT receive a
     push (exclude-admin-role-only-from-push/design.md — a correction of
     restrict-invitation-push-to-hosts-only, which over-broadly excluded
-    every role, not just Admin). A role id that doesn't resolve to a row
-    dispatches normally (fails open, not closed) rather than silently
-    dropping the push.
+    every role, not just Admin), nor when the role is one of
+    `DELEGATION_ONLY_ROLE_NAMES` (`host`) — an undelegated host-identified
+    step isn't actionable by any role holder either
+    (`approvals/service.py::_caller_matches_step`), so broadcasting "act on
+    this now" to every host-eligible employee company-wide would be both
+    noisy and misleading. A role id that doesn't resolve to a row dispatches
+    normally (fails open, not closed) rather than silently dropping the
+    push.
     """
     if approver_user_id is not None:
         await notify_user(
@@ -136,7 +142,9 @@ async def notify_step_approver(
         return
     assert approver_role_id is not None  # DB CHECK: exactly one of the two is set
     role = await RoleRepository(tenant_db).get(approver_role_id)
-    if role is not None and role.name.lower() == "admin":
+    if role is not None and (
+        role.name.lower() == "admin" or role.name.lower() in DELEGATION_ONLY_ROLE_NAMES
+    ):
         return
     await notify_role_at_branch(
         tenant_db,
