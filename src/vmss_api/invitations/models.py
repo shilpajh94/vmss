@@ -99,6 +99,17 @@ class Invitation(Base, TimestampMixin):
     host_name_or_email: Mapped[str | None] = mapped_column(String(255))
     preferred_visit_date: Mapped[date | None] = mapped_column(Date())
     preferred_visit_time: Mapped[time | None] = mapped_column(Time())
+    # Snapshot of `preferred_visit_date`/`preferred_visit_time` immediately
+    # before the most recent `PATCH /invitations/{id}/reschedule` overwrote
+    # them (`add-reschedule-history/design.md`) — NULL until the invitation
+    # has been rescheduled at least once. `reschedule_if_eligible` populates
+    # all four of these columns in the same `UPDATE` that changes the
+    # current date/time, so they always describe the immediately-prior
+    # schedule, not necessarily the invitation's original one.
+    previous_preferred_visit_date: Mapped[date | None] = mapped_column(Date())
+    previous_preferred_visit_time: Mapped[time | None] = mapped_column(Time())
+    rescheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reschedule_count: Mapped[int] = mapped_column(Integer(), default=0)
     expected_duration: Mapped[str | None] = mapped_column(String(50))
     department_to_visit: Mapped[str | None] = mapped_column(String(255))
     additional_notes: Mapped[str | None] = mapped_column(String(2000))

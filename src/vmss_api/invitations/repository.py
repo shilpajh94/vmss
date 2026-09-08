@@ -34,23 +34,44 @@ def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
     delegating the now-unconditional role-identified ownership step
     (role-based-invitation-workflow; see the `approvals` capability's
     "Delegating the Ownership Step Also Resolves the Invitation's Host") —
-    (b) has been delegated any step, regardless of that step's status, or
-    (c) currently holds — via branch-scoped `UserBranchRole` at the
-    invitation's own branch or company-wide — the role of the invitation's
-    current pending, undelegated, role-identified step. (c) closes the gap
+    (b) has been delegated any step, regardless of that step's status, (c)
+    currently holds — via branch-scoped `UserBranchRole` at the invitation's
+    own branch or company-wide — the role of the invitation's current
+    pending, role-identified step, or (d) has personally acted on
+    (approved or rejected) any of the invitation's steps, regardless of
+    that step's or the invitation's current status. (c) closes the gap
     where a valid role-based approver had no way to find their pending work
     short of the unfiltered branch-wide list
-    (checkin-approval-workflow-improvements). (b) and (c) are expressed as
-    (correlated, where needed) subqueries against
+    (checkin-approval-workflow-improvements), and deliberately does NOT
+    require that step be undelegated
+    (invitation-relevant-to-me-retains-role-visibility-after-delegation):
+    every holder of the step's role — e.g. every Reception-role holder, not
+    just whichever one of them actually delegated it — keeps seeing the
+    invitation in their worklist after it's delegated to the resolved host,
+    until the step itself is actually approved or rejected — at which point
+    (d) is what keeps it visible, but only for the specific person who
+    acted, not every role-holder: e.g. Reception, having approved the
+    invitation's ownership step, keeps seeing it (and can act on the
+    delegation-authority extension in "Current Step's Authorized Approver
+    Delegates It to a Specific Person") even once a later, different-role
+    step becomes current
+    (reception-retains-visibility-and-delegation-after-own-step). (b), (c),
+    and (d) are expressed as (correlated, where needed) subqueries against
     `invitation_approval_steps`, not a per-invitation loop
     (query-performance.md §2).
     """
-    host_or_delegate = or_(
+    host_or_delegate_or_actor = or_(
         Invitation.host_id == user_id,
         Invitation.id.in_(
             select(InvitationApprovalStep.invitation_id).where(
                 InvitationApprovalStep.deleted_at.is_(None),
                 InvitationApprovalStep.delegated_to_user_id == user_id,
+            )
+        ),
+        Invitation.id.in_(
+            select(InvitationApprovalStep.invitation_id).where(
+                InvitationApprovalStep.deleted_at.is_(None),
+                InvitationApprovalStep.acted_by_user_id == user_id,
             )
         ),
     )
@@ -78,7 +99,6 @@ def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
             current_step.deleted_at.is_(None),
             current_step.status == "pending",
             current_step.approver_role_id.is_not(None),
-            current_step.delegated_to_user_id.is_(None),
             current_step.step_order == min_pending_step_order,
             UserBranchRole.user_id == user_id,
             or_(
@@ -87,7 +107,7 @@ def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
             ),
         )
     )
-    return or_(host_or_delegate, current_role_holder)
+    return or_(host_or_delegate_or_actor, current_role_holder)
 
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
@@ -344,12 +364,23 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
     async def reschedule_if_eligible(
         self, id_: uuid.UUID, *, preferred_visit_date: Any, preferred_visit_time: Any
     ) -> Invitation | None:
+        """`previous_preferred_visit_date`/`_time` are set from
+        `Invitation.preferred_visit_date`/`_time` in the same `UPDATE` that
+        overwrites those columns — every `SET` clause in one Postgres
+        `UPDATE` reads the pre-update row, so this reliably captures the
+        immediately-prior schedule rather than the just-written new one
+        (`add-reschedule-history/design.md`).
+        """
         stmt = (
             update(Invitation)
             .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
             .values(
+                previous_preferred_visit_date=Invitation.preferred_visit_date,
+                previous_preferred_visit_time=Invitation.preferred_visit_time,
                 preferred_visit_date=preferred_visit_date,
                 preferred_visit_time=preferred_visit_time,
+                rescheduled_at=datetime.now(UTC),
+                reschedule_count=Invitation.reschedule_count + 1,
             )
             .returning(Invitation)
         )

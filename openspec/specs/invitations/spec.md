@@ -1008,37 +1008,59 @@ visitor/vehicle detail the single-invitation tracking lookup returns.
 `GET /invitations` SHALL accept a `relevantToMe` boolean query parameter.
 WHEN `relevantToMe` is true, the system SHALL return invitations where the
 authenticated caller is any of:
-(a) the invitation's resolved host (its `hostId`, once the ownership step has
-been delegated to them — see "Invitation Output Surfaces the Resolved Host as
-hostId") — regardless of that step's or the invitation's current status;
+(a) the invitation's resolved host (its `hostId`, once any of its approval
+steps has been delegated to them — see "Invitation Output Surfaces the
+Resolved Host as hostId") — regardless of that step's or the invitation's
+current status;
 (b) the delegate assigned to any of that invitation's approval steps (see
 the `approvals` capability's "Current Step's Authorized Approver Delegates
 It to a Specific Person") — regardless of that step's or the invitation's
 current status; or
-(c) currently authorized, via branch-scoped role assignment at the
-invitation's branch or company-wide, to act on the invitation's current
-pending `InvitationApprovalStep` because that step is role-identified and
-names a role the caller holds, and no delegate has yet been assigned to
-that step — i.e., the caller is one of the role-holders who could act on
-the currently-pending step right now, per the `approvals` capability's
-role-match authorization rule.
-Clause (c) only ever matches while the invitation is `submitted` with an
-un-delegated, role-identified step currently pending; once that step is
-delegated, acted on, or the invitation leaves `submitted`, a caller who
-only ever qualified under (c) (never under (a) or (b)) no longer sees that
-invitation via `relevantToMe`. Since every newly submitted invitation's
-`stepOrder` 0 step is role-identified for the tenant's default host role
-(rather than sometimes host-identified as before), clause (c) is what makes
-that invitation visible to every front-office holder before anyone
-delegates it — clause (a) does not apply until a delegation actually
-happens. This filter SHALL NOT require the caller to hold `invitations:view`,
+(c) currently holds, via branch-scoped role assignment at the invitation's
+branch or company-wide, the role that the invitation's current pending
+`InvitationApprovalStep` names (that step being role-identified) — i.e.,
+the caller is one of the role-holders who could act on the
+currently-pending step right now if no delegate had been assigned to it,
+per the `approvals` capability's role-match authorization rule. Unlike that
+authorization rule, clause (c) SHALL NOT require the step to be
+undelegated: a role-holder keeps seeing the invitation via `relevantToMe`
+even after the step has been delegated to a specific person, so that (e.g.)
+every holder of the tenant's default host role keeps visibility into an
+invitation after one of them delegates its `stepOrder` 0 step to the
+resolved host, not just whichever one of them actually performed the
+delegation.
+Clause (c) only ever matches while the invitation is `submitted` with a
+role-identified step currently pending; once that step is actually approved
+or rejected (by its delegate or an override-permission holder), or the
+invitation otherwise leaves `submitted`, a caller who only ever qualified
+under (c) (never under (a) or (b)) no longer sees that invitation via
+`relevantToMe`. Since every newly submitted invitation's `stepOrder` 0 step
+is role-identified for the tenant's default host role (rather than
+sometimes host-identified as before), clause (c) is what makes that
+invitation visible to every front-office holder both before anyone
+delegates it and after — clause (a) does not apply until a delegation
+actually happens, but clause (c) keeps working across that transition, only
+dropping off once the step itself is acted on; or
+(d) has personally acted on (approved or rejected, i.e. is the `actedByUserId`
+of) any of the invitation's approval steps, regardless of that step's or
+the invitation's current status. Unlike (c), clause (d) never drops off:
+once a caller has approved or rejected a step, that invitation stays in
+their `relevantToMe` list for its entire lifecycle — e.g. Reception, having
+approved the invitation's `stepOrder` 0 ownership step, keeps seeing it
+through every later, differently-role-identified step and after final
+approval/denial, not just while their own step was current
+(reception-retains-visibility-and-delegation-after-own-step). Clause (d) is
+keyed to the specific person who acted, not to a role: another holder of
+Reception's role who never personally acted on that invitation does not
+gain visibility from (d) — only (c), while their role's step is current,
+covers them. This filter SHALL NOT require the caller to hold `invitations:view`,
 and SHALL NOT be scoped by `X-Branch-ID` or the caller's authorized branches:
 it is a personal worklist keyed to the caller's own identity and current
 approval authority, not the branch-scoped admin listing the "Employee Lists
 Invitations at Their Authorized Branches" requirement above describes.
 `relevantToMe` SHALL compose with the existing `status`, `registrationType`,
 and `source` filters and with pagination/sorting. A caller matching none of
-(a)/(b)/(c) for any invitation SHALL receive an empty, successfully-paginated
+(a)/(b)/(c)/(d) for any invitation SHALL receive an empty, successfully-paginated
 result, not an error.
 
 #### Scenario: Host sees their own invitation without invitations:view
@@ -1069,12 +1091,44 @@ result, not an error.
   neither the invitation's host nor a delegate — this closes the gap where
   such a user could only find the invitation via the branch-wide list
 
-#### Scenario: A role-holder no longer sees the invitation once someone else's delegation is assigned
+#### Scenario: A role-holder keeps seeing the invitation once someone else's delegation is assigned
 - **WHEN** an invitation's current pending step (role-identified, matching a
   role the caller holds) is delegated to a different, specific user
-- **THEN** the caller — who is not that delegate — no longer sees the
-  invitation via `relevantToMe=true`, since clause (c) requires no delegate
-  be assigned
+- **THEN** the caller — though not that delegate, and no longer authorized
+  to act on the step directly — still sees the invitation via
+  `relevantToMe=true`, the same as every other holder of that role
+
+#### Scenario: A role-holder loses visibility once the step is actually approved or rejected, unless they were the one who acted
+- **WHEN** an invitation's current pending step, role-identified for a role
+  the caller holds, is approved or rejected by a different holder of that
+  role (or its delegate, or an override-permission holder)
+- **THEN** the caller — who only ever qualified under clause (c) for that
+  step, never as its host, its delegate, or the one who acted — no longer
+  sees the invitation via `relevantToMe=true`, since that step is no longer
+  the current pending step and clause (d) does not apply to them
+
+#### Scenario: The caller who personally approved a step keeps seeing the invitation forever, via clause (d)
+- **WHEN** a caller personally approves an invitation's current pending,
+  role-identified step, and a later step (role-identified for a different
+  role the caller does not hold) subsequently becomes current, is itself
+  approved, and the invitation is fully approved
+- **THEN** the caller continues to see the invitation via
+  `relevantToMe=true` throughout — while the later step is current, after
+  it is approved, and once the invitation itself is `approved` — because
+  clause (d) does not depend on any step being current or on the
+  invitation's own status
+
+#### Scenario: Approving your own step also grants delegation authority over the very next step
+- **WHEN** the caller from the previous scenario, instead of waiting, calls
+  `POST /invitations/{id}/approval-steps/{stepId}/delegate` on the
+  next step (now current, role-identified for a role the caller does not
+  hold), naming a person who holds that step's role at the invitation's
+  branch
+- **THEN** the delegation succeeds (see the `approvals` capability's
+  "Current Step's Authorized Approver Delegates It to a Specific Person",
+  clause (d)) — the same clause (d) actor privilege that keeps the
+  invitation visible to the caller also lets them route its next step
+  onward
 
 #### Scenario: A role-holder who is not currently authorized on the pending step sees nothing for it
 - **WHEN** a user holds a role that does not match the invitation's current
@@ -1083,10 +1137,11 @@ result, not an error.
 - **THEN** that invitation is absent from the user's `relevantToMe=true`
   response, unless they separately qualify as its host or a delegate
 
-#### Scenario: Caller who is neither host nor delegate sees nothing for that invitation
+#### Scenario: Caller who is neither host, delegate, nor actor sees nothing for that invitation
 - **WHEN** a caller who is not the resolved host, has not been delegated
-  any step, and does not hold the role of any invitation's current pending
-  step requests `GET /invitations` with `relevantToMe=true`
+  any step, has not personally acted on any step, and does not hold the
+  role of any invitation's current pending step requests
+  `GET /invitations` with `relevantToMe=true`
 - **THEN** that invitation is absent from the response, even if the caller
   holds `invitations:view` at its branch
 
@@ -1097,7 +1152,7 @@ result, not an error.
   currently `submitted`
 
 #### Scenario: No relevant invitations returns an empty page, not an error
-- **WHEN** a caller who does not match (a), (b), or (c) for any invitation
+- **WHEN** a caller who does not match (a), (b), (c), or (d) for any invitation
   requests `GET /invitations` with `relevantToMe=true`
 - **THEN** the response is a successful, empty, correctly-paginated result
 
@@ -1210,11 +1265,14 @@ does not start failing outright.
 ### Requirement: Invitation Output Surfaces the Resolved Host as hostId
 `InvitationOut` and `InvitationDetailOut` SHALL include `hostId`, set to the
 invitation's resolved host user id once one has been assigned, and null
-before that. A host is assigned exclusively by delegating the invitation's
-ownership step (`stepOrder` 0) to a specific person — see the `approvals`
-capability's "Current Step's Authorized Approver Delegates It to a Specific
-Person" and "Delegating the Ownership Step Also Resolves the Invitation's
-Host" — never by anything supplied at creation. `hostNameOrEmail` continues
+before that. A host is assigned exclusively by delegating one of the
+invitation's approval steps — the ownership step (`stepOrder` 0) or any
+later step in its workflow chain — to a specific person, with the most
+recently delegated step (of any `stepOrder`) determining the current
+resolved host; see the `approvals` capability's "Current Step's Authorized
+Approver Delegates It to a Specific Person" and "Delegating Any Step
+Resolves/Updates the Invitation's Host" — never by anything supplied at
+creation. `hostNameOrEmail` continues
 to be surfaced alongside `hostId`, set to that same delegate's display name
 once resolved, and null before that (this capability no longer accepts a
 client-supplied `hostNameOrEmail` at creation to fall back to — see "Visit

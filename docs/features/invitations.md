@@ -239,8 +239,11 @@ the original creator's input" below.
   input** (the invitation's resolved host user id, or `null` before a
   delegation resolves one) — included on `InvitationOut` and
   `InvitationDetailOut` alongside the existing free-text
-  `hostNameOrEmail`. Both stay `null` until `stepOrder` 0 is delegated to a
-  specific person; nothing set at creation ever populates them anymore.
+  `hostNameOrEmail`. Both stay `null` until any step is delegated to a
+  specific person, and update again to that delegate on every subsequent
+  delegation at any `stepOrder` — not just `stepOrder` 0 — so `hostId`
+  always tracks the most recently delegated step. Nothing set at creation
+  ever populates them.
 - **Escalation/auto-approve timestamps exist but aren't enforced yet.**
   Each step carries `escalatesAt`/`autoApprovesAt`, computed from the
   snapshotted rule's `escalationMinutes`/`autoApproveMinutes` relative to
@@ -396,14 +399,26 @@ list view that doesn't render either (`query-performance.md` §1-2).
 
 `GET /invitations?relevantToMe=true` is a personal worklist, not a narrower
 branch scope: it returns invitations where the caller is either the
-invitation's currently resolved host (`hostId` — set once `stepOrder` 0 has
+invitation's currently resolved host (`hostId` — set once any step has
 been delegated to them, see `docs/features/approvals.md`), has been
 delegated one of that invitation's approval steps (`docs/features/
-approvals.md`'s "Delegation"), or currently holds the role that the
-invitation's current pending, undelegated step names (e.g. every holder of
-the default host role sees a freshly submitted invitation before anyone
-delegates it) — regardless of that step's or the invitation's current
-status for the first two clauses.
+approvals.md`'s "Delegation"), currently holds the role that the
+invitation's current pending step names (e.g. every holder of the default
+host role sees a freshly submitted invitation before anyone delegates it),
+or has personally approved/rejected any of that invitation's steps —
+regardless of that step's or the invitation's current status for all but
+the role clause. The role clause deliberately does **not** require the step
+to be undelegated: every holder of the role keeps seeing the invitation
+after one of them delegates it to the resolved host, not just whichever one
+of them performed the delegation — that visibility only drops, for the
+*other* role-holders, once the step itself is actually approved or
+rejected. The person who actually acted on it, though, keeps seeing the
+invitation forever via the fourth clause: e.g. Reception, having approved
+the ownership step, keeps it in their list through every later step and
+past final approval/denial — and that same "I acted on the step before
+this one" fact also lets them delegate the *next* step straight to whoever
+the workflow configures for it, without needing to hold that step's role
+themselves (see `docs/features/approvals.md`'s "Delegation").
 
 This deliberately **bypasses** `invitations:view` and `X-Branch-ID`
 entirely — a host or delegate with no branch-level view permission still

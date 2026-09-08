@@ -441,6 +441,49 @@ async def test_create_invitation_auto_approve_disabled_is_awaiting_approval(
     assert approval_calls == []
 
 
+async def test_create_invitation_auto_approve_never_resolves_a_host(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    visit_host: User,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    """An auto-approved invitation gets no `InvitationApprovalStep` rows at
+    all (create_invitation's `if not auto_approved:` gate) — so, unlike a
+    manual-approval invitation, it has no ownership step for anyone to
+    delegate. Combined with "A supplied hostId or hostNameOrEmail is
+    silently ignored" (role-based-invitation-workflow), that means an
+    auto-approved invitation never gets a resolved host at all: `hostId`
+    stays null, and no one sees it in their `relevantToMe` worklist by
+    virtue of being its host. Accepted current behavior — auto-approve
+    skips the whole approval/delegation workflow, host resolution
+    included, not just the approval gate.
+    """
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), auto_approve_pre_registered_visitors=True))
+    await db_session.commit()
+    monkeypatch.setattr(tasks.send_approval_notification, "delay", lambda **kw: None)
+    monkeypatch.setattr(tasks.send_host_creation_notification, "delay", lambda **kw: None)
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["hostId"] = str(visit_host.id)
+    created = await _create_invitation_success(client, token, branch, payload=payload)
+    assert created["status"] == "approved"
+    assert created["hostId"] is None
+
+    host_token = issue_token(visit_host)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true", "status": "approved"},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert created["trackingId"] not in tracking_ids
+
+
 async def test_create_invitation_no_company_profile_defaults_to_awaiting_approval(
     client: AsyncClient, user: User, branch: Branch, monkeypatch
 ) -> None:
@@ -1824,16 +1867,17 @@ async def test_list_invitations_relevant_to_me_role_holder_sees_current_step_inv
     assert invitation.tracking_id in tracking_ids
 
 
-async def test_list_invitations_relevant_to_me_role_holder_loses_visibility_once_delegated(
+async def test_list_invitations_relevant_to_me_role_holder_retains_visibility_once_delegated(
     client: AsyncClient,
     db_session: AsyncSession,
     tenant: Tenant,
     branch: Branch,
     issue_token: Callable[[User], str],
 ) -> None:
-    """specs/invitations/spec.md "A role-holder no longer sees the
-    invitation once someone else's delegation is assigned" — clause (c)
-    requires no delegate be assigned to the current step.
+    """specs/invitations/spec.md "A role-holder keeps seeing the invitation
+    once someone else's delegation is assigned" — clause (c) does not
+    require the current step to be undelegated
+    (invitation-relevant-to-me-retains-role-visibility-after-delegation).
     """
     role = RoleFactory.build(id=uuid.uuid4(), name=f"relevant-role-{uuid.uuid4().hex[:8]}")
     db_session.add(role)
@@ -1866,6 +1910,159 @@ async def test_list_invitations_relevant_to_me_role_holder_loses_visibility_once
     await db_session.commit()
 
     token = issue_token(role_holder)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_role_holder_loses_visibility_once_step_acted_on(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "A role-holder loses visibility once the
+    step is actually approved or rejected" — clause (c) only matches while
+    the role's step is still the current pending one, delegated or not.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"relevant-role-{uuid.uuid4().hex[:8]}")
+    db_session.add(role)
+    await db_session.flush()
+    invitation = await _invitation_with_role_step(db_session, branch.id, role)
+
+    role_holder = _make_role_holder(db_session, role, branch.id)
+    delegate = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"delegate-{uuid.uuid4().hex[:8]}@acme-test.example",
+        full_name="Delegate",
+    )
+    db_session.add(delegate)
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=role_holder.email, tenant_id=tenant.id, user_id=role_holder.id)
+    )
+    await db_session.commit()
+
+    step_repo = InvitationApprovalStepRepository(db_session)
+    step = (
+        await db_session.execute(
+            select(InvitationApprovalStep).where(
+                InvitationApprovalStep.invitation_id == invitation.id
+            )
+        )
+    ).scalar_one()
+    await step_repo.delegate_if_eligible(
+        step.id, delegated_to_user_id=delegate.id, delegated_by_user_id=role_holder.id
+    )
+    await db_session.commit()
+    await step_repo.approve_if_pending(step.id, user_id=delegate.id)
+    await db_session.commit()
+
+    token = issue_token(role_holder)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id not in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_actor_keeps_visibility_after_own_step_approved(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "The caller who personally approved a step
+    keeps seeing the invitation forever, via clause (d)"
+    (reception-retains-visibility-and-delegation-after-own-step) — unlike
+    clause (c), clause (d) does not drop off once the step the caller acted
+    on stops being current.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"relevant-role-{uuid.uuid4().hex[:8]}")
+    db_session.add(role)
+    await db_session.flush()
+    invitation = await _invitation_with_role_step(db_session, branch.id, role)
+
+    role_holder = _make_role_holder(db_session, role, branch.id)
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=role_holder.email, tenant_id=tenant.id, user_id=role_holder.id)
+    )
+    await db_session.commit()
+
+    step = (
+        await db_session.execute(
+            select(InvitationApprovalStep).where(
+                InvitationApprovalStep.invitation_id == invitation.id
+            )
+        )
+    ).scalar_one()
+    await InvitationApprovalStepRepository(db_session).approve_if_pending(
+        step.id, user_id=role_holder.id
+    )
+    await db_session.commit()
+
+    token = issue_token(role_holder)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_non_actor_role_holder_gains_nothing_from_clause_d(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "clause (d) is keyed to the specific person
+    who acted, not to a role" — a different holder of the same role, who
+    never personally acted on the step, gains no visibility once it's no
+    longer current.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"relevant-role-{uuid.uuid4().hex[:8]}")
+    db_session.add(role)
+    await db_session.flush()
+    invitation = await _invitation_with_role_step(db_session, branch.id, role)
+
+    acting_holder = _make_role_holder(db_session, role, branch.id)
+    bystander_holder = _make_role_holder(db_session, role, branch.id)
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(
+            email=bystander_holder.email, tenant_id=tenant.id, user_id=bystander_holder.id
+        )
+    )
+    await db_session.commit()
+
+    step = (
+        await db_session.execute(
+            select(InvitationApprovalStep).where(
+                InvitationApprovalStep.invitation_id == invitation.id
+            )
+        )
+    ).scalar_one()
+    await InvitationApprovalStepRepository(db_session).approve_if_pending(
+        step.id, user_id=acting_holder.id
+    )
+    await db_session.commit()
+
+    token = issue_token(bystander_holder)
     response = await client.get(
         "/api/v1/invitations",
         params={"relevantToMe": "true"},
@@ -2863,8 +3060,11 @@ async def test_created_invitation_current_step_id_is_directly_actionable(
     steps/{stepId}/approve` expects, with no separate lookup needed. Every
     newly created invitation's ownership step is role-identified for the
     tenant's default host role (role-based-invitation-workflow), so a
-    holder of that role is the current approver — no resolved `hostId` at
-    creation anymore.
+    holder of that role — e.g. Reception — is the current approver and may
+    approve it directly like any other step (`specs/approvals/spec.md`
+    "The Ownership Step Is a Plain Role-Identified Step, Approvable
+    Directly") — no resolved `hostId` results from approving it directly,
+    since only delegating a step resolves the host.
     """
     # `_default_host_role` (this module's autouse fixture) seeds "reception"
     # with no permissions attached — enough for snapshot logic, not enough
@@ -2903,6 +3103,7 @@ async def test_created_invitation_current_step_id_is_directly_actionable(
     )
     assert response.status_code == 200, response.text
     assert response.json()["data"]["status"] == "approved"
+    assert response.json()["data"]["hostId"] is None
 
 
 async def test_create_invitation_unknown_purpose_id_rejected(
@@ -4900,6 +5101,63 @@ async def test_reschedule_invitation_success(
 
     assert len(reschedule_calls) == 1
     assert reschedule_calls[0]["invitation_id"] == str(invitation.id)
+
+
+async def test_reschedule_invitation_captures_previous_schedule_and_audit_diff(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """`add-reschedule-history/design.md`: a reschedule snapshots the
+    invitation's prior date/time onto `previous_preferred_visit_date`/`_time`,
+    bumps `rescheduled_at`/`reschedule_count`, and records the before/after
+    values on the `invitation_rescheduled` audit-log entry — none of which
+    existed before this change (the old date/time was simply overwritten).
+    """
+    monkeypatch.setattr(tasks.send_reschedule_notification, "delay", lambda **kw: None)
+
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="submitted",
+        preferred_visit_date=date(2026, 10, 1),
+        preferred_visit_time=time(9, 0, 0),
+        reschedule_count=0,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/reschedule",
+        json={"preferredVisitDate": "2026-12-01", "preferredVisitTime": "15:30:00"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+    await db_session.refresh(invitation)
+    assert invitation.previous_preferred_visit_date.isoformat() == "2026-10-01"
+    assert invitation.previous_preferred_visit_time.isoformat() == "09:00:00"
+    assert invitation.reschedule_count == 1
+    assert invitation.rescheduled_at is not None
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{invitation.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert detail_response.status_code == 200
+    detail = detail_response.json()["data"]
+    assert detail["previousPreferredVisitDate"] == "2026-10-01"
+    assert detail["previousPreferredVisitTime"] == "09:00:00"
+    assert detail["rescheduleCount"] == 1
+    assert detail["rescheduledAt"] is not None
+
+    audit_stmt = select(AuditLog).where(
+        AuditLog.action == "invitation_rescheduled",
+        AuditLog.entity_id == invitation.id,
+    )
+    [entry] = (await db_session.execute(audit_stmt)).scalars().all()
+    assert entry.diff == {
+        "before": {"preferredVisitDate": "2026-10-01", "preferredVisitTime": "09:00:00"},
+        "after": {"preferredVisitDate": "2026-12-01", "preferredVisitTime": "15:30:00"},
+    }
 
 
 async def test_reschedule_invitation_after_check_in_rejected(

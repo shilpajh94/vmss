@@ -559,6 +559,10 @@ async def _to_invitation_detail_out(
         host_id=invitation.host_id,
         preferred_visit_date=invitation.preferred_visit_date,
         preferred_visit_time=invitation.preferred_visit_time,
+        previous_preferred_visit_date=invitation.previous_preferred_visit_date,
+        previous_preferred_visit_time=invitation.previous_preferred_visit_time,
+        rescheduled_at=invitation.rescheduled_at,
+        reschedule_count=invitation.reschedule_count,
         expected_duration=invitation.expected_duration,
         department_to_visit=invitation.department_to_visit,
         additional_notes=invitation.additional_notes,
@@ -1074,6 +1078,8 @@ async def reschedule_invitation(
     await authorize_branch_id_tolerant(
         tenant_db, user, "invitations:reschedule", invitation.branch_id
     )
+    previous_preferred_visit_date = invitation.preferred_visit_date
+    previous_preferred_visit_time = invitation.preferred_visit_time
     invitation = await service.reschedule_invitation(
         tenant_db,
         invitation,
@@ -1088,6 +1094,24 @@ async def reschedule_invitation(
         action="invitation_rescheduled",
         entity_type="Invitation",
         entity_id=invitation.id,
+        diff={
+            "before": {
+                "preferredVisitDate": (
+                    previous_preferred_visit_date.isoformat()
+                    if previous_preferred_visit_date
+                    else None
+                ),
+                "preferredVisitTime": (
+                    previous_preferred_visit_time.isoformat()
+                    if previous_preferred_visit_time
+                    else None
+                ),
+            },
+            "after": {
+                "preferredVisitDate": invitation.preferred_visit_date.isoformat(),
+                "preferredVisitTime": invitation.preferred_visit_time.isoformat(),
+            },
+        },
     )
     return success_response(data=to_invitation_out(invitation))
 

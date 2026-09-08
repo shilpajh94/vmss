@@ -81,13 +81,25 @@ The ownership step never has `escalatesAt`/`autoApprovesAt` — no rule backs
 it, so both stay null (consistent with "an unconfigured duration leaves its
 timestamp null"). It's role-identified, not host-identified, at snapshot
 time — the invitation has no resolved host yet at this point. The actual
-host is established afterward, exclusively by **delegating** this step to a
-specific person (see "Delegation" below) — doing so also sets the
-invitation's `hostId`/`hostNameOrEmail` (`docs/features/invitations.md`) in
-the same transaction, and notifies the newly-named host (push, and a
-`"You've been named host"` email — `invitations/tasks.py::
-send_host_creation_notification`, repurposed from firing at creation to
-firing on this delegation instead).
+host is established afterward by **delegating** any step — this one or a
+later one in the workflow chain (see "Delegation" below) — doing so also
+sets the invitation's `hostId`/`hostNameOrEmail`
+(`docs/features/invitations.md`) in the same transaction, and notifies the
+newly-named host (push, and a `"You've been named host"` email —
+`invitations/tasks.py::send_host_creation_notification`, repurposed from
+firing at creation to firing on this delegation instead). Delegating a
+later step supersedes whichever host was previously resolved — the
+invitation's host always reflects the most recent delegation, at any
+`stepOrder`, not just this one.
+
+**Approvable directly, same as any other step**: `stepOrder` 0 has no
+special approval gate — the owning-role holder (e.g. `reception`) may
+`approve` it directly, exactly as they would `delegate` it, the same
+role-match authorization every other step uses. Approving it directly just
+means no host ever gets resolved from that step (`hostId` stays null unless
+some step is delegated); a caller who wants to name a specific host still
+uses `delegate`, not `approve`. Once delegated, the named delegate approves
+the step like any other current pending step.
 
 ## Push notifications on step activation
 
@@ -159,7 +171,18 @@ delegate if they are:
 - otherwise already authorized to act on the current step directly
   (role-match, or the step's existing delegate re-delegating onward); or
 - an `invitations:approve-override` holder, for any step regardless of role
-  or host match.
+  or host match; or
+- the one who **personally approved the immediately preceding step**
+  (`stepOrder - 1`) — regardless of whether they hold the current step's own
+  role. This lets Reception, having approved the ownership step directly
+  (without delegating it), hand the workflow's next configured step
+  straight to whoever should act on it, rather than waiting for a holder of
+  that role to notice it themselves
+  (`reception-retains-visibility-and-delegation-after-own-step`). It only
+  ever reaches back one step — approving `stepOrder` 1 doesn't grant any
+  privilege over `stepOrder` 3 once `stepOrder` 2 has also been approved by
+  someone else — and never applies to `stepOrder` 0 itself (no preceding
+  step exists).
 
 **Named-delegate eligibility** depends on which step is being delegated:
 
@@ -169,12 +192,18 @@ delegate if they are:
   (`role-based-invitation-workflow`): the real host is normally not a
   front-office employee, so requiring them to hold the default host role
   would defeat the point of delegating ownership to them in the first
-  place. Delegating this step also resolves the invitation's host — see
-  "The ownership step" above.
+  place.
 - **Every other role-identified step** (the category's own configured
   chain, `stepOrder` 1+): the delegate must hold that step's
   `approverRoleId` role at the invitation's branch (or company-wide) — the
   original, unchanged rule.
+
+**Every** delegation — at any `stepOrder`, first or repeat — also
+resolves/updates the invitation's `hostId`/`hostNameOrEmail` to that
+delegate and fires the same host-assigned notification (extended from the
+original `stepOrder`-0-only rule; see "The ownership step" above). The
+host always reflects the most recently delegated step, so delegating a
+later step in the chain supersedes whoever was resolved as host before.
 
 A step can be re-delegated any number of times — each delegation overwrites
 the prior one rather than accumulating multiple delegates. Delegating a step

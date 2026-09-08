@@ -1413,6 +1413,182 @@ async def test_delegate_step_role_holder_delegates_later_step_succeeds(
     assert updated.delegated_by_user_id == caller.id
 
 
+async def _reception_approved_two_step_invitation(
+    db_session: AsyncSession, branch: Branch
+) -> tuple[Invitation, User, Role]:
+    """A `submitted` invitation whose role-identified `stepOrder` 0
+    ownership step has already been approved directly (not delegated) by a
+    specific owning-role user, with a `stepOrder` 1 step — role-identified
+    for a *different* role the approver does not hold — now current and
+    pending. Backs the "previous-step-approver may delegate the next step"
+    tests (reception-retains-visibility-and-delegation-after-own-step).
+    Returns `(invitation, step_zero_approver, step_one_role)`.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    owning_role = RoleFactory.build(id=uuid.uuid4(), name=f"owning-role-{suffix}", permissions=[])
+    step_one_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"step-one-role-{suffix}", permissions=[]
+    )
+    db_session.add_all([owning_role, step_one_role])
+    await db_session.flush()
+
+    invitation = _build_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.flush()
+
+    step_zero_approver = await _user_with_role(
+        db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
+    )
+
+    acted_now = datetime.now(UTC)
+    db_session.add_all(
+        [
+            InvitationApprovalStepFactory.build(
+                id=uuid.uuid4(),
+                invitation_id=invitation.id,
+                step_order=0,
+                approver_role_id=owning_role.id,
+                approver_user_id=None,
+                status="approved",
+                acted_by_user_id=step_zero_approver.id,
+                acted_at=acted_now,
+            ),
+            InvitationApprovalStepFactory.build(
+                id=uuid.uuid4(),
+                invitation_id=invitation.id,
+                step_order=1,
+                approver_role_id=step_one_role.id,
+                status="pending",
+            ),
+        ]
+    )
+    await db_session.commit()
+    return invitation, step_zero_approver, step_one_role
+
+
+async def test_delegate_step_previous_step_approver_delegates_next_step_succeeds(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "The previous step's approver delegates the
+    next step to the workflow-configured role"
+    (reception-retains-visibility-and-delegation-after-own-step) — Reception,
+    having approved the ownership step directly rather than delegating it,
+    may still route the next, differently-role-identified step to whoever
+    the workflow configures for it.
+    """
+    invitation, step_zero_approver, step_one_role = await _reception_approved_two_step_invitation(
+        db_session, branch
+    )
+    delegate = await _user_with_role(db_session, branch.id, role=step_one_role)
+    step_one = await _get_step(db_session, invitation.id, 1)
+
+    token = issue_token(step_zero_approver)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    updated = await _get_step(db_session, invitation.id, 1)
+    assert updated.delegated_to_user_id == delegate.id
+    assert updated.delegated_by_user_id == step_zero_approver.id
+
+
+async def test_delegate_step_previous_step_approver_privilege_does_not_chain_back_further(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "Only the step's own approver, not an earlier
+    one, gets the previous-step delegation privilege" — clause (d) only
+    reaches back exactly one step, so `stepOrder` 0's approver gains no
+    delegation authority over `stepOrder` 2 once `stepOrder` 1 has been
+    approved by someone else.
+    """
+    invitation, step_zero_approver, step_one_role = await _reception_approved_two_step_invitation(
+        db_session, branch
+    )
+    step_two_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"step-two-role-{uuid.uuid4().hex[:8]}", permissions=[]
+    )
+    db_session.add(step_two_role)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=2,
+            approver_role_id=step_two_role.id,
+            status="pending",
+        )
+    )
+    await db_session.commit()
+
+    step_one_approver = await _user_with_role(
+        db_session, branch.id, role=step_one_role, extra_permission_codes=("invitations:approve",)
+    )
+    step_one = await _get_step(db_session, invitation.id, 1)
+    await InvitationApprovalStepRepository(db_session).approve_if_pending(
+        step_one.id, user_id=step_one_approver.id
+    )
+    await db_session.commit()
+
+    delegate = await _user_with_role(db_session, branch.id, role=step_two_role)
+    step_two = await _get_step(db_session, invitation.id, 2)
+    await _grant_approve_permission(db_session, step_zero_approver, branch.id)
+
+    token = issue_token(step_zero_approver)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_two.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    unchanged = await _get_step(db_session, invitation.id, 2)
+    assert unchanged.delegated_to_user_id is None
+
+
+async def test_delegate_step_later_step_also_resolves_and_updates_host(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "Delegating a later step also updates the
+    resolved host" (reception-retains-visibility-and-delegation-after-own-
+    step) — extended from the original `stepOrder`-0-only rule, delegating
+    *any* step resolves/updates the invitation's `hostId`.
+    """
+    invitation, step_one_role, step_two_role = await _two_step_invitation(db_session, branch)
+    assert invitation.host_id is None
+    caller = await _user_with_role(
+        db_session, branch.id, role=step_one_role, extra_permission_codes=("invitations:approve",)
+    )
+    delegate = await _user_with_role(db_session, branch.id, role=step_one_role)
+    step_one = await _get_step(db_session, invitation.id, 1)
+
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["hostId"] == str(delegate.id)
+
+    refreshed = (
+        await db_session.execute(select(Invitation).where(Invitation.id == invitation.id))
+    ).scalar_one()
+    assert refreshed.host_id == delegate.id
+    assert refreshed.host_name_or_email == delegate.full_name
+
+
 async def test_delegate_step_current_delegate_re_delegates_chaining(
     client: AsyncClient,
     branch: Branch,
@@ -1837,6 +2013,80 @@ async def test_delegate_ownership_step_to_non_role_holder_succeeds(
     updated = await _get_step(db_session, invitation.id, 0)
     assert updated.status == "pending"
     assert updated.delegated_to_user_id == delegate.id
+
+
+async def test_approve_ownership_step_directly_succeeds_without_delegation(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """The `stepOrder` 0 ownership step is a plain role-identified step —
+    its owning-role holder (e.g. `reception`) may approve it directly,
+    exactly as they could delegate it. Approving it directly just leaves
+    the invitation's `hostId` unresolved, since only delegating a step
+    resolves it (see "Delegating the Ownership Step Also Resolves the
+    Invitation's Host").
+    """
+    invitation, owning_role = await _role_owned_invitation(db_session, branch)
+    caller = await _user_with_role(
+        db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
+    )
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["hostId"] is None
+
+    updated = await _get_step(db_session, invitation.id, 0)
+    assert updated.status == "approved"
+
+
+async def test_approve_ownership_step_after_delegation_succeeds(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Once the ownership step has been delegated to the real host, that
+    delegate approves it normally — the delegate-only rule only blocks the
+    undelegated owning-role-holder path.
+    """
+    invitation, owning_role = await _role_owned_invitation(db_session, branch)
+    caller = await _user_with_role(
+        db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
+    )
+    delegate_permission = await _get_or_create_permission(db_session, "invitations:approve")
+    delegate_role = RoleFactory.build(
+        id=uuid.uuid4(), name="real-host-role-approve", permissions=[delegate_permission]
+    )
+    db_session.add(delegate_role)
+    await db_session.flush()
+    delegate = await _user_with_role(db_session, branch.id, role=delegate_role)
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    caller_token = issue_token(caller)
+    delegate_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {caller_token}"},
+    )
+    assert delegate_response.status_code == 200, delegate_response.text
+
+    delegate_token = issue_token(delegate)
+    approve_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/approve",
+        headers={"Authorization": f"Bearer {delegate_token}"},
+    )
+    assert approve_response.status_code == 200, approve_response.text
+
+    updated = await _get_step(db_session, invitation.id, 0)
+    assert updated.status == "approved"
+    assert updated.acted_by_user_id == delegate.id
 
 
 async def test_delegate_ownership_step_lacking_approve_permission_rejected(
