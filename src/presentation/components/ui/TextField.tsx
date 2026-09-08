@@ -27,6 +27,18 @@ export function TextField({ label, value, onChange, placeholder, type = 'text', 
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        onClick={(event) => {
+          // Firefox (and some Chromium builds) only open the native date/time
+          // picker when the click lands exactly on the tiny calendar icon.
+          // Forcing showPicker() on any click makes the whole field clickable.
+          if (type === 'date' || type === 'time') {
+            try {
+              event.currentTarget.showPicker?.()
+            } catch {
+              // unsupported or blocked (e.g. no user-gesture context) — ignore
+            }
+          }
+        }}
         placeholder={placeholder}
         aria-required={required}
         min={min}
