@@ -25,6 +25,7 @@ import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-vi
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
 import { RequestAuditReportUseCase } from './data/use-cases/request-audit-report'
 import { GetAuditReportUseCase } from './data/use-cases/get-audit-report'
+import { DownloadAuditReportUseCase } from './data/use-cases/download-audit-report'
 import { TrackVisitRequestUseCase } from './data/use-cases/track-visit-request'
 import { RequestVisitorOtpUseCase } from './data/use-cases/request-visitor-otp'
 import { VerifyVisitorOtpUseCase } from './data/use-cases/verify-visitor-otp'
@@ -132,6 +133,7 @@ export interface AppDependencies {
   getAuditTrailUseCase: GetAuditTrailUseCase
   requestAuditReportUseCase: RequestAuditReportUseCase
   getAuditReportUseCase: GetAuditReportUseCase
+  downloadAuditReportUseCase: DownloadAuditReportUseCase
   getOrganisationConfigUseCase: GetOrganisationConfigUseCase
   updateOrganisationConfigUseCase: UpdateOrganisationConfigUseCase
   listBranchesUseCase: ListBranchesUseCase
@@ -211,6 +213,7 @@ export function createApp(): AppDependencies {
   let getAuditTrailUseCase: GetAuditTrailUseCase | undefined
   let requestAuditReportUseCase: RequestAuditReportUseCase | undefined
   let getAuditReportUseCase: GetAuditReportUseCase | undefined
+  let downloadAuditReportUseCase: DownloadAuditReportUseCase | undefined
   let organisationConfigRepository: OrganisationConfigRepository | undefined
   let getOrganisationConfigUseCase: GetOrganisationConfigUseCase | undefined
   let updateOrganisationConfigUseCase: UpdateOrganisationConfigUseCase | undefined
@@ -419,6 +422,11 @@ export function createApp(): AppDependencies {
   const resolveGetAuditReportUseCase = (): GetAuditReportUseCase => {
     getAuditReportUseCase ??= new GetAuditReportUseCase(resolveAuditTrailRepository())
     return getAuditReportUseCase
+  }
+
+  const resolveDownloadAuditReportUseCase = (): DownloadAuditReportUseCase => {
+    downloadAuditReportUseCase ??= new DownloadAuditReportUseCase(resolveAuditTrailRepository())
+    return downloadAuditReportUseCase
   }
 
   const resolveOrganisationConfigRepository = (): OrganisationConfigRepository => {
@@ -788,6 +796,9 @@ export function createApp(): AppDependencies {
     },
     get getAuditReportUseCase() {
       return resolveGetAuditReportUseCase()
+    },
+    get downloadAuditReportUseCase() {
+      return resolveDownloadAuditReportUseCase()
     },
     get getOrganisationConfigUseCase() {
       return resolveGetOrganisationConfigUseCase()

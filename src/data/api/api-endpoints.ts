@@ -109,6 +109,11 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  DOWNLOAD_AUDIT_REPORT: {
+    endpoint: "/audit-trail/reports/:jobId/download",
+    method: "GET",
+    hasToken: true,
+  },
   GET_ORGANISATION_CONFIG: {
     endpoint: "/company",
     method: "GET",
