@@ -443,6 +443,10 @@ class InvitationDetailOut(CamelModel):
     host_id: uuid.UUID | None = None
     preferred_visit_date: date | None
     preferred_visit_time: time | None
+    previous_preferred_visit_date: date | None = None
+    previous_preferred_visit_time: time | None = None
+    rescheduled_at: datetime | None = None
+    reschedule_count: int = 0
     expected_duration: str | None
     department_to_visit: str | None
     additional_notes: str | None

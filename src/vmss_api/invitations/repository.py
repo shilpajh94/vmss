@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, exists, func, or_, select, update
+from sqlalchemy import Select, exists, func, or_, select, update
 from sqlalchemy.orm import aliased, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
@@ -29,28 +29,27 @@ def _branch_filter(branch_scope: BranchScope) -> Any | None:
 def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
     """specs/invitations/spec.md "Caller Lists Invitations Relevant to
     Themselves via relevantToMe": invitations where `user_id` is (a) the
-    snapshotted host (the `stepOrder` 0 step's `approver_user_id`), (b) has
-    been delegated any step, regardless of that step's status, or (c)
-    currently holds — via branch-scoped `UserBranchRole` at the invitation's
-    own branch or company-wide — the role of the invitation's current
-    pending, undelegated, role-identified step. (c) closes the gap where a
-    valid role-based approver had no way to find their pending work short of
-    the unfiltered branch-wide list (checkin-approval-workflow-improvements).
-    All three clauses are expressed as (correlated, where needed) subqueries
-    against `invitation_approval_steps`, not a per-invitation loop
-    (query-performance.md §2).
+    invitation's own `host_id` — checked directly rather than via a
+    `stepOrder` 0 `InvitationApprovalStep`, since an auto-approved invitation
+    never gets any approval steps created for it and would otherwise be
+    invisible to its own host — (b) has been delegated any step, regardless
+    of that step's status, or (c) currently holds — via branch-scoped
+    `UserBranchRole` at the invitation's own branch or company-wide — the
+    role of the invitation's current pending, undelegated, role-identified
+    step. (c) closes the gap where a valid role-based approver had no way to
+    find their pending work short of the unfiltered branch-wide list
+    (checkin-approval-workflow-improvements). (b) and (c) are expressed as
+    (correlated, where needed) subqueries against `invitation_approval_steps`,
+    not a per-invitation loop (query-performance.md §2).
     """
-    host_or_delegate = Invitation.id.in_(
-        select(InvitationApprovalStep.invitation_id).where(
-            InvitationApprovalStep.deleted_at.is_(None),
-            or_(
-                and_(
-                    InvitationApprovalStep.step_order == 0,
-                    InvitationApprovalStep.approver_user_id == user_id,
-                ),
+    host_or_delegate = or_(
+        Invitation.host_id == user_id,
+        Invitation.id.in_(
+            select(InvitationApprovalStep.invitation_id).where(
+                InvitationApprovalStep.deleted_at.is_(None),
                 InvitationApprovalStep.delegated_to_user_id == user_id,
-            ),
-        )
+            )
+        ),
     )
 
     # "Current pending step" mirrors
@@ -307,12 +306,23 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
     async def reschedule_if_eligible(
         self, id_: uuid.UUID, *, preferred_visit_date: Any, preferred_visit_time: Any
     ) -> Invitation | None:
+        """`previous_preferred_visit_date`/`_time` are set from
+        `Invitation.preferred_visit_date`/`_time` in the same `UPDATE` that
+        overwrites those columns — every `SET` clause in one Postgres
+        `UPDATE` reads the pre-update row, so this reliably captures the
+        immediately-prior schedule rather than the just-written new one
+        (`add-reschedule-history/design.md`).
+        """
         stmt = (
             update(Invitation)
             .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
             .values(
+                previous_preferred_visit_date=Invitation.preferred_visit_date,
+                previous_preferred_visit_time=Invitation.preferred_visit_time,
                 preferred_visit_date=preferred_visit_date,
                 preferred_visit_time=preferred_visit_time,
+                rescheduled_at=datetime.now(UTC),
+                reschedule_count=Invitation.reschedule_count + 1,
             )
             .returning(Invitation)
         )

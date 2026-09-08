@@ -428,6 +428,43 @@ async def test_create_invitation_auto_approve_disabled_is_awaiting_approval(
     assert approval_calls == []
 
 
+async def test_create_invitation_auto_approve_host_sees_it_in_approved_section(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    visit_host: User,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    """Regression: an auto-approved invitation gets no `InvitationApprovalStep`
+    rows at all (create_invitation's `if not auto_approved:` gate), so the
+    host must be resolved via `Invitation.host_id` directly rather than a
+    `stepOrder` 0 step's `approver_user_id` — otherwise the host can never
+    find their own invitation via `relevantToMe`, in any status section.
+    """
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), auto_approve_pre_registered_visitors=True))
+    await db_session.commit()
+    monkeypatch.setattr(tasks.send_approval_notification, "delay", lambda **kw: None)
+    monkeypatch.setattr(tasks.send_host_creation_notification, "delay", lambda **kw: None)
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["hostId"] = str(visit_host.id)
+    created = await _create_invitation_success(client, token, branch, payload=payload)
+    assert created["status"] == "approved"
+
+    host_token = issue_token(visit_host)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true", "status": "approved"},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert created["trackingId"] in tracking_ids
+
+
 async def test_create_invitation_no_company_profile_defaults_to_awaiting_approval(
     client: AsyncClient, user: User, branch: Branch, monkeypatch
 ) -> None:
@@ -4865,6 +4902,63 @@ async def test_reschedule_invitation_success(
 
     assert len(reschedule_calls) == 1
     assert reschedule_calls[0]["invitation_id"] == str(invitation.id)
+
+
+async def test_reschedule_invitation_captures_previous_schedule_and_audit_diff(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """`add-reschedule-history/design.md`: a reschedule snapshots the
+    invitation's prior date/time onto `previous_preferred_visit_date`/`_time`,
+    bumps `rescheduled_at`/`reschedule_count`, and records the before/after
+    values on the `invitation_rescheduled` audit-log entry — none of which
+    existed before this change (the old date/time was simply overwritten).
+    """
+    monkeypatch.setattr(tasks.send_reschedule_notification, "delay", lambda **kw: None)
+
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="submitted",
+        preferred_visit_date=date(2026, 10, 1),
+        preferred_visit_time=time(9, 0, 0),
+        reschedule_count=0,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/reschedule",
+        json={"preferredVisitDate": "2026-12-01", "preferredVisitTime": "15:30:00"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+    await db_session.refresh(invitation)
+    assert invitation.previous_preferred_visit_date.isoformat() == "2026-10-01"
+    assert invitation.previous_preferred_visit_time.isoformat() == "09:00:00"
+    assert invitation.reschedule_count == 1
+    assert invitation.rescheduled_at is not None
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{invitation.id}", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert detail_response.status_code == 200
+    detail = detail_response.json()["data"]
+    assert detail["previousPreferredVisitDate"] == "2026-10-01"
+    assert detail["previousPreferredVisitTime"] == "09:00:00"
+    assert detail["rescheduleCount"] == 1
+    assert detail["rescheduledAt"] is not None
+
+    audit_stmt = select(AuditLog).where(
+        AuditLog.action == "invitation_rescheduled",
+        AuditLog.entity_id == invitation.id,
+    )
+    [entry] = (await db_session.execute(audit_stmt)).scalars().all()
+    assert entry.diff == {
+        "before": {"preferredVisitDate": "2026-10-01", "preferredVisitTime": "09:00:00"},
+        "after": {"preferredVisitDate": "2026-12-01", "preferredVisitTime": "15:30:00"},
+    }
 
 
 async def test_reschedule_invitation_after_check_in_rejected(
