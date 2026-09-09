@@ -237,6 +237,11 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  CREATE_ROLE: {
+    endpoint: "/auth/roles",
+    method: "POST",
+    hasToken: true,
+  },
   LIST_PERMISSIONS: {
     endpoint: "/auth/permissions",
     method: "GET",
