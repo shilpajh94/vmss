@@ -3,8 +3,24 @@ import { useNavigate } from 'react-router'
 import { onMessage } from 'firebase/messaging'
 import { getFirebaseMessaging } from '../../../infrastructure/firebase/firebase-app'
 import { useToast } from '../toast/toast-context'
-import { useNotificationCenter } from '../../context/notification-center-context'
+import { useNotificationCenter, type NotificationAddressingReason } from '../../context/notification-center-context'
 import { usePushNotifications } from '../../hooks/use-push-notifications'
+import { useAppDependencies } from '../../context/app-dependencies-context'
+
+// role-based-invitation-workflow: the push payload's `data` carries
+// `assignedRoleId`/`assignedUserId`/`reason` so a role-addressed
+// notification ("New invitation for Front Office") can be visually
+// distinguished from a person-addressed one ("Delegated to you"). Resolving
+// `assignedRoleId` to a display name needs the tenant's role list, which
+// this provider (mounted once at the app root, independent of which board
+// page is open) doesn't otherwise have — fetched once here rather than
+// threading the board's own `roleNameById` state down into a
+// page-independent provider.
+function buildAddressingLabel(reason: NotificationAddressingReason | undefined, roleName: string | undefined): string | undefined {
+  if (reason === 'role_assigned') return `New invitation for ${roleName ?? 'your role'}`
+  if (reason === 'delegated') return 'Delegated to you'
+  return undefined
+}
 
 // The real push payload's `data` carries `invitationId` (and `trackingId`/`action`),
 // not a recipient-role field, so admin vs. staff is inferred from which area this
@@ -35,7 +51,12 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
   const navigate = useNavigate()
   const notificationCenter = useNotificationCenter()
   const { registerCurrentDevice } = usePushNotifications()
+  const { listRolesUseCase } = useAppDependencies()
   const lastRegisteredAtRef = useRef(0)
+  // Populated once, lazily, the first time a role-addressed push actually
+  // needs a name — not on mount, since this provider renders before a
+  // caller may be signed in at all.
+  const roleNameByIdRef = useRef<Record<string, string> | undefined>(undefined)
 
   // `notificationCenter`'s context value changes identity every time a notification
   // is added (its `notifications` state updates), and `toast`/`navigate` can also
@@ -43,9 +64,9 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
   // subscription below stay mounted once instead of tearing down and
   // re-subscribing on every received message — a resubscribe-per-message pattern
   // that silently stopped delivering anything after the first push.
-  const latestRef = useRef({ toast, navigate, notificationCenter })
+  const latestRef = useRef({ toast, navigate, notificationCenter, listRolesUseCase })
   useEffect(() => {
-    latestRef.current = { toast, navigate, notificationCenter }
+    latestRef.current = { toast, navigate, notificationCenter, listRolesUseCase }
   })
 
   useEffect(() => {
@@ -87,13 +108,35 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
     if (!messaging) return
 
     return onMessage(messaging, (payload) => {
-      const { toast, navigate, notificationCenter } = latestRef.current
+      const { toast, navigate, notificationCenter, listRolesUseCase } = latestRef.current
       const invitationId = payload.data?.invitationId
       const message = payload.notification?.body ?? payload.notification?.title ?? 'You have a new notification.'
       const onClick = invitationId ? () => navigate(buildInvitationPath(invitationId)) : undefined
+      const reason = payload.data?.reason as NotificationAddressingReason | undefined
+      const assignedRoleId = payload.data?.assignedRoleId
 
-      toast.info(message, { onClick })
-      notificationCenter.addNotification({ message, onClick })
+      const dispatch = (roleName: string | undefined) => {
+        const addressingLabel = buildAddressingLabel(reason, roleName)
+        const displayMessage = addressingLabel ? `${addressingLabel}: ${message}` : message
+        toast.info(displayMessage, { onClick })
+        notificationCenter.addNotification({ message: displayMessage, onClick, reason })
+      }
+
+      if (reason === 'role_assigned' && assignedRoleId && !roleNameByIdRef.current) {
+        listRolesUseCase
+          .execute()
+          .then((roles) => {
+            roleNameByIdRef.current = Object.fromEntries(roles.map((role) => [role.id, role.name]))
+            dispatch(roleNameByIdRef.current[assignedRoleId])
+          })
+          .catch((error: unknown) => {
+            console.error('Failed to resolve role name for push notification label', error)
+            dispatch(undefined)
+          })
+        return
+      }
+
+      dispatch(assignedRoleId ? roleNameByIdRef.current?.[assignedRoleId] : undefined)
     })
     // Intentionally subscribes once for the component's lifetime — see latestRef above.
   }, [])

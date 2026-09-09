@@ -13,6 +13,7 @@ import {
   UserCheckIcon,
   UsersIcon,
 } from './icons'
+import logoMark from '../../assets/logo-mark.svg'
 
 export type AdminSidebarActiveItem =
   | 'dashboard'
@@ -75,9 +76,7 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
         onClick={() => navigate('/admin/dashboard')}
         className="flex items-center gap-2 pb-4 text-left"
       >
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-admin-accent">
-          <ShieldIcon className="size-4 text-white" />
-        </span>
+        <img src={logoMark} alt="" className="size-8 shrink-0" />
         <span className="font-display text-[22px] font-extrabold whitespace-nowrap text-white">VisitorPass</span>
       </button>
 

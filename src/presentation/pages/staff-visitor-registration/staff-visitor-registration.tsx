@@ -4,9 +4,6 @@ import { DashboardSidebar } from '../../components/DashboardSidebar'
 import { useAppDependencies } from '../../context/app-dependencies-context'
 import type { Branch } from '../../../domain/entities/branch-schema'
 import type { Building } from '../../../domain/entities/building-schema'
-import type { Department } from '../../../domain/entities/department-schema'
-import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
-import type { HostSearchResult } from '../../../domain/entities/host-search-schema'
 import type { StaffUser } from '../../../domain/entities/staff-user-schema'
 import type { VisitorCategory } from '../../../domain/entities/visitor-category-schema'
 import { CarriedItemsStep } from '../visitor-request/Components/steps/CarriedItemsStep'
@@ -22,19 +19,10 @@ import { STAFF_WIZARD_STEPS } from './types'
 
 export function StaffVisitorRegistrationPage() {
   const navigate = useNavigate()
-  const {
-    getCurrentStaffUserUseCase,
-    listHostEmployeesUseCase,
-    listBranchesUseCase,
-    listBuildingsUseCase,
-    listDepartmentsUseCase,
-    listVisitorCategoriesUseCase,
-  } = useAppDependencies()
+  const { getCurrentStaffUserUseCase, listBranchesUseCase, listBuildingsUseCase, listVisitorCategoriesUseCase } = useAppDependencies()
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [hostEmployees, setHostEmployees] = useState<HostEmployee[] | undefined>(undefined)
   const [branches, setBranches] = useState<Branch[] | undefined>(undefined)
   const [buildings, setBuildings] = useState<Building[] | undefined>(undefined)
-  const [departments, setDepartments] = useState<Department[] | undefined>(undefined)
   const [visitorCategories, setVisitorCategories] = useState<VisitorCategory[] | undefined>(undefined)
 
   const {
@@ -64,46 +52,19 @@ export function StaffVisitorRegistrationPage() {
 
   const loadVisitInfoMasterData = useCallback(async () => {
     try {
-      const [employees, branchList, buildingList, departmentList, categoryList] = await Promise.all([
-        listHostEmployeesUseCase.execute(),
+      const [branchList, buildingList, categoryList] = await Promise.all([
         listBranchesUseCase.execute(),
         listBuildingsUseCase.execute(),
-        listDepartmentsUseCase.execute(),
         listVisitorCategoriesUseCase.execute(),
       ])
-      setHostEmployees(employees)
       setBranches(branchList)
       setBuildings(buildingList)
-      setDepartments(departmentList)
       setVisitorCategories(categoryList)
     } catch (error) {
       // Visit Info step falls back to free-text fields if master data can't be loaded.
       console.error('Failed to load visit info master data', error)
     }
-  }, [listHostEmployeesUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase, listVisitorCategoriesUseCase])
-
-  // Staff wizard already loads the full (authenticated) host roster up front,
-  // so search here is a client-side filter rather than a call to the public
-  // /hosts/search endpoint the kiosk-facing walk-in wizard uses.
-  const handleSearchHosts = useCallback(
-    async (query: string): Promise<HostSearchResult[]> => {
-      const normalizedQuery = query.trim().toLowerCase()
-      if (!normalizedQuery || !hostEmployees) return []
-
-      return hostEmployees
-        .filter(
-          (employee) => employee.fullName.toLowerCase().includes(normalizedQuery) || employee.email.toLowerCase().includes(normalizedQuery),
-        )
-        .slice(0, 10)
-        .map((employee) => ({
-          id: employee.id,
-          name: employee.fullName,
-          email: employee.email,
-          department: departments?.find((department) => department.id === employee.departmentId)?.name,
-        }))
-    },
-    [hostEmployees, departments],
-  )
+  }, [listBranchesUseCase, listBuildingsUseCase, listVisitorCategoriesUseCase])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -154,10 +115,8 @@ export function StaffVisitorRegistrationPage() {
                 value={formState.visitInfo}
                 onChange={(visitInfo) => setFormState({ ...formState, visitInfo })}
                 errors={errors}
-                onSearchHosts={handleSearchHosts}
                 branches={branches}
                 buildings={buildings}
-                departments={departments}
               />
             )}
             {currentStep === 2 && (

@@ -1,8 +1,12 @@
 import { useState } from 'react'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
 import { isValidPhoneNumber } from '../../../../utils/is-valid-phone-number'
-import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
-import { createEmptyVisitorFormEntry, type RegistrationType, type VisitorFormEntry } from '../../types'
+import {
+  createEmptyVisitorFormEntry,
+  type RegistrationType,
+  type VisitorCategoriesFieldState,
+  type VisitorFormEntry,
+} from '../../types'
 import { VisitorFieldsForm } from './VisitorFieldsForm'
 
 interface VisitorInfoStepProps {
@@ -15,7 +19,8 @@ interface VisitorInfoStepProps {
   uploadFile: (file: File) => Promise<string>
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
   errors: Record<string, string>
-  visitorCategories?: VisitorCategory[]
+  visitorCategoriesState: VisitorCategoriesFieldState
+  onRetryVisitorCategories: () => void
 }
 
 export function VisitorInfoStep({
@@ -28,7 +33,8 @@ export function VisitorInfoStep({
   uploadFile,
   getFilePreviewUrl,
   errors,
-  visitorCategories,
+  visitorCategoriesState,
+  onRetryVisitorCategories,
 }: VisitorInfoStepProps) {
   const [draftVisitor, setDraftVisitor] = useState<VisitorFormEntry | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
@@ -56,9 +62,8 @@ export function VisitorInfoStep({
     if (!draftVisitor) return
     const errors: Record<string, string> = {}
     if (!draftVisitor.fullName) errors.fullName = 'Full name is required.'
-    if (!draftVisitor.email) errors.email = 'Email is required.'
-    if (!draftVisitor.phone) errors.phone = 'Phone number is required.'
-    else if (!isValidPhoneNumber(draftVisitor.phone)) errors.phone = 'Enter a valid phone number.'
+    if (!draftVisitor.email && !draftVisitor.phone) errors.email = 'Either email or phone is required.'
+    if (draftVisitor.phone && !isValidPhoneNumber(draftVisitor.phone)) errors.phone = 'Enter a valid phone number.'
     if (!draftVisitor.idProofType) errors.idProofType = 'ID proof type is required.'
     if (!draftVisitor.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
     if (Object.keys(errors).length > 0) {
@@ -105,7 +110,8 @@ export function VisitorInfoStep({
           uploadFile={uploadFile}
           getFilePreviewUrl={getFilePreviewUrl}
           errors={errors}
-          visitorCategories={visitorCategories}
+          visitorCategoriesState={visitorCategoriesState}
+          onRetryVisitorCategories={onRetryVisitorCategories}
         />
       </div>
 
@@ -169,7 +175,8 @@ export function VisitorInfoStep({
                 uploadFile={uploadFile}
                 getFilePreviewUrl={getFilePreviewUrl}
                 errors={draftErrors}
-                visitorCategories={visitorCategories}
+                visitorCategoriesState={visitorCategoriesState}
+                onRetryVisitorCategories={onRetryVisitorCategories}
               />
               <div className="flex gap-3">
                 <button type="button" onClick={commitDraft} className="rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white">

@@ -13,6 +13,7 @@ export interface ReviewVisitorSummary {
   email: string
   phone: string
   visitorCategory?: string
+  preferredContactMethod?: 'email' | 'sms'
   idProofType: string
   idProofFileRef?: string
   idProofFileName?: string
@@ -111,6 +112,7 @@ export function ReviewConfirmStep({
   const visitors = [formState.primaryContact, ...formState.additionalVisitors]
 
   const visitorCategoryName = (id: string) => visitorCategories?.find((category) => category.id === id)?.name ?? id
+  const preferredContactMethodLabel = (method?: 'email' | 'sms') => (method === 'sms' ? 'SMS' : method === 'email' ? 'Email' : '')
 
   return (
     <div className="flex flex-col gap-6">
@@ -130,6 +132,9 @@ export function ReviewConfirmStep({
             ['Email', visitor.email],
             ['Phone', visitor.phone],
           ]
+          if (visitor.preferredContactMethod) {
+            rows.push(['Preferred Contact Method', preferredContactMethodLabel(visitor.preferredContactMethod)])
+          }
           rows.push(['Visitor Category', visitor.visitorCategory ? visitorCategoryName(visitor.visitorCategory) : ''])
           rows.push(['ID Proof', visitor.idProofType])
           rows.push([
@@ -148,13 +153,11 @@ export function ReviewConfirmStep({
         title="Visit Info"
         rows={[
           ['Purpose', formState.visitInfo.purpose],
-          ['Host', formState.visitInfo.hostNameOrEmail],
           ['Date', formState.visitInfo.preferredDate],
           ['Time', formState.visitInfo.preferredTime],
           ['Duration', formState.visitInfo.expectedDuration],
           ['Location', formState.visitInfo.location],
           ['Building', formState.visitInfo.building],
-          ['Department', formState.visitInfo.department],
           ['Additional Notes', formState.visitInfo.notes],
         ]}
       />

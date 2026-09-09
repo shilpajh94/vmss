@@ -4,11 +4,6 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: false,
   },
-  SEARCH_HOSTS: {
-    endpoint: "/hosts/search",
-    method: "GET",
-    hasToken: false,
-  },
   TRACK_VISIT_REQUEST: {
     endpoint: "/invitations/track",
     method: "GET",
@@ -69,6 +64,11 @@ export const API_ENDPOINTS = {
     method: "PATCH",
     hasToken: true,
   },
+  EDIT_INVITATION: {
+    endpoint: "/invitations/:id/edit",
+    method: "PATCH",
+    hasToken: true,
+  },
   DENY_INVITATION: {
     endpoint: "/invitations/:id/deny",
     method: "PATCH",
@@ -106,6 +106,11 @@ export const API_ENDPOINTS = {
   },
   GET_AUDIT_REPORT: {
     endpoint: "/audit-trail/reports/:jobId",
+    method: "GET",
+    hasToken: true,
+  },
+  DOWNLOAD_AUDIT_REPORT: {
+    endpoint: "/audit-trail/reports/:jobId/download",
     method: "GET",
     hasToken: true,
   },
@@ -230,6 +235,11 @@ export const API_ENDPOINTS = {
   LIST_ROLES: {
     endpoint: "/auth/roles",
     method: "GET",
+    hasToken: true,
+  },
+  CREATE_ROLE: {
+    endpoint: "/auth/roles",
+    method: "POST",
     hasToken: true,
   },
   LIST_PERMISSIONS: {

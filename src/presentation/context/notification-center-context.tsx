@@ -1,16 +1,25 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 
+// Mirrors the `reason` field the API's push payload carries
+// (role-based-invitation-workflow): `role_assigned` when the recipient was
+// reached via role-at-branch fan-out, `delegated` when reached as one
+// specific named person (a step delegate, or a newly assigned host).
+// Undefined for any push predating this addressing metadata.
+export type NotificationAddressingReason = 'role_assigned' | 'delegated'
+
 export interface NotificationCenterItem {
   id: string
   message: string
   receivedAt: string
   read: boolean
   onClick?: () => void
+  reason?: NotificationAddressingReason
 }
 
 interface AddNotificationInput {
   message: string
   onClick?: () => void
+  reason?: NotificationAddressingReason
 }
 
 interface NotificationCenterContextValue {
@@ -29,11 +38,12 @@ const MAX_NOTIFICATIONS = 50
 export function NotificationCenterProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<NotificationCenterItem[]>([])
 
-  const addNotification = useCallback(({ message, onClick }: AddNotificationInput) => {
+  const addNotification = useCallback(({ message, onClick, reason }: AddNotificationInput) => {
     const item: NotificationCenterItem = {
       id: crypto.randomUUID(),
       message,
       onClick,
+      reason,
       receivedAt: new Date().toISOString(),
       read: false,
     }

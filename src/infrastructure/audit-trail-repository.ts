@@ -56,7 +56,7 @@ export class HttpAuditTrailRepository implements AuditTrailRepository {
       parserSchema: AuditReportJobResponseSchema,
     })
 
-    return this.resolveDownloadUrls(response.data)
+    return response.data
   }
 
   async getReport(jobId: string): Promise<AuditReportJob> {
@@ -66,21 +66,17 @@ export class HttpAuditTrailRepository implements AuditTrailRepository {
       parserSchema: AuditReportJobResponseSchema,
     })
 
-    return this.resolveDownloadUrls(response.data)
+    return response.data
   }
 
-  // The API currently returns download links as bare storage paths (e.g.
-  // "var/storage/vmss/.../report.csv") rather than fetchable URLs — there is
-  // no confirmed static-file route for them yet. This resolves them against
-  // the API's origin as the most standard convention; revisit once the
-  // backend confirms how these paths are meant to be served.
-  private resolveDownloadUrls(job: AuditReportJob): AuditReportJob {
-    const origin = new URL(this.apiClient.getBaseUrl(), window.location.origin).origin
-
-    return {
-      ...job,
-      csvDownloadUrl: job.csvDownloadUrl ? `${origin}/${job.csvDownloadUrl}` : null,
-      pdfDownloadUrl: job.pdfDownloadUrl ? `${origin}/${job.pdfDownloadUrl}` : null,
-    }
+  // Report files require the bearer token, so they must be fetched here (not
+  // opened via plain browser navigation, which sends no Authorization header)
+  // and handed back as a Blob for the caller to save via an object URL.
+  async downloadReport(jobId: string, format: AuditReportFormat): Promise<Blob> {
+    return this.apiClient.downloadBlob({
+      endpointConfig: API_ENDPOINTS.DOWNLOAD_AUDIT_REPORT,
+      pathParams: { jobId },
+      queryParams: { format },
+    })
   }
 }

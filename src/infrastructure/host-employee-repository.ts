@@ -5,7 +5,7 @@ import type { HostEmployeeRepository } from '../data/repositories/host-employee-
 import { EmployeeListResponseSchema, type EmployeeOut } from '../domain/entities/employee-out-schema'
 import { EmployeeSyncResponseSchema, type EmployeeSyncItem } from '../domain/entities/employee-sync-schema'
 import type { BranchRoleAssignment, HostEmployee, HostEmployeeCreateInput } from '../domain/entities/host-employee-schema'
-import { RoleListResponseSchema, RoleResponseSchema, type RoleOut } from '../domain/entities/role-out-schema'
+import { RoleListResponseSchema, RoleResponseSchema, type RoleCreateInput, type RoleOut } from '../domain/entities/role-out-schema'
 import {
   PermissionListResponseSchema,
   RolePermissionResyncResponseSchema,
@@ -100,6 +100,16 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
       endpointConfig: API_ENDPOINTS.LIST_ROLES,
       queryParams: { pageSize: 100 },
       parserSchema: RoleListResponseSchema,
+    })
+
+    return response.data
+  }
+
+  async createRole(input: RoleCreateInput): Promise<RoleOut> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.CREATE_ROLE,
+      body: { name: input.name, description: input.description ?? null, permissionCodes: input.permissionCodes },
+      parserSchema: RoleResponseSchema,
     })
 
     return response.data

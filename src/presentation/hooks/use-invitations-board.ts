@@ -8,6 +8,7 @@ import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entities/invitation-detail-schema'
 import type { RoleOut } from '../../domain/entities/role-out-schema'
 import type { HostEmployee } from '../../domain/entities/host-employee-schema'
+import type { EditInvitationFields } from '../../data/repositories/visit-request-summary-repository'
 import { PURPOSE_OF_VISIT_OPTIONS } from '../utils/purpose-of-visit-options'
 
 export const BOARD_STATUS_COLUMNS = [
@@ -61,6 +62,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     listRolesUseCase,
     listHostEmployeesUseCase,
     rescheduleInvitationUseCase,
+    editInvitationUseCase,
     denyInvitationUseCase,
     approveInvitationStepUseCase,
     rejectInvitationStepUseCase,
@@ -85,10 +87,12 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [loadingDetailId, setLoadingDetailId] = useState<string | undefined>(undefined)
   const [reschedulingId, setReschedulingId] = useState<string | undefined>(undefined)
   const [delegatingId, setDelegatingId] = useState<string | undefined>(undefined)
+  const [editingId, setEditingId] = useState<string | undefined>(undefined)
   const [pendingDenyId, setPendingDenyId] = useState<string | undefined>(undefined)
   const [denyingId, setDenyingId] = useState<string | undefined>(undefined)
   const [pendingRescheduleId, setPendingRescheduleId] = useState<string | undefined>(undefined)
   const [pendingDelegateId, setPendingDelegateId] = useState<string | undefined>(undefined)
+  const [pendingEditId, setPendingEditId] = useState<string | undefined>(undefined)
   const [visitorInfoId, setVisitorInfoId] = useState<string | undefined>(undefined)
 
   const loadDashboard = useCallback(
@@ -150,10 +154,21 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
       pendingDenyId !== undefined ||
       pendingRescheduleId !== undefined ||
       pendingDelegateId !== undefined ||
+      pendingEditId !== undefined ||
       denyingId !== undefined ||
       reschedulingId !== undefined ||
-      delegatingId !== undefined
-  }, [pendingDenyId, pendingRescheduleId, pendingDelegateId, denyingId, reschedulingId, delegatingId])
+      delegatingId !== undefined ||
+      editingId !== undefined
+  }, [
+    pendingDenyId,
+    pendingRescheduleId,
+    pendingDelegateId,
+    pendingEditId,
+    denyingId,
+    reschedulingId,
+    delegatingId,
+    editingId,
+  ])
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -336,6 +351,9 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         if (!detail.currentApprovalStep) {
           throw new Error('This request has no pending approval step to delegate.')
         }
+        if (detail.currentApprovalStep.stepOrder === 0) {
+          throw new Error('Reception must approve this request before it can be delegated to another step.')
+        }
 
         await delegateInvitationStepUseCase.execute(id, detail.currentApprovalStep.id, delegateUserId)
         const updatedDetail = await getInvitationDetailUseCase.execute(id)
@@ -365,6 +383,51 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   }, [])
 
   const pendingDelegateDetail = pendingDelegateId ? invitationDetails[pendingDelegateId] : undefined
+
+  // Unlike Delegate (only offered once a card's detail is already loaded,
+  // since `canDelegate` depends on `detail.currentApprovalStep`), Edit is
+  // offered purely by status — a card whose detail was never fetched (e.g.
+  // an "approved" column card never expanded) can still show the button.
+  // So opening the modal has to fetch detail itself rather than assume it's
+  // already in `invitationDetails`.
+  const requestEdit = useCallback(
+    (id: string) => {
+      setPendingEditId(id)
+      void loadDetail(id).catch((error: unknown) => {
+        console.error('Failed to load invitation detail for edit', error)
+        toast.error('Could not load this request for editing.')
+        setPendingEditId(undefined)
+      })
+    },
+    [loadDetail, toast],
+  )
+
+  const cancelEdit = useCallback(() => {
+    setPendingEditId(undefined)
+  }, [])
+
+  const pendingEditDetail = pendingEditId ? invitationDetails[pendingEditId] : undefined
+
+  const edit = useCallback(
+    async (id: string, fields: EditInvitationFields) => {
+      setEditingId(id)
+
+      try {
+        await editInvitationUseCase.execute(id, fields)
+        const updatedDetail = await getInvitationDetailUseCase.execute(id)
+        setInvitationDetails((previous) => ({ ...previous, [id]: updatedDetail }))
+        setPendingEditId(undefined)
+        toast.success('Visit request updated.')
+        await loadDashboard()
+      } catch (error) {
+        console.error('Failed to edit visit request', error)
+        toast.error(error instanceof Error ? error.message : 'Failed to update the visit request. Please try again.')
+      } finally {
+        setEditingId(undefined)
+      }
+    },
+    [editInvitationUseCase, getInvitationDetailUseCase, loadDashboard, toast],
+  )
 
   const requestDeny = useCallback((id: string) => {
     setPendingDenyId(id)
@@ -462,6 +525,12 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     reschedulingId,
     delegate,
     delegatingId,
+    edit,
+    editingId,
+    requestEdit,
+    cancelEdit,
+    pendingEditId,
+    pendingEditDetail,
     pendingDenyId,
     requestDeny,
     cancelDeny,

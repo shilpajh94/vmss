@@ -1,0 +1,147 @@
+import { useEffect, useState } from 'react'
+import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
+import type { EditInvitationFields } from '../../../data/repositories/visit-request-summary-repository'
+import { Modal } from '../ui/Modal'
+import { SelectField } from '../ui/SelectField'
+import { TextField } from '../ui/TextField'
+import { TextareaField } from '../ui/TextareaField'
+import { EXPECTED_DURATION_OPTIONS } from '../../utils/expected-duration-options'
+import { PURPOSE_OF_VISIT_OPTIONS } from '../../utils/purpose-of-visit-options'
+
+interface EditInvitationModalProps {
+  isOpen: boolean
+  isSaving?: boolean
+  detail?: InvitationDetail
+  onConfirm: (fields: EditInvitationFields) => void
+  onCancel: () => void
+}
+
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-overline text-text-faint">{label}</span>
+      <span className="truncate font-body text-[13px] font-medium text-text">{value}</span>
+    </div>
+  )
+}
+
+function toFormState(detail?: InvitationDetail): EditInvitationFields {
+  return {
+    purposeOfVisit: detail?.purposeOfVisit ?? '',
+    preferredVisitDate: detail?.preferredVisitDate ?? '',
+    preferredVisitTime: detail?.preferredVisitTime ?? '',
+    expectedDuration: detail?.expectedDuration ?? '',
+    departmentToVisit: detail?.departmentToVisit ?? '',
+    additionalNotes: detail?.additionalNotes ?? '',
+  }
+}
+
+// Editable fields mirror exactly what `PATCH /invitations/{id}/edit` accepts
+// — purpose, date/time, duration, department, notes. Deliberately no
+// location/building fields (the API's edit endpoint doesn't accept them —
+// there's no backing column to edit) despite earlier planning language
+// mentioning them; and no visitor-personal/category/host fields, which are
+// rendered read-only below instead (host reassignment stays the Delegate
+// action's job).
+export function EditInvitationModal({ isOpen, isSaving, detail, onConfirm, onCancel }: EditInvitationModalProps) {
+  const [fields, setFields] = useState<EditInvitationFields>(() => toFormState(detail))
+
+  // Re-seed local form state whenever a different invitation's modal opens
+  // (or its detail arrives after opening) — `RescheduleInvitationModal`/
+  // `DelegateInvitationModal` don't need this since they always start blank;
+  // Edit needs to start from the invitation's current values instead.
+  useEffect(() => {
+    if (isOpen) setFields(toFormState(detail))
+  }, [isOpen, detail])
+
+  const handleCancel = () => {
+    onCancel()
+  }
+
+  const handleConfirm = () => {
+    onConfirm(fields)
+  }
+
+  return (
+    <Modal isOpen={isOpen} onClose={handleCancel} title="Edit Invitation" maxWidthClassName="max-w-lg">
+      {!detail ? (
+        <div className="flex flex-col items-center gap-2 py-8">
+          <div className="size-6 animate-spin rounded-full border-2 border-border-subtle border-t-secondary-accent" />
+          <p className="font-body text-sm text-text-muted">Loading invitation…</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-5">
+          <div className="flex flex-col gap-3">
+            <h3 className="text-overline text-text-faint">Visitor (read-only)</h3>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
+              <ReadOnlyField label="Name" value={detail.primaryContactFullName} />
+              <ReadOnlyField label="Host" value={detail.hostNameOrEmail ?? 'Unassigned — Front Office'} />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <h3 className="text-overline text-text-faint">Visit details</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <SelectField
+                label="Purpose of Visit"
+                placeholder="Select purpose"
+                options={PURPOSE_OF_VISIT_OPTIONS}
+                value={fields.purposeOfVisit ?? ''}
+                onChange={(purposeOfVisit) => setFields({ ...fields, purposeOfVisit })}
+              />
+              <SelectField
+                label="Expected Duration"
+                placeholder="Select duration"
+                options={EXPECTED_DURATION_OPTIONS}
+                value={fields.expectedDuration ?? ''}
+                onChange={(expectedDuration) => setFields({ ...fields, expectedDuration })}
+              />
+              <TextField
+                label="Preferred Visit Date"
+                type="date"
+                value={fields.preferredVisitDate ?? ''}
+                onChange={(preferredVisitDate) => setFields({ ...fields, preferredVisitDate })}
+              />
+              <TextField
+                label="Preferred Visit Time"
+                type="time"
+                value={fields.preferredVisitTime ?? ''}
+                onChange={(preferredVisitTime) => setFields({ ...fields, preferredVisitTime })}
+              />
+              <TextField
+                label="Department to Visit"
+                placeholder="Enter department name"
+                value={fields.departmentToVisit ?? ''}
+                onChange={(departmentToVisit) => setFields({ ...fields, departmentToVisit })}
+              />
+            </div>
+            <TextareaField
+              label="Additional Notes / Special Requirements"
+              placeholder="Any special requirements, accessibility needs, or notes for the host…"
+              value={fields.additionalNotes ?? ''}
+              onChange={(additionalNotes) => setFields({ ...fields, additionalNotes })}
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={handleCancel}
+              className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isSaving}
+              onClick={handleConfirm}
+              className="rounded-full bg-secondary-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
+            >
+              {isSaving ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}

@@ -16,8 +16,14 @@ function wait(ms: number): Promise<void> {
 
 export function useStaffAuditTrail() {
   const navigate = useNavigate()
-  const { getAuditTrailUseCase, getCurrentStaffUserUseCase, listHostEmployeesUseCase, requestAuditReportUseCase, getAuditReportUseCase } =
-    useAppDependencies()
+  const {
+    getAuditTrailUseCase,
+    getCurrentStaffUserUseCase,
+    listHostEmployeesUseCase,
+    requestAuditReportUseCase,
+    getAuditReportUseCase,
+    downloadAuditReportUseCase,
+  } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
@@ -106,11 +112,22 @@ export function useStaffAuditTrail() {
         }
 
         if (job.status === 'ready') {
-          const url = format === 'csv' ? job.csvDownloadUrl : job.pdfDownloadUrl
-          if (url) {
-            window.open(url, '_blank', 'noopener,noreferrer')
-          } else {
+          const hasFormat = format === 'csv' ? job.csvDownloadUrl !== null : job.pdfDownloadUrl !== null
+          if (!hasFormat) {
             toast.error('The report finished but no download link was returned.')
+            return
+          }
+
+          try {
+            const blob = await downloadAuditReportUseCase.execute(job.id, format)
+            const objectUrl = URL.createObjectURL(blob)
+            const anchor = document.createElement('a')
+            anchor.href = objectUrl
+            anchor.download = `audit-report.${format}`
+            anchor.click()
+            URL.revokeObjectURL(objectUrl)
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Something went wrong downloading the report. Please try again.')
           }
         } else if (job.status === 'failed') {
           toast.error(job.errorMessage ?? 'The report could not be generated. Please try again.')
@@ -123,7 +140,7 @@ export function useStaffAuditTrail() {
         setDownloadingFormat(undefined)
       }
     },
-    [requestAuditReportUseCase, getAuditReportUseCase, dateRange, activityType, toast],
+    [requestAuditReportUseCase, getAuditReportUseCase, downloadAuditReportUseCase, dateRange, activityType, toast],
   )
 
   return {

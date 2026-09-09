@@ -33,6 +33,12 @@ interface MultipartRequestOptions<T> {
   parserSchema: ZodType<T>
 }
 
+interface DownloadFileOptions {
+  endpointConfig: ApiEndpointDefinition
+  queryParams?: QueryParams
+  pathParams?: Record<string, string>
+}
+
 export const SESSION_EXPIRED_EVENT = 'auth:session-expired'
 
 export class ApiClient {
@@ -131,6 +137,30 @@ export class ApiClient {
     }
 
     return parserSchema.parse(await response.json())
+  }
+
+  // For endpoints that hand back a file (CSV/PDF export, etc.) rather than a JSON
+  // body — plain browser navigation to these routes never attaches the
+  // Authorization header, so the file must be fetched here and handed to the
+  // caller as a Blob to save via an object URL instead.
+  async downloadBlob({ endpointConfig, queryParams, pathParams }: DownloadFileOptions): Promise<Blob> {
+    const { endpoint, method, hasToken } = endpointConfig as EndpointConfigShape
+    const url = `${this.baseUrl}${this.buildPath(endpoint, pathParams)}${this.buildQueryString(queryParams)}`
+
+    const headers: Record<string, string> = {}
+
+    if (hasToken) {
+      const token = sessionStorage.getItem('token')
+      if (!token) {
+        throw new Error(`Missing auth token for endpoint: ${endpoint}`)
+      }
+      headers.Authorization = `Bearer ${token}`
+    }
+
+    const response = await fetch(url, { method, headers })
+    await this.ensureOk(response)
+
+    return response.blob()
   }
 
   async uploadFile<T>({ endpointConfig, file, parserSchema }: UploadFileOptions<T>): Promise<T> {

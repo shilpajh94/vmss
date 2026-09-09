@@ -15,13 +15,22 @@ import {
 function validateStaffVisitorContact(contact: StaffVisitorFormEntry): Record<string, string> {
   const errors: Record<string, string> = {}
   if (!contact.fullName) errors.fullName = 'Full name is required.'
-  if (!contact.email) errors.email = 'Email is required.'
-  if (!contact.phone) errors.phone = 'Phone number is required.'
-  else if (!isValidPhoneNumber(contact.phone)) errors.phone = 'Enter a valid phone number.'
+  // Only the contact field matching the chosen preferred contact method is
+  // mandatory (mirrors the API's `_require_contact_for_method`) — the other
+  // field is optional, not both unconditionally.
+  if (!contact.preferredContactMethod) {
+    errors.preferredContactMethod = 'Preferred contact method is required.'
+  } else if (contact.preferredContactMethod === 'email' && !contact.email) {
+    errors.email = 'Email is required.'
+  } else if (contact.preferredContactMethod === 'sms' && !contact.phone) {
+    errors.phone = 'Phone number is required.'
+  }
+  if (contact.phone && !isValidPhoneNumber(contact.phone)) errors.phone = 'Enter a valid phone number.'
   if (!contact.visitorCategory) errors.visitorCategory = 'Visitor category is required.'
-  if (!contact.preferredContactMethod) errors.preferredContactMethod = 'Preferred contact method is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
   if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
+  // Profile image is only collected for the primary contact (PrimaryContactCard),
+  // not the additional-visitor draft form, so it's only enforced here.
   if (!contact.profileImageFileRef) errors.profileImageFileRef = 'Profile image is required.'
   return errors
 }
@@ -39,15 +48,12 @@ function validateStep(step: number, formState: StaffVisitRequestFormState): Reco
     const errors: Record<string, string> = {}
     const { visitInfo } = formState
     if (!visitInfo.purpose) errors.purpose = 'Purpose of visit is required.'
-    if (!visitInfo.hostNameOrEmail) errors.hostNameOrEmail = 'Host name or email is required.'
-    else if (!visitInfo.hostId) errors.hostNameOrEmail = 'Please select a host from the list.'
     if (!visitInfo.preferredDate) errors.preferredDate = 'Preferred visit date is required.'
     else if (visitInfo.preferredDate < todayAsDateInputValue()) errors.preferredDate = 'Preferred visit date cannot be in the past.'
     if (!visitInfo.preferredTime) errors.preferredTime = 'Preferred visit time is required.'
     if (!visitInfo.expectedDuration) errors.expectedDuration = 'Expected duration is required.'
     if (!visitInfo.location) errors.location = 'Location is required.'
     if (!visitInfo.building) errors.building = 'Building is required.'
-    if (!visitInfo.department) errors.department = 'Department to visit is required.'
     return errors
   }
 

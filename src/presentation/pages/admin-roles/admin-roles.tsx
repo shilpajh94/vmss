@@ -1,12 +1,14 @@
+import { useNavigate } from 'react-router'
 import { AdminSidebar } from '../../components/AdminSidebar'
 import { AdminTopBar } from '../../components/AdminTopBar'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { LoadingState } from '../../components/ui/LoadingState'
-import { RefreshCcwIcon } from '../../components/icons'
+import { PlusIcon, RefreshCcwIcon } from '../../components/icons'
 import { RolesTable } from './Components/RolesTable'
 import { useAdminRoles } from './hooks/use-admin-roles'
 
 export function AdminRolesPage() {
+  const navigate = useNavigate()
   const { currentUser, roles, isLoading, errorMessage, retry, isResyncing, resyncResult, resyncPermissions } = useAdminRoles()
 
   return (
@@ -19,16 +21,26 @@ export function AdminRolesPage() {
         <main className="flex flex-1 flex-col gap-6 p-8">
           <div className="flex w-full items-center justify-between">
             <h1 className="font-display text-2xl font-bold text-text">Roles &amp; Permissions</h1>
-            <button
-              type="button"
-              disabled={isResyncing}
-              onClick={() => void resyncPermissions()}
-              className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text disabled:opacity-50"
-              title="Backfills any catalog permission a standard role is currently missing. Additive only — never revokes."
-            >
-              <RefreshCcwIcon className="size-3.5" />
-              {isResyncing ? 'Resyncing…' : 'Resync Permissions'}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={isResyncing}
+                onClick={() => void resyncPermissions()}
+                className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text disabled:opacity-50"
+                title="Backfills any catalog permission a standard role is currently missing. Additive only — never revokes."
+              >
+                <RefreshCcwIcon className="size-3.5" />
+                {isResyncing ? 'Resyncing…' : 'Resync Permissions'}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/admin/roles/new')}
+                className="flex items-center gap-2 rounded-full bg-admin-accent px-3.5 py-2.5 font-body text-[13px] font-semibold text-white"
+              >
+                <PlusIcon className="size-3.5" />
+                Add Role
+              </button>
+            </div>
           </div>
 
           {resyncResult ? (

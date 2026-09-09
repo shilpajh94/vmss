@@ -29,6 +29,7 @@ interface VisitRequestCardProps {
   employeeNameById?: Record<string, string>
   onRescheduleClick?: (id: string) => void
   onDelegateClick?: (id: string) => void
+  onEditClick?: (id: string) => void
   onVisitorInfoClick?: (id: string) => void
 }
 
@@ -44,10 +45,12 @@ export function VisitRequestCard({
   employeeNameById,
   onRescheduleClick,
   onDelegateClick,
+  onEditClick,
   onVisitorInfoClick,
 }: VisitRequestCardProps) {
   const canReschedule = Boolean(onRescheduleClick) && RESCHEDULABLE_STATUSES.has(request.status)
   const canDelegate = Boolean(onDelegateClick) && Boolean(detail?.currentApprovalStep)
+  const canEdit = Boolean(onEditClick) && RESCHEDULABLE_STATUSES.has(request.status)
 
   return (
     <div
@@ -77,6 +80,12 @@ export function VisitRequestCard({
           <span className="text-text-muted">Purpose:</span>
           <span className="font-medium text-text">{request.purposeOfVisit}</span>
         </div>
+        {detail ? (
+          <div className="flex items-center gap-1 font-body text-xs">
+            <span className="text-text-muted">Host:</span>
+            <span className="font-medium text-text">{detail.hostNameOrEmail ?? 'Unassigned — Front Office'}</span>
+          </div>
+        ) : null}
       </div>
 
       {detail?.currentApprovalStep ? (
@@ -105,7 +114,7 @@ export function VisitRequestCard({
         </div>
       ) : null}
 
-      {canReschedule || canDelegate || onVisitorInfoClick ? (
+      {canReschedule || canDelegate || canEdit || onVisitorInfoClick ? (
         <div className="flex w-full flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
           {onVisitorInfoClick ? (
             <button
@@ -132,6 +141,15 @@ export function VisitRequestCard({
               className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
             >
               Delegate
+            </button>
+          ) : null}
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={() => onEditClick?.(request.id)}
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+            >
+              Edit
             </button>
           ) : null}
         </div>

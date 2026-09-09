@@ -23,22 +23,39 @@ function buildInitialFormState(initial?: VisitorRequestWizardInitialData): Visit
   return formState
 }
 
-function validateVisitorContact(contact: VisitorFormEntry): Record<string, string> {
+// `isPrimary` gates the preferred-contact-method-matching rule: the primary
+// contact (or the individual visitor) must supply the field matching their
+// chosen preferred contact method, while an additional group visitor — who
+// has no preferred contact method of their own — just needs at least one of
+// email or phone, mirroring the API's `VisitorSubmit`/`_require_reachable_contact`.
+function validateVisitorContact(contact: VisitorFormEntry, isPrimary: boolean): Record<string, string> {
   const errors: Record<string, string> = {}
   if (!contact.fullName) errors.fullName = 'Full name is required.'
-  if (!contact.email) errors.email = 'Email is required.'
-  if (!contact.phone) errors.phone = 'Phone number is required.'
-  else if (!isValidPhoneNumber(contact.phone)) errors.phone = 'Enter a valid phone number.'
+  if (isPrimary) {
+    if (!contact.preferredContactMethod) {
+      errors.preferredContactMethod = 'Preferred contact method is required.'
+    } else if (contact.preferredContactMethod === 'email' && !contact.email) {
+      errors.email = 'Email is required.'
+    } else if (contact.preferredContactMethod === 'sms' && !contact.phone) {
+      errors.phone = 'Phone number is required.'
+    }
+  } else if (!contact.email && !contact.phone) {
+    errors.email = 'Either email or phone is required.'
+  }
+  if (contact.phone && !isValidPhoneNumber(contact.phone)) errors.phone = 'Enter a valid phone number.'
   if (!contact.visitorCategory) errors.visitorCategory = 'Visitor category is required.'
   if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
   if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
-  if (!contact.profileImageFileRef) errors.profileImageFileRef = 'Profile image is required.'
+  // Profile image is only collected for the primary contact (VisitorFieldsForm
+  // only renders it when showExtendedFields is set, which the additional-visitor
+  // draft form disables), so only enforce it there.
+  if (isPrimary && !contact.profileImageFileRef) errors.profileImageFileRef = 'Profile image is required.'
   return errors
 }
 
 function validateStep(step: number, formState: VisitRequestFormState): Record<string, string> {
   if (step === 0) {
-    const errors = validateVisitorContact(formState.primaryContact)
+    const errors = validateVisitorContact(formState.primaryContact, true)
     if (formState.registrationType === 'group' && formState.additionalVisitors.length === 0) {
       errors.additionalVisitors = 'Add at least one visitor to continue.'
     }
@@ -49,15 +66,12 @@ function validateStep(step: number, formState: VisitRequestFormState): Record<st
     const errors: Record<string, string> = {}
     const { visitInfo } = formState
     if (!visitInfo.purpose) errors.purpose = 'Purpose of visit is required.'
-    if (!visitInfo.hostNameOrEmail) errors.hostNameOrEmail = 'Host name or email is required.'
-    else if (!visitInfo.hostId) errors.hostNameOrEmail = 'Please select a host from the list.'
     if (!visitInfo.preferredDate) errors.preferredDate = 'Preferred visit date is required.'
     else if (visitInfo.preferredDate < todayAsDateInputValue()) errors.preferredDate = 'Preferred visit date cannot be in the past.'
     if (!visitInfo.preferredTime) errors.preferredTime = 'Preferred visit time is required.'
     if (!visitInfo.expectedDuration) errors.expectedDuration = 'Expected duration is required.'
     if (!visitInfo.location) errors.location = 'Location is required.'
     if (!visitInfo.building) errors.building = 'Building is required.'
-    if (!visitInfo.department) errors.department = 'Department to visit is required.'
     return errors
   }
 

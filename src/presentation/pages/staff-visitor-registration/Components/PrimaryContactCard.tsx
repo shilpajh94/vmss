@@ -40,7 +40,7 @@ export function PrimaryContactCard({ value, onChange, uploadFile, getFilePreview
             value={value.email}
             onChange={(email) => onChange({ ...value, email })}
             error={errors.email}
-            required
+            required={(value.preferredContactMethod ?? 'email') === 'email'}
           />
           <p className="text-caption text-text-muted">OTP will be sent to this email</p>
         </div>
@@ -51,7 +51,7 @@ export function PrimaryContactCard({ value, onChange, uploadFile, getFilePreview
           value={value.phone}
           onChange={(phone) => onChange({ ...value, phone })}
           error={errors.phone}
-          required
+          required={value.preferredContactMethod === 'sms'}
         />
         <SelectField
           label="Visitor Category"

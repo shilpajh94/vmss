@@ -4,6 +4,9 @@ import { VisitorSchema } from "./visitor-schema"
 
 // Wire shape of the JSON-encoded `payload` field for
 // POST /registrations/walk-in (identical contract to POST /invitations).
+// `hostId`/`hostNameOrEmail`/`departmentToVisit` are intentionally absent
+// (role-based-invitation-workflow) — the API accepts them as optional but
+// the wizard no longer collects or sends any of the three.
 export const VisitRequestSchema = z.object({
   registrationType: z.enum(["individual", "group"]),
   visitorCategoryId: z.string().min(1),
@@ -11,12 +14,9 @@ export const VisitRequestSchema = z.object({
   visitors: z.array(VisitorSchema),
   visitDetails: z.object({
     purposeOfVisit: z.string().min(1),
-    hostNameOrEmail: z.string().min(1),
-    hostId: z.string().min(1),
     preferredVisitDate: z.string().min(1),
     preferredVisitTime: z.string().min(1),
     expectedDuration: z.string().min(1),
-    departmentToVisit: z.string().min(1),
     additionalNotes: z.string().optional(),
   }),
   carriedItems: z.object({

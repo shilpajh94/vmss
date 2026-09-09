@@ -5,8 +5,6 @@ import { PortalHeader } from '../../components/PortalHeader'
 import { useAppDependencies } from '../../context/app-dependencies-context'
 import type { Branch } from '../../../domain/entities/branch-schema'
 import type { Building } from '../../../domain/entities/building-schema'
-import type { Department } from '../../../domain/entities/department-schema'
-import type { VisitorCategory } from '../../../domain/entities/visitor-category-schema'
 import { OtpRequestScreen } from './Components/otp/OtpRequestScreen'
 import { OtpScreenLayout } from './Components/otp/OtpScreenLayout'
 import { OtpVerifyScreen } from './Components/otp/OtpVerifyScreen'
@@ -19,6 +17,7 @@ import { VisitInfoStep } from './Components/steps/VisitInfoStep'
 import { VisitorInfoStep } from './Components/steps/VisitorInfoStep'
 import { useVisitorOtp } from './hooks/use-visitor-otp'
 import { useVisitorRequestWizard, type VisitorRequestWizardInitialData } from './hooks/use-visitor-request-wizard'
+import type { VisitorCategoriesFieldState } from './types'
 
 function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardInitialData }) {
   const {
@@ -38,23 +37,26 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
   } = useVisitorRequestWizard(initial)
 
   const navigate = useNavigate()
-  const { listVisitorCategoriesUseCase, searchHostsUseCase, listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase } =
-    useAppDependencies()
-  const [visitorCategories, setVisitorCategories] = useState<VisitorCategory[] | undefined>(undefined)
+  const { listVisitorCategoriesUseCase, listBranchesUseCase, listBuildingsUseCase } = useAppDependencies()
+  const [visitorCategoriesState, setVisitorCategoriesState] = useState<VisitorCategoriesFieldState>({
+    status: 'loading',
+    categories: [],
+  })
   const [branches, setBranches] = useState<Branch[] | undefined>(undefined)
   const [buildings, setBuildings] = useState<Building[] | undefined>(undefined)
-  const [departments, setDepartments] = useState<Department[] | undefined>(undefined)
 
+  // Also used as the retry action from the Visitor Category field's error
+  // state — re-running it resets status to 'loading' first.
   const loadVisitorCategories = useCallback(async () => {
+    setVisitorCategoriesState((previous) => ({ status: 'loading', categories: previous.categories }))
     try {
-      setVisitorCategories(await listVisitorCategoriesUseCase.execute())
+      const categories = await listVisitorCategoriesUseCase.execute()
+      setVisitorCategoriesState({ status: 'loaded', categories })
     } catch (error) {
-      // Falls back to no options; the field stays empty if this fails.
       console.error('Failed to load visitor categories', error)
+      setVisitorCategoriesState({ status: 'error', categories: [] })
     }
   }, [listVisitorCategoriesUseCase])
-
-  const handleSearchHosts = useCallback((query: string) => searchHostsUseCase.execute(query), [searchHostsUseCase])
 
   // Each call is caught independently — a Promise.all would let one rejection
   // block every field's data.
@@ -71,13 +73,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
       .catch(() => {
         // Falls back to a free-text Building field.
       })
-    listDepartmentsUseCase
-      .execute()
-      .then(setDepartments)
-      .catch(() => {
-        // Falls back to a free-text Department to Visit field.
-      })
-  }, [listBranchesUseCase, listBuildingsUseCase, listDepartmentsUseCase])
+  }, [listBranchesUseCase, listBuildingsUseCase])
 
   useEffect(() => {
     void loadVisitorCategories()
@@ -99,7 +95,8 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             uploadFile={uploadFile}
             getFilePreviewUrl={getFilePreviewUrl}
             errors={errors}
-            visitorCategories={visitorCategories}
+            visitorCategoriesState={visitorCategoriesState}
+            onRetryVisitorCategories={loadVisitorCategories}
           />
         )}
         {currentStep === 1 && (
@@ -107,10 +104,8 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             value={formState.visitInfo}
             onChange={(visitInfo) => setFormState({ ...formState, visitInfo })}
             errors={errors}
-            onSearchHosts={handleSearchHosts}
             branches={branches}
             buildings={buildings}
-            departments={departments}
           />
         )}
         {currentStep === 2 && (
@@ -128,7 +123,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             status={submissionStatus}
             trackingId={trackingId}
             errorMessage={submissionError}
-            visitorCategories={visitorCategories}
+            visitorCategories={visitorCategoriesState.categories}
             getFilePreviewUrl={getFilePreviewUrl}
             onBack={goBack}
             onSubmit={submit}
