@@ -35,6 +35,7 @@ import { AdminWorkflowFormPage } from './presentation/pages/admin-workflows/admi
 import { AdminInvitationsPage } from './presentation/pages/admin-invitations/admin-invitations'
 import { AdminRolesPage } from './presentation/pages/admin-roles/admin-roles'
 import { AdminRolePermissionsFormPage } from './presentation/pages/admin-roles/admin-role-permissions-form'
+import { AdminRoleCreateFormPage } from './presentation/pages/admin-roles/admin-role-create-form'
 
 function RootLayout() {
   return (
@@ -82,6 +83,7 @@ function RootLayout() {
               <Route path="/admin/workflows/:visitorCategoryId/edit" element={<AdminWorkflowFormPage />} />
               <Route path="/admin/invitations" element={<AdminInvitationsPage />} />
               <Route path="/admin/roles" element={<AdminRolesPage />} />
+              <Route path="/admin/roles/new" element={<AdminRoleCreateFormPage />} />
               <Route path="/admin/roles/:id/edit" element={<AdminRolePermissionsFormPage />} />
             </Routes>
           </PushNotificationsProvider>

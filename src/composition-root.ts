@@ -66,6 +66,7 @@ import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
 import { ListEmployeeDirectoryUseCase } from './data/use-cases/list-employee-directory'
 import { CreateHostEmployeeUseCase } from './data/use-cases/create-host-employee'
 import { ListRolesUseCase } from './data/use-cases/list-roles'
+import { CreateRoleUseCase } from './data/use-cases/create-role'
 import { ListPermissionsUseCase } from './data/use-cases/list-permissions'
 import { UpdateRolePermissionsUseCase } from './data/use-cases/update-role-permissions'
 import { ResyncRolePermissionsUseCase } from './data/use-cases/resync-role-permissions'
@@ -158,6 +159,7 @@ export interface AppDependencies {
   listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase
   createHostEmployeeUseCase: CreateHostEmployeeUseCase
   listRolesUseCase: ListRolesUseCase
+  createRoleUseCase: CreateRoleUseCase
   listPermissionsUseCase: ListPermissionsUseCase
   updateRolePermissionsUseCase: UpdateRolePermissionsUseCase
   resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase
@@ -246,6 +248,7 @@ export function createApp(): AppDependencies {
   let listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase | undefined
   let createHostEmployeeUseCase: CreateHostEmployeeUseCase | undefined
   let listRolesUseCase: ListRolesUseCase | undefined
+  let createRoleUseCase: CreateRoleUseCase | undefined
   let listPermissionsUseCase: ListPermissionsUseCase | undefined
   let updateRolePermissionsUseCase: UpdateRolePermissionsUseCase | undefined
   let resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase | undefined
@@ -590,6 +593,11 @@ export function createApp(): AppDependencies {
     return listRolesUseCase
   }
 
+  const resolveCreateRoleUseCase = (): CreateRoleUseCase => {
+    createRoleUseCase ??= new CreateRoleUseCase(resolveHostEmployeeRepository())
+    return createRoleUseCase
+  }
+
   const resolveListPermissionsUseCase = (): ListPermissionsUseCase => {
     listPermissionsUseCase ??= new ListPermissionsUseCase(resolveHostEmployeeRepository())
     return listPermissionsUseCase
@@ -871,6 +879,9 @@ export function createApp(): AppDependencies {
     },
     get listRolesUseCase() {
       return resolveListRolesUseCase()
+    },
+    get createRoleUseCase() {
+      return resolveCreateRoleUseCase()
     },
     get listPermissionsUseCase() {
       return resolveListPermissionsUseCase()

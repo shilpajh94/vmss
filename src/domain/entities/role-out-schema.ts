@@ -10,6 +10,12 @@ export const RoleOutSchema = z.object({
 
 export type RoleOut = z.infer<typeof RoleOutSchema>
 
+export interface RoleCreateInput {
+  name: string
+  description?: string
+  permissionCodes: string[]
+}
+
 export const RoleListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
