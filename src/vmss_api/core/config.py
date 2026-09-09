@@ -163,6 +163,10 @@ class Settings(BaseSettings):
     # value (see `.env.example`).
     storage_local_url_secret: str | None = None
     storage_local_presigned_url_ttl_seconds: int = 300
+    storage_public_base_url: str | None = Field(
+        default=None,
+        alias="STORAGE_PUBLIC_BASE_URL",
+    )
 
     # Mail settings for `core/emailing.py`'s `SmtpEmailSender` — shared by
     # `invitations/notifications.py` and `reports/tasks.py` (see
