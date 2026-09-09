@@ -34,8 +34,8 @@ branch from the request body via the same `authorize_branch_id` helper.
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
 | GET | `/api/v1/invitations/{id}` | `invitations:view` at the invitation's branch | — | Authenticated, staff-facing single-invitation detail view (`InvitationDetailOut`) — branch/source/creator plus every lifecycle field below. Also includes resolved `branch`/`building`/`department` detail (alongside the existing raw `branchId`) and the primary contact's/each visitor's `idProofType`; `idProofUrl` (the raw document image) is included only when the caller additionally holds `documents:view` — see "Resolved location and permission-gated ID-proof documents" below. 404 unknown id, 403 (not 404) if the caller lacks branch access. See "Lifecycle actions" below. |
 | PATCH | `/api/v1/invitations/{id}/deny` | `invitations:deny` at the invitation's branch | — | Transitions a `submitted` invitation to `denied`, with a mandatory `reason`, and dispatches a denial notification. 409 if not currently `submitted`. |
-| PATCH | `/api/v2/invitations/{trackingId}/check-in` | None (public) | 20/minute per IP | **The single staff/desk-facing check-in endpoint** — the legacy `PATCH /api/v1/invitations/{id}/check-in` route has been removed outright (`checkin-approval-workflow-improvements`). Public, unauthenticated check-in by the invitation's `tracking_id` (`INV-XXXXXXXX`). Transitions an `approved` invitation to `checked_in`; 409 if not `approved`, or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key`. No branch-authorization check since there's no authenticated caller. Audit entries for this path use `actor_user_id = null` and `action = "invitation_checked_in_public"`. Success response (`InvitationCheckInOut`) matches the public tracking lookup's field set — primary contact name, host display name, purpose of visit, department, preferred visit date/time, expected duration, additional notes, carried items, co-visitors, and vehicles — alongside the id/trackingId/status fields it already carried. It does not carry `branchId`/`createdByUserId`/badge/watchlist-override internals, resolved branch/building/department, or any ID-proof field; those stay exclusive to `GET /invitations/{id}` (branch/building/department also on the QR endpoints below) — this endpoint has no authenticated caller to gate anything by, so it stays exactly as minimally-revealing as before. See "The tracking ID is a plain, human-readable identifier" below for how tenancy resolves with no bearer token. |
-| PATCH | `/api/v2/invitations/qr/{token}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated QR scan check-in — `token` is the encrypted, tamper-evident check-in token encoded in the invitation's QR image (see "QR check-in: encrypted token and the `checkInStatus` lifecycle" below), not the tracking ID. **No longer toggles** (`checkin-approval-workflow-improvements`): entry only, `unused`/`checked_out` → `checked_in`; 409 (not a silent toggle to checked-out) if already `checked_in` — use the check-out endpoint below instead. 400 for an invalid/tampered token or a not-yet-approved invitation, 409 for a watchlist block or already-checked-in, 425 if scanned before `preferredVisitDate` (`qr-checkin-scheduling-photo-email`), 410 if scanned after `expiresAt` has passed. Audit entries use `action = "invitation_qr_checked_in"`. Accepts `Idempotency-Key` — a scanning client must mint a fresh key per physical scan, not reuse one across scans. Also includes resolved `branch`/`building`/`department` detail and the primary contact's/each visitor's `idProofType` — but never an ID-proof document URL, since there's no authenticated caller to gate one by; see "Resolved location and permission-gated ID-proof documents" below. |
+| PATCH | `/api/v2/invitations/{trackingId}/check-in` | None (public) | 20/minute per IP | **The single staff/desk-facing check-in endpoint** — the legacy `PATCH /api/v1/invitations/{id}/check-in` route has been removed outright (`checkin-approval-workflow-improvements`). Public, unauthenticated check-in by the invitation's `tracking_id` (`INV-XXXXXXXX`). Transitions an invitation whose `checkInStatus` is `unused` or `checked_out` to `checked_in` (`allow-multiple-checkins` — `checked_out` is not terminal, mirroring the QR endpoint's cycling rule below); `status` must also show the invitation was validly approved at some point (`approved`, `checked_in`, or `checked_out` — never `submitted`/`denied`). A call while already `checked_in` is a **200 idempotent no-op** (unchanged data, no re-stamped `checkedInAt`) rather than an error — this holds even if the invitation was checked in via the *other* check-in endpoint (QR), since both read/write the same `checkInStatus` column. 409 if never approved ("Invitation is not approved") or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key` (optional — the already-checked-in case is idempotent on its own; the header only dedupes two distinct concurrent requests). No branch-authorization check since there's no authenticated caller. Audit entries for this path use `actor_user_id = null` and `action = "invitation_checked_in_public"`. Success response (`InvitationCheckInOut`) matches the public tracking lookup's field set — primary contact name, host display name, purpose of visit, department, preferred visit date/time, expected duration, additional notes, carried items, co-visitors, and vehicles — alongside the id/trackingId/status fields it already carried. It does not carry `branchId`/`createdByUserId`/badge/watchlist-override internals, resolved branch/building/department, or any ID-proof field; those stay exclusive to `GET /invitations/{id}` (branch/building/department also on the QR endpoints below) — this endpoint has no authenticated caller to gate anything by, so it stays exactly as minimally-revealing as before. See "The tracking ID is a plain, human-readable identifier" below for how tenancy resolves with no bearer token. |
+| PATCH | `/api/v2/invitations/qr/{token}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated QR scan check-in — `token` is the encrypted, tamper-evident check-in token encoded in the invitation's QR image (see "QR check-in: encrypted token and the `checkInStatus` lifecycle" below), not the tracking ID. **No longer toggles** (`checkin-approval-workflow-improvements`): entry only, `unused`/`checked_out` → `checked_in`. Scanning while already `checked_in` is a **200 idempotent no-op** (not a silent toggle to checked-out, and not an error) — same "Verification passed" message, unchanged data; use the check-out endpoint below to actually exit. 400 for an invalid/tampered token or a not-yet-approved invitation, 409 for a watchlist block, 425 if scanned before `preferredVisitDate` (`qr-checkin-scheduling-photo-email`), 410 if scanned after `expiresAt` has passed. Audit entries use `action = "invitation_qr_checked_in"`. Accepts `Idempotency-Key` — a scanning client must mint a fresh key per physical scan, not reuse one across scans. Also includes resolved `branch`/`building`/`department` detail and the primary contact's/each visitor's `idProofType` — but never an ID-proof document URL, since there's no authenticated caller to gate one by; see "Resolved location and permission-gated ID-proof documents" below. |
 | PATCH | `/api/v2/invitations/qr/{token}/check-out` | None (public) | 20/minute per IP | Exit counterpart of the QR check-in route above, added by `checkin-approval-workflow-improvements` to replace its old check-in-URL toggle. `checked_in` → `checked_out`; 409 if not currently `checked_in`. Never expiry-blocked — a visit that legitimately continues past `expiresAt` can still be closed out. Audit entries use `action = "invitation_qr_checked_out"`. Accepts `Idempotency-Key`. Same resolved `branch`/`building`/`department`/`idProofType` fields as the check-in endpoint above. |
 | PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. |
 | PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`, and dispatches a reschedule notification to the primary contact. 409 once `checked_in`/`checked_out`/`denied`. |
@@ -269,16 +269,35 @@ losing concurrent request gets 409, never a corrupted double-transition):
 ```
 submitted ──deny──> denied
 submitted ──approve──> approved ──check-in──> checked_in ──check-out──> checked_out
+                                       ▲                                      │
+                                       └──────────────check-in────────────────┘
 ```
 
 - **`checkInStatus`** (`add-qr-checkin-security`) is a second, parallel
-  lifecycle field — `unused` → `checked_in` → `checked_out` — driven only
-  by the QR endpoint above. `status` keeps transitioning exactly as shown
-  in the diagram for the `v1`/`v2` tracking-ID routes; the QR endpoint
-  updates both fields together in the same transaction, so anything
-  reading `status` (the "who's inside" emergency report, in particular)
-  sees a QR-driven check-in exactly like any other. The two fields are
-  deliberately not merged — see "QR check-in" below.
+  lifecycle field — `unused`/`checked_out` → `checked_in` → `checked_out`,
+  cycling indefinitely with no terminal state. It is the actual re-entry
+  gate for **both** the tracking-ID/staff check-in endpoint and the QR
+  check-in endpoint (`allow-multiple-checkins`) — `check_in_status`, not
+  `status`, decides entry-vs-exit eligibility on every check-in path, and
+  every check-in/check-out transition on every path writes both columns
+  together in the same atomic `UPDATE`, so they can never disagree within
+  one request. `status` keeps transitioning exactly as shown in the
+  diagram above for both the tracking-ID and QR routes, so anything reading
+  `status` (the "who's inside" emergency report, in particular) sees a
+  check-in the same way regardless of which endpoint drove it. `checked_out`
+  is **not** terminal on either endpoint — a visitor who steps out (lunch, a
+  second delivery drop-off, moving between buildings) can be checked back in
+  through either endpoint as many times as their invitation stays `approved`
+  and unexpired. Calling a check-in endpoint while `checkInStatus` is
+  already `checked_in` is a **200 idempotent no-op** (unchanged data, no
+  re-stamped `checkedInAt`, no duplicate host notification/audit entry) —
+  not an error — whichever endpoint originally checked them in; the caller
+  still has to use a check-out endpoint to actually exit. Because both
+  check-in endpoints share the one `check_in_status` column, this
+  already-checked-in recognition works across endpoints too — checking in
+  via tracking-ID then "checking in" again via QR (or vice versa) is
+  recognized as the same already-checked-in visitor, not treated as two
+  separate entries.
 - **Reschedule** (`preferredVisitDate`/`preferredVisitTime`) and **extend**
   (`expiresAt`) operate on different status windows: reschedule only while
   `submitted`/`approved` (before check-in); extend only while
@@ -403,18 +422,27 @@ invitation's currently resolved host (`hostId` — set once any step has
 been delegated to them, see `docs/features/approvals.md`), has been
 delegated one of that invitation's approval steps (`docs/features/
 approvals.md`'s "Delegation"), currently holds the role that the
-invitation's current pending step names (e.g. every holder of the default
-host role sees a freshly submitted invitation before anyone delegates it),
-or has personally approved/rejected any of that invitation's steps —
+invitation's current pending step names *and that step has no delegate
+assigned yet*, has personally approved/rejected any of that invitation's
+steps, or currently holds the tenant's default host role (e.g. Reception) —
 regardless of that step's or the invitation's current status for all but
-the role clause. The role clause deliberately does **not** require the step
-to be undelegated: every holder of the role keeps seeing the invitation
-after one of them delegates it to the resolved host, not just whichever one
-of them performed the delegation — that visibility only drops, for the
-*other* role-holders, once the step itself is actually approved or
-rejected. The person who actually acted on it, though, keeps seeing the
-invitation forever via the fourth clause: e.g. Reception, having approved
-the ownership step, keeps it in their list through every later step and
+the plain role clause.
+
+**BREAKING (harden-approval-gate-and-narrow-delegate-visibility)**: the
+plain role clause used to deliberately *not* require the step to be
+undelegated — every holder of the role kept seeing the invitation even
+after it was delegated to someone else. That is reversed: once a
+role-identified step (at any `stepOrder`) is delegated to a specific
+person, every other holder of that role stops seeing the invitation via
+this clause — only the delegate, the resolved host, or someone who
+personally acted on a step still sees it. The one exception is the
+tenant's default host role (Reception): every holder of that role keeps
+*permanent* visibility into every invitation regardless of delegation or
+status, via its own clause, since that role owns front-office intake for
+an invitation's entire lifecycle. The person who actually acted on a step
+also keeps seeing the invitation forever, via the "personally
+approved/rejected" clause: e.g. an individual Reception user who approved
+the ownership step keeps it in their list through every later step and
 past final approval/denial — and that same "I acted on the step before
 this one" fact also lets them delegate the *next* step straight to whoever
 the workflow configures for it, without needing to hold that step's role

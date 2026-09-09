@@ -1867,17 +1867,21 @@ async def test_list_invitations_relevant_to_me_role_holder_sees_current_step_inv
     assert invitation.tracking_id in tracking_ids
 
 
-async def test_list_invitations_relevant_to_me_role_holder_retains_visibility_once_delegated(
+async def test_list_invitations_relevant_to_me_role_holder_loses_visibility_once_delegated(
     client: AsyncClient,
     db_session: AsyncSession,
     tenant: Tenant,
     branch: Branch,
     issue_token: Callable[[User], str],
 ) -> None:
-    """specs/invitations/spec.md "A role-holder keeps seeing the invitation
-    once someone else's delegation is assigned" — clause (c) does not
-    require the current step to be undelegated
-    (invitation-relevant-to-me-retains-role-visibility-after-delegation).
+    """specs/invitations/spec.md "A non-default-role holder loses
+    visibility once the step is delegated to someone else"
+    (harden-approval-gate-and-narrow-delegate-visibility) — clause (c) now
+    requires the current step to be undelegated; a non-default-host-role
+    holder who is not the delegate, the resolved host, or a past actor
+    loses visibility the moment the step is delegated to someone else. This
+    replaces the pre-change assertion that such a role-holder retained
+    visibility indefinitely.
     """
     role = RoleFactory.build(id=uuid.uuid4(), name=f"relevant-role-{uuid.uuid4().hex[:8]}")
     db_session.add(role)
@@ -1907,6 +1911,110 @@ async def test_list_invitations_relevant_to_me_role_holder_retains_visibility_on
     await InvitationApprovalStepRepository(db_session).delegate_if_eligible(
         step.id, delegated_to_user_id=delegate.id, delegated_by_user_id=role_holder.id
     )
+    await db_session.commit()
+
+    token = issue_token(role_holder)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id not in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_default_host_role_keeps_visibility_once_delegated(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "A role-holder keeps seeing the invitation
+    once someone else's delegation is assigned" — clause (e) is the one
+    exception to clause (c)'s narrowing: every holder of the tenant's
+    default host role keeps permanent visibility, even once the ownership
+    step is delegated to a specific host who is neither them nor anyone who
+    acted on the step.
+    """
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
+    invitation = await _invitation_with_role_step(db_session, branch.id, reception_role)
+
+    role_holder = _make_role_holder(db_session, reception_role, branch.id)
+    host = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example",
+        full_name="Host",
+    )
+    db_session.add(host)
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=role_holder.email, tenant_id=tenant.id, user_id=role_holder.id)
+    )
+    await db_session.commit()
+
+    step = (
+        await db_session.execute(
+            select(InvitationApprovalStep).where(
+                InvitationApprovalStep.invitation_id == invitation.id
+            )
+        )
+    ).scalar_one()
+    await InvitationApprovalStepRepository(db_session).delegate_if_eligible(
+        step.id, delegated_to_user_id=host.id, delegated_by_user_id=role_holder.id
+    )
+    await db_session.commit()
+
+    token = issue_token(role_holder)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_default_host_role_keeps_visibility_after_approval(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md clause (e) — permanent visibility for every
+    default-host-role holder does not depend on the invitation's own
+    status either: it still holds once the invitation is fully `approved`.
+    """
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
+    invitation = await _invitation_with_role_step(db_session, branch.id, reception_role)
+
+    role_holder = _make_role_holder(db_session, reception_role, branch.id)
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=role_holder.email, tenant_id=tenant.id, user_id=role_holder.id)
+    )
+    await db_session.commit()
+
+    step = (
+        await db_session.execute(
+            select(InvitationApprovalStep).where(
+                InvitationApprovalStep.invitation_id == invitation.id
+            )
+        )
+    ).scalar_one()
+    other_holder = _make_role_holder(db_session, reception_role, branch.id)
+    await db_session.commit()
+    await InvitationApprovalStepRepository(db_session).approve_if_pending(
+        step.id, user_id=other_holder.id
+    )
+    invitation.status = "approved"
+    invitation.approved_at = datetime.now(UTC)
+    db_session.add(invitation)
     await db_session.commit()
 
     token = issue_token(role_holder)
@@ -2247,6 +2355,7 @@ async def test_list_invitations_relevant_to_me_tenant_schema_isolation(
         rows, total = await InvitationRepository(other_session).list_page(
             branch_scope=None,
             relevant_to_user_id=host.id,
+            default_host_role_id=uuid.uuid4(),
             status=None,
             registration_type=None,
             source=None,
@@ -2286,6 +2395,7 @@ async def test_list_invitations_relevant_to_me_role_holder_tenant_schema_isolati
         rows, total = await InvitationRepository(other_session).list_page(
             branch_scope=None,
             relevant_to_user_id=role_holder.id,
+            default_host_role_id=uuid.uuid4(),
             status=None,
             registration_type=None,
             source=None,
@@ -3981,6 +4091,205 @@ async def test_public_check_in_watchlist_flagged_blocked(
     assert invitation.status == "approved"
 
 
+async def test_public_check_in_re_entry_after_staff_checkout_succeeds(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """allow-multiple-checkins: `checked_out` is no longer terminal for the
+    tracking-ID/staff check-in path — mirrors the QR path's already-proven
+    cycling (`test_qr_check_in_and_check_out_full_lifecycle`).
+    """
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        check_in_status="unused",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    first_check_in = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert first_check_in.status_code == 200
+
+    token = await _login(client, user.email)
+    check_out = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-out",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert check_out.status_code == 200
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_out"
+    assert invitation.check_in_status == "checked_out"
+
+    re_entry = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert re_entry.status_code == 200
+    assert re_entry.json()["data"]["status"] == "checked_in"
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_in"
+    assert invitation.check_in_status == "checked_in"
+    assert invitation.checked_in_at is not None
+
+
+async def test_public_check_in_two_full_round_trips_succeed(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """allow-multiple-checkins: the cycle isn't a one-time exception — it
+    repeats indefinitely, same as the QR path.
+    """
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        check_in_status="unused",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    token = await _login(client, user.email)
+
+    for _ in range(2):
+        check_in = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+        assert check_in.status_code == 200
+        check_out = await client.patch(
+            f"/api/v1/invitations/{invitation.id}/check-out",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert check_out.status_code == 200
+
+    final_check_in = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert final_check_in.status_code == 200
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_in"
+    assert invitation.check_in_status == "checked_in"
+
+
+async def test_public_check_in_while_already_checked_in_is_idempotent_success(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """A repeat check-in call while already `checked_in` is a no-op
+    success, not an error — no re-stamped `checkedInAt`, matching
+    `test_qr_check_in_while_already_checked_in_is_idempotent_success`'s
+    rule for the other endpoint.
+    """
+    original_checked_in_at = datetime.now(UTC)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=original_checked_in_at,
+        check_in_status="checked_in",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "checked_in"
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_in"
+    assert invitation.checked_in_at == original_checked_in_at
+
+
+async def test_public_check_in_watchlist_flagged_still_blocked_after_checkout(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """allow-multiple-checkins: the watchlist gate survives the widened
+    re-entry eligibility check — a flagged visitor who somehow completed one
+    cycle can't just re-enter through the same relaxed `checked_out` gate.
+    """
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_out",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+        checked_out_at=datetime.now(UTC),
+        check_in_status="checked_out",
+        watchlist_flagged=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_out"
+
+
+async def test_check_in_via_tracking_id_then_qr_is_idempotent_no_double_write(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """Cross-path check: a visitor checked in via the tracking-ID/staff
+    endpoint who is then "checked in" again via QR gets a 200 idempotent
+    no-op from the QR endpoint too (both endpoints share the same
+    already-checked-in rule) — not a second write, not a re-stamped
+    `checkedInAt`. Before `check_in_if_eligible` wrote `check_in_status`,
+    this cross-endpoint call used to slip through as a genuine second
+    check-in; this asserts it's recognized as the same already-checked-in
+    visitor and produces no state change.
+    """
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        check_in_status="unused",
+        preferred_visit_date=None,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    check_in = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert check_in.status_code == 200
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "checked_in"  # the cross-path fix
+    first_checked_in_at = invitation.checked_in_at
+
+    qr = qr_token.encrypt_invitation_token(invitation.id)
+    second_check_in = await client.patch(f"/api/v2/invitations/qr/{qr}/check-in")
+    assert second_check_in.status_code == 200
+    assert second_check_in.json()["message"] == "Verification passed"
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "checked_in"
+    assert invitation.checked_in_at == first_checked_in_at  # no re-stamp, no second write
+
+
+async def test_check_in_via_qr_then_tracking_id_is_idempotent_no_double_write(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """The reverse direction of the same cross-path check: checking in via
+    QR, then calling the tracking-ID endpoint, is also a 200 idempotent
+    no-op rather than a second write.
+    """
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    qr = qr_token.encrypt_invitation_token(invitation.id)
+
+    check_in = await client.patch(f"/api/v2/invitations/qr/{qr}/check-in")
+    assert check_in.status_code == 200
+
+    await db_session.refresh(invitation)
+    first_checked_in_at = invitation.checked_in_at
+
+    second_check_in = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert second_check_in.status_code == 200
+    assert second_check_in.json()["data"]["status"] == "checked_in"
+
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "checked_in"
+    assert invitation.checked_in_at == first_checked_in_at  # no re-stamp, no second write
+
+
 async def test_public_check_in_unknown_tracking_id_not_found(
     client: AsyncClient, tenant: Tenant
 ) -> None:
@@ -4391,23 +4700,30 @@ async def test_qr_check_in_and_check_out_full_lifecycle(
     assert invitation.status == "checked_out"
 
 
-async def test_qr_check_in_while_already_checked_in_rejected(
+async def test_qr_check_in_while_already_checked_in_is_idempotent_success(
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
-    """spec.md "Calling check-in while already checked in is rejected" —
-    the check-in endpoint no longer toggles to checked-out; it 409s and
-    leaves state unchanged, directing the caller to the check-out endpoint.
+    """Revises spec.md "Calling check-in while already checked in is
+    rejected": the check-in endpoint still doesn't toggle to checked-out on
+    a repeat scan, but a repeat scan is now a 200 idempotent no-op (same
+    "Verification passed" message, no re-stamped `checkedInAt`) rather than
+    a 409 — the caller still uses the check-out endpoint to actually exit.
     """
-    invitation = _approved_invitation(db_session, branch.id, check_in_status="checked_in")
+    checked_in_at = datetime.now(UTC)
+    invitation = _approved_invitation(
+        db_session, branch.id, check_in_status="checked_in", checked_in_at=checked_in_at
+    )
     db_session.add(invitation)
     await db_session.commit()
     token = qr_token.encrypt_invitation_token(invitation.id)
 
     response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
-    assert response.status_code == 409
+    assert response.status_code == 200
+    assert response.json()["message"] == "Verification passed"
 
     await db_session.refresh(invitation)
     assert invitation.check_in_status == "checked_in"
+    assert invitation.checked_in_at == checked_in_at
 
 
 async def test_qr_check_out_while_not_checked_in_rejected(
