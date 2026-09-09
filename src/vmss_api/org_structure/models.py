@@ -53,6 +53,12 @@ class Company(Base, TimestampMixin):
     default_timezone: Mapped[str | None] = mapped_column(String(50))
     auto_approve_pre_registered_visitors: Mapped[bool] = mapped_column(Boolean, default=False)
     badge_expiry_duration_minutes: Mapped[int | None] = mapped_column(Integer)
+    # Which `Role` a newly submitted invitation's `stepOrder` 0 ownership
+    # step is created for (role-based-invitation-workflow/design.md
+    # Decision D1). Null means "not configured yet" — every resolver falls
+    # back to the tenant's standard `reception` role in that case, so a
+    # tenant never has to explicitly set this to get sane default behavior.
+    default_host_role_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("roles.id"))
 
 
 class Branch(Base, TimestampMixin):

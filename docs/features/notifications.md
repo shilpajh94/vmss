@@ -78,6 +78,20 @@ enforcing that a payload never carries identity-document data, raw OTP
 codes, or other data `security-architecture.md` §2/§4 classifies as
 sensitive, so it can't be bypassed per call site.
 
+`notify_user`/`notify_role_at_branch` (`role-based-invitation-workflow`)
+each add their own addressing metadata to the `data` dict on top of
+whatever `push_notifications.py` built, so a client can tell *why* a given
+push arrived without re-deriving it from `tracking_id`/`id` alone:
+
+| Function | Extra `data` fields | Meaning |
+|---|---|---|
+| `notify_user` | `assignedUserId`, `reason: "delegated"` | This push targets one specific person because a step (usually the ownership step) was delegated to them — `assignedUserId` echoes that same user's id. |
+| `notify_role_at_branch` | `assignedRoleId`, `reason: "role_assigned"` | This push fanned out to every holder of a role because a step is currently role-identified and un-delegated — `assignedRoleId` names that role. |
+
+These fields are addressing metadata only, not new sensitive content — they
+carry a `Role`/`User` id already implied by which step is current, nothing
+`security-architecture.md` §2/§4 restricts.
+
 ## Failure handling
 
 - Push dispatch always runs as a Celery task enqueued after the triggering

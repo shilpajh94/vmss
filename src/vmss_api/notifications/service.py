@@ -3,6 +3,7 @@ import uuid
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
 from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core.logging import logger
 from vmss_api.notifications import tasks
@@ -45,6 +46,13 @@ async def notify_user(
     resolved recipient itself (design.md Decision 2): the task resolves
     *devices* for `user_id` fresh at send time, it is never asked to
     re-derive who the recipient is.
+
+    Adds `assignedUserId`/`reason` addressing metadata to the payload
+    (role-based-invitation-workflow, "Push Payloads Exclude Sensitive
+    Visitor Data") so a client can distinguish this from a role-fan-out push
+    — every specific-user dispatch (a resolved host, a step delegate) is
+    `reason: "delegated"`, regardless of whether an actual delegation action
+    triggered it.
     """
     tasks.send_push.delay(
         request_id=_current_request_id(),
@@ -52,7 +60,7 @@ async def notify_user(
         user_ids=[str(user_id)],
         title=title,
         body=body,
-        data=data or {},
+        data={**(data or {}), "assignedUserId": str(user_id), "reason": "delegated"},
     )
 
 
@@ -71,6 +79,10 @@ async def notify_role_at_branch(
     (design.md Decision 2/3). Zero holders logs `WARNING` and is otherwise a
     no-op — not an error for the triggering action (proposal.md's "no push
     recipient" case).
+
+    Adds `assignedRoleId`/`reason` addressing metadata to the payload
+    (role-based-invitation-workflow), `reason: "role_assigned"` — the
+    role-fan-out counterpart of `notify_user`'s `assignedUserId`/`delegated`.
     """
     user_ids = await UserRepository(tenant_db).list_user_ids_holding_role_at_branch(
         role_id, branch_id
@@ -86,7 +98,7 @@ async def notify_role_at_branch(
         user_ids=[str(user_id) for user_id in user_ids],
         title=title,
         body=body,
-        data=data or {},
+        data={**(data or {}), "assignedRoleId": str(role_id), "reason": "role_assigned"},
     )
 
 
@@ -114,9 +126,14 @@ async def notify_step_approver(
     so it's a reliable cross-tenant identifier), which SHALL NOT receive a
     push (exclude-admin-role-only-from-push/design.md — a correction of
     restrict-invitation-push-to-hosts-only, which over-broadly excluded
-    every role, not just Admin). A role id that doesn't resolve to a row
-    dispatches normally (fails open, not closed) rather than silently
-    dropping the push.
+    every role, not just Admin), nor when the role is one of
+    `DELEGATION_ONLY_ROLE_NAMES` (`host`) — an undelegated host-identified
+    step isn't actionable by any role holder either
+    (`approvals/service.py::_caller_matches_step`), so broadcasting "act on
+    this now" to every host-eligible employee company-wide would be both
+    noisy and misleading. A role id that doesn't resolve to a row dispatches
+    normally (fails open, not closed) rather than silently dropping the
+    push.
     """
     if approver_user_id is not None:
         await notify_user(
@@ -125,7 +142,9 @@ async def notify_step_approver(
         return
     assert approver_role_id is not None  # DB CHECK: exactly one of the two is set
     role = await RoleRepository(tenant_db).get(approver_role_id)
-    if role is not None and role.name.lower() == "admin":
+    if role is not None and (
+        role.name.lower() == "admin" or role.name.lower() in DELEGATION_ONLY_ROLE_NAMES
+    ):
         return
     await notify_role_at_branch(
         tenant_db,

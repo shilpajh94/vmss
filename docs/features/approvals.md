@@ -31,14 +31,19 @@ One ordered step snapshotted onto an invitation at submission time. Most
 steps are copied from the matching category's active `ApprovalWorkflowRule`
 rows — a point-in-time copy, not a live reference, so editing or
 deactivating a rule afterward never changes an invitation already in
-flight. When the invitation's `hostId` resolves to an active user at
-submission, an additional **host-identified** step is always prepended at
-`stepOrder` 0, ahead of any role-identified steps — unconditional, whether
-or not the category has any configured rules (see "Host as step 0" below).
+flight. `stepOrder` 0 is always the **ownership step**, role-identified for
+the tenant's default host role — see "The ownership step" below
+(`role-based-invitation-workflow` — replaces the old "host-identified when
+a client-supplied `hostId` resolved" behavior).
 
 Exactly one of `approverRoleId`/`approverUserId` is set per row (a `CHECK`
-constraint enforces this) — a role-identified step (from a rule) sets
-`approverRoleId`; the host-identified step sets `approverUserId` instead.
+constraint enforces this) — a role-identified step (from a rule, or the
+ownership step before it's delegated) sets `approverRoleId`; a
+host-identified step sets `approverUserId` instead. New invitations only
+ever produce a host-identified step via delegation now (see "The ownership
+step" below) — a genuinely host-identified step at snapshot time is legacy
+data from before this change, still handled the same way it always was
+(both kinds share the exact same authorization/delegation logic below).
 
 | Field | Notes |
 |---|---|
@@ -57,25 +62,44 @@ constraint enforces this) — a role-identified step (from a rule) sets
 index, same soft-delete-reuse posture as `ApprovalWorkflowRule`'s own
 constraint).
 
-## Host as step 0
+## The ownership step (`stepOrder` 0)
 
-The invitation's own host (`Invitation.hostId`, resolved at submission from
-`hostId`/`hostNameOrEmail` — see `docs/features/invitations.md`) is always
-the first approver whenever it resolves to an active user, composing with
-(never replacing) the category's configured role-based chain:
+`stepOrder` 0 is **always** created, unconditionally, for every submitted
+(non-auto-approved) invitation, role-identified for the tenant's default
+host role (`Company.defaultHostRoleId`, falling back to the standard
+`reception` role) — composing with (never replacing) the category's own
+configured role-based chain:
 
-- Host resolves, category has no active rules → one step, host-identified,
-  `stepOrder` 0. Blanket `POST /invitations/{id}/approve` is unavailable
-  (409) — same as any other snapshotted-step invitation.
-- Host resolves, category has N active rules → N+1 steps: `stepOrder` 0
-  (host), then the rules' own configured `stepOrder` values (1..N)
-  unchanged.
-- Host does not resolve, category has no active rules → no steps (unchanged
-  from before this feature — blanket approve still works).
+- Category has no active rules → one step: `stepOrder` 0 (the ownership
+  role), and nothing else. Blanket `POST /invitations/{id}/approve` is
+  unavailable (409) for **every** newly submitted invitation now — there is
+  no longer a "no snapshotted steps" case to fall back to it.
+- Category has N active rules → N+1 steps: `stepOrder` 0 (the ownership
+  role), then the rules' own configured `stepOrder` values (1..N) unchanged.
 
-The host step never has `escalatesAt`/`autoApprovesAt` — no rule backs it,
-so both stay null (consistent with "an unconfigured duration leaves its
-timestamp null").
+The ownership step never has `escalatesAt`/`autoApprovesAt` — no rule backs
+it, so both stay null (consistent with "an unconfigured duration leaves its
+timestamp null"). It's role-identified, not host-identified, at snapshot
+time — the invitation has no resolved host yet at this point. The actual
+host is established afterward by **delegating** any step — this one or a
+later one in the workflow chain (see "Delegation" below) — doing so also
+sets the invitation's `hostId`/`hostNameOrEmail`
+(`docs/features/invitations.md`) in the same transaction, and notifies the
+newly-named host (push, and a `"You've been named host"` email —
+`invitations/tasks.py::send_host_creation_notification`, repurposed from
+firing at creation to firing on this delegation instead). Delegating a
+later step supersedes whichever host was previously resolved — the
+invitation's host always reflects the most recent delegation, at any
+`stepOrder`, not just this one.
+
+**Approvable directly, same as any other step**: `stepOrder` 0 has no
+special approval gate — the owning-role holder (e.g. `reception`) may
+`approve` it directly, exactly as they would `delegate` it, the same
+role-match authorization every other step uses. Approving it directly just
+means no host ever gets resolved from that step (`hostId` stays null unless
+some step is delegated); a caller who wants to name a specific host still
+uses `delegate`, not `approve`. Once delegated, the named delegate approves
+the step like any other current pending step.
 
 ## Push notifications on step activation
 
@@ -98,7 +122,7 @@ request/response reference. Summary:
 |---|---|---|
 | POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/approve` | `invitations:approve` at the invitation's branch, **and** delegate-match, role-match, host-match, or `invitations:approve-override` |
 | POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/reject` | Same as above; body: `{"reason": "..."}` |
-| POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/delegate` | `invitations:approve` at the invitation's branch, **and** caller must be the invitation's host acting on the step immediately following their own — see "Host delegation" below; body: `{"delegateUserId": "..."}` |
+| POST | `/api/v1/invitations/{id}/approval-steps/{stepId}/delegate` | `invitations:approve` at the invitation's branch, **and** delegate-match, role-match, the invitation's resolved host (any step position), or `invitations:approve-override` — see "Delegation" below; body: `{"delegateUserId": "..."}` |
 
 ## Authorization: delegate-match, role-match, host-match, or override
 
@@ -115,10 +139,11 @@ not sufficient. The caller must additionally either:
   company-wide (`branch_id IS NULL`), matching
   `auth.models.User.has_permission`'s own branch-or-company-wide semantics;
   or
-- for a **host-identified** step (`stepOrder` 0, when present): be that
-  exact user — `caller.id == step.approverUserId`. No role check applies at
-  all for this step kind; the step is authorized for that one person
-  regardless of which role(s) they otherwise hold; or
+- for a **host-identified** step (only ever produced by delegating the
+  ownership step, or on legacy pre-migration data — see "The ownership
+  step" above): be that exact user — `caller.id == step.approverUserId`. No
+  role check applies at all for this step kind; the step is authorized for
+  that one person regardless of which role(s) they otherwise hold; or
 - hold the `invitations:approve-override` permission (seeded to `admin`
   only in the default catalog), which bypasses the delegate-match,
   role-match, or host-match check entirely, for any step kind.
@@ -129,28 +154,66 @@ with no `invitations:approve` grant at their own branch cannot act on their
 own host-identified step — provisioning hosts with that permission is an
 RBAC/onboarding decision, not something this endpoint decides on its own.
 
-## Host delegation
+## Delegation
 
-Once an invitation's `stepOrder` 0 host-identified step is `approved`,
-making the role-identified step at `stepOrder` 1 the current pending one,
-the invitation's host (the user identified by that `stepOrder` 0 step's
-`approverUserId`) can delegate `stepOrder` 1 to a specific person of their
-choosing, instead of leaving it open to anyone holding that step's role.
+The invitation's **current pending step, at any `stepOrder`** — not just the
+one immediately after another — can be delegated to a specific person
+instead of being left open to anyone holding that step's role. A caller may
+delegate if they are:
 
-- Only the step immediately following the host's own is delegable —
-  `stepOrder` 0 itself, and `stepOrder` 2+ in a 3-or-more level workflow,
-  are rejected.
-- The named delegate must hold the step's `approverRoleId` role at the
-  invitation's branch (or company-wide) at the moment of delegation, via the
-  same role-membership check a role-identified step action is authorized
-  with — an ineligible delegate is rejected (422).
-- A step can be delegated once; delegating an already-delegated step, or one
-  that's no longer the current pending step (already acted on, or the host's
-  own step isn't approved yet), is rejected (409).
-- Delegating does **not** itself advance the workflow — the step stays
-  `pending` until the delegate (or an `invitations:approve-override` holder)
-  separately approves or rejects it. A delegate approving the last step
-  finalizes the invitation exactly like any other last-step approval.
+- the invitation's already-**resolved host** (its `hostId`) — a blanket
+  privilege across every step position, once a host has been resolved. This
+  is how a host can hand a later step to someone else even if they don't
+  hold that step's own role. Before a host has been resolved (the common
+  case right after submission, since `stepOrder` 0 now starts
+  role-identified — see "The ownership step" above), this clause doesn't
+  apply yet; or
+- otherwise already authorized to act on the current step directly
+  (role-match, or the step's existing delegate re-delegating onward); or
+- an `invitations:approve-override` holder, for any step regardless of role
+  or host match; or
+- the one who **personally approved the immediately preceding step**
+  (`stepOrder - 1`) — regardless of whether they hold the current step's own
+  role. This lets Reception, having approved the ownership step directly
+  (without delegating it), hand the workflow's next configured step
+  straight to whoever should act on it, rather than waiting for a holder of
+  that role to notice it themselves
+  (`reception-retains-visibility-and-delegation-after-own-step`). It only
+  ever reaches back one step — approving `stepOrder` 1 doesn't grant any
+  privilege over `stepOrder` 3 once `stepOrder` 2 has also been approved by
+  someone else — and never applies to `stepOrder` 0 itself (no preceding
+  step exists).
+
+**Named-delegate eligibility** depends on which step is being delegated:
+
+- **`stepOrder` 0 (the ownership step)**: the delegate need only hold
+  `invitations:approve` at the invitation's branch — **not** the step's own
+  `approverRoleId` role. This is the one deliberate exception
+  (`role-based-invitation-workflow`): the real host is normally not a
+  front-office employee, so requiring them to hold the default host role
+  would defeat the point of delegating ownership to them in the first
+  place.
+- **Every other role-identified step** (the category's own configured
+  chain, `stepOrder` 1+): the delegate must hold that step's
+  `approverRoleId` role at the invitation's branch (or company-wide) — the
+  original, unchanged rule.
+
+**Every** delegation — at any `stepOrder`, first or repeat — also
+resolves/updates the invitation's `hostId`/`hostNameOrEmail` to that
+delegate and fires the same host-assigned notification (extended from the
+original `stepOrder`-0-only rule; see "The ownership step" above). The
+host always reflects the most recently delegated step, so delegating a
+later step in the chain supersedes whoever was resolved as host before.
+
+A step can be re-delegated any number of times — each delegation overwrites
+the prior one rather than accumulating multiple delegates. Delegating a step
+that isn't currently the invitation's pending step (already acted on, or
+not yet reached), or naming an ineligible delegate, is rejected (409/422
+respectively). Delegating does **not** itself advance the workflow — the
+step stays `pending` until the delegate (or an `invitations:approve-
+override` holder) separately approves or rejects it. A delegate approving
+the last step finalizes the invitation exactly like any other last-step
+approval.
 
 The delegate then sees the invitation in their own `GET /invitations
 ?relevantToMe=true` list — see `docs/features/invitations.md`.

@@ -125,6 +125,41 @@ array) — such a user simply matches no mapping and defaults to `host`.
 | `SSO_FRONTEND_CALLBACK_URL` | unset | Where the callback redirects the browser with the exchange code (e.g. `https://portal.example.com/sso/callback`). |
 | `SSO_EXCHANGE_CODE_TTL_SECONDS` | `60` | How long an exchange code stays redeemable. |
 | `SSO_STATE_TTL_SECONDS` | `600` | How long a login attempt's `state`/`nonce` record stays valid in Redis. |
+| `SSO_DEV_SEED_DISCOVERY_URL` / `SSO_DEV_SEED_CLIENT_ID` / `SSO_DEV_SEED_CLIENT_SECRET` | unset | Dev-seeding-only, see "Local Development Setup" below. |
+| `SSO_DEV_SEED_DISPLAY_NAME` | `Dev SSO Provider` | Display name for the dev-seeded provider config. |
+
+## Local Development Setup
+
+A freshly seeded dev tenant (`scripts/seed_dev_data.py`) has **no** SSO
+provider configured by default, so `GET /auth/sso/{tenant_slug}/login` will
+correctly return `409 {"message": "SSO is not configured for this
+tenant"}` — this is expected, not a bug (see
+`sso/tests.py::test_login_initiate_without_configured_provider_returns_409`).
+
+Seeding a fake/placeholder provider row is **not** a fix: the SSRF guard
+above (`_assert_safe_outbound_url`) rejects any `discoveryUrl` that isn't a
+publicly-reachable `https://` endpoint, so a local or private address saves
+without error but fails at actual login time with a 503. To get a real,
+clickable SSO login working locally:
+
+1. Register a free test OIDC app with any real provider — Auth0, Okta,
+   Azure AD (Entra ID), and Google Identity Platform all offer a free tier
+   suitable for this. Note its discovery URL (usually
+   `.well-known/openid-configuration`), client ID, and client secret.
+2. Either:
+   - Set `SSO_DEV_SEED_DISCOVERY_URL`, `SSO_DEV_SEED_CLIENT_ID`, and
+     `SSO_DEV_SEED_CLIENT_SECRET` in `.env` (optionally
+     `SSO_DEV_SEED_DISPLAY_NAME` too) and (re-)run
+     `ddev exec uv run python scripts/seed_dev_data.py` — it upserts an
+     enabled `SsoProvider` row for the seeded tenant automatically, safe to
+     re-run if credentials change; **or**
+   - Skip the env vars and call `PUT /auth/sso/config` directly (via
+     Swagger or an authenticated request) with the same values — the two
+     approaches produce an identical row, so use whichever fits your
+     workflow.
+3. Treat these three values as real credentials, exactly like
+   `SSO_ENCRYPTION_KEY` — never commit them to `.env.example` with a real
+   value (it stays blank there), and don't paste them into chat/logs.
 
 ## Password login (Admin only)
 

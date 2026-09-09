@@ -125,7 +125,12 @@ async def delegate_step(
     invitation = await invitations_service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:approve", invitation.branch_id)
     await service.delegate_step(
-        tenant_db, user, invitation, step_id, delegate_user_id=payload.delegate_user_id
+        tenant_db,
+        user,
+        invitation,
+        step_id,
+        delegate_user_id=payload.delegate_user_id,
+        tenant=tenant,
     )
     background_tasks.add_task(
         record_audit_log,
@@ -136,6 +141,10 @@ async def delegate_step(
         entity_id=step_id,
         diff={"delegatedToUserId": str(payload.delegate_user_id)},
     )
+    # Re-fetched: delegating stepOrder 0 may have just resolved `hostId`
+    # (role-based-invitation-workflow), which the `invitation` object read
+    # before delegation doesn't reflect.
+    invitation = await invitations_service.get_invitation(tenant_db, invitation_id)
     current_approval_step = await invitations_service.get_current_approval_step(
         tenant_db, invitation
     )

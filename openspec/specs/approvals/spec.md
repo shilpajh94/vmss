@@ -10,7 +10,7 @@ takes effect at approval time instead of only existing as unused config.
 
 ## Requirements
 
-### Requirement: Submission Snapshots the Category's Active Workflow Into Ordered Steps
+### Requirement: Submission Snapshots the Category's Workflow Plus an Unconditional Ownership Step
 WHEN an invitation is submitted (created with a resulting status of
 `submitted`, i.e. not auto-approved) for a `visitorCategoryId` that has one
 or more active `ApprovalWorkflowRule` rows, the system SHALL create one
@@ -21,53 +21,33 @@ the rule: a rule created, edited, or deactivated after the snapshot SHALL
 NOT change the steps already created for invitations submitted before that
 edit.
 
-WHEN the invitation's host resolves to an active user at submission time
-(`hostId` given, or `hostNameOrEmail` matched to an active user), the
-system SHALL additionally create one implicit host-identified
-`InvitationApprovalStep` at `stepOrder` 0 — carrying `approverUserId` set to
-that host, `approverRoleId` null, `isMandatory` true, starting `pending` —
-ahead of any role-identified steps snapshotted from the category's active
-`ApprovalWorkflowRule` chain. This host step is unconditional: it is
-created whenever the host resolves, regardless of whether the category has
-any active rules, and the role-identified steps (if any) keep the
-`stepOrder` values already configured on their rules (by convention
-starting at 1), so no renumbering is needed. WHEN the category has zero
-active rules and the host does not resolve to a user, the system SHALL
-create no steps for that invitation, leaving it to the existing single-
-approve behavior.
+Unconditionally — regardless of whether the category has any active rules,
+and regardless of anything supplied at creation — the system SHALL
+additionally create one `InvitationApprovalStep` at `stepOrder` 0,
+role-identified for the tenant's default host role (the standard `reception`
+role unless a tenant has reconfigured it), `isMandatory` true, starting
+`pending`, ahead of any role-identified steps snapshotted from the
+category's active `ApprovalWorkflowRule` chain. The role-identified steps
+(if any) keep the `stepOrder` values already configured on their rules (by
+convention starting at 1), so no renumbering is needed. The invitation's
+actual host is established later, by delegating this step to a specific
+person (see "Delegating Any Step Resolves/Updates the Invitation's
+Host") — not at snapshot time.
 
-#### Scenario: A category with three active rules snapshots three ordered steps
+#### Scenario: A category with three active rules snapshots four ordered steps
 - **WHEN** an invitation is submitted for a `visitorCategoryId` with three
-  active `ApprovalWorkflowRule` rows at `stepOrder` 1, 2, and 3, and the
-  invitation's host does not resolve to a user
-- **THEN** three `InvitationApprovalStep` rows are created for that
-  invitation, each `pending`, ordered 1, 2, and 3, carrying the
-  corresponding rule's `approverRoleId` and `isMandatory`
-
-#### Scenario: A category with no active rules creates no steps
-- **WHEN** an invitation is submitted for a `visitorCategoryId` with zero
-  active `ApprovalWorkflowRule` rows, and the invitation's host does not
-  resolve to a user
-- **THEN** no `InvitationApprovalStep` rows are created for that invitation,
-  and it remains approvable only through the blanket single-approve
-  endpoint
-
-#### Scenario: A resolved host with no configured rules creates a single host-approval step
-- **WHEN** an invitation is submitted whose host resolves to an active
-  user, for a `visitorCategoryId` with zero active `ApprovalWorkflowRule`
-  rows
-- **THEN** exactly one `InvitationApprovalStep` is created at `stepOrder`
-  0, `pending`, carrying `approverUserId` set to the resolved host and
-  `approverRoleId` null
-
-#### Scenario: A resolved host with configured rules creates a host step ahead of the role chain
-- **WHEN** an invitation is submitted whose host resolves to an active
-  user, for a `visitorCategoryId` with three active `ApprovalWorkflowRule`
-  rows at `stepOrder` 1, 2, and 3
+  active `ApprovalWorkflowRule` rows at `stepOrder` 1, 2, and 3
 - **THEN** four `InvitationApprovalStep` rows are created: `stepOrder` 0
-  (host-identified, `approverUserId` set, `pending`, the current step),
-  followed by `stepOrder` 1, 2, and 3 (role-identified, as configured),
-  all still `pending`
+  (role-identified for the tenant's default host role, `pending`, the
+  current step), followed by `stepOrder` 1, 2, and 3 (role-identified, as
+  configured), all `pending`
+
+#### Scenario: A category with no active rules still snapshots the ownership step
+- **WHEN** an invitation is submitted for a `visitorCategoryId` with zero
+  active `ApprovalWorkflowRule` rows
+- **THEN** exactly one `InvitationApprovalStep` is created, at `stepOrder` 0,
+  role-identified for the tenant's default host role, `pending` — the
+  invitation is no longer left with zero snapshotted steps in this case
 
 #### Scenario: Editing a rule after snapshot does not affect an in-flight invitation
 - **WHEN** an invitation's approval steps have already been snapshotted, and
@@ -81,7 +61,7 @@ approve behavior.
 - **WHEN** an invitation's initial status resolves to `approved` at creation
   (tenant auto-approve enabled)
 - **THEN** no `InvitationApprovalStep` rows are created, regardless of
-  whether the category has active rules or the host resolves to a user
+  whether the category has active rules
 
 ### Requirement: Steps Are Approved in Strict Order by the Current Pending Step
 For an invitation with snapshotted approval steps, only the single step with
@@ -124,6 +104,36 @@ invitation) SHALL be rejected with 404.
   or a step id that belongs to a different invitation than the one named in
   the path
 - **THEN** the request is rejected with 404
+
+### Requirement: The Ownership Step Is a Plain Role-Identified Step, Approvable Directly
+`POST /invitations/{id}/approval-steps/{stepId}/approve` on the unconditional
+`stepOrder` 0 ownership step is authorized exactly like any other current
+pending step (see "Acting on a Step Requires the Caller's Matching Role, or
+an Explicit Override") — the step's owning-role holder (e.g. `reception`)
+MAY approve it directly, with no requirement to delegate it first. Approving
+it directly SHALL NOT itself resolve the invitation's `hostId` — only
+delegating a step still does that (see "Delegating the Ownership Step Also
+Resolves the Invitation's Host"). Whether an invitation's `hostId` ever gets
+resolved is therefore independent of how its `stepOrder` 0 step is acted
+on: a caller who wants to name a specific host still delegates the step (at
+`stepOrder` 0, or a later step in the category's configured chain) exactly
+as before; a caller who just wants to approve the step and move the
+workflow on may do so without naming anyone.
+
+#### Scenario: The owning-role holder approves the ownership step directly
+- **WHEN** a holder of the tenant's default host role calls the approve
+  endpoint on the invitation's `stepOrder` 0 step, which has not been
+  delegated to anyone
+- **THEN** the step is approved normally (the workflow advances, or the
+  invitation is finalized if it was the last step), and the invitation's
+  `hostId` remains unresolved
+
+#### Scenario: The delegate approves the ownership step after delegation
+- **WHEN** the ownership step has been delegated to a specific person (see
+  "Delegating Any Step Resolves/Updates the Invitation's Host"), and
+  that delegate calls the approve endpoint on it
+- **THEN** the step is approved normally and the workflow advances, exactly
+  as approving any other current pending step would
 
 ### Requirement: Rejecting a Step Is Terminal and Denies the Invitation
 `POST /invitations/{id}/approval-steps/{stepId}/reject` SHALL reject the
@@ -229,70 +239,104 @@ For an invitation with a current pending `InvitationApprovalStep`, a caller
 MAY delegate that step, via `POST
 /invitations/{invitationId}/approval-steps/{stepId}/delegate`, to a
 specific other person, at any `stepOrder` — including `stepOrder` 0 (the
-host step itself) and any step beyond the one immediately following it —
+ownership step) and any step beyond the one immediately following it —
 provided the caller satisfies one of:
-(a) the caller is the invitation's host — the user identified by its
-`stepOrder` 0 host-identified step's `approverUserId` — regardless of
-whether they would otherwise be authorized to act on the current step
-directly. This is a blanket privilege, generalized from the prior
-capability's own "the host may hand off the very next role-identified step
-to someone else even without holding that role" behavior, now extended to
-every step position rather than only the one immediately following the
-host's;
+(a) the caller is the invitation's currently resolved host (its `hostId` —
+see the `invitations` capability's "Invitation Output Surfaces the Resolved
+Host as hostId"), if one has been resolved — regardless of whether they
+would otherwise be authorized to act on the current step directly. This is
+a blanket privilege, extended to every step position rather than only the
+one immediately following the ownership step's. Before a host has been
+resolved (the common case for a freshly submitted invitation, since
+`stepOrder` 0 now starts role-identified rather than host-identified), this
+clause simply does not apply yet — clause (b) below is what lets any
+holder of the owning role delegate `stepOrder` 0 to the real host in the
+first place;
 (b) the caller otherwise satisfies one of the conditions that would
 authorize them to act on the current step directly (see "Acting on a Step
 Requires the Caller's Matching Role, or an Explicit Override"): matches its
-currently assigned delegate (re-delegating), holds the role its
-`approverRoleId` names (when no delegate is yet assigned), or — for a
-host-identified step — is the person its `approverUserId` names (already
-covered by clause (a) when that person is the invitation's own host, but
-this also covers a *different* host-identified step were one ever to
-exist); or
-(c) the caller holds `invitations:approve-override`.
-The named delegate SHALL satisfy the step's own eligibility: for a
-role-identified step, the delegate SHALL hold the step's `approverRoleId`
-role at the invitation's branch or company-wide; for a host-identified step
-(`stepOrder` 0), the delegate SHALL hold `invitations:approve` at the
-invitation's branch. A step that already has a delegate assigned MAY be
-re-delegated — by its current delegate, by the invitation's host (clause
-a), or by an override-permission holder (clause c) — to a different
-specific person, overwriting the prior delegate rather than accumulating
-multiple delegates for one step; this chaining is what makes delegation
-genuinely multi-level rather than a single hop. Delegating a step that is
-not currently the invitation's current pending step, that has already been
-acted on (approved/rejected), or that belongs to an invitation with no
-snapshotted approval steps at all, SHALL be rejected with 409 and SHALL NOT
-record any delegation. A caller satisfying none of (a)-(c) for that step
-SHALL be rejected with 403. A successful delegation SHALL record the
-delegate, the delegating user, and the timestamp; it does not itself change
-the step's `pending` status or the invitation's overall status — the
-delegate must still separately approve or reject it (or delegate it onward
-again).
+currently assigned delegate (re-delegating), or holds the role its
+`approverRoleId` names (when no delegate is yet assigned);
+(c) the caller holds `invitations:approve-override`; or
+(d) the caller is the one who actually approved the step immediately
+preceding this one (that step's `approverRoleId`/`approverUserId` is
+irrelevant — what matters is whose `actedByUserId` that prior step
+records), regardless of whether the caller holds this step's own
+`approverRoleId`. Clause (d) never applies to `stepOrder` 0 (no preceding
+step exists) and only ever reaches back one step — the caller must have
+personally approved the step directly before this one, not merely held its
+role or approved some earlier step in the chain.
+The named delegate's own eligibility depends on which step is being
+delegated: for `stepOrder` 0 (the ownership step, role-identified for the
+tenant's default host role), the delegate SHALL hold `invitations:approve`
+at the invitation's branch — the delegate need NOT hold the default host
+role itself, since the real host is normally not a front-office employee;
+this is the one exception to the general rule. For every other
+role-identified step (the category's own configured chain, `stepOrder` 1
+and beyond), the delegate SHALL hold that step's `approverRoleId` role at
+the invitation's branch or company-wide, unchanged from before. A step that
+already has a delegate assigned MAY be re-delegated — by its current
+delegate, by the invitation's resolved host once one exists (clause a), or
+by an override-permission holder (clause c) — to a different specific
+person, overwriting the prior delegate rather than accumulating multiple
+delegates for one step. Delegating a step that is not currently the
+invitation's current pending step, that has already been acted on
+(approved/rejected), or that belongs to an invitation with no snapshotted
+approval steps at all, SHALL be rejected with 409 and SHALL NOT record any
+delegation. A caller satisfying none of (a)-(c) for that step SHALL be
+rejected with 403. A successful delegation SHALL record the delegate, the
+delegating user, and the timestamp; it does not itself change the step's
+`pending` status or the invitation's overall status — the delegate must
+still separately approve or reject it (or delegate it onward again).
+Delegating any step, at any `stepOrder`, additionally resolves/updates the
+invitation's host to that delegate (see "Delegating Any Step
+Resolves/Updates the Invitation's Host").
 
 #### Scenario: Host delegates their own step to another person
-- **WHEN** the host of an invitation — currently the only one authorized to
-  act on its `stepOrder` 0 step — calls the delegate endpoint on that same
-  step, naming a person who holds `invitations:approve` at the invitation's
-  branch
+- **WHEN** the invitation's already-resolved host — currently authorized to
+  act on its `stepOrder` 0 step via clause (a) — calls the delegate endpoint
+  on that same step, naming a person who holds `invitations:approve` at the
+  invitation's branch
 - **THEN** the delegation succeeds, the step remains `pending`, and the
-  named delegate — not the original host — becomes the one who can approve
-  or reject `stepOrder` 0
+  invitation's resolved host updates to the new delegate
 
 #### Scenario: Host delegates a later role-identified step without holding its role
-- **WHEN** the invitation's host, who does not hold the role its current
-  pending `stepOrder` 2 step names, calls the delegate endpoint on that
-  step, naming a person who does hold that role at the invitation's branch
-- **THEN** the delegation succeeds — the host's delegation privilege does
-  not require the host to be independently authorized to act on the step
-  being delegated
+- **WHEN** the invitation's resolved host, who does not hold the role its
+  current pending `stepOrder` 2 step names, calls the delegate endpoint on
+  that step, naming a person who does hold that role at the invitation's
+  branch
+- **THEN** the delegation succeeds — the resolved host's delegation
+  privilege does not require them to be independently authorized to act on
+  the step being delegated
 
 #### Scenario: A role-holder delegates a later step, not just the one after the host's
-- **WHEN** a user who is not the invitation's host, but is currently
+- **WHEN** a user who is not the invitation's resolved host, but is currently
   authorized (by role match) to act on a `stepOrder` 2 step of a
   multi-level workflow, calls the delegate endpoint on it, naming another
   user who holds that step's role at the invitation's branch
 - **THEN** the delegation succeeds regardless of the step's position in the
-  sequence
+  sequence, and this step's delegate eligibility is unchanged from before
+  (the named delegate must hold that step's role — the `stepOrder` 0
+  exception below does not apply here)
+
+#### Scenario: Host re-delegates an already-delegated step
+- **WHEN** the invitation's resolved host calls the delegate endpoint on a
+  step that already has a different delegate assigned, naming a new person
+  who satisfies the step's own eligibility
+- **THEN** the delegation succeeds and is updated to the new person — the
+  resolved host's blanket privilege persists even after a step has already
+  been delegated to someone else, not just at the moment it first becomes
+  current
+
+#### Scenario: A holder of the owning role delegates the ownership step to the real host
+- **WHEN** a user holding the tenant's default host role at an invitation's
+  branch — with no host yet resolved for that invitation — calls the
+  delegate endpoint on its `stepOrder` 0 step, naming a person who holds
+  `invitations:approve` at the branch but does not hold the default host
+  role
+- **THEN** the delegation succeeds even though the named delegate does not
+  hold the step's `approverRoleId` role — this is the exception this change
+  introduces for `stepOrder` 0 specifically
 
 #### Scenario: A delegate re-delegates the step onward, chaining the delegation
 - **WHEN** a step already has a delegate assigned, and that delegate calls
@@ -301,14 +345,25 @@ again).
 - **THEN** the delegation is updated to the third person, superseding the
   prior delegate, and the step remains `pending`
 
-#### Scenario: Host re-delegates an already-delegated step
-- **WHEN** the invitation's host calls the delegate endpoint on a step that
-  already has a different delegate assigned, naming a new person who
-  satisfies the step's own eligibility
-- **THEN** the delegation succeeds and is updated to the new person — the
-  host's blanket privilege persists even after a step has already been
-  delegated to someone else, not just at the moment it first becomes
-  current
+#### Scenario: The previous step's approver delegates the next step to the workflow-configured role
+- **WHEN** a user who is not the invitation's resolved host, does not hold
+  the current pending step's `approverRoleId` role, and is not its
+  currently assigned delegate, but who personally approved the step
+  immediately preceding it, calls the delegate endpoint on the current
+  step, naming a person who holds that step's `approverRoleId` role at the
+  invitation's branch
+- **THEN** the delegation succeeds — e.g. Reception, having approved the
+  invitation's `stepOrder` 0 ownership step directly (without delegating
+  it), may still hand the workflow's second-level step straight to the
+  role it configures
+
+#### Scenario: Only the step's own approver, not an earlier one, gets the previous-step delegation privilege
+- **WHEN** a user personally approved `stepOrder` 1 of a three-step
+  invitation, and `stepOrder` 2 has since also been approved by someone
+  else, making `stepOrder` 3 the current pending step
+- **THEN** that user does not gain delegation authority over `stepOrder` 3
+  from clause (d) — only whoever approved `stepOrder` 2 does — though they
+  may still be authorized some other way (host, role match, override)
 
 #### Scenario: Override-permission holder delegates any step regardless of role or host match
 - **WHEN** a caller holds `invitations:approve` and
@@ -319,9 +374,10 @@ again).
   on that step
 
 #### Scenario: Caller not currently authorized on the step is rejected
-- **WHEN** a caller who is not the invitation's host, does not match the
-  current step's role, is not its currently assigned delegate, and does
-  not hold `invitations:approve-override` calls the delegate endpoint
+- **WHEN** a caller who is not the invitation's resolved host, does not
+  match the current step's role, is not its currently assigned delegate,
+  and does not hold `invitations:approve-override` calls the delegate
+  endpoint
 - **THEN** the request is rejected with 403 and no delegation is recorded
 
 #### Scenario: Delegating a step that is not currently pending is rejected
@@ -330,11 +386,16 @@ again).
 - **THEN** the request is rejected with 409 and no delegation is recorded
 
 #### Scenario: Named delegate not eligible for the step is rejected
-- **WHEN** a caller names a delegate who does not hold the step's
-  `approverRoleId` role (for a role-identified step) or does not hold
-  `invitations:approve` at the invitation's branch (for the host-identified
-  step)
+- **WHEN** a caller names a delegate who does not hold a `stepOrder` 1-or-
+  later step's `approverRoleId` role at the invitation's branch or
+  company-wide
 - **THEN** the request is rejected and no delegation is recorded
+
+#### Scenario: Named delegate lacking invitations:approve for the ownership step is rejected
+- **WHEN** a caller delegates `stepOrder` 0 to a person who does not hold
+  `invitations:approve` at the invitation's branch
+- **THEN** the request is rejected and no delegation is recorded, even
+  though holding the default host role itself is not required for this step
 
 #### Scenario: Delegation alone does not advance the workflow
 - **WHEN** a delegation is successfully recorded on the current pending
@@ -348,6 +409,59 @@ again).
   delegate approves it
 - **THEN** the invitation transitions to `approved` exactly as it would if
   a role-holding, non-delegated approver had acted on that same step
+
+### Requirement: Delegating Any Step Resolves/Updates the Invitation's Host
+WHEN any of an invitation's `InvitationApprovalStep` rows — at any
+`stepOrder`, not only `stepOrder` 0 — is successfully delegated to a
+specific person, the system SHALL, in the same transaction, set the
+invitation's `hostId` and `hostNameOrEmail` (see the `invitations`
+capability's "Invitation Output Surfaces the Resolved Host as hostId") to
+that delegate — establishing (or updating) them as the invitation's
+resolved host from that point on. This applies uniformly to every
+delegation, first or repeat, at every step position: the invitation's
+resolved host always reflects whoever was most recently delegated *any*
+step (extended from the original `stepOrder`-0-only rule by
+reception-retains-visibility-and-delegation-after-own-step — see also
+"Current Step's Authorized Approver Delegates It to a Specific Person"
+clause (4), which is what lets a caller who is not that later step's
+role-holder perform this delegation in the first place). The newly
+assigned host SHALL be notified (push, and email using the branded
+template from the `email-notifications` capability) that they have been
+named host of the invitation, including the tracking ID, visitor's name,
+and visit date/time.
+
+#### Scenario: Delegating stepOrder 0 resolves and notifies the host
+- **WHEN** a holder of the tenant's default host role delegates an
+  invitation's `stepOrder` 0 step to a specific person for the first time
+- **THEN** the invitation's `hostId`/`hostNameOrEmail` are set to that
+  person, and they receive a push notification and an email stating they
+  have been named host, with the tracking ID, visitor's name, and visit
+  date/time
+
+#### Scenario: Re-delegating stepOrder 0 updates the resolved host and notifies the new one
+- **WHEN** an invitation's already-delegated `stepOrder` 0 step is
+  re-delegated to a different person
+- **THEN** the invitation's `hostId`/`hostNameOrEmail` update to the new
+  person, who receives the same host-assignment notification; the
+  previous delegate receives no further notifications tied to being host
+
+#### Scenario: Delegating a later step also updates the resolved host
+- **WHEN** a `stepOrder` 1 (or later) step is delegated to a specific
+  person — e.g. Reception, via clause (4), routing the workflow's
+  second-level step to the role it configures
+- **THEN** the invitation's `hostId`/`hostNameOrEmail` update to that
+  step's delegate, superseding whoever was resolved as host before (the
+  `stepOrder` 0 delegate, if any), and that new delegate receives the same
+  host-assignment notification
+
+#### Scenario: A later delegation supersedes an earlier one as the resolved host
+- **WHEN** an invitation's `stepOrder` 0 step was delegated to person A
+  (resolving them as host), and its `stepOrder` 1 step is subsequently
+  delegated to a different person B
+- **THEN** the invitation's `hostId`/`hostNameOrEmail` update to B, and A is
+  no longer the resolved host — A keeps their own visibility into the
+  invitation only via the `relevantToMe` clauses that don't depend on host
+  status (e.g. having personally acted on a step)
 
 ### Requirement: The Current Step's Identifier Is Returned So Callers Can Act On It
 The current-step summary embedded in an invitation response
@@ -421,8 +535,8 @@ that role is the tenant's standard `admin` role (matched by name,
 case-insensitively), which SHALL NOT receive a push notification. This is
 in addition to, and uses the same resolution rules as, the push dispatched
 when an invitation's first step is created at submission
-(`specs/invitations/spec.md` "Invitation Submission Notifies the Approval
-Workflow's First Approver(s) via Push").
+(`specs/invitations/spec.md` "Submission Notifies the Owning Role via
+Push").
 
 #### Scenario: Approving a role-identified step activates a host-identified step
 - **WHEN** a two-step invitation's first (role-identified) step is approved,

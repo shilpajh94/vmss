@@ -200,6 +200,54 @@ async def test_list_tenants_success(
     assert "acme-test" in slugs
 
 
+async def test_list_tenants_sort_by_slug(
+    client: AsyncClient, superadmin: SuperAdmin, tenant: Tenant, db_session: AsyncSession
+) -> None:
+    """verify-full-api-test-and-validation-coverage task 7.2/7.4 — the
+    `sortBy`/`sortOrder` params on `GET /platform/tenants`
+    (`platform/router.py::list_tenants`) are additive-only per
+    `api-conventions.md` §2, but had no HTTP-level test proving they
+    actually reorder the response. `tenant` fixture's slug is `acme-test`;
+    provisioning a second tenant with a lexicographically earlier slug
+    gives a real, order-sensitive comparison. Drops the schema it
+    provisions in a `finally`, same reasoning as
+    `test_create_tenant_success_via_endpoint` above.
+    """
+    login = await client.post(
+        "/api/v1/platform/auth/login",
+        json={"email": superadmin.email, "password": "correct-password"},
+    )
+    token = login.json()["data"]["accessToken"]
+    headers = {"Authorization": f"Bearer {token}"}
+    slug = f"aardvark-corp-{uuid.uuid4().hex[:8]}"
+
+    try:
+        await client.post(
+            "/api/v1/platform/tenants",
+            json={"name": "Aardvark Corp", "slug": slug},
+            headers=headers,
+        )
+
+        asc_response = await client.get(
+            "/api/v1/platform/tenants",
+            params={"sortBy": "slug", "sortOrder": "asc"},
+            headers=headers,
+        )
+        asc_slugs = [t["slug"] for t in asc_response.json()["data"]]
+        assert asc_slugs.index(slug) < asc_slugs.index("acme-test")
+
+        desc_response = await client.get(
+            "/api/v1/platform/tenants",
+            params={"sortBy": "slug", "sortOrder": "desc"},
+            headers=headers,
+        )
+        desc_slugs = [t["slug"] for t in desc_response.json()["data"]]
+        assert desc_slugs.index(slug) > desc_slugs.index("acme-test")
+    finally:
+        await db_session.execute(text(f'DROP SCHEMA IF EXISTS "tenant_{slug}" CASCADE'))
+        await db_session.commit()
+
+
 async def test_create_tenant_provisions_real_schema(db_session: AsyncSession) -> None:
     """Service-level test (testing-standards.md §3) for the one thing an
     HTTP-level test can't cheaply cover: that provisioning actually creates

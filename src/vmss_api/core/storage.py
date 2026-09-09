@@ -69,15 +69,21 @@ def _local_url_signature(key: str, expires_at: int) -> str:
 
 
 async def _local_presigned_url(key: str) -> str:
-    """Signed, time-boxed URL for the `local` backend, mirroring the `s3`
-    backend's presigned-URL model (add-avatar-upload-and-verify-image-
-    storage/design.md Decision 1) — the signature is the authorization, a
-    caller fetching it needs no separate permission check.
-    """
+    """Signed, time-boxed URL for the `local` backend."""
     expires_at = int(time.time()) + settings.storage_local_presigned_url_ttl_seconds
     signature = _local_url_signature(key, expires_at)
-    return f"/api/v1/files/local/{quote(key, safe='')}?exp={expires_at}&sig={signature}"
 
+    path = (
+        f"/api/v1/files/local/"
+        f"{quote(key, safe='')}?exp={expires_at}&sig={signature}"
+    )
+
+    base_url = settings.storage_public_base_url
+
+    if base_url:
+        return f"{base_url.rstrip('/')}{path}"
+
+    return path
 
 def verify_local_url(key: str, expires_at: int, signature: str) -> bool:
     """Verifies a local-backend signed URL's signature and expiry. Returns

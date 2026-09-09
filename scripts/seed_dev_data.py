@@ -19,6 +19,8 @@ from vmss_api.core.security import hash_password
 from vmss_api.org_structure.models import Branch
 from vmss_api.platform import service as platform_service
 from vmss_api.platform.repository import TenantUserIndexRepository
+from vmss_api.sso import service as sso_service
+from vmss_api.sso.schemas import SsoProviderConfigIn
 from vmss_api.tenant.repository import TenantRepository
 
 ADMIN_EMAIL = "admin@example.com"
@@ -59,6 +61,30 @@ async def seed() -> None:
         async with tenant_session_scope(tenant.schema_name) as tenant_db:
             await seed_default_roles(tenant_db)
             await tenant_db.commit()
+
+        # Opt-in, dev-seeding-only: only runs when a developer has filled in
+        # real OIDC test-app credentials in `.env` (see `.env.example`'s
+        # SSO_DEV_SEED_* block) — otherwise a no-op, same as before these
+        # settings existed. Placed before the `already_indexed` early return
+        # below so re-running this script always re-syncs it, matching the
+        # role-catalog re-sync just above.
+        if (
+            settings.sso_dev_seed_discovery_url
+            and settings.sso_dev_seed_client_id
+            and settings.sso_dev_seed_client_secret
+        ):
+            async with tenant_session_scope(tenant.schema_name) as tenant_db:
+                await sso_service.save_provider_config(
+                    tenant_db,
+                    SsoProviderConfigIn(
+                        display_name=settings.sso_dev_seed_display_name,
+                        discovery_url=settings.sso_dev_seed_discovery_url,
+                        client_id=settings.sso_dev_seed_client_id,
+                        client_secret=settings.sso_dev_seed_client_secret,
+                        is_enabled=True,
+                    ),
+                )
+            print(f"SSO provider configured for tenant '{tenant.slug}'")
 
         already_indexed = await TenantUserIndexRepository(db).get_by_email(ADMIN_EMAIL)
         if already_indexed is not None:

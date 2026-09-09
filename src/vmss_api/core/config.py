@@ -163,6 +163,10 @@ class Settings(BaseSettings):
     # value (see `.env.example`).
     storage_local_url_secret: str | None = None
     storage_local_presigned_url_ttl_seconds: int = 300
+    storage_public_base_url: str | None = Field(
+        default=None,
+        alias="STORAGE_PUBLIC_BASE_URL",
+    )
 
     # Mail settings for `core/emailing.py`'s `SmtpEmailSender` — shared by
     # `invitations/notifications.py` and `reports/tasks.py` (see
@@ -265,6 +269,21 @@ class Settings(BaseSettings):
     sso_frontend_callback_url: str | None = Field(default=None, alias="SSO_FRONTEND_CALLBACK_URL")
     sso_exchange_code_ttl_seconds: int = Field(default=60, alias="SSO_EXCHANGE_CODE_TTL_SECONDS")
     sso_state_ttl_seconds: int = Field(default=600, alias="SSO_STATE_TTL_SECONDS")
+    # Dev-seeding-only: when all three of discovery_url/client_id/client_secret
+    # are set, `scripts/seed_dev_data.py` provisions an enabled `SsoProvider`
+    # row for the seeded tenant so staff SSO login can actually be clicked
+    # through locally. Left unset by default — seeding stays a no-op for this
+    # step exactly as it was before these settings existed. Requires a real,
+    # publicly-reachable OIDC discovery endpoint: `fetch_discovery_document`'s
+    # SSRF hardening rejects any private/loopback/reserved address, so a
+    # placeholder or local value will not work at actual login time even
+    # though it saves without error (see docs/features/sso_authentication.md).
+    sso_dev_seed_discovery_url: str | None = Field(default=None, alias="SSO_DEV_SEED_DISCOVERY_URL")
+    sso_dev_seed_client_id: str | None = Field(default=None, alias="SSO_DEV_SEED_CLIENT_ID")
+    sso_dev_seed_client_secret: str | None = Field(default=None, alias="SSO_DEV_SEED_CLIENT_SECRET")
+    sso_dev_seed_display_name: str = Field(
+        default="Dev SSO Provider", alias="SSO_DEV_SEED_DISPLAY_NAME"
+    )
 
     # Firebase Cloud Messaging — the push provider for both web and the
     # Flutter app (add-invitation-push-notifications/design.md Decision 4).

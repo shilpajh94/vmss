@@ -4,6 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.auth.rbac_catalog import NON_WORKFLOW_STEP_ROLE_NAMES
 from vmss_api.auth.repository import RoleRepository
 from vmss_api.core.schemas import SortOrder
 from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
@@ -123,8 +124,14 @@ async def create_approval_workflow_rule(
 ) -> ApprovalWorkflowRule:
     if await VisitorCategoryRepository(tenant_db).get(payload.visitor_category_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Visitor category not found")
-    if await RoleRepository(tenant_db).get(payload.approver_role_id) is None:
+    approver_role = await RoleRepository(tenant_db).get(payload.approver_role_id)
+    if approver_role is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Approver role not found")
+    if approver_role.name.lower() in NON_WORKFLOW_STEP_ROLE_NAMES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"'{approver_role.name}' cannot be a step's approver role",
+        )
     repo = ApprovalWorkflowRuleRepository(tenant_db)
     if (
         await repo.get_by_category_and_step(payload.visitor_category_id, payload.step_order)
@@ -174,8 +181,15 @@ async def update_approval_workflow_rule(
     rule = await get_approval_workflow_rule(tenant_db, rule_id)
     changes = payload.model_dump(exclude_unset=True)
     new_role_id = changes.get("approver_role_id")
-    if new_role_id is not None and await RoleRepository(tenant_db).get(new_role_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Approver role not found")
+    if new_role_id is not None:
+        new_role = await RoleRepository(tenant_db).get(new_role_id)
+        if new_role is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Approver role not found")
+        if new_role.name.lower() in NON_WORKFLOW_STEP_ROLE_NAMES:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"'{new_role.name}' cannot be a step's approver role",
+            )
     new_step = changes.get("step_order")
     if (
         new_step is not None
