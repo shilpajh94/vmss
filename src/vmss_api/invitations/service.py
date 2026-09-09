@@ -666,7 +666,7 @@ async def _perform_check_in(
     *,
     actor_user_id: uuid.UUID | None,
     tenant: Tenant,
-) -> Invitation:
+) -> tuple[Invitation, bool]:
     """spec.md "An Approved Invitation Can Be Checked In" /
     "A Watchlist-Flagged Invitation Blocks Check-In Until Overridden" /
     "An Approved Invitation Can Be Publicly Checked In By Tracking ID". The
@@ -678,13 +678,28 @@ async def _perform_check_in(
     `actor_user_id` is `None` for the public, tracking-ID-keyed check-in path
     (there is no authenticated caller to record) — `checked_in_by_user_id` is
     nullable at the model level for exactly this case.
+
+    Returns `(invitation, changed)` — `changed` is `False` for the
+    idempotent-no-op case below, so the caller (the router's audit-log
+    background task) can skip writing an audit entry for a call that
+    performed no actual transition.
+
+    A repeat call while already `checked_in` is treated as an idempotent
+    no-op success (returns the invitation unchanged) rather than a 409 — no
+    second `UPDATE`, no re-stamped `checkedInAt`, no duplicate host
+    notification or audit entry, since nothing about the invitation's state
+    actually changed. This is deliberately checked before the watchlist gate
+    below: a flag added after a visitor already entered must not turn their
+    repeat/duplicate check-in call into an error.
     """
+    if invitation.check_in_status == "checked_in":
+        return invitation, False
     if invitation.watchlist_flagged:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail="Invitation is watchlist-flagged; override required before check-in",
         )
-    if invitation.status != "approved":
+    if invitation.status not in ("approved", "checked_in", "checked_out"):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
     updated = await InvitationRepository(tenant_db).check_in_if_eligible(
         invitation.id, user_id=actor_user_id
@@ -696,12 +711,12 @@ async def _perform_check_in(
         )
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_in)
-    return updated
+    return updated, True
 
 
 async def check_in_invitation_by_tracking_id(
     tenant_db: AsyncSession, tracking_id: str, *, tenant: Tenant
-) -> Invitation:
+) -> tuple[Invitation, bool]:
     """`PATCH /api/v2/invitations/{trackingId}/check-in` — public,
     unauthenticated, tracking-ID-keyed (spec.md "An Approved Invitation Can
     Be Publicly Checked In By Tracking ID"). No authenticated caller, so no
@@ -737,32 +752,33 @@ async def _get_invitation_by_qr_token_or_400(
 
 async def check_in_by_qr_token(
     tenant_db: AsyncSession, token: str, *, tenant: Tenant
-) -> tuple[Invitation, str]:
+) -> tuple[Invitation, str, bool]:
     """`PATCH /api/v2/invitations/qr/{token}/check-in` — public,
     unauthenticated, driven by the encrypted QR token rather than the
     tracking ID (spec.md "QR Check-In Token Is Encrypted and
     Tamper-Evident" / "QR Check-In Endpoint Transitions an Eligible
     Visitor to Checked-In"). Entry only: `unused`/`checked_out` ->
-    `checked_in`. Rejects with 409 (not toggling to checked-out) when the
-    invitation is already `checked_in` — the caller must use
-    `check_out_by_qr_token` instead. Also rejects a scan attempted before
-    the invitation's `preferred_visit_date` (date-only, tenant-local
-    calendar day) with `425 Too Early`, distinct from the `410 Gone` used
-    for expiry — see qr-checkin-scheduling-photo-email/design.md Decisions
-    1-2. An invitation with no `preferred_visit_date` set skips that check
-    entirely.
+    `checked_in`. A repeat scan while already `checked_in` is an idempotent
+    no-op success (same "Verification passed" message, unchanged data) —
+    not a 409 — mirroring `_perform_check_in`'s identical rule; the caller
+    still uses `check_out_by_qr_token` to actually exit. Also rejects a scan
+    attempted before the invitation's `preferred_visit_date` (date-only,
+    tenant-local calendar day) with `425 Too Early`, distinct from the
+    `410 Gone` used for expiry — see qr-checkin-scheduling-photo-email/
+    design.md Decisions 1-2. An invitation with no `preferred_visit_date`
+    set skips that check entirely.
 
-    Returns `(invitation, message)` — `message` is the human-readable
-    outcome the caller surfaces directly ("Verification passed"), matching
-    the confirmed frontend spec's response contract.
+    Returns `(invitation, message, changed)` — `message` is the
+    human-readable outcome the caller surfaces directly ("Verification
+    passed"), matching the confirmed frontend spec's response contract;
+    `changed` is `False` for the idempotent-no-op case below, so the
+    caller (the router's audit-log background task) can skip writing an
+    audit entry for a scan that performed no actual transition.
     """
     invitation = await _get_invitation_by_qr_token_or_400(tenant_db, token, tenant=tenant)
 
-    if invitation.check_in_status not in ("unused", "checked_out"):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail="Invitation is already checked in; use check-out instead",
-        )
+    if invitation.check_in_status == "checked_in":
+        return invitation, "Verification passed", False
     if invitation.status not in ("approved", "checked_in", "checked_out"):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, detail="Verification failed — invitation not approved"
@@ -795,7 +811,7 @@ async def check_in_by_qr_token(
 
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_in)
-    return updated, "Verification passed"
+    return updated, "Verification passed", True
 
 
 async def check_out_by_qr_token(
@@ -1125,6 +1141,7 @@ async def list_invitations_page(
     *,
     branch_scope: BranchScope | None,
     relevant_to_user_id: uuid.UUID | None = None,
+    default_host_role_id: uuid.UUID | None = None,
     status: str | None,
     registration_type: str | None,
     source: str | None,
@@ -1136,6 +1153,7 @@ async def list_invitations_page(
     return await InvitationRepository(tenant_db).list_page(
         branch_scope=branch_scope,
         relevant_to_user_id=relevant_to_user_id,
+        default_host_role_id=default_host_role_id,
         status=status,
         registration_type=registration_type,
         source=source,

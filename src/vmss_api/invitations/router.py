@@ -72,6 +72,7 @@ from vmss_api.org_structure.deps import (
     require_branch_scope,
 )
 from vmss_api.org_structure.models import Branch, Building, Department
+from vmss_api.org_structure.service import get_default_host_role
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/invitations", tags=["invitations"])
@@ -863,8 +864,11 @@ async def check_in_invitation_by_tracking_id(
         Header(
             alias="Idempotency-Key",
             description=(
-                "Optional. Omitting it simply forgoes retry-dedup safety — a "
-                "retried request with no key may check in twice. See "
+                "Optional. A repeat check-in call is already an idempotent "
+                "no-op once the invitation is checked in (allow-multiple-"
+                "checkins), so omitting this key is safe against a bare "
+                "retry; it still dedupes two *distinct* requests that "
+                "happen to race (e.g. concurrent double-taps). See "
                 "api-conventions.md §3."
             ),
         ),
@@ -875,27 +879,31 @@ async def check_in_invitation_by_tracking_id(
     `tracking_id` instead of its internal UUID `id` (spec.md "An Approved
     Invitation Can Be Publicly Checked In By Tracking ID") — for a kiosk,
     the visitor's own device checking in from the QR/badge code, or a staff
-    desk view, with no staff bearer token required. Returns the same full
-    invitation detail the legacy staff-authenticated route used to (spec.md
-    "Staff Check-In Response Surfaces Full Invitation Detail"). No branch
-    authorization check, since there is no authenticated caller to check it
-    against.
+    desk view, with no staff bearer token required. `checkInStatus` cycles
+    `unused`/`checked_out` -> `checked_in` indefinitely (allow-multiple-
+    checkins) — `checked_out` is not terminal, mirroring the QR endpoint's
+    re-entry rule; a call while already `checked_in` is a 200 idempotent
+    no-op, not an error. Returns the same full invitation detail the legacy
+    staff-authenticated route used to (spec.md "Staff Check-In Response
+    Surfaces Full Invitation Detail"). No branch authorization check, since
+    there is no authenticated caller to check it against.
     """
     cached = await _cached_response(tenant.id, idempotency_key)
     if cached is not None:
         return cached
 
-    invitation = await service.check_in_invitation_by_tracking_id(
+    invitation, changed = await service.check_in_invitation_by_tracking_id(
         tenant_db, tracking_id, tenant=tenant
     )
-    background_tasks.add_task(
-        record_audit_log,
-        tenant.schema_name,
-        actor_user_id=None,
-        action="invitation_checked_in_public",
-        entity_type="Invitation",
-        entity_id=invitation.id,
-    )
+    if changed:
+        background_tasks.add_task(
+            record_audit_log,
+            tenant.schema_name,
+            actor_user_id=None,
+            action="invitation_checked_in_public",
+            entity_type="Invitation",
+            entity_id=invitation.id,
+        )
     response = success_response(data=await _to_check_in_out(invitation))
     await _cache_response(tenant.id, idempotency_key, response)
     return response
@@ -931,25 +939,31 @@ async def check_in_by_qr_token(
     invitation's encrypted check-in token transitions `checkInStatus` from
     `unused`/`checked_out` (currently outside) to `checked_in`. This
     endpoint no longer toggles: calling it while already `checked_in`
-    returns 409 — use `PATCH /api/v2/invitations/qr/{token}/check-out`
-    instead. Expiry is enforced on every entry, including a re-entry.
-    Distinct from `PATCH /api/v2/invitations/{trackingId}/check-in` — that
-    route stays the manual desk fallback, keyed by the human-readable
-    tracking ID and unaffected by this one.
+    returns 200 as an idempotent no-op (unchanged data) rather than
+    performing a second transition — use
+    `PATCH /api/v2/invitations/qr/{token}/check-out` to actually exit.
+    Expiry is enforced on every entry, including a re-entry. Shares its
+    already-checked-in state (and therefore this idempotent-no-op behavior)
+    with `PATCH /api/v2/invitations/{trackingId}/check-in` — both endpoints
+    read/write the same `checkInStatus` column, so a visitor checked in via
+    one is recognized as already-checked-in by the other.
     """
     cached = await _cached_response(tenant.id, idempotency_key)
     if cached is not None:
         return cached
 
-    invitation, message = await service.check_in_by_qr_token(tenant_db, token, tenant=tenant)
-    background_tasks.add_task(
-        record_audit_log,
-        tenant.schema_name,
-        actor_user_id=None,
-        action="invitation_qr_checked_in",
-        entity_type="Invitation",
-        entity_id=invitation.id,
+    invitation, message, changed = await service.check_in_by_qr_token(
+        tenant_db, token, tenant=tenant
     )
+    if changed:
+        background_tasks.add_task(
+            record_audit_log,
+            tenant.schema_name,
+            actor_user_id=None,
+            action="invitation_qr_checked_in",
+            entity_type="Invitation",
+            entity_id=invitation.id,
+        )
     branch, department, building = await service.get_invitation_location(tenant_db, invitation)
     response = success_response(
         data=await _to_qr_check_in_out(
@@ -1315,14 +1329,18 @@ async def list_invitations(
     """
     page, page_size = pagination
     branch_scope: BranchScope | None = None
+    default_host_role_id: uuid.UUID | None = None
     if not relevant_to_me:
         branch_scope = await require_branch_scope("invitations:view")(
             user=user, tenant_db=tenant_db, x_branch_id=x_branch_id
         )
+    else:
+        default_host_role_id = (await get_default_host_role(tenant_db)).id
     invitations, total = await service.list_invitations_page(
         tenant_db,
         branch_scope=branch_scope,
         relevant_to_user_id=user.id if relevant_to_me else None,
+        default_host_role_id=default_host_role_id,
         status=status_filter.value if status_filter is not None else None,
         registration_type=registration_type.value if registration_type is not None else None,
         source=source.value if source is not None else None,

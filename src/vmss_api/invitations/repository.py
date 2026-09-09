@@ -26,7 +26,7 @@ def _branch_filter(branch_scope: BranchScope) -> Any | None:
     return None if branch_scope == "all" else Invitation.branch_id.in_(branch_scope)
 
 
-def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
+def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) -> Any:
     """specs/invitations/spec.md "Caller Lists Invitations Relevant to
     Themselves via relevantToMe": invitations where `user_id` is (a) the
     invitation's currently resolved host (`Invitation.host_id`) — set either
@@ -37,28 +37,33 @@ def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
     (b) has been delegated any step, regardless of that step's status, (c)
     currently holds — via branch-scoped `UserBranchRole` at the invitation's
     own branch or company-wide — the role of the invitation's current
-    pending, role-identified step, or (d) has personally acted on
-    (approved or rejected) any of the invitation's steps, regardless of
-    that step's or the invitation's current status. (c) closes the gap
-    where a valid role-based approver had no way to find their pending work
-    short of the unfiltered branch-wide list
-    (checkin-approval-workflow-improvements), and deliberately does NOT
-    require that step be undelegated
-    (invitation-relevant-to-me-retains-role-visibility-after-delegation):
-    every holder of the step's role — e.g. every Reception-role holder, not
-    just whichever one of them actually delegated it — keeps seeing the
-    invitation in their worklist after it's delegated to the resolved host,
-    until the step itself is actually approved or rejected — at which point
-    (d) is what keeps it visible, but only for the specific person who
-    acted, not every role-holder: e.g. Reception, having approved the
-    invitation's ownership step, keeps seeing it (and can act on the
-    delegation-authority extension in "Current Step's Authorized Approver
-    Delegates It to a Specific Person") even once a later, different-role
-    step becomes current
-    (reception-retains-visibility-and-delegation-after-own-step). (b), (c),
-    and (d) are expressed as (correlated, where needed) subqueries against
-    `invitation_approval_steps`, not a per-invitation loop
-    (query-performance.md §2).
+    pending, role-identified step, AND that step has no delegate assigned,
+    (d) has personally acted on (approved or rejected) any of the
+    invitation's steps, regardless of that step's or the invitation's
+    current status, or (e) currently holds — via branch-scoped
+    `UserBranchRole` at the invitation's own branch or company-wide — the
+    tenant's default host role (`default_host_role_id`, resolved by the
+    caller via `org_structure.service.get_default_host_role`), regardless of
+    the invitation's current step, that step's delegation state, or the
+    invitation's own status.
+
+    (c) closes the gap where a valid role-based approver had no way to find
+    their pending work short of the unfiltered branch-wide list
+    (checkin-approval-workflow-improvements), but — unlike an earlier
+    version of this clause — now DOES require that step be undelegated
+    (harden-approval-gate-and-narrow-delegate-visibility): once a
+    role-identified step is delegated to a specific person, every holder of
+    that role other than the delegate (clause (b)), the resolved host
+    (clause (a)), or someone who personally acted on a step (clause (d))
+    stops seeing the invitation via (c). Clause (e) is the one exception to
+    that narrowing: every holder of the tenant's default host role (e.g.
+    Reception) keeps permanent visibility into every invitation regardless
+    of delegation or status, since that role owns front-office intake for
+    the invitation's entire lifecycle — the same permanence clause (d)
+    gives an individual actor, granted here to the whole role instead.
+    (b), (c), (d), and (e) are expressed as (correlated, where needed)
+    subqueries against `invitation_approval_steps`/`user_branch_roles`, not
+    a per-invitation loop (query-performance.md §2).
     """
     host_or_delegate_or_actor = or_(
         Invitation.host_id == user_id,
@@ -100,6 +105,7 @@ def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
             current_step.status == "pending",
             current_step.approver_role_id.is_not(None),
             current_step.step_order == min_pending_step_order,
+            current_step.delegated_to_user_id.is_(None),
             UserBranchRole.user_id == user_id,
             or_(
                 UserBranchRole.branch_id == Invitation.branch_id,
@@ -107,7 +113,17 @@ def _relevant_to_me_filter(user_id: uuid.UUID) -> Any:
             ),
         )
     )
-    return or_(host_or_delegate_or_actor, current_role_holder)
+    default_host_role_holder = exists(
+        select(UserBranchRole.id).where(
+            UserBranchRole.user_id == user_id,
+            UserBranchRole.role_id == default_host_role_id,
+            or_(
+                UserBranchRole.branch_id == Invitation.branch_id,
+                UserBranchRole.branch_id.is_(None),
+            ),
+        )
+    )
+    return or_(host_or_delegate_or_actor, current_role_holder, default_host_role_holder)
 
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
@@ -217,12 +233,20 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
     async def check_in_if_eligible(
         self, id_: uuid.UUID, *, user_id: uuid.UUID | None
     ) -> Invitation | None:
-        """Only transitions a row that is both `approved` and not
-        watchlist-flagged (spec.md "A Watchlist-Flagged Invitation Blocks
-        Check-In Until Overridden") — both conditions are checked in the
-        same atomic `UPDATE` so a concurrent override/check-in pair can't
-        race past a read-then-write gap the way `approve_if_submitted`'s
-        docstring already explains for the approve case.
+        """Gated on `check_in_status` (not `status` alone), same cycling
+        rule as `check_in_by_qr_if_eligible` (allow-multiple-checkins):
+        `unused`/`checked_out` are both "currently outside" and admitted,
+        `checked_in` is rejected. `status` must still show the invitation
+        was validly approved at some point (`approved`/`checked_in`/
+        `checked_out` — never `submitted`/`denied`). Both conditions are
+        checked in the same atomic `UPDATE` so a concurrent
+        override/check-in/check-out can't race past a read-then-write gap,
+        the way `approve_if_submitted`'s docstring already explains for the
+        approve case. Writing `check_in_status` here (previously left
+        untouched by this path) is what closes the cross-path gap where a
+        visitor checked in via this endpoint could still be re-admitted
+        through the QR endpoint, whose own gate reads `check_in_status`,
+        not `status`.
 
         `user_id` is `None` for the public, tracking-ID-keyed check-in path
         (spec.md "An Approved Invitation Can Be Publicly Checked In By
@@ -233,11 +257,13 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             update(Invitation)
             .where(
                 Invitation.id == id_,
-                Invitation.status == "approved",
+                Invitation.check_in_status.in_(("unused", "checked_out")),
+                Invitation.status.in_(_QR_ENTRY_ELIGIBLE_STATUSES),
                 Invitation.watchlist_flagged.is_(False),
             )
             .values(
                 status="checked_in",
+                check_in_status="checked_in",
                 checked_in_at=datetime.now(UTC),
                 checked_in_by_user_id=user_id,
             )
@@ -314,11 +340,20 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
     async def check_out_if_checked_in(
         self, id_: uuid.UUID, *, user_id: uuid.UUID
     ) -> Invitation | None:
+        """Also writes `check_in_status="checked_out"` (allow-multiple-
+        checkins) — this path previously left `check_in_status` untouched,
+        so a visitor checked in via `check_in_if_eligible` and checked out
+        here would leave `check_in_status` stuck wherever it was, breaking
+        both the QR endpoint's own gate (which reads `check_in_status`, not
+        `status`) and this same re-entry path's own gate above. Gate
+        (`status == "checked_in"`) unchanged.
+        """
         stmt = (
             update(Invitation)
             .where(Invitation.id == id_, Invitation.status == "checked_in")
             .values(
                 status="checked_out",
+                check_in_status="checked_out",
                 checked_out_at=datetime.now(UTC),
                 checked_out_by_user_id=user_id,
             )
@@ -485,6 +520,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         *,
         branch_scope: BranchScope | None,
         relevant_to_user_id: uuid.UUID | None = None,
+        default_host_role_id: uuid.UUID | None = None,
         status: str | None,
         registration_type: str | None,
         source: str | None,
@@ -503,14 +539,19 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         Themselves via relevantToMe") — `branch_scope` is ignored in that
         case, per invitation-relevant-to-me-and-delegation/design.md
         "relevantToMe is implemented as a distinct query path, not a
-        require_branch_scope variant".
+        require_branch_scope variant". `default_host_role_id` is required
+        whenever `relevant_to_user_id` is given (the caller resolves it via
+        `org_structure.service.get_default_host_role` — see
+        harden-approval-gate-and-narrow-delegate-visibility/design.md
+        Decision 1) and is otherwise ignored.
         """
         column = {"submitted_at": Invitation.submitted_at, "created_at": Invitation.created_at}[
             sort_by
         ]
         filters: list[Any] = []
         if relevant_to_user_id is not None:
-            filters.append(_relevant_to_me_filter(relevant_to_user_id))
+            assert default_host_role_id is not None
+            filters.append(_relevant_to_me_filter(relevant_to_user_id, default_host_role_id))
         else:
             assert branch_scope is not None
             branch_filter = _branch_filter(branch_scope)

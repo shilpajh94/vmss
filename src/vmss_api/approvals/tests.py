@@ -763,6 +763,41 @@ async def test_approve_step_out_of_order_rejected(
     assert unchanged.status == "pending"
 
 
+async def test_approve_step_override_permission_cannot_skip_pending_earlier_step(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "A Step Cannot Be Delegated or Actioned While
+    an Earlier Step Is Still Pending" — mirrors
+    `test_approve_step_out_of_order_rejected` for an
+    `invitations:approve-override` holder, who otherwise bypasses the
+    role/host match entirely but still cannot approve a step ahead of a
+    still-pending earlier one.
+    """
+    invitation, _step_one_role, _step_two_role = await _two_step_invitation(db_session, branch)
+    override_role = _approve_permission_role(name=f"override-role-{uuid.uuid4().hex[:8]}")
+    db_session.add(override_role)
+    await db_session.flush()
+    override_permission = await _get_or_create_permission(
+        db_session, "invitations:approve-override"
+    )
+    override_role.permissions = [*override_role.permissions, override_permission]
+    approver = await _user_with_role(db_session, branch.id, role=override_role)
+    step_two = await _get_step(db_session, invitation.id, 2)
+
+    token = issue_token(approver)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_two.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    unchanged = await _get_step(db_session, invitation.id, 2)
+    assert unchanged.status == "pending"
+
+
 async def test_approve_step_unknown_invitation_id_not_found(
     client: AsyncClient, user: User, issue_token: Callable[[User], str]
 ) -> None:
@@ -2087,6 +2122,228 @@ async def test_approve_ownership_step_after_delegation_succeeds(
     updated = await _get_step(db_session, invitation.id, 0)
     assert updated.status == "approved"
     assert updated.acted_by_user_id == delegate.id
+
+
+async def test_delegate_ownership_step_alone_does_not_unlock_next_step_for_delegation(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "A Step Cannot Be Delegated or Actioned While
+    an Earlier Step Is Still Pending" — delegating `stepOrder` 0 resolves
+    the invitation's host but leaves the step `pending`, so `stepOrder` 1
+    is not yet current; even the newly-resolved host cannot delegate it.
+    """
+    invitation, owning_role = await _role_owned_invitation(db_session, branch)
+    step_one_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"next-flow-role-{uuid.uuid4().hex[:8]}", permissions=[]
+    )
+    db_session.add(step_one_role)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=1,
+            approver_role_id=step_one_role.id,
+        )
+    )
+    await db_session.commit()
+
+    caller = await _user_with_role(
+        db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
+    )
+    delegate_permission = await _get_or_create_permission(db_session, "invitations:approve")
+    delegate_role = RoleFactory.build(
+        id=uuid.uuid4(),
+        name=f"real-host-role-{uuid.uuid4().hex[:8]}",
+        permissions=[delegate_permission],
+    )
+    db_session.add(delegate_role)
+    await db_session.flush()
+    host = await _user_with_role(db_session, branch.id, role=delegate_role)
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    caller_token = issue_token(caller)
+    delegate_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/delegate",
+        json={"delegateUserId": str(host.id)},
+        headers={"Authorization": f"Bearer {caller_token}"},
+    )
+    assert delegate_response.status_code == 200, delegate_response.text
+    assert delegate_response.json()["data"]["hostId"] == str(host.id)
+
+    step_one = await _get_step(db_session, invitation.id, 1)
+    next_delegate = await _user_with_role(db_session, branch.id, role=step_one_role)
+    host_token = issue_token(host)
+    next_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/delegate",
+        json={"delegateUserId": str(next_delegate.id)},
+        headers={"Authorization": f"Bearer {host_token}"},
+    )
+    assert next_response.status_code == 409
+
+    unchanged_step_one = await _get_step(db_session, invitation.id, 1)
+    assert unchanged_step_one.delegated_to_user_id is None
+    unchanged_invitation = (
+        await db_session.execute(select(Invitation).where(Invitation.id == invitation.id))
+    ).scalar_one()
+    assert unchanged_invitation.host_id == host.id
+
+
+async def test_delegate_step_override_permission_cannot_skip_pending_earlier_step(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "A Step Cannot Be Delegated or Actioned While
+    an Earlier Step Is Still Pending" — an `invitations:approve-override`
+    holder still cannot delegate a step that is not yet current, even
+    though override otherwise bypasses the role/host/delegate match.
+    """
+    invitation, _owning_role = await _role_owned_invitation(db_session, branch)
+    step_one_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"next-flow-role-{uuid.uuid4().hex[:8]}", permissions=[]
+    )
+    db_session.add(step_one_role)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=1,
+            approver_role_id=step_one_role.id,
+        )
+    )
+    await db_session.commit()
+
+    override_role = _approve_permission_role(name=f"override-role-{uuid.uuid4().hex[:8]}")
+    db_session.add(override_role)
+    await db_session.flush()
+    override_permission = await _get_or_create_permission(
+        db_session, "invitations:approve-override"
+    )
+    override_role.permissions = [*override_role.permissions, override_permission]
+    caller = await _user_with_role(db_session, branch.id, role=override_role)
+    delegate = await _user_with_role(db_session, branch.id, role=step_one_role)
+    step_one = await _get_step(db_session, invitation.id, 1)
+
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    unchanged = await _get_step(db_session, invitation.id, 1)
+    assert unchanged.delegated_to_user_id is None
+
+
+async def test_delegate_step_role_holder_cannot_skip_pending_earlier_step(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "A Step Cannot Be Delegated or Actioned While
+    an Earlier Step Is Still Pending" — holding the target step's own
+    `approverRoleId` role does not bypass the ordering guarantee either.
+    """
+    invitation, _owning_role = await _role_owned_invitation(db_session, branch)
+    step_one_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"next-flow-role-{uuid.uuid4().hex[:8]}", permissions=[]
+    )
+    db_session.add(step_one_role)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=1,
+            approver_role_id=step_one_role.id,
+        )
+    )
+    await db_session.commit()
+
+    caller = await _user_with_role(
+        db_session,
+        branch.id,
+        role=step_one_role,
+        extra_permission_codes=("invitations:approve",),
+    )
+    delegate = await _user_with_role(db_session, branch.id, role=step_one_role)
+    step_one = await _get_step(db_session, invitation.id, 1)
+
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/delegate",
+        json={"delegateUserId": str(delegate.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    unchanged = await _get_step(db_session, invitation.id, 1)
+    assert unchanged.delegated_to_user_id is None
+
+
+async def test_delegate_step_role_and_override_succeed_once_earlier_step_approved(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/approvals/spec.md "A Step Cannot Be Delegated or Actioned While
+    an Earlier Step Is Still Pending" — positive control: once `stepOrder` 0
+    is actually approved (by its owning-role holder, without ever
+    delegating it), `stepOrder` 1 becomes current and is delegable by both
+    its own role-holder and an override-permission holder, confirming the
+    409s above are about ordering, not unrelated authorization failures.
+    """
+    invitation, owning_role = await _role_owned_invitation(db_session, branch)
+    step_one_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"next-flow-role-{uuid.uuid4().hex[:8]}", permissions=[]
+    )
+    db_session.add(step_one_role)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=1,
+            approver_role_id=step_one_role.id,
+        )
+    )
+    await db_session.commit()
+
+    owning_holder = await _user_with_role(
+        db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
+    )
+    step_zero = await _get_step(db_session, invitation.id, 0)
+    owning_token = issue_token(owning_holder)
+    approve_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/approve",
+        headers={"Authorization": f"Bearer {owning_token}"},
+    )
+    assert approve_response.status_code == 200, approve_response.text
+
+    step_one = await _get_step(db_session, invitation.id, 1)
+    role_delegate = await _user_with_role(db_session, branch.id, role=step_one_role)
+    role_holder = await _user_with_role(
+        db_session,
+        branch.id,
+        role=step_one_role,
+        extra_permission_codes=("invitations:approve",),
+    )
+    role_token = issue_token(role_holder)
+    role_response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_one.id}/delegate",
+        json={"delegateUserId": str(role_delegate.id)},
+        headers={"Authorization": f"Bearer {role_token}"},
+    )
+    assert role_response.status_code == 200, role_response.text
 
 
 async def test_delegate_ownership_step_lacking_approve_permission_rejected(
