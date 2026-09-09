@@ -179,6 +179,21 @@ spec:
             - secretRef:
                 name: $(proj_branch)-secret
 
+          # FIX:
+          # Mount the same shared storage PVC used by the API.
+          # Report-generation tasks in this queue (e.g. audit_trail) write
+          # files that the API pod must later read back for download.
+          volumeMounts:
+            - name: storage-volume
+              mountPath: $(mount_path)
+
+      # FIX:
+      # Attach the shared PVC to the cron worker.
+      volumes:
+        - name: storage-volume
+          persistentVolumeClaim:
+            claimName: $(pvc_name)
+
 ---
 ############################################
 # Celery Worker Deployment for notifications

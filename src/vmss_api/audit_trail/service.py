@@ -10,6 +10,7 @@ from vmss_api.audit_trail.repository import AuditLogRepository, AuditReportJobRe
 from vmss_api.audit_trail.schemas import AuditReportJobOut
 from vmss_api.auth.models import AuditLog
 from vmss_api.core.schemas import SortOrder
+from vmss_api.core.storage import StorageBackendError
 from vmss_api.core.storage import content_type_for as storage_content_type_for
 from vmss_api.core.storage import load as storage_load
 
@@ -29,6 +30,18 @@ class ReportFileNotAvailableError(Exception):
     hasn't reached `ready`, or it reached `ready` without ever generating
     that particular format (a `formats=["csv"]` request has no PDF to
     download).
+    """
+
+
+class ReportStorageError(Exception):
+    """Raised when a job's DB row says a file is `ready`, but the storage
+    backend can't actually produce it (missing key on disk, unreachable/
+    misconfigured S3). Kept distinct from `ReportFileNotAvailableError` so
+    the router logs it at ERROR — this is an infra problem for someone to
+    fix, not the ordinary "not generated yet" case — rather than letting
+    the underlying `OSError`/`StorageBackendError` reach the global handler
+    as an unhandled 500 (which the client can't distinguish from a genuine
+    CORS misconfiguration — see security-architecture.md §4).
     """
 
 
@@ -160,6 +173,9 @@ async def get_report_file(
     key = job.csv_storage_key if fmt == "csv" else job.pdf_storage_key
     if job.status != "ready" or key is None:
         raise ReportFileNotAvailableError
-    content = await storage_load(key)
+    try:
+        content = await storage_load(key)
+    except (OSError, StorageBackendError) as exc:
+        raise ReportStorageError(f"job {job.id} format {fmt!r} key {key!r}: {exc}") from exc
     content_type = storage_content_type_for(key)
     return content, content_type, f"audit-report-{job.id}.{fmt}"
