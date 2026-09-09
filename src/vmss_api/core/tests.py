@@ -359,3 +359,31 @@ async def test_unhandled_exception_in_middleware_returns_standard_envelope_when_
     assert response.json() == _STANDARD_ERROR_ENVELOPE
     assert "boom-in-middleware" not in response.text
     assert "Traceback" not in response.text
+
+
+async def test_unhandled_exception_response_still_carries_cors_headers(monkeypatch) -> None:
+    """`Exception`-registered handlers run inside Starlette's
+    `ServerErrorMiddleware`, which sits *outside* `CORSMiddleware`
+    (`Starlette.build_middleware_stack`) — so a genuine crash unwinds past
+    `CORSMiddleware` entirely instead of through it. Without
+    `unhandled_exception_handler` re-adding the headers itself
+    (`core/middleware.py`), a browser sees no `Access-Control-Allow-Origin`
+    on the resulting 500 and reports a misleading CORS failure for what's
+    actually an unrelated server crash — the exact confusion reported
+    against `/audit-trail/reports/{job_id}/download` on stage.
+    """
+    origin = "https://vmss-web-stage.mypits.org"
+    monkeypatch.setattr(settings, "cors_allowed_origins", [origin])
+    test_app = create_app("production")
+
+    @test_app.get("/_test/boom")
+    async def boom() -> None:
+        raise RuntimeError("boom")
+
+    transport = ASGITransport(app=test_app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/_test/boom", headers={"Origin": origin})
+
+    assert response.status_code == 500
+    assert response.headers["access-control-allow-origin"] == origin
+    assert response.headers["access-control-allow-credentials"] == "true"
