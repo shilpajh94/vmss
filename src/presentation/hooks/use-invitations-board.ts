@@ -351,6 +351,9 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         if (!detail.currentApprovalStep) {
           throw new Error('This request has no pending approval step to delegate.')
         }
+        if (detail.currentApprovalStep.stepOrder === 0) {
+          throw new Error('Reception must approve this request before it can be delegated to another step.')
+        }
 
         await delegateInvitationStepUseCase.execute(id, detail.currentApprovalStep.id, delegateUserId)
         const updatedDetail = await getInvitationDetailUseCase.execute(id)
