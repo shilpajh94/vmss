@@ -27,7 +27,11 @@ from vmss_api.audit_trail.schemas import (
     AuditReportRequest,
     ReportFormat,
 )
-from vmss_api.audit_trail.service import ReportFileNotAvailableError, ReportJobNotFoundError
+from vmss_api.audit_trail.service import (
+    ReportFileNotAvailableError,
+    ReportJobNotFoundError,
+    ReportStorageError,
+)
 from vmss_api.auth.models import User
 from vmss_api.core.deps import get_pagination, get_tenant, get_tenant_db, require_permission
 from vmss_api.core.logging import logger
@@ -197,6 +201,18 @@ async def download_audit_report(
     except ReportFileNotAvailableError:
         return error_response(
             message="Report file is not available", status_code=status.HTTP_404_NOT_FOUND
+        )
+    except ReportStorageError as exc:
+        # Caught here (rather than left to the global handler) specifically
+        # so this still returns through the router's normal path: an
+        # exception raised for the bare `Exception` class unwinds past
+        # `CORSMiddleware` entirely (core/middleware.py's
+        # `unhandled_exception_handler` docstring) and a client would see a
+        # misleading CORS error instead of this 500.
+        logger.error("audit_report_storage_error", job_id=str(job_id), format=fmt, error=str(exc))
+        return error_response(
+            message="Report file could not be retrieved",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
     logger.info("audit_report_downloaded", job_id=str(job_id), format=fmt)
     return Response(

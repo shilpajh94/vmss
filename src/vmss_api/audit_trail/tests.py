@@ -457,6 +457,50 @@ async def test_download_audit_report_returns_generated_file(
     assert str(user.id) in response.text
 
 
+async def test_download_audit_report_storage_failure_returns_500_envelope(
+    client: AsyncClient,
+    user: User,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token,
+    monkeypatch,
+) -> None:
+    """A job row saying `ready` doesn't guarantee the storage backend can
+    still produce the file (e.g. a missing key on disk, or an unreachable
+    S3 endpoint). This must surface as a clean 500 returned normally by the
+    router — not an unhandled exception left to the global handler, which
+    a browser reports as a misleading CORS failure instead of the real
+    server error (see `core/tests.py::
+    test_unhandled_exception_response_still_carries_cors_headers` for that
+    class of bug).
+    """
+    await _seed_audit_log(db_session, actor_user_id=user.id)
+    monkeypatch.setattr(tasks.generate_audit_report, "delay", lambda **kw: None)
+
+    token = issue_token(user)
+    create_response = await client.post(
+        "/api/v1/audit-trail/reports",
+        json={"formats": ["csv"]},
+        headers=_auth_headers(token),
+    )
+    job_id = create_response.json()["data"]["id"]
+    await tasks._generate_audit_report(job_id, str(tenant.id), tenant.schema_name)
+
+    def _raise_missing_file(key: str):
+        raise FileNotFoundError(key)
+
+    monkeypatch.setattr("vmss_api.audit_trail.service.storage_load", _raise_missing_file)
+
+    response = await client.get(
+        f"/api/v1/audit-trail/reports/{job_id}/download",
+        params={"format": "csv"},
+        headers=_auth_headers(token),
+    )
+
+    assert response.status_code == 500
+    assert response.json()["success"] is False
+
+
 async def test_download_audit_report_requires_export_permission(
     client: AsyncClient, db_session: AsyncSession, tenant: Tenant, issue_token
 ) -> None:
