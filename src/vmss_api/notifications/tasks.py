@@ -78,5 +78,16 @@ async def _send_push(
             if invalid_tokens:
                 await repo.delete_by_tokens(invalid_tokens)
                 await session.commit()
+            failed = [r for r in results if not r.success and not r.token_invalid]
+            if failed:
+                logger.warning(
+                    "push_dispatch_partial_failure",
+                    tenant_schema=tenant_schema,
+                    failed_count=len(failed),
+                    total_count=len(results),
+                )
+                raise fcm.PushDeliveryError(
+                    f"{len(failed)} of {len(results)} push sends failed"
+                )
     finally:
         await engine.dispose()

@@ -88,7 +88,7 @@ class SmtpEmailSender:
         username = settings.smtp_username or None
         password = settings.smtp_password or None
         try:
-            await aiosmtplib.send(
+            errors, queue_response = await aiosmtplib.send(
                 message,
                 hostname=settings.smtp_host,
                 port=settings.smtp_port,
@@ -96,6 +96,31 @@ class SmtpEmailSender:
                 password=password,
                 start_tls=settings.smtp_use_tls,
             )
+            # `queue_response` is the SMTP server's final reply (usually
+            # something like "250 2.0.0 Ok: queued as <id>") — the join key
+            # onto the mail server's own log/queue when a message is
+            # accepted here but never lands in an inbox
+            # (`security-architecture.md` §5 / `logging-observability.md`
+            # §3: this is the operational trail an admin needs to correlate
+            # "app says sent" against "mail server says delivered"). `errors`
+            # is normally empty here — `aiosmtplib.send` raises
+            # `SMTPRecipientsRefused` instead when the lone recipient this
+            # sender always calls with is rejected — but is logged
+            # defensively rather than assumed impossible.
+            if errors:
+                logger.warning(
+                    "smtp_email_dispatch_partial_failure",
+                    smtp_host=settings.smtp_host,
+                    smtp_port=settings.smtp_port,
+                    recipient_count=len(errors),
+                )
+            else:
+                logger.info(
+                    "smtp_email_dispatch_succeeded",
+                    smtp_host=settings.smtp_host,
+                    smtp_port=settings.smtp_port,
+                    queue_response=queue_response,
+                )
         except aiosmtplib.SMTPException as exc:
             # No recipient address here — the enqueuing task already binds
             # tenant/invitation context (logging-observability.md §2), and
