@@ -17,16 +17,26 @@ celery_app.conf.task_default_queue = "vmss_api"
 # in "vmss_api" and sit unconsumed in Redis forever on the deployed
 # environment (no error, nothing in worker logs), even though the local
 # ddev worker picks them up fine since it listens on every queue.
+environment = settings.environment.lower()
+
+notification_queue = f"{environment}_notifications"
+cron_queue = f"{environment}_cron_jobs"
+
+celery_app.conf.task_default_queue = f"{environment}_vmss_api"
+
 celery_app.conf.task_routes = {
-    "vmss_api.invitations.tasks.*": {"queue": "notifications"},
-    "vmss_api.notifications.tasks.*": {"queue": "notifications"},
-    "vmss_api.reports.tasks.*": {"queue": "cron_jobs"},
-    # No dedicated queue/worker Deployment exists for `audit_trail` — routed
-    # onto the existing "cron_jobs" queue/worker rather than provisioning a
-    # third one, since report generation is the same kind of
-    # not-time-critical background job as the rollup snapshot already on
-    # that queue.
-    "vmss_api.audit_trail.tasks.*": {"queue": "cron_jobs"},
+    "vmss_api.invitations.tasks.*": {
+        "queue": notification_queue
+    },
+    "vmss_api.notifications.tasks.*": {
+        "queue": notification_queue
+    },
+    "vmss_api.reports.tasks.*": {
+        "queue": cron_queue
+    },
+    "vmss_api.audit_trail.tasks.*": {
+        "queue": cron_queue
+    },
 }
 
 # Feature task modules register themselves here as they're built.
