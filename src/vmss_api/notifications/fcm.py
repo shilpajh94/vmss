@@ -49,6 +49,17 @@ class FcmNotConfiguredError(RuntimeError):
     """
 
 
+class PushDeliveryError(RuntimeError):
+    """A `PushSendResult` came back `success=False` for a reason other than
+    the token being invalid (quota, FCM temporarily unavailable, etc.).
+    `messaging.send_each` doesn't raise for that on its own — it just marks
+    the individual message failed in the batch response — so
+    `notifications/tasks.py` raises this to route a real delivery failure
+    through Celery's retry/exhaustion-logging path instead of it vanishing
+    as a silent no-op (background-jobs.md §3/§4).
+    """
+
+
 _app_lock = threading.Lock()
 _app: firebase_admin.App | None = None
 
