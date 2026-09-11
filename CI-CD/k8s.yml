@@ -11,47 +11,64 @@ stringData:
   APP_NAME: "$(APP_NAME)"
   ENVIRONMENT: "$(ENVIRONMENT)"
   DEBUG: "$(DEBUG)"
+
   DB_USER: "$(DB_USER)"
   DB_PASSWORD: "$(DB_PASSWORD)"
   DB_HOST: "$(DB_HOST)"
   DB_PORT: "$(DB_PORT)"
   DB_NAME: "$(DB_NAME)"
+
   REDIS_URL: "$(REDIS_URL)"
   CELERY_BROKER_URL: "$(CELERY_BROKER_URL)"
   CELERY_RESULT_BACKEND: "$(CELERY_RESULT_BACKEND)"
+
+  # Environment-specific Celery queues
+  CELERY_NOTIFICATION_QUEUE: "$(ENVIRONMENT)_notifications"
+  CELERY_CRON_QUEUE: "$(ENVIRONMENT)_cron_jobs"
+
   JWT_SECRET_KEY: "$(JWT_SECRET_KEY)"
   JWT_ALGORITHM: "$(JWT_ALGORITHM)"
   ACCESS_TOKEN_EXPIRE_MINUTES: "$(ACCESS_TOKEN_EXPIRE_MINUTES)"
   REFRESH_TOKEN_EXPIRE_MINUTES: "$(REFRESH_TOKEN_EXPIRE_MINUTES)"
+
   CORS_ALLOWED_ORIGINS: '$(CORS_ALLOWED_ORIGINS)'
+
   DEFAULT_TENANT_SLUG: "$(DEFAULT_TENANT_SLUG)"
   GLOBAL_SCHEMA_NAME: "$(GLOBAL_SCHEMA_NAME)"
   TENANT_SCHEMA_PREFIX: "$(TENANT_SCHEMA_PREFIX)"
+
   STORAGE_ROOT: "$(STORAGE_ROOT)"
   STORAGE_BACKEND: "$(STORAGE_BACKEND)"
   STORAGE_S3_PRESIGNED_URL_TTL_SECONDS: "$(STORAGE_S3_PRESIGNED_URL_TTL_SECONDS)"
   STORAGE_LOCAL_PRESIGNED_URL_TTL_SECONDS: "$(STORAGE_LOCAL_PRESIGNED_URL_TTL_SECONDS)"
   STORAGE_LOCAL_URL_SECRET: "$(STORAGE_LOCAL_URL_SECRET)"
   STORAGE_PUBLIC_BASE_URL: "$(STORAGE_PUBLIC_BASE_URL)"
+
   SMTP_HOST: "$(SMTP_HOST)"
   SMTP_PORT: "$(SMTP_PORT)"
   SMTP_USERNAME: "$(SMTP_USERNAME)"
   SMTP_PASSWORD: "$(SMTP_PASSWORD)"
   SMTP_USE_TLS: "$(SMTP_USE_TLS)"
   SMTP_FROM_ADDRESS: "$(SMTP_FROM_ADDRESS)"
+
   SMS_GATEWAY_BASE_URL: "$(SMS_GATEWAY_BASE_URL)"
   SMS_GATEWAY_API_KEY: "$(SMS_GATEWAY_API_KEY)"
   SMS_FROM_NUMBER: "$(SMS_FROM_NUMBER)"
+
   INVITATION_TOKEN_TTL_HOURS: "$(INVITATION_TOKEN_TTL_HOURS)"
   INVITATION_MAX_UPLOAD_SIZE_BYTES: "$(INVITATION_MAX_UPLOAD_SIZE_BYTES)"
   INVITATION_MAX_GROUP_VISITORS: "$(INVITATION_MAX_GROUP_VISITORS)"
+
   SSO_ENCRYPTION_KEY: "$(SSO_ENCRYPTION_KEY)"
   SSO_REDIRECT_URI: "$(SSO_REDIRECT_URI)"
   SSO_FRONTEND_CALLBACK_URL: "$(SSO_FRONTEND_CALLBACK_URL)"
   SSO_EXCHANGE_CODE_TTL_SECONDS: "$(SSO_EXCHANGE_CODE_TTL_SECONDS)"
   SSO_STATE_TTL_SECONDS: "$(SSO_STATE_TTL_SECONDS)"
+
   QR_TOKEN_ENCRYPTION_KEY: "$(QR_TOKEN_ENCRYPTION_KEY)"
+
   FCM_CREDENTIALS_PATH: "$(FCM_CREDENTIALS_PATH)"
+
 
 ---
 ############################################
@@ -65,10 +82,13 @@ metadata:
 spec:
   accessModes:
     - ReadWriteMany
+
   storageClassName: $(storageClassName)
+
   resources:
     requests:
       storage: $(pvc_storage)
+
 
 ---
 ############################################
@@ -79,16 +99,20 @@ kind: Service
 metadata:
   namespace: $(namespace)
   name: $(proj_branch)
+
   labels:
     app: $(proj_branch)
+
 spec:
   selector:
     app: $(proj_branch)
+
   ports:
     - name: $(proj_port)
       port: 80
       targetPort: 8000
       protocol: TCP
+
 
 ---
 ############################################
@@ -99,22 +123,29 @@ kind: Deployment
 metadata:
   namespace: $(namespace)
   name: $(proj_branch)
+
   labels:
     app: $(proj_branch)
+
 spec:
   replicas: 1
+
   selector:
     matchLabels:
       app: $(proj_branch)
+
   template:
     metadata:
       labels:
         app: $(proj_branch)
+
     spec:
       containers:
         - name: $(proj_branch)
+
           image: docker-registry.dev.displayme.net/$(dockerrepo)
           imagePullPolicy: IfNotPresent
+
           ports:
             - containerPort: 8000
 
@@ -128,8 +159,10 @@ spec:
 
       volumes:
         - name: storage-volume
+
           persistentVolumeClaim:
             claimName: $(pvc_name)
+
 
 ---
 ############################################
@@ -140,59 +173,66 @@ kind: Deployment
 metadata:
   namespace: $(namespace)
   name: $(proj_branch)-celery-worker-cron
+
   labels:
     app: $(proj_branch)-celery-worker-cron
+
 spec:
   replicas: 1
+
   selector:
     matchLabels:
       app: $(proj_branch)-celery-worker-cron
+
   template:
     metadata:
       labels:
         app: $(proj_branch)-celery-worker-cron
+
     spec:
       containers:
         - name: celery-worker-cron
+
           image: docker-registry.dev.displayme.net/$(dockerrepo)
           imagePullPolicy: IfNotPresent
 
-          command: ["celery"]
+          command:
+            - celery
 
           args:
             - "-A"
             - "vmss_api.core.celery_app"
             - "worker"
             - "-Q"
-            - "cron_jobs"
+            - "$(ENVIRONMENT)_cron_jobs"
             - "--concurrency=2"
             - "-l"
             - "info"
 
           env:
             - name: CELERY_BROKER_URL
-              value: $(CELERY_BROKER_URL)
+              value: "$(CELERY_BROKER_URL)"
+
             - name: CELERY_RESULT_BACKEND
-              value: $(CELERY_RESULT_BACKEND)
+              value: "$(CELERY_RESULT_BACKEND)"
+
+            - name: CELERY_CRON_QUEUE
+              value: "$(ENVIRONMENT)_cron_jobs"
 
           envFrom:
             - secretRef:
                 name: $(proj_branch)-secret
 
-          # FIX:
-          # Mount the same shared storage PVC used by the API.
-          # Report-generation tasks in this queue (e.g. audit_trail) write
-          # files that the API pod must later read back for download.
           volumeMounts:
             - name: storage-volume
               mountPath: $(mount_path)
 
-      # FIX:
-      # Attach the shared PVC to the cron worker.
       volumes:
         - name: storage-volume
+
           persistentVolumeClaim:
             claimName: $(pvc_name)
+
 
 ---
 ############################################
@@ -203,6 +243,7 @@ kind: Deployment
 metadata:
   namespace: $(namespace)
   name: $(proj_branch)-celery-worker-notifications
+
   labels:
     app: $(proj_branch)-celery-worker-notifications
 
@@ -221,45 +262,47 @@ spec:
     spec:
       containers:
         - name: celery-worker-notifications
+
           image: docker-registry.dev.displayme.net/$(dockerrepo)
           imagePullPolicy: IfNotPresent
 
-          command: ["celery"]
+          command:
+            - celery
 
           args:
             - "-A"
             - "vmss_api.core.celery_app"
             - "worker"
             - "-Q"
-            - "notifications"
+            - "$(ENVIRONMENT)_notifications"
             - "--concurrency=2"
             - "-l"
             - "info"
 
           env:
             - name: CELERY_BROKER_URL
-              value: $(CELERY_BROKER_URL)
+              value: "$(CELERY_BROKER_URL)"
+
             - name: CELERY_RESULT_BACKEND
-              value: $(CELERY_RESULT_BACKEND)
+              value: "$(CELERY_RESULT_BACKEND)"
+
+            - name: CELERY_NOTIFICATION_QUEUE
+              value: "$(ENVIRONMENT)_notifications"
 
           envFrom:
             - secretRef:
                 name: $(proj_branch)-secret
 
-          # FIX:
-          # Mount the same shared storage PVC used by the API.
-          # This provides:
-          # /app/var/storage/firebase-adminsdk.json
           volumeMounts:
             - name: storage-volume
               mountPath: $(mount_path)
 
-      # FIX:
-      # Attach the shared PVC to the notifications worker.
       volumes:
         - name: storage-volume
+
           persistentVolumeClaim:
             claimName: $(pvc_name)
+
 
 ---
 ############################################
@@ -270,24 +313,31 @@ kind: Deployment
 metadata:
   namespace: $(namespace)
   name: $(proj_branch)-celery-beat
+
   labels:
     app: $(proj_branch)-celery-beat
+
 spec:
   replicas: 1
+
   selector:
     matchLabels:
       app: $(proj_branch)-celery-beat
+
   template:
     metadata:
       labels:
         app: $(proj_branch)-celery-beat
+
     spec:
       containers:
         - name: celery-beat
+
           image: docker-registry.dev.displayme.net/$(dockerrepo)
           imagePullPolicy: IfNotPresent
 
-          command: ["celery"]
+          command:
+            - celery
 
           args:
             - "-A"
@@ -298,11 +348,12 @@ spec:
 
           env:
             - name: CELERY_BROKER_URL
-              value: $(CELERY_BROKER_URL)
+              value: "$(CELERY_BROKER_URL)"
 
           envFrom:
             - secretRef:
                 name: $(proj_branch)-secret
+
 
 ---
 ############################################
@@ -313,15 +364,19 @@ kind: Ingress
 metadata:
   namespace: $(namespace)
   name: $(proj_branch)
+
 spec:
   rules:
     - host: $(site_url)
+
       http:
         paths:
           - path: /
             pathType: Prefix
+
             backend:
               service:
                 name: $(proj_branch)
+
                 port:
                   name: $(proj_port)
