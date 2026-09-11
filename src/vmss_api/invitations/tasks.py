@@ -406,6 +406,19 @@ async def _send_submission_role_email_notification(
             users = await UserRepository(session).list_users_holding_role_at_branch(
                 uuid.UUID(role_id), uuid.UUID(branch_id)
             )
+            if not users:
+                # No one currently holds this role at this branch — nothing
+                # to notify. Logged, not just returned, because unlike a
+                # deleted invitation (benign) this means a role/branch
+                # staffing gap silently ate a submission notification.
+                logger.warning(
+                    "submission_role_email_notification_no_recipients",
+                    tenant_schema=tenant_schema,
+                    invitation_id=invitation_id,
+                    role_id=role_id,
+                    branch_id=branch_id,
+                )
+                return
             subject = "New invitation awaiting triage"
             body = (
                 "A new invitation awaits your team's triage.\n"
@@ -482,6 +495,16 @@ async def _send_host_creation_notification(
                 return
             host = await UserRepository(session).get_active(uuid.UUID(host_id))
             if host is None:
+                # Host was deactivated/deleted between assignment and send —
+                # nothing to notify. Logged, not just returned, so a host
+                # who never got told they were named host is traceable
+                # instead of vanishing with no trace.
+                logger.warning(
+                    "host_creation_notification_host_not_found",
+                    tenant_schema=tenant_schema,
+                    invitation_id=invitation_id,
+                    host_id=host_id,
+                )
                 return
             subject = "You've been named host"
             body = (
