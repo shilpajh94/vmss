@@ -57,6 +57,14 @@ export function AdminInvitationsPage() {
     requestDelegate,
     cancelDelegate,
     pendingDelegateDetail,
+    approveAndDelegate,
+    approvingAndDelegatingId,
+    pendingApproveAndDelegateId,
+    requestApproveAndDelegate,
+    cancelApproveAndDelegate,
+    nextStepCandidates,
+    isLoadingNextStepCandidates,
+    workflowRulesByCategory,
     visitorInfoId,
     viewVisitorInfo,
     closeVisitorInfo,
@@ -120,8 +128,11 @@ export function AdminInvitationsPage() {
                   loadingDetailId={loadingDetailId}
                   roleNameById={roleNameById}
                   employeeNameById={employeeNameById}
+                  workflowRulesByCategory={workflowRulesByCategory}
                   onRescheduleClick={requestReschedule}
                   onDelegateClick={requestDelegate}
+                  onApproveAndDelegateClick={requestApproveAndDelegate}
+                  onApproveClick={approve}
                   onEditClick={requestEdit}
                   onVisitorInfoClick={viewVisitorInfo}
                 />
@@ -149,8 +160,19 @@ export function AdminInvitationsPage() {
         stepOrder={pendingDelegateDetail?.currentApprovalStep?.stepOrder}
         roleNameById={roleNameById}
         hostEmployees={hostEmployees}
+        branchId={pendingDelegateDetail?.branchId}
         onConfirm={(delegateUserId) => pendingDelegateId && delegate(pendingDelegateId, delegateUserId)}
         onCancel={cancelDelegate}
+      />
+
+      <DelegateInvitationModal
+        isOpen={pendingApproveAndDelegateId !== undefined}
+        isDelegating={approvingAndDelegatingId !== undefined}
+        mode="approve-and-delegate"
+        isLoadingCandidates={isLoadingNextStepCandidates}
+        hostEmployees={nextStepCandidates}
+        onConfirm={(delegateUserId) => pendingApproveAndDelegateId && approveAndDelegate(pendingApproveAndDelegateId, delegateUserId)}
+        onCancel={cancelApproveAndDelegate}
       />
 
       <EditInvitationModal
@@ -165,6 +187,12 @@ export function AdminInvitationsPage() {
         isOpen={visitorInfoId !== undefined}
         isLoading={visitorInfoId !== undefined && !invitationDetails[visitorInfoId]}
         detail={visitorInfoId ? invitationDetails[visitorInfoId] : undefined}
+        workflowRulesByCategory={workflowRulesByCategory}
+        onEditHost={() => {
+          const id = visitorInfoId
+          closeVisitorInfo()
+          if (id) requestDelegate(id)
+        }}
         onClose={closeVisitorInfo}
       />
     </div>

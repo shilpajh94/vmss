@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
-import { resolveApproverLabel } from '../utils/approval-step-label'
+import { isReceptionCurrentStep, resolveApproverLabel, resolveCurrentLevel, resolveTotalSteps } from '../utils/approval-step-label'
+import { employeeHasRoleAtBranch } from '../utils/role-name-match'
 import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entities/invitation-detail-schema'
 import type { RoleOut } from '../../domain/entities/role-out-schema'
 import type { HostEmployee } from '../../domain/entities/host-employee-schema'
+import type { ApprovalWorkflowRule } from '../../domain/entities/approval-workflow-rule-schema'
 import type { EditInvitationFields } from '../../data/repositories/visit-request-summary-repository'
 import { PURPOSE_OF_VISIT_OPTIONS } from '../utils/purpose-of-visit-options'
 
@@ -36,13 +38,18 @@ function describeApprovalOutcome(
   nextStep: CurrentApprovalStep | null,
   roleNameById: Record<string, string>,
   employeeNameById: Record<string, string>,
+  totalSteps: number,
+  visitorCategoryId: string | null | undefined,
+  workflowRulesByCategory: Record<string, ApprovalWorkflowRule[]>,
 ): string {
+  const approvedLevel = resolveCurrentLevel(approvedStep, visitorCategoryId, workflowRulesByCategory)
   if (!nextStep) {
-    return `Level ${approvedStep.stepOrder} of ${approvedStep.totalSteps} approved — request fully approved.`
+    return `Level ${approvedLevel} of ${totalSteps} approved — request fully approved.`
   }
 
   const approverLabel = resolveApproverLabel(nextStep, roleNameById, employeeNameById)
-  return `Level ${approvedStep.stepOrder} of ${approvedStep.totalSteps} approved — now waiting on ${approverLabel} (level ${nextStep.stepOrder} of ${nextStep.totalSteps}).`
+  const nextLevel = resolveCurrentLevel(nextStep, visitorCategoryId, workflowRulesByCategory)
+  return `Level ${approvedLevel} of ${totalSteps} approved — now waiting on ${approverLabel} (level ${nextLevel} of ${totalSteps}).`
 }
 
 // Shared Kanban-board data/actions behind the staff dashboard and the admin
@@ -67,6 +74,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     approveInvitationStepUseCase,
     rejectInvitationStepUseCase,
     delegateInvitationStepUseCase,
+    listApprovalWorkflowRulesUseCase,
   } = useAppDependencies()
   const toast = useToast()
 
@@ -92,6 +100,11 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [denyingId, setDenyingId] = useState<string | undefined>(undefined)
   const [pendingRescheduleId, setPendingRescheduleId] = useState<string | undefined>(undefined)
   const [pendingDelegateId, setPendingDelegateId] = useState<string | undefined>(undefined)
+  const [approvingAndDelegatingId, setApprovingAndDelegatingId] = useState<string | undefined>(undefined)
+  const [pendingApproveAndDelegateId, setPendingApproveAndDelegateId] = useState<string | undefined>(undefined)
+  const [nextStepCandidates, setNextStepCandidates] = useState<HostEmployee[]>([])
+  const [workflowRulesByCategory, setWorkflowRulesByCategory] = useState<Record<string, ApprovalWorkflowRule[]>>({})
+  const [isLoadingNextStepCandidates, setIsLoadingNextStepCandidates] = useState(false)
   const [pendingEditId, setPendingEditId] = useState<string | undefined>(undefined)
   const [visitorInfoId, setVisitorInfoId] = useState<string | undefined>(undefined)
 
@@ -155,19 +168,23 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
       pendingRescheduleId !== undefined ||
       pendingDelegateId !== undefined ||
       pendingEditId !== undefined ||
+      pendingApproveAndDelegateId !== undefined ||
       denyingId !== undefined ||
       reschedulingId !== undefined ||
       delegatingId !== undefined ||
-      editingId !== undefined
+      editingId !== undefined ||
+      approvingAndDelegatingId !== undefined
   }, [
     pendingDenyId,
     pendingRescheduleId,
     pendingDelegateId,
     pendingEditId,
+    pendingApproveAndDelegateId,
     denyingId,
     reschedulingId,
     delegatingId,
     editingId,
+    approvingAndDelegatingId,
   ])
 
   useEffect(() => {
@@ -181,10 +198,15 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
 
   // Preloads approval-step detail for pending requests so the "Level X/Y"
   // badge is visible on the collapsed card, not just after expanding it.
+  // Also covers "approved" requests: the backend's `status` field flips to
+  // "approved" as soon as an intermediate step (e.g. Reception) clears, even
+  // when a further step is still pending, so a genuinely mid-workflow request
+  // needs its detail fetched here too for `resolveEffectiveStatus` below to
+  // correctly keep it out of the Approved column.
   const pendingDetailFetchesRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     const idsNeedingDetail = visitRequests
-      .filter((request) => normalizeStatus(request.status) === 'requested')
+      .filter((request) => ['requested', 'approved'].includes(normalizeStatus(request.status)))
       .map((request) => request.id)
       .filter((id) => !invitationDetails[id] && !pendingDetailFetchesRef.current.has(id))
 
@@ -203,6 +225,80 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         })
     })
   }, [visitRequests, invitationDetails, getInvitationDetailUseCase])
+
+  // Workflow rules are defined per visitor category, not per invitation, so
+  // every card sharing a category reuses one fetch instead of one each. The
+  // in-flight/resolved promise is cached (not just a "have we started"
+  // flag) so a caller that needs the rules immediately after triggering a
+  // load (e.g. `loadNextStepCandidates` below) can await the same fetch and
+  // get the real result, instead of racing the `workflowRulesByCategory`
+  // state update.
+  const workflowRulesPromiseCacheRef = useRef<Record<string, Promise<ApprovalWorkflowRule[]>>>({})
+  const ensureWorkflowRulesLoaded = useCallback(
+    (visitorCategoryId: string): Promise<ApprovalWorkflowRule[]> => {
+      const cached = workflowRulesPromiseCacheRef.current[visitorCategoryId]
+      if (cached) return cached
+
+      const promise = listApprovalWorkflowRulesUseCase
+        .execute(visitorCategoryId)
+        .then((rules) => {
+          // Don't trust the backend to have actually filtered by the query
+          // param — `use-admin-workflow-form.ts` doesn't (it fetches broadly
+          // and filters client-side), so mirror that here defensively. An
+          // unfiltered response would otherwise let a same-stepOrder rule
+          // from a different category silently win the lookup below. Also
+          // drop any `isActive: false` row still coming back from the API
+          // (e.g. a level removed in the workflow editor that the backend
+          // didn't actually delete) — otherwise `resolveTotalSteps` counts it
+          // and shows one level more than is really configured.
+          const scopedRules = rules.filter((rule) => rule.visitorCategoryId === visitorCategoryId && rule.isActive)
+          setWorkflowRulesByCategory((previous) => ({ ...previous, [visitorCategoryId]: scopedRules }))
+          return scopedRules
+        })
+        .catch((error: unknown) => {
+          console.error('Failed to load workflow rules for visitor category', error)
+          delete workflowRulesPromiseCacheRef.current[visitorCategoryId]
+          throw error
+        })
+
+      workflowRulesPromiseCacheRef.current[visitorCategoryId] = promise
+      return promise
+    },
+    [listApprovalWorkflowRulesUseCase],
+  )
+
+  // Preloads workflow rules for every visible card with a live approval step,
+  // so "Pending:" can preview the next level and the level/total badges can
+  // use the category's *current* rules instead of the step's own possibly
+  // stale `stepOrder`/`totalSteps` snapshot (confirmed backend bug: a fresh
+  // invitation can still snapshot an outdated version of the category's
+  // workflow). Deliberately not gated on `step.stepOrder === 0` (Reception) —
+  // that raw value is exactly what can be stale — nor on `step.totalSteps > 1`:
+  // a single-level category can still snapshot a non-zero `stepOrder` for its
+  // one (Reception) step, and `totalSteps` claiming "1" was exactly what
+  // used to skip this preload, leaving `resolveCurrentLevel` stuck on that
+  // stale `stepOrder` fallback forever (confirmed live: shows "Level 2/2" on
+  // a freshly-created, never-edited single-level category). Every step needs
+  // the live rules to display correctly, not just ones whose snapshot
+  // happens to already look ambiguous.
+  useEffect(() => {
+    const categoryIdsNeedingRules = new Set<string>()
+
+    for (const detail of Object.values(invitationDetails)) {
+      const step = detail.currentApprovalStep
+      if (step && detail.visitorCategoryId && !workflowRulesPromiseCacheRef.current[detail.visitorCategoryId]) {
+        categoryIdsNeedingRules.add(detail.visitorCategoryId)
+      }
+    }
+
+    categoryIdsNeedingRules.forEach((categoryId) => {
+      // `ensureWorkflowRulesLoaded` already logs and rethrows on failure (e.g.
+      // a 403 for a role without list-rules permission) so its own caller can
+      // react; this background preload has no caller to react, so swallow it
+      // here instead of leaving an unhandled rejection in the console.
+      ensureWorkflowRulesLoaded(categoryId).catch(() => {})
+    })
+  }, [invitationDetails, ensureWorkflowRulesLoaded])
 
   const loadDetail = useCallback(
     async (id: string, options?: { forceRefresh?: boolean }): Promise<InvitationDetail> => {
@@ -281,11 +377,36 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         const detail = await loadDetail(id)
 
         if (detail.currentApprovalStep) {
+          // Mirrors `delegate`'s guard below, for the opposite mistake: when
+          // more than one level is configured, Reception must go through
+          // "Approve & Delegate" so the next level actually gets created —
+          // a plain approve here (e.g. a drag-and-drop drop onto "Approved")
+          // would finalize Reception's step as if it were the last one,
+          // silently skipping the remaining levels. The UI already disables
+          // dragging and hides the plain "Approve" button for this case, but
+          // that depends on `isReceptionCurrentStep`/`resolveTotalSteps`
+          // having correctly loaded, live workflow-rules data by the time the
+          // card rendered — this check enforces the rule regardless of that.
+          if (
+            isReceptionCurrentStep(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory) &&
+            resolveTotalSteps(detail, workflowRulesByCategory) > 1
+          ) {
+            throw new Error('Reception must use "Approve & Delegate" when more than one approval level is configured.')
+          }
+
           await approveInvitationStepUseCase.execute(id, detail.currentApprovalStep.id)
           const updatedDetail = await getInvitationDetailUseCase.execute(id)
           setInvitationDetails((previous) => ({ ...previous, [id]: updatedDetail }))
           toast.success(
-            describeApprovalOutcome(detail.currentApprovalStep, updatedDetail.currentApprovalStep, roleNameById, employeeNameById),
+            describeApprovalOutcome(
+              detail.currentApprovalStep,
+              updatedDetail.currentApprovalStep,
+              roleNameById,
+              employeeNameById,
+              resolveTotalSteps(detail, workflowRulesByCategory),
+              detail.visitorCategoryId,
+              workflowRulesByCategory,
+            ),
           )
         } else {
           await approveInvitationUseCase.execute(id)
@@ -308,6 +429,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
       loadDetail,
       roleNameById,
       employeeNameById,
+      workflowRulesByCategory,
       toast,
     ],
   )
@@ -351,7 +473,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         if (!detail.currentApprovalStep) {
           throw new Error('This request has no pending approval step to delegate.')
         }
-        if (detail.currentApprovalStep.stepOrder === 0) {
+        if (isReceptionCurrentStep(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory)) {
           throw new Error('Reception must approve this request before it can be delegated to another step.')
         }
 
@@ -361,7 +483,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         setPendingDelegateId(undefined)
 
         const approverLabel = employeeNameById[delegateUserId] ?? 'the selected host'
-        toast.success(`Delegated level ${detail.currentApprovalStep.stepOrder} of ${detail.currentApprovalStep.totalSteps} to ${approverLabel}.`)
+        const delegatedLevel = resolveCurrentLevel(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory)
+        toast.success(`Delegated level ${delegatedLevel} of ${resolveTotalSteps(detail, workflowRulesByCategory)} to ${approverLabel}.`)
 
         await loadDashboard()
       } catch (error) {
@@ -371,7 +494,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         setDelegatingId(undefined)
       }
     },
-    [delegateInvitationStepUseCase, getInvitationDetailUseCase, loadDashboard, loadDetail, employeeNameById, toast],
+    [delegateInvitationStepUseCase, getInvitationDetailUseCase, loadDashboard, loadDetail, employeeNameById, workflowRulesByCategory, toast],
   )
 
   const requestDelegate = useCallback((id: string) => {
@@ -383,6 +506,128 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   }, [])
 
   const pendingDelegateDetail = pendingDelegateId ? invitationDetails[pendingDelegateId] : undefined
+
+  // Populates the "Approve & Delegate" dropdown with employees eligible for
+  // the *next* step — not the current (Reception) step's role. The next
+  // step's role isn't on the invitation detail itself, so this additionally
+  // consults the workflow's configured rules for the invitation's visitor
+  // category, same data `admin-workflows` already uses.
+  const loadNextStepCandidates = useCallback(
+    async (id: string) => {
+      setIsLoadingNextStepCandidates(true)
+      setNextStepCandidates([])
+
+      try {
+        const detail = await loadDetail(id)
+        const step = detail.currentApprovalStep
+        if (!step || step.totalSteps <= 1 || !detail.visitorCategoryId) {
+          return
+        }
+
+        // Find the current step's role by *position* among the category's
+        // live rules, then take the one right after it — not `stepOrder`
+        // arithmetic, since the step's own `stepOrder` can be a stale
+        // snapshot (confirmed backend bug) that no longer lines up with the
+        // category's current rule ordering.
+        const rules = await ensureWorkflowRulesLoaded(detail.visitorCategoryId)
+        const sortedRules = [...rules].sort((a, b) => a.stepOrder - b.stepOrder)
+        const currentIndex = step.approverRoleId ? sortedRules.findIndex((rule) => rule.approverRoleId === step.approverRoleId) : -1
+        const nextRule = currentIndex !== -1 ? sortedRules[currentIndex + 1] : undefined
+        const nextRoleName = nextRule ? roleNameById[nextRule.approverRoleId] : undefined
+        if (!nextRoleName) return
+
+        setNextStepCandidates(hostEmployees.filter((employee) => employeeHasRoleAtBranch(employee, nextRoleName, detail.branchId)))
+      } catch (error) {
+        console.error('Failed to load next-step candidates', error)
+        toast.error('Could not load eligible employees for the next step.')
+      } finally {
+        setIsLoadingNextStepCandidates(false)
+      }
+    },
+    [loadDetail, ensureWorkflowRulesLoaded, roleNameById, hostEmployees, toast],
+  )
+
+  const requestApproveAndDelegate = useCallback(
+    (id: string) => {
+      setPendingApproveAndDelegateId(id)
+      void loadNextStepCandidates(id)
+    },
+    [loadNextStepCandidates],
+  )
+
+  const cancelApproveAndDelegate = useCallback(() => {
+    setPendingApproveAndDelegateId(undefined)
+    setNextStepCandidates([])
+  }, [])
+
+  const pendingApproveAndDelegateDetail = pendingApproveAndDelegateId ? invitationDetails[pendingApproveAndDelegateId] : undefined
+
+  // Approves Reception's own (first-level) step and assigns a specific
+  // employee to the resulting next step, in one user-facing action. Once the
+  // approve call succeeds it cannot be undone (no "unapprove" operation
+  // exists), so a failure in the delegate call that follows is reported
+  // distinctly from a failure in the approve call itself — see design.md's
+  // partial-failure decision.
+  const approveAndDelegate = useCallback(
+    async (id: string, delegateUserId: string) => {
+      setApprovingAndDelegatingId(id)
+
+      try {
+        const detail = await loadDetail(id)
+        if (!detail.currentApprovalStep || !isReceptionCurrentStep(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory)) {
+          throw new Error('This request is not pending Reception approval.')
+        }
+
+        await approveInvitationStepUseCase.execute(id, detail.currentApprovalStep.id)
+
+        try {
+          const updatedDetail = await getInvitationDetailUseCase.execute(id)
+          setInvitationDetails((previous) => ({ ...previous, [id]: updatedDetail }))
+
+          const totalSteps = resolveTotalSteps(detail, workflowRulesByCategory)
+          const approvedLevel = resolveCurrentLevel(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory)
+          if (!updatedDetail.currentApprovalStep) {
+            toast.success(`Level ${approvedLevel} of ${totalSteps} approved — request fully approved.`)
+          } else {
+            await delegateInvitationStepUseCase.execute(id, updatedDetail.currentApprovalStep.id, delegateUserId)
+            const finalDetail = await getInvitationDetailUseCase.execute(id)
+            setInvitationDetails((previous) => ({ ...previous, [id]: finalDetail }))
+            const approverLabel = employeeNameById[delegateUserId] ?? 'the selected employee'
+            const nextLevel = resolveCurrentLevel(updatedDetail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory)
+            toast.success(
+              `Level ${approvedLevel} of ${totalSteps} approved — now assigned to ${approverLabel} (level ${nextLevel} of ${totalSteps}).`,
+            )
+          }
+
+          setPendingApproveAndDelegateId(undefined)
+          setNextStepCandidates([])
+        } catch (error) {
+          console.error('Approved, but failed to assign the next approver', error)
+          toast.error(
+            error instanceof Error
+              ? `Request approved, but could not assign the next approver: ${error.message}`
+              : 'Request approved, but the next approver could not be assigned. Please delegate manually.',
+          )
+        }
+      } catch (error) {
+        console.error('Failed to approve visit request', error)
+        toast.error(error instanceof Error ? error.message : 'Failed to approve the visit request. Please try again.')
+      } finally {
+        await loadDashboard()
+        setApprovingAndDelegatingId(undefined)
+      }
+    },
+    [
+      approveInvitationStepUseCase,
+      getInvitationDetailUseCase,
+      delegateInvitationStepUseCase,
+      loadDetail,
+      loadDashboard,
+      employeeNameById,
+      workflowRulesByCategory,
+      toast,
+    ],
+  )
 
   // Unlike Delegate (only offered once a card's detail is already loaded,
   // since `canDelegate` depends on `detail.currentApprovalStep`), Edit is
@@ -449,9 +694,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
 
         if (detail.currentApprovalStep) {
           await rejectInvitationStepUseCase.execute(id, detail.currentApprovalStep.id, reason)
-          toast.success(
-            `Denied at level ${detail.currentApprovalStep.stepOrder} of ${detail.currentApprovalStep.totalSteps}.`,
-          )
+          const deniedLevel = resolveCurrentLevel(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory)
+          toast.success(`Denied at level ${deniedLevel} of ${resolveTotalSteps(detail, workflowRulesByCategory)}.`)
         } else {
           await denyInvitationUseCase.execute(id, reason)
           toast.success('Visit request denied.')
@@ -466,7 +710,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         setDenyingId(undefined)
       }
     },
-    [pendingDenyId, denyInvitationUseCase, rejectInvitationStepUseCase, loadDashboard, loadDetail, toast],
+    [pendingDenyId, denyInvitationUseCase, rejectInvitationStepUseCase, loadDashboard, loadDetail, workflowRulesByCategory, toast],
   )
 
   const purposeOptions = useMemo(
@@ -489,13 +733,31 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     })
   }, [visitRequests, search, purposeFilter, registrationTypeFilter])
 
+  // The backend's `status` field on a visit request flips to "approved" as
+  // soon as any single step clears (e.g. Reception approves-and-delegates),
+  // even though a further step is still pending — it doesn't track
+  // multi-step completion itself. Once this invitation's detail has been
+  // fetched, `currentApprovalStep` is the real source of truth: a step still
+  // pending means the request hasn't actually finished the workflow, so keep
+  // it in "Requested" until that step clears too (`currentApprovalStep` null).
+  const resolveEffectiveStatus = useCallback(
+    (request: VisitRequestSummary): string => {
+      const status = normalizeStatus(request.status)
+      if (status === 'approved' && invitationDetails[request.id]?.currentApprovalStep) {
+        return 'requested'
+      }
+      return status
+    },
+    [invitationDetails],
+  )
+
   const columns = useMemo(
     () =>
       BOARD_STATUS_COLUMNS.map((column) => ({
         ...column,
-        requests: filteredRequests.filter((request) => normalizeStatus(request.status) === column.status),
+        requests: filteredRequests.filter((request) => resolveEffectiveStatus(request) === column.status),
       })),
-    [filteredRequests],
+    [filteredRequests, resolveEffectiveStatus],
   )
 
   return {
@@ -543,6 +805,15 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     requestDelegate,
     cancelDelegate,
     pendingDelegateDetail,
+    approveAndDelegate,
+    approvingAndDelegatingId,
+    pendingApproveAndDelegateId,
+    requestApproveAndDelegate,
+    cancelApproveAndDelegate,
+    pendingApproveAndDelegateDetail,
+    nextStepCandidates,
+    isLoadingNextStepCandidates,
+    workflowRulesByCategory,
     visitorInfoId,
     viewVisitorInfo,
     closeVisitorInfo,

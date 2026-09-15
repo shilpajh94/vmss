@@ -1,4 +1,5 @@
 import { DashboardSidebar } from '../../components/DashboardSidebar'
+import { ReceptionSidebar } from '../../components/ReceptionSidebar'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
@@ -63,6 +64,14 @@ export function StaffDashboardPage() {
     requestDelegate,
     cancelDelegate,
     pendingDelegateDetail,
+    approveAndDelegate,
+    approvingAndDelegatingId,
+    pendingApproveAndDelegateId,
+    requestApproveAndDelegate,
+    cancelApproveAndDelegate,
+    nextStepCandidates,
+    isLoadingNextStepCandidates,
+    workflowRulesByCategory,
     visitorInfoId,
     viewVisitorInfo,
     closeVisitorInfo,
@@ -70,7 +79,7 @@ export function StaffDashboardPage() {
 
   return (
     <div className="flex min-h-screen w-full items-stretch bg-bg">
-      <DashboardSidebar activeItem="all-visitors" />
+      {currentUser?.isReception ? <ReceptionSidebar activeItem="visits" /> : <DashboardSidebar activeItem="all-visitors" />}
 
       <main className="flex flex-1 flex-col gap-6 p-8">
         <WorkspaceHeader currentUser={currentUser} onRefresh={refresh} onSignOut={signOut} />
@@ -110,8 +119,11 @@ export function StaffDashboardPage() {
                 loadingDetailId={loadingDetailId}
                 roleNameById={roleNameById}
                 employeeNameById={employeeNameById}
+                workflowRulesByCategory={workflowRulesByCategory}
                 onRescheduleClick={requestReschedule}
                 onDelegateClick={requestDelegate}
+                onApproveAndDelegateClick={requestApproveAndDelegate}
+                onApproveClick={approve}
                 onEditClick={requestEdit}
                 onVisitorInfoClick={viewVisitorInfo}
               />
@@ -138,8 +150,19 @@ export function StaffDashboardPage() {
         stepOrder={pendingDelegateDetail?.currentApprovalStep?.stepOrder}
         roleNameById={roleNameById}
         hostEmployees={hostEmployees}
+        branchId={pendingDelegateDetail?.branchId}
         onConfirm={(delegateUserId) => pendingDelegateId && delegate(pendingDelegateId, delegateUserId)}
         onCancel={cancelDelegate}
+      />
+
+      <DelegateInvitationModal
+        isOpen={pendingApproveAndDelegateId !== undefined}
+        isDelegating={approvingAndDelegatingId !== undefined}
+        mode="approve-and-delegate"
+        isLoadingCandidates={isLoadingNextStepCandidates}
+        hostEmployees={nextStepCandidates}
+        onConfirm={(delegateUserId) => pendingApproveAndDelegateId && approveAndDelegate(pendingApproveAndDelegateId, delegateUserId)}
+        onCancel={cancelApproveAndDelegate}
       />
 
       <EditInvitationModal
@@ -154,6 +177,12 @@ export function StaffDashboardPage() {
         isOpen={visitorInfoId !== undefined}
         isLoading={visitorInfoId !== undefined && !invitationDetails[visitorInfoId]}
         detail={visitorInfoId ? invitationDetails[visitorInfoId] : undefined}
+        workflowRulesByCategory={workflowRulesByCategory}
+        onEditHost={() => {
+          const id = visitorInfoId
+          closeVisitorInfo()
+          if (id) requestDelegate(id)
+        }}
         onClose={closeVisitorInfo}
       />
     </div>

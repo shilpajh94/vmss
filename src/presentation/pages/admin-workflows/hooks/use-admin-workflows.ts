@@ -10,13 +10,19 @@ export interface WorkflowLevelView {
   stepOrder: number
   approverRoleId: string
   approverRoleName: string
+  isActive: boolean
 }
+
+export type WorkflowStatus = 'active' | 'paused'
 
 export interface WorkflowGroup {
   visitorCategoryId: string
   categoryName: string
   levels: WorkflowLevelView[]
+  status: WorkflowStatus
 }
+
+const PAGE_SIZE = 4
 
 export function useAdminWorkflows() {
   const navigate = useNavigate()
@@ -32,9 +38,12 @@ export function useAdminWorkflows() {
   const [pendingDelete, setPendingDelete] = useState<WorkflowGroup | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
 
+  const [page, setPage] = useState(1)
+
   const loadWorkflows = useCallback(async () => {
     setIsLoading(true)
     setErrorMessage(undefined)
+    setPage(1)
 
     try {
       const [user, rules, categories, roles] = await Promise.all([
@@ -55,18 +64,24 @@ export function useAdminWorkflows() {
         rulesByCategory.set(rule.visitorCategoryId, group)
       }
 
-      const groups: WorkflowGroup[] = Array.from(rulesByCategory.entries()).map(([visitorCategoryId, categoryRules]) => ({
-        visitorCategoryId,
-        categoryName: categoryNameById.get(visitorCategoryId) ?? 'Unknown category',
-        levels: [...categoryRules]
+      const groups: WorkflowGroup[] = Array.from(rulesByCategory.entries()).map(([visitorCategoryId, categoryRules]) => {
+        const levels: WorkflowLevelView[] = [...categoryRules]
           .sort((a, b) => a.stepOrder - b.stepOrder)
           .map((rule) => ({
             ruleId: rule.id,
             stepOrder: rule.stepOrder,
             approverRoleId: rule.approverRoleId,
             approverRoleName: roleNameById.get(rule.approverRoleId) ?? 'Unknown role',
-          })),
-      }))
+            isActive: rule.isActive,
+          }))
+
+        return {
+          visitorCategoryId,
+          categoryName: categoryNameById.get(visitorCategoryId) ?? 'Unknown category',
+          levels,
+          status: levels.every((level) => level.isActive) ? 'active' : 'paused',
+        }
+      })
 
       setWorkflows(groups)
     } catch {
@@ -105,6 +120,7 @@ export function useAdminWorkflows() {
     try {
       await deleteWorkflowUseCase.execute(pendingDelete.levels.map((level) => level.ruleId))
       setWorkflows((current) => current.filter((workflow) => workflow.visitorCategoryId !== pendingDelete.visitorCategoryId))
+      setPage(1)
       toast.success('Workflow deleted.')
       setPendingDelete(undefined)
     } catch {
@@ -114,9 +130,26 @@ export function useAdminWorkflows() {
     }
   }, [pendingDelete, deleteWorkflowUseCase, toast])
 
+  const totalPages = Math.max(1, Math.ceil(workflows.length / PAGE_SIZE))
+  const pagedWorkflows = workflows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  const goToPreviousPage = useCallback(() => {
+    setPage((current) => Math.max(1, current - 1))
+  }, [])
+
+  const goToNextPage = useCallback(() => {
+    setPage((current) => Math.min(totalPages, current + 1))
+  }, [totalPages])
+
   return {
     currentUser,
     workflows,
+    pagedWorkflows,
+    page,
+    pageSize: PAGE_SIZE,
+    totalPages,
+    goToPreviousPage,
+    goToNextPage,
     isLoading,
     errorMessage,
     retry,

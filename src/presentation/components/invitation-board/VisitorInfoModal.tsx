@@ -1,13 +1,22 @@
 import { useState } from 'react'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
+import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { Modal } from '../ui/Modal'
 import { CalendarClockIcon, ShieldIcon, TagIcon } from '../icons'
 import { formatDateTime } from '../../utils/format-time'
+import { resolvePointOfContactLabel } from '../../utils/approval-step-label'
 
 interface VisitorInfoModalProps {
   isOpen: boolean
   isLoading?: boolean
   detail?: InvitationDetail
+  workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
+  // Reassigning the host/point of contact has real backend rules (role and
+  // branch eligibility, and Reception's own step can't be delegated directly
+  // — see use-invitations-board.ts's `delegate`) that DelegateInvitationModal
+  // already encodes correctly, so "Edit" here opens that flow rather than
+  // duplicating its logic.
+  onEditHost?: () => void
   onClose: () => void
 }
 
@@ -106,7 +115,42 @@ function SectionLabel({ children }: { children: string }) {
   return <h3 className="text-overline text-text-faint">{children}</h3>
 }
 
-export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: VisitorInfoModalProps) {
+function HostField({
+  hostNameOrEmail,
+  onEditHost,
+}: {
+  hostNameOrEmail: string | null
+  onEditHost?: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-overline text-text-faint">Host</span>
+      <span className="flex items-center gap-2">
+        <span className="truncate font-body text-[13px] font-medium text-text">{hostNameOrEmail ?? '—'}</span>
+        {onEditHost ? (
+          <button
+            type="button"
+            onClick={onEditHost}
+            className="shrink-0 font-body text-[11px] font-semibold text-secondary-accent hover:underline"
+          >
+            Edit
+          </button>
+        ) : null}
+      </span>
+    </div>
+  )
+}
+
+export function VisitorInfoModal({
+  isOpen,
+  isLoading,
+  detail,
+  workflowRulesByCategory,
+  onEditHost,
+  onClose,
+}: VisitorInfoModalProps) {
+  const pointOfContact = detail ? resolvePointOfContactLabel(detail, workflowRulesByCategory ?? {}) : undefined
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Visitor Info" maxWidthClassName="max-w-lg">
       {isLoading || !detail ? (
@@ -145,7 +189,8 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
             <SectionLabel>Visit details</SectionLabel>
             <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
               <Field label="Purpose" value={detail.purposeOfVisit} />
-              <Field label="Host" value={detail.hostNameOrEmail ?? '—'} />
+              <HostField hostNameOrEmail={detail.hostNameOrEmail} onEditHost={onEditHost} />
+              {pointOfContact ? <Field label="Point of Contact" value={pointOfContact} /> : null}
               <Field label="Department" value={detail.departmentToVisit ?? '—'} />
               <Field label="Expected duration" value={detail.expectedDuration ?? '—'} />
               {detail.rescheduleCount > 0 ? (

@@ -32,6 +32,7 @@ export class HttpStaffAuthRepository implements StaffAuthRepository {
       name: response.data.fullName,
       role: response.data.branchRoles[0]?.roleName ?? 'Staff',
       isAdmin: response.data.branchRoles.some((branchRole) => branchRole.roleName.toLowerCase() === 'admin'),
+      isReception: response.data.branchRoles.some((branchRole) => branchRole.roleName.toLowerCase() === 'reception'),
     }
   }
 }

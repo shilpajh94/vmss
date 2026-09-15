@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
+import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { VisitRequestCard } from './VisitRequestCard'
 import { UserIcon } from '../icons'
 import { EmptyState } from '../ui/EmptyState'
@@ -30,8 +31,11 @@ interface KanbanColumnProps {
   loadingDetailId?: string
   roleNameById?: Record<string, string>
   employeeNameById?: Record<string, string>
+  workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
   onRescheduleClick?: (id: string) => void
   onDelegateClick?: (id: string) => void
+  onApproveAndDelegateClick?: (id: string) => void
+  onApproveClick?: (id: string) => void
   onEditClick?: (id: string) => void
   onVisitorInfoClick?: (id: string) => void
 }
@@ -49,8 +53,11 @@ export function KanbanColumn({
   loadingDetailId,
   roleNameById,
   employeeNameById,
+  workflowRulesByCategory,
   onRescheduleClick,
   onDelegateClick,
+  onApproveAndDelegateClick,
+  onApproveClick,
   onEditClick,
   onVisitorInfoClick,
 }: KanbanColumnProps) {
@@ -109,8 +116,11 @@ export function KanbanColumn({
               isLoadingDetail={loadingDetailId === request.id}
               roleNameById={roleNameById}
               employeeNameById={employeeNameById}
+              workflowRulesByCategory={workflowRulesByCategory}
               onRescheduleClick={onRescheduleClick}
               onDelegateClick={onDelegateClick}
+              onApproveAndDelegateClick={onApproveAndDelegateClick}
+              onApproveClick={onApproveClick}
               onEditClick={onEditClick}
               onVisitorInfoClick={onVisitorInfoClick}
             />
