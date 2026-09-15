@@ -1119,10 +1119,11 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
 ) -> None:
     """invitation-multi-step-approval spec.md "Workflow-backed invitation
     exposes current step progress" — a category with two active rules
-    snapshots two steps at submission, behind the unconditional `stepOrder`
-    0 ownership step (role-based-invitation-workflow); the tracking lookup
-    surfaces that ownership step as current, since it's always the first to
-    become pending.
+    snapshots exactly those two steps at submission (no separate ownership
+    step ahead of them — see `docs/features/approvals.md` "The
+    host-nomination step"); the tracking lookup surfaces the first
+    configured step (`stepOrder` 1) as current, since it's the first to
+    become pending and doubles as the host-nomination step.
     """
     category = VisitorCategoryFactory.build(
         id=uuid.uuid4(), name="Workflow Category", code="WORKFLOW-CAT"
@@ -1147,8 +1148,6 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
         ]
     )
     await db_session.commit()
-    reception_role = await RoleRepository(db_session).get_by_name("reception")
-    assert reception_role is not None
 
     token = await _login(client, user.email)
     payload = _individual_payload()
@@ -1157,13 +1156,13 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
     steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(
         uuid.UUID(data["id"])
     )
-    step_zero = next(s for s in steps if s.step_order == 0)
+    step_one = next(s for s in steps if s.step_order == 1)
     assert data["currentApprovalStep"] == {
-        "id": str(step_zero.id),
-        "stepOrder": 0,
-        "approverRoleId": str(reception_role.id),
+        "id": str(step_one.id),
+        "stepOrder": 1,
+        "approverRoleId": str(approver_role.id),
         "approverUserId": None,
-        "totalSteps": 3,
+        "totalSteps": 2,
         "delegatedToUserId": None,
     }
 
@@ -1172,11 +1171,11 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
     )
     assert response.status_code == 200
     assert response.json()["data"]["currentApprovalStep"] == {
-        "id": str(step_zero.id),
-        "stepOrder": 0,
-        "approverRoleId": str(reception_role.id),
+        "id": str(step_one.id),
+        "stepOrder": 1,
+        "approverRoleId": str(approver_role.id),
         "approverUserId": None,
-        "totalSteps": 3,
+        "totalSteps": 2,
         "delegatedToUserId": None,
     }
 
@@ -1295,6 +1294,37 @@ async def _branch_scoped_invitation_viewer(
         email=f"viewer-{uuid.uuid4().hex[:8]}@acme-test.example",
         hashed_password=hash_password("correct-password"),
         full_name="Invitation Viewer",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([permission, role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+async def _branch_scoped_invitation_editor(
+    db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
+) -> User:
+    """A caller whose only role grant is `invitations:edit` at `branch_id` —
+    holds enough to reach `PATCH /invitations/{id}/edit` at all, but not
+    `invitations:approve`, for point-of-contact authorization tests
+    (add-invitation-point-of-contact: setting `pocUserId`/`pocRoleId`
+    requires `invitations:approve` in addition to this endpoint's own
+    `invitations:edit` gate).
+    """
+    permission = PermissionFactory.build(
+        id=uuid.uuid4(), code="invitations:edit", description="invitations:edit"
+    )
+    role = RoleFactory.build(id=uuid.uuid4(), name="invitations-editor", permissions=[permission])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"editor-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Invitation Editor",
         branch_roles=[branch_role],
     )
     db_session.add_all([permission, role, test_user])
@@ -3173,8 +3203,12 @@ async def test_created_invitation_current_step_id_is_directly_actionable(
     holder of that role — e.g. Reception — is the current approver and may
     approve it directly like any other step (`specs/approvals/spec.md`
     "The Ownership Step Is a Plain Role-Identified Step, Approvable
-    Directly") — no resolved `hostId` results from approving it directly,
-    since only delegating a step resolves the host.
+    Directly"). This invitation's category has no configured workflow rules,
+    so this one synthetic step is also its *only* step — a single-step,
+    reception-only workflow — so approving it directly resolves `hostId` to
+    the approving Reception user (see "Approving the Only Step of a
+    Single-Step Workflow Also Resolves the Invitation's Host"), the same as
+    delegating would.
     """
     # `_default_host_role` (this module's autouse fixture) seeds "reception"
     # with no permissions attached — enough for snapshot logic, not enough
@@ -3213,7 +3247,7 @@ async def test_created_invitation_current_step_id_is_directly_actionable(
     )
     assert response.status_code == 200, response.text
     assert response.json()["data"]["status"] == "approved"
-    assert response.json()["data"]["hostId"] is None
+    assert response.json()["data"]["hostId"] == str(visit_host.id)
 
 
 async def test_create_invitation_unknown_purpose_id_rejected(
@@ -5916,6 +5950,217 @@ async def test_edit_invitation_notifies_resolved_host(
     assert push_calls[0]["user_id"] == host.id
 
 
+# --- PATCH /invitations/{id}/edit: point of contact (add-invitation-point-of-contact)
+
+
+async def test_edit_invitation_sets_point_of_contact_to_user(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """`pocUserId` resolves to a specific person, distinct from `hostId` —
+    settable directly, any time, by a caller holding `invitations:approve`
+    (the `user` fixture is a company-wide admin holding every permission).
+    Notifies the newly-named POC by push and email, on top of the always-
+    fired visitor edit-notification email.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    poc_user = UserFactory.build(
+        id=uuid.uuid4(), email="poc-person@acme-test.example", full_name="Priya POC"
+    )
+    db_session.add(poc_user)
+    await db_session.commit()
+
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: None)
+    push_calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        push_calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+    email_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_poc_creation_notification, "delay", lambda **kw: email_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocUserId": str(poc_user.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["pocUserId"] == str(poc_user.id)
+    assert response.json()["data"]["pocRoleId"] is None
+    assert response.json()["data"]["pocName"] == "Priya POC"
+
+    await db_session.refresh(invitation)
+    assert invitation.poc_user_id == poc_user.id
+    assert invitation.poc_role_id is None
+    assert invitation.poc_name == "Priya POC"
+    assert len(push_calls) == 1
+    assert push_calls[0]["user_id"] == poc_user.id
+    assert len(email_calls) == 1
+    assert email_calls[0]["poc_id"] == str(poc_user.id)
+
+
+async def test_edit_invitation_sets_point_of_contact_to_role(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """`pocRoleId` broadcasts to every holder of that role at the
+    invitation's branch (push only — no specific person to email, same as a
+    role-identified approval step has no email counterpart).
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    poc_role = RoleFactory.build(id=uuid.uuid4(), name="front-desk-poc", permissions=[])
+    db_session.add(poc_role)
+    await db_session.commit()
+
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: None)
+    role_push_calls: list[dict] = []
+
+    async def _fake_notify_role_at_branch(*args, **kwargs):
+        role_push_calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify_role_at_branch)
+    email_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_poc_creation_notification, "delay", lambda **kw: email_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocRoleId": str(poc_role.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["pocRoleId"] == str(poc_role.id)
+    assert response.json()["data"]["pocUserId"] is None
+    assert response.json()["data"]["pocName"] == "front-desk-poc"
+
+    await db_session.refresh(invitation)
+    assert invitation.poc_role_id == poc_role.id
+    assert invitation.poc_user_id is None
+    assert len(role_push_calls) == 1
+    assert role_push_calls[0]["role_id"] == poc_role.id
+    assert len(email_calls) == 0
+
+
+async def test_edit_invitation_poc_both_fields_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocUserId": str(uuid.uuid4()), "pocRoleId": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
+async def test_edit_invitation_poc_unknown_user_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocUserId": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.poc_user_id is None
+
+
+async def test_edit_invitation_poc_unknown_role_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocRoleId": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.poc_role_id is None
+
+
+async def test_edit_invitation_poc_requires_approve_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Holding `invitations:edit` alone (this endpoint's own gate) is not
+    enough to set the point of contact — `invitations:approve` is required
+    in addition, checked in the service layer.
+    """
+    editor = await _branch_scoped_invitation_editor(db_session, tenant, branch.id)
+    poc_user = UserFactory.build(id=uuid.uuid4(), email="poc-candidate@acme-test.example")
+    db_session.add(poc_user)
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(editor)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocUserId": str(poc_user.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.poc_user_id is None
+
+
+async def test_edit_invitation_poc_change_included_in_edit_notification_context(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """The visitor's own edit-notification email (unconditional on every
+    successful edit — `_send_edit_notification`) reflects whichever point of
+    contact is currently resolved, the same way it already reflects the
+    other visit-detail fields regardless of which one changed.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    poc_user = UserFactory.build(id=uuid.uuid4(), email="poc-person-2@acme-test.example")
+    db_session.add(poc_user)
+    await db_session.commit()
+
+    edit_calls: list[dict] = []
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: edit_calls.append(kw))
+    monkeypatch.setattr(notifications_service, "notify_user", lambda **kw: asyncio.sleep(0))
+    monkeypatch.setattr(tasks.send_poc_creation_notification, "delay", lambda **kw: None)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocUserId": str(poc_user.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert len(edit_calls) == 1
+    assert edit_calls[0]["invitation_id"] == str(invitation.id)
+
+
 # --- POST /invitations/{id}/badge and /badge/reprint ----------------------------
 
 
@@ -6278,13 +6523,15 @@ async def test_create_invitation_submission_notifies_owning_role(
     assert email_calls[0]["invitation_id"] == created["id"]
 
 
-async def test_create_invitation_configured_chain_does_not_preempt_ownership_push(
+async def test_create_invitation_configured_chain_determines_submission_push(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
 ) -> None:
-    """A category's own configured `ApprovalWorkflowRule` chain no longer
-    determines which step gets pushed at submission — the unconditional
-    `stepOrder` 0 ownership step is always current first, regardless of what
-    role a category's own chain configures at `stepOrder` 1+.
+    """A category's own configured `ApprovalWorkflowRule` chain now
+    determines which step (and therefore which role) gets pushed at
+    submission — its first configured step is the invitation's current
+    step, so the submission push goes to that step's role, not
+    unconditionally to the tenant's default host role
+    (`docs/features/approvals.md` "The host-nomination step").
     """
     category = VisitorCategoryFactory.build(
         id=uuid.uuid4(), name="Role Workflow Category", code="ROLE-WORKFLOW-CAT"
@@ -6311,16 +6558,13 @@ async def test_create_invitation_configured_chain_does_not_preempt_ownership_pus
 
     monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify_role_at_branch)
 
-    reception_role = await RoleRepository(db_session).get_by_name("reception")
-    assert reception_role is not None
-
     token = await _login(client, user.email)
     payload = _individual_payload()
     payload["visitorCategoryId"] = str(category.id)
     await _create_invitation_success(client, token, branch, payload=payload)
 
     assert len(role_calls) == 1
-    assert role_calls[0]["role_id"] == reception_role.id
+    assert role_calls[0]["role_id"] == approver_role.id
     assert role_calls[0]["branch_id"] == branch.id
 
 
