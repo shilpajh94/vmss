@@ -48,7 +48,6 @@ async def create_visitor_category(
         name=payload.name,
         code=payload.code,
         description=payload.description,
-        form_schema=[f.model_dump(mode="json") for f in payload.form_schema],
         badge_color=payload.badge_color,
         nda_requirement=payload.nda_requirement.value if payload.nda_requirement else None,
         escort_requirement=(

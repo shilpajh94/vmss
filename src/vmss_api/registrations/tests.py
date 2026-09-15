@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
+import starlette.datastructures as starlette_datastructures
 from httpx import AsyncClient, Response
 from PIL import Image
 from sqlalchemy import select, update
@@ -101,10 +102,12 @@ def _individual_payload() -> dict:
         },
         "carriedItems": {"items": []},
         "vehicles": [],
+        # Keys are raw (never camelCased) — see invitations/schemas.py's
+        # `InvitationCreate.consents` docstring.
         "consents": {
-            "termsAccepted": True,
-            "dataProcessingAccepted": True,
-            "safetyGuidelinesAccepted": True,
+            "terms_accepted": True,
+            "data_processing_accepted": True,
+            "safety_guidelines_accepted": True,
         },
     }
 
@@ -289,6 +292,33 @@ async def test_walk_in_registration_oversized_file_rejected(
         client, registration_device_raw_key, payload=_individual_payload()
     )
     assert response.status_code == 422
+
+
+async def test_walk_in_registration_oversized_file_read_is_bounded(
+    client: AsyncClient, registration_device_raw_key: str, monkeypatch
+) -> None:
+    """Sibling of `invitations/tests.py::test_create_invitation_oversized_file_read_is_bounded`
+    — `POST /registrations/walk-in` accepts the identical multipart contract
+    and must bound each `UploadFile.read()` call the same way
+    (file-upload-handling.md §1), not just eventually reject an oversized
+    upload after buffering it in full.
+    """
+    monkeypatch.setattr(settings, "invitation_max_upload_size_bytes", 10)
+    read_sizes: list[int] = []
+    original_read = starlette_datastructures.UploadFile.read
+
+    async def _spy_read(self, size: int = -1) -> bytes:
+        read_sizes.append(size)
+        return await original_read(self, size)
+
+    monkeypatch.setattr(starlette_datastructures.UploadFile, "read", _spy_read)
+
+    response = await _create_walk_in(
+        client, registration_device_raw_key, payload=_individual_payload()
+    )
+
+    assert response.status_code == 422
+    assert read_sizes == [11, settings.invitation_max_photo_size_bytes + 1]
 
 
 # --- Optional profile photo (checkin-approval-workflow-improvements) --------

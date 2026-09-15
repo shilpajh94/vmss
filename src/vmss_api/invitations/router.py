@@ -37,7 +37,6 @@ from vmss_api.invitations.deps import track_default_tenant, track_default_tenant
 from vmss_api.invitations.schemas import (
     BadgeOut,
     CarriedItemsSubmit,
-    ConsentsSubmit,
     InvitationBranchOut,
     InvitationBuildingOut,
     InvitationCheckInOut,
@@ -130,10 +129,13 @@ _INDIVIDUAL_PAYLOAD_EXAMPLE = {
     },
     "carriedItems": {"items": [], "itemDescription": ""},
     "vehicles": [],
+    # Keys are raw (never camelCased) — whatever the calling branch's
+    # published Consent Agreement step declares; these three are the
+    # default for a branch that has never customized it.
     "consents": {
-        "termsAccepted": True,
-        "dataProcessingAccepted": True,
-        "safetyGuidelinesAccepted": True,
+        "terms_accepted": True,
+        "data_processing_accepted": True,
+        "safety_guidelines_accepted": True,
     },
 }
 
@@ -189,9 +191,9 @@ _GROUP_PAYLOAD_EXAMPLE = {
         },
     ],
     "consents": {
-        "termsAccepted": True,
-        "dataProcessingAccepted": True,
-        "safetyGuidelinesAccepted": True,
+        "terms_accepted": True,
+        "data_processing_accepted": True,
+        "safety_guidelines_accepted": True,
     },
 }
 
@@ -233,6 +235,12 @@ def _required_fields_summary() -> str:
     since "at least one of the two" is a cross-field business rule a JSON
     Schema `required` entry can't express; called out explicitly instead of
     left to look like an oversight.
+
+    Structurally-mandatory only — `idProofType` (per visitor/primary
+    contact), the primary contact's photo file, and which `consents` keys
+    must be `true` are additionally branch-configurable (`form-builder`):
+    required by default, but not required if the calling branch's published
+    configuration has deactivated/relaxed them. See the note appended below.
     """
     nested: list[tuple[str, type[BaseModel]]] = [
         ("primaryContact", InvitationPrimaryContactCreate),
@@ -240,7 +248,6 @@ def _required_fields_summary() -> str:
         ("visitDetails", VisitDetailsSubmit),
         ("carriedItems", CarriedItemsSubmit),
         ("each entry in vehicles", VehicleSubmit),
-        ("consents", ConsentsSubmit),
     ]
     lines = [
         "Required fields (generated from the schemas below, not hand-typed):",
@@ -249,10 +256,20 @@ def _required_fields_summary() -> str:
     for label, model in nested:
         required = model.model_json_schema().get("required", [])
         lines.append(f"- {label}: {', '.join(required) if required else '(none required)'}")
+    lines.append("- consents: present (even as `{}`); see the branch-configurable note below.")
     lines.append(
         "Note: `email`/`phone` are each individually optional above, but at "
         "least one is required on every contact/visitor entry — enforced by "
         "a cross-field rule, not a schema-level `required` marker."
+    )
+    lines.append(
+        "Note: `idProofType`/the ID-proof and primary-contact-photo files "
+        "default to required, and the default three `consents` keys "
+        "(terms_accepted, data_processing_accepted, safety_guidelines_accepted) "
+        "default to all being required — but every branch can reconfigure "
+        "these via the Form Builder admin capability, so the effective "
+        "requirement for a given branch/call may differ from this schema-level "
+        "default."
     )
     return "\n".join(lines)
 
@@ -662,26 +679,31 @@ async def create_invitation(
     user: Annotated[User, Depends(get_current_user)],
     payload: Annotated[str, Form(description=_PAYLOAD_DESCRIPTION)],
     primary_contact_id_proof_file: Annotated[
-        UploadFile,
+        UploadFile | None,
         File(
             description=(
                 "Primary contact's ID-proof image/PDF upload — paired with "
-                "`payload.primaryContact`. See `visitorIdProofFiles` below "
-                "for the co-visitor equivalent."
+                "`payload.primaryContact`. Required by default, but only "
+                "when the calling branch's published Form Builder "
+                "configuration marks ID proof active/required (it may be "
+                "omitted otherwise). See `visitorIdProofFiles` below for "
+                "the co-visitor equivalent."
             )
         ),
-    ],
+    ] = None,
     primary_contact_photo_file: Annotated[
-        UploadFile,
+        UploadFile | None,
         File(
             description=(
-                "Required profile photo for the primary contact (JPEG/PNG "
-                "only) — paired with `payload.primaryContact`. See "
-                "`visitorPhotoFiles` below for the (optional) co-visitor "
-                "equivalent."
+                "Profile photo for the primary contact (JPEG/PNG only) — "
+                "paired with `payload.primaryContact`. Required by default, "
+                "but only when the calling branch's published Form Builder "
+                "configuration marks it active/required. See "
+                "`visitorPhotoFiles` below for the (always optional) "
+                "co-visitor equivalent."
             )
         ),
-    ],
+    ] = None,
     visitor_id_proof_files: list[UploadFile] = _NO_VISITOR_FILES,
     visitor_photo_files: list[UploadFile] = _NO_VISITOR_PHOTOS,
     idempotency_key: Annotated[
@@ -740,9 +762,17 @@ async def create_invitation(
     # it all and only then checking `len()` in `service.py`'s validation.
     id_proof_limit = settings.invitation_max_upload_size_bytes + 1
     photo_limit = settings.invitation_max_photo_size_bytes + 1
-    primary_content = await primary_contact_id_proof_file.read(id_proof_limit)
+    primary_content = (
+        await primary_contact_id_proof_file.read(id_proof_limit)
+        if primary_contact_id_proof_file is not None
+        else None
+    )
     visitor_contents = [await f.read(id_proof_limit) for f in visitor_id_proof_files]
-    primary_photo_content = await primary_contact_photo_file.read(photo_limit)
+    primary_photo_content = (
+        await primary_contact_photo_file.read(photo_limit)
+        if primary_contact_photo_file is not None
+        else None
+    )
     visitor_photo_contents = [await f.read(photo_limit) for f in visitor_photo_files]
 
     invitation = await service.create_invitation(

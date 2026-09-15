@@ -14,9 +14,12 @@ from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.core.config import settings
 from vmss_api.core.logging import logger
+from vmss_api.core.redis import get_redis
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.storage import FileTooLargeError, UnsupportedFileTypeError, validate_upload
 from vmss_api.core.storage import save as storage_save
+from vmss_api.form_builder import service as form_builder_service
+from vmss_api.form_builder import validation as form_builder_validation
 from vmss_api.invitations import badge, push_notifications, tasks
 from vmss_api.invitations.models import (
     Invitation,
@@ -306,9 +309,9 @@ async def create_invitation(
     branch_id: uuid.UUID,
     created_by_user_id: uuid.UUID | None,
     tenant: Tenant,
-    primary_contact_id_proof_content: bytes,
+    primary_contact_id_proof_content: bytes | None,
     visitor_id_proof_contents: list[bytes],
-    primary_contact_photo_content: bytes,
+    primary_contact_photo_content: bytes | None,
     visitor_photo_contents: list[bytes],
     source: RegistrationSource = RegistrationSource.staff_pre_registration,
 ) -> Invitation:
@@ -334,11 +337,6 @@ async def create_invitation(
             detail=f"A group registration may not list more than "
             f"{settings.invitation_max_group_visitors} visitors",
         )
-    if len(payload.visitors) != len(visitor_id_proof_contents):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Visitor list and uploaded ID proof files must match in count",
-        )
 
     # Validated before any file I/O, same "fail fast" reasoning as the
     # optional catalog ids resolved right below.
@@ -348,6 +346,89 @@ async def create_invitation(
     # display value) before any file I/O, so a bad `purposeId`/`hostId`/
     # `durationId`/`departmentId` fails fast without wasting a storage write.
     visit_details = await _resolve_visit_detail_ids(tenant_db, payload.visit_details)
+
+    # Branch-configured requiredness/allow-lists (form-builder), resolved
+    # once, ahead of every check below that depends on it — see
+    # `openspec/changes/form-builder/design.md` Decision 5.
+    redis = await get_redis()
+    effective_form = await form_builder_service.resolve_effective_form(
+        tenant_db, redis, tenant_id=tenant.id, branch_id=branch_id
+    )
+    id_proof_required = form_builder_validation.is_field_required(
+        effective_form, "visitor_info", "id_proof_upload", default=False
+    )
+    photo_required = form_builder_validation.is_field_required(
+        effective_form, "visitor_info", "profile_photo", default=False
+    )
+    required_consent_keys = form_builder_validation.required_consent_keys(effective_form)
+    allowed_consent_keys = form_builder_validation.allowed_consent_keys(effective_form)
+    allowed_carried_item_keys = form_builder_validation.allowed_carried_item_keys(effective_form)
+
+    # ID proof: every visitor (primary + each co-visitor) supplies one,
+    # matched 1:1, unless the calling branch has deactivated it — see
+    # specs/invitations/spec.md (delta) "Every Visitor Has a Reachable
+    # Contact and a Validated ID Proof".
+    if id_proof_required:
+        if len(payload.visitors) != len(visitor_id_proof_contents):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Visitor list and uploaded ID proof files must match in count",
+            )
+        if (
+            payload.primary_contact.id_proof_type is None
+            or primary_contact_id_proof_content is None
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="ID proof is required for the primary contact",
+            )
+        if any(visitor.id_proof_type is None for visitor in payload.visitors):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="ID proof type is required for every visitor",
+            )
+    elif len(visitor_id_proof_contents) > len(payload.visitors):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="More ID proof files were uploaded than visitors listed",
+        )
+
+    if photo_required and primary_contact_photo_content is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="A profile photo is required for the primary contact",
+        )
+
+    # specs/invitations/spec.md (delta) "Carried Items and Vehicles Are
+    # Optional Structured Declarations" — every declared item must be one
+    # of the calling branch's currently configured Carried Items keys.
+    invalid_items = set(payload.carried_items.items) - allowed_carried_item_keys
+    if invalid_items:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unknown carried item(s): {', '.join(sorted(invalid_items))}",
+        )
+
+    # specs/invitations/spec.md (delta) "Consent Is Mandatory and Recorded"
+    # — the payload must not introduce a consent key outside the calling
+    # branch's currently configured Consent Agreement set, mirroring the
+    # carried-items allow-list check above.
+    invalid_consent_keys = set(payload.consents) - allowed_consent_keys
+    if invalid_consent_keys:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unknown consent key(s): {', '.join(sorted(invalid_consent_keys))}",
+        )
+
+    # ... and every consent the calling branch's Consent Agreement step
+    # marks required must be accepted.
+    accepted_consent_keys = {key for key, accepted in payload.consents.items() if accepted}
+    missing_consents = required_consent_keys - accepted_consent_keys
+    if missing_consents:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Missing required consent(s): {', '.join(sorted(missing_consents))}",
+        )
 
     repo = InvitationRepository(tenant_db)
     tracking_id = await _generate_unique_tracking_id(repo)
@@ -365,26 +446,51 @@ async def create_invitation(
     initial_status = "approved" if auto_approved else "submitted"
     approved_at = now if auto_approved else None
 
-    # Validate every file before persisting any of them (spec.md "Each Visitor
-    # Has at Least One Reachable Contact and an ID Proof") — otherwise a later
-    # visitor's invalid file would abort the request after an earlier
-    # visitor's file was already written to storage. Photos (optional) are
-    # validated in the same pass, for the same reason.
+    # Validate every present file before persisting any of them (spec.md
+    # "Each Visitor Has at Least One Reachable Contact and an ID Proof") —
+    # otherwise a later visitor's invalid file would abort the request
+    # after an earlier visitor's file was already written to storage.
+    # Photos, and (when not required) ID-proof files, may be entirely
+    # absent for a given visitor: `None` in, `None` out, skipping
+    # validation and storage for that one.
     max_photo_size = settings.invitation_max_photo_size_bytes
-    primary_content_type = _validate_id_proof(primary_contact_id_proof_content, max_size)
+    primary_content_type = (
+        _validate_id_proof(primary_contact_id_proof_content, max_size)
+        if primary_contact_id_proof_content is not None
+        else None
+    )
     visitor_content_types = [
-        _validate_id_proof(content, max_size) for content in visitor_id_proof_contents
+        _validate_id_proof(content, max_size) if content is not None else None
+        for content in visitor_id_proof_contents
     ]
-    primary_photo_content_type = _validate_photo(primary_contact_photo_content, max_photo_size)
+    primary_photo_content_type = (
+        _validate_photo(primary_contact_photo_content, max_photo_size)
+        if primary_contact_photo_content is not None
+        else None
+    )
     visitor_photo_content_types = [
         _validate_photo(content, max_photo_size) for content in visitor_photo_contents
     ]
 
-    primary_key = await storage_save(
-        tenant.id, "invitations/id-proof", primary_contact_id_proof_content, primary_content_type
+    primary_key = (
+        await storage_save(
+            tenant.id,
+            "invitations/id-proof",
+            primary_contact_id_proof_content,
+            primary_content_type,
+        )
+        if primary_contact_id_proof_content is not None and primary_content_type is not None
+        else None
     )
-    primary_photo_key = await storage_save(
-        tenant.id, "invitations/photos", primary_contact_photo_content, primary_photo_content_type
+    primary_photo_key = (
+        await storage_save(
+            tenant.id,
+            "invitations/photos",
+            primary_contact_photo_content,
+            primary_photo_content_type,
+        )
+        if primary_contact_photo_content is not None and primary_photo_content_type is not None
+        else None
     )
 
     invitation = Invitation(
@@ -405,7 +511,11 @@ async def create_invitation(
         primary_contact_preferred_contact_method=(
             payload.primary_contact.preferred_contact_method.value
         ),
-        primary_contact_id_proof_type=payload.primary_contact.id_proof_type.value,
+        primary_contact_id_proof_type=(
+            payload.primary_contact.id_proof_type.value
+            if payload.primary_contact.id_proof_type is not None
+            else None
+        ),
         primary_contact_id_proof_storage_key=primary_key,
         primary_contact_photo_storage_key=primary_photo_key,
         purpose_of_visit=visit_details["purpose_of_visit"],
@@ -422,11 +532,9 @@ async def create_invitation(
         host_id=None,
         duration_id=visit_details["duration_id"],
         department_id=visit_details["department_id"],
-        carried_items=[item.value for item in payload.carried_items.items],
+        carried_items=list(payload.carried_items.items),
         carried_items_description=payload.carried_items.item_description,
-        terms_accepted=payload.consents.terms_accepted,
-        data_processing_accepted=payload.consents.data_processing_accepted,
-        safety_guidelines_accepted=payload.consents.safety_guidelines_accepted,
+        consents=dict(payload.consents),
         consent_recorded_at=now,
     )
     tenant_db.add(invitation)
@@ -438,9 +546,23 @@ async def create_invitation(
             full_name=visitor.full_name,
             email=visitor.email,
             phone=visitor.phone,
-            id_proof_type=visitor.id_proof_type.value,
-            id_proof_storage_key=await storage_save(
-                tenant.id, "invitations/id-proof", content, content_type
+            id_proof_type=(
+                visitor.id_proof_type.value if visitor.id_proof_type is not None else None
+            ),
+            # ID-proof files are order-matched but, when the branch has
+            # deactivated ID proof, may be entirely absent or shorter than
+            # the visitor list — same "beyond the supplied count simply has
+            # none" posture the photo handling below already had.
+            id_proof_storage_key=(
+                await storage_save(
+                    tenant.id,
+                    "invitations/id-proof",
+                    visitor_id_proof_contents[idx],
+                    visitor_content_types[idx],
+                )
+                if idx < len(visitor_id_proof_contents)
+                and visitor_id_proof_contents[idx] is not None
+                else None
             ),
             # Photos are order-matched but may be shorter than the visitor
             # list — a visitor beyond the supplied photo count simply has
@@ -456,9 +578,7 @@ async def create_invitation(
                 else None
             ),
         )
-        for idx, (visitor, content, content_type) in enumerate(
-            zip(payload.visitors, visitor_id_proof_contents, visitor_content_types, strict=True)
-        )
+        for idx, visitor in enumerate(payload.visitors)
     ]
     vehicle_rows = [
         InvitationVehicle(

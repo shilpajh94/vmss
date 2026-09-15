@@ -14,9 +14,9 @@ async def create_walk_in_registration(
     *,
     branch_id: uuid.UUID,
     tenant: Tenant,
-    primary_contact_id_proof_content: bytes,
+    primary_contact_id_proof_content: bytes | None,
     visitor_id_proof_contents: list[bytes],
-    primary_contact_photo_content: bytes,
+    primary_contact_photo_content: bytes | None,
     visitor_photo_contents: list[bytes],
 ) -> Invitation:
     """API-13. A visitor registering on arrival, with no staff creator and no

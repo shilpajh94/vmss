@@ -28,21 +28,7 @@ def _default_tenant_slug_matches_test_tenant(monkeypatch):
 
 @pytest_asyncio.fixture
 async def visitor_category(db_session: AsyncSession) -> VisitorCategory:
-    category = VisitorCategoryFactory.build(
-        id=uuid.uuid4(),
-        name="Vendor",
-        code="VENDOR",
-        form_schema=[
-            {
-                "name": "company_name",
-                "label": "Company Name",
-                "fieldType": "text",
-                "required": True,
-                "options": None,
-                "helpText": None,
-            }
-        ],
-    )
+    category = VisitorCategoryFactory.build(id=uuid.uuid4(), name="Vendor", code="VENDOR")
     db_session.add(category)
     await db_session.commit()
     return category
@@ -87,22 +73,34 @@ async def test_create_visitor_category_success(client: AsyncClient, user: User) 
             "name": "Interview Candidate",
             "code": "INTERVIEW",
             "description": "Job applicants",
-            "formSchema": [
-                {
-                    "name": "position_applied",
-                    "label": "Position Applied For",
-                    "fieldType": "text",
-                    "required": True,
-                }
-            ],
         },
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 201
     body = response.json()["data"]
     assert body["code"] == "INTERVIEW"
-    assert body["formSchema"][0]["name"] == "position_applied"
     assert body["isActive"] is True
+
+
+async def test_create_visitor_category_ignores_form_schema_field(
+    client: AsyncClient, user: User
+) -> None:
+    """visitors delta spec "A category create/update request no longer
+    accepts formSchema" — the field is silently ignored, not rejected,
+    since category-specific fields are now authored in `form_builder`.
+    """
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/visitor-categories",
+        json={
+            "name": "Contractor",
+            "code": "CONTRACTOR",
+            "formSchema": [{"name": "company_name", "label": "Company", "fieldType": "text"}],
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
+    assert "formSchema" not in response.json()["data"]
 
 
 async def test_create_visitor_category_duplicate_code_conflict(
@@ -115,25 +113,6 @@ async def test_create_visitor_category_duplicate_code_conflict(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 409
-
-
-async def test_create_visitor_category_duplicate_form_field_names_rejected(
-    client: AsyncClient, user: User
-) -> None:
-    token = await _login(client, user.email)
-    response = await client.post(
-        "/api/v1/visitor-categories",
-        json={
-            "name": "Contractor",
-            "code": "CONTRACTOR",
-            "formSchema": [
-                {"name": "company_name", "label": "Company", "fieldType": "text"},
-                {"name": "company_name", "label": "Company Again", "fieldType": "text"},
-            ],
-        },
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 422
 
 
 async def test_create_visitor_category_requires_permission(
@@ -322,47 +301,6 @@ async def test_create_visitor_category_after_soft_delete_reuses_name(
         headers=headers,
     )
     assert recreate_response.status_code == 201
-
-
-async def test_create_visitor_category_select_field_without_options_rejected(
-    client: AsyncClient, user: User
-) -> None:
-    token = await _login(client, user.email)
-    response = await client.post(
-        "/api/v1/visitor-categories",
-        json={
-            "name": "Delivery Person",
-            "code": "DELIVERY",
-            "formSchema": [
-                {"name": "carrier", "label": "Carrier", "fieldType": "select", "options": []}
-            ],
-        },
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 422
-
-
-async def test_create_visitor_category_option_too_long_rejected(
-    client: AsyncClient, user: User
-) -> None:
-    token = await _login(client, user.email)
-    response = await client.post(
-        "/api/v1/visitor-categories",
-        json={
-            "name": "Delivery Person",
-            "code": "DELIVERY",
-            "formSchema": [
-                {
-                    "name": "carrier",
-                    "label": "Carrier",
-                    "fieldType": "select",
-                    "options": ["a" * 101],
-                }
-            ],
-        },
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert response.status_code == 422
 
 
 async def test_visitor_category_repository_tenant_schema_isolation(

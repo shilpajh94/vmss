@@ -216,6 +216,7 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     tracking_id = Use(lambda: f"INV-{token_hex(4).upper()}")
     approved_at = None
     carried_items: list[str] = []
+    consents: dict[str, bool] = {}
     visitors: list[InvitationVisitor] = []
     vehicles: list[InvitationVehicle] = []
     # Same FK-safety rationale as `BranchFactory.contact_person_user_id`:

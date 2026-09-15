@@ -89,10 +89,13 @@ def _individual_payload() -> dict:
         },
         "carriedItems": {"items": []},
         "vehicles": [],
+        # Keys are raw (never camelCased) — whatever the calling branch's
+        # published Consent Agreement step declares; these three are the
+        # default for a branch that has never customized it.
         "consents": {
-            "termsAccepted": True,
-            "dataProcessingAccepted": True,
-            "safetyGuidelinesAccepted": True,
+            "terms_accepted": True,
+            "data_processing_accepted": True,
+            "safety_guidelines_accepted": True,
         },
     }
 
@@ -142,9 +145,9 @@ def _group_payload() -> dict:
             {"vehicleType": "2_wheeler", "licensePlate": "KA-05-CD-5678"},
         ],
         "consents": {
-            "termsAccepted": True,
-            "dataProcessingAccepted": True,
-            "safetyGuidelinesAccepted": True,
+            "terms_accepted": True,
+            "data_processing_accepted": True,
+            "safety_guidelines_accepted": True,
         },
     }
 
@@ -278,7 +281,7 @@ async def test_create_group_invitation_success_with_visitors_and_vehicles(
     assert len(invitation.visitors) == 2
     assert len(invitation.vehicles) == 2
     assert invitation.carried_items == ["laptop_tablet", "mobile_phone"]
-    assert invitation.terms_accepted is True
+    assert invitation.consents.get("terms_accepted") is True
 
 
 # --- invitation-multi-step-approval: visitorCategoryId on creation ----------
@@ -590,7 +593,7 @@ async def test_create_invitation_missing_consent_rejected(
 ) -> None:
     token = await _login(client, user.email)
     payload = _individual_payload()
-    payload["consents"]["safetyGuidelinesAccepted"] = False
+    payload["consents"]["safety_guidelines_accepted"] = False
     response = await _create_invitation(client, token, branch, payload=payload)
     assert response.status_code == 422
 
@@ -989,6 +992,21 @@ async def test_create_invitation_invalid_carried_item_category_rejected(
     assert response.status_code == 422
 
 
+async def test_create_invitation_unknown_consent_key_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "Consent Is Mandatory and
+    Recorded" — a `consents` key outside the calling branch's configured
+    Consent Agreement set is rejected, mirroring the carried-items allow-list
+    check above.
+    """
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["consents"]["not_a_real_consent"] = True
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
 async def test_create_invitation_vehicle_missing_license_plate_rejected(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
@@ -1022,7 +1040,6 @@ def test_invitation_payload_description_matches_schema_requirements() -> None:
     from vmss_api.invitations import router
     from vmss_api.invitations.schemas import (
         CarriedItemsSubmit,
-        ConsentsSubmit,
         InvitationCreate,
         InvitationPrimaryContactCreate,
         VehicleSubmit,
@@ -1031,6 +1048,10 @@ def test_invitation_payload_description_matches_schema_requirements() -> None:
     )
 
     description = router._PAYLOAD_DESCRIPTION
+    # `consents` is no longer its own nested schema (`dict[str, bool]`
+    # directly on `InvitationCreate`) — its top-level requiredness is
+    # already covered via `InvitationCreate.model_json_schema()["required"]`
+    # below.
     models: list[type[BaseModel]] = [
         InvitationCreate,
         InvitationPrimaryContactCreate,
@@ -1038,7 +1059,6 @@ def test_invitation_payload_description_matches_schema_requirements() -> None:
         VisitDetailsSubmit,
         CarriedItemsSubmit,
         VehicleSubmit,
-        ConsentsSubmit,
     ]
     for model in models:
         for field_name in model.model_json_schema().get("required", []):
@@ -7185,3 +7205,190 @@ async def test_send_submission_role_email_notification_emails_every_role_holder_
     recipients = {call["to"] for call in sent}
     assert recipients == {"reception1@acme-test.example", "reception2@acme-test.example"}
     assert all("INV-TEST0009" in call["body"] for call in sent)
+
+
+# --- form-builder integration: branch-configured requiredness ---------------
+#
+# specs/invitations/spec.md (delta) — these exercise the branch actually
+# *changing* what's required, not just the seeded-default path every other
+# test above already covers implicitly.
+
+
+async def _create_invitation_raw(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    payload: dict,
+    include_primary_id_proof: bool = True,
+    include_primary_photo: bool = True,
+) -> Response:
+    """Like `_create_invitation`, but lets a caller omit the primary
+    contact's ID-proof/photo file parts entirely — needed to exercise a
+    branch that has deactivated one of them.
+    """
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    files = []
+    if include_primary_id_proof:
+        files.append(("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")))
+    if include_primary_photo:
+        files.append(("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")))
+    return await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=files,
+        headers=headers,
+    )
+
+
+async def _configure_and_publish_branch_field(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    field_key: str,
+    changes: dict,
+) -> None:
+    """Admin-side setup shared by the tests below: fetches the branch's
+    (form-builder-seeded) draft steps, finds `field_key` within `step_key`,
+    PATCHes it with `changes`, then publishes the branch's scope so
+    `create_invitation` actually reads the new configuration.
+    """
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+    field = next(f for f in step["fields"] if f["key"] == field_key)
+
+    patch_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field['id']}", json=changes, headers=headers
+    )
+    assert patch_response.status_code == 200, patch_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+
+
+async def test_create_invitation_id_proof_not_required_when_branch_deactivates_it(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "ID proof not required when the
+    branch has deactivated it".
+    """
+    token = await _login(client, user.email)
+    await _configure_and_publish_branch_field(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        field_key="id_proof_upload",
+        changes={"isActive": False, "isRequired": False},
+    )
+
+    payload = _individual_payload()
+    del payload["primaryContact"]["idProofType"]
+    response = await _create_invitation_raw(
+        client, token, branch, payload=payload, include_primary_id_proof=False
+    )
+    assert response.status_code == 201, response.text
+
+
+async def test_create_invitation_photo_not_required_when_branch_deactivates_it(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "Missing primary contact photo is
+    accepted when the branch has deactivated it".
+    """
+    token = await _login(client, user.email)
+    await _configure_and_publish_branch_field(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        field_key="profile_photo",
+        changes={"isActive": False, "isRequired": False},
+    )
+
+    response = await _create_invitation_raw(
+        client, token, branch, payload=_individual_payload(), include_primary_photo=False
+    )
+    assert response.status_code == 201, response.text
+
+
+async def test_create_invitation_consent_not_required_when_branch_deactivates_it(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "Consent Is Mandatory and
+    Recorded" — a consent the branch no longer marks required may be
+    omitted.
+    """
+    token = await _login(client, user.email)
+    await _configure_and_publish_branch_field(
+        client,
+        token,
+        branch,
+        step_key="consent_agreement",
+        field_key="safety_guidelines_accepted",
+        changes={"isRequired": False},
+    )
+
+    payload = _individual_payload()
+    del payload["consents"]["safety_guidelines_accepted"]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 201, response.text
+
+
+async def test_create_invitation_carried_item_allowed_when_branch_adds_custom_item(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "Carried Items and Vehicles Are
+    Optional Structured Declarations" — a key the branch adds to its
+    Carried Items options becomes acceptable.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    step = next(s for s in steps_response.json()["data"] if s["key"] == "carried_items")
+    field = next(f for f in step["fields"] if f["key"] == "items")
+
+    patch_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field['id']}",
+        json={"options": [*field["options"], "company_badge"]},
+        headers=headers,
+    )
+    assert patch_response.status_code == 200, patch_response.text
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": ["company_badge"]}
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 201, response.text
+
+
+async def test_create_invitation_carried_item_still_rejected_when_not_in_branch_config(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Sibling of the success case above — a key that was never added to
+    the branch's Carried Items options is still rejected even after that
+    branch has published its own configuration (not just the tenant
+    default fallback).
+    """
+    token = await _login(client, user.email)
+    # Gives this branch its own published configuration (distinct from the
+    # tenant-default fallback) via an innocuous field edit, so this test
+    # exercises the branch's own resolved config, not just the default.
+    await _configure_and_publish_branch_field(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        field_key="profile_photo",
+        changes={"placeholder": "A clear, recent photo"},
+    )
+
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": ["not_a_configured_item"]}
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422

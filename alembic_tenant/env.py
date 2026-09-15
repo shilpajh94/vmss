@@ -20,6 +20,11 @@ from vmss_api.auth.models import (  # noqa: F401
 )
 from vmss_api.core.config import settings
 from vmss_api.core.database import Base
+from vmss_api.form_builder.models import (  # noqa: F401
+    FormConfigVersion,
+    FormField,
+    FormStep,
+)
 from vmss_api.invitations.models import (  # noqa: F401
     Invitation,
     InvitationVehicle,

@@ -50,3 +50,12 @@ class TenantSchemaVersionRepository:
         )
         await self.session.execute(stmt)
         await self.session.flush()
+
+    async def get_all(self) -> dict[uuid.UUID, str]:
+        """Every tenant's recorded revision in one query — the drift check
+        and the upgrade-all-tenants sweep both need "where does each tenant
+        stand" without a per-tenant round trip.
+        """
+        stmt = select(TenantSchemaVersion.tenant_id, TenantSchemaVersion.revision)
+        rows = (await self.session.execute(stmt)).all()
+        return {tenant_id: revision for tenant_id, revision in rows}
