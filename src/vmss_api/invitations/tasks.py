@@ -117,6 +117,12 @@ async def _send_approval_notification(
             # Host Detail" — the resolved host's name/contact when one
             # exists by approval time, otherwise the tenant's own Company
             # contact channel in its place (role-based-invitation-workflow).
+            # add-invitation-point-of-contact: the "Your point of contact"
+            # box prefers the invitation's own POC (if one has been set),
+            # since that's a caller's deliberate override of who to reach
+            # about the visit's logistics — the resolved host is only the
+            # fallback for an invitation whose POC was never set, same as
+            # the front-desk contact is the fallback below that.
             host_name = None
             host_contact = None
             if invitation.host_id is not None:
@@ -124,6 +130,11 @@ async def _send_approval_notification(
                 if host is not None:
                     host_name = host.full_name
                     host_contact = host.phone_number or host.email
+            poc_contact = None
+            if invitation.poc_user_id is not None:
+                poc_user = await UserRepository(session).get_active(invitation.poc_user_id)
+                if poc_user is not None:
+                    poc_contact = poc_user.phone_number or poc_user.email
             company = await CompanyRepository(session).get_singleton()
             front_desk_contact = (company.phone or company.email) if company is not None else None
             html_body = _render_html_or_none(
@@ -136,6 +147,8 @@ async def _send_approval_notification(
                     "visit_time": invitation.preferred_visit_time,
                     "duration": invitation.expected_duration,
                     "department": invitation.department_to_visit,
+                    "poc_name": invitation.poc_name,
+                    "poc_contact": poc_contact,
                     "host_name": host_name,
                     "host_contact": host_contact,
                     "front_desk_contact": front_desk_contact,
@@ -344,6 +357,8 @@ async def _send_edit_notification(tenant_schema: str, invitation_id: str) -> Non
                 f"Duration: {invitation.expected_duration or 'Not specified'}\n"
                 f"Department: {invitation.department_to_visit or 'Not specified'}"
             )
+            if invitation.poc_name:
+                body += f"\nPoint of contact: {invitation.poc_name}"
             html_body = _render_html_or_none(
                 "edit",
                 {
@@ -590,7 +605,13 @@ async def _send_poc_creation_notification(
                 "You've been named point of contact for an invitation.\n"
                 f"Tracking ID: {invitation.tracking_id}\n"
                 f"Visitor: {invitation.primary_contact_full_name}\n"
-                f"Purpose: {invitation.purpose_of_visit or 'Not specified'}"
+                f"Visitor phone: {invitation.primary_contact_phone or 'Not specified'}\n"
+                f"Visitor email: {invitation.primary_contact_email or 'Not specified'}\n"
+                f"Purpose: {invitation.purpose_of_visit or 'Not specified'}\n"
+                f"Date: {invitation.preferred_visit_date}, time: "
+                f"{invitation.preferred_visit_time}\n"
+                f"Duration: {invitation.expected_duration or 'Not specified'}\n"
+                f"Department: {invitation.department_to_visit or 'Not specified'}"
             )
             html_body = _render_html_or_none(
                 "poc_assigned",
@@ -598,9 +619,13 @@ async def _send_poc_creation_notification(
                     **await _base_email_context(session),
                     "tracking_id": invitation.tracking_id,
                     "visitor_name": invitation.primary_contact_full_name,
+                    "visitor_phone": invitation.primary_contact_phone,
+                    "visitor_email": invitation.primary_contact_email,
                     "purpose": invitation.purpose_of_visit,
                     "visit_date": invitation.preferred_visit_date,
                     "visit_time": invitation.preferred_visit_time,
+                    "duration": invitation.expected_duration,
+                    "department": invitation.department_to_visit,
                 },
             )
             await notifications.email_sender.send(

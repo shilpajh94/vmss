@@ -994,6 +994,41 @@ async def _resolve_edit_changes(
     return changes
 
 
+async def _poc_eligible(tenant_db: AsyncSession, invitation: Invitation) -> bool:
+    """Server-side mirror of the frontend's Edit-modal Point-of-Contact
+    gating (add-invitation-point-of-contact) — a client-supplied
+    `pocUserId`/`pocRoleId` can't be trusted to reflect it, so
+    `edit_invitation` re-derives it here rather than trusting the caller
+    only got this far because the UI disabled the field. Eligible when
+    either:
+
+    - the invitation's visitor category has no configured active
+      `ApprovalWorkflowRule`s (nothing to be "mid-workflow" relative to), or
+    - the invitation is currently at its final approval level: its current
+      pending step (if any) is the last-`step_order` snapshotted step, or
+      there is no pending step left at all (workflow already finalized,
+      i.e. at/past the final level).
+
+    Compares against the *max* snapshotted `step_order`, not
+    `total_steps - 1` — `_build_approval_steps` copies `step_order` directly
+    from each category's own `ApprovalWorkflowRule.step_order`, which isn't
+    guaranteed to be a contiguous 0-based sequence.
+    """
+    if invitation.visitor_category_id is None:
+        return True
+    active_rules = await ApprovalWorkflowRuleRepository(tenant_db).list_active_for_category(
+        invitation.visitor_category_id
+    )
+    if not active_rules:
+        return True
+    step_repo = InvitationApprovalStepRepository(tenant_db)
+    current = await step_repo.get_current_pending(invitation.id)
+    if current is None:
+        return True
+    steps = await step_repo.list_for_invitation(invitation.id)
+    return current.step_order == steps[-1].step_order
+
+
 async def edit_invitation(
     tenant_db: AsyncSession,
     invitation: Invitation,
@@ -1024,16 +1059,30 @@ async def edit_invitation(
     unconditional visitor edit-notification email/host push below, which
     already reflects the invitation's current `pocName` regardless of what
     changed.
+
+    Setting either is additionally gated by `_poc_eligible`: the visitor
+    category must have no configured approval workflow, or the invitation
+    must currently be at its final approval level. Enforced here rather
+    than trusted from the client, even though the frontend already disables
+    the field outside that window.
     """
     if invitation.status not in _RESCHEDULABLE_STATUSES:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
-    if (
-        payload.poc_user_id is not None or payload.poc_role_id is not None
-    ) and not user.has_permission("invitations:approve", branch_id=invitation.branch_id):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            detail="Caller lacks invitations:approve required to set the point of contact",
-        )
+    if payload.poc_user_id is not None or payload.poc_role_id is not None:
+        if not user.has_permission("invitations:approve", branch_id=invitation.branch_id):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="Caller lacks invitations:approve required to set the point of contact",
+            )
+        if not await _poc_eligible(tenant_db, invitation):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=(
+                    "Point of contact can only be set when the visitor category has no "
+                    "configured approval workflow or the invitation is at its final "
+                    "approval level"
+                ),
+            )
     changes = await _resolve_edit_changes(tenant_db, payload)
     if not changes:
         return invitation

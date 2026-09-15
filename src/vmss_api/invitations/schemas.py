@@ -363,6 +363,9 @@ class InvitationCheckInOut(CamelModel):
     status: str
     visitor_category_id: uuid.UUID | None
     host_id: uuid.UUID | None = None
+    poc_user_id: uuid.UUID | None = None
+    poc_role_id: uuid.UUID | None = None
+    poc_name: str | None = None
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -399,6 +402,9 @@ class InvitationTrackingOut(CamelModel):
     primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
     host_name_or_email: str | None
+    poc_user_id: uuid.UUID | None = None
+    poc_role_id: uuid.UUID | None = None
+    poc_name: str | None = None
     preferred_visit_date: date | None
     preferred_visit_time: time | None
     expected_duration: str | None
@@ -586,6 +592,9 @@ class InvitationQrCheckInOut(CamelModel):
     primary_contact_phone: str | None
     host_id: uuid.UUID | None = None
     host_name_or_email: str | None
+    poc_user_id: uuid.UUID | None = None
+    poc_role_id: uuid.UUID | None = None
+    poc_name: str | None = None
     purpose_of_visit: str | None
     department_to_visit: str | None
     preferred_visit_date: date | None

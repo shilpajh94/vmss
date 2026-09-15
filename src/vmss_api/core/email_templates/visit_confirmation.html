@@ -12,7 +12,9 @@
 </table>
 <div style="margin-top:20px; padding:16px; background-color:#f4f5f7; border-radius:6px;">
   <p style="margin:0 0 4px 0; font-weight:bold; color:#1f2933;">Your point of contact</p>
-  {% if host_name %}
+  {% if poc_name %}
+    <p style="margin:0;">{{ poc_name }}{% if poc_contact %} — {{ poc_contact }}{% endif %}</p>
+  {% elif host_name %}
     <p style="margin:0;">{{ host_name }}{% if host_contact %} — {{ host_contact }}{% endif %}</p>
   {% else %}
     <p style="margin:0;">{{ front_desk_contact | default('Please contact the front desk on arrival.') }}</p>
