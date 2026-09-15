@@ -1,6 +1,6 @@
 import type { Vehicle } from '../../../domain/entities/vehicle-schema'
 import type { StaffVisitRequest } from '../../../domain/entities/staff-visit-request-schema'
-import type { CarriedItemsFormState, ConsentFormState, RegistrationType, VisitInfoFormState } from '../visitor-request/types'
+import type { CarriedItemsFormState, ConsentFormState, CustomStepAnswers, RegistrationType, VisitInfoFormState } from '../visitor-request/types'
 
 export interface StaffVisitorFormEntry {
   fullName: string
@@ -35,6 +35,7 @@ export interface StaffVisitRequestFormState {
   carriedItems: CarriedItemsFormState
   vehicles: Vehicle[]
   consent: ConsentFormState
+  customStepAnswers: CustomStepAnswers
 }
 
 export function createInitialStaffFormState(): StaffVisitRequestFormState {
@@ -53,7 +54,8 @@ export function createInitialStaffFormState(): StaffVisitRequestFormState {
     },
     carriedItems: { categories: [], description: '' },
     vehicles: [],
-    consent: { agreedTerms: false, agreedDataUse: false, agreedSafety: false },
+    consent: {},
+    customStepAnswers: {},
   }
 }
 
@@ -91,19 +93,6 @@ export function toStaffVisitRequest(formState: StaffVisitRequestFormState): Staf
       itemDescription: formState.carriedItems.description,
     },
     vehicles: formState.vehicles,
-    consents: {
-      termsAccepted: formState.consent.agreedTerms,
-      dataProcessingAccepted: formState.consent.agreedDataUse,
-      safetyGuidelinesAccepted: formState.consent.agreedSafety,
-    },
+    consents: formState.consent,
   }
 }
-
-export const STAFF_WIZARD_STEPS = [
-  'Visitor Info',
-  'Visit Info',
-  'Carried Items',
-  'Vehicle Info',
-  'Consent Agreement',
-  'Review & Confirm',
-] as const

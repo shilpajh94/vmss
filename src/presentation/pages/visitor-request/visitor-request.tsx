@@ -11,15 +11,26 @@ import { OtpVerifyScreen } from './Components/otp/OtpVerifyScreen'
 import { StepSidebar } from './Components/StepSidebar'
 import { CarriedItemsStep } from './Components/steps/CarriedItemsStep'
 import { ConsentStep } from './Components/steps/ConsentStep'
+import { GenericConfiguredStep } from './Components/steps/GenericConfiguredStep'
 import { ReviewConfirmStep } from './Components/steps/ReviewConfirmStep'
 import { VehicleInfoStep } from './Components/steps/VehicleInfoStep'
 import { VisitInfoStep } from './Components/steps/VisitInfoStep'
 import { VisitorInfoStep } from './Components/steps/VisitorInfoStep'
 import { useVisitorOtp } from './hooks/use-visitor-otp'
 import { useVisitorRequestWizard, type VisitorRequestWizardInitialData } from './hooks/use-visitor-request-wizard'
+import { getSkeletonStepLabels, isCanonicalStepKey, resolveStepLabel } from './registration-wizard-steps'
 import type { VisitorCategoriesFieldState } from './types'
 
 function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardInitialData }) {
+  const navigate = useNavigate()
+  const { listVisitorCategoriesUseCase, listBranchesUseCase, listBuildingsUseCase } = useAppDependencies()
+  const [visitorCategoriesState, setVisitorCategoriesState] = useState<VisitorCategoriesFieldState>({
+    status: 'loading',
+    categories: [],
+  })
+  const [branches, setBranches] = useState<Branch[] | undefined>(undefined)
+  const [buildings, setBuildings] = useState<Building[] | undefined>(undefined)
+
   const {
     currentStep,
     formState,
@@ -34,16 +45,15 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     trackingId,
     submissionError,
     submit,
-  } = useVisitorRequestWizard(initial)
+    activeSteps,
+    isFormConfigLoading,
+    formConfigError,
+    carriedItemsFields,
+    consentFields,
+  } = useVisitorRequestWizard(initial, branches)
 
-  const navigate = useNavigate()
-  const { listVisitorCategoriesUseCase, listBranchesUseCase, listBuildingsUseCase } = useAppDependencies()
-  const [visitorCategoriesState, setVisitorCategoriesState] = useState<VisitorCategoriesFieldState>({
-    status: 'loading',
-    categories: [],
-  })
-  const [branches, setBranches] = useState<Branch[] | undefined>(undefined)
-  const [buildings, setBuildings] = useState<Building[] | undefined>(undefined)
+  const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
+  const activeStep = activeSteps[currentStep]
 
   // Also used as the retry action from the Visitor Category field's error
   // state — re-running it resets status to 'loading' first.
@@ -82,9 +92,15 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
 
   return (
     <div className="flex w-full flex-1 gap-8 px-12 py-10">
-      <StepSidebar currentStep={currentStep} onStepSelect={goToStep} />
+      <StepSidebar steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
       <div className="flex-1 rounded-2xl border border-border bg-surface p-8">
-        {currentStep === 0 && (
+        {isFormConfigLoading && <p className="text-body text-text-muted">Loading…</p>}
+
+        {!isFormConfigLoading && formConfigError && (
+          <p className="text-body text-danger">Something went wrong loading the registration form. Please refresh the page.</p>
+        )}
+
+        {!isFormConfigLoading && !formConfigError && activeStep?.key === 'visitor_info' && (
           <VisitorInfoStep
             registrationType={formState.registrationType}
             onRegistrationTypeChange={(registrationType) => setFormState({ ...formState, registrationType })}
@@ -99,7 +115,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             onRetryVisitorCategories={loadVisitorCategories}
           />
         )}
-        {currentStep === 1 && (
+        {!isFormConfigLoading && !formConfigError && activeStep?.key === 'visit_details' && (
           <VisitInfoStep
             value={formState.visitInfo}
             onChange={(visitInfo) => setFormState({ ...formState, visitInfo })}
@@ -108,16 +124,27 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             buildings={buildings}
           />
         )}
-        {currentStep === 2 && (
-          <CarriedItemsStep value={formState.carriedItems} onChange={(carriedItems) => setFormState({ ...formState, carriedItems })} />
+        {!isFormConfigLoading && !formConfigError && activeStep?.key === 'carried_items' && (
+          <CarriedItemsStep
+            fields={carriedItemsFields}
+            isLoading={false}
+            value={formState.carriedItems}
+            onChange={(carriedItems) => setFormState({ ...formState, carriedItems })}
+          />
         )}
-        {currentStep === 3 && (
+        {!isFormConfigLoading && !formConfigError && activeStep?.key === 'vehicle_info' && (
           <VehicleInfoStep vehicles={formState.vehicles} onChange={(vehicles) => setFormState({ ...formState, vehicles })} errors={errors} />
         )}
-        {currentStep === 4 && (
-          <ConsentStep value={formState.consent} onChange={(consent) => setFormState({ ...formState, consent })} error={errors.consent} />
+        {!isFormConfigLoading && !formConfigError && activeStep?.key === 'consent_agreement' && (
+          <ConsentStep
+            fields={consentFields}
+            isLoading={false}
+            value={formState.consent}
+            onChange={(consent) => setFormState({ ...formState, consent })}
+            error={errors.consent}
+          />
         )}
-        {currentStep === 5 && (
+        {!isFormConfigLoading && !formConfigError && activeStep?.key === 'review_confirm' && (
           <ReviewConfirmStep
             formState={formState}
             status={submissionStatus}
@@ -130,8 +157,20 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             onGoHome={() => navigate('/')}
           />
         )}
+        {!isFormConfigLoading && !formConfigError && activeStep && !isCanonicalStepKey(activeStep.key) && (
+          <GenericConfiguredStep
+            step={activeStep}
+            value={formState.customStepAnswers[activeStep.key] ?? {}}
+            onChange={(answers) =>
+              setFormState({
+                ...formState,
+                customStepAnswers: { ...formState.customStepAnswers, [activeStep.key]: answers },
+              })
+            }
+          />
+        )}
 
-        {currentStep < 5 && (
+        {!isFormConfigLoading && !formConfigError && activeStep?.key !== 'review_confirm' && (
           <div className="mt-8 flex justify-between">
             <button
               type="button"

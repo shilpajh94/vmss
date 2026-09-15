@@ -36,6 +36,8 @@ import { AdminInvitationsPage } from './presentation/pages/admin-invitations/adm
 import { AdminRolesPage } from './presentation/pages/admin-roles/admin-roles'
 import { AdminRolePermissionsFormPage } from './presentation/pages/admin-roles/admin-role-permissions-form'
 import { AdminRoleCreateFormPage } from './presentation/pages/admin-roles/admin-role-create-form'
+import { AdminFormBuilderPage } from './presentation/pages/admin-form-builder/admin-form-builder'
+import { AdminFormBuilderStepEditorPage } from './presentation/pages/admin-form-builder/admin-form-builder-step-editor'
 
 function RootLayout() {
   return (
@@ -85,6 +87,8 @@ function RootLayout() {
               <Route path="/admin/roles" element={<AdminRolesPage />} />
               <Route path="/admin/roles/new" element={<AdminRoleCreateFormPage />} />
               <Route path="/admin/roles/:id/edit" element={<AdminRolePermissionsFormPage />} />
+              <Route path="/admin/form-builder" element={<AdminFormBuilderPage />} />
+              <Route path="/admin/form-builder/steps/:stepId" element={<AdminFormBuilderStepEditorPage />} />
             </Routes>
           </PushNotificationsProvider>
         </NotificationCenterProvider>

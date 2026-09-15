@@ -17,6 +17,8 @@ interface MakeRequestOptions<T> {
   body?: unknown
   queryParams?: QueryParams
   pathParams?: Record<string, string>
+  /** Extra request headers (e.g. `X-Branch-ID` for a branch-scoped call) merged in after the token/content-type ones. */
+  headers?: Record<string, string>
   parserSchema: ZodType<T>
 }
 
@@ -107,7 +109,7 @@ export class ApiClient {
     return query ? `?${query}` : ''
   }
 
-  async makeRequest<T>({ endpointConfig, body, queryParams, pathParams, parserSchema }: MakeRequestOptions<T>): Promise<T> {
+  async makeRequest<T>({ endpointConfig, body, queryParams, pathParams, headers: extraHeaders, parserSchema }: MakeRequestOptions<T>): Promise<T> {
     const { endpoint, method, hasToken } = endpointConfig as EndpointConfigShape
     const url = `${this.baseUrl}${this.buildPath(endpoint, pathParams)}${this.buildQueryString(queryParams)}`
 
@@ -115,7 +117,10 @@ export class ApiClient {
     // JSON body parsers) try to parse the request body whenever this header is
     // present, and throw an unhandled 500 when it's empty (e.g. approveStep,
     // which has no body).
-    const headers: Record<string, string> = body !== undefined ? { 'Content-Type': 'application/json' } : {}
+    const headers: Record<string, string> = {
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...extraHeaders,
+    }
 
     if (hasToken) {
       const token = sessionStorage.getItem('token')

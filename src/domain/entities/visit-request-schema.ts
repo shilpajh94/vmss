@@ -24,11 +24,11 @@ export const VisitRequestSchema = z.object({
     itemDescription: z.string().optional(),
   }),
   vehicles: z.array(VehicleSchema),
-  consents: z.object({
-    termsAccepted: z.boolean(),
-    dataProcessingAccepted: z.boolean(),
-    safetyGuidelinesAccepted: z.boolean(),
-  }),
+  // Dynamic, branch-configured keys (form-builder) — never camelCased,
+  // since they're admin-defined data, not a fixed schema field name. See
+  // `VMSS_API/docs/features/invitations.md`'s "Branch-configurable
+  // requiredness" section.
+  consents: z.record(z.string(), z.boolean()),
 })
 
 export type VisitRequest = z.infer<typeof VisitRequestSchema>

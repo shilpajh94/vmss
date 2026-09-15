@@ -1,9 +1,11 @@
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { findStepFields, useEffectiveForm } from '../../../hooks/use-effective-form'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
 import type { Branch } from '../../../../domain/entities/branch-schema'
+import { getActiveSteps, type StepKey } from '../../visitor-request/registration-wizard-steps'
 import type { SubmissionStatus } from '../../visitor-request/Components/steps/ReviewConfirmStep'
 import {
   createInitialStaffFormState,
@@ -35,8 +37,14 @@ function validateStaffVisitorContact(contact: StaffVisitorFormEntry): Record<str
   return errors
 }
 
-function validateStep(step: number, formState: StaffVisitRequestFormState): Record<string, string> {
-  if (step === 0) {
+// Keyed by the step's form-builder `key`, not its numeric position — see
+// use-visitor-request-wizard.ts's matching comment.
+function validateStep(
+  stepKey: StepKey | string | undefined,
+  formState: StaffVisitRequestFormState,
+  requiredConsentKeys: string[],
+): Record<string, string> {
+  if (stepKey === 'visitor_info') {
     const errors = validateStaffVisitorContact(formState.primaryContact)
     if (formState.registrationType === 'group' && formState.additionalVisitors.length === 0) {
       errors.additionalVisitors = 'Add at least one visitor to continue.'
@@ -44,7 +52,7 @@ function validateStep(step: number, formState: StaffVisitRequestFormState): Reco
     return errors
   }
 
-  if (step === 1) {
+  if (stepKey === 'visit_details') {
     const errors: Record<string, string> = {}
     const { visitInfo } = formState
     if (!visitInfo.purpose) errors.purpose = 'Purpose of visit is required.'
@@ -57,10 +65,12 @@ function validateStep(step: number, formState: StaffVisitRequestFormState): Reco
     return errors
   }
 
-  if (step === 4) {
-    const { consent } = formState
-    if (!consent.agreedTerms || !consent.agreedDataUse || !consent.agreedSafety) {
-      return { consent: 'You must agree to all three items to continue.' }
+  if (stepKey === 'consent_agreement') {
+    // Branch-configured (form-builder) — see
+    // use-visitor-request-wizard.ts's matching comment.
+    const missing = requiredConsentKeys.filter((key) => !formState.consent[key])
+    if (missing.length > 0) {
+      return { consent: 'You must agree to all the required items to continue.' }
     }
     return {}
   }
@@ -78,6 +88,29 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
   const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus>('idle')
   const [trackingId, setTrackingId] = useState<string | undefined>(undefined)
   const [submissionError, setSubmissionError] = useState<string | undefined>(undefined)
+
+  const branchId = useMemo(
+    () => branches?.find((branch) => branch.name === formState.visitInfo.location)?.id,
+    [branches, formState.visitInfo.location],
+  )
+  const {
+    steps: effectiveFormSteps,
+    isLoading: isFormConfigLoading,
+    error: formConfigError,
+  } = useEffectiveForm(branchId)
+  const activeSteps = useMemo(() => getActiveSteps(effectiveFormSteps), [effectiveFormSteps])
+  const carriedItemsFields = useMemo(() => findStepFields(effectiveFormSteps, 'carried_items'), [effectiveFormSteps])
+  const consentFields = useMemo(() => findStepFields(effectiveFormSteps, 'consent_agreement'), [effectiveFormSteps])
+  const requiredConsentKeys = useMemo(
+    () => consentFields.filter((field) => field.isRequired).map((field) => field.key),
+    [consentFields],
+  )
+  const lastStepIndex = activeSteps.length > 0 ? activeSteps.length - 1 : 0
+
+  // See use-visitor-request-wizard.ts's matching effect for why this is needed.
+  useEffect(() => {
+    setCurrentStep((step) => Math.min(step, lastStepIndex))
+  }, [lastStepIndex])
 
   // POST /invitations wants ID-proof files travelling inline in the final
   // multipart submission, not pre-uploaded. `uploadFile` here just hands the
@@ -112,13 +145,15 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
   }
 
   const goNext = () => {
-    const stepErrors = validateStep(currentStep, formState)
+    // See use-visitor-request-wizard.ts's matching guard.
+    if (isFormConfigLoading) return
+    const stepErrors = validateStep(activeSteps[currentStep]?.key, formState, requiredConsentKeys)
     if (Object.keys(stepErrors).length > 0) {
       setErrors(stepErrors)
       return
     }
     setErrors({})
-    setCurrentStep((step) => Math.min(step + 1, 5))
+    setCurrentStep((step) => Math.min(step + 1, lastStepIndex))
   }
 
   const goBack = () => {
@@ -196,5 +231,10 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     submissionError,
     submit,
     reset,
+    activeSteps,
+    isFormConfigLoading,
+    formConfigError,
+    carriedItemsFields,
+    consentFields,
   }
 }

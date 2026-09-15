@@ -1,3 +1,4 @@
+import type { DynamicFieldValue } from '../../components/dynamic-fields/DynamicField'
 import type { Vehicle } from '../../../domain/entities/vehicle-schema'
 import type { Visitor } from '../../../domain/entities/visitor-schema'
 import type { VisitorCategory } from '../../../domain/entities/visitor-category-schema'
@@ -57,11 +58,16 @@ export interface CarriedItemsFormState {
   description: string
 }
 
-export interface ConsentFormState {
-  agreedTerms: boolean
-  agreedDataUse: boolean
-  agreedSafety: boolean
-}
+// Dynamic, branch-configured consent-key -> accepted, keyed by whatever the
+// resolved branch's published Consent Agreement step currently declares
+// (form-builder) — not a fixed `agreedTerms`/`agreedDataUse`/`agreedSafety`
+// shape. See ConsentStep, which renders one checkbox per active field.
+export type ConsentFormState = Record<string, boolean>
+
+// Answers for a custom (non-canonical) step from the branch's Form Builder
+// config, keyed by step key then field key. Not part of the submission wire
+// contract yet — see GenericConfiguredStep's comment.
+export type CustomStepAnswers = Record<string, Record<string, DynamicFieldValue>>
 
 export interface VisitRequestFormState {
   registrationType: RegistrationType
@@ -71,6 +77,7 @@ export interface VisitRequestFormState {
   carriedItems: CarriedItemsFormState
   vehicles: Vehicle[]
   consent: ConsentFormState
+  customStepAnswers: CustomStepAnswers
 }
 
 export function createInitialFormState(): VisitRequestFormState {
@@ -89,7 +96,8 @@ export function createInitialFormState(): VisitRequestFormState {
     },
     carriedItems: { categories: [], description: '' },
     vehicles: [],
-    consent: { agreedTerms: false, agreedDataUse: false, agreedSafety: false },
+    consent: {},
+    customStepAnswers: {},
   }
 }
 
@@ -131,19 +139,6 @@ export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
       itemDescription: formState.carriedItems.description,
     },
     vehicles: formState.vehicles,
-    consents: {
-      termsAccepted: formState.consent.agreedTerms,
-      dataProcessingAccepted: formState.consent.agreedDataUse,
-      safetyGuidelinesAccepted: formState.consent.agreedSafety,
-    },
+    consents: formState.consent,
   }
 }
-
-export const WIZARD_STEPS = [
-  'Visitor Info',
-  'Visit Info',
-  'Carried Items',
-  'Vehicle Info',
-  'Consent Agreement',
-  'Review & Confirm',
-] as const

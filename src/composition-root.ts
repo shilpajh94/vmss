@@ -20,6 +20,7 @@ import type { SecurityGateRepository } from './data/repositories/security-gate-r
 import type { VisitorCategoryRepository } from './data/repositories/visitor-category-repository'
 import type { ApprovalWorkflowRuleRepository } from './data/repositories/approval-workflow-rule-repository'
 import type { NotificationRepository } from './data/repositories/notification-repository'
+import type { FormBuilderRepository } from './data/repositories/form-builder-repository'
 import { SubmitVisitRequestUseCase } from './data/use-cases/submit-visit-request'
 import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-visit-request'
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
@@ -84,6 +85,18 @@ import { ListVisitorCategoriesUseCase } from './data/use-cases/list-visitor-cate
 import { CreateVisitorCategoryUseCase } from './data/use-cases/create-visitor-category'
 import { UpdateVisitorCategoryUseCase } from './data/use-cases/update-visitor-category'
 import { DeleteVisitorCategoryUseCase } from './data/use-cases/delete-visitor-category'
+import { ListFormStepsUseCase } from './data/use-cases/list-form-steps'
+import { CreateFormStepUseCase } from './data/use-cases/create-form-step'
+import { UpdateFormStepUseCase } from './data/use-cases/update-form-step'
+import { DeleteFormStepUseCase } from './data/use-cases/delete-form-step'
+import { ReorderFormStepsUseCase } from './data/use-cases/reorder-form-steps'
+import { ListFormFieldsUseCase } from './data/use-cases/list-form-fields'
+import { CreateFormFieldUseCase } from './data/use-cases/create-form-field'
+import { UpdateFormFieldUseCase } from './data/use-cases/update-form-field'
+import { DeleteFormFieldUseCase } from './data/use-cases/delete-form-field'
+import { ReorderFormFieldsUseCase } from './data/use-cases/reorder-form-fields'
+import { PublishFormConfigUseCase } from './data/use-cases/publish-form-config'
+import { GetEffectiveFormUseCase } from './data/use-cases/get-effective-form'
 import { ListApprovalWorkflowRulesUseCase } from './data/use-cases/list-approval-workflow-rules'
 import { SaveWorkflowUseCase } from './data/use-cases/save-workflow'
 import { DeleteWorkflowUseCase } from './data/use-cases/delete-workflow'
@@ -108,6 +121,7 @@ import { HttpEmployeeDirectoryRepository } from './infrastructure/employee-direc
 import { HttpReceptionDeskRepository } from './infrastructure/reception-desk-repository'
 import { HttpSecurityGateRepository } from './infrastructure/security-gate-repository'
 import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category-repository'
+import { HttpFormBuilderRepository } from './infrastructure/form-builder-repository'
 import { HttpApprovalWorkflowRuleRepository } from './infrastructure/approval-workflow-rule-repository'
 import { HttpNotificationRepository } from './infrastructure/notification-repository'
 
@@ -182,6 +196,18 @@ export interface AppDependencies {
   deleteWorkflowUseCase: DeleteWorkflowUseCase
   registerDeviceUseCase: RegisterDeviceUseCase
   unregisterDeviceUseCase: UnregisterDeviceUseCase
+  listFormStepsUseCase: ListFormStepsUseCase
+  createFormStepUseCase: CreateFormStepUseCase
+  updateFormStepUseCase: UpdateFormStepUseCase
+  deleteFormStepUseCase: DeleteFormStepUseCase
+  reorderFormStepsUseCase: ReorderFormStepsUseCase
+  listFormFieldsUseCase: ListFormFieldsUseCase
+  createFormFieldUseCase: CreateFormFieldUseCase
+  updateFormFieldUseCase: UpdateFormFieldUseCase
+  deleteFormFieldUseCase: DeleteFormFieldUseCase
+  reorderFormFieldsUseCase: ReorderFormFieldsUseCase
+  publishFormConfigUseCase: PublishFormConfigUseCase
+  getEffectiveFormUseCase: GetEffectiveFormUseCase
 }
 
 export function createApp(): AppDependencies {
@@ -269,6 +295,19 @@ export function createApp(): AppDependencies {
   let createVisitorCategoryUseCase: CreateVisitorCategoryUseCase | undefined
   let updateVisitorCategoryUseCase: UpdateVisitorCategoryUseCase | undefined
   let deleteVisitorCategoryUseCase: DeleteVisitorCategoryUseCase | undefined
+  let formBuilderRepository: FormBuilderRepository | undefined
+  let listFormStepsUseCase: ListFormStepsUseCase | undefined
+  let createFormStepUseCase: CreateFormStepUseCase | undefined
+  let updateFormStepUseCase: UpdateFormStepUseCase | undefined
+  let deleteFormStepUseCase: DeleteFormStepUseCase | undefined
+  let reorderFormStepsUseCase: ReorderFormStepsUseCase | undefined
+  let listFormFieldsUseCase: ListFormFieldsUseCase | undefined
+  let createFormFieldUseCase: CreateFormFieldUseCase | undefined
+  let updateFormFieldUseCase: UpdateFormFieldUseCase | undefined
+  let deleteFormFieldUseCase: DeleteFormFieldUseCase | undefined
+  let reorderFormFieldsUseCase: ReorderFormFieldsUseCase | undefined
+  let publishFormConfigUseCase: PublishFormConfigUseCase | undefined
+  let getEffectiveFormUseCase: GetEffectiveFormUseCase | undefined
   let approvalWorkflowRuleRepository: ApprovalWorkflowRuleRepository | undefined
   let listApprovalWorkflowRulesUseCase: ListApprovalWorkflowRulesUseCase | undefined
   let saveWorkflowUseCase: SaveWorkflowUseCase | undefined
@@ -703,6 +742,71 @@ export function createApp(): AppDependencies {
     return deleteVisitorCategoryUseCase
   }
 
+  const resolveFormBuilderRepository = (): FormBuilderRepository => {
+    formBuilderRepository ??= new HttpFormBuilderRepository(resolveApiClient())
+    return formBuilderRepository
+  }
+
+  const resolveListFormStepsUseCase = (): ListFormStepsUseCase => {
+    listFormStepsUseCase ??= new ListFormStepsUseCase(resolveFormBuilderRepository())
+    return listFormStepsUseCase
+  }
+
+  const resolveCreateFormStepUseCase = (): CreateFormStepUseCase => {
+    createFormStepUseCase ??= new CreateFormStepUseCase(resolveFormBuilderRepository())
+    return createFormStepUseCase
+  }
+
+  const resolveUpdateFormStepUseCase = (): UpdateFormStepUseCase => {
+    updateFormStepUseCase ??= new UpdateFormStepUseCase(resolveFormBuilderRepository())
+    return updateFormStepUseCase
+  }
+
+  const resolveDeleteFormStepUseCase = (): DeleteFormStepUseCase => {
+    deleteFormStepUseCase ??= new DeleteFormStepUseCase(resolveFormBuilderRepository())
+    return deleteFormStepUseCase
+  }
+
+  const resolveReorderFormStepsUseCase = (): ReorderFormStepsUseCase => {
+    reorderFormStepsUseCase ??= new ReorderFormStepsUseCase(resolveFormBuilderRepository())
+    return reorderFormStepsUseCase
+  }
+
+  const resolveListFormFieldsUseCase = (): ListFormFieldsUseCase => {
+    listFormFieldsUseCase ??= new ListFormFieldsUseCase(resolveFormBuilderRepository())
+    return listFormFieldsUseCase
+  }
+
+  const resolveCreateFormFieldUseCase = (): CreateFormFieldUseCase => {
+    createFormFieldUseCase ??= new CreateFormFieldUseCase(resolveFormBuilderRepository())
+    return createFormFieldUseCase
+  }
+
+  const resolveUpdateFormFieldUseCase = (): UpdateFormFieldUseCase => {
+    updateFormFieldUseCase ??= new UpdateFormFieldUseCase(resolveFormBuilderRepository())
+    return updateFormFieldUseCase
+  }
+
+  const resolveDeleteFormFieldUseCase = (): DeleteFormFieldUseCase => {
+    deleteFormFieldUseCase ??= new DeleteFormFieldUseCase(resolveFormBuilderRepository())
+    return deleteFormFieldUseCase
+  }
+
+  const resolveReorderFormFieldsUseCase = (): ReorderFormFieldsUseCase => {
+    reorderFormFieldsUseCase ??= new ReorderFormFieldsUseCase(resolveFormBuilderRepository())
+    return reorderFormFieldsUseCase
+  }
+
+  const resolvePublishFormConfigUseCase = (): PublishFormConfigUseCase => {
+    publishFormConfigUseCase ??= new PublishFormConfigUseCase(resolveFormBuilderRepository())
+    return publishFormConfigUseCase
+  }
+
+  const resolveGetEffectiveFormUseCase = (): GetEffectiveFormUseCase => {
+    getEffectiveFormUseCase ??= new GetEffectiveFormUseCase(resolveFormBuilderRepository())
+    return getEffectiveFormUseCase
+  }
+
   const resolveApprovalWorkflowRuleRepository = (): ApprovalWorkflowRuleRepository => {
     approvalWorkflowRuleRepository ??= new HttpApprovalWorkflowRuleRepository(resolveApiClient())
     return approvalWorkflowRuleRepository
@@ -948,6 +1052,42 @@ export function createApp(): AppDependencies {
     },
     get unregisterDeviceUseCase() {
       return resolveUnregisterDeviceUseCase()
+    },
+    get listFormStepsUseCase() {
+      return resolveListFormStepsUseCase()
+    },
+    get createFormStepUseCase() {
+      return resolveCreateFormStepUseCase()
+    },
+    get updateFormStepUseCase() {
+      return resolveUpdateFormStepUseCase()
+    },
+    get deleteFormStepUseCase() {
+      return resolveDeleteFormStepUseCase()
+    },
+    get reorderFormStepsUseCase() {
+      return resolveReorderFormStepsUseCase()
+    },
+    get listFormFieldsUseCase() {
+      return resolveListFormFieldsUseCase()
+    },
+    get createFormFieldUseCase() {
+      return resolveCreateFormFieldUseCase()
+    },
+    get updateFormFieldUseCase() {
+      return resolveUpdateFormFieldUseCase()
+    },
+    get deleteFormFieldUseCase() {
+      return resolveDeleteFormFieldUseCase()
+    },
+    get reorderFormFieldsUseCase() {
+      return resolveReorderFormFieldsUseCase()
+    },
+    get publishFormConfigUseCase() {
+      return resolvePublishFormConfigUseCase()
+    },
+    get getEffectiveFormUseCase() {
+      return resolveGetEffectiveFormUseCase()
     },
   }
 }

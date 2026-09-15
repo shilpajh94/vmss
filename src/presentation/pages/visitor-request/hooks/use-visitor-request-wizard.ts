@@ -1,7 +1,10 @@
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { findStepFields, useEffectiveForm } from '../../../hooks/use-effective-form'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
+import type { Branch } from '../../../../domain/entities/branch-schema'
+import { getActiveSteps, type StepKey } from '../registration-wizard-steps'
 import {
   createInitialFormState,
   toVisitRequest,
@@ -53,8 +56,16 @@ function validateVisitorContact(contact: VisitorFormEntry, isPrimary: boolean): 
   return errors
 }
 
-function validateStep(step: number, formState: VisitRequestFormState): Record<string, string> {
-  if (step === 0) {
+// Keyed by the step's form-builder `key`, not its numeric position — the
+// position shifts whenever an earlier step is deactivated or steps are
+// reordered, but a given step's validation rule doesn't (design.md
+// Decision 3).
+function validateStep(
+  stepKey: StepKey | string | undefined,
+  formState: VisitRequestFormState,
+  requiredConsentKeys: string[],
+): Record<string, string> {
+  if (stepKey === 'visitor_info') {
     const errors = validateVisitorContact(formState.primaryContact, true)
     if (formState.registrationType === 'group' && formState.additionalVisitors.length === 0) {
       errors.additionalVisitors = 'Add at least one visitor to continue.'
@@ -62,7 +73,7 @@ function validateStep(step: number, formState: VisitRequestFormState): Record<st
     return errors
   }
 
-  if (step === 1) {
+  if (stepKey === 'visit_details') {
     const errors: Record<string, string> = {}
     const { visitInfo } = formState
     if (!visitInfo.purpose) errors.purpose = 'Purpose of visit is required.'
@@ -75,10 +86,14 @@ function validateStep(step: number, formState: VisitRequestFormState): Record<st
     return errors
   }
 
-  if (step === 4) {
-    const { consent } = formState
-    if (!consent.agreedTerms || !consent.agreedDataUse || !consent.agreedSafety) {
-      return { consent: 'You must agree to all three items to continue.' }
+  if (stepKey === 'consent_agreement') {
+    // Branch-configured (form-builder): whichever keys the resolved
+    // branch's Consent Agreement step currently marks required. `goNext`
+    // doesn't call this while the config is still loading, so there's no
+    // "not resolved yet" case to default here.
+    const missing = requiredConsentKeys.filter((key) => !formState.consent[key])
+    if (missing.length > 0) {
+      return { consent: 'You must agree to all the required items to continue.' }
     }
     return {}
   }
@@ -86,7 +101,7 @@ function validateStep(step: number, formState: VisitRequestFormState): Record<st
   return {}
 }
 
-export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialData) {
+export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialData, branches?: Branch[]) {
   const { submitVisitRequestUseCase } = useAppDependencies()
 
   const [currentStep, setCurrentStep] = useState(0)
@@ -95,6 +110,37 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
   const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus>('idle')
   const [trackingId, setTrackingId] = useState<string | undefined>(undefined)
   const [submissionError, setSubmissionError] = useState<string | undefined>(undefined)
+
+  // Resolved the same way `submit` below resolves it for the real
+  // request — matching branch name against the publicly listed branches —
+  // so the Carried Items/Consent steps render (and validate against) the
+  // same branch's Form Builder configuration the backend will actually
+  // enforce, once that branch is known (step 1, Visit Info).
+  const branchId = useMemo(
+    () => branches?.find((branch) => branch.name === formState.visitInfo.location)?.id,
+    [branches, formState.visitInfo.location],
+  )
+  const {
+    steps: effectiveFormSteps,
+    isLoading: isFormConfigLoading,
+    error: formConfigError,
+  } = useEffectiveForm(branchId)
+  const activeSteps = useMemo(() => getActiveSteps(effectiveFormSteps), [effectiveFormSteps])
+  const carriedItemsFields = useMemo(() => findStepFields(effectiveFormSteps, 'carried_items'), [effectiveFormSteps])
+  const consentFields = useMemo(() => findStepFields(effectiveFormSteps, 'consent_agreement'), [effectiveFormSteps])
+  const requiredConsentKeys = useMemo(
+    () => consentFields.filter((field) => field.isRequired).map((field) => field.key),
+    [consentFields],
+  )
+  const lastStepIndex = activeSteps.length > 0 ? activeSteps.length - 1 : 0
+
+  // The active step set can change mid-session once `branchId` resolves
+  // from the tenant default to a branch-specific override (design.md's
+  // branch-resolution-timing risk) — keep `currentStep` in range rather
+  // than pointing past the end of a shorter list.
+  useEffect(() => {
+    setCurrentStep((step) => Math.min(step, lastStepIndex))
+  }, [lastStepIndex])
 
   // POST /registrations/walk-in wants ID-proof files travelling inline in the
   // final multipart submission, not pre-uploaded. `uploadFile` here just hands
@@ -129,13 +175,17 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
   }
 
   const goNext = () => {
-    const stepErrors = validateStep(currentStep, formState)
+    // While the effective config is still loading, `activeSteps` may not yet
+    // reflect the branch's real step list — hold the visitor on the first
+    // step rather than advance against a stale/incomplete list.
+    if (isFormConfigLoading) return
+    const stepErrors = validateStep(activeSteps[currentStep]?.key, formState, requiredConsentKeys)
     if (Object.keys(stepErrors).length > 0) {
       setErrors(stepErrors)
       return
     }
     setErrors({})
-    setCurrentStep((step) => Math.min(step + 1, 5))
+    setCurrentStep((step) => Math.min(step + 1, lastStepIndex))
   }
 
   const goBack = () => {
@@ -198,5 +248,10 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     trackingId,
     submissionError,
     submit,
+    activeSteps,
+    isFormConfigLoading,
+    formConfigError,
+    carriedItemsFields,
+    consentFields,
   }
 }

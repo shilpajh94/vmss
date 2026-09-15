@@ -5,6 +5,7 @@ import type { VisitorCategory } from '../../../../../domain/entities/visitor-cat
 import { Spinner } from '../../../../components/ui/LoadingState'
 import { FileTextIcon } from '../../../../components/icons'
 import { getFilePreviewKind } from '../../../../utils/file-preview-kind'
+import { prettifyKey } from '../../../../utils/prettify-key'
 
 export type SubmissionStatus = 'idle' | 'submitting' | 'success' | 'error'
 
@@ -165,7 +166,7 @@ export function ReviewConfirmStep({
       <SummarySection
         title="Carried Items"
         rows={[
-          ['Categories', formState.carriedItems.categories.join(', ') || 'None declared'],
+          ['Categories', formState.carriedItems.categories.map(prettifyKey).join(', ') || 'None declared'],
           ['Description', formState.carriedItems.description],
         ]}
       />
@@ -181,11 +182,11 @@ export function ReviewConfirmStep({
 
       <SummarySection
         title="Consent"
-        rows={[
-          ['Terms & Conditions', formState.consent.agreedTerms ? 'Agreed' : 'Not agreed'],
-          ['Data Use', formState.consent.agreedDataUse ? 'Agreed' : 'Not agreed'],
-          ['Safety Guidelines', formState.consent.agreedSafety ? 'Agreed' : 'Not agreed'],
-        ]}
+        rows={
+          Object.keys(formState.consent).length > 0
+            ? Object.entries(formState.consent).map(([key, agreed]) => [prettifyKey(key), agreed ? 'Agreed' : 'Not agreed'])
+            : [['Consent', 'None recorded']]
+        }
       />
 
       <div className="flex gap-3">
