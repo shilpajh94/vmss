@@ -179,6 +179,8 @@ export function AdminInvitationsPage() {
         isOpen={pendingEditId !== undefined}
         isSaving={editingId !== undefined}
         detail={pendingEditDetail}
+        workflowRulesByCategory={workflowRulesByCategory}
+        hostEmployees={hostEmployees}
         onConfirm={(fields) => pendingEditId && edit(pendingEditId, fields)}
         onCancel={cancelEdit}
       />
@@ -188,11 +190,6 @@ export function AdminInvitationsPage() {
         isLoading={visitorInfoId !== undefined && !invitationDetails[visitorInfoId]}
         detail={visitorInfoId ? invitationDetails[visitorInfoId] : undefined}
         workflowRulesByCategory={workflowRulesByCategory}
-        onEditHost={() => {
-          const id = visitorInfoId
-          closeVisitorInfo()
-          if (id) requestDelegate(id)
-        }}
         onClose={closeVisitorInfo}
       />
     </div>

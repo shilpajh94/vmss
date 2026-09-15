@@ -117,6 +117,26 @@ export function resolvePointOfContactLabel(
   return resolveTotalSteps(detail, workflowRulesByCategory) <= 1 ? 'Reception' : undefined
 }
 
+// Point of Contact is a genuinely separate, independently-editable field from
+// the workflow's current approver/host, but the frontend has nowhere to
+// persist a selection yet (see VisitorInfoModal.tsx / use-invitations-board.ts
+// — there is no backend field or endpoint for it as of 2026-09-15; the UI
+// only tracks a local, non-persisted override in the meantime). This helper
+// only decides when the picker itself should be enabled: either the category
+// has no real multi-step workflow configured at all, or the invitation is
+// currently sitting at its final approval level, where pinning down the
+// eventual point of contact matters most.
+export function canEditPointOfContact(
+  detail: InvitationDetail,
+  workflowRulesByCategory: Record<string, ApprovalWorkflowRule[]>,
+): boolean {
+  const totalSteps = resolveTotalSteps(detail, workflowRulesByCategory)
+  if (totalSteps <= 1) return true
+
+  const currentLevel = resolveCurrentLevel(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory)
+  return currentLevel >= totalSteps
+}
+
 // On Reception's own step in a multi-step workflow, "Pending:" should
 // preview the *next* step's role rather than naming Reception's own step
 // (redundant to the person already looking at their own queue). Returns
