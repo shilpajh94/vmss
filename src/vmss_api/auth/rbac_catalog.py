@@ -80,6 +80,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "employees:view",
         "desks:view",
         "visitor-categories:view",
+        "approval-workflow-rules:view",
         "invitations:create",
         "invitations:view",
         "invitations:approve",
@@ -89,6 +90,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:edit",
         "invitations:badge",
         "documents:view",
+        "roles:view",
     ],
     "security": [
         "branches:view",
@@ -107,6 +109,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "departments:view",
         "employees:view",
         "visitor-categories:view",
+        "approval-workflow-rules:view",
         "invitations:create",
         "invitations:view",
         "invitations:approve",
