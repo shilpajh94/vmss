@@ -121,7 +121,16 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         const [user, requests, roles, employees] = await Promise.all([
           getCurrentStaffUserUseCase.execute(),
           listVisitRequestsUseCase.execute(scope === 'mine'),
-          listRolesUseCase.execute(),
+          // Listing roles is admin-scoped and 403s for other staff roles
+          // (e.g. host, reception). Every consumer of roleNameById already
+          // falls back gracefully when a name is missing (see
+          // resolveApproverLabel), so degrade to an empty list here instead
+          // of failing the whole dashboard load over a permission the
+          // current user was never going to have.
+          listRolesUseCase.execute().catch((error: unknown) => {
+            console.error('Failed to load roles', error)
+            return []
+          }),
           listHostEmployeesUseCase.execute(),
         ])
         setCurrentUser(user)
