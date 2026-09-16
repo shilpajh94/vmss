@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { CustomFieldsSection } from '../../../../components/dynamic-fields/CustomFieldsSection'
 import type { DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
+import { formatDynamicFieldValue } from '../../../../components/dynamic-fields/format-dynamic-field-value'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
 import { TextField } from '../../../../components/ui/TextField'
 import type { FormField } from '../../../../../domain/entities/form-builder-schema'
@@ -113,6 +114,11 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
                 <th className="px-4 py-2">License Plate</th>
                 <th className="px-4 py-2">Make / Model</th>
                 <th className="px-4 py-2">Color</th>
+                {customFields.map((field) => (
+                  <th key={field.key} className="px-4 py-2">
+                    {field.label}
+                  </th>
+                ))}
                 <th className="px-4 py-2">Actions</th>
               </tr>
             </thead>
@@ -124,6 +130,11 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
                   <td className="px-4 py-2">{vehicle.licensePlate}</td>
                   <td className="px-4 py-2">{vehicle.makeModel}</td>
                   <td className="px-4 py-2">{vehicle.color}</td>
+                  {customFields.map((field) => (
+                    <td key={field.key} className="px-4 py-2">
+                      {formatDynamicFieldValue(field, (vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined)?.[field.key])}
+                    </td>
+                  ))}
                   <td className="px-4 py-2">
                     <button type="button" onClick={() => startEditVehicle(index)} className="mr-2 text-secondary-accent">
                       Edit

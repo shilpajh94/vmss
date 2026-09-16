@@ -172,6 +172,8 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             errorMessage={submissionError}
             visitorCategories={visitorCategoriesState.categories}
             getFilePreviewUrl={getFilePreviewUrl}
+            vehicleCustomFields={vehicleInfoCustomFields}
+            carriedItemsCustomFields={carriedItemsFields.filter((field) => !field.isSystem)}
             onBack={goBack}
             onSubmit={submit}
             onGoHome={() => navigate('/')}

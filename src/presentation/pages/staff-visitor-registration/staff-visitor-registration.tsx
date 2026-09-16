@@ -178,6 +178,8 @@ export function StaffVisitorRegistrationPage() {
             errorMessage={submissionError}
             visitorCategories={visitorCategories}
             getFilePreviewUrl={getFilePreviewUrl}
+            vehicleCustomFields={vehicleInfoCustomFields}
+            carriedItemsCustomFields={carriedItemsFields.filter((field) => !field.isSystem)}
             onBack={goBack}
             onSubmit={submit}
             onGoHome={cancelRegistration}
