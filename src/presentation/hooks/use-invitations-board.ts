@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
 import { isReceptionCurrentStep, resolveApproverLabel, resolveCurrentLevel, resolveTotalSteps } from '../utils/approval-step-label'
-import { employeeHasRoleAtBranch } from '../utils/role-name-match'
+import { employeeAtBranch, employeeHasRoleAtBranch } from '../utils/role-name-match'
 import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entities/invitation-detail-schema'
@@ -548,14 +548,28 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         // arithmetic, since the step's own `stepOrder` can be a stale
         // snapshot (confirmed backend bug) that no longer lines up with the
         // category's current rule ordering.
-        const rules = await ensureWorkflowRulesLoaded(detail.visitorCategoryId)
-        const sortedRules = [...rules].sort((a, b) => a.stepOrder - b.stepOrder)
-        const currentIndex = step.approverRoleId ? sortedRules.findIndex((rule) => rule.approverRoleId === step.approverRoleId) : -1
-        const nextRule = currentIndex !== -1 ? sortedRules[currentIndex + 1] : undefined
-        const nextRoleName = nextRule ? roleNameById[nextRule.approverRoleId] : undefined
-        if (!nextRoleName) return
+        let nextRoleName: string | undefined
+        try {
+          const rules = await ensureWorkflowRulesLoaded(detail.visitorCategoryId)
+          const sortedRules = [...rules].sort((a, b) => a.stepOrder - b.stepOrder)
+          const currentIndex = step.approverRoleId ? sortedRules.findIndex((rule) => rule.approverRoleId === step.approverRoleId) : -1
+          const nextRule = currentIndex !== -1 ? sortedRules[currentIndex + 1] : undefined
+          nextRoleName = nextRule ? roleNameById[nextRule.approverRoleId] : undefined
+        } catch (error) {
+          // `approval-workflow-rules` is admin-scoped and 403s for host/reception
+          // (see `ensureWorkflowRulesLoaded`'s own comment). Without the rules we
+          // can't know exactly which role handles the next step, so fall through
+          // to offering every active employee at the branch below instead of
+          // leaving this picker permanently empty — the backend still enforces
+          // the real role-at-branch check when the delegate is submitted.
+          console.error('Could not resolve the next approval step role', error)
+        }
 
-        setNextStepCandidates(hostEmployees.filter((employee) => employeeHasRoleAtBranch(employee, nextRoleName, detail.branchId)))
+        setNextStepCandidates(
+          nextRoleName
+            ? hostEmployees.filter((employee) => employeeHasRoleAtBranch(employee, nextRoleName, detail.branchId))
+            : hostEmployees.filter((employee) => employeeAtBranch(employee, detail.branchId)),
+        )
       } catch (error) {
         console.error('Failed to load next-step candidates', error)
         toast.error('Could not load eligible employees for the next step.')

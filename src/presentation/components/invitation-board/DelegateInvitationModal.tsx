@@ -59,12 +59,22 @@ export function DelegateInvitationModal({
   // the caller already filtered `hostEmployees` to the next step's role, so
   // it is used as-is.
   const stepRoleName = approverRoleId ? roleNameById?.[approverRoleId] : undefined
+  // When `approverRoleId` is set but its name can't be resolved (e.g. the
+  // admin-scoped `/auth/roles` call 403s for a host/reception-logged-in
+  // user — see use-invitations-board.ts), we have no role string left to
+  // match branch-role assignments against, so a role-name filter would
+  // always come back empty even for a Host who genuinely holds the step's
+  // role. Fall back to every active employee at the branch instead — the
+  // backend still enforces the real role-at-branch check when the delegate
+  // is submitted (see the `branchId` prop doc above).
   const delegateCandidates = isApproveAndDelegate
     ? hostEmployees
     : isOwnershipStep
       ? hostEmployees?.filter((employee) => employeeAtBranch(employee, branchId))
       : approverRoleId
-        ? hostEmployees?.filter((employee) => employeeHasRoleAtBranch(employee, stepRoleName, branchId))
+        ? stepRoleName
+          ? hostEmployees?.filter((employee) => employeeHasRoleAtBranch(employee, stepRoleName, branchId))
+          : hostEmployees?.filter((employee) => employeeAtBranch(employee, branchId))
         : hostEmployees
 
   const handleCancel = () => {
@@ -87,7 +97,13 @@ export function DelegateInvitationModal({
           </p>
         ) : approverRoleId && !isOwnershipStep ? (
           <p className="font-body text-[13px] text-text-faint">
-            Delegating within role: <span className="font-semibold text-text">{stepRoleName ?? 'the configured role'}</span>
+            {stepRoleName ? (
+              <>
+                Delegating within role: <span className="font-semibold text-text">{stepRoleName}</span>
+              </>
+            ) : (
+              "This role's name isn't available to your account — showing all active employees at this branch. The server will still confirm the delegate holds the right role."
+            )}
           </p>
         ) : isOwnershipStep ? (
           <p className="font-body text-[13px] text-text-faint">
@@ -111,9 +127,9 @@ export function DelegateInvitationModal({
                     : 'No employees are eligible for the next step yet.'
                 : delegateCandidates?.length
                   ? 'Select host…'
-                  : approverRoleId && !isOwnershipStep
-                    ? `No one currently holds ${stepRoleName ?? 'the configured role'}`
-                    : 'Select host…'}
+                  : stepRoleName
+                    ? `No one currently holds ${stepRoleName}`
+                    : 'No active employees at this branch'}
             </option>
             {delegateCandidates?.map((employee) => (
               <option key={employee.id} value={employee.id}>
