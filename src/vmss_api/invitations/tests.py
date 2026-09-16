@@ -46,7 +46,7 @@ from vmss_api.core.schemas import SortOrder
 from vmss_api.core.security import hash_password
 from vmss_api.invitations import notifications, qr_token, tasks
 from vmss_api.invitations import service as invitations_service
-from vmss_api.invitations.models import InvitationQRCode
+from vmss_api.invitations.models import Invitation, InvitationQRCode
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.models import Branch, Company, Department
@@ -7392,3 +7392,255 @@ async def test_create_invitation_carried_item_still_rejected_when_not_in_branch_
     payload["carriedItems"] = {"items": ["not_a_configured_item"]}
     response = await _create_invitation(client, token, branch, payload=payload)
     assert response.status_code == 422
+
+
+# --- add-generic-custom-field-support: admin-authored custom fields --------
+#
+# specs/invitations/spec.md (delta) "Invitation Creation Captures
+# Admin-Defined Custom Field Answers" — every step now accepts new
+# admin-authored fields (form-builder), and their answers are captured at
+# the same per-visitor/per-vehicle/per-invitation scope their step's own
+# fields already use.
+
+
+async def _create_and_publish_custom_field(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    key: str,
+    field_type: str = "text",
+    is_required: bool = False,
+    options: list[str] | None = None,
+) -> dict:
+    """Admin-side setup: creates a new admin-authored field on `step_key`
+    and publishes the branch's scope so `create_invitation` reads it.
+    """
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+
+    body: dict = {"key": key, "label": key.replace("_", " ").title(), "fieldType": field_type}
+    if is_required:
+        body["isRequired"] = True
+    if options is not None:
+        body["options"] = options
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", json=body, headers=headers
+    )
+    assert create_response.status_code == 201, create_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    return create_response.json()["data"]
+
+
+async def test_create_invitation_captures_primary_contact_custom_field(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="employee_id"
+    )
+
+    payload = _individual_payload()
+    payload["primaryContact"]["customFieldValues"] = {"employee_id": "E-1001"}
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    assert detail_response.json()["data"]["primaryContactCustomFieldValues"] == {
+        "employee_id": "E-1001"
+    }
+
+
+async def test_create_invitation_captures_co_visitor_custom_fields_independently(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Two visitors answering the same admin-authored Visitor Info field
+    each keep their own independent answer."""
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="employee_id"
+    )
+
+    payload = _group_payload()
+    payload["primaryContact"]["customFieldValues"] = {"employee_id": "E-1001"}
+    payload["visitors"][0]["customFieldValues"] = {"employee_id": "E-2002"}
+    data = await _create_invitation_success(
+        client, token, branch, payload=payload, visitor_file_count=2
+    )
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    body = detail_response.json()["data"]
+    assert body["primaryContactCustomFieldValues"] == {"employee_id": "E-1001"}
+    visitors_by_name = {v["fullName"]: v for v in body["visitors"]}
+    assert visitors_by_name["Alexander Pierce"]["customFieldValues"] == {"employee_id": "E-2002"}
+    assert visitors_by_name["Clara Oswald"]["customFieldValues"] == {}
+
+
+async def test_create_invitation_captures_vehicle_custom_field(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="vehicle_info", key="parking_zone"
+    )
+
+    payload = _group_payload()
+    payload["vehicles"][0]["customFieldValues"] = {"parking_zone": "B2"}
+    data = await _create_invitation_success(
+        client, token, branch, payload=payload, visitor_file_count=2
+    )
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    vehicles = detail_response.json()["data"]["vehicles"]
+    vehicles_by_plate = {v["licensePlate"]: v for v in vehicles}
+    assert vehicles_by_plate["KA-01-AB-1234"]["customFieldValues"] == {"parking_zone": "B2"}
+    assert vehicles_by_plate["KA-05-CD-5678"]["customFieldValues"] == {}
+
+
+async def test_create_invitation_captures_invitation_level_custom_field(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A custom field on Visit Details (no per-entity structure of its own)
+    is captured once per invitation."""
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visit_details", key="cost_center"
+    )
+
+    payload = _individual_payload()
+    payload["customFieldValues"] = {"cost_center": "CC-42"}
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert detail_response.json()["data"]["customFieldValues"] == {"cost_center": "CC-42"}
+
+
+async def test_create_invitation_custom_field_unknown_key_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["customFieldValues"] = {"not_a_configured_field": "x"}
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_custom_field_missing_required_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visit_details", key="cost_center", is_required=True
+    )
+
+    payload = _individual_payload()
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_seeded_carried_items_field_unaffected_by_custom_field(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression: adding an admin-authored field to Carried Items must not
+    disturb the seeded `items` field's existing wire shape (`carriedItems.
+    items`, mapped to the `carried_items` column) — only the new field's
+    answer routes through `customFieldValues`."""
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        key="company_badge",
+        field_type="toggle_switch",
+    )
+
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": ["laptop_tablet"]}
+    payload["customFieldValues"] = {"company_badge": True}
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    body = detail_response.json()["data"]
+    assert body["carriedItems"] == ["laptop_tablet"]
+    assert body["customFieldValues"] == {"company_badge": True}
+
+
+async def test_create_invitation_custom_consent_field_goes_through_consents(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression for design.md Decision 6: a new admin-authored Consent
+    Agreement field is already captured by the pre-existing `consents` map
+    (every field on that step, system or not) - it must not also be
+    required in `customFieldValues`, and supplying it there instead of in
+    `consents` must not satisfy the requirement.
+    """
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="consent_agreement",
+        key="extra_consent",
+        field_type="toggle_switch",
+        is_required=True,
+    )
+
+    payload = _individual_payload()
+    payload["consents"]["extra_consent"] = True
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+    wrong_scope_payload = _individual_payload()
+    wrong_scope_payload["customFieldValues"] = {"extra_consent": True}
+    response = await _create_invitation(client, token, branch, payload=wrong_scope_payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_custom_field_values_tenant_schema_isolation(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """testing-standards.md §2 tenant-isolation case: an invitation carrying
+    custom field answers, created under this tenant's schema, must not be
+    visible from a session bound to a different tenant's schema.
+    """
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visit_details", key="cost_center"
+    )
+    payload = _individual_payload()
+    payload["customFieldValues"] = {"cost_center": "CC-42"}
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    other_schema = "tenant_other_custom_field_test"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        result = await other_session.execute(
+            select(Invitation).where(Invitation.tracking_id == data["trackingId"])
+        )
+        assert result.scalar_one_or_none() is None

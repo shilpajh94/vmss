@@ -335,6 +335,7 @@ async def _to_visitor_outs(visitors) -> list[InvitationVisitorOut]:
             phone=v.phone,
             id_proof_type=v.id_proof_type,
             photo_url=await _resolve_photo_url(v.photo_storage_key),
+            custom_field_values=v.custom_field_values,
         )
         for v in visitors
     ]
@@ -359,6 +360,7 @@ async def _to_visitor_detail_outs(
                 await _resolve_document_url(v.id_proof_storage_key) if include_documents else None
             ),
             photo_url=await _resolve_photo_url(v.photo_storage_key),
+            custom_field_values=v.custom_field_values,
         )
         for v in visitors
     ]
@@ -409,6 +411,7 @@ async def _to_qr_check_in_out(
         primary_contact_id_proof_type=invitation.primary_contact_id_proof_type,
         primary_contact_email=invitation.primary_contact_email,
         primary_contact_phone=invitation.primary_contact_phone,
+        primary_contact_custom_field_values=invitation.primary_contact_custom_field_values,
         host_id=invitation.host_id,
         host_name_or_email=invitation.host_name_or_email,
         purpose_of_visit=invitation.purpose_of_visit,
@@ -419,6 +422,7 @@ async def _to_qr_check_in_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
+        custom_field_values=invitation.custom_field_values,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
         checked_in_at=invitation.checked_in_at,
@@ -432,6 +436,7 @@ async def _to_qr_check_in_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
+                custom_field_values=v.custom_field_values,
             )
             for v in invitation.vehicles
         ],
@@ -471,6 +476,7 @@ async def _to_tracking_out(
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
         ),
+        primary_contact_custom_field_values=invitation.primary_contact_custom_field_values,
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         preferred_visit_date=invitation.preferred_visit_date,
@@ -480,6 +486,7 @@ async def _to_tracking_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
+        custom_field_values=invitation.custom_field_values,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
@@ -491,6 +498,7 @@ async def _to_tracking_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
+                custom_field_values=v.custom_field_values,
             )
             for v in invitation.vehicles
         ],
@@ -516,6 +524,7 @@ async def _to_check_in_out(
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
         ),
+        primary_contact_custom_field_values=invitation.primary_contact_custom_field_values,
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         preferred_visit_date=invitation.preferred_visit_date,
@@ -525,6 +534,7 @@ async def _to_check_in_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
+        custom_field_values=invitation.custom_field_values,
         visitors=await _to_visitor_outs(invitation.visitors),
         vehicles=[
             InvitationVehicleOut(
@@ -533,6 +543,7 @@ async def _to_check_in_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
+                custom_field_values=v.custom_field_values,
             )
             for v in invitation.vehicles
         ],
@@ -572,6 +583,7 @@ async def _to_invitation_detail_out(
             if include_documents
             else None
         ),
+        primary_contact_custom_field_values=invitation.primary_contact_custom_field_values,
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         host_id=invitation.host_id,
@@ -586,6 +598,7 @@ async def _to_invitation_detail_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
+        custom_field_values=invitation.custom_field_values,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
@@ -612,6 +625,7 @@ async def _to_invitation_detail_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
+                custom_field_values=v.custom_field_values,
             )
             for v in invitation.vehicles
         ],

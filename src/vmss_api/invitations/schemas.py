@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime, time
 from enum import StrEnum
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import ConfigDict, EmailStr, Field, model_validator
 
@@ -105,6 +105,13 @@ class VisitorSubmit(CamelModel):
     # branch-configurable — see `invitations/service.py::create_invitation`'s
     # dynamic requiredness check against the effective form.
     id_proof_type: IdProofType | None = None
+    # This visitor's own answers for any admin-authored Visitor Info field
+    # (add-generic-custom-field-support), keyed by field key — validated
+    # dynamically against the effective form in
+    # `invitations/service.py::create_invitation`, not by this schema.
+    custom_field_values: dict[Annotated[str, Field(max_length=100)], Any] = Field(
+        default_factory=dict, max_length=50
+    )
 
     @model_validator(mode="after")
     def _check_contact(self) -> Self:
@@ -156,6 +163,13 @@ class VehicleSubmit(CamelModel):
     license_plate: str = Field(max_length=50)
     make_model: str | None = Field(default=None, max_length=255)
     color: str | None = Field(default=None, max_length=50)
+    # This vehicle's own answers for any admin-authored Vehicle Info field
+    # beyond the locked license-plate field (add-generic-custom-field-
+    # support), keyed by field key — validated dynamically against the
+    # effective form in `invitations/service.py::create_invitation`.
+    custom_field_values: dict[Annotated[str, Field(max_length=100)], Any] = Field(
+        default_factory=dict, max_length=50
+    )
 
 
 # --- API-09: employee creates a fully completed invitation in one call -----
@@ -168,6 +182,11 @@ class InvitationPrimaryContactCreate(CamelModel):
     preferred_contact_method: ContactMethod = ContactMethod.email
     # Optional (form-builder) — see `VisitorSubmit.id_proof_type`.
     id_proof_type: IdProofType | None = None
+    # See `VisitorSubmit.custom_field_values` — the primary contact's own
+    # answers for any admin-authored Visitor Info field.
+    custom_field_values: dict[Annotated[str, Field(max_length=100)], Any] = Field(
+        default_factory=dict, max_length=50
+    )
 
     @model_validator(mode="after")
     def _check_contact(self) -> Self:
@@ -219,6 +238,16 @@ class InvitationCreate(CamelModel):
     # (mirroring `carriedItems.items`'s `max_length=50`/`max_length=100`),
     # not the actual allow-list enforcement.
     consents: dict[Annotated[str, Field(max_length=100)], bool] = Field(max_length=50)
+    # Answers for admin-authored fields on Visit Details, Carried Items,
+    # Consent Agreement, or a custom step (add-generic-custom-field-
+    # support) — every step with no per-entity structure of its own, so its
+    # custom fields are answered once per invitation. Keyed by field key,
+    # same posture as `consents`/`carriedItems.items`: validated dynamically
+    # against the effective form in
+    # `invitations/service.py::create_invitation`, not by this schema.
+    custom_field_values: dict[Annotated[str, Field(max_length=100)], Any] = Field(
+        default_factory=dict, max_length=50
+    )
 
     @model_validator(mode="after")
     def _check_visitor_list_matches_registration_type(self) -> Self:
@@ -292,6 +321,7 @@ class InvitationVisitorOut(CamelModel):
     # at all is now branch-configurable.
     id_proof_type: str | None
     photo_url: str | None = None
+    custom_field_values: dict[str, Any]
 
 
 class InvitationVisitorDetailOut(CamelModel):
@@ -309,6 +339,7 @@ class InvitationVisitorDetailOut(CamelModel):
     id_proof_type: str | None
     id_proof_url: str | None = None
     photo_url: str | None = None
+    custom_field_values: dict[str, Any]
 
 
 class InvitationBranchOut(CamelModel):
@@ -337,6 +368,7 @@ class InvitationVehicleOut(CamelModel):
     license_plate: str
     make_model: str | None
     color: str | None
+    custom_field_values: dict[str, Any]
 
 
 class InvitationCheckInOut(CamelModel):
@@ -363,6 +395,7 @@ class InvitationCheckInOut(CamelModel):
     current_approval_step: CurrentApprovalStepOut | None = None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
+    primary_contact_custom_field_values: dict[str, Any]
     purpose_of_visit: str | None
     host_name_or_email: str | None
     preferred_visit_date: date | None
@@ -372,6 +405,7 @@ class InvitationCheckInOut(CamelModel):
     additional_notes: str | None
     carried_items: list[str]
     carried_items_description: str | None
+    custom_field_values: dict[str, Any]
     visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 
@@ -391,6 +425,7 @@ class InvitationTrackingOut(CamelModel):
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
+    primary_contact_custom_field_values: dict[str, Any]
     purpose_of_visit: str | None
     host_name_or_email: str | None
     preferred_visit_date: date | None
@@ -400,6 +435,7 @@ class InvitationTrackingOut(CamelModel):
     additional_notes: str | None
     carried_items: list[str]
     carried_items_description: str | None
+    custom_field_values: dict[str, Any]
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -445,6 +481,7 @@ class InvitationDetailOut(CamelModel):
     primary_contact_photo_url: str | None = None
     primary_contact_id_proof_type: str | None = None
     primary_contact_id_proof_url: str | None = None
+    primary_contact_custom_field_values: dict[str, Any]
     purpose_of_visit: str | None
     host_name_or_email: str | None
     host_id: uuid.UUID | None = None
@@ -459,6 +496,7 @@ class InvitationDetailOut(CamelModel):
     additional_notes: str | None
     carried_items: list[str]
     carried_items_description: str | None
+    custom_field_values: dict[str, Any]
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -557,6 +595,7 @@ class InvitationQrCheckInOut(CamelModel):
     primary_contact_id_proof_type: str | None = None
     primary_contact_email: str | None
     primary_contact_phone: str | None
+    primary_contact_custom_field_values: dict[str, Any]
     host_id: uuid.UUID | None = None
     host_name_or_email: str | None
     purpose_of_visit: str | None
@@ -567,6 +606,7 @@ class InvitationQrCheckInOut(CamelModel):
     additional_notes: str | None
     carried_items: list[str]
     carried_items_description: str | None
+    custom_field_values: dict[str, Any]
     submitted_at: datetime | None
     approved_at: datetime | None
     checked_in_at: datetime | None

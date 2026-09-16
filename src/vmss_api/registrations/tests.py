@@ -14,7 +14,7 @@ from structlog.testing import capture_logs
 
 from factories import RoleFactory, VisitorCategoryFactory
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
-from vmss_api.auth.models import AuditLog
+from vmss_api.auth.models import AuditLog, User
 from vmss_api.auth.repository import RoleRepository
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
@@ -168,6 +168,42 @@ async def _create_walk_in_success(
     )
     assert response.status_code == 201, response.text
     return response.json()["data"]
+
+
+async def _login(client: AsyncClient, email: str, password: str = "correct-password") -> str:
+    response = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    return response.json()["data"]["accessToken"]
+
+
+async def _create_and_publish_custom_field(
+    client: AsyncClient,
+    admin_token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    key: str,
+    field_type: str = "text",
+    is_required: bool = False,
+) -> None:
+    """Admin-side setup shared by the custom-field tests below — same
+    pattern as `invitations/tests.py::_create_and_publish_custom_field`,
+    duplicated here since walk-in registration has no staff bearer token of
+    its own to reuse an imported helper's auth with."""
+    headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+
+    body: dict = {"key": key, "label": key.replace("_", " ").title(), "fieldType": field_type}
+    if is_required:
+        body["isRequired"] = True
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", json=body, headers=headers
+    )
+    assert create_response.status_code == 201, create_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
 
 
 # --- API-13: happy paths ------------------------------------------------------
@@ -760,3 +796,64 @@ async def test_walk_in_registration_with_no_department_succeeds_and_leaves_it_un
     assert invitation is not None
     assert invitation.department_to_visit is None
     assert invitation.department_id is None
+
+
+# --- add-generic-custom-field-support: admin-authored custom fields --------
+#
+# specs/registrations/spec.md (delta) "Walk-in registration accepts the
+# same visit-record contract as staff pre-registration" — walk-in shares
+# `InvitationCreate` verbatim, so its custom-field capture is exercised
+# through the same `create_invitation` path invitations/tests.py covers
+# directly; these confirm that sharing actually holds through the walk-in
+# endpoint too.
+
+
+async def test_walk_in_registration_captures_invitation_level_custom_field(
+    client: AsyncClient,
+    user: User,
+    registration_device_raw_key: str,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    admin_token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, admin_token, branch, step_key="visit_details", key="cost_center"
+    )
+
+    payload = _individual_payload()
+    payload["customFieldValues"] = {"cost_center": "CC-42"}
+    data = await _create_walk_in_success(client, registration_device_raw_key, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.custom_field_values == {"cost_center": "CC-42"}
+
+
+async def test_walk_in_registration_captures_primary_contact_custom_field(
+    client: AsyncClient,
+    user: User,
+    registration_device_raw_key: str,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    admin_token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, admin_token, branch, step_key="visitor_info", key="employee_id"
+    )
+
+    payload = _individual_payload()
+    payload["primaryContact"]["customFieldValues"] = {"employee_id": "E-1001"}
+    data = await _create_walk_in_success(client, registration_device_raw_key, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.primary_contact_custom_field_values == {"employee_id": "E-1001"}
+
+
+async def test_walk_in_registration_custom_field_unknown_key_rejected(
+    client: AsyncClient, registration_device_raw_key: str
+) -> None:
+    payload = _individual_payload()
+    payload["customFieldValues"] = {"not_a_configured_field": "x"}
+    response = await _create_walk_in(client, registration_device_raw_key, payload=payload)
+    assert response.status_code == 422

@@ -9,6 +9,8 @@ list of step dicts, not the database directly.
 
 from typing import Any
 
+from fastapi import HTTPException, status
+
 
 def _find_step(effective_form: list[dict[str, Any]], step_key: str) -> dict[str, Any] | None:
     return next((step for step in effective_form if step["key"] == step_key), None)
@@ -71,3 +73,136 @@ def allowed_carried_item_keys(effective_form: list[dict[str, Any]]) -> set[str]:
     if field is None or not field.get("options"):
         return set()
     return set(field["options"])
+
+
+# --- Admin-authored custom fields (add-generic-custom-field-support) -------
+#
+# `isSystem` is what distinguishes a step's seeded fields (full name, email,
+# category, purpose, host, the Carried Items `items` field, the Vehicle Info
+# `license_plate` field, ...) — already handled by their own dedicated typed
+# columns/checks above — from an admin-authored field added on top of them,
+# whose answer is captured generically via `customFieldValues` instead. This
+# split works uniformly for every step, including a custom step (every field
+# on it is non-system) and Visitor Info/Visit Details (only their seeded
+# fields are system).
+
+
+def custom_fields_for_step(
+    effective_form: list[dict[str, Any]], step_key: str
+) -> list[dict[str, Any]]:
+    """Every admin-authored (non-system) field on one active step."""
+    step = _find_step(effective_form, step_key)
+    if step is None:
+        return []
+    return [field for field in step["fields"] if not field["isSystem"]]
+
+
+_NON_GENERIC_SCOPE_STEP_KEYS = ("visitor_info", "vehicle_info", "consent_agreement")
+"""Steps excluded from `custom_fields_for_invitation_scope` because every
+field they carry — including an admin-authored one — is already captured
+by a step-specific mechanism, not the generic `customFieldValues` map:
+Visitor Info/Vehicle Info fields are per-visitor/per-vehicle (see
+`custom_fields_for_step`), and *every* Consent Agreement field (system or
+not) has always flowed through `consents`/`allowed_consent_keys`/
+`required_consent_keys` above — that's the step's own generic mechanism,
+predating this module's custom-field support, and folding its fields into
+`customFieldValues` too would require the same key in two payload maps at
+once."""
+
+
+def custom_fields_for_invitation_scope(
+    effective_form: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Every admin-authored field whose answer is captured once per
+    invitation via the generic `customFieldValues` map — every active step
+    except the ones in `_NON_GENERIC_SCOPE_STEP_KEYS`
+    (`add-generic-custom-field-support/design.md` Decision 1/2). Covers
+    Visit Details, Carried Items (beyond its own `items` field), and any
+    custom step.
+    """
+    return [
+        field
+        for step in effective_form
+        if step["key"] not in _NON_GENERIC_SCOPE_STEP_KEYS
+        for field in step["fields"]
+        if not field["isSystem"]
+    ]
+
+
+def _validate_value_against_field(field: dict[str, Any], value: Any) -> None:
+    field_type = field["fieldType"]
+    options = field.get("options")
+    if field_type == "checkbox_list" and options:
+        candidates = value if isinstance(value, list) else [value]
+        if not set(candidates) <= set(options):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Invalid option(s) for custom field '{field['key']}'",
+            )
+    elif (field_type == "dropdown_select" and options and value not in options) or (
+        field_type == "toggle_switch"
+        and options
+        and not isinstance(value, bool)
+        and value not in options
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Invalid option for custom field '{field['key']}'",
+        )
+
+    rules = field.get("validationRules") or {}
+    if isinstance(value, str):
+        min_length, max_length = rules.get("minLength"), rules.get("maxLength")
+        if min_length is not None and len(value) < min_length:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Custom field '{field['key']}' is shorter than its minimum length",
+            )
+        if max_length is not None and len(value) > max_length:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Custom field '{field['key']}' exceeds its maximum length",
+            )
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        min_value, max_value = rules.get("minValue"), rules.get("maxValue")
+        if min_value is not None and value < min_value:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Custom field '{field['key']}' is below its minimum value",
+            )
+        if max_value is not None and value > max_value:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Custom field '{field['key']}' exceeds its maximum value",
+            )
+
+
+def validate_custom_field_values(
+    fields: list[dict[str, Any]], values: dict[str, Any], *, scope: str
+) -> None:
+    """specs/invitations/spec.md (delta) "Invitation Creation Captures
+    Admin-Defined Custom Field Answers" — `fields` is the admin-authored
+    field set for one scope (`custom_fields_for_step`/
+    `custom_fields_for_invitation_scope`), `values` the caller-supplied
+    `customFieldValues` map for that same scope. `scope` is only used to
+    make a rejection's error message identify which visitor/vehicle/
+    invitation-level map it came from.
+    """
+    fields_by_key = {field["key"]: field for field in fields}
+    unknown_keys = set(values) - set(fields_by_key)
+    if unknown_keys:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unknown custom field key(s) for {scope}: {', '.join(sorted(unknown_keys))}",
+        )
+    missing_required = {field["key"] for field in fields if field["isRequired"]} - set(values)
+    if missing_required:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Missing required custom field(s) for {scope}: "
+                f"{', '.join(sorted(missing_required))}"
+            ),
+        )
+    for key, value in values.items():
+        _validate_value_against_field(fields_by_key[key], value)

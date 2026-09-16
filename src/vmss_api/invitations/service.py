@@ -430,6 +430,37 @@ async def create_invitation(
             detail=f"Missing required consent(s): {', '.join(sorted(missing_consents))}",
         )
 
+    # specs/invitations/spec.md (delta) "Invitation Creation Captures
+    # Admin-Defined Custom Field Answers" — each admin-authored field's
+    # answer is validated at the same scope its step's own fields are
+    # already captured at (add-generic-custom-field-support/design.md
+    # Decision 1/2).
+    visitor_info_custom_fields = form_builder_validation.custom_fields_for_step(
+        effective_form, "visitor_info"
+    )
+    vehicle_info_custom_fields = form_builder_validation.custom_fields_for_step(
+        effective_form, "vehicle_info"
+    )
+    invitation_scope_custom_fields = form_builder_validation.custom_fields_for_invitation_scope(
+        effective_form
+    )
+    form_builder_validation.validate_custom_field_values(
+        visitor_info_custom_fields,
+        payload.primary_contact.custom_field_values,
+        scope="the primary contact",
+    )
+    for index, visitor in enumerate(payload.visitors):
+        form_builder_validation.validate_custom_field_values(
+            visitor_info_custom_fields, visitor.custom_field_values, scope=f"visitor {index + 1}"
+        )
+    for index, vehicle in enumerate(payload.vehicles):
+        form_builder_validation.validate_custom_field_values(
+            vehicle_info_custom_fields, vehicle.custom_field_values, scope=f"vehicle {index + 1}"
+        )
+    form_builder_validation.validate_custom_field_values(
+        invitation_scope_custom_fields, payload.custom_field_values, scope="the invitation"
+    )
+
     repo = InvitationRepository(tenant_db)
     tracking_id = await _generate_unique_tracking_id(repo)
     now = datetime.now(UTC)
@@ -518,6 +549,7 @@ async def create_invitation(
         ),
         primary_contact_id_proof_storage_key=primary_key,
         primary_contact_photo_storage_key=primary_photo_key,
+        primary_contact_custom_field_values=dict(payload.primary_contact.custom_field_values),
         purpose_of_visit=visit_details["purpose_of_visit"],
         # Never client-supplied at creation anymore — see
         # `_resolve_visit_detail_ids`. Established later, exclusively by
@@ -536,6 +568,7 @@ async def create_invitation(
         carried_items_description=payload.carried_items.item_description,
         consents=dict(payload.consents),
         consent_recorded_at=now,
+        custom_field_values=dict(payload.custom_field_values),
     )
     tenant_db.add(invitation)
 
@@ -577,6 +610,7 @@ async def create_invitation(
                 if idx < len(visitor_photo_contents)
                 else None
             ),
+            custom_field_values=dict(visitor.custom_field_values),
         )
         for idx, visitor in enumerate(payload.visitors)
     ]
@@ -588,6 +622,7 @@ async def create_invitation(
             license_plate=vehicle.license_plate,
             make_model=vehicle.make_model,
             color=vehicle.color,
+            custom_field_values=dict(vehicle.custom_field_values),
         )
         for vehicle in payload.vehicles
     ]

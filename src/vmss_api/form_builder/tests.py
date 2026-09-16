@@ -3,6 +3,7 @@ from collections.abc import Callable
 
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import User
 from vmss_api.core.config import settings
@@ -80,6 +81,47 @@ async def test_create_custom_step_success(
     assert body["isLocked"] is False
 
 
+async def test_create_step_lands_before_review_confirm(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """A custom step must never land after the locked trailing run (Review
+    & Confirm) — the pre-existing bug that made reordering (and the
+    visitor-facing form) misbehave once two or more custom steps existed.
+    """
+    token = issue_token(user)
+
+    first = (
+        await client.post(
+            "/api/v1/form-builder/steps",
+            json={"key": "test_step_one", "name": "Test"},
+            headers=_auth(token),
+        )
+    ).json()["data"]
+    second = (
+        await client.post(
+            "/api/v1/form-builder/steps",
+            json={"key": "test_step_two", "name": "Test 2"},
+            headers=_auth(token),
+        )
+    ).json()["data"]
+
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=_auth(token))
+    keys = [s["key"] for s in steps_response.json()["data"]]
+    assert keys == [
+        "visitor_info",
+        "visit_details",
+        "carried_items",
+        "vehicle_info",
+        "consent_agreement",
+        "test_step_one",
+        "test_step_two",
+        "review_confirm",
+    ]
+    # Creation-order relative to each other is preserved among the new steps.
+    assert keys.index("test_step_one") < keys.index("test_step_two")
+    assert first["id"] != second["id"]
+
+
 async def test_create_step_requires_manage_permission(
     client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
@@ -133,18 +175,91 @@ async def test_toggleable_step_can_be_deactivated(
 async def test_reorder_steps_persists(
     client: AsyncClient, user: User, issue_token: Callable[[User], str]
 ) -> None:
+    """Only the non-locked middle steps (Carried Items, Vehicle Info,
+    Consent Agreement) are reordered here — Visitor Info, Visit Details, and
+    Review & Confirm are locked and must stay in their first-two/last
+    positions, per "Fields and Steps Are Explicitly Ordered".
+    """
     token = issue_token(user)
     steps_response = await client.get("/api/v1/form-builder/steps", headers=_auth(token))
     steps = steps_response.json()["data"]
     ids = [s["id"] for s in steps]
-    reversed_ids = list(reversed(ids))
+    locked_prefix, movable, locked_suffix = ids[:2], ids[2:5], ids[5:]
+    reordered_ids = locked_prefix + list(reversed(movable)) + locked_suffix
     response = await client.post(
         "/api/v1/form-builder/steps/reorder",
-        json={"orderedIds": reversed_ids},
+        json={"orderedIds": reordered_ids},
         headers=_auth(token),
     )
     assert response.status_code == 200
-    assert [s["id"] for s in response.json()["data"]] == reversed_ids
+    assert [s["id"] for s in response.json()["data"]] == reordered_ids
+
+
+async def test_reorder_steps_rejects_locked_step_reposition(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=_auth(token))
+    ids = [s["id"] for s in steps_response.json()["data"]]
+    # Swap the two locked leading steps (Visitor Info, Visit Details) -
+    # locked siblings must keep their relative position.
+    swapped_ids = [ids[1], ids[0], *ids[2:]]
+    response = await client.post(
+        "/api/v1/form-builder/steps/reorder",
+        json={"orderedIds": swapped_ids},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+    unchanged_response = await client.get("/api/v1/form-builder/steps", headers=_auth(token))
+    assert [s["id"] for s in unchanged_response.json()["data"]] == ids
+
+
+async def test_corrupted_step_order_is_repaired_on_next_access(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Simulates the outcome of the pre-existing bug (a custom step placed
+    after Review & Confirm, as the old `create_step` would) directly at the
+    DB layer, then asserts a subsequent read repairs the order without
+    touching any step's or field's actual configuration.
+    """
+    from vmss_api.form_builder.repository import FormStepRepository
+
+    token = issue_token(user)
+    create_response = await client.post(
+        "/api/v1/form-builder/steps",
+        json={"key": "custom_step", "name": "Custom Step"},
+        headers=_auth(token),
+    )
+    custom_step_id = uuid.UUID(create_response.json()["data"]["id"])
+
+    repo = FormStepRepository(db_session)
+    review_confirm = await repo.get_by_key(None, "review_confirm")
+    custom_step = await repo.get(custom_step_id)
+    assert review_confirm is not None
+    assert custom_step is not None
+    custom_step.order_index = review_confirm.order_index + 1
+    await db_session.commit()
+
+    response = await client.get("/api/v1/form-builder/steps", headers=_auth(token))
+    steps = response.json()["data"]
+    keys = [s["key"] for s in steps]
+    assert keys == [
+        "visitor_info",
+        "visit_details",
+        "carried_items",
+        "vehicle_info",
+        "consent_agreement",
+        "custom_step",
+        "review_confirm",
+    ]
+    # Nothing about the steps themselves changed - same ids, same names.
+    custom_step_out = next(s for s in steps if s["key"] == "custom_step")
+    assert custom_step_out["id"] == str(custom_step_id)
+    assert custom_step_out["name"] == "Custom Step"
 
 
 # --- Branch scoping ----------------------------------------------------------
@@ -244,6 +359,44 @@ async def test_create_field_success(
     )
     assert response.status_code == 201
     assert response.json()["data"]["key"] == "company_badge"
+
+
+async def test_create_field_accepted_on_visitor_info(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """Every step accepts new admin-authored fields alongside its own
+    seeded set, including Visitor Info - see `add-generic-custom-field-
+    support/specs/form-builder/spec.md`'s "Fully Configurable Steps Accept
+    Admin-Authored Fields".
+    """
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visitor_info")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "test_field", "label": "Test field", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 201
+    assert response.json()["data"]["key"] == "test_field"
+
+    fields_response = await client.get(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", headers=_auth(token)
+    )
+    assert any(f["key"] == "test_field" for f in fields_response.json()["data"])
+
+
+async def test_create_field_accepted_on_visit_details(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visit_details")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "test_field", "label": "Test field", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 201
+    assert response.json()["data"]["key"] == "test_field"
 
 
 async def test_locked_field_cannot_have_required_or_active_toggled(
@@ -347,17 +500,45 @@ async def test_locked_field_cannot_be_deleted(
 async def test_reorder_fields_persists(
     client: AsyncClient, user: User, issue_token: Callable[[User], str]
 ) -> None:
+    """Visit Details has 5 locked fields followed by 2 non-locked ones
+    (`expected_duration`, `additional_notes`) - only the non-locked pair is
+    reordered here; a locked field's position is covered separately by
+    `test_reorder_fields_rejects_locked_field_reposition`.
+    """
     token = issue_token(user)
     step = await _get_default_step(client, token, "visit_details")
     ids = [f["id"] for f in step["fields"]]
-    reversed_ids = list(reversed(ids))
+    locked_prefix, movable = ids[:5], ids[5:]
+    reordered_ids = locked_prefix + list(reversed(movable))
     response = await client.post(
         f"/api/v1/form-builder/steps/{step['id']}/fields/reorder",
-        json={"orderedIds": reversed_ids},
+        json={"orderedIds": reordered_ids},
         headers=_auth(token),
     )
     assert response.status_code == 200
-    assert [f["id"] for f in response.json()["data"]] == reversed_ids
+    assert [f["id"] for f in response.json()["data"]] == reordered_ids
+
+
+async def test_reorder_fields_rejects_locked_field_reposition(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visitor_info")
+    ids = [f["id"] for f in step["fields"]]
+    # Swap the first two locked fields (registration_type, full_name) -
+    # locked siblings must keep their relative position within the step.
+    swapped_ids = [ids[1], ids[0], *ids[2:]]
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields/reorder",
+        json={"orderedIds": swapped_ids},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+    unchanged_response = await client.get(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", headers=_auth(token)
+    )
+    assert [f["id"] for f in unchanged_response.json()["data"]] == ids
 
 
 # --- Publish / effective form -------------------------------------------------
@@ -410,6 +591,94 @@ async def test_publish_then_effective_form_reflects_deactivated_step(
     # Publishing again bumps the version and doesn't keep any history.
     second_publish = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
     assert second_publish.json()["data"]["version"] == 2
+
+
+async def test_publish_then_effective_form_reflects_deactivated_field(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """Field-level counterpart of
+    `test_publish_then_effective_form_reflects_deactivated_step` -
+    `publish()` filters on each field's `isActive` the same way it filters
+    on `step.isActive`.
+    """
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visit_details")
+    additional_notes = next(f for f in step["fields"] if f["key"] == "additional_notes")
+    deactivate_response = await client.patch(
+        f"/api/v1/form-builder/fields/{additional_notes['id']}",
+        json={"isActive": False},
+        headers=_auth(token),
+    )
+    assert deactivate_response.status_code == 200
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200
+
+    effective_response = await client.get("/api/v1/form-builder/effective")
+    assert effective_response.status_code == 200
+    effective_visit_details = next(
+        s for s in effective_response.json()["data"] if s["key"] == "visit_details"
+    )
+    field_keys = [f["key"] for f in effective_visit_details["fields"]]
+    assert "additional_notes" not in field_keys
+    assert "expected_duration" in field_keys
+
+
+async def test_publish_then_effective_form_includes_new_field(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "company_badge",
+            "label": "Company Badge",
+            "fieldType": "checkbox_list",
+            "options": ["yes"],
+        },
+        headers=_auth(token),
+    )
+    assert create_response.status_code == 201
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200
+
+    effective_response = await client.get("/api/v1/form-builder/effective")
+    effective_carried_items = next(
+        s for s in effective_response.json()["data"] if s["key"] == "carried_items"
+    )
+    company_badge = next(
+        (f for f in effective_carried_items["fields"] if f["key"] == "company_badge"), None
+    )
+    assert company_badge is not None
+    assert company_badge["label"] == "Company Badge"
+    assert company_badge["options"] == ["yes"]
+
+
+async def test_publish_then_effective_form_reflects_edited_field(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "consent_agreement")
+    terms_field = next(f for f in step["fields"] if f["key"] == "terms_accepted")
+
+    update_response = await client.patch(
+        f"/api/v1/form-builder/fields/{terms_field['id']}",
+        json={"label": "Updated Terms & Conditions"},
+        headers=_auth(token),
+    )
+    assert update_response.status_code == 200
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200
+
+    effective_response = await client.get("/api/v1/form-builder/effective")
+    effective_consent = next(
+        s for s in effective_response.json()["data"] if s["key"] == "consent_agreement"
+    )
+    updated_field = next(f for f in effective_consent["fields"] if f["key"] == "terms_accepted")
+    assert updated_field["label"] == "Updated Terms & Conditions"
 
 
 async def test_publish_rejects_draft_with_dangling_visibility_reference(

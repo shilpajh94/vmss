@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime, time
+from typing import Any
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Time, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
@@ -93,6 +94,14 @@ class Invitation(Base, TimestampMixin):
     # nullable, unlike the ID-proof storage key, since capturing a photo is
     # never required.
     primary_contact_photo_storage_key: Mapped[str | None] = mapped_column(String(500))
+    # Answers for admin-authored Visitor Info fields (`form-builder`'s
+    # "Fully Configurable Steps Accept Admin-Authored Fields"), keyed by
+    # field key — the primary contact's counterpart to
+    # `InvitationVisitor.custom_field_values` below. Kept separate from
+    # `custom_field_values` (invitation-level answers) so the two scopes
+    # never share a key namespace on the same row
+    # (`add-generic-custom-field-support/design.md` Decision 1).
+    primary_contact_custom_field_values: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
     # --- Visit details (self-registration only) -----------------------------
     purpose_of_visit: Mapped[str | None] = mapped_column(String(255))
@@ -152,6 +161,16 @@ class Invitation(Base, TimestampMixin):
     safety_guidelines_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     consents: Mapped[dict[str, bool]] = mapped_column(JSONB, default=dict)
     consent_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # --- Custom fields (add-generic-custom-field-support) --------------------
+    # Answers for admin-authored fields on Visit Details, Carried Items,
+    # Consent Agreement, or a custom step — every step whose own fields have
+    # no per-entity structure of their own, so their custom-field answers
+    # are recorded once per invitation. Keyed by field key. Visitor Info and
+    # Vehicle Info custom-field answers live on `InvitationVisitor`/
+    # `primary_contact_custom_field_values` and `InvitationVehicle` instead
+    # (`design.md` Decision 1/2).
+    custom_field_values: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
     # --- Lifecycle: denial (add-invitation-lifecycle-actions/design.md) ----
     denial_reason: Mapped[str | None] = mapped_column(String(500))
@@ -228,6 +247,11 @@ class InvitationVisitor(Base, TimestampMixin):
     id_proof_storage_key: Mapped[str | None] = mapped_column(String(500))
     # Optional profile photo (checkin-approval-workflow-improvements).
     photo_storage_key: Mapped[str | None] = mapped_column(String(500))
+    # Answers for admin-authored Visitor Info fields, keyed by field key —
+    # this visitor's own copy, independent of any other visitor's answer
+    # for the same field (add-generic-custom-field-support/design.md
+    # Decision 2).
+    custom_field_values: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
 
 class InvitationQRCode(Base, TimestampMixin):
@@ -265,3 +289,7 @@ class InvitationVehicle(Base, TimestampMixin):
     license_plate: Mapped[str] = mapped_column(String(50))
     make_model: Mapped[str | None] = mapped_column(String(255))
     color: Mapped[str | None] = mapped_column(String(50))
+    # Answers for admin-authored Vehicle Info fields beyond the locked
+    # license-plate field, keyed by field key — this vehicle's own copy
+    # (add-generic-custom-field-support/design.md Decision 2).
+    custom_field_values: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)

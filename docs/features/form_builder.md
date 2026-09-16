@@ -52,10 +52,22 @@ Within a step, each field is one of three tiers:
   field like registration type or preferred contact method) choose which
   options are offered. E.g. ID proof, profile photo (Visitor Info);
   expected duration, additional notes (Visit Details).
-- **Fully configurable**: Carried Items, Vehicle Info's non-locked fields,
-  Consent Agreement, and any custom step accept an admin-authored field
-  list from scratch — the same "Add New Custom Field" flow for every field
-  type.
+- **Fully configurable**: every step — including Visitor Info and Visit
+  Details, alongside their own locked/toggleable seeded fields — accepts an
+  admin-authored field added on top, via the same "Add New Custom Field"
+  flow for every field type (`add-generic-custom-field-support`). Carried
+  Items, Vehicle Info's non-locked fields, Consent Agreement, and any
+  custom step have no fixed field set of their own at all.
+
+Every step accepts a *new* field — `POST .../fields` no longer rejects a
+creation request targeting Visitor Info or Visit Details. That restriction
+existed for one release (`fix-form-builder-step-order-and-ui-gaps`) because
+those two steps rendered fixed JSX by known field keys with no
+value-storage/rendering path for anything else; both now exist (see
+"Custom-field answer storage" below), so the restriction was reversed
+rather than kept as dead validation. Updating an *existing* seeded field
+(toggling a toggleable field's active/required state) is unaffected either
+way.
 
 `defaults.py` is the single source of truth for this seed — both what
 materializes a scope's draft on first touch, and the in-code fallback
@@ -140,29 +152,115 @@ current catalog — safe to re-run (every step is idempotent). See
 found and why the fix covers both the schema and the RBAC catalog, not just
 the missing tables.
 
+## Locked-position ordering
+
+Locked steps (Visitor Info, Visit Details, Review & Confirm) always occupy
+the first-two/last positions among a scope's steps; locked fields keep
+their relative order among themselves within a step. This is upheld two
+ways:
+
+- **At creation**: `create_step` positions a new custom step immediately
+  before the locked trailing run (before Review & Confirm), never after
+  it. A scope whose order was corrupted before this was enforced (a custom
+  step ending up positioned after Review & Confirm) is repaired
+  automatically, in place, the next time it's accessed — no admin action or
+  migration needed.
+- **At reorder**: `POST .../steps/reorder` and `POST .../fields/reorder`
+  reject (422) any payload that would change a locked step's or field's
+  position relative to its locked siblings. The admin Steps overview page's
+  drag-and-drop only offers a handle on non-locked step cards (mirroring the
+  Step Editor's existing per-field drag handles), so this can't be
+  triggered from the UI at all; the server-side guard is what protects a
+  direct API call.
+
+See `openspec/changes/fix-form-builder-config-gaps/` (the reorder-time
+guard) and `openspec/changes/fix-form-builder-step-order-and-ui-gaps/` (the
+creation-time fix and repair, closing a gap the first change's guard
+surfaced but didn't fully fix) for how this was found and closed.
+
 ## What's wired in, and what isn't yet
 
 `invitations`/`registrations` submission **does** validate against the
 calling branch's published configuration now (`invitations/service.py::
 create_invitation`) — ID-proof/photo requiredness, required consents, and
 allowed Carried Items keys. See `docs/features/invitations.md`'s
-"Branch-configurable requiredness" section.
+"Branch-configurable requiredness" section. **Expected Duration** (Visit
+Details) is the one toggleable field with no dynamic check at all —
+`invitations/schemas.py::VisitDetailsSubmit.expected_duration` is
+structurally required regardless of form-builder configuration; deactivating
+it in the admin UI currently has no effect on the backend. Flagged as an
+open follow-up, not silently treated as fixed.
 
-The frontend (`VMMS_WEB`) has both the admin Form Builder UI (steps
-overview, step editor) and a config-driven renderer for the public/staff
-registration wizards — but the renderer only covers the **Carried Items**
-and **Consent Agreement** steps (`CarriedItemsStep`/`ConsentStep`, shared
-by both wizards) — the two steps whose admin-configurable field *set*
-actually changed. Visitor Info, Visit Details, and Vehicle Info still use
-their original hardcoded components: correct for the fixed field set
-`defaults.py` seeds, but not yet reactive to an admin deactivating one of
-their toggleable fields (ID proof, profile photo, expected duration,
-additional notes) — the wizard still asks for all of them regardless of
-branch configuration, which is stricter than the backend requires, never
-laxer. See `openspec/changes/form-builder/tasks.md` §7's "Known remaining
-gaps" for the specifics.
+The frontend (`VMMS_WEB`) has the admin Form Builder UI (steps overview with
+step reordering, step editor with field reordering and a Publish action of
+its own) and a config-driven renderer for the public/staff registration
+wizards. **Carried Items** and **Consent Agreement**
+(`CarriedItemsStep`/`ConsentStep`, shared by both wizards) render their
+field *set* directly from the effective form. **Visitor Info, Visit
+Details, and Vehicle Info** keep their original fixed JSX layout for their
+own seeded fields (that set doesn't change) but are now *effective-form-
+aware*: each toggleable field (ID proof type/upload + profile photo on
+Visitor Info, additional notes on Visit Details, make/model + color on
+Vehicle Info) is shown/hidden and required/optional per the calling
+branch's published configuration, the same way Carried Items/Consent
+Agreement fields already were. Expected Duration is the one exception (see
+above) — always shown and required, since hiding it while the backend
+still requires it would break submission with no visible field to fix.
+
+All six steps now additionally render a generic `CustomFieldsSection` for
+any admin-authored field beyond their own seeded/fixed set
+(`add-generic-custom-field-support`) — a shared component, not a
+per-step reimplementation. Where it renders depends on the field's answer
+scope (see "Custom-field answer storage" below): once per visitor
+(`VisitorFieldsForm`, used by both the primary contact and each
+co-visitor), once per vehicle (`VehicleInfoStep`'s draft form), or once per
+invitation (`VisitInfoStep`, `CarriedItemsStep`, `GenericConfiguredStep`
+for a genuinely custom step). `CarriedItemsStep` previously misbound any
+field beyond its seeded `items` to a single `description` slot, which
+silently dropped or collided a second custom field's answer — fixed
+alongside this, keeping `item_description` (a real seeded field, not a
+made-up one) on its own dedicated binding.
+
+### Custom-field answer storage
+
+An admin-authored field's submitted answer is captured at the same scope
+its step's own seeded fields already use — not one invitation-wide bag:
+
+- **Visitor Info** → per-visitor. `Invitation.primary_contact_custom_field_values`
+  for the primary contact, `InvitationVisitor.custom_field_values` for each
+  co-visitor — both JSONB, keyed by field key.
+- **Vehicle Info** (beyond the locked license-plate field) → per-vehicle,
+  `InvitationVehicle.custom_field_values`.
+- **Visit Details, Carried Items** (beyond `items`/`item_description`),
+  **and any custom step** → per-invitation, `Invitation.custom_field_values`.
+- **Consent Agreement** is the one exception: every field on that step,
+  seeded or admin-authored, has always flowed through the existing
+  `consents` map (`allowed_consent_keys`/`required_consent_keys` iterate
+  every field, not only seeded ones) — a new Consent Agreement field needs
+  no change here at all.
+
+`POST /invitations`/`POST /registrations/walk-in` accept the matching
+`customFieldValues` map at each scope — nested on each `primaryContact`/
+`visitors[]`/`vehicles[]` entry, plus one at the request's top level for
+the per-invitation case — validated against the resolved branch's
+effective form (unknown key or missing-required-value rejected with 422)
+via `form_builder/validation.py`'s `custom_fields_for_step`/
+`custom_fields_for_invitation_scope`/`validate_custom_field_values`, which
+distinguish a step's seeded fields from admin-authored ones by `isSystem`
+alone — no step-key-specific carve-out beyond the Consent Agreement
+exception above. See `docs/features/invitations.md` for the full request/
+response contract.
+
+Both admin pages now also track and surface "unpublished draft changes"
+(a same-session, per-scope client-side flag — no draft-vs-published diff
+endpoint exists) with a Publish action reachable from either page, and field
+save confirmations say "saved to draft, publish to update the visitor
+form" instead of implying the change is already live.
 
 Still entirely unbuilt: the `VisitorCategory.form_schema` column drop
-(`tasks.md` §5.2, deliberately deferred for a burn-in period) and any
-`custom_field_values` storage for an admin-added Vehicle Info/custom-step
-field (`tasks.md` §1.3/§4.3 — no scenario has required it yet).
+(`tasks.md` §5.2, deliberately deferred for a burn-in period), and inline
+rendering of `file_upload`/`dynamic_table`/`signature_pad`/`rich_text_block`
+fields on any step (`DynamicField` shows a "not supported inline yet"
+placeholder for these today) — `custom_field_values` storage now exists for
+every step (`add-generic-custom-field-support`), but only for the field
+types `DynamicField` can actually render/collect a value for.

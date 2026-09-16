@@ -150,8 +150,56 @@ async def _ensure_scope_seeded(tenant_db: AsyncSession, branch_id: uuid.UUID | N
 # --- Step CRUD ---------------------------------------------------------------
 
 
+# A step's locked/non-locked tier is data (`is_locked`), but *which* locked
+# key belongs at the front vs. the back is fixed identity — no endpoint lets
+# an admin create a new locked step or flip `is_locked`, so these two tuples
+# are the complete, permanent set (`defaults.py`).
+_LEADING_LOCKED_KEYS: tuple[str, ...] = ("visitor_info", "visit_details")
+_TRAILING_LOCKED_KEYS: tuple[str, ...] = ("review_confirm",)
+
+
+def _rebuild_step_order(steps: list[FormStep], new_step: FormStep | None = None) -> list[FormStep]:
+    """Leading locked steps (fixed key order), then every non-locked step in
+    its current relative order to each other (a newly created step, if any,
+    always lands last among these), then trailing locked steps (fixed key
+    order) — the invariant `create_step`/`_ensure_step_order_valid` both
+    uphold (design.md Decision 1/2 of `fix-form-builder-step-order-and-ui-gaps`).
+    Returns the corrected list; the caller assigns `order_index` from its
+    positions.
+    """
+    current_order = sorted(steps, key=lambda s: s.order_index)
+    leading = [s for key in _LEADING_LOCKED_KEYS for s in current_order if s.key == key]
+    trailing = [s for key in _TRAILING_LOCKED_KEYS for s in current_order if s.key == key]
+    locked_ids = {s.id for s in leading} | {s.id for s in trailing}
+    middle = [s for s in current_order if s.id not in locked_ids]
+    if new_step is not None:
+        middle = [*middle, new_step]
+    return [*leading, *middle, *trailing]
+
+
+async def _ensure_step_order_valid(tenant_db: AsyncSession, branch_id: uuid.UUID | None) -> None:
+    """Idempotent, self-healing repair for the pre-existing bug where
+    `create_step` could position a new custom step after the locked
+    trailing run (e.g. after Review & Confirm) — a no-op once the order is
+    already correct, so it's safe to call unconditionally on every scope
+    access rather than requiring a separate migration/ops script.
+    """
+    repo = FormStepRepository(tenant_db)
+    steps = await repo.list_for_scope(branch_id)
+    if not steps:
+        return
+    current_order = sorted(steps, key=lambda s: s.order_index)
+    corrected_order = _rebuild_step_order(steps)
+    if [s.id for s in corrected_order] == [s.id for s in current_order]:
+        return
+    for index, step in enumerate(corrected_order):
+        step.order_index = index
+    await tenant_db.commit()
+
+
 async def list_steps(tenant_db: AsyncSession, branch_id: uuid.UUID | None) -> list[FormStep]:
     await _ensure_scope_seeded(tenant_db, branch_id)
+    await _ensure_step_order_valid(tenant_db, branch_id)
     return await FormStepRepository(tenant_db).list_for_scope(branch_id)
 
 
@@ -184,10 +232,11 @@ async def create_step(
     tenant_db: AsyncSession, branch_id: uuid.UUID | None, payload: FormStepCreate
 ) -> FormStep:
     await _ensure_scope_seeded(tenant_db, branch_id)
+    await _ensure_step_order_valid(tenant_db, branch_id)
     repo = FormStepRepository(tenant_db)
     if await repo.get_by_key(branch_id, payload.key) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Step key already exists")
-    max_order = max((s.order_index for s in await repo.list_for_scope(branch_id)), default=-1)
+    existing_steps = await repo.list_for_scope(branch_id)
     step = FormStep(
         id=uuid.uuid4(),
         branch_id=branch_id,
@@ -198,8 +247,10 @@ async def create_step(
         is_system=False,
         is_locked=False,
         is_active=True,
-        order_index=max_order + 1,
+        order_index=0,
     )
+    for index, ordered_step in enumerate(_rebuild_step_order(existing_steps, step)):
+        ordered_step.order_index = index
     tenant_db.add(step)
     await tenant_db.commit()
     await tenant_db.refresh(step)
@@ -232,9 +283,28 @@ async def delete_step(tenant_db: AsyncSession, step_id: uuid.UUID) -> None:
     await tenant_db.commit()
 
 
+def _assert_locked_positions_unchanged(
+    current_order: list[uuid.UUID],
+    ordered_ids: list[uuid.UUID],
+    rows_by_id: dict[uuid.UUID, Any],
+    *,
+    detail: str,
+) -> None:
+    """specs/form-builder/spec.md "Fields and Steps Are Explicitly Ordered":
+    a locked row must keep its position relative to every other locked
+    sibling. Compared by position in the current order-sorted sequence, not
+    by raw `order_index` value, so gaps left by a prior delete never affect
+    the check (design.md Decision 1).
+    """
+    for position, current_id in enumerate(current_order):
+        if rows_by_id[current_id].is_locked and ordered_ids[position] != current_id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
+
+
 async def reorder_steps(
     tenant_db: AsyncSession, branch_id: uuid.UUID | None, ordered_ids: list[uuid.UUID]
 ) -> list[FormStep]:
+    await _ensure_step_order_valid(tenant_db, branch_id)
     repo = FormStepRepository(tenant_db)
     steps = await repo.list_for_scope(branch_id)
     steps_by_id = {s.id: s for s in steps}
@@ -243,6 +313,13 @@ async def reorder_steps(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="orderedIds must contain exactly this scope's current step ids",
         )
+    current_order = [s.id for s in sorted(steps, key=lambda s: s.order_index)]
+    _assert_locked_positions_unchanged(
+        current_order,
+        ordered_ids,
+        steps_by_id,
+        detail="A locked step's position cannot be changed by reordering",
+    )
     for index, step_id in enumerate(ordered_ids):
         steps_by_id[step_id].order_index = index
     await tenant_db.commit()
@@ -408,6 +485,13 @@ async def reorder_fields(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="orderedIds must contain exactly this step's current field ids",
         )
+    current_order = [f.id for f in sorted(fields, key=lambda f: f.order_index)]
+    _assert_locked_positions_unchanged(
+        current_order,
+        ordered_ids,
+        fields_by_id,
+        detail="A locked field's position cannot be changed by reordering",
+    )
     for index, field_id in enumerate(ordered_ids):
         fields_by_id[field_id].order_index = index
     await tenant_db.commit()
@@ -495,6 +579,7 @@ async def publish(
     actor_user_id: uuid.UUID | None,
 ) -> FormConfigVersion:
     await _ensure_scope_seeded(tenant_db, branch_id)
+    await _ensure_step_order_valid(tenant_db, branch_id)
     step_repo = FormStepRepository(tenant_db)
     steps = await step_repo.list_for_scope(branch_id)
     if not steps:
