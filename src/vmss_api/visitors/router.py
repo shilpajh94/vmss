@@ -24,7 +24,10 @@ from vmss_api.visitors.schemas import (
     ApprovalWorkflowRuleCreate,
     ApprovalWorkflowRuleOut,
     ApprovalWorkflowRuleSortableField,
+    ApprovalWorkflowRuleStatus,
     ApprovalWorkflowRuleUpdate,
+    EscortRequirement,
+    NdaRequirement,
     VisitorCategoryCreate,
     VisitorCategoryOut,
     VisitorCategorySortableField,
@@ -102,6 +105,11 @@ async def list_visitor_categories(
     request: Request,
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    badge_color: Annotated[str | None, Query(alias="badgeColor")] = None,
+    nda_requirement: Annotated[NdaRequirement | None, Query(alias="ndaRequirement")] = None,
+    escort_requirement: Annotated[
+        EscortRequirement | None, Query(alias="escortRequirement")
+    ] = None,
     sort_by: Annotated[VisitorCategorySortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
@@ -112,7 +120,14 @@ async def list_visitor_categories(
     """
     page, page_size = pagination
     categories, total = await service.list_visitor_categories_page(
-        tenant_db, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+        tenant_db,
+        badge_color=badge_color,
+        nda_requirement=nda_requirement,
+        escort_requirement=escort_requirement,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     return paginated_response(
         data=[VisitorCategoryOut.model_validate(c) for c in categories],
@@ -225,6 +240,7 @@ async def list_approval_workflow_rules(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     visitor_category_id: Annotated[uuid.UUID | None, Query(alias="visitorCategoryId")] = None,
+    rule_status: Annotated[ApprovalWorkflowRuleStatus | None, Query(alias="status")] = None,
     sort_by: Annotated[ApprovalWorkflowRuleSortableField, Query(alias="sortBy")] = "step_order",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
@@ -232,6 +248,7 @@ async def list_approval_workflow_rules(
     rules, total = await service.list_approval_workflow_rules_page(
         tenant_db,
         visitor_category_id=visitor_category_id,
+        status=rule_status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

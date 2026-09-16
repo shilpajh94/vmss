@@ -11,7 +11,10 @@ from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
 from vmss_api.visitors.repository import ApprovalWorkflowRuleRepository, VisitorCategoryRepository
 from vmss_api.visitors.schemas import (
     ApprovalWorkflowRuleCreate,
+    ApprovalWorkflowRuleStatus,
     ApprovalWorkflowRuleUpdate,
+    EscortRequirement,
+    NdaRequirement,
     VisitorCategoryCreate,
     VisitorCategoryUpdate,
 )
@@ -64,13 +67,22 @@ async def create_visitor_category(
 async def list_visitor_categories_page(
     tenant_db: AsyncSession,
     *,
+    badge_color: str | None,
+    nda_requirement: NdaRequirement | None,
+    escort_requirement: EscortRequirement | None,
     page: int,
     page_size: int,
     sort_by: str,
     sort_order: SortOrder,
 ) -> tuple[list[VisitorCategory], int]:
     return await VisitorCategoryRepository(tenant_db).list_page(
-        page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+        badge_color=badge_color,
+        nda_requirement=nda_requirement,
+        escort_requirement=escort_requirement,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 
@@ -150,6 +162,7 @@ async def list_approval_workflow_rules_page(
     tenant_db: AsyncSession,
     *,
     visitor_category_id: uuid.UUID | None,
+    status: ApprovalWorkflowRuleStatus | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -157,6 +170,7 @@ async def list_approval_workflow_rules_page(
 ) -> tuple[list[ApprovalWorkflowRule], int]:
     return await ApprovalWorkflowRuleRepository(tenant_db).list_page(
         visitor_category_id=visitor_category_id,
+        status=status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

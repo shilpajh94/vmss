@@ -31,6 +31,7 @@ from vmss_api.org_structure.repository import (
     SecurityGateRepository,
 )
 from vmss_api.org_structure.schemas import (
+    ActiveStatus,
     BranchCreate,
     BranchProvisionRequest,
     BranchUpdate,
@@ -40,12 +41,16 @@ from vmss_api.org_structure.schemas import (
     CompanyUpdate,
     DepartmentCreate,
     DepartmentUpdate,
+    DeskStatus,
+    FloorAccessLevel,
     FloorCreate,
     FloorUpdate,
+    GateType,
     ReceptionDeskCreate,
     ReceptionDeskUpdate,
     SecurityGateCreate,
     SecurityGateUpdate,
+    SecurityLevel,
 )
 from vmss_api.registrations.repository import RegistrationDeviceKeyRepository
 
@@ -320,6 +325,7 @@ async def list_branches_page(
     tenant_db: AsyncSession,
     *,
     branch_scope: BranchScope,
+    status: ActiveStatus | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -327,6 +333,7 @@ async def list_branches_page(
 ) -> tuple[list[Branch], int]:
     return await BranchRepository(tenant_db).list_page(
         branch_scope=branch_scope,
+        status=status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -603,6 +610,7 @@ async def list_buildings_page(
     tenant_db: AsyncSession,
     *,
     branch_scope: BranchScope,
+    status: ActiveStatus | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -610,6 +618,7 @@ async def list_buildings_page(
 ) -> tuple[list[Building], int]:
     return await BuildingRepository(tenant_db).list_page(
         branch_scope=branch_scope,
+        status=status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -680,6 +689,8 @@ async def list_floors_page(
     *,
     branch_scope: BranchScope,
     building_id: uuid.UUID | None,
+    status: ActiveStatus | None,
+    access_level: FloorAccessLevel | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -688,6 +699,8 @@ async def list_floors_page(
     return await FloorRepository(tenant_db).list_page(
         branch_scope=branch_scope,
         building_id=building_id,
+        status=status,
+        access_level=access_level,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -760,6 +773,7 @@ async def list_departments_page(
     *,
     branch_scope: BranchScope,
     floor_id: uuid.UUID | None,
+    status: ActiveStatus | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -768,6 +782,7 @@ async def list_departments_page(
     return await DepartmentRepository(tenant_db).list_page(
         branch_scope=branch_scope,
         floor_id=floor_id,
+        status=status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -840,6 +855,7 @@ async def list_reception_desks_page(
     *,
     branch_scope: BranchScope,
     floor_id: uuid.UUID | None,
+    status: DeskStatus | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -848,6 +864,7 @@ async def list_reception_desks_page(
     return await ReceptionDeskRepository(tenant_db).list_page(
         branch_scope=branch_scope,
         floor_id=floor_id,
+        status=status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -920,6 +937,8 @@ async def list_security_gates_page(
     *,
     branch_scope: BranchScope,
     building_id: uuid.UUID | None,
+    gate_type: GateType | None,
+    security_level: SecurityLevel | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -928,6 +947,8 @@ async def list_security_gates_page(
     return await SecurityGateRepository(tenant_db).list_page(
         branch_scope=branch_scope,
         building_id=building_id,
+        gate_type=gate_type,
+        security_level=security_level,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

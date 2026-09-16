@@ -6,6 +6,11 @@ from sqlalchemy import select
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import SortOrder
 from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
+from vmss_api.visitors.schemas import (
+    ApprovalWorkflowRuleStatus,
+    EscortRequirement,
+    NdaRequirement,
+)
 
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
@@ -42,11 +47,29 @@ class VisitorCategoryRepository(TenantScopedRepository[VisitorCategory]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def list_page(
-        self, *, page: int, page_size: int, sort_by: str, sort_order: SortOrder
+        self,
+        *,
+        badge_color: str | None,
+        nda_requirement: NdaRequirement | None,
+        escort_requirement: EscortRequirement | None,
+        page: int,
+        page_size: int,
+        sort_by: str,
+        sort_order: SortOrder,
     ) -> tuple[list[VisitorCategory], int]:
         column = {"name": VisitorCategory.name, "created_at": VisitorCategory.created_at}[sort_by]
+        filters: list[Any] = []
+        if badge_color is not None:
+            filters.append(VisitorCategory.badge_color == badge_color)
+        if nda_requirement is not None:
+            filters.append(VisitorCategory.nda_requirement == nda_requirement.value)
+        if escort_requirement is not None:
+            filters.append(VisitorCategory.escort_requirement == escort_requirement.value)
         return await super().paginate(
-            page=page, page_size=page_size, order_by=_order_clause(column, sort_order)
+            page=page,
+            page_size=page_size,
+            order_by=_order_clause(column, sort_order),
+            filters=filters,
         )
 
 
@@ -87,6 +110,7 @@ class ApprovalWorkflowRuleRepository(TenantScopedRepository[ApprovalWorkflowRule
         self,
         *,
         visitor_category_id: uuid.UUID | None,
+        status: ApprovalWorkflowRuleStatus | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -99,6 +123,10 @@ class ApprovalWorkflowRuleRepository(TenantScopedRepository[ApprovalWorkflowRule
         filters: list[Any] = []
         if visitor_category_id is not None:
             filters.append(ApprovalWorkflowRule.visitor_category_id == visitor_category_id)
+        if status is not None:
+            filters.append(
+                ApprovalWorkflowRule.is_active.is_(status == ApprovalWorkflowRuleStatus.active)
+            )
         return await super().paginate(
             page=page,
             page_size=page_size,

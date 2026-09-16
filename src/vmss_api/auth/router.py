@@ -18,10 +18,12 @@ from vmss_api.auth.schemas import (
     EmployeeDirectoryOut,
     EmployeeOut,
     EmployeeSortableField,
+    EmployeeStatus,
     EmployeeSyncRequest,
     EmployeeSyncResult,
     LoginRequest,
     PermissionOut,
+    PermissionSortableField,
     RoleCreateRequest,
     RoleOut,
     RolePermissionResyncEntryOut,
@@ -323,6 +325,7 @@ async def list_employees(
     department_id: Annotated[uuid.UUID | None, Query(alias="departmentId")] = None,
     email: Annotated[EmailStr | None, Query()] = None,
     role: Annotated[str | None, Query(max_length=100)] = None,
+    employee_status: Annotated[EmployeeStatus | None, Query(alias="status")] = None,
     sort_by: Annotated[EmployeeSortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
@@ -345,6 +348,7 @@ async def list_employees(
         department_id=department_id,
         email=email,
         role=role,
+        status=employee_status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -408,17 +412,28 @@ def _to_role_out(role: Role) -> RoleOut:
 
 @router.get(
     "/permissions",
-    response_model=Envelope[list[PermissionOut]],
+    response_model=PaginatedEnvelope[PermissionOut],
     dependencies=[Depends(require_permission("roles:view"))],
 )
-async def list_permissions(db: Annotated[AsyncSession, Depends(get_db)]) -> JSONResponse:
+async def list_permissions(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    sort_by: Annotated[PermissionSortableField, Query(alias="sortBy")] = "code",
+    sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
+) -> JSONResponse:
     """The tenant-independent permission catalog, so a role-creation/update
     form can populate its permission-code choices instead of guessing —
     see `Requirement: Role Permission Codes Must Exist in the Catalog`.
     """
-    permissions = await service.list_permissions(db)
-    return success_response(
-        data=[PermissionOut(code=p.code, description=p.description) for p in permissions]
+    page, page_size = pagination
+    permissions, total = await service.list_permissions(
+        db, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+    )
+    return paginated_response(
+        data=[PermissionOut(code=p.code, description=p.description) for p in permissions],
+        page=page,
+        page_size=page_size,
+        total=total,
     )
 
 

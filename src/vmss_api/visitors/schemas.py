@@ -25,6 +25,17 @@ class EscortRequirement(StrEnum):
     gate_check_in_only = "gate_check_in_only"
 
 
+class ApprovalWorkflowRuleStatus(StrEnum):
+    """`?status=` filter value for `GET /approval-workflow-rules`, mapped
+    onto `ApprovalWorkflowRule.is_active` — matches the pattern of
+    `org_structure.schemas.ActiveStatus` but kept local to this module
+    rather than importing across features for one small enum.
+    """
+
+    active = "active"
+    inactive = "inactive"
+
+
 class VisitorCategoryCreate(CamelModel):
     name: str = Field(max_length=100)
     code: str = Field(max_length=50)

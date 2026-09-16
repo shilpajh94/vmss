@@ -1560,6 +1560,34 @@ async def test_list_invitations_filters_by_status_registration_type_and_source(
     assert non_matching.tracking_id not in tracking_ids
 
 
+async def test_list_invitations_filters_by_search_matching_contact_name_or_tracking_id(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    jane = _build_invitation(db_session, branch.id, primary_contact_full_name="Jane Visitor")
+    john = _build_invitation(db_session, branch.id, primary_contact_full_name="John Guest")
+    db_session.add_all([jane, john])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    name_response = await client.get(
+        "/api/v1/invitations", params={"search": "jane"}, headers=headers
+    )
+    assert name_response.status_code == 200
+    name_tracking_ids = {row["trackingId"] for row in name_response.json()["data"]}
+    assert jane.tracking_id in name_tracking_ids
+    assert john.tracking_id not in name_tracking_ids
+
+    id_response = await client.get(
+        "/api/v1/invitations", params={"search": john.tracking_id}, headers=headers
+    )
+    assert id_response.status_code == 200
+    id_tracking_ids = {row["trackingId"] for row in id_response.json()["data"]}
+    assert john.tracking_id in id_tracking_ids
+    assert jane.tracking_id not in id_tracking_ids
+
+
 @pytest.mark.parametrize(
     "status_value", ["submitted", "approved", "denied", "checked_in", "checked_out"]
 )
@@ -2379,6 +2407,7 @@ async def test_list_invitations_relevant_to_me_tenant_schema_isolation(
             status=None,
             registration_type=None,
             source=None,
+            search=None,
             page=1,
             page_size=20,
             sort_by="submitted_at",
@@ -2419,6 +2448,7 @@ async def test_list_invitations_relevant_to_me_role_holder_tenant_schema_isolati
             status=None,
             registration_type=None,
             source=None,
+            search=None,
             page=1,
             page_size=20,
             sort_by="submitted_at",
@@ -2447,6 +2477,7 @@ async def test_invitation_list_page_tenant_schema_isolation(
             status=None,
             registration_type=None,
             source=None,
+            search=None,
             page=1,
             page_size=20,
             sort_by="submitted_at",

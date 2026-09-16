@@ -524,6 +524,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         status: str | None,
         registration_type: str | None,
         source: str | None,
+        search: str | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -563,6 +564,14 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             filters.append(Invitation.registration_type == registration_type)
         if source is not None:
             filters.append(Invitation.source == source)
+        if search is not None:
+            pattern = f"%{search}%"
+            filters.append(
+                or_(
+                    Invitation.primary_contact_full_name.ilike(pattern),
+                    Invitation.tracking_id.ilike(pattern),
+                )
+            )
         return await super().paginate(
             page=page,
             page_size=page_size,

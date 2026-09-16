@@ -1359,6 +1359,7 @@ async def list_invitations(
     status_filter: Annotated[InvitationStatus | None, Query(alias="status")] = None,
     registration_type: Annotated[RegistrationType | None, Query(alias="registrationType")] = None,
     source: Annotated[RegistrationSource | None, Query(alias="source")] = None,
+    search: Annotated[str | None, Query(max_length=255)] = None,
 ) -> JSONResponse:
     """specs/invitations/spec.md "Employee Lists Invitations at Their
     Authorized Branches" (the default, branch-scoped mode) and "Caller
@@ -1388,6 +1389,7 @@ async def list_invitations(
         status=status_filter.value if status_filter is not None else None,
         registration_type=registration_type.value if registration_type is not None else None,
         source=source.value if source is not None else None,
+        search=search,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

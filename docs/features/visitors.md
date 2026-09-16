@@ -76,12 +76,12 @@ effect once `invitations` submits against them.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/v1/visitor-categories` | `visitor-categories:manage` | Create a category. 409s on duplicate `name`/`code`. |
-| GET | `/api/v1/visitor-categories` | `visitor-categories:view` | Paginated, sortable (`name`/`created_at`) list. |
+| GET | `/api/v1/visitor-categories` | `visitor-categories:view` | Paginated, sortable (`name`/`created_at`) list, optionally narrowed by `badgeColor` (exact match), `ndaRequirement`, and/or `escortRequirement`. |
 | GET | `/api/v1/visitor-categories/{id}` | `visitor-categories:view` | Fetch one category. |
 | PUT | `/api/v1/visitor-categories/{id}` | `visitor-categories:manage` | Update a category (partial). |
 | DELETE | `/api/v1/visitor-categories/{id}` | `visitor-categories:manage` | Soft-delete a category. |
 | POST | `/api/v1/approval-workflow-rules` | `approval-workflow-rules:manage` | Create a rule; 404s if `visitorCategoryId`/`approverRoleId` don't resolve, 409s on a duplicate `(category, stepOrder)`. |
-| GET | `/api/v1/approval-workflow-rules` | `approval-workflow-rules:view` | Paginated, sortable (`step_order`/`created_at`) list, optionally narrowed by `visitorCategoryId`. |
+| GET | `/api/v1/approval-workflow-rules` | `approval-workflow-rules:view` | Paginated, sortable (`step_order`/`created_at`) list, optionally narrowed by `visitorCategoryId` and/or `status` (`active`/`inactive`, mapped onto `is_active`). |
 | GET | `/api/v1/approval-workflow-rules/{id}` | `approval-workflow-rules:view` | Fetch one rule. |
 | PUT | `/api/v1/approval-workflow-rules/{id}` | `approval-workflow-rules:manage` | Update a rule (partial). |
 | DELETE | `/api/v1/approval-workflow-rules/{id}` | `approval-workflow-rules:manage` | Soft-delete a rule. |

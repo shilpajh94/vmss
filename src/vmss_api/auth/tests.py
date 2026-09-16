@@ -1397,6 +1397,25 @@ async def test_list_employees_filter_by_role(
     assert body["data"][0]["email"] == "receptionist@acme-test.example"
 
 
+async def test_list_employees_filter_by_status(
+    db_session: AsyncSession, client: AsyncClient, tenant: Tenant
+) -> None:
+    active_employee = UserFactory.build(
+        id=uuid.uuid4(), email="active-emp@acme-test.example", is_active=True
+    )
+    inactive_employee = UserFactory.build(
+        id=uuid.uuid4(), email="inactive-emp@acme-test.example", is_active=False
+    )
+    db_session.add_all([active_employee, inactive_employee])
+    await db_session.commit()
+
+    response = await client.get("/api/v1/auth/employees?status=inactive")
+    assert response.status_code == 200
+    emails = {e["email"] for e in response.json()["data"]}
+    assert inactive_employee.email in emails
+    assert active_employee.email not in emails
+
+
 async def _make_role_user(
     db_session: AsyncSession,
     tenant: Tenant,
@@ -1588,11 +1607,13 @@ async def test_list_permissions_success(
     viewer = await _company_wide_user(db_session, tenant, codes=["roles:view"])
     token = issue_token(viewer)
     response = await client.get(
-        "/api/v1/auth/permissions", headers={"Authorization": f"Bearer {token}"}
+        "/api/v1/auth/permissions?pageSize=100", headers={"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 200
-    codes = {row["code"] for row in response.json()["data"]}
+    body = response.json()
+    codes = {row["code"] for row in body["data"]}
     assert "roles:view" in codes
+    assert body["pagination"]["total"] == len(codes)
 
 
 async def test_list_permissions_requires_permission(
@@ -1603,6 +1624,85 @@ async def test_list_permissions_requires_permission(
         "/api/v1/auth/permissions", headers={"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 403
+
+
+def _synthetic_permission_codes(count: int) -> list[str]:
+    """Deterministic, lexically-orderable codes for pagination/sort tests —
+    `_company_wide_user` inserts exactly these into the (test-isolated)
+    global `permissions` table, so the catalog's size for these tests is
+    fully controlled rather than relying on however many rows
+    `rbac_catalog.PERMISSION_CODES` happens to seed.
+    """
+    return [f"synthetic-perm:{i:03d}" for i in range(count)]
+
+
+async def test_list_permissions_default_page(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token: Callable[[User], str],
+) -> None:
+    """No `page`/`pageSize` supplied SHALL return page 1 at the house
+    default page size, with a correct `total`/`totalPages` for the full
+    catalog — see openspec/specs/auth/spec.md's "Permission catalog is
+    paginated" scenario.
+    """
+    codes = ["roles:view", *_synthetic_permission_codes(24)]
+    viewer = await _company_wide_user(db_session, tenant, codes=codes)
+    token = issue_token(viewer)
+    response = await client.get(
+        "/api/v1/auth/permissions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pagination"]["page"] == 1
+    assert body["pagination"]["pageSize"] == 20
+    assert len(body["data"]) == 20
+    assert body["pagination"]["total"] == len(codes)
+    assert body["pagination"]["totalPages"] == 2
+
+
+async def test_list_permissions_page_beyond_last_is_empty(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token: Callable[[User], str],
+) -> None:
+    """A `page` past the catalog's last page SHALL return an empty `data`
+    array with a valid pagination block, not a 404/400 — see
+    openspec/specs/auth/spec.md's "page beyond the last page is empty, not
+    an error" scenario.
+    """
+    viewer = await _company_wide_user(
+        db_session, tenant, codes=["roles:view", *_synthetic_permission_codes(3)]
+    )
+    token = issue_token(viewer)
+    response = await client.get(
+        "/api/v1/auth/permissions?page=9999&pageSize=20",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"] == []
+    assert body["pagination"]["page"] == 9999
+
+
+async def test_list_permissions_sort_desc(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token: Callable[[User], str],
+) -> None:
+    codes = ["roles:view", *_synthetic_permission_codes(5)]
+    viewer = await _company_wide_user(db_session, tenant, codes=codes)
+    token = issue_token(viewer)
+    response = await client.get(
+        "/api/v1/auth/permissions?pageSize=100&sortBy=code&sortOrder=desc",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    returned = [row["code"] for row in response.json()["data"] if row["code"] in codes]
+    assert returned == sorted(codes, reverse=True)
 
 
 # --- Role CRUD --------------------------------------------------------------

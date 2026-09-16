@@ -138,25 +138,25 @@ below for exactly what happens when it's omitted):
 | DELETE | `/api/v1/company` | `companies:manage` (company-wide) | Soft-delete the company profile. |
 | POST | `/api/v1/branches` | `branches:manage` (company-wide) | Create a branch. |
 | POST | `/api/v1/branches/provision` | `branches:provision` (company-wide) | Bulk-bootstrap a branch plus its Building → Floor → Department/ReceptionDesk chain and SecurityGates in one transaction. |
-| GET | `/api/v1/branches` | Public (no token) | Paginated, sortable list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant. |
+| GET | `/api/v1/branches` | Public (no token) | Paginated, sortable list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant. Optionally filtered by `status` (`active`/`inactive`). |
 | GET | `/api/v1/branches/current` | `branches:view` at the resolved branch | Resolves the branch named by `X-Branch-ID` (still required here — there's no id/body field to resolve one from); confirms the caller has access. |
 | GET | `/api/v1/branches/{id}` | `branches:view` at the branch's own id | Fetch one branch; 404 if the caller has no access to it. |
 | PUT | `/api/v1/branches/{id}` | `branches:manage` (company-wide) | Update a branch. |
 | DELETE | `/api/v1/branches/{id}` | `branches:manage` (company-wide) | Soft-delete a branch. |
 | POST | `/api/v1/buildings` | `buildings:manage` at `branchId` (body) | Create a building. |
-| GET | `/api/v1/buildings` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant. |
+| GET | `/api/v1/buildings` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant. Optionally filtered by `status` (`active`/`inactive`). |
 | GET/PUT/DELETE | `/api/v1/buildings/{id}` | `buildings:view`/`buildings:manage` at the building's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
 | POST | `/api/v1/floors` | `floors:manage` at the branch resolved from `buildingId` | Create a floor. |
-| GET | `/api/v1/floors` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant; optionally narrowed by `buildingId`. |
+| GET | `/api/v1/floors` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant; optionally narrowed by `buildingId`, `status` (`active`/`inactive`), and/or `accessLevel` (`public`/`restricted`/`secure`). |
 | GET/PUT/DELETE | `/api/v1/floors/{id}` | `floors:view`/`floors:manage` at the floor's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
 | POST | `/api/v1/departments` | `departments:manage` at `branchId` (body) | Create a department. `floorId` is optional — if given, it must resolve to the same branch. |
-| GET | `/api/v1/departments` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant (`Department.branch_id` directly); optionally narrowed by `floorId`. |
+| GET | `/api/v1/departments` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant (`Department.branch_id` directly); optionally narrowed by `floorId` and/or `status` (`active`/`inactive`). |
 | GET/PUT/DELETE | `/api/v1/departments/{id}` | `departments:view`/`departments:manage` at the department's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
 | POST | `/api/v1/reception-desks` | `desks:manage` at the branch resolved from `floorId` | Create a reception desk. |
-| GET | `/api/v1/reception-desks` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant; optionally narrowed by `floorId`. |
+| GET | `/api/v1/reception-desks` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant; optionally narrowed by `floorId` and/or `status` (`active`/`maintenance`/`inactive`). |
 | GET/PUT/DELETE | `/api/v1/reception-desks/{id}` | `desks:view`/`desks:manage` at the desk's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
 | POST | `/api/v1/security-gates` | `gates:manage` at `branchId` (body) | Create a security gate; `buildingId`, if given, must belong to that same branch. |
-| GET | `/api/v1/security-gates` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant; optionally narrowed by `buildingId`. |
+| GET | `/api/v1/security-gates` | Public (no token) | Paginated list; scoped to `X-Branch-ID` if sent, else every branch in the resolved tenant; optionally narrowed by `buildingId`, `gateType` (`entry`/`exit`/`both`), and/or `securityLevel` (`standard`/`high`, mapped onto `high_security`). |
 | GET/PUT/DELETE | `/api/v1/security-gates/{id}` | `gates:view`/`gates:manage` at the gate's own branch | Fetch/update/soft-delete; 404 if the caller has no access to that branch. |
 
 Every list endpoint follows `api-conventions.md` §1: `page`/`pageSize` query
@@ -167,6 +167,16 @@ both columns) rather than a raw client-supplied sort string. There's no
 `branchId` query param on the Building/SecurityGate lists — it would be
 redundant with (and a way to bypass) `X-Branch-ID`, which still pins the
 branch for the whole request when sent.
+
+Each list endpoint's typed attribute filters (`status`, `accessLevel`,
+`gateType`, `securityLevel` — see the table above) are whitelisted enum
+query params, validated by FastAPI before the request reaches the
+repository layer (an unrecognized value is rejected with 422, not silently
+ignored), and combine with any parent-scope filter and `X-Branch-ID` as a
+single `AND`-ed `WHERE` clause. `status` reads `active`/`inactive` for
+every entity except reception desks, whose three-state `status` column
+(`active`/`maintenance`/`inactive`) is exposed as-is rather than folded
+into the two-state convention the other entities use.
 
 Every create/update/delete above queues an `AuditLog` write
 (`auth/audit.py::record_audit_log`) as a `BackgroundTasks` task, per

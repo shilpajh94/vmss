@@ -15,6 +15,13 @@ from vmss_api.org_structure.models import (
     ReceptionDesk,
     SecurityGate,
 )
+from vmss_api.org_structure.schemas import (
+    ActiveStatus,
+    DeskStatus,
+    FloorAccessLevel,
+    GateType,
+    SecurityLevel,
+)
 
 
 def _branch_filter(column: Any, branch_scope: BranchScope) -> Any | None:
@@ -113,6 +120,7 @@ class BranchRepository(TenantScopedRepository[Branch]):
         self,
         *,
         branch_scope: BranchScope,
+        status: ActiveStatus | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -126,6 +134,8 @@ class BranchRepository(TenantScopedRepository[Branch]):
         column = {"name": Branch.name, "created_at": Branch.created_at}[sort_by]
         branch_filter = _branch_filter(Branch.id, branch_scope)
         filters: list[Any] = [branch_filter] if branch_filter is not None else []
+        if status is not None:
+            filters.append(Branch.is_active.is_(status == ActiveStatus.active))
         return await super().paginate(
             page=page,
             page_size=page_size,
@@ -163,6 +173,7 @@ class BuildingRepository(TenantScopedRepository[Building]):
         self,
         *,
         branch_scope: BranchScope,
+        status: ActiveStatus | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -177,6 +188,8 @@ class BuildingRepository(TenantScopedRepository[Building]):
         column = {"name": Building.name, "created_at": Building.created_at}[sort_by]
         branch_filter = _branch_filter(Building.branch_id, branch_scope)
         filters: list[Any] = [branch_filter] if branch_filter is not None else []
+        if status is not None:
+            filters.append(Building.is_active.is_(status == ActiveStatus.active))
         return await super().paginate(
             page=page,
             page_size=page_size,
@@ -210,6 +223,8 @@ class FloorRepository(TenantScopedRepository[Floor]):
         *,
         branch_scope: BranchScope,
         building_id: uuid.UUID | None,
+        status: ActiveStatus | None,
+        access_level: FloorAccessLevel | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -227,6 +242,10 @@ class FloorRepository(TenantScopedRepository[Floor]):
             conditions.append(branch_filter)
         if building_id is not None:
             conditions.append(Floor.building_id == building_id)
+        if status is not None:
+            conditions.append(Floor.is_active.is_(status == ActiveStatus.active))
+        if access_level is not None:
+            conditions.append(Floor.access_level == access_level)
 
         count_stmt = (
             select(func.count())
@@ -280,6 +299,7 @@ class DepartmentRepository(TenantScopedRepository[Department]):
         *,
         branch_scope: BranchScope,
         floor_id: uuid.UUID | None,
+        status: ActiveStatus | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -294,6 +314,8 @@ class DepartmentRepository(TenantScopedRepository[Department]):
         filters: list[Any] = [branch_filter] if branch_filter is not None else []
         if floor_id is not None:
             filters.append(Department.floor_id == floor_id)
+        if status is not None:
+            filters.append(Department.is_active.is_(status == ActiveStatus.active))
         return await super().paginate(
             page=page,
             page_size=page_size,
@@ -360,6 +382,7 @@ class ReceptionDeskRepository(TenantScopedRepository[ReceptionDesk]):
         *,
         branch_scope: BranchScope,
         floor_id: uuid.UUID | None,
+        status: DeskStatus | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -375,6 +398,8 @@ class ReceptionDeskRepository(TenantScopedRepository[ReceptionDesk]):
             conditions.append(branch_filter)
         if floor_id is not None:
             conditions.append(ReceptionDesk.floor_id == floor_id)
+        if status is not None:
+            conditions.append(ReceptionDesk.status == status.value)
 
         count_stmt = (
             select(func.count())
@@ -414,6 +439,8 @@ class SecurityGateRepository(TenantScopedRepository[SecurityGate]):
         *,
         branch_scope: BranchScope,
         building_id: uuid.UUID | None,
+        gate_type: GateType | None,
+        security_level: SecurityLevel | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -427,6 +454,10 @@ class SecurityGateRepository(TenantScopedRepository[SecurityGate]):
         filters: list[Any] = [branch_filter] if branch_filter is not None else []
         if building_id is not None:
             filters.append(SecurityGate.building_id == building_id)
+        if gate_type is not None:
+            filters.append(SecurityGate.gate_type == gate_type.value)
+        if security_level is not None:
+            filters.append(SecurityGate.high_security.is_(security_level == SecurityLevel.high))
         return await super().paginate(
             page=page,
             page_size=page_size,

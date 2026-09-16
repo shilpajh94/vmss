@@ -23,8 +23,8 @@ is identical for every tenant.
 | DELETE | `/api/v1/auth/users/{id}/branch-roles/{assignmentId}` | `users:manage` (company-wide) | — | Revokes a previously granted branch-role assignment. |
 | POST | `/api/v1/auth/employees` | `employees:manage` (company-wide) | — | Creates a single employee, setting `employeeCode`/`departmentId` (required) and optional `phoneNumber`/`designation` directly — immediately visible via `GET /auth/employees` below, with no sync call needed. Never affects any other employee. |
 | POST | `/api/v1/auth/employees/sync` | `employees:manage` (company-wide) | — | Reconciles the employee directory against a full, authoritative batch — see below. Company-wide by design: one sync call spans every department/branch at once. |
-| GET | `/api/v1/auth/employees` | None (public) | — | Paginated employee directory (via `department -> floor -> building`) of every non-deleted user in the tenant, not just ones reconciled through the employee-sync flow — an Admin/Security/Reception account with no `employeeCode` still appears. Optionally narrowed by `departmentId`, `email` (exact match), and/or `role` (role name, matched via any branch-role assignment). No bearer token or permission required: tenant resolves from a presented access token when valid, otherwise the deployment's default tenant. `X-Branch-ID` is optional: scopes to that branch if sent, else every branch in the resolved tenant. An employee with no `department_id` still appears in an unscoped ("all branches") listing — it only drops out of a specific branch/`departmentId`-narrowed view, since there's no department chain to resolve it against. Each row includes `avatarUrl` and the employee's current `branchRoles`. |
-| GET | `/api/v1/auth/permissions` | `roles:view` (company-wide) | — | The tenant's full permission-code catalog (`{code, description}`), so a role-creation/update form can populate its permission-code choices instead of guessing. |
+| GET | `/api/v1/auth/employees` | None (public) | — | Paginated employee directory (via `department -> floor -> building`) of every non-deleted user in the tenant, not just ones reconciled through the employee-sync flow — an Admin/Security/Reception account with no `employeeCode` still appears. Optionally narrowed by `departmentId`, `email` (exact match), `role` (role name, matched via any branch-role assignment), and/or `status` (`active`/`inactive`, mapped onto `User.is_active`). No bearer token or permission required: tenant resolves from a presented access token when valid, otherwise the deployment's default tenant. `X-Branch-ID` is optional: scopes to that branch if sent, else every branch in the resolved tenant. An employee with no `department_id` still appears in an unscoped ("all branches") listing — it only drops out of a specific branch/`departmentId`-narrowed view, since there's no department chain to resolve it against. Each row includes `avatarUrl` and the employee's current `branchRoles`. |
+| GET | `/api/v1/auth/permissions` | `roles:view` (company-wide) | — | Paginated permission-code catalog (`{code, description}` rows, `page`/`pageSize` default 1/20, max 100; `sortBy` whitelisted to `code`, default ascending), so a role-creation/update form can populate its permission-code choices instead of guessing. |
 | POST | `/api/v1/auth/roles` | `roles:manage` (company-wide) | — | Creates a tenant-defined custom role with a name, optional description, and a set of permission codes (validated against the global catalog — see `GET /auth/permissions` above for discovering valid ones). |
 | GET | `/api/v1/auth/roles` | `roles:view` (company-wide) | — | Paginated list of every role in the tenant — the five standard ones plus any custom roles. |
 | GET | `/api/v1/auth/roles/verify` | `roles:view` (company-wide) | — | `?name=` availability check (case-insensitive) for a role-creation/rename form, before submitting. |
@@ -240,12 +240,17 @@ provisioning onward.
 
 ### Discovering valid permission codes
 
-`GET /auth/permissions` (`roles:view`) returns every permission code in the
-catalog, `{code, description}` per entry — built for a role-creation/update
-form's permission-code picker, so a client isn't guessing at valid values
-(or submitting Swagger's literal `"string"` placeholder, which is what
-`Unknown permission code(s): string` reports were actually a symptom of).
-`RoleCreateRequest`/`RoleUpdateRequest.permissionCodes` also carry an
+`GET /auth/permissions` (`roles:view`) returns the permission catalog one
+page at a time, `{code, description}` per entry, wrapped in the same
+paginated envelope (`data` + `pagination`) every other compliant list
+endpoint returns — see `api-conventions.md` §1. Built for a
+role-creation/update form's permission-code picker, so a client isn't
+guessing at valid values (or submitting Swagger's literal `"string"`
+placeholder, which is what `Unknown permission code(s): string` reports were
+actually a symptom of). A client that wants the whole catalog in one
+response (e.g. to render a full checkbox list, as the permission-edit page
+does) should pass `?pageSize=100` — the catalog is well under that cap
+today. `RoleCreateRequest`/`RoleUpdateRequest.permissionCodes` also carry an
 `examples` hint now for the same reason. The validation itself is
 unchanged: `POST`/`PUT /auth/roles` still reject with 404 if any submitted
 code isn't in the catalog (`auth/service.py::_resolve_permission_codes`).

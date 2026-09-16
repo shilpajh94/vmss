@@ -316,6 +316,22 @@ async def test_list_branches_unknown_branch_header_404(client: AsyncClient, tena
     assert response.status_code == 404
 
 
+async def test_list_branches_filtered_by_status(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, branch: Branch
+) -> None:
+    inactive_branch = Branch(
+        id=uuid.uuid4(), name="Inactive Branch", code="INACTIVE-BR", is_active=False
+    )
+    db_session.add(inactive_branch)
+    await db_session.commit()
+
+    response = await client.get("/api/v1/branches?status=inactive")
+    assert response.status_code == 200
+    codes = {b["code"] for b in response.json()["data"]}
+    assert inactive_branch.code in codes
+    assert branch.code not in codes
+
+
 async def test_list_branches_tenant_isolation(
     client: AsyncClient,
     make_tenant_schema,
@@ -1183,6 +1199,26 @@ async def test_list_buildings_unknown_branch_header_404(
     assert response.status_code == 404
 
 
+async def test_list_buildings_filtered_by_status(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    building: Building,
+) -> None:
+    inactive_building = BuildingFactory.build(
+        id=uuid.uuid4(), branch_id=branch.id, code="INACTIVE-BLD", is_active=False
+    )
+    db_session.add(inactive_building)
+    await db_session.commit()
+
+    response = await client.get("/api/v1/buildings?status=inactive")
+    assert response.status_code == 200
+    codes = {b["code"] for b in response.json()["data"]}
+    assert inactive_building.code in codes
+    assert building.code not in codes
+
+
 async def test_list_buildings_without_branch_header_includes_every_branch(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -1541,6 +1577,32 @@ async def test_list_floors_with_branch_header_narrows(
     assert floor.floor_number in {f["floorNumber"] for f in response.json()["data"]}
 
 
+async def test_list_floors_filtered_by_status_and_access_level(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, building: Building, floor: Floor
+) -> None:
+    other_floor = FloorFactory.build(
+        id=uuid.uuid4(),
+        building_id=building.id,
+        floor_number=1,
+        is_active=False,
+        access_level="restricted",
+    )
+    db_session.add(other_floor)
+    await db_session.commit()
+
+    status_response = await client.get("/api/v1/floors?status=inactive")
+    assert status_response.status_code == 200
+    status_ids = {f["id"] for f in status_response.json()["data"]}
+    assert str(other_floor.id) in status_ids
+    assert str(floor.id) not in status_ids
+
+    access_response = await client.get("/api/v1/floors?accessLevel=restricted")
+    assert access_response.status_code == 200
+    access_ids = {f["id"] for f in access_response.json()["data"]}
+    assert str(other_floor.id) in access_ids
+    assert str(floor.id) not in access_ids
+
+
 async def test_list_floors_unknown_branch_header_404(client: AsyncClient, tenant: Tenant) -> None:
     response = await client.get("/api/v1/floors", headers={"X-Branch-ID": str(uuid.uuid4())})
     assert response.status_code == 404
@@ -1885,6 +1947,31 @@ async def test_list_departments_with_branch_header_narrows(
     assert department.code in {d["code"] for d in response.json()["data"]}
 
 
+async def test_list_departments_filtered_by_status(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    building: Building,
+    floor: Floor,
+    department: Department,
+) -> None:
+    inactive_department = DepartmentFactory.build(
+        id=uuid.uuid4(),
+        branch_id=building.branch_id,
+        floor_id=floor.id,
+        code="INACTIVE-DEPT",
+        is_active=False,
+    )
+    db_session.add(inactive_department)
+    await db_session.commit()
+
+    response = await client.get("/api/v1/departments?status=inactive")
+    assert response.status_code == 200
+    codes = {d["code"] for d in response.json()["data"]}
+    assert inactive_department.code in codes
+    assert department.code not in codes
+
+
 async def test_list_departments_unknown_branch_header_404(
     client: AsyncClient, tenant: Tenant
 ) -> None:
@@ -2190,6 +2277,26 @@ async def test_list_reception_desks_with_branch_header_narrows(
     response = await client.get("/api/v1/reception-desks", headers={"X-Branch-ID": str(branch.id)})
     assert response.status_code == 200
     assert reception_desk.code in {d["code"] for d in response.json()["data"]}
+
+
+async def test_list_reception_desks_filtered_by_status(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    floor: Floor,
+    reception_desk: ReceptionDesk,
+) -> None:
+    maintenance_desk = ReceptionDeskFactory.build(
+        id=uuid.uuid4(), floor_id=floor.id, code="DESK-MAINT", status="maintenance"
+    )
+    db_session.add(maintenance_desk)
+    await db_session.commit()
+
+    response = await client.get("/api/v1/reception-desks?status=maintenance")
+    assert response.status_code == 200
+    codes = {d["code"] for d in response.json()["data"]}
+    assert maintenance_desk.code in codes
+    assert reception_desk.code not in codes
 
 
 async def test_list_reception_desks_unknown_branch_header_404(
@@ -2572,6 +2679,37 @@ async def test_list_security_gates_with_branch_header_narrows(
     response = await client.get("/api/v1/security-gates", headers={"X-Branch-ID": str(branch.id)})
     assert response.status_code == 200
     assert security_gate.code in {g["code"] for g in response.json()["data"]}
+
+
+async def test_list_security_gates_filtered_by_gate_type_and_security_level(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    security_gate: SecurityGate,
+) -> None:
+    other_gate = SecurityGateFactory.build(
+        id=uuid.uuid4(),
+        branch_id=branch.id,
+        building_id=None,
+        code="GATE-EXIT-HIGH",
+        gate_type="exit",
+        high_security=True,
+    )
+    db_session.add(other_gate)
+    await db_session.commit()
+
+    type_response = await client.get("/api/v1/security-gates?gateType=exit")
+    assert type_response.status_code == 200
+    type_codes = {g["code"] for g in type_response.json()["data"]}
+    assert other_gate.code in type_codes
+    assert security_gate.code not in type_codes
+
+    level_response = await client.get("/api/v1/security-gates?securityLevel=high")
+    assert level_response.status_code == 200
+    level_codes = {g["code"] for g in level_response.json()["data"]}
+    assert other_gate.code in level_codes
+    assert security_gate.code not in level_codes
 
 
 async def test_list_security_gates_unknown_branch_header_404(
