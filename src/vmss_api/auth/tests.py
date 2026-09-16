@@ -1738,6 +1738,47 @@ async def test_list_roles_requires_permission(
     assert response.status_code == 403
 
 
+@pytest.mark.parametrize("role_name", ["reception", "host"])
+async def test_list_roles_reception_and_host_can_view(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token: Callable[[User], str],
+    role_name: str,
+) -> None:
+    """Reception and Host both carry `roles:view` in the standard catalog
+    (`rbac_catalog.py::ROLE_PERMISSIONS`) specifically so their portal/app
+    UI can resolve role data for the approve/delegate actions on an
+    invitation — without it, `GET /auth/roles` 403s for these roles and the
+    UI has no permission data to decide whether to render those buttons.
+    Seeds from the real catalog (not a hand-picked permission list) so this
+    test breaks if `roles:view` is ever dropped from either role.
+    """
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    role = await RoleRepository(db_session).get_by_name(role_name)
+    assert role is not None
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=None)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"{role_name}-roles-view@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name=f"{role_name.title()} User",
+        branch_roles=[branch_role],
+    )
+    db_session.add(test_user)
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+
+    token = issue_token(test_user)
+    response = await client.get("/api/v1/auth/roles", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+
+
 async def test_list_roles_includes_standard_and_custom(client: AsyncClient, user: User) -> None:
     token = await _login(client, user.email)
     headers = {"Authorization": f"Bearer {token}"}
