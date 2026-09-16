@@ -71,6 +71,28 @@ class InvitationApprovalStepRepository(TenantScopedRepository[InvitationApproval
         )
         return (await self.session.execute(stmt)).scalar_one_or_none() is not None
 
+    async def get_first_step(self, invitation_id: uuid.UUID) -> InvitationApprovalStep | None:
+        """The step with the lowest `step_order` for this invitation — the
+        host-nomination step, whichever step that turns out to be: the
+        synthetic `step_order` 0 placeholder when the category had no active
+        rules at submission time, or the category's own first configured
+        rule otherwise (`invitations/service.py::_build_approval_steps`).
+        `step_order` is no longer assumed to start at a literal `0`, so
+        callers needing "is this the host-nomination step?" (`approvals/
+        service.py::delegate_step`) compare against this instead of a
+        hardcoded value.
+        """
+        stmt = (
+            select(InvitationApprovalStep)
+            .where(
+                InvitationApprovalStep.invitation_id == invitation_id,
+                InvitationApprovalStep.deleted_at.is_(None),
+            )
+            .order_by(InvitationApprovalStep.step_order.asc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def get_by_step_order(
         self, invitation_id: uuid.UUID, step_order: int
     ) -> InvitationApprovalStep | None:

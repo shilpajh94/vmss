@@ -285,6 +285,9 @@ def to_invitation_out(
         status=invitation.status,
         visitor_category_id=invitation.visitor_category_id,
         host_id=invitation.host_id,
+        poc_user_id=invitation.poc_user_id,
+        poc_role_id=invitation.poc_role_id,
+        poc_name=invitation.poc_name,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
@@ -394,6 +397,9 @@ async def _to_qr_check_in_out(
         primary_contact_phone=invitation.primary_contact_phone,
         host_id=invitation.host_id,
         host_name_or_email=invitation.host_name_or_email,
+        poc_user_id=invitation.poc_user_id,
+        poc_role_id=invitation.poc_role_id,
+        poc_name=invitation.poc_name,
         purpose_of_visit=invitation.purpose_of_visit,
         department_to_visit=invitation.department_to_visit,
         preferred_visit_date=invitation.preferred_visit_date,
@@ -456,6 +462,9 @@ async def _to_tracking_out(
         ),
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
+        poc_user_id=invitation.poc_user_id,
+        poc_role_id=invitation.poc_role_id,
+        poc_name=invitation.poc_name,
         preferred_visit_date=invitation.preferred_visit_date,
         preferred_visit_time=invitation.preferred_visit_time,
         expected_duration=invitation.expected_duration,
@@ -491,6 +500,9 @@ async def _to_check_in_out(
         status=invitation.status,
         visitor_category_id=invitation.visitor_category_id,
         host_id=invitation.host_id,
+        poc_user_id=invitation.poc_user_id,
+        poc_role_id=invitation.poc_role_id,
+        poc_name=invitation.poc_name,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
@@ -558,6 +570,9 @@ async def _to_invitation_detail_out(
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         host_id=invitation.host_id,
+        poc_user_id=invitation.poc_user_id,
+        poc_role_id=invitation.poc_role_id,
+        poc_name=invitation.poc_name,
         preferred_visit_date=invitation.preferred_visit_date,
         preferred_visit_time=invitation.preferred_visit_time,
         previous_preferred_visit_date=invitation.previous_preferred_visit_date,
@@ -1148,10 +1163,19 @@ async def edit_invitation(
     Edits Non-Personal Invitation Details"). Never accepts the visitor's own
     personal fields, `visitorCategoryId`, or the host — host reassignment
     stays exclusively the `approvals` capability's delegation endpoint's job.
+
+    Also accepts `pocUserId`/`pocRoleId` (add-invitation-point-of-contact) —
+    the invitation's point of contact, settable to a specific person or a
+    role at any time, independent of the approval workflow's current step.
+    Setting either requires `invitations:approve` at the invitation's
+    branch, checked in `service.edit_invitation` in addition to this
+    endpoint's own `invitations:edit` gate.
     """
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:edit", invitation.branch_id)
-    invitation = await service.edit_invitation(tenant_db, invitation, payload, tenant=tenant)
+    invitation = await service.edit_invitation(
+        tenant_db, invitation, payload, tenant=tenant, user=user
+    )
     background_tasks.add_task(
         record_audit_log,
         tenant.schema_name,

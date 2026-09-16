@@ -9,5 +9,6 @@
   {% if visit_date %}<tr><td style="padding:4px 0; color:#6b7280;">Visit date</td><td style="padding:4px 0;">{{ visit_date }}{% if visit_time %} at {{ visit_time }}{% endif %}</td></tr>{% endif %}
   {% if duration %}<tr><td style="padding:4px 0; color:#6b7280;">Expected duration</td><td style="padding:4px 0;">{{ duration }}</td></tr>{% endif %}
   {% if department %}<tr><td style="padding:4px 0; color:#6b7280;">Department</td><td style="padding:4px 0;">{{ department }}</td></tr>{% endif %}
+  {% if poc_name %}<tr><td style="padding:4px 0; color:#6b7280;">Point of contact</td><td style="padding:4px 0;">{{ poc_name }}</td></tr>{% endif %}
 </table>
 {% endblock %}

@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
+from vmss_api.auth.models import User
+from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core.config import settings
 from vmss_api.core.logging import logger
 from vmss_api.core.schemas import BranchScope, SortOrder
@@ -183,7 +185,8 @@ async def _resolve_visit_detail_ids(
 
     `hostId`/`hostNameOrEmail` are deliberately never resolved here anymore
     (role-based-invitation-workflow) — an invitation's host is established
-    exclusively by delegating its `stepOrder` 0 ownership step (see the
+    exclusively by delegating its host-nomination step (whichever step
+    that turns out to be — see `_build_approval_steps` below and the
     `approvals` capability), never by anything submitted at creation. Both
     fields are still accepted on the wire (for an un-updated client) but
     are silently ignored: `host_name_or_email` is always `None` at creation,
@@ -237,43 +240,85 @@ async def _resolve_active_category(
 
 
 def _build_approval_steps(
-    rules: list[Any], *, invitation_id: uuid.UUID, owning_role_id: uuid.UUID
+    rules: list[Any], *, invitation_id: uuid.UUID, owning_role_id: uuid.UUID, now: datetime
 ) -> list[InvitationApprovalStep]:
     """Snapshots a category's active `ApprovalWorkflowRule`s (already
     ordered by `step_order`) into `InvitationApprovalStep` rows — a
-    point-in-time copy, not a live reference (design.md Decision 1) — behind
-    an unconditional `step_order` 0 ownership step, role-identified for
-    `owning_role_id` (the tenant's default host role), ahead of the
-    role-identified steps (specs/approvals/spec.md "Submission Snapshots the
-    Category's Workflow Plus an Unconditional Ownership Step" —
-    role-based-invitation-workflow). Unlike the host-identified step it
-    replaces, this step is always created, regardless of whether the
-    category has any active rules, and regardless of anything supplied at
-    creation — an invitation's actual host is established later, by
-    delegating this step to a specific person
-    (`approvals/service.py::delegate_step`).
+    point-in-time copy, not a live reference (design.md Decision 1).
 
-    Only the step that is current the moment this snapshot is taken — always
-    the ownership step now — could have `escalates_at`/`auto_approves_at`
-    computed here; it never does, since no `ApprovalWorkflowRule` backs it.
-    Every rule-backed step's pair is instead computed when it becomes the
-    current pending step, i.e. when the step before it is approved
-    (`approvals/service.py::approve_step`/`_activate_next_step`), per
-    specs/approvals/spec.md "Escalation and Auto-Approve Timestamps".
+    A category with at least one active rule produces exactly the rules it
+    configures, unchanged — no separate ownership step is inserted ahead of
+    them (revises role-based-invitation-workflow's original "always an
+    unconditional stepOrder-0 ownership step" design: that step was
+    unconditional specifically so an invitation always had *somewhere* to
+    nominate a host from, but a category's own first configured level
+    already serves that purpose just as well, and forcing a redundant
+    step in front of it — most visibly when that first level is already the
+    tenant's default host role, e.g. reception — produced two consecutive
+    reception approvals before reaching the category's real workflow, which
+    didn't match what was configured in admin). The first snapshotted step
+    is always the invitation's host-nomination step regardless of which
+    role it's for — see `approvals/repository.py::get_first_step` and
+    `approvals/service.py::delegate_step`, neither of which assume that
+    step's `step_order` is a literal `0` anymore.
+
+    A category with **no** active rules still gets exactly one synthetic
+    step, `step_order` 0, role-identified for `owning_role_id` (the tenant's
+    default host role) — this is the only case that step still exists —
+    preserving two invariants that predate this change: every submitted
+    invitation has at least one step (so blanket `POST /invitations/{id}
+    /approve` stays unavailable for every submitted invitation, not just
+    workflow-backed ones), and there's still somewhere to nominate a host
+    from even when the category has no configured workflow at all.
+
+    Every step but the first has its `escalates_at`/`auto_approves_at` left
+    null here, computed later when it actually becomes the current pending
+    step (`approvals/service.py::approve_step`/`_activate_next_step`, per
+    specs/approvals/spec.md "Escalation and Auto-Approve Timestamps") — the
+    first step is the one exception, since it's current from the moment
+    it's snapshotted (there's no earlier step whose approval would trigger
+    `_activate_next_step` for it), so its own clock is computed right here
+    instead, the same way `_activate_next_step` computes any other step's.
     """
+    if not rules:
+        return [
+            InvitationApprovalStep(
+                id=uuid.uuid4(),
+                invitation_id=invitation_id,
+                step_order=0,
+                approver_role_id=owning_role_id,
+                approver_user_id=None,
+                is_mandatory=True,
+                status="pending",
+                escalation_minutes=None,
+                auto_approve_minutes=None,
+                escalates_at=None,
+                auto_approves_at=None,
+            )
+        ]
+
+    first_rule, *later_rules = rules
     steps: list[InvitationApprovalStep] = [
         InvitationApprovalStep(
             id=uuid.uuid4(),
             invitation_id=invitation_id,
-            step_order=0,
-            approver_role_id=owning_role_id,
+            step_order=first_rule.step_order,
+            approver_role_id=first_rule.approver_role_id,
             approver_user_id=None,
-            is_mandatory=True,
+            is_mandatory=first_rule.is_mandatory,
             status="pending",
-            escalation_minutes=None,
-            auto_approve_minutes=None,
-            escalates_at=None,
-            auto_approves_at=None,
+            escalation_minutes=first_rule.escalation_minutes,
+            auto_approve_minutes=first_rule.auto_approve_minutes,
+            escalates_at=(
+                now + timedelta(minutes=first_rule.escalation_minutes)
+                if first_rule.escalation_minutes is not None
+                else None
+            ),
+            auto_approves_at=(
+                now + timedelta(minutes=first_rule.auto_approve_minutes)
+                if first_rule.auto_approve_minutes is not None
+                else None
+            ),
         )
     ]
     steps.extend(
@@ -287,14 +332,10 @@ def _build_approval_steps(
             status="pending",
             escalation_minutes=rule.escalation_minutes,
             auto_approve_minutes=rule.auto_approve_minutes,
-            # Never the current step the moment it's snapshotted — the
-            # ownership step above always is — so its pair is always
-            # computed later, when it becomes current instead
-            # (`approvals/service.py::_activate_next_step`).
             escalates_at=None,
             auto_approves_at=None,
         )
-        for rule in rules
+        for rule in later_rules
     )
     return steps
 
@@ -475,20 +516,22 @@ async def create_invitation(
     repo.add_vehicles(vehicle_rows)
 
     # Snapshot the category's active workflow rules into ordered steps,
-    # behind an unconditional stepOrder-0 ownership step for the tenant's
-    # default host role (specs/approvals/spec.md "Submission Snapshots the
-    # Category's Workflow Plus an Unconditional Ownership Step") — only for
-    # a `submitted` (not auto-approved) invitation, and only once, in the
-    # same transaction as the `Invitation` insert above (design.md Decision
-    # 1). Unlike before, this always creates at least the ownership step,
-    # regardless of whether the category has any active rules.
+    # exactly as configured — see `_build_approval_steps` for when a
+    # synthetic ownership step still gets added (only when the category has
+    # no active rules at all) — only for a `submitted` (not auto-approved)
+    # invitation, and only once, in the same transaction as the `Invitation`
+    # insert above (design.md Decision 1). Every submitted invitation still
+    # gets at least one step, regardless of whether the category has any
+    # active rules.
     if not auto_approved:
         rules = await ApprovalWorkflowRuleRepository(tenant_db).list_active_for_category(
             visitor_category_id
         )
         owning_role = await get_default_host_role(tenant_db)
         InvitationApprovalStepRepository(tenant_db).add_steps(
-            _build_approval_steps(rules, invitation_id=invitation.id, owning_role_id=owning_role.id)
+            _build_approval_steps(
+                rules, invitation_id=invitation.id, owning_role_id=owning_role.id, now=now
+            )
         )
 
     # Generated in the same transaction as the invitation itself when it's
@@ -934,7 +977,56 @@ async def _resolve_edit_changes(
             )
         changes["department_id"] = department.id
         changes["department_to_visit"] = department.name
+    if payload.poc_user_id is not None:
+        poc_user = await UserRepository(tenant_db).get_active(payload.poc_user_id)
+        if poc_user is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown pocUserId")
+        changes["poc_user_id"] = poc_user.id
+        changes["poc_role_id"] = None
+        changes["poc_name"] = poc_user.full_name
+    elif payload.poc_role_id is not None:
+        poc_role = await RoleRepository(tenant_db).get(payload.poc_role_id)
+        if poc_role is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown pocRoleId")
+        changes["poc_role_id"] = poc_role.id
+        changes["poc_user_id"] = None
+        changes["poc_name"] = poc_role.name
     return changes
+
+
+async def _poc_eligible(tenant_db: AsyncSession, invitation: Invitation) -> bool:
+    """Server-side mirror of the frontend's Edit-modal Point-of-Contact
+    gating (add-invitation-point-of-contact) — a client-supplied
+    `pocUserId`/`pocRoleId` can't be trusted to reflect it, so
+    `edit_invitation` re-derives it here rather than trusting the caller
+    only got this far because the UI disabled the field. Eligible when
+    either:
+
+    - the invitation's visitor category has no configured active
+      `ApprovalWorkflowRule`s (nothing to be "mid-workflow" relative to), or
+    - the invitation is currently at its final approval level: its current
+      pending step (if any) is the last-`step_order` snapshotted step, or
+      there is no pending step left at all (workflow already finalized,
+      i.e. at/past the final level).
+
+    Compares against the *max* snapshotted `step_order`, not
+    `total_steps - 1` — `_build_approval_steps` copies `step_order` directly
+    from each category's own `ApprovalWorkflowRule.step_order`, which isn't
+    guaranteed to be a contiguous 0-based sequence.
+    """
+    if invitation.visitor_category_id is None:
+        return True
+    active_rules = await ApprovalWorkflowRuleRepository(tenant_db).list_active_for_category(
+        invitation.visitor_category_id
+    )
+    if not active_rules:
+        return True
+    step_repo = InvitationApprovalStepRepository(tenant_db)
+    current = await step_repo.get_current_pending(invitation.id)
+    if current is None:
+        return True
+    steps = await step_repo.list_for_invitation(invitation.id)
+    return current.step_order == steps[-1].step_order
 
 
 async def edit_invitation(
@@ -943,6 +1035,7 @@ async def edit_invitation(
     payload: InvitationEditRequest,
     *,
     tenant: Tenant,
+    user: User,
 ) -> Invitation:
     """spec.md "Authorized Caller Edits Non-Personal Invitation Details" —
     changes only the visit-detail fields the caller supplied; the visitor's
@@ -953,9 +1046,43 @@ async def edit_invitation(
     describing the change, and the resolved host (if any) by push — the
     same `_notify_host` no-op-when-unresolved guard every other lifecycle
     action already uses.
+
+    `pocUserId`/`pocRoleId` (add-invitation-point-of-contact) are the one
+    field pair here gated by a *second* permission on top of the router's
+    own `invitations:edit` check: the caller must additionally hold
+    `invitations:approve` at the invitation's branch — same permission the
+    approvals capability already requires to act on/delegate a step — since
+    naming who visitors get routed to is closer to an approval action than
+    a visit-detail edit. Setting either notifies the newly-named point of
+    contact (push, and email when a specific person was named — mirroring
+    `delegate_step`'s host-assigned notification) in addition to the
+    unconditional visitor edit-notification email/host push below, which
+    already reflects the invitation's current `pocName` regardless of what
+    changed.
+
+    Setting either is additionally gated by `_poc_eligible`: the visitor
+    category must have no configured approval workflow, or the invitation
+    must currently be at its final approval level. Enforced here rather
+    than trusted from the client, even though the frontend already disables
+    the field outside that window.
     """
     if invitation.status not in _RESCHEDULABLE_STATUSES:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
+    if payload.poc_user_id is not None or payload.poc_role_id is not None:
+        if not user.has_permission("invitations:approve", branch_id=invitation.branch_id):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="Caller lacks invitations:approve required to set the point of contact",
+            )
+        if not await _poc_eligible(tenant_db, invitation):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=(
+                    "Point of contact can only be set when the visitor category has no "
+                    "configured approval workflow or the invitation is at its final "
+                    "approval level"
+                ),
+            )
     changes = await _resolve_edit_changes(tenant_db, payload)
     if not changes:
         return invitation
@@ -969,6 +1096,25 @@ async def edit_invitation(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.edited)
+    if "poc_user_id" in changes or "poc_role_id" in changes:
+        title, body, data = push_notifications.poc_assigned(updated)
+        await notifications_service.notify_step_approver(
+            tenant_db,
+            tenant_schema=tenant.schema_name,
+            approver_user_id=updated.poc_user_id,
+            approver_role_id=updated.poc_role_id,
+            branch_id=updated.branch_id,
+            title=title,
+            body=body,
+            data=data,
+        )
+        if updated.poc_user_id is not None:
+            tasks.send_poc_creation_notification.delay(
+                request_id=_current_request_id(),
+                tenant_schema=tenant.schema_name,
+                invitation_id=str(updated.id),
+                poc_id=str(updated.poc_user_id),
+            )
     return updated
 
 

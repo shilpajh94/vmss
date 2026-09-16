@@ -243,6 +243,9 @@ class InvitationOut(CamelModel):
     status: str
     visitor_category_id: uuid.UUID | None
     host_id: uuid.UUID | None = None
+    poc_user_id: uuid.UUID | None = None
+    poc_role_id: uuid.UUID | None = None
+    poc_name: str | None = None
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -360,6 +363,9 @@ class InvitationCheckInOut(CamelModel):
     status: str
     visitor_category_id: uuid.UUID | None
     host_id: uuid.UUID | None = None
+    poc_user_id: uuid.UUID | None = None
+    poc_role_id: uuid.UUID | None = None
+    poc_name: str | None = None
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -396,6 +402,9 @@ class InvitationTrackingOut(CamelModel):
     primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
     host_name_or_email: str | None
+    poc_user_id: uuid.UUID | None = None
+    poc_role_id: uuid.UUID | None = None
+    poc_name: str | None = None
     preferred_visit_date: date | None
     preferred_visit_time: time | None
     expected_duration: str | None
@@ -451,6 +460,9 @@ class InvitationDetailOut(CamelModel):
     purpose_of_visit: str | None
     host_name_or_email: str | None
     host_id: uuid.UUID | None = None
+    poc_user_id: uuid.UUID | None = None
+    poc_role_id: uuid.UUID | None = None
+    poc_name: str | None = None
     preferred_visit_date: date | None
     preferred_visit_time: time | None
     previous_preferred_visit_date: date | None = None
@@ -514,6 +526,16 @@ class InvitationEditRequest(CamelModel):
     un-updated client, `extra="forbid"` rejects any of those fields outright
     with a validation error rather than silently ignoring them, since no
     existing client depends on this new endpoint's shape yet.
+
+    `pocUserId`/`pocRoleId` (add-invitation-point-of-contact) are the one
+    exception to "visit-detail fields only": unlike the host, the point of
+    contact is set directly here, to either a specific person or a role, by
+    any caller holding `invitations:approve` at the invitation's branch —
+    checked separately from (in addition to) this endpoint's own
+    `invitations:edit` gate, since not every `invitations:edit` holder
+    should be able to name who visitors are routed to
+    (`invitations/service.py::edit_invitation`). At most one of the two may
+    be supplied.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -527,6 +549,14 @@ class InvitationEditRequest(CamelModel):
     department_to_visit: str | None = Field(default=None, max_length=255)
     department_id: uuid.UUID | None = None
     additional_notes: str | None = Field(default=None, max_length=2000)
+    poc_user_id: uuid.UUID | None = None
+    poc_role_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _check_poc_not_both(self) -> Self:
+        if self.poc_user_id is not None and self.poc_role_id is not None:
+            raise ValueError("pocUserId and pocRoleId cannot both be supplied")
+        return self
 
 
 class WatchlistOverrideRequest(CamelModel):
@@ -562,6 +592,9 @@ class InvitationQrCheckInOut(CamelModel):
     primary_contact_phone: str | None
     host_id: uuid.UUID | None = None
     host_name_or_email: str | None
+    poc_user_id: uuid.UUID | None = None
+    poc_role_id: uuid.UUID | None = None
+    poc_name: str | None = None
     purpose_of_visit: str | None
     department_to_visit: str | None
     preferred_visit_date: date | None

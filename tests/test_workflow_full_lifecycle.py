@@ -430,9 +430,9 @@ async def _run_workflow_after_provisioning(
         assert len(tracking_calls) == 1
 
         # role-based-invitation-workflow: every submitted invitation now
-        # gets an unconditional stepOrder-0 ownership step (role-identified
-        # for the tenant's default host role), so the blanket
-        # `POST /invitations/{id}/approve` endpoint always 409s now —
+        # gets at least one snapshotted step (here, the category's own
+        # configured `stepOrder` 1, role-identified for `reception`), so the
+        # blanket `POST /invitations/{id}/approve` endpoint always 409s now —
         # approval goes through the step endpoint instead, same as any
         # other workflow-backed invitation.
         assert invitation_a["currentApprovalStep"] is not None
@@ -445,10 +445,41 @@ async def _run_workflow_after_provisioning(
         assert approve_response.json()["data"]["status"] == "approved"
         assert len(approval_calls) == 1
         assert approval_calls[0]["invitation_id"] == invitation_a["id"]
+        # Single-step (reception-only) workflow: no later step exists to
+        # delegate through, so approving the invitation's only step directly
+        # resolves its host to the approving admin — the point of contact
+        # the visitor's approval-confirmation email will name
+        # (approvals capability's "Approving the Only Step of a Single-Step
+        # Workflow Also Resolves the Invitation's Host").
+        admin_user_id_a = decode_token(admin_headers["Authorization"].removeprefix("Bearer "))[
+            "sub"
+        ]
+        assert approve_response.json()["data"]["hostId"] == admin_user_id_a
+
+        # A second workflow level for "Interview Candidate", added only now
+        # (after invitation_a already snapshotted its own single-step chain,
+        # so this doesn't retroactively affect it) — needed so the
+        # delegation scenario below has a genuinely separate step to
+        # activate after the first one is approved. Both levels are
+        # role-identified for `reception` (matching the category's real
+        # first level, which — since the fix removing the always-added
+        # ownership step — now IS `stepOrder` 1, doubling as the
+        # host-nomination step; see `docs/features/approvals.md` "The
+        # host-nomination step").
+        second_rule_response = await client.post(
+            "/api/v1/approval-workflow-rules",
+            json={
+                "visitorCategoryId": visitor_category_id,
+                "stepOrder": 2,
+                "approverRoleId": reception_role_id,
+            },
+            headers=admin_headers,
+        )
+        assert second_rule_response.status_code == 201, second_rule_response.text
 
         # --- Delegation + relevantToMe (invitation-relevant-to-me-and-
         # delegation): a host-and-role-chain invitation under the
-        # "Interview Candidate" category's workflow rule, the host
+        # "Interview Candidate" category's two-level workflow, the host
         # delegating the role-identified step following their own to the
         # Branch A staff member who already holds that role, and the
         # delegate — not just any holder of the role — acting on it via
@@ -471,12 +502,13 @@ async def _run_workflow_after_provisioning(
             ]
 
             # role-based-invitation-workflow: `hostId` is no longer accepted
-            # at creation — every submitted invitation's ownership step
-            # (stepOrder 0) starts role-identified for the tenant's default
-            # host role (reception), not host-identified. The admin (who
-            # already holds every reception permission via override) first
-            # delegates that step to themselves as the real host, then the
-            # scenario continues exactly as before.
+            # at creation — every submitted invitation's first snapshotted
+            # step (the category's own `stepOrder` 1 here) doubles as the
+            # host-nomination step, role-identified for `reception`, not
+            # host-identified. The admin (who already holds every reception
+            # permission via override) first delegates that step to
+            # themselves as the real host, then the scenario continues
+            # exactly as before.
             create_delegatable_response = await client.post(
                 "/api/v1/invitations",
                 data={
@@ -497,10 +529,10 @@ async def _run_workflow_after_provisioning(
             delegatable_invitation = create_delegatable_response.json()["data"]
             assert delegatable_invitation["status"] == "submitted"
             assert delegatable_invitation["hostId"] is None
-            # Submission's ownership step (stepOrder 0) is current — one
-            # push to every holder of the tenant's default host role at the
-            # branch (specs/invitations/spec.md "Submission Notifies the
-            # Owning Role via Push").
+            # Submission's first step (stepOrder 1, the host-nomination
+            # step) is current — one push to every holder of its configured
+            # role (`reception`) at the branch (specs/invitations/spec.md
+            # "Submission Notifies the Owning Role via Push").
             assert len(push_calls) == 1
 
             invitation_detail_response = await client.get(
@@ -519,9 +551,9 @@ async def _run_workflow_after_provisioning(
             )
             assert delegate_host_response.status_code == 200, delegate_host_response.text
             assert delegate_host_response.json()["data"]["hostId"] == admin_user_id
-            # Delegating the ownership step resolves the invitation's host
-            # and notifies them (approvals capability's "Delegating the
-            # Ownership Step Also Resolves the Invitation's Host") — a
+            # Delegating the host-nomination step resolves the invitation's
+            # host and notifies them (approvals capability's "Delegating the
+            # Host-Nomination Step Also Resolves the Invitation's Host") — a
             # second push.
             assert len(push_calls) == 2
 
@@ -550,11 +582,15 @@ async def _run_workflow_after_provisioning(
             assert delegate_response.status_code == 200, delegate_response.text
             delegated_step = delegate_response.json()["data"]["currentApprovalStep"]
             assert delegated_step["delegatedToUserId"] == staff_user_id
-            # Delegating a later (non-ownership) step sends no notification
-            # of its own and does not change the already-resolved host —
-            # the delegate, by construction, already held the role at
-            # Branch A and so was already in the broadcast set above.
-            assert len(push_calls) == 3
+            # Delegating *any* step — not just the host-nomination step —
+            # re-resolves the invitation's host to that step's delegate and
+            # sends them the same host-assigned push
+            # (approvals/service.py::delegate_step; "reception-retains-
+            # visibility-and-delegation-after-own-step"), so this delegation
+            # reassigns the host from `admin_user_id` to `staff_user_id` and
+            # is itself a fourth push.
+            assert len(push_calls) == 4
+            assert push_calls[3]["title"] == "You've been named host"
 
             delegate_token = create_access_token(uuid.UUID(staff_user_id), tenant_id)
             relevant_to_me_response = await client.get(
@@ -578,14 +614,15 @@ async def _run_workflow_after_provisioning(
             # The role step was the workflow's last one — finalizing the
             # invitation dispatches the same visitor-facing approval
             # notification as `invitation_a`'s direct approval above
-            # (`approval_calls`), plus a fourth push telling the resolved
-            # host their invitation was approved (`invitations/service.py::
+            # (`approval_calls`), plus a fifth push telling the resolved
+            # host (now `staff_user_id`, per the re-delegation above) their
+            # invitation was approved (`invitations/service.py::
             # approve_invitation`'s own `notify_user` call — unrelated to
             # delegation itself, no further push fires for the step chain
             # since there is no next step to activate).
             assert len(approval_calls) == 2
-            assert len(push_calls) == 4
-            assert push_calls[3]["title"] == "Invitation approved"
+            assert len(push_calls) == 5
+            assert push_calls[4]["title"] == "Invitation approved"
         finally:
             notifications_tasks.send_push.delay = original_push_delay
 
