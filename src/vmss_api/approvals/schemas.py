@@ -48,7 +48,21 @@ class CurrentApprovalStepOut(CamelModel):
     step_order: int
     approver_role_id: uuid.UUID | None
     approver_user_id: uuid.UUID | None
-    total_steps: int
+    total_steps: int = Field(
+        description=(
+            "Count of this invitation's own snapshotted approval steps — a "
+            "point-in-time copy taken at submission, never a live re-read of "
+            "the category's current rules. Equal to the visitor category's "
+            "active ApprovalWorkflowRule count at submission time, or 1 if "
+            "the category had none (the only case a synthetic step gets "
+            "added). Matches the row count from "
+            "GET /approval-workflow-rules?visitorCategoryId=... as of "
+            "submission time (or 1 if that returns no rows) — it will only "
+            "diverge from what that endpoint reports *now* if the category's "
+            "rules were edited after this invitation was submitted, which is "
+            "expected, not a stale read."
+        )
+    )
     delegated_to_user_id: uuid.UUID | None = None
 
 

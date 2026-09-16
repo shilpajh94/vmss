@@ -57,3 +57,17 @@ def host_assigned(invitation: Invitation) -> tuple[str, str, dict[str, str]]:
     anyone has been named).
     """
     return _build(invitation, title="You've been named host", action="host_assigned")
+
+
+def poc_assigned(invitation: Invitation) -> tuple[str, str, dict[str, str]]:
+    """add-invitation-point-of-contact: sent to the newly named point of
+    contact — a specific user (`notifications_service.notify_user`) or every
+    holder of a role at the invitation's branch
+    (`notifications_service.notify_role_at_branch`), via
+    `notify_step_approver`'s existing user-XOR-role routing
+    (`invitations/service.py::edit_invitation`). Distinct from
+    `host_assigned`: the host is who the visitor is meeting; the point of
+    contact is who to reach about the visit's logistics — the invitation may
+    have either, both, or neither resolved at any given time.
+    """
+    return _build(invitation, title="You've been named point of contact", action="poc_assigned")

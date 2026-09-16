@@ -227,6 +227,10 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     host_id = None
     duration_id = None
     department_id = None
+    # add-invitation-point-of-contact: same FK-safety rationale.
+    poc_user_id = None
+    poc_role_id = None
+    poc_name = None
     # Same FK-safety rationale — the invitation-multi-step-approval category
     # tag, nullable at the DB level for pre-existing rows.
     visitor_category_id = None

@@ -337,8 +337,13 @@ async def list_employees(
     every other unauthenticated endpoint (`security-architecture.md` §2).
     `X-Branch-ID` is optional: scopes to that one branch when supplied,
     otherwise every branch in the resolved tenant. Employees are matched to
-    a branch via `department_id -> Department -> Floor -> Building`; an
-    employee with no department assigned is not visible here — see
+    a branch via `department_id -> Department.branch_id`, OR via their own
+    `UserBranchRole.branch_id` (a specific-branch or company-wide/"All
+    Branch" role grant) — so a delegate-candidate lookup
+    (`?role=host&X-Branch-ID=...`) still surfaces a host whose role grant
+    is company-wide even if they have no department set at that branch. An
+    employee with neither a matching department nor a matching/company-wide
+    role grant is not visible in a branch-scoped call — see
     `auth/repository.py::UserRepository.list_employees_page`.
     """
     page, page_size = pagination

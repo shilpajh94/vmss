@@ -141,6 +141,28 @@ class Invitation(Base, TimestampMixin):
         Uuid, ForeignKey("departments.id"), index=True
     )
 
+    # --- Point of contact (add-invitation-point-of-contact) -----------------
+    # Distinct from `host_id`/`host_name_or_email` above: the host is who the
+    # visitor is meeting, resolved only via the `approvals` workflow (or,
+    # for a single-step workflow, by directly approving its only step — see
+    # `approvals/service.py::approve_step`). The point of contact is who to
+    # actually reach about the visit's logistics, and is set directly via
+    # `PATCH /invitations/{id}/edit` by any `invitations:approve` holder at
+    # any time, regardless of the invitation's current approval step/level.
+    # Exactly one of `poc_user_id`/`poc_role_id` may be set, never both — at
+    # most one, unlike `InvitationApprovalStep`'s exactly-one XOR, since a
+    # point of contact is optional. Enforced by the
+    # `ck_invitations_poc_at_most_one` CHECK constraint (migration-only,
+    # same convention as `InvitationApprovalStep.approver_role_id`/
+    # `approver_user_id` above it — not declared in `__table_args__` here).
+    poc_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"), index=True)
+    poc_role_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("roles.id"), index=True)
+    # Snapshotted display name (the user's full_name or the role's name) at
+    # the moment POC was last set — same convention as `host_name_or_email`,
+    # so rendering it (visit info, the visitor's edit-confirmation email)
+    # never needs an extra join.
+    poc_name: Mapped[str | None] = mapped_column(String(255))
+
     # --- Carried items -------------------------------------------------------
     # JSONB list, not a child table: items have no independent identity or
     # per-row actions of their own, unlike visitors/vehicles below — same
