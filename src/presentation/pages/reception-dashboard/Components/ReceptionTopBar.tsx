@@ -1,0 +1,55 @@
+import { useNavigate } from 'react-router'
+import { LogOutIcon } from '../../../components/icons'
+import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { usePushNotifications } from '../../../hooks/use-push-notifications'
+import { NotificationBell } from '../../../components/notification-bell/NotificationBell'
+
+interface ReceptionTopBarProps {
+  description?: string
+  currentUser: StaffUser | undefined
+}
+
+export function ReceptionTopBar({ description, currentUser }: ReceptionTopBarProps) {
+  const navigate = useNavigate()
+  const { unregisterCurrentDevice } = usePushNotifications()
+
+  const signOut = () => {
+    void unregisterCurrentDevice().finally(() => {
+      sessionStorage.removeItem('token')
+      navigate('/staff/login')
+    })
+  }
+
+  return (
+    <header className="flex h-[70px] w-full shrink-0 items-center justify-between border-b border-border bg-surface px-8">
+      <div className="flex flex-col gap-0.5">
+        <p className="font-display text-xl font-bold text-text">Reception Desk</p>
+        <p className="font-body text-[13px] text-text-faint">{description}</p>
+      </div>
+
+      <div className="flex items-center gap-6">
+        <NotificationBell />
+
+        <div className="flex items-center gap-2">
+          <span className="size-8 rounded-full bg-neutral-subtle" />
+          <div className="flex flex-col gap-0.5">
+            <p className="font-body text-[13px] font-semibold text-text">{currentUser?.name ?? '—'}</p>
+            <p className="font-body text-[11px] text-text-faint">{currentUser?.role ?? ''}</p>
+          </div>
+        </div>
+
+        <div className="h-6 w-px bg-border" />
+
+        <button
+          type="button"
+          onClick={signOut}
+          aria-label="Sign out"
+          className="flex items-center gap-1.5 rounded-lg px-3 py-2 font-body text-[13px] font-semibold text-text-muted"
+        >
+          <LogOutIcon className="size-3.5" />
+          Sign out
+        </button>
+      </div>
+    </header>
+  )
+}

@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router'
 import {
   BuildingIcon,
   CalendarCheckIcon,
+  ClockIcon,
   GitBranchIcon,
   HomeIcon,
   LayersIcon,
@@ -29,6 +30,7 @@ export type AdminSidebarActiveItem =
   | 'workflows'
   | 'invitations'
   | 'roles'
+  | 'audit-trail'
 
 interface AdminSidebarProps {
   activeItem: AdminSidebarActiveItem
@@ -48,6 +50,7 @@ const NAV_ITEMS = [
   { key: 'workflows', label: 'Workflows', icon: ListChecksIcon },
   { key: 'invitations', label: 'Invitations', icon: CalendarCheckIcon },
   { key: 'roles', label: 'Roles & Permissions', icon: ShieldIcon },
+  { key: 'audit-trail', label: 'Audit Trail', icon: ClockIcon },
 ] as const satisfies ReadonlyArray<{ key: AdminSidebarActiveItem; label: string; icon: unknown }>
 
 export function AdminSidebar({ activeItem }: AdminSidebarProps) {
@@ -67,6 +70,7 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
     if (key === 'workflows') navigate('/admin/workflows')
     if (key === 'invitations') navigate('/admin/invitations')
     if (key === 'roles') navigate('/admin/roles')
+    if (key === 'audit-trail') navigate('/admin/audit-trail')
   }
 
   return (

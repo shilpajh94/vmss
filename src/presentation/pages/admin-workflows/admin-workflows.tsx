@@ -1,17 +1,33 @@
 import { useNavigate } from 'react-router'
 import { AdminSidebar } from '../../components/AdminSidebar'
 import { AdminTopBar } from '../../components/AdminTopBar'
-import { PlusIcon, SlidersIcon } from '../../components/icons'
+import { PlusIcon, RefreshCcwIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { LoadingState } from '../../components/ui/LoadingState'
-import { WorkflowGroupList } from './Components/WorkflowGroupList'
+import { WorkflowListTable } from './Components/WorkflowListTable'
 import { useAdminWorkflows } from './hooks/use-admin-workflows'
 
 export function AdminWorkflowsPage() {
   const navigate = useNavigate()
-  const { currentUser, workflows, isLoading, errorMessage, retry, pendingDelete, isDeleting, requestDelete, cancelDelete, confirmDelete } =
-    useAdminWorkflows()
+  const {
+    currentUser,
+    workflows,
+    pagedWorkflows,
+    page,
+    pageSize,
+    totalPages,
+    goToPreviousPage,
+    goToNextPage,
+    isLoading,
+    errorMessage,
+    retry,
+    pendingDelete,
+    isDeleting,
+    requestDelete,
+    cancelDelete,
+    confirmDelete,
+  } = useAdminWorkflows()
 
   const goToAddWorkflow = () => navigate('/admin/workflows/new')
 
@@ -24,22 +40,30 @@ export function AdminWorkflowsPage() {
 
         <main className="flex flex-1 flex-col gap-6 p-8">
           <div className="flex w-full items-center justify-between">
-            <h1 className="font-display text-2xl font-bold text-text">Workflows</h1>
+            <div className="flex flex-col gap-1">
+              <h1 className="font-display text-2xl font-bold text-text">Workflows</h1>
+              <p className="font-body text-[13px] text-text-muted">
+                Review active workflows, monitor status, and manage approvals across the organization
+              </p>
+            </div>
             <div className="flex items-center gap-3">
               <button
                 type="button"
+                onClick={retry}
+                aria-label="Refresh workflows"
                 className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
               >
-                <SlidersIcon className="size-3.5" />
-                Filters
+                <RefreshCcwIcon className="size-3.5" />
+                Refresh
               </button>
               <button
                 type="button"
                 onClick={goToAddWorkflow}
+                aria-label="Create Workflow"
                 className="flex items-center gap-2 rounded-full bg-admin-accent px-[18px] py-2.5 font-body text-[13px] font-semibold text-white"
               >
                 <PlusIcon className="size-3.5" />
-                Add Workflow
+                Create Workflow
               </button>
             </div>
           </div>
@@ -58,7 +82,16 @@ export function AdminWorkflowsPage() {
               <EmptyState message="No workflows yet." action={{ label: 'Add Workflow', onClick: goToAddWorkflow }} />
             </div>
           ) : (
-            <WorkflowGroupList workflows={workflows} onDelete={requestDelete} />
+            <WorkflowListTable
+              workflows={workflows}
+              pagedWorkflows={pagedWorkflows}
+              page={page}
+              pageSize={pageSize}
+              totalPages={totalPages}
+              onPreviousPage={goToPreviousPage}
+              onNextPage={goToNextPage}
+              onDelete={requestDelete}
+            />
           )}
         </main>
       </div>

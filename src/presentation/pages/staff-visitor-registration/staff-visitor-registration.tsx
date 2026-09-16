@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { DashboardSidebar } from '../../components/DashboardSidebar'
+import { ReceptionSidebar } from '../../components/ReceptionSidebar'
 import { useAppDependencies } from '../../context/app-dependencies-context'
 import type { Branch } from '../../../domain/entities/branch-schema'
 import type { Building } from '../../../domain/entities/building-schema'
@@ -87,7 +88,7 @@ export function StaffVisitorRegistrationPage() {
 
   return (
     <div className="flex min-h-screen w-full items-stretch bg-bg">
-      <DashboardSidebar activeItem="my-actions" />
+      {currentUser?.isReception ? <ReceptionSidebar activeItem="my-actions" /> : <DashboardSidebar activeItem="my-actions" />}
 
       <main className="flex flex-1 flex-col">
         <RegistrationWorkspaceHeader currentUser={currentUser} onSignOut={signOut} />

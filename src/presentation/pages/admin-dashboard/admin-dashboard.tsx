@@ -2,9 +2,9 @@ import { AdminSidebar } from '../../components/AdminSidebar'
 import { AdminTopBar } from '../../components/AdminTopBar'
 import { CalendarIcon } from '../../components/icons'
 import { LoadingState } from '../../components/ui/LoadingState'
-import { KpiRow } from './Components/KpiRow'
-import { RecentCheckinsCard } from './Components/RecentCheckinsCard'
-import { UpcomingVisitorsCard } from './Components/UpcomingVisitorsCard'
+import { KpiRow } from '../../components/dashboard/KpiRow'
+import { RecentCheckinsCard } from '../../components/dashboard/RecentCheckinsCard'
+import { UpcomingVisitorsCard } from '../../components/dashboard/UpcomingVisitorsCard'
 import { useAdminDashboard } from './hooks/use-admin-dashboard'
 
 function greetingForHour(hour: number): string {

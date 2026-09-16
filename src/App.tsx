@@ -11,7 +11,6 @@ import { StaffLoginPage } from './presentation/pages/staff-login/staff-login'
 import { StaffSsoLoginPage } from './presentation/pages/staff-sso-login/staff-sso-login'
 import { StaffDashboardPage } from './presentation/pages/staff-dashboard/staff-dashboard'
 import { StaffVisitorRegistrationPage } from './presentation/pages/staff-visitor-registration/staff-visitor-registration'
-import { StaffAuditTrailPage } from './presentation/pages/staff-audit-trail/staff-audit-trail'
 import { AdminDashboardPage } from './presentation/pages/admin-dashboard/admin-dashboard'
 import { AdminOrganisationConfigsPage } from './presentation/pages/admin-organisation-configs/admin-organisation-configs'
 import { AdminBranchesPage } from './presentation/pages/admin-branches/admin-branches'
@@ -36,6 +35,8 @@ import { AdminInvitationsPage } from './presentation/pages/admin-invitations/adm
 import { AdminRolesPage } from './presentation/pages/admin-roles/admin-roles'
 import { AdminRolePermissionsFormPage } from './presentation/pages/admin-roles/admin-role-permissions-form'
 import { AdminRoleCreateFormPage } from './presentation/pages/admin-roles/admin-role-create-form'
+import { AdminAuditTrailPage } from './presentation/pages/admin-audit-trail/admin-audit-trail'
+import { ReceptionDashboardPage } from './presentation/pages/reception-dashboard/reception-dashboard'
 
 function RootLayout() {
   return (
@@ -52,7 +53,6 @@ function RootLayout() {
               <Route path="/staff/login" element={<StaffSsoLoginPage />} />
               <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
               <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
-              <Route path="/staff/audit-trail" element={<StaffAuditTrailPage />} />
               <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
               <Route path="/admin/organisation-configs" element={<AdminOrganisationConfigsPage />} />
               <Route path="/admin/branches" element={<AdminBranchesPage />} />
@@ -85,6 +85,8 @@ function RootLayout() {
               <Route path="/admin/roles" element={<AdminRolesPage />} />
               <Route path="/admin/roles/new" element={<AdminRoleCreateFormPage />} />
               <Route path="/admin/roles/:id/edit" element={<AdminRolePermissionsFormPage />} />
+              <Route path="/admin/audit-trail" element={<AdminAuditTrailPage />} />
+              <Route path="/reception/dashboard" element={<ReceptionDashboardPage />} />
             </Routes>
           </PushNotificationsProvider>
         </NotificationCenterProvider>
