@@ -48,6 +48,23 @@ _REPO_ROOT = _find_repo_root()
 _TENANT_ALEMBIC_INI = _REPO_ROOT / "alembic_tenant.ini"
 
 
+class TenantMigrationHeadsAmbiguousError(RuntimeError):
+    """`alembic_tenant`'s revision tree currently has more than one head —
+    a branch was authored against a stale `down_revision` and never
+    reconciled with a merge revision. Raised instead of letting Alembic's
+    own `CommandError` propagate, so callers can detect and report this
+    distinctly from an ordinary "tenant behind head" (`tenant-schema-
+    maintenance` spec's multi-head scenarios).
+    """
+
+    def __init__(self, heads: list[str]) -> None:
+        self.heads = heads
+        super().__init__(
+            "alembic_tenant has multiple migration heads and needs a merge "
+            f"revision: {', '.join(sorted(heads))}"
+        )
+
+
 async def _create_schema(schema_name: str) -> None:
     """A short-lived engine, not the app's shared pooled one — provisioning
     is rare enough that pooling doesn't matter, and reading
@@ -88,9 +105,18 @@ def get_tenant_migration_head() -> str:
     """The current `alembic_tenant` migration head, independent of any
     tenant's applied revision — used to detect drift without needing a
     connection into every tenant schema.
+
+    Raises `TenantMigrationHeadsAmbiguousError` if the revision tree
+    currently has more than one head, checked via `get_heads()` (which
+    never raises) rather than `get_current_head()` (which raises
+    Alembic's own undifferentiated `CommandError` for the same
+    condition).
     """
     cfg = Config(str(_TENANT_ALEMBIC_INI))
-    return ScriptDirectory.from_config(cfg).get_current_head() or "unknown"
+    heads = ScriptDirectory.from_config(cfg).get_heads()
+    if len(heads) > 1:
+        raise TenantMigrationHeadsAmbiguousError(list(heads))
+    return heads[0] if heads else "unknown"
 
 
 async def upgrade_tenant_schema(db: AsyncSession, *, tenant: Tenant) -> str:
@@ -137,6 +163,12 @@ async def upgrade_all_tenant_schemas(db: AsyncSession) -> list[tuple[Tenant, str
     migration itself (both the Alembic call and the seed calls are cheap,
     idempotent no-ops for such a tenant, so nothing is wasted by still
     running them).
+
+    Raises `TenantMigrationHeadsAmbiguousError` (via `get_tenant_migration_head`)
+    before touching any tenant if the `alembic_tenant` revision tree
+    currently has more than one head — no tenant is partially migrated
+    from just one of the unmerged branches (`tenant-schema-maintenance`
+    spec's multi-head scenario).
     """
     head = get_tenant_migration_head()
     tenants = await TenantRepository(db).list(limit=10_000)
@@ -156,6 +188,12 @@ async def find_tenants_behind_head(db: AsyncSession) -> list[Tenant]:
     the current `alembic_tenant` head — read-only, used by the startup drift
     check. A tenant with no recorded version at all (shouldn't happen post
     `create_tenant`, but treated defensively) counts as behind.
+
+    Raises `TenantMigrationHeadsAmbiguousError` (via `get_tenant_migration_head`)
+    if the revision tree currently has more than one head — the caller
+    (`backend_pre_start.py::check_tenant_schema_drift`) is expected to
+    handle this as a distinct, higher-severity condition, not conflate it
+    with an empty "no tenant is behind" result.
     """
     head = get_tenant_migration_head()
     tenants = await TenantRepository(db).list(limit=10_000)

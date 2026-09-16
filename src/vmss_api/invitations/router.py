@@ -1181,8 +1181,16 @@ async def reschedule_invitation(
                 ),
             },
             "after": {
-                "preferredVisitDate": invitation.preferred_visit_date.isoformat(),
-                "preferredVisitTime": invitation.preferred_visit_time.isoformat(),
+                "preferredVisitDate": (
+                    invitation.preferred_visit_date.isoformat()
+                    if invitation.preferred_visit_date
+                    else None
+                ),
+                "preferredVisitTime": (
+                    invitation.preferred_visit_time.isoformat()
+                    if invitation.preferred_visit_time
+                    else None
+                ),
             },
         },
     )

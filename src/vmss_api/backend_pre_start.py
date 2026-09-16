@@ -51,11 +51,26 @@ async def check_tenant_schema_drift() -> None:
     migration doesn't mean the *global* schema/app can't start, only that
     that tenant's own feature surface may error until someone runs
     `scripts/upgrade_all_tenants.py`.
+
+    A migration tree with more than one head is a distinct, higher-severity
+    condition — it blocks *every* tenant from being upgradable, not just
+    one lagging tenant — so it's logged at `ERROR` instead. Caught here
+    explicitly (rather than left to propagate) so `scripts/prestart.sh`'s
+    `set -euo pipefail` doesn't turn this into an unhandled crash that
+    blocks startup entirely, which would defeat the point of this check
+    being a non-blocking warning.
     """
-    from vmss_api.platform.service import find_tenants_behind_head
+    from vmss_api.platform.service import (
+        TenantMigrationHeadsAmbiguousError,
+        find_tenants_behind_head,
+    )
 
     async with AsyncSessionLocal() as db:
-        lagging = await find_tenants_behind_head(db)
+        try:
+            lagging = await find_tenants_behind_head(db)
+        except TenantMigrationHeadsAmbiguousError as exc:
+            logger.error("tenant_migration_heads_ambiguous", heads=exc.heads)
+            return
 
     if not lagging:
         logger.info("tenant_schema_drift_check_clean")

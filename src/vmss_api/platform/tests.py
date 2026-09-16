@@ -1,5 +1,6 @@
 import uuid
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -360,6 +361,33 @@ async def test_upgrade_tenant_schema_corrects_stale_bookkeeping(db_session: Asyn
     finally:
         await db_session.execute(text(f'DROP SCHEMA IF EXISTS "{tenant.schema_name}" CASCADE'))
         await db_session.commit()
+
+
+def test_get_tenant_migration_head_raises_on_multiple_heads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reproduces the `fix-tenant-migration-branch-drift` bug: two
+    `alembic_tenant` migrations authored against the same `down_revision`
+    with no reconciling merge revision leaves the tree with more than one
+    head. That must surface as `TenantMigrationHeadsAmbiguousError`, not
+    Alembic's own undifferentiated `CommandError` (which `get_current_head`
+    would have raised for the same condition).
+    """
+
+    class _FakeScriptDirectory:
+        def get_heads(self) -> list[str]:
+            return ["c1d8e5f9a2b3", "f1a2c7e9b3d5"]
+
+    monkeypatch.setattr(
+        service.ScriptDirectory,
+        "from_config",
+        staticmethod(lambda cfg: _FakeScriptDirectory()),
+    )
+
+    with pytest.raises(service.TenantMigrationHeadsAmbiguousError) as exc_info:
+        service.get_tenant_migration_head()
+
+    assert set(exc_info.value.heads) == {"c1d8e5f9a2b3", "f1a2c7e9b3d5"}
 
 
 async def test_upgrade_tenant_schema_backfills_missing_role_permission(
