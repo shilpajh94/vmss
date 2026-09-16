@@ -27,6 +27,8 @@ export const StaffVisitRequestSchema = z.object({
   // Dynamic, branch-configured keys (form-builder) — see
   // visit-request-schema.ts's matching comment.
   consents: z.record(z.string(), z.boolean()),
+  // See visit-request-schema.ts's matching comment.
+  customFieldValues: z.record(z.string(), z.unknown()).optional(),
 })
 
 export type StaffVisitRequest = z.infer<typeof StaffVisitRequestSchema>

@@ -1,4 +1,5 @@
-import { DynamicField } from '../../../../components/dynamic-fields/DynamicField'
+import { CustomFieldsSection } from '../../../../components/dynamic-fields/CustomFieldsSection'
+import { DynamicField, type DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
 import type { FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { CarriedItemsFormState } from '../../types'
 
@@ -13,9 +14,23 @@ interface CarriedItemsStepProps {
   isLoading: boolean
   value: CarriedItemsFormState
   onChange: (value: CarriedItemsFormState) => void
+  /** Answers for any admin-authored field on this step beyond the seeded
+   * `items`/`item_description` fields (add-generic-custom-field-support) —
+   * shared with Visit Details/custom steps, see `VisitRequestFormState.
+   * customFieldValues`.
+   */
+  customFieldValues: Record<string, DynamicFieldValue>
+  onCustomFieldValuesChange: (value: Record<string, DynamicFieldValue>) => void
 }
 
-export function CarriedItemsStep({ fields, isLoading, value, onChange }: CarriedItemsStepProps) {
+export function CarriedItemsStep({
+  fields,
+  isLoading,
+  value,
+  onChange,
+  customFieldValues,
+  onCustomFieldValuesChange,
+}: CarriedItemsStepProps) {
   if (isLoading) {
     return (
       <div className="flex flex-col gap-4">
@@ -34,23 +49,34 @@ export function CarriedItemsStep({ fields, isLoading, value, onChange }: Carried
         <h3 className="text-h3 text-text">Carried Items</h3>
         <p className="text-body text-text-muted">Please declare any items you will be carrying into the premises for security clearance.</p>
       </div>
-      {fields.map((field) =>
-        field.key === 'items' ? (
-          <DynamicField
-            key={field.id}
-            field={field}
-            value={value.categories}
-            onChange={(fieldValue) => onChange({ ...value, categories: Array.isArray(fieldValue) ? fieldValue : [] })}
-          />
-        ) : (
-          <DynamicField
-            key={field.id}
-            field={field}
-            value={value.description}
-            onChange={(fieldValue) => onChange({ ...value, description: typeof fieldValue === 'string' ? fieldValue : '' })}
-          />
-        ),
-      )}
+      {fields.map((field) => {
+        if (field.key === 'items') {
+          return (
+            <DynamicField
+              key={field.id}
+              field={field}
+              value={value.categories}
+              onChange={(fieldValue) => onChange({ ...value, categories: Array.isArray(fieldValue) ? fieldValue : [] })}
+            />
+          )
+        }
+        if (field.key === 'item_description') {
+          return (
+            <DynamicField
+              key={field.id}
+              field={field}
+              value={value.description}
+              onChange={(fieldValue) => onChange({ ...value, description: typeof fieldValue === 'string' ? fieldValue : '' })}
+            />
+          )
+        }
+        return null
+      })}
+      <CustomFieldsSection
+        fields={fields.filter((field) => !field.isSystem)}
+        value={customFieldValues}
+        onChange={onCustomFieldValuesChange}
+      />
       {fields.length === 0 && <p className="text-body text-text-muted">No details are required for this step.</p>}
     </div>
   )

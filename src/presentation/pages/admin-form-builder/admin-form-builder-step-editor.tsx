@@ -30,6 +30,9 @@ export function AdminFormBuilderStepEditorPage() {
     createField,
     reorderFields,
     goBack,
+    isPublishing,
+    publish,
+    hasUnpublishedChanges,
   } = useAdminFormBuilderStepEditor()
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
@@ -59,7 +62,21 @@ export function AdminFormBuilderStepEditorPage() {
             ← Back to Form Builder
           </button>
         </div>
+        <button
+          type="button"
+          onClick={() => void publish()}
+          disabled={isPublishing}
+          className="rounded-full bg-admin-accent px-[18px] py-2.5 font-body text-[13px] font-semibold text-white disabled:opacity-60"
+        >
+          {isPublishing ? 'Publishing…' : 'Publish Changes'}
+        </button>
       </div>
+
+      {hasUnpublishedChanges && (
+        <p className="rounded-lg bg-warning/15 px-4 py-2 font-body text-[13px] font-medium text-warning">
+          You have unpublished changes. Visitors won't see them until you publish.
+        </p>
+      )}
 
       {errorMessage ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">

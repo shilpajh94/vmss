@@ -83,9 +83,23 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
 
   return (
     <div className="flex w-full flex-col gap-5 rounded-2xl border border-border bg-surface p-6">
-      <div>
-        <h2 className="font-display text-lg font-bold text-text">Field Properties</h2>
-        <p className="font-body text-sm text-text-muted">Configuring "{field.label}"</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="font-display text-lg font-bold text-text">Field Properties</h2>
+          <p className="font-body text-sm text-text-muted">Configuring "{field.label}"</p>
+        </div>
+        {field.isLocked ? (
+          <span className="shrink-0 rounded-full bg-neutral-subtle px-3 py-1 font-body text-[11px] font-bold tracking-wide text-text-faint uppercase">
+            Locked
+          </span>
+        ) : (
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="font-body text-[11px] font-bold tracking-wide text-text-faint uppercase">
+              {isActive ? 'Active' : 'Inactive'}
+            </span>
+            <ToggleSwitch checked={isActive} onChange={setIsActive} label="" />
+          </div>
+        )}
       </div>
 
       <TextField label="Field Label" value={label} onChange={setLabel} required disabled={field.isLocked} />
@@ -105,7 +119,6 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
         {field.isLocked && (
           <p className="font-body text-xs text-text-muted">This field is locked and always active/required.</p>
         )}
-        {!field.isLocked && <ToggleSwitch checked={isActive} onChange={setIsActive} label="Active" />}
         <div className="grid grid-cols-2 gap-3">
           <TextField label="Min Length" value={minLength} onChange={setMinLength} type="number" />
           <TextField label="Max Length" value={maxLength} onChange={setMaxLength} type="number" />

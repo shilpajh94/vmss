@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import {
   CalendarIcon,
   CheckIcon,
@@ -25,18 +26,26 @@ interface StepCardProps {
   onToggleActive: () => void
   onEditFields: () => void
   onDelete: () => void
+  /** Rendered next to the step icon only for steps a caller has made
+   * draggable (`SortableStepCard`) — locked steps (first-two/last) are
+   * never passed one, so they render with no drag affordance at all.
+   */
+  dragHandle?: ReactNode
 }
 
-export function StepCard({ step, order, onToggleActive, onEditFields, onDelete }: StepCardProps) {
+export function StepCard({ step, order, onToggleActive, onEditFields, onDelete, dragHandle }: StepCardProps) {
   const Icon = (step.icon && STEP_ICONS[step.icon]) || PencilIcon
   const fieldCount = step.fields.length
 
   return (
     <div className="flex flex-col gap-4 rounded-2xl border border-border bg-surface p-5">
       <div className="flex items-start justify-between">
-        <span className="flex size-9 items-center justify-center rounded-lg bg-bg text-admin-accent">
-          <Icon className="size-4.5" />
-        </span>
+        <div className="flex items-center gap-2">
+          {dragHandle}
+          <span className="flex size-9 items-center justify-center rounded-lg bg-bg text-admin-accent">
+            <Icon className="size-4.5" />
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           <span className="font-body text-[11px] font-bold tracking-wide text-text-faint uppercase">
             {step.isActive ? 'Active' : 'Inactive'}

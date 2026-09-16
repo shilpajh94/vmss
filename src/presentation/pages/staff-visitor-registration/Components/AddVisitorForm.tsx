@@ -1,7 +1,10 @@
 import { useState } from 'react'
+import { CustomFieldsSection } from '../../../components/dynamic-fields/CustomFieldsSection'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
+import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visitor-request-wizard'
+import type { FormField } from '../../../../domain/entities/form-builder-schema'
 import { createEmptyStaffVisitorFormEntry, type StaffVisitorFormEntry } from '../types'
 import { ID_PROOF_ALLOWED_TYPES, ID_PROOF_OPTIONS } from './constants'
 import { InlineFileUpload } from './InlineFileUpload'
@@ -12,14 +15,30 @@ interface AddVisitorFormProps {
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
   onAdd: (visitor: StaffVisitorFormEntry) => void
   onCancel: () => void
+  /** Branch-configured (form-builder) active/required state for ID proof —
+   * see `use-visitor-request-wizard.ts`.
+   */
+  visitorInfoFields: VisitorInfoFieldState
+  /** Admin-authored (non-system) Visitor Info fields
+   * (add-generic-custom-field-support). */
+  customFields: FormField[]
 }
 
-export function AddVisitorForm({ initialValue, uploadFile, getFilePreviewUrl, onAdd, onCancel }: AddVisitorFormProps) {
+export function AddVisitorForm({
+  initialValue,
+  uploadFile,
+  getFilePreviewUrl,
+  onAdd,
+  onCancel,
+  visitorInfoFields,
+  customFields,
+}: AddVisitorFormProps) {
   const [draft, setDraft] = useState<StaffVisitorFormEntry>(initialValue ?? createEmptyStaffVisitorFormEntry())
   const [error, setError] = useState<string | undefined>(undefined)
 
   const handleAdd = () => {
-    if (!draft.fullName || !draft.idProofType) {
+    const idProofRequired = visitorInfoFields.idProofActive && visitorInfoFields.idProofRequired
+    if (!draft.fullName || (idProofRequired && !draft.idProofType)) {
       setError('Full name and ID proof type are required.')
       return
     }
@@ -31,7 +50,7 @@ export function AddVisitorForm({ initialValue, uploadFile, getFilePreviewUrl, on
       setError('Enter a valid phone number.')
       return
     }
-    if (!draft.idProofFileRef) {
+    if (idProofRequired && !draft.idProofFileRef) {
       setError('ID proof file is required.')
       return
     }
@@ -50,25 +69,35 @@ export function AddVisitorForm({ initialValue, uploadFile, getFilePreviewUrl, on
       </div>
 
       <div className="flex items-end gap-3">
-        <div className="flex-1">
-          <SelectField
-            label="ID Proof Type"
-            placeholder="Select ID type"
-            options={ID_PROOF_OPTIONS}
-            value={draft.idProofType}
-            onChange={(idProofType) => setDraft({ ...draft, idProofType })}
-          />
-        </div>
-        <InlineFileUpload
-          label="Upload ID File"
-          allowedTypes={ID_PROOF_ALLOWED_TYPES}
-          fileName={draft.idProofFileName}
-          previewUrl={getFilePreviewUrl?.(draft.idProofFileRef)}
-          onUpload={uploadFile}
-          onFileRefChange={(idProofFileRef, idProofFileName) => setDraft({ ...draft, idProofFileRef, idProofFileName })}
-          required
-        />
+        {visitorInfoFields.idProofActive && (
+          <>
+            <div className="flex-1">
+              <SelectField
+                label="ID Proof Type"
+                placeholder="Select ID type"
+                options={ID_PROOF_OPTIONS}
+                value={draft.idProofType}
+                onChange={(idProofType) => setDraft({ ...draft, idProofType })}
+              />
+            </div>
+            <InlineFileUpload
+              label="Upload ID File"
+              allowedTypes={ID_PROOF_ALLOWED_TYPES}
+              fileName={draft.idProofFileName}
+              previewUrl={getFilePreviewUrl?.(draft.idProofFileRef)}
+              onUpload={uploadFile}
+              onFileRefChange={(idProofFileRef, idProofFileName) => setDraft({ ...draft, idProofFileRef, idProofFileName })}
+              required
+            />
+          </>
+        )}
       </div>
+
+      <CustomFieldsSection
+        fields={customFields}
+        value={draft.customFieldValues}
+        onChange={(customFieldValues) => setDraft({ ...draft, customFieldValues })}
+      />
 
       {error && <p className="text-caption text-danger">{error}</p>}
 

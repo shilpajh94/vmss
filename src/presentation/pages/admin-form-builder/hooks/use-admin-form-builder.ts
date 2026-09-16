@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import type { FormStep } from '../../../../domain/entities/form-builder-schema'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { useFormBuilderPublishState } from './use-form-builder-publish-state'
 
 /** Sentinel used in the workspace `<select>` for the tenant-wide default
  * scope — `undefined` (a real branch id otherwise) is what every
@@ -21,6 +22,7 @@ export function useAdminFormBuilder() {
     createFormStepUseCase,
     updateFormStepUseCase,
     deleteFormStepUseCase,
+    reorderFormStepsUseCase,
     publishFormConfigUseCase,
   } = useAppDependencies()
   const toast = useToast()
@@ -34,6 +36,7 @@ export function useAdminFormBuilder() {
   const [isPublishing, setIsPublishing] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<FormStep | undefined>(undefined)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const { hasUnpublishedChanges, markDirty, markPublished } = useFormBuilderPublishState(selectedBranchId)
 
   const loadBranches = useCallback(async () => {
     try {
@@ -91,6 +94,7 @@ export function useAdminFormBuilder() {
       try {
         const updated = await updateFormStepUseCase.execute(step.id, { isActive: !step.isActive }, selectedBranchId)
         setSteps((current) => current.map((s) => (s.id === updated.id ? updated : s)))
+        markDirty()
       } catch {
         toast.error(
           step.isLocked
@@ -99,7 +103,7 @@ export function useAdminFormBuilder() {
         )
       }
     },
-    [updateFormStepUseCase, selectedBranchId, toast],
+    [updateFormStepUseCase, selectedBranchId, toast, markDirty],
   )
 
   const requestDeleteStep = useCallback((step: FormStep) => setPendingDelete(step), [])
@@ -110,13 +114,14 @@ export function useAdminFormBuilder() {
     try {
       await deleteFormStepUseCase.execute(pendingDelete.id, selectedBranchId)
       setSteps((current) => current.filter((s) => s.id !== pendingDelete.id))
+      markDirty()
       toast.success('Step removed.')
     } catch {
       toast.error('Something went wrong removing the step. Please try again.')
     } finally {
       setPendingDelete(undefined)
     }
-  }, [pendingDelete, deleteFormStepUseCase, selectedBranchId, toast])
+  }, [pendingDelete, deleteFormStepUseCase, selectedBranchId, toast, markDirty])
 
   const openCreateStep = useCallback(() => setIsCreateOpen(true), [])
   const closeCreateStep = useCallback(() => setIsCreateOpen(false), [])
@@ -132,13 +137,33 @@ export function useAdminFormBuilder() {
       try {
         const created = await createFormStepUseCase.execute({ key, name: name.trim() }, selectedBranchId)
         setSteps((current) => [...current, created].sort((a, b) => a.orderIndex - b.orderIndex))
+        markDirty()
         toast.success('Registration step created.')
         setIsCreateOpen(false)
       } catch {
         toast.error('Something went wrong creating the step. Please try again.')
       }
     },
-    [createFormStepUseCase, selectedBranchId, toast],
+    [createFormStepUseCase, selectedBranchId, toast, markDirty],
+  )
+
+  const reorderSteps = useCallback(
+    async (orderedIds: string[]) => {
+      const previous = steps
+      const reordered = orderedIds
+        .map((id) => steps.find((s) => s.id === id))
+        .filter((s): s is FormStep => s !== undefined)
+      setSteps(reordered)
+      try {
+        const updated = await reorderFormStepsUseCase.execute(orderedIds, selectedBranchId)
+        setSteps([...updated].sort((a, b) => a.orderIndex - b.orderIndex))
+        markDirty()
+      } catch {
+        setSteps(previous)
+        toast.error('Something went wrong reordering steps. Please try again.')
+      }
+    },
+    [steps, reorderFormStepsUseCase, selectedBranchId, toast, markDirty],
   )
 
   const goToEditFields = useCallback(
@@ -153,13 +178,14 @@ export function useAdminFormBuilder() {
     setIsPublishing(true)
     try {
       const result = await publishFormConfigUseCase.execute(selectedBranchId)
+      markPublished()
       toast.success(`Published — now live as v${result.version}.`)
     } catch {
       toast.error('Something went wrong publishing. Please try again.')
     } finally {
       setIsPublishing(false)
     }
-  }, [publishFormConfigUseCase, selectedBranchId, toast])
+  }, [publishFormConfigUseCase, selectedBranchId, toast, markPublished])
 
   return {
     currentUser,
@@ -179,8 +205,10 @@ export function useAdminFormBuilder() {
     openCreateStep,
     closeCreateStep,
     createStep,
+    reorderSteps,
     goToEditFields,
     isPublishing,
     publish,
+    hasUnpublishedChanges,
   }
 }

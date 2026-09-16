@@ -53,3 +53,13 @@ export function useEffectiveForm(branchId: string | undefined): {
 export function findStepFields(steps: FormStep[], stepKey: string): FormField[] {
   return steps.find((step) => step.key === stepKey)?.fields ?? []
 }
+
+/** A single toggleable field's active/required state, per its presence in
+ * the effective form. `publish()`'s snapshot already excludes inactive
+ * fields entirely (`form_builder/service.py`), so "absent" and "inactive"
+ * are the same fact — mirrors how `form_builder/validation.py::is_field_required`
+ * reads it server-side.
+ */
+export function findField(steps: FormStep[], stepKey: string, fieldKey: string): FormField | undefined {
+  return findStepFields(steps, stepKey).find((field) => field.key === fieldKey)
+}

@@ -9,6 +9,7 @@ import type {
   FormStep,
 } from '../../../../domain/entities/form-builder-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { useFormBuilderPublishState } from './use-form-builder-publish-state'
 
 export function useAdminFormBuilderStepEditor() {
   const navigate = useNavigate()
@@ -24,6 +25,7 @@ export function useAdminFormBuilderStepEditor() {
     updateFormFieldUseCase,
     deleteFormFieldUseCase,
     reorderFormFieldsUseCase,
+    publishFormConfigUseCase,
   } = useAppDependencies()
   const toast = useToast()
 
@@ -35,6 +37,8 @@ export function useAdminFormBuilderStepEditor() {
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
   const [isAddFieldOpen, setIsAddFieldOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<FormField | undefined>(undefined)
+  const [isPublishing, setIsPublishing] = useState(false)
+  const { hasUnpublishedChanges, markDirty, markPublished } = useFormBuilderPublishState(branchId)
 
   const load = useCallback(async () => {
     if (!stepId) return
@@ -78,11 +82,12 @@ export function useAdminFormBuilderStepEditor() {
       try {
         const updated = await updateFormFieldUseCase.execute(field.id, { isRequired: !field.isRequired }, branchId)
         setFields((current) => current.map((f) => (f.id === updated.id ? updated : f)))
+        markDirty()
       } catch {
         toast.error('Something went wrong updating the field. Please try again.')
       }
     },
-    [updateFormFieldUseCase, branchId, toast],
+    [updateFormFieldUseCase, branchId, toast, markDirty],
   )
 
   const saveFieldProperties = useCallback(
@@ -90,12 +95,13 @@ export function useAdminFormBuilderStepEditor() {
       try {
         const updated = await updateFormFieldUseCase.execute(fieldId, input, branchId)
         setFields((current) => current.map((f) => (f.id === updated.id ? updated : f)))
-        toast.success('Field properties saved.')
+        markDirty()
+        toast.success('Field properties saved to draft. Publish to update the visitor form.')
       } catch {
         toast.error('Something went wrong saving this field. Please check for a conflicting conditional rule.')
       }
     },
-    [updateFormFieldUseCase, branchId, toast],
+    [updateFormFieldUseCase, branchId, toast, markDirty],
   )
 
   const requestDeleteField = useCallback((field: FormField) => setPendingDelete(field), [])
@@ -107,13 +113,14 @@ export function useAdminFormBuilderStepEditor() {
       await deleteFormFieldUseCase.execute(pendingDelete.id, branchId)
       setFields((current) => current.filter((f) => f.id !== pendingDelete.id))
       setSelectedFieldId((current) => (current === pendingDelete.id ? undefined : current))
-      toast.success('Field removed.')
+      markDirty()
+      toast.success('Field removed from draft. Publish to update the visitor form.')
     } catch {
       toast.error('Something went wrong removing the field. Please try again.')
     } finally {
       setPendingDelete(undefined)
     }
-  }, [pendingDelete, deleteFormFieldUseCase, branchId, toast])
+  }, [pendingDelete, deleteFormFieldUseCase, branchId, toast, markDirty])
 
   const openAddField = useCallback(() => setIsAddFieldOpen(true), [])
   const closeAddField = useCallback(() => setIsAddFieldOpen(false), [])
@@ -125,13 +132,14 @@ export function useAdminFormBuilderStepEditor() {
         const created = await createFormFieldUseCase.execute(stepId, input, branchId)
         setFields((current) => [...current, created].sort((a, b) => a.orderIndex - b.orderIndex))
         setSelectedFieldId(created.id)
-        toast.success('Field created.')
+        markDirty()
+        toast.success('Field created in draft. Publish to update the visitor form.')
         setIsAddFieldOpen(false)
       } catch {
         toast.error('Something went wrong creating the field. Please try again.')
       }
     },
-    [stepId, createFormFieldUseCase, branchId, toast],
+    [stepId, createFormFieldUseCase, branchId, toast, markDirty],
   )
 
   const reorderFields = useCallback(
@@ -145,13 +153,27 @@ export function useAdminFormBuilderStepEditor() {
       try {
         const updated = await reorderFormFieldsUseCase.execute(stepId, orderedIds, branchId)
         setFields([...updated].sort((a, b) => a.orderIndex - b.orderIndex))
+        markDirty()
       } catch {
         setFields(previous)
         toast.error('Something went wrong reordering fields. Please try again.')
       }
     },
-    [stepId, fields, reorderFormFieldsUseCase, branchId, toast],
+    [stepId, fields, reorderFormFieldsUseCase, branchId, toast, markDirty],
   )
+
+  const publish = useCallback(async () => {
+    setIsPublishing(true)
+    try {
+      const result = await publishFormConfigUseCase.execute(branchId)
+      markPublished()
+      toast.success(`Published — now live as v${result.version}.`)
+    } catch {
+      toast.error('Something went wrong publishing. Please try again.')
+    } finally {
+      setIsPublishing(false)
+    }
+  }, [publishFormConfigUseCase, branchId, toast, markPublished])
 
   const goBack = useCallback(() => navigate('/admin/form-builder'), [navigate])
 
@@ -178,5 +200,8 @@ export function useAdminFormBuilderStepEditor() {
     createField,
     reorderFields,
     goBack,
+    isPublishing,
+    publish,
+    hasUnpublishedChanges,
   }
 }

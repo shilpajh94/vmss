@@ -1,6 +1,6 @@
 import type { Vehicle } from '../../../domain/entities/vehicle-schema'
 import type { StaffVisitRequest } from '../../../domain/entities/staff-visit-request-schema'
-import type { CarriedItemsFormState, ConsentFormState, CustomStepAnswers, RegistrationType, VisitInfoFormState } from '../visitor-request/types'
+import type { CarriedItemsFormState, ConsentFormState, CustomFieldValues, RegistrationType, VisitInfoFormState } from '../visitor-request/types'
 
 export interface StaffVisitorFormEntry {
   fullName: string
@@ -13,6 +13,8 @@ export interface StaffVisitorFormEntry {
   idProofFileName?: string
   profileImageFileRef?: string
   profileImageFileName?: string
+  // See visitor-request/types.ts's `VisitorFormEntry.customFieldValues`.
+  customFieldValues: CustomFieldValues
 }
 
 export function createEmptyStaffVisitorFormEntry(): StaffVisitorFormEntry {
@@ -24,6 +26,7 @@ export function createEmptyStaffVisitorFormEntry(): StaffVisitorFormEntry {
     // Matches the Preferred Contact Method toggle's default visual selection.
     preferredContactMethod: 'email',
     idProofType: '',
+    customFieldValues: {},
   }
 }
 
@@ -35,7 +38,7 @@ export interface StaffVisitRequestFormState {
   carriedItems: CarriedItemsFormState
   vehicles: Vehicle[]
   consent: ConsentFormState
-  customStepAnswers: CustomStepAnswers
+  customFieldValues: CustomFieldValues
 }
 
 export function createInitialStaffFormState(): StaffVisitRequestFormState {
@@ -55,7 +58,7 @@ export function createInitialStaffFormState(): StaffVisitRequestFormState {
     carriedItems: { categories: [], description: '' },
     vehicles: [],
     consent: {},
-    customStepAnswers: {},
+    customFieldValues: {},
   }
 }
 
@@ -66,6 +69,7 @@ function toStaffVisitor(entry: StaffVisitorFormEntry) {
     phone: entry.phone,
     preferredContactMethod: entry.preferredContactMethod,
     idProofType: entry.idProofType,
+    customFieldValues: entry.customFieldValues,
   }
 }
 
@@ -94,5 +98,6 @@ export function toStaffVisitRequest(formState: StaffVisitRequestFormState): Staf
     },
     vehicles: formState.vehicles,
     consents: formState.consent,
+    customFieldValues: formState.customFieldValues,
   }
 }

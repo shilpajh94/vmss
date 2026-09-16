@@ -10,9 +10,10 @@ interface GenericConfiguredStepProps {
 /** Renders a registration step whose `key` isn't one of the wizard's six
  * built-in steps — a custom step an admin created in the Form Builder — from
  * its configured fields, so it no longer silently disappears from the
- * wizard (fix-wizard-inactive-steps). Answers are kept in a keyed bag on
- * the wizard's form state and aren't part of the submission wire contract
- * yet (see proposal.md's Impact — no backend/wire-contract change here).
+ * wizard (fix-wizard-inactive-steps). `value`/`onChange` are the shared
+ * invitation-level `customFieldValues` bucket (`VisitRequestFormState.
+ * customFieldValues`) — answers are part of the submission wire contract
+ * (add-generic-custom-field-support), not held in step-local state only.
  */
 export function GenericConfiguredStep({ step, value, onChange }: GenericConfiguredStepProps) {
   return (

@@ -26,6 +26,10 @@ export interface VisitorFormEntry {
   idProofFileName?: string
   profileImageFileRef?: string
   profileImageFileName?: string
+  // This visitor's own answers for any admin-authored Visitor Info field
+  // (add-generic-custom-field-support) — independent of every other
+  // visitor's answer for the same field.
+  customFieldValues: Record<string, DynamicFieldValue>
 }
 
 export function createEmptyVisitorFormEntry(): VisitorFormEntry {
@@ -40,6 +44,7 @@ export function createEmptyVisitorFormEntry(): VisitorFormEntry {
     // validation with no visible error and makes "Next" appear dead.
     preferredContactMethod: 'email',
     idProofType: '',
+    customFieldValues: {},
   }
 }
 
@@ -64,10 +69,16 @@ export interface CarriedItemsFormState {
 // shape. See ConsentStep, which renders one checkbox per active field.
 export type ConsentFormState = Record<string, boolean>
 
-// Answers for a custom (non-canonical) step from the branch's Form Builder
-// config, keyed by step key then field key. Not part of the submission wire
-// contract yet — see GenericConfiguredStep's comment.
-export type CustomStepAnswers = Record<string, Record<string, DynamicFieldValue>>
+// Flat, keyed by field key — answers for every admin-authored field whose
+// step has no per-entity structure of its own: Visit Details, Carried
+// Items (beyond its seeded `items`/`item_description` fields), and any
+// custom step (add-generic-custom-field-support). One shared bucket
+// because the wire contract's `customFieldValues` is itself one flat map
+// at the request's top level; Visitor Info/Vehicle Info fields go on
+// `VisitorFormEntry`/`Vehicle` instead, since those are per-visitor/
+// per-vehicle. Consent Agreement fields are excluded — they flow through
+// `consent` below regardless of whether they're seeded or admin-authored.
+export type CustomFieldValues = Record<string, DynamicFieldValue>
 
 export interface VisitRequestFormState {
   registrationType: RegistrationType
@@ -77,7 +88,7 @@ export interface VisitRequestFormState {
   carriedItems: CarriedItemsFormState
   vehicles: Vehicle[]
   consent: ConsentFormState
-  customStepAnswers: CustomStepAnswers
+  customFieldValues: CustomFieldValues
 }
 
 export function createInitialFormState(): VisitRequestFormState {
@@ -97,7 +108,7 @@ export function createInitialFormState(): VisitRequestFormState {
     carriedItems: { categories: [], description: '' },
     vehicles: [],
     consent: {},
-    customStepAnswers: {},
+    customFieldValues: {},
   }
 }
 
@@ -108,6 +119,7 @@ export function toVisitor(entry: VisitorFormEntry): Visitor {
     phone: entry.phone,
     preferredContactMethod: entry.preferredContactMethod,
     idProofType: entry.idProofType,
+    customFieldValues: entry.customFieldValues,
   }
 }
 
@@ -140,5 +152,6 @@ export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
     },
     vehicles: formState.vehicles,
     consents: formState.consent,
+    customFieldValues: formState.customFieldValues,
   }
 }

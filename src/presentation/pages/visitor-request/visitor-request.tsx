@@ -50,6 +50,12 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     formConfigError,
     carriedItemsFields,
     consentFields,
+    visitorInfoFields,
+    additionalNotesActive,
+    vehicleInfoFields,
+    visitorInfoCustomFields,
+    visitDetailsCustomFields,
+    vehicleInfoCustomFields,
   } = useVisitorRequestWizard(initial, branches)
 
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
@@ -113,6 +119,8 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             errors={errors}
             visitorCategoriesState={visitorCategoriesState}
             onRetryVisitorCategories={loadVisitorCategories}
+            visitorInfoFields={visitorInfoFields}
+            customFields={visitorInfoCustomFields}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'visit_details' && (
@@ -122,6 +130,10 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             errors={errors}
             branches={branches}
             buildings={buildings}
+            additionalNotesActive={additionalNotesActive}
+            customFields={visitDetailsCustomFields}
+            customFieldValues={formState.customFieldValues}
+            onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'carried_items' && (
@@ -130,10 +142,18 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             isLoading={false}
             value={formState.carriedItems}
             onChange={(carriedItems) => setFormState({ ...formState, carriedItems })}
+            customFieldValues={formState.customFieldValues}
+            onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'vehicle_info' && (
-          <VehicleInfoStep vehicles={formState.vehicles} onChange={(vehicles) => setFormState({ ...formState, vehicles })} errors={errors} />
+          <VehicleInfoStep
+            vehicles={formState.vehicles}
+            onChange={(vehicles) => setFormState({ ...formState, vehicles })}
+            errors={errors}
+            vehicleInfoFields={vehicleInfoFields}
+            customFields={vehicleInfoCustomFields}
+          />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'consent_agreement' && (
           <ConsentStep
@@ -160,13 +180,8 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
         {!isFormConfigLoading && !formConfigError && activeStep && !isCanonicalStepKey(activeStep.key) && (
           <GenericConfiguredStep
             step={activeStep}
-            value={formState.customStepAnswers[activeStep.key] ?? {}}
-            onChange={(answers) =>
-              setFormState({
-                ...formState,
-                customStepAnswers: { ...formState.customStepAnswers, [activeStep.key]: answers },
-              })
-            }
+            value={formState.customFieldValues}
+            onChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
           />
         )}
 
