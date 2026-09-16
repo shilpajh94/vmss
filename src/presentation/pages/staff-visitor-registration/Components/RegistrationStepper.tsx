@@ -6,8 +6,8 @@ interface RegistrationStepperProps {
 
 export function RegistrationStepper({ steps, currentStep, onStepSelect }: RegistrationStepperProps) {
   return (
-    <div className="w-full overflow-x-auto">
-      <div className="flex min-w-max items-center gap-3">
+    <div className="w-full">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {steps.map((label, index) => {
           const isComplete = index < currentStep
 
