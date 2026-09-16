@@ -114,6 +114,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:reschedule",
         "invitations:extend",
         "invitations:edit",
+        "roles:view",
     ],
     # Exists only so the catalog literally lists all five names API-02
     # requires. Visitors never authenticate through this JWT/RBAC system

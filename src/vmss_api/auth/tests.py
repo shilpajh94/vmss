@@ -1096,6 +1096,74 @@ async def test_list_employees_with_branch_header_excludes_employee_with_no_depar
     assert "Dana Employee" not in names
 
 
+async def _make_role_holder_no_department(
+    db_session: AsyncSession, tenant: Tenant, role_name: str, branch_id: uuid.UUID | None
+) -> User:
+    role = RoleFactory.build(id=uuid.uuid4(), name=role_name, permissions=[])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"{role_name}-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name=f"{role_name.title()} No Department",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+async def test_list_employees_with_branch_header_includes_departmentless_matching_branch_role(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, user: User, branch: Branch
+) -> None:
+    """A user with no `department_id` still appears in a branch-scoped
+    listing when their own `UserBranchRole` is scoped to that exact branch
+    — the RBAC branch grant is itself sufficient to place them there, not
+    only their (optional) department. Complements
+    `test_list_employees_with_branch_header_excludes_employee_with_no_department`,
+    whose departmentless user has no branch-scoped role grant either and so
+    is still correctly excluded.
+    """
+    role_holder = await _make_role_holder_no_department(db_session, tenant, "host", branch.id)
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/auth/employees",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 200
+    emails = {e["email"] for e in response.json()["data"]}
+    assert role_holder.email in emails
+
+
+async def test_list_employees_with_branch_header_includes_departmentless_all_branch_role_holder(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, user: User, branch: Branch
+) -> None:
+    """An "All Branch" (`branch_id=None`, company-wide) role grant makes a
+    departmentless user visible in *every* branch-scoped listing, not just
+    an unscoped one — the same "company-wide means every branch" rule
+    `auth/models.py::User.has_branch_access` already applies to permission
+    checks now also applies to this listing. Closes the gap where an
+    All-Branch host was invisible from a `?role=host&X-Branch-ID=...`
+    delegate-candidate lookup.
+    """
+    role_holder = await _make_role_holder_no_department(db_session, tenant, "host", None)
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/auth/employees",
+        params={"role": "host"},
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 200
+    emails = {e["email"] for e in response.json()["data"]}
+    assert role_holder.email in emails
+
+
 async def _branch_scoped_employee_viewer(
     db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
 ) -> User:

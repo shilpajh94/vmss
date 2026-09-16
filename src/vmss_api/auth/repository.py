@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import BranchScope, SortOrder
-from vmss_api.org_structure.models import Building, Department, Floor
+from vmss_api.org_structure.models import Department
 
 
 class UserRepository(TenantScopedRepository[User]):
@@ -123,28 +123,51 @@ class UserRepository(TenantScopedRepository[User]):
         through `sync_employee_directory`/`create_employee` — an Admin,
         Security, or Reception account created directly (no
         `employee_code`) is still a real person who belongs in this
-        directory. Outer-joins `Department -> Floor -> Building` to resolve
-        each user's branch for scoping
-        (`org_structure/deps.py::public_branch_scope` — this endpoint is
-        public, so "scope" is just `X-Branch-ID` or every branch, not a
-        caller's authorized branches): a user with no `department_id` set
-        still appears in an unscoped ("all branches") listing. They only
-        drop out of a *branch-scoped* view (`branch_scope != "all"`), since
-        there's no department/floor/building chain to resolve them to that
-        specific branch — see `org_structure/router.py`'s module docstring
-        for the equivalent pattern applied to
-        Building/Floor/Department/Desk/Gate.
+        directory.
+
+        A user is in a *branch-scoped* view (`branch_scope != "all"`) if
+        either: their `Department` resolves to a branch in scope (outer-
+        joined and filtered directly on `Department.branch_id` — see
+        `org_structure/repository.py::DepartmentRepository.list_page` for
+        the equivalent direct-column pattern, a department is scoped to a
+        branch directly, not only via its (now optional) floor), OR they
+        hold a `UserBranchRole` scoped to one of those branches, or scoped
+        company-wide (`branch_id IS NULL` — "All Branch", e.g. a roaming
+        host/security account with no fixed department). Without the
+        latter, an All-Branch role holder with no department at that
+        specific branch (or no department at all) was invisible from any
+        `X-Branch-ID`-scoped call — including a `role=host` delegate-
+        candidate lookup — even though their RBAC grant plainly covers
+        every branch (`auth/models.py::User.has_branch_access` already
+        treats a `None` `branch_id` as "every branch"; this listing now
+        agrees). A user with no department AND no branch-scoped role grant
+        at all still only appears in the unscoped ("all branches") listing,
+        same as before.
 
         `role` matches via a correlated `EXISTS` against `UserBranchRole`/
         `Role` rather than a join, so a user holding that role at more than
         one branch is never duplicated in the page or double-counted in
-        `total` (query-performance.md §1).
+        `total` (query-performance.md §1) — the new branch-scope clause
+        uses the same `EXISTS` shape for the same reason.
         """
         column: Any = {"name": User.full_name, "created_at": User.created_at}[sort_by]
         order = column.desc() if sort_order == SortOrder.desc else column.asc()
         conditions: list[Any] = [User.deleted_at.is_(None)]
         if branch_scope != "all":
-            conditions.append(Building.branch_id.in_(branch_scope))
+            conditions.append(
+                or_(
+                    Department.branch_id.in_(branch_scope),
+                    select(UserBranchRole.id)
+                    .where(
+                        UserBranchRole.user_id == User.id,
+                        or_(
+                            UserBranchRole.branch_id.in_(branch_scope),
+                            UserBranchRole.branch_id.is_(None),
+                        ),
+                    )
+                    .exists(),
+                )
+            )
         if department_id is not None:
             conditions.append(User.department_id == department_id)
         if email is not None:
@@ -157,19 +180,12 @@ class UserRepository(TenantScopedRepository[User]):
                 .exists()
             )
 
-        joined_from = (
-            select(User)
-            .outerjoin(Department, User.department_id == Department.id)
-            .outerjoin(Floor, Department.floor_id == Floor.id)
-            .outerjoin(Building, Floor.building_id == Building.id)
-        )
+        joined_from = select(User).outerjoin(Department, User.department_id == Department.id)
 
         count_stmt = (
             select(func.count())
             .select_from(User)
             .outerjoin(Department, User.department_id == Department.id)
-            .outerjoin(Floor, Department.floor_id == Floor.id)
-            .outerjoin(Building, Floor.building_id == Building.id)
             .where(*conditions)
         )
         total = (await self.session.execute(count_stmt)).scalar_one()
