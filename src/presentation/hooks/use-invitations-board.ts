@@ -267,6 +267,16 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         .catch((error: unknown) => {
           console.error('Failed to load workflow rules for visitor category', error)
           delete workflowRulesPromiseCacheRef.current[visitorCategoryId]
+          // A role without list-rules permission (e.g. host/reception hitting
+          // the admin-only `approval-workflow-rules` 403, see memory) would
+          // otherwise leave `workflowRulesByCategory[id]` `undefined` forever,
+          // which `VisitRequestCard`'s `workflowRulesLoaded` treats as
+          // "still loading" — permanently disabling drag-to-approve with no
+          // explanation. Record the failed attempt as an empty result (unless
+          // a prior successful load already populated real rules) so the UI
+          // falls back to the step's own raw `stepOrder`/`totalSteps`
+          // snapshot instead of blocking approval entirely.
+          setWorkflowRulesByCategory((previous) => ({ ...previous, [visitorCategoryId]: previous[visitorCategoryId] ?? [] }))
           throw error
         })
 

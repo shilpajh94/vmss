@@ -112,7 +112,7 @@ export function DelegateInvitationModal({
                 : delegateCandidates?.length
                   ? 'Select host…'
                   : approverRoleId && !isOwnershipStep
-                    ? `No one currently holds ${stepRoleName}`
+                    ? `No one currently holds ${stepRoleName ?? 'the configured role'}`
                     : 'Select host…'}
             </option>
             {delegateCandidates?.map((employee) => (
