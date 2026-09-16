@@ -6,10 +6,9 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    host: true,
     proxy: {
       '/api': {
-        target: 'https://vmss-new-api.ddev.site:8443',
+        target: 'https://vmss-dev.mypits.org',
         changeOrigin: true,
         secure: false,
       },
