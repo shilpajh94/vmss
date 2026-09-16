@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
@@ -24,26 +25,37 @@ export function useAdminDepartments() {
   const [branchFilter, setBranchFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
 
-  const loadDepartments = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadDepartments = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
 
-    try {
-      const [user, list, employeeList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listDepartmentsUseCase.execute(),
-        listHostEmployeesUseCase.execute(),
-      ])
-      setCurrentUser(user)
-      setDepartments(list)
-      setEmployees(employeeList)
-    } catch {
-      setErrorMessage('Something went wrong loading the departments. Please try again.')
-      toast.error('Something went wrong loading the departments. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listDepartmentsUseCase, listHostEmployeesUseCase, toast])
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+
+      try {
+        const [user, list, employeeList] = await Promise.all([
+          getCurrentStaffUserUseCase.execute(),
+          listDepartmentsUseCase.execute(),
+          listHostEmployeesUseCase.execute(),
+        ])
+        setCurrentUser(user)
+        setDepartments(list)
+        setEmployees(employeeList)
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the departments. Please try again.')
+        }
+        toast.error('Something went wrong loading the departments. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listDepartmentsUseCase, listHostEmployeesUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -57,6 +69,11 @@ export function useAdminDepartments() {
   const retry = useCallback(() => {
     void loadDepartments()
   }, [loadDepartments])
+
+  // Auto-refreshes the register every 15s; skipped while a delete dialog is
+  // open so a background tick can't replace data underneath it.
+  const isActionInProgress = pendingDelete !== undefined || isDeleting
+  usePolling(() => void loadDepartments({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   const requestDelete = useCallback((department: Department) => {
     setPendingDelete(department)

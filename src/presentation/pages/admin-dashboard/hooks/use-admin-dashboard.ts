@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
 import type { DashboardOverview, DashboardKpi } from '../../../../domain/entities/dashboard-overview-schema'
 import type { DashboardRecentCheckin } from '../../../../domain/entities/dashboard-checkin-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
@@ -27,36 +28,51 @@ export function useAdminDashboard() {
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
-  const loadOverview = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadOverview = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
 
-    try {
-      const user = await getCurrentStaffUserUseCase.execute()
-      setCurrentUser(user)
-    } catch {
-      setErrorMessage('Something went wrong loading the dashboard. Please try again.')
-      toast.error('Something went wrong loading the dashboard. Please try again.')
-      setIsLoading(false)
-      return
-    }
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
 
-    try {
-      const [overviewData, checkins, employees] = await Promise.all([
-        getDashboardOverviewUseCase.execute(),
-        listRecentCheckinsUseCase.execute(),
-        listHostEmployeesUseCase.execute(),
-      ])
-      setOverview(overviewData)
-      setRecentCheckins(checkins)
-      setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
-    } catch {
-      setErrorMessage('Something went wrong loading the dashboard. Please try again.')
-      toast.error('Something went wrong loading the dashboard. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, getDashboardOverviewUseCase, listRecentCheckinsUseCase, listHostEmployeesUseCase, toast])
+      try {
+        const user = await getCurrentStaffUserUseCase.execute()
+        setCurrentUser(user)
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the dashboard. Please try again.')
+        }
+        toast.error('Something went wrong loading the dashboard. Please try again.')
+        if (!silent) {
+          setIsLoading(false)
+        }
+        return
+      }
+
+      try {
+        const [overviewData, checkins, employees] = await Promise.all([
+          getDashboardOverviewUseCase.execute(),
+          listRecentCheckinsUseCase.execute(),
+          listHostEmployeesUseCase.execute(),
+        ])
+        setOverview(overviewData)
+        setRecentCheckins(checkins)
+        setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the dashboard. Please try again.')
+        }
+        toast.error('Something went wrong loading the dashboard. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, getDashboardOverviewUseCase, listRecentCheckinsUseCase, listHostEmployeesUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -70,6 +86,10 @@ export function useAdminDashboard() {
   const retry = useCallback(() => {
     void loadOverview()
   }, [loadOverview])
+
+  // Read-only dashboard: no form/delete state to protect, so polling is
+  // never suppressed.
+  usePolling(() => void loadOverview({ silent: true }), { intervalMs: 15_000, isBusy: false })
 
   const kpis = useMemo(() => (overview ? buildKpis(overview) : []), [overview])
 

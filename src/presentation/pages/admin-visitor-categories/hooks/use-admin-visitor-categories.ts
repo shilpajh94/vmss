@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
@@ -23,21 +24,32 @@ export function useAdminVisitorCategories() {
   const [ndaRequirementFilter, setNdaRequirementFilter] = useState('')
   const [escortRequirementFilter, setEscortRequirementFilter] = useState('')
 
-  const loadVisitorCategories = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadVisitorCategories = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
 
-    try {
-      const [user, list] = await Promise.all([getCurrentStaffUserUseCase.execute(), listVisitorCategoriesUseCase.execute()])
-      setCurrentUser(user)
-      setVisitorCategories(list)
-    } catch {
-      setErrorMessage('Something went wrong loading the visitor categories. Please try again.')
-      toast.error('Something went wrong loading the visitor categories. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listVisitorCategoriesUseCase, toast])
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+
+      try {
+        const [user, list] = await Promise.all([getCurrentStaffUserUseCase.execute(), listVisitorCategoriesUseCase.execute()])
+        setCurrentUser(user)
+        setVisitorCategories(list)
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the visitor categories. Please try again.')
+        }
+        toast.error('Something went wrong loading the visitor categories. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listVisitorCategoriesUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -51,6 +63,9 @@ export function useAdminVisitorCategories() {
   const retry = useCallback(() => {
     void loadVisitorCategories()
   }, [loadVisitorCategories])
+
+  const isActionInProgress = pendingDelete !== undefined || isDeleting
+  usePolling(() => void loadVisitorCategories({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   const filteredVisitorCategories = useMemo(() => {
     return visitorCategories.filter((category) => {

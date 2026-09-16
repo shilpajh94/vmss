@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
@@ -29,26 +30,37 @@ export function useAdminBranches() {
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
 
-  const loadBranches = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadBranches = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
 
-    try {
-      const [user, list, employeeList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listBranchesUseCase.execute(),
-        listHostEmployeesUseCase.execute(),
-      ])
-      setCurrentUser(user)
-      setBranches(list)
-      setEmployees(employeeList)
-    } catch {
-      setErrorMessage('Something went wrong loading the branches. Please try again.')
-      toast.error('Something went wrong loading the branches. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listBranchesUseCase, listHostEmployeesUseCase, toast])
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+
+      try {
+        const [user, list, employeeList] = await Promise.all([
+          getCurrentStaffUserUseCase.execute(),
+          listBranchesUseCase.execute(),
+          listHostEmployeesUseCase.execute(),
+        ])
+        setCurrentUser(user)
+        setBranches(list)
+        setEmployees(employeeList)
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the branches. Please try again.')
+        }
+        toast.error('Something went wrong loading the branches. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listBranchesUseCase, listHostEmployeesUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -62,6 +74,11 @@ export function useAdminBranches() {
   const retry = useCallback(() => {
     void loadBranches()
   }, [loadBranches])
+
+  // Auto-refreshes the register every 15s; skipped while a form/delete dialog
+  // is open so a background tick can't replace data underneath it.
+  const isActionInProgress = formState !== undefined || isSaving || pendingDelete !== undefined || isDeleting
+  usePolling(() => void loadBranches({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   const openEditForm = useCallback((branch: Branch) => {
     setFormState({ mode: 'edit', branch })

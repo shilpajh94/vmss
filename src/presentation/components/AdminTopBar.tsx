@@ -4,7 +4,7 @@ import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import { usePushNotifications } from '../hooks/use-push-notifications'
 import { NotificationBell } from './notification-bell/NotificationBell'
 
-interface AdminTopBarBreadcrumbItem {
+export interface AdminTopBarBreadcrumbItem {
   label: string
   isActive?: boolean
 }

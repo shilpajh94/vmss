@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
 import type { ReceptionDesk } from '../../../../domain/entities/reception-desk-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
@@ -23,21 +24,32 @@ export function useAdminReceptionDesks() {
   const [floorFilter, setFloorFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
 
-  const loadReceptionDesks = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadReceptionDesks = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
 
-    try {
-      const [user, list] = await Promise.all([getCurrentStaffUserUseCase.execute(), listReceptionDesksUseCase.execute()])
-      setCurrentUser(user)
-      setReceptionDesks(list)
-    } catch {
-      setErrorMessage('Something went wrong loading the reception desks. Please try again.')
-      toast.error('Something went wrong loading the reception desks. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listReceptionDesksUseCase, toast])
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+
+      try {
+        const [user, list] = await Promise.all([getCurrentStaffUserUseCase.execute(), listReceptionDesksUseCase.execute()])
+        setCurrentUser(user)
+        setReceptionDesks(list)
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the reception desks. Please try again.')
+        }
+        toast.error('Something went wrong loading the reception desks. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listReceptionDesksUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -51,6 +63,11 @@ export function useAdminReceptionDesks() {
   const retry = useCallback(() => {
     void loadReceptionDesks()
   }, [loadReceptionDesks])
+
+  // Auto-refreshes the register every 15s; skipped while a delete dialog is
+  // open so a background tick can't replace data underneath it.
+  const isActionInProgress = pendingDelete !== undefined || isDeleting
+  usePolling(() => void loadReceptionDesks({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   const buildingOptions = useMemo(() => {
     const seen = new Map<string, string>()

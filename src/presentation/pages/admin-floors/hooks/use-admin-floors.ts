@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
 import type { Floor } from '../../../../domain/entities/floor-schema'
 import type { Building } from '../../../../domain/entities/building-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
@@ -32,28 +33,39 @@ export function useAdminFloors() {
   const [accessLevelFilter, setAccessLevelFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
 
-  const loadFloors = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadFloors = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
 
-    try {
-      const [user, floorResult, buildingList, departmentList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listFloorsUseCase.execute(),
-        listBuildingsUseCase.execute(),
-        listDepartmentsUseCase.execute(),
-      ])
-      setCurrentUser(user)
-      setFloorList(floorResult)
-      setBuildings(buildingList)
-      setDepartments(departmentList)
-    } catch {
-      setErrorMessage('Something went wrong loading the floors. Please try again.')
-      toast.error('Something went wrong loading the floors. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listFloorsUseCase, listBuildingsUseCase, listDepartmentsUseCase, toast])
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+
+      try {
+        const [user, floorResult, buildingList, departmentList] = await Promise.all([
+          getCurrentStaffUserUseCase.execute(),
+          listFloorsUseCase.execute(),
+          listBuildingsUseCase.execute(),
+          listDepartmentsUseCase.execute(),
+        ])
+        setCurrentUser(user)
+        setFloorList(floorResult)
+        setBuildings(buildingList)
+        setDepartments(departmentList)
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the floors. Please try again.')
+        }
+        toast.error('Something went wrong loading the floors. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listFloorsUseCase, listBuildingsUseCase, listDepartmentsUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -67,6 +79,11 @@ export function useAdminFloors() {
   const retry = useCallback(() => {
     void loadFloors()
   }, [loadFloors])
+
+  // Auto-refreshes the inventory every 15s; skipped while a delete dialog is
+  // open so a background tick can't replace data underneath it.
+  const isActionInProgress = pendingDelete !== undefined || isDeleting
+  usePolling(() => void loadFloors({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   const buildingNameById = useMemo(() => new Map(buildings.map((building) => [building.id, building.name])), [buildings])
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
 import type { ApprovalWorkflowRule } from '../../../../domain/entities/approval-workflow-rule-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
@@ -32,50 +33,61 @@ export function useAdminWorkflows() {
   const [pendingDelete, setPendingDelete] = useState<WorkflowGroup | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  const loadWorkflows = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadWorkflows = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
 
-    try {
-      const [user, rules, categories, roles] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listApprovalWorkflowRulesUseCase.execute(),
-        listVisitorCategoriesUseCase.execute(),
-        listRolesUseCase.execute(),
-      ])
-      setCurrentUser(user)
-
-      const categoryNameById = new Map(categories.map((category) => [category.id, category.name]))
-      const roleNameById = new Map(roles.map((role) => [role.id, role.name]))
-
-      const rulesByCategory = new Map<string, ApprovalWorkflowRule[]>()
-      for (const rule of rules) {
-        const group = rulesByCategory.get(rule.visitorCategoryId) ?? []
-        group.push(rule)
-        rulesByCategory.set(rule.visitorCategoryId, group)
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
       }
 
-      const groups: WorkflowGroup[] = Array.from(rulesByCategory.entries()).map(([visitorCategoryId, categoryRules]) => ({
-        visitorCategoryId,
-        categoryName: categoryNameById.get(visitorCategoryId) ?? 'Unknown category',
-        levels: [...categoryRules]
-          .sort((a, b) => a.stepOrder - b.stepOrder)
-          .map((rule) => ({
-            ruleId: rule.id,
-            stepOrder: rule.stepOrder,
-            approverRoleId: rule.approverRoleId,
-            approverRoleName: roleNameById.get(rule.approverRoleId) ?? 'Unknown role',
-          })),
-      }))
+      try {
+        const [user, rules, categories, roles] = await Promise.all([
+          getCurrentStaffUserUseCase.execute(),
+          listApprovalWorkflowRulesUseCase.execute(),
+          listVisitorCategoriesUseCase.execute(),
+          listRolesUseCase.execute(),
+        ])
+        setCurrentUser(user)
 
-      setWorkflows(groups)
-    } catch {
-      setErrorMessage('Something went wrong loading the workflows. Please try again.')
-      toast.error('Something went wrong loading the workflows. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listApprovalWorkflowRulesUseCase, listVisitorCategoriesUseCase, listRolesUseCase, toast])
+        const categoryNameById = new Map(categories.map((category) => [category.id, category.name]))
+        const roleNameById = new Map(roles.map((role) => [role.id, role.name]))
+
+        const rulesByCategory = new Map<string, ApprovalWorkflowRule[]>()
+        for (const rule of rules) {
+          const group = rulesByCategory.get(rule.visitorCategoryId) ?? []
+          group.push(rule)
+          rulesByCategory.set(rule.visitorCategoryId, group)
+        }
+
+        const groups: WorkflowGroup[] = Array.from(rulesByCategory.entries()).map(([visitorCategoryId, categoryRules]) => ({
+          visitorCategoryId,
+          categoryName: categoryNameById.get(visitorCategoryId) ?? 'Unknown category',
+          levels: [...categoryRules]
+            .sort((a, b) => a.stepOrder - b.stepOrder)
+            .map((rule) => ({
+              ruleId: rule.id,
+              stepOrder: rule.stepOrder,
+              approverRoleId: rule.approverRoleId,
+              approverRoleName: roleNameById.get(rule.approverRoleId) ?? 'Unknown role',
+            })),
+        }))
+
+        setWorkflows(groups)
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the workflows. Please try again.')
+        }
+        toast.error('Something went wrong loading the workflows. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listApprovalWorkflowRulesUseCase, listVisitorCategoriesUseCase, listRolesUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -89,6 +101,9 @@ export function useAdminWorkflows() {
   const retry = useCallback(() => {
     void loadWorkflows()
   }, [loadWorkflows])
+
+  const isActionInProgress = pendingDelete !== undefined || isDeleting
+  usePolling(() => void loadWorkflows({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   const requestDelete = useCallback((workflow: WorkflowGroup) => {
     setPendingDelete(workflow)

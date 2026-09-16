@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
@@ -22,26 +23,37 @@ export function useAdminHostEmployees() {
   const [roleFilter, setRoleFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
 
-  const loadHostEmployees = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadHostEmployees = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
 
-    try {
-      const [user, list, departmentList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listHostEmployeesUseCase.execute(),
-        listDepartmentsUseCase.execute(),
-      ])
-      setCurrentUser(user)
-      setHostEmployees(list)
-      setDepartments(departmentList)
-    } catch {
-      setErrorMessage('Something went wrong loading the employees. Please try again.')
-      toast.error('Something went wrong loading the employees. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listHostEmployeesUseCase, listDepartmentsUseCase, toast])
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+
+      try {
+        const [user, list, departmentList] = await Promise.all([
+          getCurrentStaffUserUseCase.execute(),
+          listHostEmployeesUseCase.execute(),
+          listDepartmentsUseCase.execute(),
+        ])
+        setCurrentUser(user)
+        setHostEmployees(list)
+        setDepartments(departmentList)
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the employees. Please try again.')
+        }
+        toast.error('Something went wrong loading the employees. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listHostEmployeesUseCase, listDepartmentsUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -55,6 +67,10 @@ export function useAdminHostEmployees() {
   const retry = useCallback(() => {
     void loadHostEmployees()
   }, [loadHostEmployees])
+
+  // Auto-refreshes the directory every 15s; there's no form/delete dialog
+  // state on this page to protect, so polling is never suppressed.
+  usePolling(() => void loadHostEmployees({ silent: true }), { intervalMs: 15_000, isBusy: false })
 
   const departmentNameById = useMemo(() => new Map(departments.map((department) => [department.id, department.name])), [departments])
 

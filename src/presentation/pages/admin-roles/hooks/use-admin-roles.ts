@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { RolePermissionResyncEntry } from '../../../../domain/entities/permission-out-schema'
@@ -18,21 +19,32 @@ export function useAdminRoles() {
   const [isResyncing, setIsResyncing] = useState(false)
   const [resyncResult, setResyncResult] = useState<RolePermissionResyncEntry[] | undefined>(undefined)
 
-  const loadRoles = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadRoles = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
 
-    try {
-      const [user, roleList] = await Promise.all([getCurrentStaffUserUseCase.execute(), listRolesUseCase.execute()])
-      setCurrentUser(user)
-      setRoles(roleList)
-    } catch {
-      setErrorMessage('Something went wrong loading the roles. Please try again.')
-      toast.error('Something went wrong loading the roles. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listRolesUseCase, toast])
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+
+      try {
+        const [user, roleList] = await Promise.all([getCurrentStaffUserUseCase.execute(), listRolesUseCase.execute()])
+        setCurrentUser(user)
+        setRoles(roleList)
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the roles. Please try again.')
+        }
+        toast.error('Something went wrong loading the roles. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listRolesUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -46,6 +58,9 @@ export function useAdminRoles() {
   const retry = useCallback(() => {
     void loadRoles()
   }, [loadRoles])
+
+  const isActionInProgress = isResyncing
+  usePolling(() => void loadRoles({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   const resyncPermissions = useCallback(async () => {
     setIsResyncing(true)

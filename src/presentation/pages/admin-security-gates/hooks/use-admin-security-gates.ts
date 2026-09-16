@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
 import type { SecurityGate } from '../../../../domain/entities/security-gate-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
@@ -23,21 +24,32 @@ export function useAdminSecurityGates() {
   const [gateTypeFilter, setGateTypeFilter] = useState('')
   const [securityLevelFilter, setSecurityLevelFilter] = useState('')
 
-  const loadSecurityGates = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadSecurityGates = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
 
-    try {
-      const [user, list] = await Promise.all([getCurrentStaffUserUseCase.execute(), listSecurityGatesUseCase.execute()])
-      setCurrentUser(user)
-      setSecurityGates(list)
-    } catch {
-      setErrorMessage('Something went wrong loading the security gates. Please try again.')
-      toast.error('Something went wrong loading the security gates. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listSecurityGatesUseCase, toast])
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+
+      try {
+        const [user, list] = await Promise.all([getCurrentStaffUserUseCase.execute(), listSecurityGatesUseCase.execute()])
+        setCurrentUser(user)
+        setSecurityGates(list)
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the security gates. Please try again.')
+        }
+        toast.error('Something went wrong loading the security gates. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listSecurityGatesUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -51,6 +63,11 @@ export function useAdminSecurityGates() {
   const retry = useCallback(() => {
     void loadSecurityGates()
   }, [loadSecurityGates])
+
+  // Auto-refreshes the register every 15s; skipped while a delete dialog is
+  // open so a background tick can't replace data underneath it.
+  const isActionInProgress = pendingDelete !== undefined || isDeleting
+  usePolling(() => void loadSecurityGates({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   const buildingOptions = useMemo(() => {
     const seen = new Map<string, string>()

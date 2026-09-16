@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
+import { usePolling } from './use-polling'
 import { resolveApproverLabel } from '../utils/approval-step-label'
 import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
@@ -146,38 +147,19 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   }, [loadDashboard])
 
   // Tracks whether a deny/reschedule/delegate action or its dialog is in
-  // progress, so the auto-refresh tick below can skip a fetch that would
-  // otherwise disrupt it.
-  const actionInProgressRef = useRef(false)
-  useEffect(() => {
-    actionInProgressRef.current =
-      pendingDenyId !== undefined ||
-      pendingRescheduleId !== undefined ||
-      pendingDelegateId !== undefined ||
-      pendingEditId !== undefined ||
-      denyingId !== undefined ||
-      reschedulingId !== undefined ||
-      delegatingId !== undefined ||
-      editingId !== undefined
-  }, [
-    pendingDenyId,
-    pendingRescheduleId,
-    pendingDelegateId,
-    pendingEditId,
-    denyingId,
-    reschedulingId,
-    delegatingId,
-    editingId,
-  ])
+  // progress, so the auto-refresh tick can skip a fetch that would otherwise
+  // disrupt it.
+  const isActionInProgress =
+    pendingDenyId !== undefined ||
+    pendingRescheduleId !== undefined ||
+    pendingDelegateId !== undefined ||
+    pendingEditId !== undefined ||
+    denyingId !== undefined ||
+    reschedulingId !== undefined ||
+    delegatingId !== undefined ||
+    editingId !== undefined
 
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      if (actionInProgressRef.current) return
-      void loadDashboard({ silent: true })
-    }, 30_000)
-
-    return () => clearInterval(intervalId)
-  }, [loadDashboard])
+  usePolling(() => void loadDashboard({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   // Preloads approval-step detail for pending requests so the "Level X/Y"
   // badge is visible on the collapsed card, not just after expanding it.
