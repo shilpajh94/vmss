@@ -45,6 +45,32 @@ class FormFieldRepository(TenantScopedRepository[FormField]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_key_in_branch(
+        self, branch_id: uuid.UUID | None, key: str, *, exclude_step_id: uuid.UUID | None = None
+    ) -> FormField | None:
+        """specs/form-builder/spec.md "A Custom Field's Key Is Unique Across
+        a Branch's Entire Active Form" — every active field on every active
+        step of `branch_id`'s form, optionally excluding one step (the
+        target step of a `create_field` call, whose own key collision is
+        already checked separately by `get_by_key` regardless of the step's
+        active state).
+        """
+        stmt = (
+            select(FormField)
+            .join(FormStep, FormField.step_id == FormStep.id)
+            .where(
+                FormStep.branch_id == branch_id,
+                FormStep.is_active.is_(True),
+                FormStep.deleted_at.is_(None),
+                FormField.key == key,
+                FormField.is_active.is_(True),
+                FormField.deleted_at.is_(None),
+            )
+        )
+        if exclude_step_id is not None:
+            stmt = stmt.where(FormField.step_id != exclude_step_id)
+        return (await self.session.execute(stmt)).scalars().first()
+
 
 class FormConfigVersionRepository:
     """Plain (not `TenantScopedRepository`-based) since a `FormConfigVersion`

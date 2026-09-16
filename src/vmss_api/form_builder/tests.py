@@ -751,3 +751,77 @@ async def test_form_steps_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         found = await FormStepRepository(other_session).get(step_id)
         assert found is None
+
+
+# --- fix-registration-host-role-crash: field-key uniqueness across a ------
+# branch's entire active form (not only within one step) --------------------
+
+
+async def test_create_field_key_collision_on_same_step_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """specs/form-builder/spec.md "Creating a Field With a Key Already Used
+    on the Same Step Is Still Rejected" — today's existing per-step
+    uniqueness check, unaffected by the new cross-step scope below.
+    """
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    body = {"key": "duplicate_key", "label": "Duplicate", "fieldType": "text"}
+    first = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", json=body, headers=_auth(token)
+    )
+    assert first.status_code == 201
+
+    second = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", json=body, headers=_auth(token)
+    )
+    assert second.status_code == 409
+
+
+async def test_create_field_key_collision_on_different_active_step_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """specs/form-builder/spec.md "A Custom Field's Key Is Unique Across a
+    Branch's Entire Active Form" — a key already used on one active step of
+    the tenant-default form is rejected when creating a field with the same
+    key on a *different* active step, since `custom_fields_for_invitation_scope`
+    (`form_builder/validation.py`) merges every active step's fields into
+    one flat by-key map at submission time.
+    """
+    token = issue_token(user)
+    carried_items_step = await _get_default_step(client, token, "carried_items")
+    first = await client.post(
+        f"/api/v1/form-builder/steps/{carried_items_step['id']}/fields",
+        json={"key": "shared_key", "label": "Shared Key", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert first.status_code == 201
+
+    visit_details_step = await _get_default_step(client, token, "visit_details")
+    second = await client.post(
+        f"/api/v1/form-builder/steps/{visit_details_step['id']}/fields",
+        json={"key": "shared_key", "label": "Shared Key", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert second.status_code == 409
+
+
+async def test_create_field_distinct_keys_across_steps_succeed(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    carried_items_step = await _get_default_step(client, token, "carried_items")
+    first = await client.post(
+        f"/api/v1/form-builder/steps/{carried_items_step['id']}/fields",
+        json={"key": "carried_items_only_key", "label": "First", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert first.status_code == 201
+
+    visit_details_step = await _get_default_step(client, token, "visit_details")
+    second = await client.post(
+        f"/api/v1/form-builder/steps/{visit_details_step['id']}/fields",
+        json={"key": "visit_details_only_key", "label": "Second", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert second.status_code == 201

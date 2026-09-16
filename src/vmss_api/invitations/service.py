@@ -370,6 +370,13 @@ async def create_invitation(
     # Contact and a Validated ID Proof".
     if id_proof_required:
         if len(payload.visitors) != len(visitor_id_proof_contents):
+            logger.warning(
+                "registration_form_config_validation_failed",
+                branch_id=str(branch_id),
+                check="required_field",
+                field="id_proof_upload",
+                reason="visitor_id_proof_count_mismatch",
+            )
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Visitor list and uploaded ID proof files must match in count",
@@ -378,11 +385,25 @@ async def create_invitation(
             payload.primary_contact.id_proof_type is None
             or primary_contact_id_proof_content is None
         ):
+            logger.warning(
+                "registration_form_config_validation_failed",
+                branch_id=str(branch_id),
+                check="required_field",
+                field="id_proof_upload",
+                reason="primary_contact_id_proof_missing",
+            )
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="ID proof is required for the primary contact",
             )
         if any(visitor.id_proof_type is None for visitor in payload.visitors):
+            logger.warning(
+                "registration_form_config_validation_failed",
+                branch_id=str(branch_id),
+                check="required_field",
+                field="id_proof_upload",
+                reason="visitor_id_proof_type_missing",
+            )
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="ID proof type is required for every visitor",
@@ -394,6 +415,13 @@ async def create_invitation(
         )
 
     if photo_required and primary_contact_photo_content is None:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="required_field",
+            field="profile_photo",
+            reason="primary_contact_photo_missing",
+        )
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A profile photo is required for the primary contact",
@@ -404,6 +432,13 @@ async def create_invitation(
     # of the calling branch's currently configured Carried Items keys.
     invalid_items = set(payload.carried_items.items) - allowed_carried_item_keys
     if invalid_items:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="carried_item",
+            reason="unknown_carried_item_key",
+            keys=sorted(invalid_items),
+        )
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown carried item(s): {', '.join(sorted(invalid_items))}",
@@ -415,6 +450,13 @@ async def create_invitation(
     # carried-items allow-list check above.
     invalid_consent_keys = set(payload.consents) - allowed_consent_keys
     if invalid_consent_keys:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="consent_key",
+            reason="unknown_consent_key",
+            keys=sorted(invalid_consent_keys),
+        )
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown consent key(s): {', '.join(sorted(invalid_consent_keys))}",
@@ -425,6 +467,13 @@ async def create_invitation(
     accepted_consent_keys = {key for key, accepted in payload.consents.items() if accepted}
     missing_consents = required_consent_keys - accepted_consent_keys
     if missing_consents:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="consent_key",
+            reason="missing_required_consent",
+            keys=sorted(missing_consents),
+        )
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Missing required consent(s): {', '.join(sorted(missing_consents))}",
@@ -444,20 +493,35 @@ async def create_invitation(
     invitation_scope_custom_fields = form_builder_validation.custom_fields_for_invitation_scope(
         effective_form
     )
-    form_builder_validation.validate_custom_field_values(
+
+    def _validate_custom_fields(
+        fields: list[dict[str, Any]], values: dict[str, Any], *, scope: str
+    ) -> None:
+        try:
+            form_builder_validation.validate_custom_field_values(fields, values, scope=scope)
+        except HTTPException:
+            logger.warning(
+                "registration_form_config_validation_failed",
+                branch_id=str(branch_id),
+                check="custom_field",
+                scope=scope,
+            )
+            raise
+
+    _validate_custom_fields(
         visitor_info_custom_fields,
         payload.primary_contact.custom_field_values,
         scope="the primary contact",
     )
     for index, visitor in enumerate(payload.visitors):
-        form_builder_validation.validate_custom_field_values(
+        _validate_custom_fields(
             visitor_info_custom_fields, visitor.custom_field_values, scope=f"visitor {index + 1}"
         )
     for index, vehicle in enumerate(payload.vehicles):
-        form_builder_validation.validate_custom_field_values(
+        _validate_custom_fields(
             vehicle_info_custom_fields, vehicle.custom_field_values, scope=f"vehicle {index + 1}"
         )
-    form_builder_validation.validate_custom_field_values(
+    _validate_custom_fields(
         invitation_scope_custom_fields, payload.custom_field_values, scope="the invitation"
     )
 

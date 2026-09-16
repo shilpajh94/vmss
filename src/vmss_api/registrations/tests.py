@@ -6,13 +6,15 @@ from datetime import UTC, datetime
 import pytest
 import pytest_asyncio
 import starlette.datastructures as starlette_datastructures
+import structlog
 from httpx import AsyncClient, Response
 from PIL import Image
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
-from factories import RoleFactory, VisitorCategoryFactory
+from factories import BranchFactory, RoleFactory, VisitorCategoryFactory
+from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import AuditLog, User
 from vmss_api.auth.repository import RoleRepository
@@ -20,6 +22,7 @@ from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.security import hash_password
 from vmss_api.invitations import tasks
+from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.org_structure.models import Branch
 from vmss_api.registrations.models import RegistrationDeviceKey
@@ -857,3 +860,107 @@ async def test_walk_in_registration_custom_field_unknown_key_rejected(
     payload["customFieldValues"] = {"not_a_configured_field": "x"}
     response = await _create_walk_in(client, registration_device_raw_key, payload=payload)
     assert response.status_code == 422
+
+
+# --- fix-registration-host-role-crash: default-host-role failure mode ------
+
+
+async def test_walk_in_registration_missing_default_host_role_fails_as_server_misconfiguration(
+    client: AsyncClient,
+    registration_device_raw_key: str,
+    tenant: Tenant,
+    db_session: AsyncSession,
+) -> None:
+    """Confirms the shared `create_invitation` path
+    (org_structure/service.py::get_default_host_role) fails identically for
+    the walk-in entry point as it does for staff pre-registration — see
+    `invitations/tests.py::test_create_invitation_missing_default_host_role_fails_as_server_misconfiguration`.
+    Bypasses `auth/service.py`'s rename/delete protection for the standard
+    "reception" role directly at the repository layer (this state isn't
+    reachable via the walk-in registration API itself — see design.md).
+    """
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
+    await RoleRepository(db_session).soft_delete(reception_role)
+    await db_session.commit()
+
+    # `capture_logs()` disables every configured processor by default
+    # (including `structlog.contextvars.merge_contextvars`), so a field
+    # bound only via contextvars (`tenant_id`, here) has to have that
+    # processor passed back in explicitly to show up in a captured entry.
+    with capture_logs(processors=(structlog.contextvars.merge_contextvars,)) as captured:
+        response = await _create_walk_in(
+            client, registration_device_raw_key, payload=_individual_payload()
+        )
+
+    assert response.status_code == 500
+
+    [entry] = [e for e in captured if e["event"] == "default_host_role_not_seeded"]
+    assert entry["log_level"] == "error"
+    assert entry["tenant_id"] == str(tenant.id)
+
+    # Same rollback-on-exit stand-in as `invitations/tests.py`'s counterpart
+    # test and `org_structure/tests.py`'s
+    # `test_provision_branch_rolls_back_partial_tree_on_mid_transaction_conflict`
+    # — the test client's `get_tenant_db` override hands every request the
+    # same bare `db_session`, with no `async with` around it to roll back
+    # automatically the way production's `tenant_session_scope` would.
+    await db_session.rollback()
+    for model in (Invitation, InvitationVisitor, InvitationVehicle, InvitationApprovalStep):
+        count = await db_session.scalar(select(func.count()).select_from(model))
+        assert count == 0, f"{model.__name__} row(s) leaked from a failed default-host-role lookup"
+
+
+# --- fix-registration-host-role-crash: branch/form-config divergence -------
+
+
+async def test_walk_in_registration_branch_config_mismatch_logs_enforced_branch(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    user: User,
+    registration_device_raw_key: str,
+    db_session: AsyncSession,
+) -> None:
+    """specs/registrations/spec.md (delta) "A Configuration Mismatch Is
+    Logged With the Enforced Branch" — `branch` (the device credential's
+    own branch) publishes a required consent that a second branch
+    (`other_branch`) never gets configured. Submitting the default payload
+    (whose consents only satisfy `other_branch`'s unconfigured form) against
+    the device-credential-resolved branch must be rejected, and the
+    rejection's log must identify `branch`'s id — the server-resolved
+    branch actually enforced — regardless of what any client separately
+    assumed or rendered (there is no branch field on the wire to compare
+    against, per design.md).
+    """
+    other_branch = BranchFactory.build(id=uuid.uuid4(), name="Other Branch", code="OTHER")
+    db_session.add(other_branch)
+    await db_session.commit()
+
+    admin_token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client,
+        admin_token,
+        branch,
+        step_key="consent_agreement",
+        key="confidentiality_agreement",
+        field_type="toggle_switch",
+        is_required=True,
+    )
+
+    with capture_logs() as captured:
+        response = await _create_walk_in(
+            client, registration_device_raw_key, payload=_individual_payload()
+        )
+
+    assert response.status_code == 422
+
+    matching_entries = [
+        e for e in captured if e["event"] == "registration_form_config_validation_failed"
+    ]
+    assert matching_entries, "expected a form-config-validation-failed log entry"
+    entry = matching_entries[-1]
+    assert entry["log_level"] == "warning"
+    assert entry["branch_id"] == str(branch.id)
+    assert entry["branch_id"] != str(other_branch.id)
+    assert entry["check"] == "consent_key"

@@ -10,11 +10,12 @@ import aiosmtplib
 import pytest
 import pytest_asyncio
 import starlette.datastructures as starlette_datastructures
+import structlog
 from fastapi import HTTPException
 from httpx import AsyncClient, Response
 from PIL import Image
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
@@ -46,7 +47,12 @@ from vmss_api.core.schemas import SortOrder
 from vmss_api.core.security import hash_password
 from vmss_api.invitations import notifications, qr_token, tasks
 from vmss_api.invitations import service as invitations_service
-from vmss_api.invitations.models import Invitation, InvitationQRCode
+from vmss_api.invitations.models import (
+    Invitation,
+    InvitationQRCode,
+    InvitationVehicle,
+    InvitationVisitor,
+)
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.models import Branch, Company, Department
@@ -7675,3 +7681,111 @@ async def test_create_invitation_custom_field_values_tenant_schema_isolation(
             select(Invitation).where(Invitation.tracking_id == data["trackingId"])
         )
         assert result.scalar_one_or_none() is None
+
+
+# --- fix-registration-host-role-crash: default-host-role failure mode ------
+#
+# specs/approvals/spec.md (delta) "Unresolvable Default Host Role Fails the
+# Submission as a Server Misconfiguration" — `get_default_host_role`
+# (org_structure/service.py) already raises 500 + logs ERROR when a
+# tenant's `reception` role can't be resolved; this was previously
+# untested and undocumented in specs.
+
+
+async def test_create_invitation_missing_default_host_role_fails_as_server_misconfiguration(
+    client: AsyncClient, user: User, branch: Branch, tenant: Tenant, db_session: AsyncSession
+) -> None:
+    """`auth/service.py`'s `update_role`/`delete_role` protect any
+    `STANDARD_ROLE_NAMES` role (including "reception") from rename/delete
+    via the API, so this provisioning-gap state — a tenant with no
+    resolvable default host role — isn't reachable through the product's
+    own API. It's constructed directly at the repository layer instead,
+    per `design.md`'s "Risks/Trade-offs" note, bypassing that protection on
+    purpose (not a scenario a client can trigger).
+    """
+    token = await _login(client, user.email)
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
+    await RoleRepository(db_session).soft_delete(reception_role)
+    await db_session.commit()
+
+    # `capture_logs()` disables every configured processor by default
+    # (including `structlog.contextvars.merge_contextvars`), so a field
+    # bound only via contextvars (`tenant_id`, here) has to have that
+    # processor passed back in explicitly to show up in a captured entry.
+    with capture_logs(processors=(structlog.contextvars.merge_contextvars,)) as captured:
+        response = await _create_invitation(client, token, branch, payload=_individual_payload())
+
+    assert response.status_code == 500
+
+    [entry] = [e for e in captured if e["event"] == "default_host_role_not_seeded"]
+    assert entry["log_level"] == "error"
+    # tenant_id is bound into structlog's contextvars for every authenticated
+    # request (core/tenancy.py) — no explicit parameter needed for this log
+    # line to carry it (logging-observability.md §1).
+    assert entry["tenant_id"] == str(tenant.id)
+
+    # `create_invitation` calls `get_default_host_role` before
+    # `tenant_db.commit()` (invitations/service.py), so nothing from this
+    # failed attempt should have reached the database. The test client's
+    # `get_tenant_db` override hands every request the same bare
+    # `db_session` with no `async with` around it (unlike production's
+    # `tenant_session_scope`), so this explicit rollback stands in for the
+    # automatic rollback-on-exit production gets for free — see
+    # `org_structure/tests.py`'s
+    # `test_provision_branch_rolls_back_partial_tree_on_mid_transaction_conflict`.
+    await db_session.rollback()
+    for model in (Invitation, InvitationVisitor, InvitationVehicle, InvitationApprovalStep):
+        count = await db_session.scalar(select(func.count()).select_from(model))
+        assert count == 0, f"{model.__name__} row(s) leaked from a failed default-host-role lookup"
+
+
+# --- fix-registration-host-role-crash: submission through a brand-new step -
+
+# testing-standards.md §2 — every prior custom-field test above adds a field
+# to an already-*seeded* step (visitor_info/vehicle_info/visit_details/
+# carried_items/consent_agreement); none exercises a genuinely new custom
+# step, the exact "test"/"test 2" shape reported in the originating bug
+# (including one step left with zero fields configured).
+
+
+async def test_create_invitation_through_new_custom_step_with_and_without_fields(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+
+    step_with_field = (
+        await client.post(
+            "/api/v1/form-builder/steps",
+            json={"key": "custom_step_one", "name": "Custom Step"},
+            headers=headers,
+        )
+    ).json()["data"]
+    field_response = await client.post(
+        f"/api/v1/form-builder/steps/{step_with_field['id']}/fields",
+        json={"key": "custom_answer", "label": "Custom Answer", "fieldType": "text"},
+        headers=headers,
+    )
+    assert field_response.status_code == 201, field_response.text
+
+    # A second new custom step deliberately left with zero fields — must
+    # not break `resolve_effective_form`/validation for a submission that
+    # simply has nothing to answer on it.
+    empty_step_response = await client.post(
+        "/api/v1/form-builder/steps",
+        json={"key": "custom_step_two", "name": "Custom Step 2"},
+        headers=headers,
+    )
+    assert empty_step_response.status_code == 201, empty_step_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+
+    payload = _individual_payload()
+    payload["customFieldValues"] = {"custom_answer": "Some value"}
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(f"/api/v1/invitations/{data['id']}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    assert detail_response.json()["data"]["customFieldValues"] == {"custom_answer": "Some value"}

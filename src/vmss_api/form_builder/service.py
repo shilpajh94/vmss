@@ -381,6 +381,14 @@ async def create_field(
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Field key already exists on this step"
         )
+    if (
+        await repo.get_by_key_in_branch(step.branch_id, payload.key, exclude_step_id=step_id)
+        is not None
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Field key already exists on another step of this branch's form",
+        )
     fields_by_key = await _fields_by_key_for_step(tenant_db, step_id)
     condition = (
         payload.visibility_condition.model_dump(mode="json", by_alias=True)
