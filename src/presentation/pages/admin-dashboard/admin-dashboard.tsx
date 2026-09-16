@@ -1,4 +1,4 @@
-import { CalendarIcon, RefreshCcwIcon } from '../../components/icons'
+import { CalendarIcon } from '../../components/icons'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { usePageHeader } from '../../context/page-header-context'
 import { KpiRow } from './Components/KpiRow'
@@ -47,14 +47,6 @@ export function AdminDashboardPage() {
                 <CalendarIcon className="size-4 text-admin-accent" />
                 {TODAY_LABEL}
               </div>
-              <button
-                type="button"
-                onClick={retry}
-                aria-label="Refresh"
-                className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
-              >
-                <RefreshCcwIcon className="size-3.5" />
-              </button>
             </div>
           </div>
 

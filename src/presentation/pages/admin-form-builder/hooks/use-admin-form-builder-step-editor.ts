@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
+import { usePageRefresh } from '../../../context/refresh-context'
 import type {
   FormField,
   FormFieldCreateInput,
@@ -35,32 +37,45 @@ export function useAdminFormBuilderStepEditor() {
   const [selectedFieldId, setSelectedFieldId] = useState<string | undefined>(undefined)
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   const [isAddFieldOpen, setIsAddFieldOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<FormField | undefined>(undefined)
   const [isPublishing, setIsPublishing] = useState(false)
   const { hasUnpublishedChanges, markDirty, markPublished } = useFormBuilderPublishState(branchId)
 
-  const load = useCallback(async () => {
-    if (!stepId) return
-    setIsLoading(true)
-    setErrorMessage(undefined)
-    try {
-      const [steps, stepFields] = await Promise.all([
-        listFormStepsUseCase.execute(branchId),
-        listFormFieldsUseCase.execute(stepId, branchId),
-      ])
-      const foundStep = steps.find((s) => s.id === stepId)
-      setStep(foundStep)
-      const sortedFields = [...stepFields].sort((a, b) => a.orderIndex - b.orderIndex)
-      setFields(sortedFields)
-      setSelectedFieldId((current) => current ?? sortedFields[0]?.id)
-    } catch {
-      setErrorMessage('Something went wrong loading this step. Please try again.')
-      toast.error('Something went wrong loading this step. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [stepId, branchId, listFormStepsUseCase, listFormFieldsUseCase, toast])
+  const load = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!stepId) return
+      const silent = options?.silent ?? false
+
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+      try {
+        const [steps, stepFields] = await Promise.all([
+          listFormStepsUseCase.execute(branchId),
+          listFormFieldsUseCase.execute(stepId, branchId),
+        ])
+        const foundStep = steps.find((s) => s.id === stepId)
+        setStep(foundStep)
+        const sortedFields = [...stepFields].sort((a, b) => a.orderIndex - b.orderIndex)
+        setFields(sortedFields)
+        setSelectedFieldId((current) => current ?? sortedFields[0]?.id)
+        setLastUpdatedAt(new Date())
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading this step. Please try again.')
+        }
+        toast.error('Something went wrong loading this step. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [stepId, branchId, listFormStepsUseCase, listFormFieldsUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -73,6 +88,13 @@ export function useAdminFormBuilderStepEditor() {
   }, [navigate, stepId, branchId])
 
   const retry = useCallback(() => void load(), [load])
+
+  // Auto-refreshes step fields every 15s; skipped while an add/delete/publish
+  // action is in progress (same convention as use-admin-form-builder.ts).
+  const isActionInProgress = isAddFieldOpen || pendingDelete !== undefined || isPublishing
+  usePolling(() => void load({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+
+  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
 
   const selectField = useCallback((fieldId: string) => setSelectedFieldId(fieldId), [])
 

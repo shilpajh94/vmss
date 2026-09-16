@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePolling } from '../../../hooks/use-polling'
+import { usePageRefresh } from '../../../context/refresh-context'
 import type { DashboardOverview, DashboardKpi } from '../../../../domain/entities/dashboard-overview-schema'
 import type { DashboardRecentCheckin } from '../../../../domain/entities/dashboard-checkin-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
@@ -27,6 +28,7 @@ export function useAdminDashboard() {
   const [employeeNameById, setEmployeeNameById] = useState<Record<string, string>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const loadOverview = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -60,6 +62,7 @@ export function useAdminDashboard() {
         setOverview(overviewData)
         setRecentCheckins(checkins)
         setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
+        setLastUpdatedAt(new Date())
       } catch {
         if (!silent) {
           setErrorMessage('Something went wrong loading the dashboard. Please try again.')
@@ -90,6 +93,8 @@ export function useAdminDashboard() {
   // Read-only dashboard: no form/delete state to protect, so polling is
   // never suppressed.
   usePolling(() => void loadOverview({ silent: true }), { intervalMs: 15_000, isBusy: false })
+
+  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
 
   const kpis = useMemo(() => (overview ? buildKpis(overview) : []), [overview])
 

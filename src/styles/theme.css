@@ -100,3 +100,31 @@
   padding-inline: 1.125rem; /* 18px */
   padding-block: 0.625rem; /* 10px, matches every primary ("Add X") button */
 }
+
+/* Thin, low-contrast scrollbar for a bounded scroll region on a light
+   surface (card grids, etc.) - a reusable counterpart to index.css's
+   `.sidebar-nav-scroll`, which is hardcoded for the dark sidebar's colors
+   and not reusable here. Uses the theme's own border/text-faint tokens so
+   it fits any light-surface scroll region without redefining colors per
+   call site. */
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
+    border-radius: 9999px;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-text-faint);
+  }
+}

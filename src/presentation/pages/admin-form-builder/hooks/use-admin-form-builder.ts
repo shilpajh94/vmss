@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
+import { usePageRefresh } from '../../../context/refresh-context'
 import type { FormStep } from '../../../../domain/entities/form-builder-schema'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
@@ -33,6 +35,7 @@ export function useAdminFormBuilder() {
   const [steps, setSteps] = useState<FormStep[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   const [isPublishing, setIsPublishing] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<FormStep | undefined>(undefined)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -48,17 +51,26 @@ export function useAdminFormBuilder() {
   }, [listBranchesUseCase])
 
   const loadSteps = useCallback(
-    async (branchId: string | undefined) => {
-      setIsLoading(true)
-      setErrorMessage(undefined)
+    async (branchId: string | undefined, options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
+
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
       try {
         const list = await listFormStepsUseCase.execute(branchId)
         setSteps([...list].sort((a, b) => a.orderIndex - b.orderIndex))
+        setLastUpdatedAt(new Date())
       } catch {
-        setErrorMessage('Something went wrong loading the registration steps. Please try again.')
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the registration steps. Please try again.')
+        }
         toast.error('Something went wrong loading the registration steps. Please try again.')
       } finally {
-        setIsLoading(false)
+        if (!silent) {
+          setIsLoading(false)
+        }
       }
     },
     [listFormStepsUseCase, toast],
@@ -88,6 +100,14 @@ export function useAdminFormBuilder() {
   const retry = useCallback(() => {
     void loadSteps(selectedBranchId)
   }, [loadSteps, selectedBranchId])
+
+  // Auto-refreshes steps every 15s; skipped while a create/delete/publish
+  // action is in progress so a background tick can't replace data underneath
+  // an in-progress user action (same convention as use-admin-branches.ts).
+  const isActionInProgress = isCreateOpen || pendingDelete !== undefined || isPublishing
+  usePolling(() => void loadSteps(selectedBranchId, { silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+
+  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
 
   const toggleStepActive = useCallback(
     async (step: FormStep) => {
