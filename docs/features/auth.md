@@ -175,6 +175,19 @@ existed needs `POST /auth/roles/resync-permissions` run once to backfill it
 onto its existing Reception/Security roles, same as any other catalog
 addition (see "Resyncing stale roles against the catalog" below).
 
+`roles:view` (Reception and Host) lets those roles' own portal/app screens
+call `GET /auth/roles`/`GET /auth/permissions` to resolve role and permission
+data client-side when deciding whether to render the approve/delegate
+actions on an invitation — without it, that call 403'd for Reception/Host
+and the UI had no permission data to act on, so those buttons never
+rendered even for a caller who otherwise held `invitations:approve`.
+`approval-workflow-rules:view` (Reception and Host) is granted for the same
+reason — the invitation form/approval UI needs to read the configured
+workflow, not just act on it. A tenant provisioned before either permission
+existed needs `POST /auth/roles/resync-permissions` run once to backfill it
+onto its existing Reception/Host roles (see "Resyncing stale roles against
+the catalog" below).
+
 "Visitor" exists in the catalog only to satisfy the five-role requirement
 literally — it grants zero permissions, and `assign_branch_role`
 (`auth/service.py`) rejects with 409 any attempt to grant it to a `User`.
