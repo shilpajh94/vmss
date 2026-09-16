@@ -14,7 +14,6 @@ import { StaffLoginPage } from './presentation/pages/staff-login/staff-login'
 import { StaffSsoLoginPage } from './presentation/pages/staff-sso-login/staff-sso-login'
 import { StaffDashboardPage } from './presentation/pages/staff-dashboard/staff-dashboard'
 import { StaffVisitorRegistrationPage } from './presentation/pages/staff-visitor-registration/staff-visitor-registration'
-import { StaffAuditTrailPage } from './presentation/pages/staff-audit-trail/staff-audit-trail'
 import { AdminDashboardPage } from './presentation/pages/admin-dashboard/admin-dashboard'
 import { AdminOrganisationConfigsPage } from './presentation/pages/admin-organisation-configs/admin-organisation-configs'
 import { AdminBranchesPage } from './presentation/pages/admin-branches/admin-branches'
@@ -41,6 +40,8 @@ import { AdminRolePermissionsFormPage } from './presentation/pages/admin-roles/a
 import { AdminRoleCreateFormPage } from './presentation/pages/admin-roles/admin-role-create-form'
 import { AdminFormBuilderPage } from './presentation/pages/admin-form-builder/admin-form-builder'
 import { AdminFormBuilderStepEditorPage } from './presentation/pages/admin-form-builder/admin-form-builder-step-editor'
+import { AdminAuditTrailPage } from './presentation/pages/admin-audit-trail/admin-audit-trail'
+import { ReceptionDashboardPage } from './presentation/pages/reception-dashboard/reception-dashboard'
 
 function RootLayout() {
   return (
@@ -57,6 +58,8 @@ function RootLayout() {
                 <Route path="/admin/login" element={<StaffLoginPage />} />
                 <Route path="/staff/login" element={<StaffSsoLoginPage />} />
               </Route>
+
+              <Route path="/reception/dashboard" element={<ReceptionDashboardPage />} />
 
               <Route element={<AdminLayout />}>
                 <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
@@ -93,12 +96,12 @@ function RootLayout() {
                 <Route path="/admin/roles/:id/edit" element={<AdminRolePermissionsFormPage />} />
                 <Route path="/admin/form-builder" element={<AdminFormBuilderPage />} />
                 <Route path="/admin/form-builder/steps/:stepId" element={<AdminFormBuilderStepEditorPage />} />
+                <Route path="/admin/audit-trail" element={<AdminAuditTrailPage />} />
               </Route>
 
               <Route element={<StaffLayout />}>
                 <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
                 <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
-                <Route path="/staff/audit-trail" element={<StaffAuditTrailPage />} />
               </Route>
             </Routes>
           </PushNotificationsProvider>

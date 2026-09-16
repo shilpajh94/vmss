@@ -86,6 +86,7 @@ export function AdminWorkflowFormPage() {
                         label={`Level ${index + 1} approver`}
                         labelClassName="sr-only"
                         required
+                        disabled={index === 0}
                         value={level.approverRoleId}
                         onChange={(approverRoleId) => updateLevelApprover(index, approverRoleId)}
                         options={roleSelectOptions}
@@ -96,7 +97,7 @@ export function AdminWorkflowFormPage() {
                     <button
                       type="button"
                       onClick={() => removeLevel(index)}
-                      disabled={levels.length <= 1}
+                      disabled={index === 0 || levels.length <= 1}
                       aria-label={`Remove level ${index + 1}`}
                       className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-danger/15 text-danger disabled:opacity-40"
                     >

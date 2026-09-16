@@ -20,8 +20,14 @@ export function useAdminVisitorCategoryForm() {
   const { id } = useParams<{ id: string }>()
   const isEditMode = id !== undefined
 
-  const { getCurrentStaffUserUseCase, listVisitorCategoriesUseCase, createVisitorCategoryUseCase, updateVisitorCategoryUseCase } =
-    useAppDependencies()
+  const {
+    getCurrentStaffUserUseCase,
+    listVisitorCategoriesUseCase,
+    createVisitorCategoryUseCase,
+    updateVisitorCategoryUseCase,
+    listRolesUseCase,
+    saveWorkflowUseCase,
+  } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
@@ -101,8 +107,24 @@ export function useAdminVisitorCategoryForm() {
         await updateVisitorCategoryUseCase.execute(id, values)
         toast.success('Visitor category updated.')
       } else {
-        await createVisitorCategoryUseCase.execute(values)
+        const created = await createVisitorCategoryUseCase.execute(values)
         toast.success('Visitor category created.')
+
+        // Every category should have at least Reception approval by
+        // default — additional levels are an opt-in the admin adds later via
+        // /admin/workflows, but a category should never silently start with
+        // zero approval levels. Best-effort: if this fails (e.g. no
+        // "Reception" role exists yet), the category is still created; the
+        // admin can configure its workflow manually from /admin/workflows.
+        try {
+          const roles = await listRolesUseCase.execute()
+          const receptionRole = roles.find((role) => role.name.toLowerCase() === 'reception')
+          if (receptionRole) {
+            await saveWorkflowUseCase.execute(created.id, [{ approverRoleId: receptionRole.id }])
+          }
+        } catch (workflowError) {
+          console.error('Failed to auto-configure the default Reception approval level', workflowError)
+        }
       }
       navigate('/admin/visitor-categories')
     } catch {
@@ -110,7 +132,7 @@ export function useAdminVisitorCategoryForm() {
     } finally {
       setIsSaving(false)
     }
-  }, [values, isEditMode, id, createVisitorCategoryUseCase, updateVisitorCategoryUseCase, navigate, toast])
+  }, [values, isEditMode, id, createVisitorCategoryUseCase, updateVisitorCategoryUseCase, listRolesUseCase, saveWorkflowUseCase, navigate, toast])
 
   const cancel = useCallback(() => {
     navigate('/admin/visitor-categories')

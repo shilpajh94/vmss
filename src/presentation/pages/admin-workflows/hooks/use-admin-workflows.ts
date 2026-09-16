@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePolling } from '../../../hooks/use-polling'
+import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
 import type { ApprovalWorkflowRule } from '../../../../domain/entities/approval-workflow-rule-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
@@ -12,13 +13,19 @@ export interface WorkflowLevelView {
   stepOrder: number
   approverRoleId: string
   approverRoleName: string
+  isActive: boolean
 }
+
+export type WorkflowStatus = 'active' | 'paused'
 
 export interface WorkflowGroup {
   visitorCategoryId: string
   categoryName: string
   levels: WorkflowLevelView[]
+  status: WorkflowStatus
 }
+
+const PAGE_SIZE = 4
 
 export function useAdminWorkflows() {
   const navigate = useNavigate()
@@ -39,6 +46,8 @@ export function useAdminWorkflows() {
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [categoryFilter, setCategoryFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+
+  const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
   const loadWorkflows = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -72,18 +81,24 @@ export function useAdminWorkflows() {
           rulesByCategory.set(rule.visitorCategoryId, group)
         }
 
-        const groups: WorkflowGroup[] = Array.from(rulesByCategory.entries()).map(([visitorCategoryId, categoryRules]) => ({
-          visitorCategoryId,
-          categoryName: categoryNameById.get(visitorCategoryId) ?? 'Unknown category',
-          levels: [...categoryRules]
+        const groups: WorkflowGroup[] = Array.from(rulesByCategory.entries()).map(([visitorCategoryId, categoryRules]) => {
+          const levels: WorkflowLevelView[] = [...categoryRules]
             .sort((a, b) => a.stepOrder - b.stepOrder)
             .map((rule) => ({
               ruleId: rule.id,
               stepOrder: rule.stepOrder,
               approverRoleId: rule.approverRoleId,
               approverRoleName: roleNameById.get(rule.approverRoleId) ?? 'Unknown role',
-            })),
-        }))
+              isActive: rule.isActive,
+            }))
+
+          return {
+            visitorCategoryId,
+            categoryName: categoryNameById.get(visitorCategoryId) ?? 'Unknown category',
+            levels,
+            status: levels.every((level) => level.isActive) ? 'active' : ('paused' as WorkflowStatus),
+          }
+        })
 
         setWorkflows(groups)
         setLastUpdatedAt(new Date())
@@ -129,10 +144,28 @@ export function useAdminWorkflows() {
 
   const isFiltering = categoryFilter !== '' || statusFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+
+  const changeCategoryFilter = useCallback(
+    (value: string) => {
+      setCategoryFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
+
+  const changeStatusFilter = useCallback(
+    (value: string) => {
+      setStatusFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
+
   const clearFilters = useCallback(() => {
     setCategoryFilter('')
     setStatusFilter('')
-  }, [])
+    resetToFirstPage()
+  }, [resetToFirstPage])
 
   const requestDelete = useCallback((workflow: WorkflowGroup) => {
     setPendingDelete(workflow)
@@ -150,17 +183,27 @@ export function useAdminWorkflows() {
       await deleteWorkflowUseCase.execute(pendingDelete.levels.map((level) => level.ruleId))
       toast.success('Workflow deleted.')
       setPendingDelete(undefined)
+      resetToFirstPage()
       await loadWorkflows({ silent: true })
     } catch {
       toast.error('Something went wrong deleting the workflow. Please try again.')
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, deleteWorkflowUseCase, toast, loadWorkflows])
+  }, [pendingDelete, deleteWorkflowUseCase, toast, loadWorkflows, resetToFirstPage])
+
+  const totalPages = Math.max(1, Math.ceil(workflows.length / PAGE_SIZE))
+  const pagedWorkflows = workflows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   return {
     currentUser,
     workflows,
+    pagedWorkflows,
+    page,
+    pageSize: PAGE_SIZE,
+    totalPages,
+    goToPreviousPage: goToPrevPage,
+    goToNextPage,
     isLoading,
     errorMessage,
     retry,
@@ -168,9 +211,9 @@ export function useAdminWorkflows() {
     toggleFilterPanel,
     categoryOptions,
     categoryFilter,
-    setCategoryFilter,
+    setCategoryFilter: changeCategoryFilter,
     statusFilter,
-    setStatusFilter,
+    setStatusFilter: changeStatusFilter,
     clearFilters,
     isFiltering,
     pendingDelete,

@@ -6,13 +6,19 @@ import { LoadingState } from '../../components/ui/LoadingState'
 import { SelectField } from '../../components/ui/SelectField'
 import { PageContentLayout } from '../../components/PageContentLayout'
 import { usePageHeader } from '../../context/page-header-context'
-import { WorkflowGroupList } from './Components/WorkflowGroupList'
+import { WorkflowListTable } from './Components/WorkflowListTable'
 import { useAdminWorkflows } from './hooks/use-admin-workflows'
 
 export function AdminWorkflowsPage() {
   const navigate = useNavigate()
   const {
     workflows,
+    pagedWorkflows,
+    page,
+    pageSize,
+    totalPages,
+    goToPreviousPage,
+    goToNextPage,
     isLoading,
     errorMessage,
     retry,
@@ -113,7 +119,16 @@ export function AdminWorkflowsPage() {
           )}
         </div>
       ) : (
-        <WorkflowGroupList workflows={workflows} onDelete={requestDelete} />
+        <WorkflowListTable
+          workflows={workflows}
+          pagedWorkflows={pagedWorkflows}
+          page={page}
+          pageSize={pageSize}
+          totalPages={totalPages}
+          onPreviousPage={goToPreviousPage}
+          onNextPage={goToNextPage}
+          onDelete={requestDelete}
+        />
       )}
 
       <ConfirmDialog

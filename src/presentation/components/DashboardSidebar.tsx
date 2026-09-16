@@ -1,8 +1,8 @@
 import { useNavigate } from 'react-router'
-import { CheckIcon, ClockIcon, HelpCircleIcon, UsersIcon } from './icons'
+import { CheckIcon, HelpCircleIcon, UsersIcon } from './icons'
 import logoMark from '../../assets/logo-mark.svg'
 
-export type DashboardSidebarActiveItem = 'all-visitors' | 'my-actions' | 'audit-trail'
+export type DashboardSidebarActiveItem = 'all-visitors' | 'my-actions'
 
 interface DashboardSidebarProps {
   activeItem: DashboardSidebarActiveItem
@@ -11,13 +11,11 @@ interface DashboardSidebarProps {
 const NAV_ITEMS = [
   { key: 'all-visitors', label: 'All visitors', icon: UsersIcon },
   { key: 'my-actions', label: 'My actions', icon: CheckIcon },
-  { key: 'audit-trail', label: 'Audit trail', icon: ClockIcon },
 ] as const
 
 const STAFF_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: DashboardSidebarActiveItem]> = [
   ['/staff/dashboard', 'all-visitors'],
   ['/staff/visitors/new', 'my-actions'],
-  ['/staff/audit-trail', 'audit-trail'],
 ]
 
 // Derives which sidebar entry highlights from the current URL, so the active
@@ -33,7 +31,6 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
   const handleActivate = (key: DashboardSidebarActiveItem) => {
     if (key === 'all-visitors') navigate('/staff/dashboard')
     if (key === 'my-actions') navigate('/staff/visitors/new')
-    if (key === 'audit-trail') navigate('/staff/audit-trail')
   }
 
   return (

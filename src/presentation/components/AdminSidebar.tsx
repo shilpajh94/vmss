@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router'
 import {
   BuildingIcon,
   CalendarCheckIcon,
+  ClockIcon,
   GitBranchIcon,
   HomeIcon,
   LayersIcon,
@@ -31,6 +32,7 @@ export type AdminSidebarActiveItem =
   | 'invitations'
   | 'roles'
   | 'form-builder'
+  | 'audit-trail'
 
 interface AdminSidebarProps {
   activeItem: AdminSidebarActiveItem
@@ -51,6 +53,7 @@ const ADMIN_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: Ad
   ['/admin/invitations', 'invitations'],
   ['/admin/roles', 'roles'],
   ['/admin/form-builder', 'form-builder'],
+  ['/admin/audit-trail', 'audit-trail'],
 ]
 
 // Derives which sidebar entry highlights from the current URL, so the active
@@ -75,6 +78,7 @@ const NAV_ITEMS = [
   { key: 'invitations', label: 'Invitations', icon: CalendarCheckIcon },
   { key: 'roles', label: 'Roles & Permissions', icon: ShieldIcon },
   { key: 'form-builder', label: 'Form Builder', icon: PencilIcon },
+  { key: 'audit-trail', label: 'Audit Trail', icon: ClockIcon },
 ] as const satisfies ReadonlyArray<{ key: AdminSidebarActiveItem; label: string; icon: unknown }>
 
 export function AdminSidebar({ activeItem }: AdminSidebarProps) {
@@ -95,6 +99,7 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
     if (key === 'invitations') navigate('/admin/invitations')
     if (key === 'roles') navigate('/admin/roles')
     if (key === 'form-builder') navigate('/admin/form-builder')
+    if (key === 'audit-trail') navigate('/admin/audit-trail')
   }
 
   return (

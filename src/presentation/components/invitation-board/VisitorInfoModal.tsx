@@ -1,13 +1,17 @@
 import { useState } from 'react'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
+import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { Modal } from '../ui/Modal'
 import { CalendarClockIcon, ShieldIcon, TagIcon } from '../icons'
 import { formatDateTime } from '../../utils/format-time'
+import { resolvePointOfContactLabel } from '../../utils/approval-step-label'
 
 interface VisitorInfoModalProps {
   isOpen: boolean
   isLoading?: boolean
   detail?: InvitationDetail
+  workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
+  // Read-only here — editing Point of Contact happens in EditInvitationModal.
   onClose: () => void
 }
 
@@ -106,7 +110,15 @@ function SectionLabel({ children }: { children: string }) {
   return <h3 className="text-overline text-text-faint">{children}</h3>
 }
 
-export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: VisitorInfoModalProps) {
+export function VisitorInfoModal({
+  isOpen,
+  isLoading,
+  detail,
+  workflowRulesByCategory,
+  onClose,
+}: VisitorInfoModalProps) {
+  const pointOfContact = detail?.pocName ?? (detail ? resolvePointOfContactLabel(detail, workflowRulesByCategory ?? {}) : undefined)
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Visitor Info" maxWidthClassName="max-w-lg">
       {isLoading || !detail ? (
@@ -146,6 +158,7 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
             <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
               <Field label="Purpose" value={detail.purposeOfVisit} />
               <Field label="Host" value={detail.hostNameOrEmail ?? '—'} />
+              <Field label="Point of Contact" value={pointOfContact ?? '—'} />
               <Field label="Department" value={detail.departmentToVisit ?? '—'} />
               <Field label="Expected duration" value={detail.expectedDuration ?? '—'} />
               {detail.rescheduleCount > 0 ? (
