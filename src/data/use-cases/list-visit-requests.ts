@@ -1,4 +1,4 @@
-import type { VisitRequestSummaryRepository } from '../repositories/visit-request-summary-repository'
+import type { ListVisitRequestsParams, VisitRequestSummaryRepository } from '../repositories/visit-request-summary-repository'
 import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 
 export class ListVisitRequestsUseCase {
@@ -8,7 +8,7 @@ export class ListVisitRequestsUseCase {
     this.visitRequestSummaryRepository = visitRequestSummaryRepository
   }
 
-  async execute(relevantToMe?: boolean): Promise<VisitRequestSummary[]> {
-    return this.visitRequestSummaryRepository.list({ relevantToMe })
+  async execute(params?: ListVisitRequestsParams): Promise<VisitRequestSummary[]> {
+    return this.visitRequestSummaryRepository.list(params)
   }
 }

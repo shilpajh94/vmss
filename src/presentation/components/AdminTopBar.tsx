@@ -1,8 +1,57 @@
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { LogOutIcon } from './icons'
+import { LogOutIcon, RefreshCcwIcon } from './icons'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import { usePushNotifications } from '../hooks/use-push-notifications'
+import { useRefreshContext } from '../context/refresh-context'
 import { NotificationBell } from './notification-bell/NotificationBell'
+
+const NOW_TICK_INTERVAL_MS = 30_000
+
+function formatRelativeTime(date: Date, now: Date): string {
+  const diffSeconds = Math.max(0, Math.round((now.getTime() - date.getTime()) / 1000))
+  if (diffSeconds < 5) return 'just now'
+  if (diffSeconds < 60) return `${diffSeconds}s ago`
+  const diffMinutes = Math.round(diffSeconds / 60)
+  if (diffMinutes < 60) return `${diffMinutes}m ago`
+  const diffHours = Math.round(diffMinutes / 60)
+  return `${diffHours}h ago`
+}
+
+// Shared manual-refresh control for whichever operational list/dashboard
+// page is currently active (see live-data-refresh's modified requirement).
+// Reads its target from RefreshContext instead of owning any fetch itself -
+// each page's own data hook is what actually knows how to refresh itself.
+function RefreshControl() {
+  const { activeRefresh } = useRefreshContext()
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    if (!activeRefresh) return
+    const intervalId = setInterval(() => setNow(new Date()), NOW_TICK_INTERVAL_MS)
+    return () => clearInterval(intervalId)
+  }, [activeRefresh])
+
+  if (!activeRefresh) return null
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={activeRefresh.refresh}
+        aria-label="Refresh"
+        className="flex size-8 items-center justify-center rounded-full border border-border bg-surface text-text"
+      >
+        <RefreshCcwIcon className={`size-3.5 ${activeRefresh.isRefreshing ? 'animate-spin' : ''}`} />
+      </button>
+      {activeRefresh.lastUpdatedAt && (
+        <span className="font-body text-[11px] whitespace-nowrap text-text-faint">
+          Updated {formatRelativeTime(activeRefresh.lastUpdatedAt, now)}
+        </span>
+      )}
+    </div>
+  )
+}
 
 export interface AdminTopBarBreadcrumbItem {
   label: string
@@ -45,6 +94,7 @@ export function AdminTopBar({ description, breadcrumb, currentUser }: AdminTopBa
       )}
 
       <div className="flex items-center gap-6">
+        <RefreshControl />
         <NotificationBell />
 
         <div className="flex items-center gap-2">

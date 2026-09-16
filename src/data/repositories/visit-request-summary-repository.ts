@@ -15,8 +15,17 @@ export interface EditInvitationFields {
   additionalNotes?: string
 }
 
+export interface ListVisitRequestsParams {
+  relevantToMe?: boolean
+  status?: string
+  registrationType?: string
+  source?: string
+  search?: string
+  pageSize?: number
+}
+
 export interface VisitRequestSummaryRepository {
-  list(params?: { relevantToMe?: boolean }): Promise<VisitRequestSummary[]>
+  list(params?: ListVisitRequestsParams): Promise<VisitRequestSummary[]>
   approve(id: string): Promise<void>
   getDetail(id: string): Promise<InvitationDetail>
   reschedule(id: string, preferredVisitDate: string, preferredVisitTime: string): Promise<void>

@@ -1,9 +1,11 @@
 import { useNavigate } from 'react-router'
-import { PlusIcon, RefreshCcwIcon, SlidersIcon } from '../../components/icons'
+import { PlusIcon, SlidersIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { SelectField } from '../../components/ui/SelectField'
+import { Pagination } from '../../components/Pagination'
+import { PageContentLayout } from '../../components/PageContentLayout'
 import { usePageHeader } from '../../context/page-header-context'
 import { BuildingsTable } from './Components/BuildingsTable'
 import { useAdminBuildings } from './hooks/use-admin-buildings'
@@ -12,7 +14,11 @@ export function AdminBuildingsPage() {
   const navigate = useNavigate()
   const {
     buildings,
-    hasAnyBuildings,
+    total,
+    page,
+    pageSize,
+    goToNextPage,
+    goToPrevPage,
     isLoading,
     errorMessage,
     retry,
@@ -37,62 +43,58 @@ export function AdminBuildingsPage() {
   const goToAddBuilding = () => navigate('/admin/buildings/new')
 
   return (
-    <>
-      <div className="flex w-full items-center justify-between">
-        <h1 className="font-display text-2xl font-bold text-text">Buildings Registry</h1>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={retry}
-            aria-label="Refresh"
-            className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
-          >
-            <RefreshCcwIcon className="size-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={toggleFilterPanel}
-            className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
-          >
-            <SlidersIcon className="size-3.5" />
-            Filters
-          </button>
-          <button
-            type="button"
-            onClick={goToAddBuilding}
-            className="flex items-center gap-2 rounded-full bg-admin-accent px-[18px] py-2.5 font-body text-[13px] font-semibold text-white"
-          >
-            <PlusIcon className="size-3.5" />
-            Add Building
-          </button>
-        </div>
-      </div>
+    <PageContentLayout
+      header={
+        <>
+          <div className="flex w-full items-center justify-between">
+            <h1 className="font-display text-2xl font-bold text-text">Buildings Registry</h1>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={toggleFilterPanel}
+                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
+              >
+                <SlidersIcon className="size-3.5" />
+                Filters
+              </button>
+              <button
+                type="button"
+                onClick={goToAddBuilding}
+                className="flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white"
+              >
+                <PlusIcon className="size-3.5" />
+                Add Building
+              </button>
+            </div>
+          </div>
 
-      {isFilterPanelOpen && (
-        <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-4">
-          <div className="w-48">
-            <SelectField label="Branch" value={branchFilter} onChange={setBranchFilter} placeholder="All" options={branchOptions} />
-          </div>
-          <div className="w-48">
-            <SelectField
-              label="Status"
-              value={statusFilter}
-              onChange={setStatusFilter}
-              placeholder="All"
-              options={[
-                { value: 'active', label: 'Active' },
-                { value: 'inactive', label: 'Inactive' },
-              ]}
-            />
-          </div>
-          {isFiltering && (
-            <button type="button" onClick={clearFilters} className="font-body text-[13px] font-semibold text-admin-accent">
-              Clear filters
-            </button>
+          {isFilterPanelOpen && (
+            <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-filter-panel">
+              <div className="w-48">
+                <SelectField label="Branch" value={branchFilter} onChange={setBranchFilter} placeholder="All" options={branchOptions} />
+              </div>
+              <div className="w-48">
+                <SelectField
+                  label="Status"
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  placeholder="All"
+                  options={[
+                    { value: 'active', label: 'Active' },
+                    { value: 'inactive', label: 'Inactive' },
+                  ]}
+                />
+              </div>
+              {isFiltering && (
+                <button type="button" onClick={clearFilters} className="font-body text-[13px] font-semibold text-admin-accent">
+                  Clear filters
+                </button>
+              )}
+            </div>
           )}
-        </div>
-      )}
-
+        </>
+      }
+    >
       {errorMessage ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
@@ -104,14 +106,17 @@ export function AdminBuildingsPage() {
         <LoadingState label="Loading buildings…" className="flex-1" />
       ) : buildings.length === 0 ? (
         <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
-          {hasAnyBuildings ? (
+          {isFiltering ? (
             <EmptyState message="No buildings match these filters." />
           ) : (
             <EmptyState message="No buildings yet." action={{ label: 'Add Building', onClick: goToAddBuilding }} />
           )}
         </div>
       ) : (
-        <BuildingsTable buildings={buildings} onDelete={requestDelete} />
+        <div className="flex h-full flex-col gap-3">
+          <BuildingsTable buildings={buildings} onDelete={requestDelete} />
+          <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
+        </div>
       )}
 
       <ConfirmDialog
@@ -122,6 +127,6 @@ export function AdminBuildingsPage() {
         onConfirm={() => void confirmDelete()}
         onCancel={cancelDelete}
       />
-    </>
+    </PageContentLayout>
   )
 }

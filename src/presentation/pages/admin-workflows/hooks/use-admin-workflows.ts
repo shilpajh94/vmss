@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePolling } from '../../../hooks/use-polling'
+import { usePageRefresh } from '../../../context/refresh-context'
 import type { ApprovalWorkflowRule } from '../../../../domain/entities/approval-workflow-rule-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
@@ -27,11 +28,17 @@ export function useAdminWorkflows() {
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [workflows, setWorkflows] = useState<WorkflowGroup[]>([])
+  const [categoryOptions, setCategoryOptions] = useState<{ value: string; label: string }[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [pendingDelete, setPendingDelete] = useState<WorkflowGroup | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [categoryFilter, setCategoryFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
 
   const loadWorkflows = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -45,7 +52,10 @@ export function useAdminWorkflows() {
       try {
         const [user, rules, categories, roles] = await Promise.all([
           getCurrentStaffUserUseCase.execute(),
-          listApprovalWorkflowRulesUseCase.execute(),
+          listApprovalWorkflowRulesUseCase.execute({
+            visitorCategoryId: categoryFilter || undefined,
+            status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+          }),
           listVisitorCategoriesUseCase.execute(),
           listRolesUseCase.execute(),
         ])
@@ -53,6 +63,7 @@ export function useAdminWorkflows() {
 
         const categoryNameById = new Map(categories.map((category) => [category.id, category.name]))
         const roleNameById = new Map(roles.map((role) => [role.id, role.name]))
+        setCategoryOptions(categories.map((category) => ({ value: category.id, label: category.name })).sort((a, b) => a.label.localeCompare(b.label)))
 
         const rulesByCategory = new Map<string, ApprovalWorkflowRule[]>()
         for (const rule of rules) {
@@ -75,6 +86,7 @@ export function useAdminWorkflows() {
         }))
 
         setWorkflows(groups)
+        setLastUpdatedAt(new Date())
       } catch {
         if (!silent) {
           setErrorMessage('Something went wrong loading the workflows. Please try again.')
@@ -86,7 +98,15 @@ export function useAdminWorkflows() {
         }
       }
     },
-    [getCurrentStaffUserUseCase, listApprovalWorkflowRulesUseCase, listVisitorCategoriesUseCase, listRolesUseCase, toast],
+    [
+      getCurrentStaffUserUseCase,
+      listApprovalWorkflowRulesUseCase,
+      listVisitorCategoriesUseCase,
+      listRolesUseCase,
+      categoryFilter,
+      statusFilter,
+      toast,
+    ],
   )
 
   useEffect(() => {
@@ -105,6 +125,15 @@ export function useAdminWorkflows() {
   const isActionInProgress = pendingDelete !== undefined || isDeleting
   usePolling(() => void loadWorkflows({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
+  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+
+  const isFiltering = categoryFilter !== '' || statusFilter !== ''
+  const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+  const clearFilters = useCallback(() => {
+    setCategoryFilter('')
+    setStatusFilter('')
+  }, [])
+
   const requestDelete = useCallback((workflow: WorkflowGroup) => {
     setPendingDelete(workflow)
   }, [])
@@ -119,15 +148,15 @@ export function useAdminWorkflows() {
     setIsDeleting(true)
     try {
       await deleteWorkflowUseCase.execute(pendingDelete.levels.map((level) => level.ruleId))
-      setWorkflows((current) => current.filter((workflow) => workflow.visitorCategoryId !== pendingDelete.visitorCategoryId))
       toast.success('Workflow deleted.')
       setPendingDelete(undefined)
+      await loadWorkflows({ silent: true })
     } catch {
       toast.error('Something went wrong deleting the workflow. Please try again.')
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, deleteWorkflowUseCase, toast])
+  }, [pendingDelete, deleteWorkflowUseCase, toast, loadWorkflows])
 
   return {
     currentUser,
@@ -135,6 +164,15 @@ export function useAdminWorkflows() {
     isLoading,
     errorMessage,
     retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    categoryOptions,
+    categoryFilter,
+    setCategoryFilter,
+    statusFilter,
+    setStatusFilter,
+    clearFilters,
+    isFiltering,
     pendingDelete,
     isDeleting,
     requestDelete,

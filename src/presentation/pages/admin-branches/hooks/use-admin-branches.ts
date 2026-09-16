@@ -1,25 +1,36 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePolling } from '../../../hooks/use-polling'
+import { usePagedList } from '../../../hooks/use-paged-list'
+import { usePageRefresh } from '../../../context/refresh-context'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 
 export type BranchFormState = { mode: 'edit'; branch: Branch } | undefined
 
+const PAGE_SIZE = 20
+
 export function useAdminBranches() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listBranchesUseCase, listHostEmployeesUseCase, updateBranchUseCase, deleteBranchUseCase } =
-    useAppDependencies()
+  const {
+    getCurrentStaffUserUseCase,
+    listBranchesPageUseCase,
+    listHostEmployeesUseCase,
+    updateBranchUseCase,
+    deleteBranchUseCase,
+  } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [branches, setBranches] = useState<Branch[]>([])
+  const [total, setTotal] = useState(0)
   const [employees, setEmployees] = useState<HostEmployee[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [formState, setFormState] = useState<BranchFormState>(undefined)
   const [isSaving, setIsSaving] = useState(false)
@@ -29,6 +40,8 @@ export function useAdminBranches() {
 
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
+
+  const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
   const loadBranches = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -40,14 +53,20 @@ export function useAdminBranches() {
       }
 
       try {
-        const [user, list, employeeList] = await Promise.all([
+        const [user, page_, employeeList] = await Promise.all([
           getCurrentStaffUserUseCase.execute(),
-          listBranchesUseCase.execute(),
+          listBranchesPageUseCase.execute({
+            page,
+            pageSize: PAGE_SIZE,
+            status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+          }),
           listHostEmployeesUseCase.execute(),
         ])
         setCurrentUser(user)
-        setBranches(list)
+        setBranches(page_.items)
+        setTotal(page_.total)
         setEmployees(employeeList)
+        setLastUpdatedAt(new Date())
       } catch {
         if (!silent) {
           setErrorMessage('Something went wrong loading the branches. Please try again.')
@@ -59,7 +78,7 @@ export function useAdminBranches() {
         }
       }
     },
-    [getCurrentStaffUserUseCase, listBranchesUseCase, listHostEmployeesUseCase, toast],
+    [getCurrentStaffUserUseCase, listBranchesPageUseCase, listHostEmployeesUseCase, page, statusFilter, toast],
   )
 
   useEffect(() => {
@@ -79,6 +98,8 @@ export function useAdminBranches() {
   // is open so a background tick can't replace data underneath it.
   const isActionInProgress = formState !== undefined || isSaving || pendingDelete !== undefined || isDeleting
   usePolling(() => void loadBranches({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+
+  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
 
   const openEditForm = useCallback((branch: Branch) => {
     setFormState({ mode: 'edit', branch })
@@ -121,31 +142,40 @@ export function useAdminBranches() {
     setIsDeleting(true)
     try {
       await deleteBranchUseCase.execute(pendingDelete.id)
-      setBranches((current) => current.filter((branch) => branch.id !== pendingDelete.id))
       toast.success('Branch deleted.')
       setPendingDelete(undefined)
+      await loadBranches({ silent: true })
     } catch {
       toast.error('Something went wrong deleting the branch. Please try again.')
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, deleteBranchUseCase, toast])
-
-  const filteredBranches = useMemo(() => {
-    return branches.filter((branch) => {
-      if (statusFilter && (statusFilter === 'active') !== branch.isActive) return false
-      return true
-    })
-  }, [branches, statusFilter])
+  }, [pendingDelete, deleteBranchUseCase, toast, loadBranches])
 
   const isFiltering = statusFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
-  const clearFilters = useCallback(() => setStatusFilter(''), [])
+
+  const changeStatusFilter = useCallback(
+    (value: string) => {
+      setStatusFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
+
+  const clearFilters = useCallback(() => {
+    setStatusFilter('')
+    resetToFirstPage()
+  }, [resetToFirstPage])
 
   return {
     currentUser,
-    branches: filteredBranches,
-    hasAnyBranches: branches.length > 0,
+    branches,
+    total,
+    page,
+    pageSize: PAGE_SIZE,
+    goToNextPage,
+    goToPrevPage,
     employees,
     isLoading,
     errorMessage,
@@ -153,7 +183,7 @@ export function useAdminBranches() {
     isFilterPanelOpen,
     toggleFilterPanel,
     statusFilter,
-    setStatusFilter,
+    setStatusFilter: changeStatusFilter,
     clearFilters,
     isFiltering,
     formState,

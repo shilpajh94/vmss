@@ -46,27 +46,33 @@ import { GetCurrentStaffUserUseCase } from './data/use-cases/get-current-staff-u
 import { GetOrganisationConfigUseCase } from './data/use-cases/get-organisation-config'
 import { UpdateOrganisationConfigUseCase } from './data/use-cases/update-organisation-config'
 import { ListBranchesUseCase } from './data/use-cases/list-branches'
+import { ListBranchesPageUseCase } from './data/use-cases/list-branches-page'
 import { CreateBranchUseCase } from './data/use-cases/create-branch'
 import { UpdateBranchUseCase } from './data/use-cases/update-branch'
 import { DeleteBranchUseCase } from './data/use-cases/delete-branch'
 import { ListDepartmentsUseCase } from './data/use-cases/list-departments'
+import { ListDepartmentsPageUseCase } from './data/use-cases/list-departments-page'
 import { CreateDepartmentUseCase } from './data/use-cases/create-department'
 import { UpdateDepartmentUseCase } from './data/use-cases/update-department'
 import { DeleteDepartmentUseCase } from './data/use-cases/delete-department'
 import { ListBuildingsUseCase } from './data/use-cases/list-buildings'
+import { ListBuildingsPageUseCase } from './data/use-cases/list-buildings-page'
 import { CreateBuildingUseCase } from './data/use-cases/create-building'
 import { UpdateBuildingUseCase } from './data/use-cases/update-building'
 import { DeleteBuildingUseCase } from './data/use-cases/delete-building'
 import { ListFloorsUseCase } from './data/use-cases/list-floors'
+import { ListFloorsPageUseCase } from './data/use-cases/list-floors-page'
 import { CreateFloorUseCase } from './data/use-cases/create-floor'
 import { UpdateFloorUseCase } from './data/use-cases/update-floor'
 import { DeleteFloorUseCase } from './data/use-cases/delete-floor'
 import { GetDashboardOverviewUseCase } from './data/use-cases/get-dashboard-overview'
 import { ListRecentCheckinsUseCase } from './data/use-cases/list-recent-checkins'
 import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
+import { ListHostEmployeesPageUseCase } from './data/use-cases/list-host-employees-page'
 import { ListEmployeeDirectoryUseCase } from './data/use-cases/list-employee-directory'
 import { CreateHostEmployeeUseCase } from './data/use-cases/create-host-employee'
 import { ListRolesUseCase } from './data/use-cases/list-roles'
+import { ListRolesPageUseCase } from './data/use-cases/list-roles-page'
 import { CreateRoleUseCase } from './data/use-cases/create-role'
 import { ListPermissionsUseCase } from './data/use-cases/list-permissions'
 import { UpdateRolePermissionsUseCase } from './data/use-cases/update-role-permissions'
@@ -74,14 +80,17 @@ import { ResyncRolePermissionsUseCase } from './data/use-cases/resync-role-permi
 import { AssignHostEmployeeRoleUseCase } from './data/use-cases/assign-host-employee-role'
 import { RevokeHostEmployeeRoleUseCase } from './data/use-cases/revoke-host-employee-role'
 import { ListReceptionDesksUseCase } from './data/use-cases/list-reception-desks'
+import { ListReceptionDesksPageUseCase } from './data/use-cases/list-reception-desks-page'
 import { CreateReceptionDeskUseCase } from './data/use-cases/create-reception-desk'
 import { UpdateReceptionDeskUseCase } from './data/use-cases/update-reception-desk'
 import { DeleteReceptionDeskUseCase } from './data/use-cases/delete-reception-desk'
 import { ListSecurityGatesUseCase } from './data/use-cases/list-security-gates'
+import { ListSecurityGatesPageUseCase } from './data/use-cases/list-security-gates-page'
 import { CreateSecurityGateUseCase } from './data/use-cases/create-security-gate'
 import { UpdateSecurityGateUseCase } from './data/use-cases/update-security-gate'
 import { DeleteSecurityGateUseCase } from './data/use-cases/delete-security-gate'
 import { ListVisitorCategoriesUseCase } from './data/use-cases/list-visitor-categories'
+import { ListVisitorCategoriesPageUseCase } from './data/use-cases/list-visitor-categories-page'
 import { CreateVisitorCategoryUseCase } from './data/use-cases/create-visitor-category'
 import { UpdateVisitorCategoryUseCase } from './data/use-cases/update-visitor-category'
 import { DeleteVisitorCategoryUseCase } from './data/use-cases/delete-visitor-category'
@@ -152,27 +161,33 @@ export interface AppDependencies {
   getOrganisationConfigUseCase: GetOrganisationConfigUseCase
   updateOrganisationConfigUseCase: UpdateOrganisationConfigUseCase
   listBranchesUseCase: ListBranchesUseCase
+  listBranchesPageUseCase: ListBranchesPageUseCase
   createBranchUseCase: CreateBranchUseCase
   updateBranchUseCase: UpdateBranchUseCase
   deleteBranchUseCase: DeleteBranchUseCase
   listDepartmentsUseCase: ListDepartmentsUseCase
+  listDepartmentsPageUseCase: ListDepartmentsPageUseCase
   createDepartmentUseCase: CreateDepartmentUseCase
   updateDepartmentUseCase: UpdateDepartmentUseCase
   deleteDepartmentUseCase: DeleteDepartmentUseCase
   listBuildingsUseCase: ListBuildingsUseCase
+  listBuildingsPageUseCase: ListBuildingsPageUseCase
   createBuildingUseCase: CreateBuildingUseCase
   updateBuildingUseCase: UpdateBuildingUseCase
   deleteBuildingUseCase: DeleteBuildingUseCase
   listFloorsUseCase: ListFloorsUseCase
+  listFloorsPageUseCase: ListFloorsPageUseCase
   createFloorUseCase: CreateFloorUseCase
   updateFloorUseCase: UpdateFloorUseCase
   deleteFloorUseCase: DeleteFloorUseCase
   getDashboardOverviewUseCase: GetDashboardOverviewUseCase
   listRecentCheckinsUseCase: ListRecentCheckinsUseCase
   listHostEmployeesUseCase: ListHostEmployeesUseCase
+  listHostEmployeesPageUseCase: ListHostEmployeesPageUseCase
   listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase
   createHostEmployeeUseCase: CreateHostEmployeeUseCase
   listRolesUseCase: ListRolesUseCase
+  listRolesPageUseCase: ListRolesPageUseCase
   createRoleUseCase: CreateRoleUseCase
   listPermissionsUseCase: ListPermissionsUseCase
   updateRolePermissionsUseCase: UpdateRolePermissionsUseCase
@@ -180,14 +195,17 @@ export interface AppDependencies {
   assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase
   revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase
   listReceptionDesksUseCase: ListReceptionDesksUseCase
+  listReceptionDesksPageUseCase: ListReceptionDesksPageUseCase
   createReceptionDeskUseCase: CreateReceptionDeskUseCase
   updateReceptionDeskUseCase: UpdateReceptionDeskUseCase
   deleteReceptionDeskUseCase: DeleteReceptionDeskUseCase
   listSecurityGatesUseCase: ListSecurityGatesUseCase
+  listSecurityGatesPageUseCase: ListSecurityGatesPageUseCase
   createSecurityGateUseCase: CreateSecurityGateUseCase
   updateSecurityGateUseCase: UpdateSecurityGateUseCase
   deleteSecurityGateUseCase: DeleteSecurityGateUseCase
   listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase
+  listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase
   createVisitorCategoryUseCase: CreateVisitorCategoryUseCase
   updateVisitorCategoryUseCase: UpdateVisitorCategoryUseCase
   deleteVisitorCategoryUseCase: DeleteVisitorCategoryUseCase
@@ -247,21 +265,25 @@ export function createApp(): AppDependencies {
   let updateOrganisationConfigUseCase: UpdateOrganisationConfigUseCase | undefined
   let branchRepository: BranchRepository | undefined
   let listBranchesUseCase: ListBranchesUseCase | undefined
+  let listBranchesPageUseCase: ListBranchesPageUseCase | undefined
   let createBranchUseCase: CreateBranchUseCase | undefined
   let updateBranchUseCase: UpdateBranchUseCase | undefined
   let deleteBranchUseCase: DeleteBranchUseCase | undefined
   let departmentRepository: DepartmentRepository | undefined
   let listDepartmentsUseCase: ListDepartmentsUseCase | undefined
+  let listDepartmentsPageUseCase: ListDepartmentsPageUseCase | undefined
   let createDepartmentUseCase: CreateDepartmentUseCase | undefined
   let updateDepartmentUseCase: UpdateDepartmentUseCase | undefined
   let deleteDepartmentUseCase: DeleteDepartmentUseCase | undefined
   let buildingRepository: BuildingRepository | undefined
   let listBuildingsUseCase: ListBuildingsUseCase | undefined
+  let listBuildingsPageUseCase: ListBuildingsPageUseCase | undefined
   let createBuildingUseCase: CreateBuildingUseCase | undefined
   let updateBuildingUseCase: UpdateBuildingUseCase | undefined
   let deleteBuildingUseCase: DeleteBuildingUseCase | undefined
   let floorRepository: FloorRepository | undefined
   let listFloorsUseCase: ListFloorsUseCase | undefined
+  let listFloorsPageUseCase: ListFloorsPageUseCase | undefined
   let createFloorUseCase: CreateFloorUseCase | undefined
   let updateFloorUseCase: UpdateFloorUseCase | undefined
   let deleteFloorUseCase: DeleteFloorUseCase | undefined
@@ -270,10 +292,12 @@ export function createApp(): AppDependencies {
   let listRecentCheckinsUseCase: ListRecentCheckinsUseCase | undefined
   let hostEmployeeRepository: HostEmployeeRepository | undefined
   let listHostEmployeesUseCase: ListHostEmployeesUseCase | undefined
+  let listHostEmployeesPageUseCase: ListHostEmployeesPageUseCase | undefined
   let employeeDirectoryRepository: EmployeeDirectoryRepository | undefined
   let listEmployeeDirectoryUseCase: ListEmployeeDirectoryUseCase | undefined
   let createHostEmployeeUseCase: CreateHostEmployeeUseCase | undefined
   let listRolesUseCase: ListRolesUseCase | undefined
+  let listRolesPageUseCase: ListRolesPageUseCase | undefined
   let createRoleUseCase: CreateRoleUseCase | undefined
   let listPermissionsUseCase: ListPermissionsUseCase | undefined
   let updateRolePermissionsUseCase: UpdateRolePermissionsUseCase | undefined
@@ -282,16 +306,19 @@ export function createApp(): AppDependencies {
   let revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase | undefined
   let receptionDeskRepository: ReceptionDeskRepository | undefined
   let listReceptionDesksUseCase: ListReceptionDesksUseCase | undefined
+  let listReceptionDesksPageUseCase: ListReceptionDesksPageUseCase | undefined
   let createReceptionDeskUseCase: CreateReceptionDeskUseCase | undefined
   let updateReceptionDeskUseCase: UpdateReceptionDeskUseCase | undefined
   let deleteReceptionDeskUseCase: DeleteReceptionDeskUseCase | undefined
   let securityGateRepository: SecurityGateRepository | undefined
   let listSecurityGatesUseCase: ListSecurityGatesUseCase | undefined
+  let listSecurityGatesPageUseCase: ListSecurityGatesPageUseCase | undefined
   let createSecurityGateUseCase: CreateSecurityGateUseCase | undefined
   let updateSecurityGateUseCase: UpdateSecurityGateUseCase | undefined
   let deleteSecurityGateUseCase: DeleteSecurityGateUseCase | undefined
   let visitorCategoryRepository: VisitorCategoryRepository | undefined
   let listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase | undefined
+  let listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase | undefined
   let createVisitorCategoryUseCase: CreateVisitorCategoryUseCase | undefined
   let updateVisitorCategoryUseCase: UpdateVisitorCategoryUseCase | undefined
   let deleteVisitorCategoryUseCase: DeleteVisitorCategoryUseCase | undefined
@@ -497,6 +524,11 @@ export function createApp(): AppDependencies {
     return listBranchesUseCase
   }
 
+  const resolveListBranchesPageUseCase = (): ListBranchesPageUseCase => {
+    listBranchesPageUseCase ??= new ListBranchesPageUseCase(resolveBranchRepository())
+    return listBranchesPageUseCase
+  }
+
   const resolveCreateBranchUseCase = (): CreateBranchUseCase => {
     createBranchUseCase ??= new CreateBranchUseCase(resolveBranchRepository())
     return createBranchUseCase
@@ -520,6 +552,11 @@ export function createApp(): AppDependencies {
   const resolveListDepartmentsUseCase = (): ListDepartmentsUseCase => {
     listDepartmentsUseCase ??= new ListDepartmentsUseCase(resolveDepartmentRepository())
     return listDepartmentsUseCase
+  }
+
+  const resolveListDepartmentsPageUseCase = (): ListDepartmentsPageUseCase => {
+    listDepartmentsPageUseCase ??= new ListDepartmentsPageUseCase(resolveDepartmentRepository())
+    return listDepartmentsPageUseCase
   }
 
   const resolveCreateDepartmentUseCase = (): CreateDepartmentUseCase => {
@@ -547,6 +584,11 @@ export function createApp(): AppDependencies {
     return listBuildingsUseCase
   }
 
+  const resolveListBuildingsPageUseCase = (): ListBuildingsPageUseCase => {
+    listBuildingsPageUseCase ??= new ListBuildingsPageUseCase(resolveBuildingRepository())
+    return listBuildingsPageUseCase
+  }
+
   const resolveCreateBuildingUseCase = (): CreateBuildingUseCase => {
     createBuildingUseCase ??= new CreateBuildingUseCase(resolveBuildingRepository())
     return createBuildingUseCase
@@ -570,6 +612,11 @@ export function createApp(): AppDependencies {
   const resolveListFloorsUseCase = (): ListFloorsUseCase => {
     listFloorsUseCase ??= new ListFloorsUseCase(resolveFloorRepository())
     return listFloorsUseCase
+  }
+
+  const resolveListFloorsPageUseCase = (): ListFloorsPageUseCase => {
+    listFloorsPageUseCase ??= new ListFloorsPageUseCase(resolveFloorRepository())
+    return listFloorsPageUseCase
   }
 
   const resolveCreateFloorUseCase = (): CreateFloorUseCase => {
@@ -607,6 +654,11 @@ export function createApp(): AppDependencies {
     return hostEmployeeRepository
   }
 
+  const resolveListHostEmployeesPageUseCase = (): ListHostEmployeesPageUseCase => {
+    listHostEmployeesPageUseCase ??= new ListHostEmployeesPageUseCase(resolveHostEmployeeRepository())
+    return listHostEmployeesPageUseCase
+  }
+
   const resolveListHostEmployeesUseCase = (): ListHostEmployeesUseCase => {
     listHostEmployeesUseCase ??= new ListHostEmployeesUseCase(resolveHostEmployeeRepository())
     return listHostEmployeesUseCase
@@ -625,6 +677,11 @@ export function createApp(): AppDependencies {
   const resolveCreateHostEmployeeUseCase = (): CreateHostEmployeeUseCase => {
     createHostEmployeeUseCase ??= new CreateHostEmployeeUseCase(resolveHostEmployeeRepository())
     return createHostEmployeeUseCase
+  }
+
+  const resolveListRolesPageUseCase = (): ListRolesPageUseCase => {
+    listRolesPageUseCase ??= new ListRolesPageUseCase(resolveHostEmployeeRepository())
+    return listRolesPageUseCase
   }
 
   const resolveListRolesUseCase = (): ListRolesUseCase => {
@@ -672,6 +729,11 @@ export function createApp(): AppDependencies {
     return receptionDeskRepository
   }
 
+  const resolveListReceptionDesksPageUseCase = (): ListReceptionDesksPageUseCase => {
+    listReceptionDesksPageUseCase ??= new ListReceptionDesksPageUseCase(resolveReceptionDeskRepository())
+    return listReceptionDesksPageUseCase
+  }
+
   const resolveListReceptionDesksUseCase = (): ListReceptionDesksUseCase => {
     listReceptionDesksUseCase ??= new ListReceptionDesksUseCase(resolveReceptionDeskRepository())
     return listReceptionDesksUseCase
@@ -697,6 +759,11 @@ export function createApp(): AppDependencies {
     return securityGateRepository
   }
 
+  const resolveListSecurityGatesPageUseCase = (): ListSecurityGatesPageUseCase => {
+    listSecurityGatesPageUseCase ??= new ListSecurityGatesPageUseCase(resolveSecurityGateRepository())
+    return listSecurityGatesPageUseCase
+  }
+
   const resolveListSecurityGatesUseCase = (): ListSecurityGatesUseCase => {
     listSecurityGatesUseCase ??= new ListSecurityGatesUseCase(resolveSecurityGateRepository())
     return listSecurityGatesUseCase
@@ -720,6 +787,11 @@ export function createApp(): AppDependencies {
   const resolveVisitorCategoryRepository = (): VisitorCategoryRepository => {
     visitorCategoryRepository ??= new HttpVisitorCategoryRepository(resolveApiClient())
     return visitorCategoryRepository
+  }
+
+  const resolveListVisitorCategoriesPageUseCase = (): ListVisitorCategoriesPageUseCase => {
+    listVisitorCategoriesPageUseCase ??= new ListVisitorCategoriesPageUseCase(resolveVisitorCategoryRepository())
+    return listVisitorCategoriesPageUseCase
   }
 
   const resolveListVisitorCategoriesUseCase = (): ListVisitorCategoriesUseCase => {
@@ -921,6 +993,9 @@ export function createApp(): AppDependencies {
     get listBranchesUseCase() {
       return resolveListBranchesUseCase()
     },
+    get listBranchesPageUseCase() {
+      return resolveListBranchesPageUseCase()
+    },
     get createBranchUseCase() {
       return resolveCreateBranchUseCase()
     },
@@ -932,6 +1007,9 @@ export function createApp(): AppDependencies {
     },
     get listDepartmentsUseCase() {
       return resolveListDepartmentsUseCase()
+    },
+    get listDepartmentsPageUseCase() {
+      return resolveListDepartmentsPageUseCase()
     },
     get createDepartmentUseCase() {
       return resolveCreateDepartmentUseCase()
@@ -945,6 +1023,9 @@ export function createApp(): AppDependencies {
     get listBuildingsUseCase() {
       return resolveListBuildingsUseCase()
     },
+    get listBuildingsPageUseCase() {
+      return resolveListBuildingsPageUseCase()
+    },
     get createBuildingUseCase() {
       return resolveCreateBuildingUseCase()
     },
@@ -956,6 +1037,9 @@ export function createApp(): AppDependencies {
     },
     get listFloorsUseCase() {
       return resolveListFloorsUseCase()
+    },
+    get listFloorsPageUseCase() {
+      return resolveListFloorsPageUseCase()
     },
     get createFloorUseCase() {
       return resolveCreateFloorUseCase()
@@ -975,6 +1059,9 @@ export function createApp(): AppDependencies {
     get listHostEmployeesUseCase() {
       return resolveListHostEmployeesUseCase()
     },
+    get listHostEmployeesPageUseCase() {
+      return resolveListHostEmployeesPageUseCase()
+    },
     get listEmployeeDirectoryUseCase() {
       return resolveListEmployeeDirectoryUseCase()
     },
@@ -983,6 +1070,9 @@ export function createApp(): AppDependencies {
     },
     get listRolesUseCase() {
       return resolveListRolesUseCase()
+    },
+    get listRolesPageUseCase() {
+      return resolveListRolesPageUseCase()
     },
     get createRoleUseCase() {
       return resolveCreateRoleUseCase()
@@ -1005,6 +1095,9 @@ export function createApp(): AppDependencies {
     get listReceptionDesksUseCase() {
       return resolveListReceptionDesksUseCase()
     },
+    get listReceptionDesksPageUseCase() {
+      return resolveListReceptionDesksPageUseCase()
+    },
     get createReceptionDeskUseCase() {
       return resolveCreateReceptionDeskUseCase()
     },
@@ -1017,6 +1110,9 @@ export function createApp(): AppDependencies {
     get listSecurityGatesUseCase() {
       return resolveListSecurityGatesUseCase()
     },
+    get listSecurityGatesPageUseCase() {
+      return resolveListSecurityGatesPageUseCase()
+    },
     get createSecurityGateUseCase() {
       return resolveCreateSecurityGateUseCase()
     },
@@ -1028,6 +1124,9 @@ export function createApp(): AppDependencies {
     },
     get listVisitorCategoriesUseCase() {
       return resolveListVisitorCategoriesUseCase()
+    },
+    get listVisitorCategoriesPageUseCase() {
+      return resolveListVisitorCategoriesPageUseCase()
     },
     get createVisitorCategoryUseCase() {
       return resolveCreateVisitorCategoryUseCase()

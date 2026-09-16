@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
 import { usePolling } from './use-polling'
+import { useDebouncedValue } from './use-debounced-value'
 import { resolveApproverLabel } from '../utils/approval-step-label'
 import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
@@ -46,13 +47,25 @@ function describeApprovalOutcome(
   return `Level ${approvedStep.stepOrder} of ${approvedStep.totalSteps} approved — now waiting on ${approverLabel} (level ${nextStep.stepOrder} of ${nextStep.totalSteps}).`
 }
 
+export interface InvitationsBoardOptions {
+  /**
+   * When true, search/status/registrationType/source are sent to the server
+   * (debounced search) and the board's fetch is bounded (not the default
+   * pageSize) rather than filtering an already-fetched list client-side.
+   * Used by the admin Invitations board only — the staff dashboard keeps
+   * its existing client-side filtering unchanged (default: false).
+   */
+  serverFilters?: boolean
+}
+
 // Shared Kanban-board data/actions behind the staff dashboard and the admin
 // invitations board — same columns, same approve/reschedule/step-progress
 // behavior, differing in where an unauthenticated visitor is redirected and
 // in scope: the staff dashboard asks the API for only the requests where the
 // current user is the host or a delegate (`relevantToMe=true`), while the
 // admin board keeps its organisation-wide view.
-export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | 'all' = 'all') {
+export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | 'all' = 'all', options?: InvitationsBoardOptions) {
+  const serverFilters = options?.serverFilters ?? false
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const {
@@ -82,6 +95,10 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [search, setSearch] = useState('')
   const [purposeFilter, setPurposeFilter] = useState('all')
   const [registrationTypeFilter, setRegistrationTypeFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [sourceFilter, setSourceFilter] = useState('')
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
+  const debouncedSearch = useDebouncedValue(search, 300)
   const [approvingId, setApprovingId] = useState<string | undefined>(undefined)
   const [expandedId, setExpandedId] = useState<string | undefined>(undefined)
   const [invitationDetails, setInvitationDetails] = useState<Record<string, InvitationDetail>>({})
@@ -96,6 +113,33 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [pendingEditId, setPendingEditId] = useState<string | undefined>(undefined)
   const [visitorInfoId, setVisitorInfoId] = useState<string | undefined>(undefined)
 
+  // Two separately-memoized param objects, not one memo branching at read
+  // time: `clientModeParams`'s identity only changes when `scope` does, so
+  // the staff dashboard (which always resolves to it, since it never sets
+  // serverFilters) never triggers a network refetch just because
+  // statusFilter/sourceFilter/debouncedSearch/registrationTypeFilter
+  // changed - those stay a pure client-side re-filter there, exactly as
+  // before this option existed. A single memo keyed on all those filters
+  // would give every read a fresh object reference regardless of which
+  // branch it took, defeating that.
+  const clientModeParams = useMemo(() => ({ relevantToMe: scope === 'mine' }), [scope])
+  const serverModeParams = useMemo(
+    () => ({
+      relevantToMe: scope === 'mine',
+      status: statusFilter || undefined,
+      registrationType: registrationTypeFilter === 'all' ? undefined : registrationTypeFilter,
+      source: sourceFilter || undefined,
+      search: debouncedSearch.trim() || undefined,
+      // Bounded, not paginated - the board groups by status column, so a
+      // page-by-page fetch could under-populate a column until an admin
+      // paged further. See admin-invitations spec's "board's fetch is
+      // bounded" requirement.
+      pageSize: 200,
+    }),
+    [scope, statusFilter, registrationTypeFilter, sourceFilter, debouncedSearch],
+  )
+  const fetchParams = serverFilters ? serverModeParams : clientModeParams
+
   const loadDashboard = useCallback(
     async (options?: { silent?: boolean }) => {
       const silent = options?.silent ?? false
@@ -108,7 +152,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
       try {
         const [user, requests, roles, employees] = await Promise.all([
           getCurrentStaffUserUseCase.execute(),
-          listVisitRequestsUseCase.execute(scope === 'mine'),
+          listVisitRequestsUseCase.execute(fetchParams),
           listRolesUseCase.execute(),
           listHostEmployeesUseCase.execute(),
         ])
@@ -118,6 +162,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         setRoleNameById(Object.fromEntries(roles.map((role: RoleOut) => [role.id, role.name])))
         setHostEmployees(employees)
         setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
+        setLastUpdatedAt(new Date())
       } catch (error) {
         console.error('Failed to load dashboard', error)
         if (!silent) {
@@ -130,7 +175,19 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         }
       }
     },
-    [getCurrentStaffUserUseCase, listVisitRequestsUseCase, listRolesUseCase, listHostEmployeesUseCase, scope, toast],
+    [
+      getCurrentStaffUserUseCase,
+      listVisitRequestsUseCase,
+      listRolesUseCase,
+      listHostEmployeesUseCase,
+      scope,
+      serverFilters,
+      statusFilter,
+      registrationTypeFilter,
+      sourceFilter,
+      debouncedSearch,
+      toast,
+    ],
   )
 
   useEffect(() => {
@@ -457,6 +514,12 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   )
 
   const filteredRequests = useMemo(() => {
+    // serverFilters mode already sent search/registrationType (and
+    // status/source) to the API - re-narrowing here with the live
+    // (non-debounced) `search` value would visibly flicker results ahead
+    // of what the debounced server fetch actually returned.
+    if (serverFilters) return visitRequests
+
     const query = search.trim().toLowerCase()
 
     return visitRequests.filter((request) => {
@@ -469,7 +532,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
 
       return matchesSearch && matchesPurpose && matchesRegistrationType
     })
-  }, [visitRequests, search, purposeFilter, registrationTypeFilter])
+  }, [visitRequests, search, purposeFilter, registrationTypeFilter, serverFilters])
 
   const columns = useMemo(
     () =>
@@ -492,6 +555,11 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     purposeOptions,
     registrationTypeFilter,
     setRegistrationTypeFilter,
+    statusFilter,
+    setStatusFilter,
+    sourceFilter,
+    setSourceFilter,
+    lastUpdatedAt,
     refresh,
     approve,
     approvingId,

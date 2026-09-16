@@ -19,7 +19,7 @@ export function AppShell({ sidebar, topBar, mainClassName, children }: AppShellP
       <div className="flex h-screen flex-1 flex-col overflow-hidden">
         {topBar}
 
-        <main className={mainClassName ?? 'flex flex-1 flex-col gap-6 overflow-y-auto overflow-x-hidden p-8'}>
+        <main className={mainClassName ?? 'flex flex-1 flex-col gap-page-section overflow-y-auto overflow-x-hidden p-page-content'}>
           {children}
         </main>
       </div>

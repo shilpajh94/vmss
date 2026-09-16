@@ -1,7 +1,7 @@
 import { LoadingState } from '../../components/ui/LoadingState'
+import { Pagination } from '../../components/Pagination'
 import { ActivityTable } from './Components/ActivityTable'
 import { AuditFilterBar } from './Components/AuditFilterBar'
-import { Pagination } from './Components/Pagination'
 import { WorkspaceHeader } from './Components/WorkspaceHeader'
 import { useStaffAuditTrail } from './hooks/use-staff-audit-trail'
 import { PAGE_SIZE } from './types'

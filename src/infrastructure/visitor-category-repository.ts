@@ -1,7 +1,11 @@
 import z from 'zod'
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
-import type { VisitorCategoryRepository } from '../data/repositories/visitor-category-repository'
+import type {
+  ListVisitorCategoriesPageParams,
+  VisitorCategoriesPage,
+  VisitorCategoryRepository,
+} from '../data/repositories/visitor-category-repository'
 import {
   VisitorCategoryListResponseSchema,
   VisitorCategoryResponseSchema,
@@ -41,6 +45,16 @@ export class HttpVisitorCategoryRepository implements VisitorCategoryRepository 
     })
 
     return response.data.map(toVisitorCategory)
+  }
+
+  async listPage({ page, pageSize, badgeColor, ndaRequirement, escortRequirement }: ListVisitorCategoriesPageParams): Promise<VisitorCategoriesPage> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.LIST_VISITOR_CATEGORIES,
+      queryParams: { page, pageSize, badgeColor, ndaRequirement, escortRequirement },
+      parserSchema: VisitorCategoryListResponseSchema,
+    })
+
+    return { items: response.data.map(toVisitorCategory), total: response.pagination.total }
   }
 
   async create(input: VisitorCategoryInput): Promise<VisitorCategory> {

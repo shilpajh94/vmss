@@ -5,6 +5,7 @@ import { AdminTopBar } from './AdminTopBar'
 import { AppShell } from './AppShell'
 import { RouteTransition } from './RouteTransition'
 import { PageHeaderProvider, usePageHeaderContext } from '../context/page-header-context'
+import { RefreshProvider } from '../context/refresh-context'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
 
@@ -41,7 +42,9 @@ function AdminLayoutContent() {
 export function AdminLayout() {
   return (
     <PageHeaderProvider>
-      <AdminLayoutContent />
+      <RefreshProvider>
+        <AdminLayoutContent />
+      </RefreshProvider>
     </PageHeaderProvider>
   )
 }

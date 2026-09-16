@@ -1,13 +1,17 @@
 import z from 'zod'
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
-import type { ApprovalWorkflowRuleRepository } from '../data/repositories/approval-workflow-rule-repository'
+import type { ApprovalWorkflowRuleRepository, ListApprovalWorkflowRulesParams } from '../data/repositories/approval-workflow-rule-repository'
 import {
   ApprovalWorkflowRuleListResponseSchema,
   ApprovalWorkflowRuleResponseSchema,
   type ApprovalWorkflowRule,
   type ApprovalWorkflowRuleInput,
 } from '../domain/entities/approval-workflow-rule-schema'
+
+// Bounded fetch size for the Workflows page's grouped-by-category view - see
+// admin-approval-workflows spec's "bounded but not paginated" requirement.
+const WORKFLOW_RULES_PAGE_SIZE = 200
 
 export class HttpApprovalWorkflowRuleRepository implements ApprovalWorkflowRuleRepository {
   private readonly apiClient: ApiClient
@@ -16,10 +20,14 @@ export class HttpApprovalWorkflowRuleRepository implements ApprovalWorkflowRuleR
     this.apiClient = apiClient
   }
 
-  async list(visitorCategoryId?: string): Promise<ApprovalWorkflowRule[]> {
+  async list(params?: ListApprovalWorkflowRulesParams): Promise<ApprovalWorkflowRule[]> {
     const response = await this.apiClient.makeRequest({
       endpointConfig: API_ENDPOINTS.LIST_APPROVAL_WORKFLOW_RULES,
-      queryParams: { visitorCategoryId, pageSize: 100 },
+      queryParams: {
+        visitorCategoryId: params?.visitorCategoryId,
+        status: params?.status,
+        pageSize: WORKFLOW_RULES_PAGE_SIZE,
+      },
       parserSchema: ApprovalWorkflowRuleListResponseSchema,
     })
 

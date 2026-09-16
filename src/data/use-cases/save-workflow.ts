@@ -12,7 +12,7 @@ export class SaveWorkflowUseCase {
   }
 
   async execute(visitorCategoryId: string, levels: WorkflowLevelInput[]): Promise<void> {
-    const existingRules = (await this.approvalWorkflowRuleRepository.list(visitorCategoryId)).sort((a, b) => a.stepOrder - b.stepOrder)
+    const existingRules = (await this.approvalWorkflowRuleRepository.list({ visitorCategoryId })).sort((a, b) => a.stepOrder - b.stepOrder)
 
     const operations: Promise<unknown>[] = []
     const maxLength = Math.max(existingRules.length, levels.length)

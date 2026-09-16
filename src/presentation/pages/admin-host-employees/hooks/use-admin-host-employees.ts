@@ -3,25 +3,34 @@ import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePolling } from '../../../hooks/use-polling'
+import { usePagedList } from '../../../hooks/use-paged-list'
+import { usePageRefresh } from '../../../context/refresh-context'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
+const PAGE_SIZE = 20
+
 export function useAdminHostEmployees() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listHostEmployeesUseCase, listDepartmentsUseCase } = useAppDependencies()
+  const { getCurrentStaffUserUseCase, listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [hostEmployees, setHostEmployees] = useState<HostEmployee[]>([])
+  const [total, setTotal] = useState(0)
   const [departments, setDepartments] = useState<Department[]>([])
+  const [roleOptions, setRoleOptions] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [departmentFilter, setDepartmentFilter] = useState('')
   const [roleFilter, setRoleFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+
+  const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
   const loadHostEmployees = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -33,14 +42,24 @@ export function useAdminHostEmployees() {
       }
 
       try {
-        const [user, list, departmentList] = await Promise.all([
+        const [user, page_, departmentList, roles] = await Promise.all([
           getCurrentStaffUserUseCase.execute(),
-          listHostEmployeesUseCase.execute(),
+          listHostEmployeesPageUseCase.execute({
+            page,
+            pageSize: PAGE_SIZE,
+            departmentId: departmentFilter || undefined,
+            role: roleFilter || undefined,
+            status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+          }),
           listDepartmentsUseCase.execute(),
+          listRolesUseCase.execute(),
         ])
         setCurrentUser(user)
-        setHostEmployees(list)
+        setHostEmployees(page_.items)
+        setTotal(page_.total)
         setDepartments(departmentList)
+        setRoleOptions([...new Set(roles.map((role) => role.name))].sort((a, b) => a.localeCompare(b)))
+        setLastUpdatedAt(new Date())
       } catch {
         if (!silent) {
           setErrorMessage('Something went wrong loading the employees. Please try again.')
@@ -52,7 +71,7 @@ export function useAdminHostEmployees() {
         }
       }
     },
-    [getCurrentStaffUserUseCase, listHostEmployeesUseCase, listDepartmentsUseCase, toast],
+    [getCurrentStaffUserUseCase, listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase, page, departmentFilter, roleFilter, statusFilter, toast],
   )
 
   useEffect(() => {
@@ -72,35 +91,51 @@ export function useAdminHostEmployees() {
   // state on this page to protect, so polling is never suppressed.
   usePolling(() => void loadHostEmployees({ silent: true }), { intervalMs: 15_000, isBusy: false })
 
+  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+
   const departmentNameById = useMemo(() => new Map(departments.map((department) => [department.id, department.name])), [departments])
-
-  const roleOptions = useMemo(() => {
-    const roleNames = new Set(hostEmployees.flatMap((employee) => employee.branchRoles.map((role) => role.roleName)))
-    return [...roleNames].sort((a, b) => a.localeCompare(b))
-  }, [hostEmployees])
-
-  const filteredHostEmployees = useMemo(() => {
-    return hostEmployees.filter((employee) => {
-      if (departmentFilter && employee.departmentId !== departmentFilter) return false
-      if (roleFilter && !employee.branchRoles.some((role) => role.roleName === roleFilter)) return false
-      if (statusFilter && (statusFilter === 'active') !== employee.isActive) return false
-      return true
-    })
-  }, [hostEmployees, departmentFilter, roleFilter, statusFilter])
 
   const isFiltering = departmentFilter !== '' || roleFilter !== '' || statusFilter !== ''
 
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+
+  const changeDepartmentFilter = useCallback(
+    (value: string) => {
+      setDepartmentFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
+  const changeRoleFilter = useCallback(
+    (value: string) => {
+      setRoleFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
+  const changeStatusFilter = useCallback(
+    (value: string) => {
+      setStatusFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
+
   const clearFilters = useCallback(() => {
     setDepartmentFilter('')
     setRoleFilter('')
     setStatusFilter('')
-  }, [])
+    resetToFirstPage()
+  }, [resetToFirstPage])
 
   return {
     currentUser,
-    hostEmployees: filteredHostEmployees,
-    hasAnyHostEmployees: hostEmployees.length > 0,
+    hostEmployees,
+    total,
+    page,
+    pageSize: PAGE_SIZE,
+    goToNextPage,
+    goToPrevPage,
     departmentNameById,
     isLoading,
     errorMessage,
@@ -110,11 +145,11 @@ export function useAdminHostEmployees() {
     departments,
     roleOptions,
     departmentFilter,
-    setDepartmentFilter,
+    setDepartmentFilter: changeDepartmentFilter,
     roleFilter,
-    setRoleFilter,
+    setRoleFilter: changeRoleFilter,
     statusFilter,
-    setStatusFilter,
+    setStatusFilter: changeStatusFilter,
     clearFilters,
     isFiltering,
   }
