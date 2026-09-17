@@ -35,7 +35,7 @@ stages:
         containerRegistry: 'Harbor_Reg'
         repository: '$(dockerrepo)'
         command: 'build'
-        Dockerfile: 'Dockerfile'
+        Dockerfile: 'Dockerfile.openstack'
         buildContext: '.'
 
     - task: Docker@2
