@@ -362,21 +362,49 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
+  name: $(proj_branch)-ingress
   namespace: $(namespace)
-  name: $(proj_branch)
-
+  labels:
+    app: $(proj_branch)
+  annotations:
+    konghq.com/plugins: acme-disable-key-auth
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    konghq.com/proxy-read-timeout: "300"
+    konghq.com/proxy-send-timeout: "300"
+    konghq.com/proxy-buffering: "on"
+    konghq.com/client-max-body-size: "256m"
 spec:
+  ingressClassName: kong
   rules:
-    - host: $(site_url)
-
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-
-            backend:
-              service:
-                name: $(proj_branch)
-
-                port:
-                  name: $(proj_port)
+  - host: $(site_url)
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: $(proj_branch)
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - $(site_url)
+    secretName: $(proj_branch)-tls
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongConsumer
+metadata:
+  name: $(proj_branch)-anon
+  namespace: $(namespace)
+  annotations:
+    kubernetes.io/ingress.class: kong
+username: $(proj_branch)-anon
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: acme-disable-key-auth
+  namespace: $(namespace)
+plugin: key-auth
+config:
+  anonymous: $(proj_branch)-anon
