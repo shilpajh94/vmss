@@ -1,4 +1,4 @@
-import { ChevronLeftIcon, ChevronRightIcon } from '../../../components/icons'
+import { ChevronLeftIcon, ChevronRightIcon } from './icons'
 
 interface PaginationProps {
   page: number
@@ -8,6 +8,11 @@ interface PaginationProps {
   onNext: () => void
 }
 
+// Shared next/prev pagination control for any server-paged admin list.
+// Extracted from staff-audit-trail's original page-local copy so every
+// admin list page renders the same control instead of each hand-rolling
+// its own - see design.md's "one shared pattern for paginated, server-
+// filtered list" goal. No page-size selector yet (design.md Non-Goals).
 export function Pagination({ page, pageSize, total, onPrev, onNext }: PaginationProps) {
   const start = total === 0 ? 0 : (page - 1) * pageSize + 1
   const end = Math.min(page * pageSize, total)

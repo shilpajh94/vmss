@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
 import { isValidPhoneNumber } from '../../../../utils/is-valid-phone-number'
+import type { FormField } from '../../../../../domain/entities/form-builder-schema'
+import type { VisitorInfoFieldState } from '../../hooks/use-visitor-request-wizard'
 import {
   createEmptyVisitorFormEntry,
   type RegistrationType,
@@ -21,6 +23,14 @@ interface VisitorInfoStepProps {
   errors: Record<string, string>
   visitorCategoriesState: VisitorCategoriesFieldState
   onRetryVisitorCategories: () => void
+  /** Branch-configured (form-builder) active/required state for ID proof
+   * and profile photo — see `use-visitor-request-wizard.ts`.
+   */
+  visitorInfoFields: VisitorInfoFieldState
+  /** Admin-authored (non-system) Visitor Info fields, passed straight
+   * through to each visitor's own `VisitorFieldsForm`
+   * (add-generic-custom-field-support). */
+  customFields: FormField[]
 }
 
 export function VisitorInfoStep({
@@ -35,6 +45,8 @@ export function VisitorInfoStep({
   errors,
   visitorCategoriesState,
   onRetryVisitorCategories,
+  visitorInfoFields,
+  customFields,
 }: VisitorInfoStepProps) {
   const [draftVisitor, setDraftVisitor] = useState<VisitorFormEntry | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
@@ -64,8 +76,10 @@ export function VisitorInfoStep({
     if (!draftVisitor.fullName) errors.fullName = 'Full name is required.'
     if (!draftVisitor.email && !draftVisitor.phone) errors.email = 'Either email or phone is required.'
     if (draftVisitor.phone && !isValidPhoneNumber(draftVisitor.phone)) errors.phone = 'Enter a valid phone number.'
-    if (!draftVisitor.idProofType) errors.idProofType = 'ID proof type is required.'
-    if (!draftVisitor.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
+    if (visitorInfoFields.idProofActive && visitorInfoFields.idProofRequired) {
+      if (!draftVisitor.idProofType) errors.idProofType = 'ID proof type is required.'
+      if (!draftVisitor.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
+    }
     if (Object.keys(errors).length > 0) {
       setDraftErrors(errors)
       return
@@ -112,6 +126,8 @@ export function VisitorInfoStep({
           errors={errors}
           visitorCategoriesState={visitorCategoriesState}
           onRetryVisitorCategories={onRetryVisitorCategories}
+          visitorInfoFields={visitorInfoFields}
+          customFields={customFields}
         />
       </div>
 
@@ -175,8 +191,10 @@ export function VisitorInfoStep({
                 uploadFile={uploadFile}
                 getFilePreviewUrl={getFilePreviewUrl}
                 errors={draftErrors}
+                visitorInfoFields={visitorInfoFields}
                 visitorCategoriesState={visitorCategoriesState}
                 onRetryVisitorCategories={onRetryVisitorCategories}
+                customFields={customFields}
               />
               <div className="flex gap-3">
                 <button type="button" onClick={commitDraft} className="rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white">

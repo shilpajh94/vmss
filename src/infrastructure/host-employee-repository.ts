@@ -1,7 +1,13 @@
 import z from 'zod'
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
-import type { HostEmployeeRepository } from '../data/repositories/host-employee-repository'
+import type {
+  HostEmployeeRepository,
+  HostEmployeesPage,
+  ListHostEmployeesPageParams,
+  ListRolesPageParams,
+  RolesPage,
+} from '../data/repositories/host-employee-repository'
 import { EmployeeListResponseSchema, type EmployeeOut } from '../domain/entities/employee-out-schema'
 import { EmployeeSyncResponseSchema, type EmployeeSyncItem } from '../domain/entities/employee-sync-schema'
 import type { BranchRoleAssignment, HostEmployee, HostEmployeeCreateInput } from '../domain/entities/host-employee-schema'
@@ -44,6 +50,16 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
     })
 
     return response.data.map(toHostEmployee)
+  }
+
+  async listPage({ page, pageSize, departmentId, role, status }: ListHostEmployeesPageParams): Promise<HostEmployeesPage> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.LIST_HOST_EMPLOYEES,
+      queryParams: { page, pageSize, departmentId, role, status },
+      parserSchema: EmployeeListResponseSchema,
+    })
+
+    return { items: response.data.map(toHostEmployee), total: response.pagination.total }
   }
 
   // The backend has no per-employee create endpoint — the employee directory
@@ -105,6 +121,16 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
     return response.data
   }
 
+  async listRolesPage({ page, pageSize }: ListRolesPageParams): Promise<RolesPage> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.LIST_ROLES,
+      queryParams: { page, pageSize },
+      parserSchema: RoleListResponseSchema,
+    })
+
+    return { items: response.data, total: response.pagination.total }
+  }
+
   async createRole(input: RoleCreateInput): Promise<RoleOut> {
     const response = await this.apiClient.makeRequest({
       endpointConfig: API_ENDPOINTS.CREATE_ROLE,
@@ -135,8 +161,13 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
   }
 
   async listPermissions(): Promise<PermissionOut[]> {
+    // GET /auth/permissions is now paginated (paired add-listing-pagination-
+    // filtering API change) - the permission-edit page's checklist UX needs
+    // the whole catalog at once, not a paged subset, so request a page size
+    // comfortably larger than the catalog (currently ~45 codes) in one call.
     const response = await this.apiClient.makeRequest({
       endpointConfig: API_ENDPOINTS.LIST_PERMISSIONS,
+      queryParams: { pageSize: 100 },
       parserSchema: PermissionListResponseSchema,
     })
 

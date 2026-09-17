@@ -1,8 +1,11 @@
+import { CustomFieldsSection } from '../../../../components/dynamic-fields/CustomFieldsSection'
+import type { DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
 import { SelectField } from '../../../../components/ui/SelectField'
 import { TextField } from '../../../../components/ui/TextField'
 import { TextareaField } from '../../../../components/ui/TextareaField'
 import type { Branch } from '../../../../../domain/entities/branch-schema'
 import type { Building } from '../../../../../domain/entities/building-schema'
+import type { FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { VisitInfoFormState } from '../../types'
 import { todayAsDateInputValue } from '../../../../utils/local-date-input-value'
 import { EXPECTED_DURATION_OPTIONS as DURATION_OPTIONS } from '../../../../utils/expected-duration-options'
@@ -14,6 +17,17 @@ interface VisitInfoStepProps {
   errors: Record<string, string>
   branches?: Branch[]
   buildings?: Building[]
+  /** Branch-configured (form-builder) active state for the toggleable
+   * "Additional Notes" field. `expected_duration` is intentionally not
+   * gated here — it's structurally required by the backend regardless of
+   * form-builder configuration (see design.md Decision 3 / Risks).
+   */
+  additionalNotesActive: boolean
+  /** Admin-authored (non-system) Visit Details fields
+   * (add-generic-custom-field-support). */
+  customFields: FormField[]
+  customFieldValues: Record<string, DynamicFieldValue>
+  onCustomFieldValuesChange: (value: Record<string, DynamicFieldValue>) => void
 }
 
 // Neither host nor department is collected here anymore
@@ -23,7 +37,17 @@ interface VisitInfoStepProps {
 // they know the visitor's actual requirements. Both fields rarely have a
 // correct answer at this point in the flow for a visitor or for staff
 // booking on a visitor's behalf.
-export function VisitInfoStep({ value, onChange, errors, branches, buildings }: VisitInfoStepProps) {
+export function VisitInfoStep({
+  value,
+  onChange,
+  errors,
+  branches,
+  buildings,
+  additionalNotesActive,
+  customFields,
+  customFieldValues,
+  onCustomFieldValuesChange,
+}: VisitInfoStepProps) {
   const selectedBranch = branches?.find((branch) => branch.name === value.location)
   const buildingOptions = (selectedBranch ? buildings?.filter((building) => building.branchId === selectedBranch.id) : buildings)?.map(
     (building) => ({ value: building.name, label: building.name }),
@@ -113,12 +137,15 @@ export function VisitInfoStep({ value, onChange, errors, branches, buildings }: 
           />
         )}
       </div>
-      <TextareaField
-        label="Additional Notes / Special Requirements"
-        placeholder="Any special requirements, accessibility needs, or notes for the host…"
-        value={value.notes}
-        onChange={(notes) => onChange({ ...value, notes })}
-      />
+      {additionalNotesActive && (
+        <TextareaField
+          label="Additional Notes / Special Requirements"
+          placeholder="Any special requirements, accessibility needs, or notes for the host…"
+          value={value.notes}
+          onChange={(notes) => onChange({ ...value, notes })}
+        />
+      )}
+      <CustomFieldsSection fields={customFields} value={customFieldValues} onChange={onCustomFieldValuesChange} />
     </div>
   )
 }

@@ -18,6 +18,19 @@ const NAV_ITEMS = [
   icon: unknown
 }>
 
+const RECEPTION_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: ReceptionSidebarActiveItem]> = [
+  ['/reception/dashboard', 'dashboard'],
+  ['/staff/dashboard', 'visits'],
+  ['/staff/visitors/new', 'my-actions'],
+]
+
+// Derives which sidebar entry highlights from the current URL, so the active
+// item can never drift out of sync with the route table the way a hardcoded
+// per-page prop could - mirrors `DashboardSidebar.resolveStaffActiveItem`.
+export function resolveReceptionActiveItem(pathname: string): ReceptionSidebarActiveItem {
+  return RECEPTION_ROUTE_ACTIVE_ITEMS.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? 'dashboard'
+}
+
 export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
   const navigate = useNavigate()
 

@@ -1,9 +1,12 @@
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { findField, findStepFields, useEffectiveForm } from '../../../hooks/use-effective-form'
+import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visitor-request-wizard'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
 import type { Branch } from '../../../../domain/entities/branch-schema'
+import { getActiveSteps, type StepKey } from '../../visitor-request/registration-wizard-steps'
 import type { SubmissionStatus } from '../../visitor-request/Components/steps/ReviewConfirmStep'
 import {
   createInitialStaffFormState,
@@ -12,7 +15,7 @@ import {
   type StaffVisitRequestFormState,
 } from '../types'
 
-function validateStaffVisitorContact(contact: StaffVisitorFormEntry): Record<string, string> {
+function validateStaffVisitorContact(contact: StaffVisitorFormEntry, visitorInfoFields: VisitorInfoFieldState): Record<string, string> {
   const errors: Record<string, string> = {}
   if (!contact.fullName) errors.fullName = 'Full name is required.'
   // Only the contact field matching the chosen preferred contact method is
@@ -27,40 +30,56 @@ function validateStaffVisitorContact(contact: StaffVisitorFormEntry): Record<str
   }
   if (contact.phone && !isValidPhoneNumber(contact.phone)) errors.phone = 'Enter a valid phone number.'
   if (!contact.visitorCategory) errors.visitorCategory = 'Visitor category is required.'
-  if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
-  if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
+  if (visitorInfoFields.idProofActive && visitorInfoFields.idProofRequired) {
+    if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'
+    if (!contact.idProofFileRef) errors.idProofFileRef = 'ID proof file is required.'
+  }
   // Profile image is only collected for the primary contact (PrimaryContactCard),
   // not the additional-visitor draft form, so it's only enforced here.
-  if (!contact.profileImageFileRef) errors.profileImageFileRef = 'Profile image is required.'
+  if (visitorInfoFields.profilePhotoActive && visitorInfoFields.profilePhotoRequired && !contact.profileImageFileRef) {
+    errors.profileImageFileRef = 'Profile image is required.'
+  }
   return errors
 }
 
-function validateStep(step: number, formState: StaffVisitRequestFormState): Record<string, string> {
-  if (step === 0) {
-    const errors = validateStaffVisitorContact(formState.primaryContact)
+// Keyed by the step's form-builder `key`, not its numeric position — see
+// use-visitor-request-wizard.ts's matching comment.
+function validateStep(
+  stepKey: StepKey | string | undefined,
+  formState: StaffVisitRequestFormState,
+  requiredConsentKeys: string[],
+  visitorInfoFields: VisitorInfoFieldState,
+): Record<string, string> {
+  if (stepKey === 'visitor_info') {
+    const errors = validateStaffVisitorContact(formState.primaryContact, visitorInfoFields)
     if (formState.registrationType === 'group' && formState.additionalVisitors.length === 0) {
       errors.additionalVisitors = 'Add at least one visitor to continue.'
     }
     return errors
   }
 
-  if (step === 1) {
+  if (stepKey === 'visit_details') {
     const errors: Record<string, string> = {}
     const { visitInfo } = formState
     if (!visitInfo.purpose) errors.purpose = 'Purpose of visit is required.'
     if (!visitInfo.preferredDate) errors.preferredDate = 'Preferred visit date is required.'
     else if (visitInfo.preferredDate < todayAsDateInputValue()) errors.preferredDate = 'Preferred visit date cannot be in the past.'
     if (!visitInfo.preferredTime) errors.preferredTime = 'Preferred visit time is required.'
+    // `expected_duration` is structurally required by the backend
+    // regardless of form-builder configuration — see
+    // use-visitor-request-wizard.ts's matching comment.
     if (!visitInfo.expectedDuration) errors.expectedDuration = 'Expected duration is required.'
     if (!visitInfo.location) errors.location = 'Location is required.'
     if (!visitInfo.building) errors.building = 'Building is required.'
     return errors
   }
 
-  if (step === 4) {
-    const { consent } = formState
-    if (!consent.agreedTerms || !consent.agreedDataUse || !consent.agreedSafety) {
-      return { consent: 'You must agree to all three items to continue.' }
+  if (stepKey === 'consent_agreement') {
+    // Branch-configured (form-builder) — see
+    // use-visitor-request-wizard.ts's matching comment.
+    const missing = requiredConsentKeys.filter((key) => !formState.consent[key])
+    if (missing.length > 0) {
+      return { consent: 'You must agree to all the required items to continue.' }
     }
     return {}
   }
@@ -78,6 +97,67 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
   const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus>('idle')
   const [trackingId, setTrackingId] = useState<string | undefined>(undefined)
   const [submissionError, setSubmissionError] = useState<string | undefined>(undefined)
+
+  const branchId = useMemo(
+    () => branches?.find((branch) => branch.name === formState.visitInfo.location)?.id,
+    [branches, formState.visitInfo.location],
+  )
+  const {
+    steps: effectiveFormSteps,
+    isLoading: isFormConfigLoading,
+    error: formConfigError,
+  } = useEffectiveForm(branchId)
+  const activeSteps = useMemo(() => getActiveSteps(effectiveFormSteps), [effectiveFormSteps])
+  const carriedItemsFields = useMemo(() => findStepFields(effectiveFormSteps, 'carried_items'), [effectiveFormSteps])
+  const consentFields = useMemo(() => findStepFields(effectiveFormSteps, 'consent_agreement'), [effectiveFormSteps])
+  const requiredConsentKeys = useMemo(
+    () => consentFields.filter((field) => field.isRequired).map((field) => field.key),
+    [consentFields],
+  )
+  const visitorInfoFields = useMemo<VisitorInfoFieldState>(() => {
+    const idProofUpload = findField(effectiveFormSteps, 'visitor_info', 'id_proof_upload')
+    const profilePhoto = findField(effectiveFormSteps, 'visitor_info', 'profile_photo')
+    return {
+      idProofActive: idProofUpload !== undefined,
+      idProofRequired: idProofUpload?.isRequired ?? false,
+      profilePhotoActive: profilePhoto !== undefined,
+      profilePhotoRequired: profilePhoto?.isRequired ?? false,
+    }
+  }, [effectiveFormSteps])
+  const additionalNotesActive = useMemo(
+    () => findField(effectiveFormSteps, 'visit_details', 'additional_notes') !== undefined,
+    [effectiveFormSteps],
+  )
+  const vehicleInfoFields = useMemo(() => {
+    const makeModel = findField(effectiveFormSteps, 'vehicle_info', 'make_model')
+    const color = findField(effectiveFormSteps, 'vehicle_info', 'color')
+    return {
+      makeModelActive: makeModel !== undefined,
+      makeModelRequired: makeModel?.isRequired ?? false,
+      colorActive: color !== undefined,
+      colorRequired: color?.isRequired ?? false,
+    }
+  }, [effectiveFormSteps])
+  // Admin-authored (non-system) fields per step — see
+  // use-visitor-request-wizard.ts's matching comment.
+  const visitorInfoCustomFields = useMemo(
+    () => findStepFields(effectiveFormSteps, 'visitor_info').filter((field) => !field.isSystem),
+    [effectiveFormSteps],
+  )
+  const visitDetailsCustomFields = useMemo(
+    () => findStepFields(effectiveFormSteps, 'visit_details').filter((field) => !field.isSystem),
+    [effectiveFormSteps],
+  )
+  const vehicleInfoCustomFields = useMemo(
+    () => findStepFields(effectiveFormSteps, 'vehicle_info').filter((field) => !field.isSystem),
+    [effectiveFormSteps],
+  )
+  const lastStepIndex = activeSteps.length > 0 ? activeSteps.length - 1 : 0
+
+  // See use-visitor-request-wizard.ts's matching effect for why this is needed.
+  useEffect(() => {
+    setCurrentStep((step) => Math.min(step, lastStepIndex))
+  }, [lastStepIndex])
 
   // POST /invitations wants ID-proof files travelling inline in the final
   // multipart submission, not pre-uploaded. `uploadFile` here just hands the
@@ -112,13 +192,15 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
   }
 
   const goNext = () => {
-    const stepErrors = validateStep(currentStep, formState)
+    // See use-visitor-request-wizard.ts's matching guard.
+    if (isFormConfigLoading) return
+    const stepErrors = validateStep(activeSteps[currentStep]?.key, formState, requiredConsentKeys, visitorInfoFields)
     if (Object.keys(stepErrors).length > 0) {
       setErrors(stepErrors)
       return
     }
     setErrors({})
-    setCurrentStep((step) => Math.min(step + 1, 5))
+    setCurrentStep((step) => Math.min(step + 1, lastStepIndex))
   }
 
   const goBack = () => {
@@ -151,7 +233,9 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
       ? fileRegistry.current.get(formState.primaryContact.profileImageFileRef)
       : undefined
     const branchId = branches?.find((branch) => branch.name === formState.visitInfo.location)?.id
-    if (!primaryContactIdProofFile || !primaryContactPhotoFile || !branchId) {
+    const idProofMissing = visitorInfoFields.idProofActive && visitorInfoFields.idProofRequired && !primaryContactIdProofFile
+    const photoMissing = visitorInfoFields.profilePhotoActive && visitorInfoFields.profilePhotoRequired && !primaryContactPhotoFile
+    if (idProofMissing || photoMissing || !branchId) {
       setSubmissionError('Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
       toast.error('Something went wrong submitting your request. Please try again.')
@@ -196,5 +280,16 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     submissionError,
     submit,
     reset,
+    activeSteps,
+    isFormConfigLoading,
+    formConfigError,
+    carriedItemsFields,
+    consentFields,
+    visitorInfoFields,
+    additionalNotesActive,
+    vehicleInfoFields,
+    visitorInfoCustomFields,
+    visitDetailsCustomFields,
+    vehicleInfoCustomFields,
   }
 }

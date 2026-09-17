@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { PlusIcon } from '../../../components/icons'
+import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visitor-request-wizard'
 import type { RegistrationType } from '../../visitor-request/types'
+import type { FormField } from '../../../../domain/entities/form-builder-schema'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffVisitorFormEntry } from '../types'
 import { AddVisitorForm } from './AddVisitorForm'
@@ -19,6 +21,13 @@ interface VisitorInfoStepProps {
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
   errors: Record<string, string>
   visitorCategories?: VisitorCategory[]
+  /** Branch-configured (form-builder) active/required state for ID proof
+   * and profile photo — see `use-visitor-request-wizard.ts`.
+   */
+  visitorInfoFields: VisitorInfoFieldState
+  /** Admin-authored (non-system) Visitor Info fields
+   * (add-generic-custom-field-support). */
+  customFields: FormField[]
 }
 
 export function VisitorInfoStep({
@@ -32,6 +41,8 @@ export function VisitorInfoStep({
   getFilePreviewUrl,
   errors,
   visitorCategories,
+  visitorInfoFields,
+  customFields,
 }: VisitorInfoStepProps) {
   const [isAdding, setIsAdding] = useState(false)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
@@ -76,6 +87,8 @@ export function VisitorInfoStep({
         getFilePreviewUrl={getFilePreviewUrl}
         errors={errors}
         visitorCategories={visitorCategories}
+        visitorInfoFields={visitorInfoFields}
+        customFields={customFields}
       />
 
       {registrationType === 'group' && (
@@ -104,6 +117,8 @@ export function VisitorInfoStep({
               getFilePreviewUrl={getFilePreviewUrl}
               onAdd={commitVisitor}
               onCancel={cancelAdd}
+              visitorInfoFields={visitorInfoFields}
+              customFields={customFields}
             />
           )}
         </div>

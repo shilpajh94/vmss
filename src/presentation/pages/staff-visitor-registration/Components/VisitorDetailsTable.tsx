@@ -11,7 +11,7 @@ export function VisitorDetailsTable({ visitors, onEdit, onRemove }: VisitorDetai
   if (visitors.length === 0) return null
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border">
+    <div className="w-full overflow-x-auto rounded-xl border border-border">
       <table className="w-full text-left text-body">
         <thead className="border-b border-border bg-border-subtle text-caption font-bold text-text-muted uppercase">
           <tr>

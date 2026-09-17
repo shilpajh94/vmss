@@ -1,6 +1,6 @@
 import type { Vehicle } from '../../../domain/entities/vehicle-schema'
 import type { StaffVisitRequest } from '../../../domain/entities/staff-visit-request-schema'
-import type { CarriedItemsFormState, ConsentFormState, RegistrationType, VisitInfoFormState } from '../visitor-request/types'
+import type { CarriedItemsFormState, ConsentFormState, CustomFieldValues, RegistrationType, VisitInfoFormState } from '../visitor-request/types'
 
 export interface StaffVisitorFormEntry {
   fullName: string
@@ -13,6 +13,8 @@ export interface StaffVisitorFormEntry {
   idProofFileName?: string
   profileImageFileRef?: string
   profileImageFileName?: string
+  // See visitor-request/types.ts's `VisitorFormEntry.customFieldValues`.
+  customFieldValues: CustomFieldValues
 }
 
 export function createEmptyStaffVisitorFormEntry(): StaffVisitorFormEntry {
@@ -24,6 +26,7 @@ export function createEmptyStaffVisitorFormEntry(): StaffVisitorFormEntry {
     // Matches the Preferred Contact Method toggle's default visual selection.
     preferredContactMethod: 'email',
     idProofType: '',
+    customFieldValues: {},
   }
 }
 
@@ -35,6 +38,7 @@ export interface StaffVisitRequestFormState {
   carriedItems: CarriedItemsFormState
   vehicles: Vehicle[]
   consent: ConsentFormState
+  customFieldValues: CustomFieldValues
 }
 
 export function createInitialStaffFormState(): StaffVisitRequestFormState {
@@ -53,7 +57,8 @@ export function createInitialStaffFormState(): StaffVisitRequestFormState {
     },
     carriedItems: { categories: [], description: '' },
     vehicles: [],
-    consent: { agreedTerms: false, agreedDataUse: false, agreedSafety: false },
+    consent: {},
+    customFieldValues: {},
   }
 }
 
@@ -64,6 +69,7 @@ function toStaffVisitor(entry: StaffVisitorFormEntry) {
     phone: entry.phone,
     preferredContactMethod: entry.preferredContactMethod,
     idProofType: entry.idProofType,
+    customFieldValues: entry.customFieldValues,
   }
 }
 
@@ -91,19 +97,7 @@ export function toStaffVisitRequest(formState: StaffVisitRequestFormState): Staf
       itemDescription: formState.carriedItems.description,
     },
     vehicles: formState.vehicles,
-    consents: {
-      termsAccepted: formState.consent.agreedTerms,
-      dataProcessingAccepted: formState.consent.agreedDataUse,
-      safetyGuidelinesAccepted: formState.consent.agreedSafety,
-    },
+    consents: formState.consent,
+    customFieldValues: formState.customFieldValues,
   }
 }
-
-export const STAFF_WIZARD_STEPS = [
-  'Visitor Info',
-  'Visit Info',
-  'Carried Items',
-  'Vehicle Info',
-  'Consent Agreement',
-  'Review & Confirm',
-] as const

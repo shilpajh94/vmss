@@ -1,6 +1,10 @@
 import { useState } from 'react'
+import { CustomFieldsSection } from '../../../../components/dynamic-fields/CustomFieldsSection'
+import type { DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
+import { formatDynamicFieldValue } from '../../../../components/dynamic-fields/format-dynamic-field-value'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
 import { TextField } from '../../../../components/ui/TextField'
+import type { FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
 
 const VEHICLE_TYPE_OPTIONS = [
@@ -10,16 +14,32 @@ const VEHICLE_TYPE_OPTIONS = [
 ]
 
 function createEmptyVehicle(): Vehicle {
-  return { vehicleType: '2_wheeler', licensePlate: '', makeModel: '', color: '' }
+  return { vehicleType: '2_wheeler', licensePlate: '', makeModel: '', color: '', customFieldValues: {} }
+}
+
+export interface VehicleInfoFieldState {
+  makeModelActive: boolean
+  makeModelRequired: boolean
+  colorActive: boolean
+  colorRequired: boolean
 }
 
 interface VehicleInfoStepProps {
   vehicles: Vehicle[]
   onChange: (vehicles: Vehicle[]) => void
   errors: Record<string, string>
+  /** Branch-configured (form-builder) active/required state for the
+   * non-locked `make_model`/`color` fields — `vehicleType`/`licensePlate`
+   * are locked and always shown/required.
+   */
+  vehicleInfoFields: VehicleInfoFieldState
+  /** Admin-authored (non-system) Vehicle Info fields
+   * (add-generic-custom-field-support) — each vehicle's own answers live
+   * on its own `customFieldValues`, independent of every other vehicle's. */
+  customFields: FormField[]
 }
 
-export function VehicleInfoStep({ vehicles, onChange, errors }: VehicleInfoStepProps) {
+export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields, customFields }: VehicleInfoStepProps) {
   const [draftVehicle, setDraftVehicle] = useState<Vehicle | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [draftErrors, setDraftErrors] = useState<Record<string, string>>({})
@@ -46,8 +66,12 @@ export function VehicleInfoStep({ vehicles, onChange, errors }: VehicleInfoStepP
     if (!draftVehicle) return
     const errors: Record<string, string> = {}
     if (!draftVehicle.licensePlate) errors.licensePlate = 'License plate number is required.'
-    if (!draftVehicle.makeModel) errors.makeModel = 'Make / Model is required.'
-    if (!draftVehicle.color) errors.color = 'Color is required.'
+    if (vehicleInfoFields.makeModelActive && vehicleInfoFields.makeModelRequired && !draftVehicle.makeModel) {
+      errors.makeModel = 'Make / Model is required.'
+    }
+    if (vehicleInfoFields.colorActive && vehicleInfoFields.colorRequired && !draftVehicle.color) {
+      errors.color = 'Color is required.'
+    }
     if (Object.keys(errors).length > 0) {
       setDraftErrors(errors)
       return
@@ -90,6 +114,11 @@ export function VehicleInfoStep({ vehicles, onChange, errors }: VehicleInfoStepP
                 <th className="px-4 py-2">License Plate</th>
                 <th className="px-4 py-2">Make / Model</th>
                 <th className="px-4 py-2">Color</th>
+                {customFields.map((field) => (
+                  <th key={field.key} className="px-4 py-2">
+                    {field.label}
+                  </th>
+                ))}
                 <th className="px-4 py-2">Actions</th>
               </tr>
             </thead>
@@ -101,6 +130,11 @@ export function VehicleInfoStep({ vehicles, onChange, errors }: VehicleInfoStepP
                   <td className="px-4 py-2">{vehicle.licensePlate}</td>
                   <td className="px-4 py-2">{vehicle.makeModel}</td>
                   <td className="px-4 py-2">{vehicle.color}</td>
+                  {customFields.map((field) => (
+                    <td key={field.key} className="px-4 py-2">
+                      {formatDynamicFieldValue(field, (vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined)?.[field.key])}
+                    </td>
+                  ))}
                   <td className="px-4 py-2">
                     <button type="button" onClick={() => startEditVehicle(index)} className="mr-2 text-secondary-accent">
                       Edit
@@ -137,23 +171,32 @@ export function VehicleInfoStep({ vehicles, onChange, errors }: VehicleInfoStepP
               error={draftErrors.licensePlate}
               required
             />
-            <TextField
-              label="Make / Model"
-              placeholder="e.g. Honda City"
-              value={draftVehicle.makeModel}
-              onChange={(makeModel) => setDraftVehicle({ ...draftVehicle, makeModel })}
-              error={draftErrors.makeModel}
-              required
-            />
-            <TextField
-              label="Color"
-              placeholder="e.g. White"
-              value={draftVehicle.color}
-              onChange={(color) => setDraftVehicle({ ...draftVehicle, color })}
-              error={draftErrors.color}
-              required
-            />
+            {vehicleInfoFields.makeModelActive && (
+              <TextField
+                label="Make / Model"
+                placeholder="e.g. Honda City"
+                value={draftVehicle.makeModel}
+                onChange={(makeModel) => setDraftVehicle({ ...draftVehicle, makeModel })}
+                error={draftErrors.makeModel}
+                required={vehicleInfoFields.makeModelRequired}
+              />
+            )}
+            {vehicleInfoFields.colorActive && (
+              <TextField
+                label="Color"
+                placeholder="e.g. White"
+                value={draftVehicle.color}
+                onChange={(color) => setDraftVehicle({ ...draftVehicle, color })}
+                error={draftErrors.color}
+                required={vehicleInfoFields.colorRequired}
+              />
+            )}
           </div>
+          <CustomFieldsSection
+            fields={customFields}
+            value={(draftVehicle.customFieldValues ?? {}) as Record<string, DynamicFieldValue>}
+            onChange={(customFieldValues) => setDraftVehicle({ ...draftVehicle, customFieldValues })}
+          />
           <div className="flex gap-3">
             <button type="button" onClick={commitDraft} className="rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white">
               Add to List

@@ -1,7 +1,7 @@
 import z from 'zod'
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
-import type { FloorRepository } from '../data/repositories/floor-repository'
+import type { FloorRepository, FloorsPage, ListFloorsPageParams } from '../data/repositories/floor-repository'
 import { FloorListResponseSchema, FloorResponseSchema, type FloorOut } from '../domain/entities/floor-out-schema'
 import type { Floor, FloorInput } from '../domain/entities/floor-schema'
 
@@ -33,6 +33,16 @@ export class HttpFloorRepository implements FloorRepository {
     })
 
     return response.data.map(toFloor)
+  }
+
+  async listPage({ page, pageSize, buildingId, status, accessLevel }: ListFloorsPageParams): Promise<FloorsPage> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.LIST_FLOORS,
+      queryParams: { page, pageSize, buildingId, status, accessLevel },
+      parserSchema: FloorListResponseSchema,
+    })
+
+    return { items: response.data.map(toFloor), total: response.pagination.total }
   }
 
   async create(input: FloorInput): Promise<Floor> {

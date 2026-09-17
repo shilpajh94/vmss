@@ -24,11 +24,11 @@ export const StaffVisitRequestSchema = z.object({
     itemDescription: z.string().optional(),
   }),
   vehicles: z.array(VehicleSchema),
-  consents: z.object({
-    termsAccepted: z.boolean(),
-    dataProcessingAccepted: z.boolean(),
-    safetyGuidelinesAccepted: z.boolean(),
-  }),
+  // Dynamic, branch-configured keys (form-builder) — see
+  // visit-request-schema.ts's matching comment.
+  consents: z.record(z.string(), z.boolean()),
+  // See visit-request-schema.ts's matching comment.
+  customFieldValues: z.record(z.string(), z.unknown()).optional(),
 })
 
 export type StaffVisitRequest = z.infer<typeof StaffVisitRequestSchema>

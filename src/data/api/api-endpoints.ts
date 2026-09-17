@@ -359,6 +359,66 @@ export const API_ENDPOINTS = {
     method: "DELETE",
     hasToken: true,
   },
+  LIST_FORM_STEPS: {
+    endpoint: "/form-builder/steps",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_FORM_STEP: {
+    endpoint: "/form-builder/steps",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_FORM_STEP: {
+    endpoint: "/form-builder/steps/:id",
+    method: "PATCH",
+    hasToken: true,
+  },
+  DELETE_FORM_STEP: {
+    endpoint: "/form-builder/steps/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  REORDER_FORM_STEPS: {
+    endpoint: "/form-builder/steps/reorder",
+    method: "POST",
+    hasToken: true,
+  },
+  LIST_FORM_FIELDS: {
+    endpoint: "/form-builder/steps/:stepId/fields",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_FORM_FIELD: {
+    endpoint: "/form-builder/steps/:stepId/fields",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_FORM_FIELD: {
+    endpoint: "/form-builder/fields/:id",
+    method: "PATCH",
+    hasToken: true,
+  },
+  DELETE_FORM_FIELD: {
+    endpoint: "/form-builder/fields/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  REORDER_FORM_FIELDS: {
+    endpoint: "/form-builder/steps/:stepId/fields/reorder",
+    method: "POST",
+    hasToken: true,
+  },
+  PUBLISH_FORM_CONFIG: {
+    endpoint: "/form-builder/publish",
+    method: "POST",
+    hasToken: true,
+  },
+  GET_EFFECTIVE_FORM: {
+    endpoint: "/form-builder/effective",
+    method: "GET",
+    hasToken: false,
+  },
 } as const
 
 export type ApiEndpointDefinition = (typeof API_ENDPOINTS)[keyof typeof API_ENDPOINTS]

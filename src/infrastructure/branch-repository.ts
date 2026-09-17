@@ -1,7 +1,7 @@
 import z from 'zod'
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
-import type { BranchRepository } from '../data/repositories/branch-repository'
+import type { BranchesPage, BranchRepository, ListBranchesPageParams } from '../data/repositories/branch-repository'
 import { BranchListResponseSchema, BranchResponseSchema, type BranchOut } from '../domain/entities/branch-out-schema'
 import type { Branch } from '../domain/entities/branch-schema'
 
@@ -38,6 +38,16 @@ export class HttpBranchRepository implements BranchRepository {
     })
 
     return response.data.map(toBranch)
+  }
+
+  async listPage({ page, pageSize, status }: ListBranchesPageParams): Promise<BranchesPage> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.LIST_BRANCHES,
+      queryParams: { page, pageSize, status },
+      parserSchema: BranchListResponseSchema,
+    })
+
+    return { items: response.data.map(toBranch), total: response.pagination.total }
   }
 
   async create(input: Omit<Branch, 'id'>): Promise<Branch> {

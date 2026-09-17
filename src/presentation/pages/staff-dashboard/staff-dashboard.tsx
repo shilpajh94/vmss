@@ -1,5 +1,3 @@
-import { DashboardSidebar } from '../../components/DashboardSidebar'
-import { ReceptionSidebar } from '../../components/ReceptionSidebar'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
@@ -78,59 +76,55 @@ export function StaffDashboardPage() {
   } = useStaffDashboard()
 
   return (
-    <div className="flex min-h-screen w-full items-stretch bg-bg">
-      {currentUser?.isReception ? <ReceptionSidebar activeItem="visits" /> : <DashboardSidebar activeItem="all-visitors" />}
+    <>
+      <WorkspaceHeader currentUser={currentUser} onRefresh={refresh} onSignOut={signOut} />
+      <SearchActionBar
+        search={search}
+        onSearchChange={setSearch}
+        purposeFilter={purposeFilter}
+        onPurposeFilterChange={setPurposeFilter}
+        purposeOptions={purposeOptions}
+        registrationTypeFilter={registrationTypeFilter}
+        onRegistrationTypeFilterChange={setRegistrationTypeFilter}
+      />
 
-      <main className="flex flex-1 flex-col gap-6 p-8">
-        <WorkspaceHeader currentUser={currentUser} onRefresh={refresh} onSignOut={signOut} />
-        <SearchActionBar
-          search={search}
-          onSearchChange={setSearch}
-          purposeFilter={purposeFilter}
-          onPurposeFilterChange={setPurposeFilter}
-          purposeOptions={purposeOptions}
-          registrationTypeFilter={registrationTypeFilter}
-          onRegistrationTypeFilterChange={setRegistrationTypeFilter}
-        />
-
-        {errorMessage ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
-            <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={refresh} className="rounded-lg bg-secondary-accent px-4 py-2 font-body text-sm font-semibold text-white">
-              Try again
-            </button>
-          </div>
-        ) : isLoading ? (
-          <LoadingState label="Loading visit requests…" className="flex-1" />
-        ) : (
-          <div className="flex w-full flex-1 items-start gap-4">
-            {columns.map((column) => (
-              <KanbanColumn
-                key={column.status}
-                status={column.status}
-                label={column.label}
-                requests={column.requests}
-                emptyMessage={EMPTY_MESSAGES[column.status]}
-                onDrop={column.status === 'approved' ? approve : column.status === 'denied' ? requestDeny : undefined}
-                approvingId={approvingId}
-                expandedId={expandedId}
-                onToggleExpand={toggleExpand}
-                invitationDetails={invitationDetails}
-                loadingDetailId={loadingDetailId}
-                roleNameById={roleNameById}
-                employeeNameById={employeeNameById}
-                workflowRulesByCategory={workflowRulesByCategory}
-                onRescheduleClick={requestReschedule}
-                onDelegateClick={requestDelegate}
-                onApproveAndDelegateClick={requestApproveAndDelegate}
-                onApproveClick={approve}
-                onEditClick={requestEdit}
-                onVisitorInfoClick={viewVisitorInfo}
-              />
-            ))}
-          </div>
-        )}
-      </main>
+      {errorMessage ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
+          <p className="font-body text-sm text-danger">{errorMessage}</p>
+          <button type="button" onClick={refresh} className="rounded-lg bg-secondary-accent px-4 py-2 font-body text-sm font-semibold text-white">
+            Try again
+          </button>
+        </div>
+      ) : isLoading ? (
+        <LoadingState label="Loading visit requests…" className="flex-1" />
+      ) : (
+        <div className="flex w-full flex-1 items-start gap-4 overflow-x-auto">
+          {columns.map((column) => (
+            <KanbanColumn
+              key={column.status}
+              status={column.status}
+              label={column.label}
+              requests={column.requests}
+              emptyMessage={EMPTY_MESSAGES[column.status]}
+              onDrop={column.status === 'approved' ? approve : column.status === 'denied' ? requestDeny : undefined}
+              approvingId={approvingId}
+              expandedId={expandedId}
+              onToggleExpand={toggleExpand}
+              invitationDetails={invitationDetails}
+              loadingDetailId={loadingDetailId}
+              roleNameById={roleNameById}
+              employeeNameById={employeeNameById}
+              workflowRulesByCategory={workflowRulesByCategory}
+              onRescheduleClick={requestReschedule}
+              onDelegateClick={requestDelegate}
+              onApproveAndDelegateClick={requestApproveAndDelegate}
+              onApproveClick={approve}
+              onEditClick={requestEdit}
+              onVisitorInfoClick={viewVisitorInfo}
+            />
+          ))}
+        </div>
+      )}
 
       <DenyInvitationModal isOpen={pendingDenyId !== undefined} isDenying={denyingId !== undefined} onConfirm={confirmDeny} onCancel={cancelDeny} />
 
@@ -182,6 +176,6 @@ export function StaffDashboardPage() {
         workflowRulesByCategory={workflowRulesByCategory}
         onClose={closeVisitorInfo}
       />
-    </div>
+    </>
   )
 }

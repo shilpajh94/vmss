@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
+import { usePolling } from './use-polling'
+import { useDebouncedValue } from './use-debounced-value'
 import { isReceptionCurrentStep, resolveApproverLabel, resolveCurrentLevel, resolveTotalSteps } from '../utils/approval-step-label'
 import { employeeAtBranch, employeeHasRoleAtBranch } from '../utils/role-name-match'
 import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
@@ -52,13 +54,25 @@ function describeApprovalOutcome(
   return `Level ${approvedLevel} of ${totalSteps} approved — now waiting on ${approverLabel} (level ${nextLevel} of ${totalSteps}).`
 }
 
+export interface InvitationsBoardOptions {
+  /**
+   * When true, search/status/registrationType/source are sent to the server
+   * (debounced search) and the board's fetch is bounded (not the default
+   * pageSize) rather than filtering an already-fetched list client-side.
+   * Used by the admin Invitations board only — the staff dashboard keeps
+   * its existing client-side filtering unchanged (default: false).
+   */
+  serverFilters?: boolean
+}
+
 // Shared Kanban-board data/actions behind the staff dashboard and the admin
 // invitations board — same columns, same approve/reschedule/step-progress
 // behavior, differing in where an unauthenticated visitor is redirected and
 // in scope: the staff dashboard asks the API for only the requests where the
 // current user is the host or a delegate (`relevantToMe=true`), while the
 // admin board keeps its organisation-wide view.
-export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | 'all' = 'all') {
+export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | 'all' = 'all', options?: InvitationsBoardOptions) {
+  const serverFilters = options?.serverFilters ?? false
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const {
@@ -89,6 +103,10 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [search, setSearch] = useState('')
   const [purposeFilter, setPurposeFilter] = useState('all')
   const [registrationTypeFilter, setRegistrationTypeFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [sourceFilter, setSourceFilter] = useState('')
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
+  const debouncedSearch = useDebouncedValue(search, 300)
   const [approvingId, setApprovingId] = useState<string | undefined>(undefined)
   const [expandedId, setExpandedId] = useState<string | undefined>(undefined)
   const [invitationDetails, setInvitationDetails] = useState<Record<string, InvitationDetail>>({})
@@ -108,6 +126,33 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [pendingEditId, setPendingEditId] = useState<string | undefined>(undefined)
   const [visitorInfoId, setVisitorInfoId] = useState<string | undefined>(undefined)
 
+  // Two separately-memoized param objects, not one memo branching at read
+  // time: `clientModeParams`'s identity only changes when `scope` does, so
+  // the staff dashboard (which always resolves to it, since it never sets
+  // serverFilters) never triggers a network refetch just because
+  // statusFilter/sourceFilter/debouncedSearch/registrationTypeFilter
+  // changed - those stay a pure client-side re-filter there, exactly as
+  // before this option existed. A single memo keyed on all those filters
+  // would give every read a fresh object reference regardless of which
+  // branch it took, defeating that.
+  const clientModeParams = useMemo(() => ({ relevantToMe: scope === 'mine' }), [scope])
+  const serverModeParams = useMemo(
+    () => ({
+      relevantToMe: scope === 'mine',
+      status: statusFilter || undefined,
+      registrationType: registrationTypeFilter === 'all' ? undefined : registrationTypeFilter,
+      source: sourceFilter || undefined,
+      search: debouncedSearch.trim() || undefined,
+      // Bounded, not paginated - the board groups by status column, so a
+      // page-by-page fetch could under-populate a column until an admin
+      // paged further. See admin-invitations spec's "board's fetch is
+      // bounded" requirement. Capped at the API's hard max page size (100).
+      pageSize: 100,
+    }),
+    [scope, statusFilter, registrationTypeFilter, sourceFilter, debouncedSearch],
+  )
+  const fetchParams = serverFilters ? serverModeParams : clientModeParams
+
   const loadDashboard = useCallback(
     async (options?: { silent?: boolean }) => {
       const silent = options?.silent ?? false
@@ -120,7 +165,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
       try {
         const [user, requests, roles, employees] = await Promise.all([
           getCurrentStaffUserUseCase.execute(),
-          listVisitRequestsUseCase.execute(scope === 'mine'),
+          listVisitRequestsUseCase.execute(fetchParams),
           // Listing roles is admin-scoped and 403s for other staff roles
           // (e.g. host, reception). Every consumer of roleNameById already
           // falls back gracefully when a name is missing (see
@@ -139,6 +184,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         setRoleNameById(Object.fromEntries(roles.map((role: RoleOut) => [role.id, role.name])))
         setHostEmployees(employees)
         setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
+        setLastUpdatedAt(new Date())
       } catch (error) {
         console.error('Failed to load dashboard', error)
         if (!silent) {
@@ -151,7 +197,19 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         }
       }
     },
-    [getCurrentStaffUserUseCase, listVisitRequestsUseCase, listRolesUseCase, listHostEmployeesUseCase, scope, toast],
+    [
+      getCurrentStaffUserUseCase,
+      listVisitRequestsUseCase,
+      listRolesUseCase,
+      listHostEmployeesUseCase,
+      scope,
+      serverFilters,
+      statusFilter,
+      registrationTypeFilter,
+      sourceFilter,
+      debouncedSearch,
+      toast,
+    ],
   )
 
   useEffect(() => {
@@ -167,73 +225,21 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     void loadDashboard()
   }, [loadDashboard])
 
-  // Tracks whether a deny/reschedule/delegate action or its dialog is in
-  // progress, so the auto-refresh tick below can skip a fetch that would
-  // otherwise disrupt it.
-  const actionInProgressRef = useRef(false)
-  useEffect(() => {
-    actionInProgressRef.current =
-      pendingDenyId !== undefined ||
-      pendingRescheduleId !== undefined ||
-      pendingDelegateId !== undefined ||
-      pendingEditId !== undefined ||
-      pendingApproveAndDelegateId !== undefined ||
-      denyingId !== undefined ||
-      reschedulingId !== undefined ||
-      delegatingId !== undefined ||
-      editingId !== undefined ||
-      approvingAndDelegatingId !== undefined
-  }, [
-    pendingDenyId,
-    pendingRescheduleId,
-    pendingDelegateId,
-    pendingEditId,
-    pendingApproveAndDelegateId,
-    denyingId,
-    reschedulingId,
-    delegatingId,
-    editingId,
-    approvingAndDelegatingId,
-  ])
+  // progress, so the auto-refresh tick can skip a fetch that would otherwise
+  // disrupt it.
+  const isActionInProgress =
+    pendingDenyId !== undefined ||
+    pendingRescheduleId !== undefined ||
+    pendingDelegateId !== undefined ||
+    pendingEditId !== undefined ||
+    pendingApproveAndDelegateId !== undefined ||
+    denyingId !== undefined ||
+    reschedulingId !== undefined ||
+    delegatingId !== undefined ||
+    editingId !== undefined ||
+    approvingAndDelegatingId !== undefined
 
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      if (actionInProgressRef.current) return
-      void loadDashboard({ silent: true })
-    }, 30_000)
-
-    return () => clearInterval(intervalId)
-  }, [loadDashboard])
-
-  // Preloads approval-step detail for pending requests so the "Level X/Y"
-  // badge is visible on the collapsed card, not just after expanding it.
-  // Also covers "approved" requests: the backend's `status` field flips to
-  // "approved" as soon as an intermediate step (e.g. Reception) clears, even
-  // when a further step is still pending, so a genuinely mid-workflow request
-  // needs its detail fetched here too for `resolveEffectiveStatus` below to
-  // correctly keep it out of the Approved column.
-  const pendingDetailFetchesRef = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    const idsNeedingDetail = visitRequests
-      .filter((request) => ['requested', 'approved'].includes(normalizeStatus(request.status)))
-      .map((request) => request.id)
-      .filter((id) => !invitationDetails[id] && !pendingDetailFetchesRef.current.has(id))
-
-    idsNeedingDetail.forEach((id) => {
-      pendingDetailFetchesRef.current.add(id)
-      getInvitationDetailUseCase
-        .execute(id)
-        .then((detail) => {
-          setInvitationDetails((previous) => ({ ...previous, [id]: detail }))
-        })
-        .catch((error: unknown) => {
-          console.error('Failed to preload approval progress', error)
-        })
-        .finally(() => {
-          pendingDetailFetchesRef.current.delete(id)
-        })
-    })
-  }, [visitRequests, invitationDetails, getInvitationDetailUseCase])
+  usePolling(() => void loadDashboard({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   // Workflow rules are defined per visitor category, not per invitation, so
   // every card sharing a category reuses one fetch instead of one each. The
@@ -249,7 +255,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
       if (cached) return cached
 
       const promise = listApprovalWorkflowRulesUseCase
-        .execute(visitorCategoryId)
+        .execute({ visitorCategoryId })
         .then((rules) => {
           // Don't trust the backend to have actually filtered by the query
           // param — `use-admin-workflow-form.ts` doesn't (it fetches broadly
@@ -285,6 +291,47 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     },
     [listApprovalWorkflowRulesUseCase],
   )
+
+  // Preloads approval-step detail for pending requests so the "Level X/Y"
+  // badge is visible on the collapsed card, not just after expanding it.
+  // Also covers "approved" requests: the backend's `status` field flips to
+  // "approved" as soon as an intermediate step (e.g. Reception) clears, even
+  // when a further step is still pending, so a genuinely mid-workflow request
+  // needs its detail fetched here too for `resolveEffectiveStatus` below to
+  // correctly keep it out of the Approved column.
+  //
+  // Kicks off the category's workflow-rules fetch (below) in parallel with
+  // the detail fetch, keyed off the summary's own `visitorCategoryId` rather
+  // than waiting for the detail to resolve first: chaining them was exactly
+  // what caused the card to render once with the stale `stepOrder`/`totalSteps`
+  // snapshot and then "blink" to the correct level 2-3s later once the
+  // category's live rules arrived on their own separate round trip.
+  const pendingDetailFetchesRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const requestsNeedingDetail = visitRequests
+      .filter((request) => ['requested', 'approved'].includes(normalizeStatus(request.status)))
+      .filter((request) => !invitationDetails[request.id] && !pendingDetailFetchesRef.current.has(request.id))
+
+    requestsNeedingDetail.forEach((request) => {
+      const id = request.id
+      pendingDetailFetchesRef.current.add(id)
+      getInvitationDetailUseCase
+        .execute(id)
+        .then((detail) => {
+          setInvitationDetails((previous) => ({ ...previous, [id]: detail }))
+        })
+        .catch((error: unknown) => {
+          console.error('Failed to preload approval progress', error)
+        })
+        .finally(() => {
+          pendingDetailFetchesRef.current.delete(id)
+        })
+
+      if (request.visitorCategoryId) {
+        ensureWorkflowRulesLoaded(request.visitorCategoryId).catch(() => {})
+      }
+    })
+  }, [visitRequests, invitationDetails, getInvitationDetailUseCase, ensureWorkflowRulesLoaded])
 
   // Preloads workflow rules for every visible card with a live approval step,
   // so "Pending:" can preview the next level and the level/total badges can
@@ -752,6 +799,12 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   )
 
   const filteredRequests = useMemo(() => {
+    // serverFilters mode already sent search/registrationType (and
+    // status/source) to the API - re-narrowing here with the live
+    // (non-debounced) `search` value would visibly flicker results ahead
+    // of what the debounced server fetch actually returned.
+    if (serverFilters) return visitRequests
+
     const query = search.trim().toLowerCase()
 
     return visitRequests.filter((request) => {
@@ -764,7 +817,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
 
       return matchesSearch && matchesPurpose && matchesRegistrationType
     })
-  }, [visitRequests, search, purposeFilter, registrationTypeFilter])
+  }, [visitRequests, search, purposeFilter, registrationTypeFilter, serverFilters])
 
   // The backend's `status` field on a visit request flips to "approved" as
   // soon as any single step clears (e.g. Reception approves-and-delegates),
@@ -805,6 +858,11 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     purposeOptions,
     registrationTypeFilter,
     setRegistrationTypeFilter,
+    statusFilter,
+    setStatusFilter,
+    sourceFilter,
+    setSourceFilter,
+    lastUpdatedAt,
     refresh,
     approve,
     approvingId,

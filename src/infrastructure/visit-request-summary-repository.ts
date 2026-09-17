@@ -1,6 +1,10 @@
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
-import type { EditInvitationFields, VisitRequestSummaryRepository } from '../data/repositories/visit-request-summary-repository'
+import type {
+  EditInvitationFields,
+  ListVisitRequestsParams,
+  VisitRequestSummaryRepository,
+} from '../data/repositories/visit-request-summary-repository'
 import {
   VisitRequestSummaryListResponseSchema,
   InvitationActionResultSchema,
@@ -21,10 +25,20 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
     this.apiClient = apiClient
   }
 
-  async list(params?: { relevantToMe?: boolean }): Promise<VisitRequestSummary[]> {
+  async list(params?: ListVisitRequestsParams): Promise<VisitRequestSummary[]> {
     const response = await this.apiClient.makeRequest<VisitRequestSummaryListResponse>({
       endpointConfig: API_ENDPOINTS.LIST_VISIT_REQUESTS,
-      queryParams: { relevantToMe: params?.relevantToMe ? true : undefined },
+      queryParams: {
+        relevantToMe: params?.relevantToMe ? true : undefined,
+        status: params?.status,
+        registrationType: params?.registrationType,
+        source: params?.source,
+        search: params?.search,
+        // Previously unset (silently capped at the API's default pageSize
+        // of 20) - explicit here so the board sees its full realistic
+        // volume, same bounded-not-paginated posture as Workflows.
+        pageSize: params?.pageSize ?? 100,
+      },
       parserSchema: VisitRequestSummaryListResponseSchema,
     })
 

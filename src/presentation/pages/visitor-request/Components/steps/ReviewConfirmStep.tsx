@@ -1,10 +1,14 @@
 import type { ReactNode } from 'react'
-import type { CarriedItemsFormState, ConsentFormState, RegistrationType, VisitInfoFormState } from '../../types'
+import type { CarriedItemsFormState, ConsentFormState, CustomFieldValues, RegistrationType, VisitInfoFormState } from '../../types'
 import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
+import type { FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
 import { Spinner } from '../../../../components/ui/LoadingState'
 import { FileTextIcon } from '../../../../components/icons'
 import { getFilePreviewKind } from '../../../../utils/file-preview-kind'
+import { prettifyKey } from '../../../../utils/prettify-key'
+import { formatDynamicFieldValue } from '../../../../components/dynamic-fields/format-dynamic-field-value'
+import type { DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
 
 export type SubmissionStatus = 'idle' | 'submitting' | 'success' | 'error'
 
@@ -29,6 +33,7 @@ export interface ReviewableFormState {
   carriedItems: CarriedItemsFormState
   vehicles: Vehicle[]
   consent: ConsentFormState
+  customFieldValues: CustomFieldValues
 }
 
 interface ReviewConfirmStepProps {
@@ -38,6 +43,12 @@ interface ReviewConfirmStepProps {
   errorMessage?: string
   visitorCategories?: VisitorCategory[]
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
+  /** Active Vehicle Info custom fields, for labeling each vehicle's custom
+   * field values in the summary below (form-builder). */
+  vehicleCustomFields?: FormField[]
+  /** Active Carried Items custom fields, for labeling values pulled from
+   * `formState.customFieldValues` (form-builder). */
+  carriedItemsCustomFields?: FormField[]
   onBack: () => void
   onSubmit: () => void
   onGoHome?: () => void
@@ -84,6 +95,8 @@ export function ReviewConfirmStep({
   errorMessage,
   visitorCategories,
   getFilePreviewUrl,
+  vehicleCustomFields = [],
+  carriedItemsCustomFields = [],
   onBack,
   onSubmit,
   onGoHome,
@@ -165,8 +178,14 @@ export function ReviewConfirmStep({
       <SummarySection
         title="Carried Items"
         rows={[
-          ['Categories', formState.carriedItems.categories.join(', ') || 'None declared'],
+          ['Categories', formState.carriedItems.categories.map(prettifyKey).join(', ') || 'None declared'],
           ['Description', formState.carriedItems.description],
+          ...carriedItemsCustomFields.map(
+            (field): [string, ReactNode] => [
+              field.label,
+              formatDynamicFieldValue(field, formState.customFieldValues[field.key] as DynamicFieldValue),
+            ],
+          ),
         ]}
       />
 
@@ -174,18 +193,24 @@ export function ReviewConfirmStep({
         title="Vehicle Info"
         rows={
           formState.vehicles.length > 0
-            ? formState.vehicles.map((vehicle, index) => [`Vehicle ${index + 1}`, `${vehicle.makeModel} · ${vehicle.licensePlate}`])
+            ? formState.vehicles.flatMap((vehicle, index): [string, ReactNode][] => [
+                [`Vehicle ${index + 1}`, `${vehicle.makeModel} · ${vehicle.licensePlate}`],
+                ...vehicleCustomFields.map((field): [string, ReactNode] => [
+                  `Vehicle ${index + 1} — ${field.label}`,
+                  formatDynamicFieldValue(field, (vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined)?.[field.key]),
+                ]),
+              ])
             : [['Vehicles', 'None declared']]
         }
       />
 
       <SummarySection
         title="Consent"
-        rows={[
-          ['Terms & Conditions', formState.consent.agreedTerms ? 'Agreed' : 'Not agreed'],
-          ['Data Use', formState.consent.agreedDataUse ? 'Agreed' : 'Not agreed'],
-          ['Safety Guidelines', formState.consent.agreedSafety ? 'Agreed' : 'Not agreed'],
-        ]}
+        rows={
+          Object.keys(formState.consent).length > 0
+            ? Object.entries(formState.consent).map(([key, agreed]) => [prettifyKey(key), agreed ? 'Agreed' : 'Not agreed'])
+            : [['Consent', 'None recorded']]
+        }
       />
 
       <div className="flex gap-3">

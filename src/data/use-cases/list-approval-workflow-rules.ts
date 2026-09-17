@@ -1,4 +1,4 @@
-import type { ApprovalWorkflowRuleRepository } from '../repositories/approval-workflow-rule-repository'
+import type { ApprovalWorkflowRuleRepository, ListApprovalWorkflowRulesParams } from '../repositories/approval-workflow-rule-repository'
 import type { ApprovalWorkflowRule } from '../../domain/entities/approval-workflow-rule-schema'
 
 export class ListApprovalWorkflowRulesUseCase {
@@ -8,7 +8,7 @@ export class ListApprovalWorkflowRulesUseCase {
     this.approvalWorkflowRuleRepository = approvalWorkflowRuleRepository
   }
 
-  async execute(visitorCategoryId?: string): Promise<ApprovalWorkflowRule[]> {
-    return this.approvalWorkflowRuleRepository.list(visitorCategoryId)
+  async execute(params?: ListApprovalWorkflowRulesParams): Promise<ApprovalWorkflowRule[]> {
+    return this.approvalWorkflowRuleRepository.list(params)
   }
 }

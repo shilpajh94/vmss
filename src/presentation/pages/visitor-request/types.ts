@@ -1,3 +1,4 @@
+import type { DynamicFieldValue } from '../../components/dynamic-fields/DynamicField'
 import type { Vehicle } from '../../../domain/entities/vehicle-schema'
 import type { Visitor } from '../../../domain/entities/visitor-schema'
 import type { VisitorCategory } from '../../../domain/entities/visitor-category-schema'
@@ -25,6 +26,10 @@ export interface VisitorFormEntry {
   idProofFileName?: string
   profileImageFileRef?: string
   profileImageFileName?: string
+  // This visitor's own answers for any admin-authored Visitor Info field
+  // (add-generic-custom-field-support) — independent of every other
+  // visitor's answer for the same field.
+  customFieldValues: Record<string, DynamicFieldValue>
 }
 
 export function createEmptyVisitorFormEntry(): VisitorFormEntry {
@@ -39,6 +44,7 @@ export function createEmptyVisitorFormEntry(): VisitorFormEntry {
     // validation with no visible error and makes "Next" appear dead.
     preferredContactMethod: 'email',
     idProofType: '',
+    customFieldValues: {},
   }
 }
 
@@ -57,11 +63,22 @@ export interface CarriedItemsFormState {
   description: string
 }
 
-export interface ConsentFormState {
-  agreedTerms: boolean
-  agreedDataUse: boolean
-  agreedSafety: boolean
-}
+// Dynamic, branch-configured consent-key -> accepted, keyed by whatever the
+// resolved branch's published Consent Agreement step currently declares
+// (form-builder) — not a fixed `agreedTerms`/`agreedDataUse`/`agreedSafety`
+// shape. See ConsentStep, which renders one checkbox per active field.
+export type ConsentFormState = Record<string, boolean>
+
+// Flat, keyed by field key — answers for every admin-authored field whose
+// step has no per-entity structure of its own: Visit Details, Carried
+// Items (beyond its seeded `items`/`item_description` fields), and any
+// custom step (add-generic-custom-field-support). One shared bucket
+// because the wire contract's `customFieldValues` is itself one flat map
+// at the request's top level; Visitor Info/Vehicle Info fields go on
+// `VisitorFormEntry`/`Vehicle` instead, since those are per-visitor/
+// per-vehicle. Consent Agreement fields are excluded — they flow through
+// `consent` below regardless of whether they're seeded or admin-authored.
+export type CustomFieldValues = Record<string, DynamicFieldValue>
 
 export interface VisitRequestFormState {
   registrationType: RegistrationType
@@ -71,6 +88,7 @@ export interface VisitRequestFormState {
   carriedItems: CarriedItemsFormState
   vehicles: Vehicle[]
   consent: ConsentFormState
+  customFieldValues: CustomFieldValues
 }
 
 export function createInitialFormState(): VisitRequestFormState {
@@ -89,7 +107,8 @@ export function createInitialFormState(): VisitRequestFormState {
     },
     carriedItems: { categories: [], description: '' },
     vehicles: [],
-    consent: { agreedTerms: false, agreedDataUse: false, agreedSafety: false },
+    consent: {},
+    customFieldValues: {},
   }
 }
 
@@ -100,6 +119,7 @@ export function toVisitor(entry: VisitorFormEntry): Visitor {
     phone: entry.phone,
     preferredContactMethod: entry.preferredContactMethod,
     idProofType: entry.idProofType,
+    customFieldValues: entry.customFieldValues,
   }
 }
 
@@ -131,19 +151,7 @@ export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
       itemDescription: formState.carriedItems.description,
     },
     vehicles: formState.vehicles,
-    consents: {
-      termsAccepted: formState.consent.agreedTerms,
-      dataProcessingAccepted: formState.consent.agreedDataUse,
-      safetyGuidelinesAccepted: formState.consent.agreedSafety,
-    },
+    consents: formState.consent,
+    customFieldValues: formState.customFieldValues,
   }
 }
-
-export const WIZARD_STEPS = [
-  'Visitor Info',
-  'Visit Info',
-  'Carried Items',
-  'Vehicle Info',
-  'Consent Agreement',
-  'Review & Confirm',
-] as const
