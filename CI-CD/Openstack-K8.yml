@@ -193,7 +193,7 @@ spec:
       containers:
         - name: celery-worker-cron
 
-          image: docker-registry.dev.displayme.net/$(dockerrepo)
+          image: harbor.openstack.mypits.org/$(dockerrepo)
           imagePullPolicy: IfNotPresent
 
           command:
@@ -263,7 +263,7 @@ spec:
       containers:
         - name: celery-worker-notifications
 
-          image: docker-registry.dev.displayme.net/$(dockerrepo)
+          image: harbor.openstack.mypits.org/$(dockerrepo)
           imagePullPolicy: IfNotPresent
 
           command:
@@ -333,7 +333,7 @@ spec:
       containers:
         - name: celery-beat
 
-          image: docker-registry.dev.displayme.net/$(dockerrepo)
+          image: harbor.openstack.mypits.org/$(dockerrepo)
           imagePullPolicy: IfNotPresent
 
           command:
