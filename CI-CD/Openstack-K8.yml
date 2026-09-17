@@ -1,0 +1,597 @@
+```yaml
+############################################
+# PersistentVolumeClaim
+############################################
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  namespace: $(namespace)
+  name: $(pvc_name)
+spec:
+  accessModes:
+    - ReadWriteMany
+
+  storageClassName: $(storageClassName)
+
+  resources:
+    requests:
+      storage: $(pvc_storage)
+
+
+---
+############################################
+# Application Service
+############################################
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: $(namespace)
+  name: $(proj_branch)
+
+  labels:
+    app: $(proj_branch)
+
+spec:
+  selector:
+    app: $(proj_branch)
+
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP
+
+
+---
+############################################
+# Application Deployment
+############################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: $(namespace)
+  name: $(proj_branch)
+
+  labels:
+    app: $(proj_branch)
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: $(proj_branch)
+
+  template:
+    metadata:
+      labels:
+        app: $(proj_branch)
+
+      annotations:
+
+        # Vault Agent
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "$(proj_branch)-role"
+
+        # Vault secret path
+        vault.hashicorp.com/agent-inject-secret-env: "secret/data/$(namespace)/$(proj_branch)"
+
+        # Inject application environment variables
+        vault.hashicorp.com/agent-inject-template-env: |
+          {{- with secret "secret/data/$(namespace)/$(proj_branch)" -}}
+          export APP_NAME="{{ .Data.data.app_name }}"
+          export ENVIRONMENT="{{ .Data.data.environment }}"
+          export DEBUG="{{ .Data.data.debug }}"
+
+          export DB_USER="{{ .Data.data.db_user }}"
+          export DB_PASSWORD="{{ .Data.data.db_password }}"
+          export DB_HOST="{{ .Data.data.db_host }}"
+          export DB_PORT="{{ .Data.data.db_port }}"
+          export DB_NAME="{{ .Data.data.db_name }}"
+
+          export REDIS_URL="{{ .Data.data.redis_url }}"
+          export CELERY_BROKER_URL="{{ .Data.data.celery_broker_url }}"
+          export CELERY_RESULT_BACKEND="{{ .Data.data.celery_result_backend }}"
+
+          export CELERY_NOTIFICATION_QUEUE="{{ .Data.data.celery_notification_queue }}"
+          export CELERY_CRON_QUEUE="{{ .Data.data.celery_cron_queue }}"
+
+          export JWT_SECRET_KEY="{{ .Data.data.jwt_secret_key }}"
+          export JWT_ALGORITHM="{{ .Data.data.jwt_algorithm }}"
+          export ACCESS_TOKEN_EXPIRE_MINUTES="{{ .Data.data.access_token_expire_minutes }}"
+          export REFRESH_TOKEN_EXPIRE_MINUTES="{{ .Data.data.refresh_token_expire_minutes }}"
+
+          export CORS_ALLOWED_ORIGINS="{{ .Data.data.cors_allowed_origins }}"
+
+          export DEFAULT_TENANT_SLUG="{{ .Data.data.default_tenant_slug }}"
+          export GLOBAL_SCHEMA_NAME="{{ .Data.data.global_schema_name }}"
+          export TENANT_SCHEMA_PREFIX="{{ .Data.data.tenant_schema_prefix }}"
+
+          export STORAGE_ROOT="{{ .Data.data.storage_root }}"
+          export STORAGE_BACKEND="{{ .Data.data.storage_backend }}"
+          export STORAGE_S3_PRESIGNED_URL_TTL_SECONDS="{{ .Data.data.storage_s3_presigned_url_ttl_seconds }}"
+          export STORAGE_LOCAL_PRESIGNED_URL_TTL_SECONDS="{{ .Data.data.storage_local_presigned_url_ttl_seconds }}"
+          export STORAGE_LOCAL_URL_SECRET="{{ .Data.data.storage_local_url_secret }}"
+          export STORAGE_PUBLIC_BASE_URL="{{ .Data.data.storage_public_base_url }}"
+
+          export SMTP_HOST="{{ .Data.data.smtp_host }}"
+          export SMTP_PORT="{{ .Data.data.smtp_port }}"
+          export SMTP_USERNAME="{{ .Data.data.smtp_username }}"
+          export SMTP_PASSWORD="{{ .Data.data.smtp_password }}"
+          export SMTP_USE_TLS="{{ .Data.data.smtp_use_tls }}"
+          export SMTP_FROM_ADDRESS="{{ .Data.data.smtp_from_address }}"
+
+          export SMS_GATEWAY_BASE_URL="{{ .Data.data.sms_gateway_base_url }}"
+          export SMS_GATEWAY_API_KEY="{{ .Data.data.sms_gateway_api_key }}"
+          export SMS_FROM_NUMBER="{{ .Data.data.sms_from_number }}"
+
+          export INVITATION_TOKEN_TTL_HOURS="{{ .Data.data.invitation_token_ttl_hours }}"
+          export INVITATION_MAX_UPLOAD_SIZE_BYTES="{{ .Data.data.invitation_max_upload_size_bytes }}"
+          export INVITATION_MAX_GROUP_VISITORS="{{ .Data.data.invitation_max_group_visitors }}"
+
+          export SSO_ENCRYPTION_KEY="{{ .Data.data.sso_encryption_key }}"
+          export SSO_REDIRECT_URI="{{ .Data.data.sso_redirect_uri }}"
+          export SSO_FRONTEND_CALLBACK_URL="{{ .Data.data.sso_frontend_callback_url }}"
+          export SSO_EXCHANGE_CODE_TTL_SECONDS="{{ .Data.data.sso_exchange_code_ttl_seconds }}"
+          export SSO_STATE_TTL_SECONDS="{{ .Data.data.sso_state_ttl_seconds }}"
+
+          export QR_TOKEN_ENCRYPTION_KEY="{{ .Data.data.qr_token_encryption_key }}"
+
+          export FCM_CREDENTIALS_PATH="{{ .Data.data.fcm_credentials_path }}"
+          {{- end -}}
+
+        vault.hashicorp.com/agent-inject-perms-env: "0440"
+
+    spec:
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+
+      containers:
+
+        - name: $(proj_branch)
+
+          image: harbor.openstack.mypits.org/$(dockerrepo)
+
+          imagePullPolicy: IfNotPresent
+
+          securityContext:
+            allowPrivilegeEscalation: false
+
+            capabilities:
+              drop:
+                - ALL
+
+              add:
+                - NET_BIND_SERVICE
+
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+
+            limits:
+              cpu: "1"
+              memory: "3Gi"
+
+          volumeMounts:
+            - name: storage-volume
+              mountPath: $(mount_path)
+
+      volumes:
+
+        - name: storage-volume
+
+          persistentVolumeClaim:
+            claimName: $(pvc_name)
+
+
+---
+############################################
+# Celery Worker - Cron Jobs
+############################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: $(namespace)
+  name: $(proj_branch)-celery-worker-cron
+
+  labels:
+    app: $(proj_branch)-celery-worker-cron
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: $(proj_branch)-celery-worker-cron
+
+  template:
+    metadata:
+      labels:
+        app: $(proj_branch)-celery-worker-cron
+
+      annotations:
+
+        # Vault Agent
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "$(proj_branch)-role"
+
+        vault.hashicorp.com/agent-inject-secret-env: "secret/data/$(namespace)/$(proj_branch)"
+
+        vault.hashicorp.com/agent-inject-template-env: |
+          {{- with secret "secret/data/$(namespace)/$(proj_branch)" -}}
+          export APP_NAME="{{ .Data.data.app_name }}"
+          export ENVIRONMENT="{{ .Data.data.environment }}"
+
+          export DB_USER="{{ .Data.data.db_user }}"
+          export DB_PASSWORD="{{ .Data.data.db_password }}"
+          export DB_HOST="{{ .Data.data.db_host }}"
+          export DB_PORT="{{ .Data.data.db_port }}"
+          export DB_NAME="{{ .Data.data.db_name }}"
+
+          export REDIS_URL="{{ .Data.data.redis_url }}"
+          export CELERY_BROKER_URL="{{ .Data.data.celery_broker_url }}"
+          export CELERY_RESULT_BACKEND="{{ .Data.data.celery_result_backend }}"
+
+          export CELERY_NOTIFICATION_QUEUE="{{ .Data.data.celery_notification_queue }}"
+          export CELERY_CRON_QUEUE="{{ .Data.data.celery_cron_queue }}"
+          {{- end -}}
+
+        vault.hashicorp.com/agent-inject-perms-env: "0440"
+
+    spec:
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+
+      containers:
+
+        - name: celery-worker-cron
+
+          image: harbor.openstack.mypits.org/$(dockerrepo)
+
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - celery
+
+          args:
+            - "-A"
+            - "vmss_api.core.celery_app"
+            - "worker"
+            - "-Q"
+            - "$(ENVIRONMENT)_cron_jobs"
+            - "--concurrency=2"
+            - "-l"
+            - "info"
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+
+          volumeMounts:
+            - name: storage-volume
+              mountPath: $(mount_path)
+
+      volumes:
+
+        - name: storage-volume
+
+          persistentVolumeClaim:
+            claimName: $(pvc_name)
+
+
+---
+############################################
+# Celery Worker - Notifications
+############################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: $(namespace)
+  name: $(proj_branch)-celery-worker-notifications
+
+  labels:
+    app: $(proj_branch)-celery-worker-notifications
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: $(proj_branch)-celery-worker-notifications
+
+  template:
+    metadata:
+      labels:
+        app: $(proj_branch)-celery-worker-notifications
+
+      annotations:
+
+        # Vault Agent
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "$(proj_branch)-role"
+
+        vault.hashicorp.com/agent-inject-secret-env: "secret/data/$(namespace)/$(proj_branch)"
+
+        vault.hashicorp.com/agent-inject-template-env: |
+          {{- with secret "secret/data/$(namespace)/$(proj_branch)" -}}
+          export APP_NAME="{{ .Data.data.app_name }}"
+          export ENVIRONMENT="{{ .Data.data.environment }}"
+
+          export DB_USER="{{ .Data.data.db_user }}"
+          export DB_PASSWORD="{{ .Data.data.db_password }}"
+          export DB_HOST="{{ .Data.data.db_host }}"
+          export DB_PORT="{{ .Data.data.db_port }}"
+          export DB_NAME="{{ .Data.data.db_name }}"
+
+          export REDIS_URL="{{ .Data.data.redis_url }}"
+          export CELERY_BROKER_URL="{{ .Data.data.celery_broker_url }}"
+          export CELERY_RESULT_BACKEND="{{ .Data.data.celery_result_backend }}"
+
+          export CELERY_NOTIFICATION_QUEUE="{{ .Data.data.celery_notification_queue }}"
+          export CELERY_CRON_QUEUE="{{ .Data.data.celery_cron_queue }}"
+          {{- end -}}
+
+        vault.hashicorp.com/agent-inject-perms-env: "0440"
+
+    spec:
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+
+      containers:
+
+        - name: celery-worker-notifications
+
+          image: harbor.openstack.mypits.org/$(dockerrepo)
+
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - celery
+
+          args:
+            - "-A"
+            - "vmss_api.core.celery_app"
+            - "worker"
+            - "-Q"
+            - "$(ENVIRONMENT)_notifications"
+            - "--concurrency=2"
+            - "-l"
+            - "info"
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+
+          volumeMounts:
+            - name: storage-volume
+              mountPath: $(mount_path)
+
+      volumes:
+
+        - name: storage-volume
+
+          persistentVolumeClaim:
+            claimName: $(pvc_name)
+
+
+---
+############################################
+# Celery Beat
+############################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: $(namespace)
+  name: $(proj_branch)-celery-beat
+
+  labels:
+    app: $(proj_branch)-celery-beat
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: $(proj_branch)-celery-beat
+
+  template:
+    metadata:
+      labels:
+        app: $(proj_branch)-celery-beat
+
+      annotations:
+
+        # Vault Agent
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "$(proj_branch)-role"
+
+        vault.hashicorp.com/agent-inject-secret-env: "secret/data/$(namespace)/$(proj_branch)"
+
+        vault.hashicorp.com/agent-inject-template-env: |
+          {{- with secret "secret/data/$(namespace)/$(proj_branch)" -}}
+          export APP_NAME="{{ .Data.data.app_name }}"
+          export ENVIRONMENT="{{ .Data.data.environment }}"
+
+          export DB_USER="{{ .Data.data.db_user }}"
+          export DB_PASSWORD="{{ .Data.data.db_password }}"
+          export DB_HOST="{{ .Data.data.db_host }}"
+          export DB_PORT="{{ .Data.data.db_port }}"
+          export DB_NAME="{{ .Data.data.db_name }}"
+
+          export REDIS_URL="{{ .Data.data.redis_url }}"
+          export CELERY_BROKER_URL="{{ .Data.data.celery_broker_url }}"
+          export CELERY_RESULT_BACKEND="{{ .Data.data.celery_result_backend }}"
+
+          export CELERY_NOTIFICATION_QUEUE="{{ .Data.data.celery_notification_queue }}"
+          export CELERY_CRON_QUEUE="{{ .Data.data.celery_cron_queue }}"
+          {{- end -}}
+
+        vault.hashicorp.com/agent-inject-perms-env: "0440"
+
+    spec:
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+
+      containers:
+
+        - name: celery-beat
+
+          image: harbor.openstack.mypits.org/$(dockerrepo)
+
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - celery
+
+          args:
+            - "-A"
+            - "vmss_api.core.celery_app"
+            - "beat"
+            - "-l"
+            - "INFO"
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          volumeMounts:
+            - name: storage-volume
+              mountPath: $(mount_path)
+
+      volumes:
+
+        - name: storage-volume
+
+          persistentVolumeClaim:
+            claimName: $(pvc_name)
+
+
+---
+############################################
+# Ingress
+############################################
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: $(proj_branch)-ingress
+  namespace: $(namespace)
+
+  labels:
+    app: $(proj_branch)
+
+  annotations:
+
+    # Kong
+    konghq.com/plugins: acme-disable-key-auth
+
+    # Cert Manager
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
+    # Timeout
+    konghq.com/proxy-read-timeout: "300"
+    konghq.com/proxy-send-timeout: "300"
+
+    # Buffering
+    konghq.com/proxy-buffering: "on"
+
+    # Upload size
+    konghq.com/client-max-body-size: "256m"
+
+spec:
+
+  ingressClassName: kong
+
+  rules:
+
+    - host: $(site_url)
+
+      http:
+
+        paths:
+
+          - path: /
+            pathType: Prefix
+
+            backend:
+
+              service:
+                name: $(proj_branch)
+
+                port:
+                  number: 80
+
+  tls:
+
+    - hosts:
+        - $(site_url)
+
+      secretName: $(proj_branch)-tls
+
+
+---
+############################################
+# Kong Consumer
+############################################
+apiVersion: configuration.konghq.com/v1
+kind: KongConsumer
+metadata:
+  name: $(proj_branch)-anon
+  namespace: $(namespace)
+
+  annotations:
+    kubernetes.io/ingress.class: kong
+
+username: $(proj_branch)-anon
+
+
+---
+############################################
+# Kong Plugin
+############################################
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: acme-disable-key-auth
+  namespace: $(namespace)
+
+plugin: key-auth
+
+config:
+  anonymous: $(proj_branch)-anon
+```
