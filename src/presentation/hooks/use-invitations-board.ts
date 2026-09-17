@@ -146,8 +146,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
       // Bounded, not paginated - the board groups by status column, so a
       // page-by-page fetch could under-populate a column until an admin
       // paged further. See admin-invitations spec's "board's fetch is
-      // bounded" requirement.
-      pageSize: 200,
+      // bounded" requirement. Capped at the API's hard max page size (100).
+      pageSize: 100,
     }),
     [scope, statusFilter, registrationTypeFilter, sourceFilter, debouncedSearch],
   )
@@ -241,36 +241,6 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
 
   usePolling(() => void loadDashboard({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
-  // Preloads approval-step detail for pending requests so the "Level X/Y"
-  // badge is visible on the collapsed card, not just after expanding it.
-  // Also covers "approved" requests: the backend's `status` field flips to
-  // "approved" as soon as an intermediate step (e.g. Reception) clears, even
-  // when a further step is still pending, so a genuinely mid-workflow request
-  // needs its detail fetched here too for `resolveEffectiveStatus` below to
-  // correctly keep it out of the Approved column.
-  const pendingDetailFetchesRef = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    const idsNeedingDetail = visitRequests
-      .filter((request) => ['requested', 'approved'].includes(normalizeStatus(request.status)))
-      .map((request) => request.id)
-      .filter((id) => !invitationDetails[id] && !pendingDetailFetchesRef.current.has(id))
-
-    idsNeedingDetail.forEach((id) => {
-      pendingDetailFetchesRef.current.add(id)
-      getInvitationDetailUseCase
-        .execute(id)
-        .then((detail) => {
-          setInvitationDetails((previous) => ({ ...previous, [id]: detail }))
-        })
-        .catch((error: unknown) => {
-          console.error('Failed to preload approval progress', error)
-        })
-        .finally(() => {
-          pendingDetailFetchesRef.current.delete(id)
-        })
-    })
-  }, [visitRequests, invitationDetails, getInvitationDetailUseCase])
-
   // Workflow rules are defined per visitor category, not per invitation, so
   // every card sharing a category reuses one fetch instead of one each. The
   // in-flight/resolved promise is cached (not just a "have we started"
@@ -321,6 +291,47 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     },
     [listApprovalWorkflowRulesUseCase],
   )
+
+  // Preloads approval-step detail for pending requests so the "Level X/Y"
+  // badge is visible on the collapsed card, not just after expanding it.
+  // Also covers "approved" requests: the backend's `status` field flips to
+  // "approved" as soon as an intermediate step (e.g. Reception) clears, even
+  // when a further step is still pending, so a genuinely mid-workflow request
+  // needs its detail fetched here too for `resolveEffectiveStatus` below to
+  // correctly keep it out of the Approved column.
+  //
+  // Kicks off the category's workflow-rules fetch (below) in parallel with
+  // the detail fetch, keyed off the summary's own `visitorCategoryId` rather
+  // than waiting for the detail to resolve first: chaining them was exactly
+  // what caused the card to render once with the stale `stepOrder`/`totalSteps`
+  // snapshot and then "blink" to the correct level 2-3s later once the
+  // category's live rules arrived on their own separate round trip.
+  const pendingDetailFetchesRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const requestsNeedingDetail = visitRequests
+      .filter((request) => ['requested', 'approved'].includes(normalizeStatus(request.status)))
+      .filter((request) => !invitationDetails[request.id] && !pendingDetailFetchesRef.current.has(request.id))
+
+    requestsNeedingDetail.forEach((request) => {
+      const id = request.id
+      pendingDetailFetchesRef.current.add(id)
+      getInvitationDetailUseCase
+        .execute(id)
+        .then((detail) => {
+          setInvitationDetails((previous) => ({ ...previous, [id]: detail }))
+        })
+        .catch((error: unknown) => {
+          console.error('Failed to preload approval progress', error)
+        })
+        .finally(() => {
+          pendingDetailFetchesRef.current.delete(id)
+        })
+
+      if (request.visitorCategoryId) {
+        ensureWorkflowRulesLoaded(request.visitorCategoryId).catch(() => {})
+      }
+    })
+  }, [visitRequests, invitationDetails, getInvitationDetailUseCase, ensureWorkflowRulesLoaded])
 
   // Preloads workflow rules for every visible card with a live approval step,
   // so "Pending:" can preview the next level and the level/total badges can

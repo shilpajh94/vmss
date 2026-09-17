@@ -11,7 +11,8 @@ import {
 
 // Bounded fetch size for the Workflows page's grouped-by-category view - see
 // admin-approval-workflows spec's "bounded but not paginated" requirement.
-const WORKFLOW_RULES_PAGE_SIZE = 200
+// Capped at the API's hard max page size (100).
+const WORKFLOW_RULES_PAGE_SIZE = 100
 
 export class HttpApprovalWorkflowRuleRepository implements ApprovalWorkflowRuleRepository {
   private readonly apiClient: ApiClient
