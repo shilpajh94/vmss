@@ -41,7 +41,7 @@ spec:
         fsGroup: 1001
       containers:
         - name: $(proj_branch)
-          image: docker-registry.dev.displayme.net/$(dockerrepo)
+          image: harbor.openstack.mypits.org/$(dockerrepo)
           imagePullPolicy: IfNotPresent
 
           securityContext:
