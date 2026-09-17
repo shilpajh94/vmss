@@ -84,9 +84,9 @@ def _individual_payload(full_name: str, email: str) -> dict:
         "carriedItems": {"items": []},
         "vehicles": [],
         "consents": {
-            "termsAccepted": True,
-            "dataProcessingAccepted": True,
-            "safetyGuidelinesAccepted": True,
+            "terms_accepted": True,
+            "data_processing_accepted": True,
+            "safety_guidelines_accepted": True,
         },
     }
 

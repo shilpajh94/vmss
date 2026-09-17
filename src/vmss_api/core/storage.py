@@ -73,10 +73,7 @@ async def _local_presigned_url(key: str) -> str:
     expires_at = int(time.time()) + settings.storage_local_presigned_url_ttl_seconds
     signature = _local_url_signature(key, expires_at)
 
-    path = (
-        f"/api/v1/files/local/"
-        f"{quote(key, safe='')}?exp={expires_at}&sig={signature}"
-    )
+    path = f"/api/v1/files/local/{quote(key, safe='')}?exp={expires_at}&sig={signature}"
 
     base_url = settings.storage_public_base_url
 
@@ -84,6 +81,7 @@ async def _local_presigned_url(key: str) -> str:
         return f"{base_url.rstrip('/')}{path}"
 
     return path
+
 
 def verify_local_url(key: str, expires_at: int, signature: str) -> bool:
     """Verifies a local-backend signed URL's signature and expiry. Returns

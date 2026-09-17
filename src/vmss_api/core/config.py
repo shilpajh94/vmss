@@ -68,9 +68,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"Database is not configured: set DATABASE_URL, or all of {', '.join(missing)}."
             )
+        assert self.db_username is not None and self.db_password is not None  # validated above
         driver = _DB_DRIVERS[self.db_connection]
         return (
-            f"postgresql+asyncpg://"
+            f"{driver}://"
             f"{quote_plus(self.db_username)}:"
             f"{quote_plus(self.db_password)}@"
             f"{self.db_host}:{self.db_port}/"
@@ -300,4 +301,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
- 

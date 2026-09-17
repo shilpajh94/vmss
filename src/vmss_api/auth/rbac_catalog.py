@@ -42,6 +42,8 @@ PERMISSION_CODES = [
     "employees:view",
     "visitor-categories:manage",
     "visitor-categories:view",
+    "form-builder:manage",
+    "form-builder:view",
     "approval-workflow-rules:manage",
     "approval-workflow-rules:view",
     "invitations:create",

@@ -37,7 +37,6 @@ from vmss_api.invitations.deps import track_default_tenant, track_default_tenant
 from vmss_api.invitations.schemas import (
     BadgeOut,
     CarriedItemsSubmit,
-    ConsentsSubmit,
     InvitationBranchOut,
     InvitationBuildingOut,
     InvitationCheckInOut,
@@ -130,10 +129,13 @@ _INDIVIDUAL_PAYLOAD_EXAMPLE = {
     },
     "carriedItems": {"items": [], "itemDescription": ""},
     "vehicles": [],
+    # Keys are raw (never camelCased) — whatever the calling branch's
+    # published Consent Agreement step declares; these three are the
+    # default for a branch that has never customized it.
     "consents": {
-        "termsAccepted": True,
-        "dataProcessingAccepted": True,
-        "safetyGuidelinesAccepted": True,
+        "terms_accepted": True,
+        "data_processing_accepted": True,
+        "safety_guidelines_accepted": True,
     },
 }
 
@@ -189,9 +191,9 @@ _GROUP_PAYLOAD_EXAMPLE = {
         },
     ],
     "consents": {
-        "termsAccepted": True,
-        "dataProcessingAccepted": True,
-        "safetyGuidelinesAccepted": True,
+        "terms_accepted": True,
+        "data_processing_accepted": True,
+        "safety_guidelines_accepted": True,
     },
 }
 
@@ -233,6 +235,12 @@ def _required_fields_summary() -> str:
     since "at least one of the two" is a cross-field business rule a JSON
     Schema `required` entry can't express; called out explicitly instead of
     left to look like an oversight.
+
+    Structurally-mandatory only — `idProofType` (per visitor/primary
+    contact), the primary contact's photo file, and which `consents` keys
+    must be `true` are additionally branch-configurable (`form-builder`):
+    required by default, but not required if the calling branch's published
+    configuration has deactivated/relaxed them. See the note appended below.
     """
     nested: list[tuple[str, type[BaseModel]]] = [
         ("primaryContact", InvitationPrimaryContactCreate),
@@ -240,7 +248,6 @@ def _required_fields_summary() -> str:
         ("visitDetails", VisitDetailsSubmit),
         ("carriedItems", CarriedItemsSubmit),
         ("each entry in vehicles", VehicleSubmit),
-        ("consents", ConsentsSubmit),
     ]
     lines = [
         "Required fields (generated from the schemas below, not hand-typed):",
@@ -249,10 +256,20 @@ def _required_fields_summary() -> str:
     for label, model in nested:
         required = model.model_json_schema().get("required", [])
         lines.append(f"- {label}: {', '.join(required) if required else '(none required)'}")
+    lines.append("- consents: present (even as `{}`); see the branch-configurable note below.")
     lines.append(
         "Note: `email`/`phone` are each individually optional above, but at "
         "least one is required on every contact/visitor entry — enforced by "
         "a cross-field rule, not a schema-level `required` marker."
+    )
+    lines.append(
+        "Note: `idProofType`/the ID-proof and primary-contact-photo files "
+        "default to required, and the default three `consents` keys "
+        "(terms_accepted, data_processing_accepted, safety_guidelines_accepted) "
+        "default to all being required — but every branch can reconfigure "
+        "these via the Form Builder admin capability, so the effective "
+        "requirement for a given branch/call may differ from this schema-level "
+        "default."
     )
     return "\n".join(lines)
 
@@ -321,6 +338,7 @@ async def _to_visitor_outs(visitors) -> list[InvitationVisitorOut]:
             phone=v.phone,
             id_proof_type=v.id_proof_type,
             photo_url=await _resolve_photo_url(v.photo_storage_key),
+            custom_field_values=v.custom_field_values,
         )
         for v in visitors
     ]
@@ -345,6 +363,7 @@ async def _to_visitor_detail_outs(
                 await _resolve_document_url(v.id_proof_storage_key) if include_documents else None
             ),
             photo_url=await _resolve_photo_url(v.photo_storage_key),
+            custom_field_values=v.custom_field_values,
         )
         for v in visitors
     ]
@@ -395,6 +414,7 @@ async def _to_qr_check_in_out(
         primary_contact_id_proof_type=invitation.primary_contact_id_proof_type,
         primary_contact_email=invitation.primary_contact_email,
         primary_contact_phone=invitation.primary_contact_phone,
+        primary_contact_custom_field_values=invitation.primary_contact_custom_field_values,
         host_id=invitation.host_id,
         host_name_or_email=invitation.host_name_or_email,
         poc_user_id=invitation.poc_user_id,
@@ -408,6 +428,7 @@ async def _to_qr_check_in_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
+        custom_field_values=invitation.custom_field_values,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
         checked_in_at=invitation.checked_in_at,
@@ -421,6 +442,7 @@ async def _to_qr_check_in_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
+                custom_field_values=v.custom_field_values,
             )
             for v in invitation.vehicles
         ],
@@ -460,6 +482,7 @@ async def _to_tracking_out(
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
         ),
+        primary_contact_custom_field_values=invitation.primary_contact_custom_field_values,
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         poc_user_id=invitation.poc_user_id,
@@ -472,6 +495,7 @@ async def _to_tracking_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
+        custom_field_values=invitation.custom_field_values,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
@@ -483,6 +507,7 @@ async def _to_tracking_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
+                custom_field_values=v.custom_field_values,
             )
             for v in invitation.vehicles
         ],
@@ -511,6 +536,7 @@ async def _to_check_in_out(
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
         ),
+        primary_contact_custom_field_values=invitation.primary_contact_custom_field_values,
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         preferred_visit_date=invitation.preferred_visit_date,
@@ -520,6 +546,7 @@ async def _to_check_in_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
+        custom_field_values=invitation.custom_field_values,
         visitors=await _to_visitor_outs(invitation.visitors),
         vehicles=[
             InvitationVehicleOut(
@@ -528,6 +555,7 @@ async def _to_check_in_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
+                custom_field_values=v.custom_field_values,
             )
             for v in invitation.vehicles
         ],
@@ -567,6 +595,7 @@ async def _to_invitation_detail_out(
             if include_documents
             else None
         ),
+        primary_contact_custom_field_values=invitation.primary_contact_custom_field_values,
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         host_id=invitation.host_id,
@@ -584,6 +613,7 @@ async def _to_invitation_detail_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
+        custom_field_values=invitation.custom_field_values,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
@@ -610,6 +640,7 @@ async def _to_invitation_detail_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
+                custom_field_values=v.custom_field_values,
             )
             for v in invitation.vehicles
         ],
@@ -677,26 +708,31 @@ async def create_invitation(
     user: Annotated[User, Depends(get_current_user)],
     payload: Annotated[str, Form(description=_PAYLOAD_DESCRIPTION)],
     primary_contact_id_proof_file: Annotated[
-        UploadFile,
+        UploadFile | None,
         File(
             description=(
                 "Primary contact's ID-proof image/PDF upload — paired with "
-                "`payload.primaryContact`. See `visitorIdProofFiles` below "
-                "for the co-visitor equivalent."
+                "`payload.primaryContact`. Required by default, but only "
+                "when the calling branch's published Form Builder "
+                "configuration marks ID proof active/required (it may be "
+                "omitted otherwise). See `visitorIdProofFiles` below for "
+                "the co-visitor equivalent."
             )
         ),
-    ],
+    ] = None,
     primary_contact_photo_file: Annotated[
-        UploadFile,
+        UploadFile | None,
         File(
             description=(
-                "Required profile photo for the primary contact (JPEG/PNG "
-                "only) — paired with `payload.primaryContact`. See "
-                "`visitorPhotoFiles` below for the (optional) co-visitor "
-                "equivalent."
+                "Profile photo for the primary contact (JPEG/PNG only) — "
+                "paired with `payload.primaryContact`. Required by default, "
+                "but only when the calling branch's published Form Builder "
+                "configuration marks it active/required. See "
+                "`visitorPhotoFiles` below for the (always optional) "
+                "co-visitor equivalent."
             )
         ),
-    ],
+    ] = None,
     visitor_id_proof_files: list[UploadFile] = _NO_VISITOR_FILES,
     visitor_photo_files: list[UploadFile] = _NO_VISITOR_PHOTOS,
     idempotency_key: Annotated[
@@ -755,9 +791,17 @@ async def create_invitation(
     # it all and only then checking `len()` in `service.py`'s validation.
     id_proof_limit = settings.invitation_max_upload_size_bytes + 1
     photo_limit = settings.invitation_max_photo_size_bytes + 1
-    primary_content = await primary_contact_id_proof_file.read(id_proof_limit)
+    primary_content = (
+        await primary_contact_id_proof_file.read(id_proof_limit)
+        if primary_contact_id_proof_file is not None
+        else None
+    )
     visitor_contents = [await f.read(id_proof_limit) for f in visitor_id_proof_files]
-    primary_photo_content = await primary_contact_photo_file.read(photo_limit)
+    primary_photo_content = (
+        await primary_contact_photo_file.read(photo_limit)
+        if primary_contact_photo_file is not None
+        else None
+    )
     visitor_photo_contents = [await f.read(photo_limit) for f in visitor_photo_files]
 
     invitation = await service.create_invitation(
@@ -1137,8 +1181,16 @@ async def reschedule_invitation(
                 ),
             },
             "after": {
-                "preferredVisitDate": invitation.preferred_visit_date.isoformat(),
-                "preferredVisitTime": invitation.preferred_visit_time.isoformat(),
+                "preferredVisitDate": (
+                    invitation.preferred_visit_date.isoformat()
+                    if invitation.preferred_visit_date
+                    else None
+                ),
+                "preferredVisitTime": (
+                    invitation.preferred_visit_time.isoformat()
+                    if invitation.preferred_visit_time
+                    else None
+                ),
             },
         },
     )
@@ -1339,6 +1391,7 @@ async def list_invitations(
     status_filter: Annotated[InvitationStatus | None, Query(alias="status")] = None,
     registration_type: Annotated[RegistrationType | None, Query(alias="registrationType")] = None,
     source: Annotated[RegistrationSource | None, Query(alias="source")] = None,
+    search: Annotated[str | None, Query(max_length=255)] = None,
 ) -> JSONResponse:
     """specs/invitations/spec.md "Employee Lists Invitations at Their
     Authorized Branches" (the default, branch-scoped mode) and "Caller
@@ -1368,6 +1421,7 @@ async def list_invitations(
         status=status_filter.value if status_filter is not None else None,
         registration_type=registration_type.value if registration_type is not None else None,
         source=source.value if source is not None else None,
+        search=search,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

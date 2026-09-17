@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.audit import record_audit_log
+from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.redis import get_redis
 from vmss_api.core.responses import error_response, success_response
@@ -96,26 +97,30 @@ async def create_walk_in_registration(
     tenant_db: Annotated[AsyncSession, Depends(get_registration_tenant_db)],
     payload: Annotated[str, Form(description=_PAYLOAD_DESCRIPTION)],
     primary_contact_id_proof_file: Annotated[
-        UploadFile,
+        UploadFile | None,
         File(
             description=(
                 "Primary contact's ID-proof image/PDF upload — paired with "
-                "`payload.primaryContact`. See `visitorIdProofFiles` below "
-                "for the co-visitor equivalent."
+                "`payload.primaryContact`. Required by default, but only "
+                "when the resolved branch's published Form Builder "
+                "configuration marks ID proof active/required. See "
+                "`visitorIdProofFiles` below for the co-visitor equivalent."
             )
         ),
-    ],
+    ] = None,
     primary_contact_photo_file: Annotated[
-        UploadFile,
+        UploadFile | None,
         File(
             description=(
-                "Required profile photo for the primary contact (JPEG/PNG "
-                "only) — paired with `payload.primaryContact`. See "
-                "`visitorPhotoFiles` below for the (optional) co-visitor "
-                "equivalent."
+                "Profile photo for the primary contact (JPEG/PNG only) — "
+                "paired with `payload.primaryContact`. Required by default, "
+                "but only when the resolved branch's published Form "
+                "Builder configuration marks it active/required. See "
+                "`visitorPhotoFiles` below for the (always optional) "
+                "co-visitor equivalent."
             )
         ),
-    ],
+    ] = None,
     visitor_id_proof_files: list[UploadFile] = _NO_VISITOR_FILES,
     visitor_photo_files: list[UploadFile] = _NO_VISITOR_PHOTOS,
     idempotency_key: Annotated[
@@ -148,10 +153,24 @@ async def create_walk_in_registration(
     except ValidationError as exc:
         return error_response(message=str(exc), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
 
-    primary_content = await primary_contact_id_proof_file.read()
-    visitor_contents = [await f.read() for f in visitor_id_proof_files]
-    primary_photo_content = await primary_contact_photo_file.read()
-    visitor_photo_contents = [await f.read() for f in visitor_photo_files]
+    # Same "reject an oversized upload before it's fully buffered" guard
+    # `POST /invitations` applies (file-upload-handling.md §1) — this
+    # endpoint accepts the identical multipart contract, so it reuses the
+    # identical limits rather than risking them drifting apart.
+    id_proof_limit = settings.invitation_max_upload_size_bytes + 1
+    photo_limit = settings.invitation_max_photo_size_bytes + 1
+    primary_content = (
+        await primary_contact_id_proof_file.read(id_proof_limit)
+        if primary_contact_id_proof_file is not None
+        else None
+    )
+    visitor_contents = [await f.read(id_proof_limit) for f in visitor_id_proof_files]
+    primary_photo_content = (
+        await primary_contact_photo_file.read(photo_limit)
+        if primary_contact_photo_file is not None
+        else None
+    )
+    visitor_photo_contents = [await f.read(photo_limit) for f in visitor_photo_files]
 
     invitation = await service.create_walk_in_registration(
         tenant_db,

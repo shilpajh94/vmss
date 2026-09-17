@@ -183,9 +183,9 @@ def _invitation_payload(
         "carriedItems": {"items": []},
         "vehicles": [],
         "consents": {
-            "termsAccepted": True,
-            "dataProcessingAccepted": True,
-            "safetyGuidelinesAccepted": True,
+            "terms_accepted": True,
+            "data_processing_accepted": True,
+            "safety_guidelines_accepted": True,
         },
     }
 
@@ -311,7 +311,9 @@ async def _run_workflow_after_provisioning(
 
     # --- Role management: custom role, permission catalog, assign + revoke,
     # then a standard role so Branch A has a real staff member -------------
-    permissions_response = await client.get("/api/v1/auth/permissions", headers=admin_headers)
+    permissions_response = await client.get(
+        "/api/v1/auth/permissions?pageSize=100", headers=admin_headers
+    )
     assert permissions_response.status_code == 200
     catalog_codes = {p["code"] for p in permissions_response.json()["data"]}
     assert {"invitations:create", "invitations:view"} <= catalog_codes

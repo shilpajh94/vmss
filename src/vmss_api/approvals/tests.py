@@ -2702,7 +2702,6 @@ async def test_category_with_no_active_rules_creates_only_the_ownership_step(
 
     from vmss_api.invitations import service as invitations_service
     from vmss_api.invitations.schemas import (
-        ConsentsSubmit,
         IdProofType,
         InvitationCreate,
         InvitationPrimaryContactCreate,
@@ -2729,9 +2728,11 @@ async def test_category_with_no_active_rules_creates_only_the_ownership_step(
             expected_duration="< 1 hour",
             department_to_visit="Test",
         ),
-        consents=ConsentsSubmit(
-            terms_accepted=True, data_processing_accepted=True, safety_guidelines_accepted=True
-        ),
+        consents={
+            "terms_accepted": True,
+            "data_processing_accepted": True,
+            "safety_guidelines_accepted": True,
+        },
     )
     invitation = await invitations_service.create_invitation(
         db_session,
@@ -2771,7 +2772,6 @@ async def test_category_with_configured_rules_snapshots_exactly_the_configured_c
 
     from vmss_api.invitations import service as invitations_service
     from vmss_api.invitations.schemas import (
-        ConsentsSubmit,
         IdProofType,
         InvitationCreate,
         InvitationPrimaryContactCreate,
@@ -2813,9 +2813,11 @@ async def test_category_with_configured_rules_snapshots_exactly_the_configured_c
             expected_duration="< 1 hour",
             department_to_visit="Test",
         ),
-        consents=ConsentsSubmit(
-            terms_accepted=True, data_processing_accepted=True, safety_guidelines_accepted=True
-        ),
+        consents={
+            "terms_accepted": True,
+            "data_processing_accepted": True,
+            "safety_guidelines_accepted": True,
+        },
     )
     invitation = await invitations_service.create_invitation(
         db_session,

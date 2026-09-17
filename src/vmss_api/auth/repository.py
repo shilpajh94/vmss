@@ -6,6 +6,7 @@ from sqlalchemy import ColumnElement, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
+from vmss_api.auth.schemas import EmployeeStatus
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.org_structure.models import Department
@@ -114,6 +115,7 @@ class UserRepository(TenantScopedRepository[User]):
         department_id: uuid.UUID | None,
         email: str | None,
         role: str | None,
+        status: EmployeeStatus | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -179,6 +181,8 @@ class UserRepository(TenantScopedRepository[User]):
                 .where(UserBranchRole.user_id == User.id, Role.name == role)
                 .exists()
             )
+        if status is not None:
+            conditions.append(User.is_active.is_(status == EmployeeStatus.active))
 
         joined_from = select(User).outerjoin(Department, User.department_id == Department.id)
 
@@ -286,9 +290,17 @@ class PermissionRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_all(self) -> list[Permission]:
-        stmt = select(Permission).order_by(Permission.code)
-        return list((await self.session.execute(stmt)).scalars().all())
+    async def list_page(
+        self, *, page: int, page_size: int, sort_by: str, sort_order: SortOrder
+    ) -> tuple[list[Permission], int]:
+        column = {"code": Permission.code}[sort_by]
+        order = column.desc() if sort_order == SortOrder.desc else column.asc()
+        total = (
+            await self.session.execute(select(func.count()).select_from(Permission))
+        ).scalar_one()
+        stmt = select(Permission).order_by(order).limit(page_size).offset((page - 1) * page_size)
+        items = list((await self.session.execute(stmt)).scalars().all())
+        return items, total
 
 
 class RoleRepository(TenantScopedRepository[Role]):

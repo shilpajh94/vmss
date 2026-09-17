@@ -16,11 +16,16 @@ _NOT_DELETED = text("deleted_at IS NULL")
 
 class VisitorCategory(Base, TimestampMixin):
     """A configurable visitor type (e.g. "Vendor", "Interview Candidate",
-    "Contractor", "Guest"). `form_schema` is a JSON list of field
-    definitions (`schemas.py::FormFieldDefinition`) describing what a
-    pre-registration/check-in form for this category collects beyond the
-    fixed visitor fields — validated at the API boundary
-    (security-architecture.md §4) before it's ever stored here.
+    "Contractor", "Guest").
+
+    `form_schema` is **deprecated** (`openspec/changes/form-builder/`): no
+    longer read or written by the API layer (`schemas.py` no longer
+    exposes it). Category-specific registration fields are now authored in
+    the `form_builder` capability instead, as ordinary fields with a
+    conditional-visibility rule keyed on the selected category. The column
+    itself is left in place for one release's burn-in before a follow-up
+    migration drops it (design.md's migration plan), since nothing has ever
+    written meaningful data into it.
 
     Whether/how a visit of this category needs approval is deliberately not
     a column on this table — it's zero-or-more `ApprovalWorkflowRule` rows;

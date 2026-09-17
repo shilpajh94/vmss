@@ -13,30 +13,16 @@ data, blacklist, and watchlist are not built yet.
 ## VisitorCategory
 
 A configurable visitor type (e.g. "Vendor", "Interview Candidate",
-"Contractor", "Guest"). `formSchema` is a JSON list of field definitions
-describing what a pre-registration/check-in form for this category collects
-beyond the fixed visitor fields (name, phone, photo, etc. — owned by the
-not-yet-built visitor-master-data feature). Each field definition is:
+"Contractor", "Guest").
 
-```json
-{
-  "name": "company_name",
-  "label": "Company Name",
-  "fieldType": "text",
-  "required": true,
-  "options": null,
-  "helpText": null
-}
-```
-
-`fieldType` is one of `text`, `textarea`, `number`, `date`, `select`,
-`checkbox`, `email`, `phone`. `name` is validated as a snake_case identifier
-(`^[a-z][a-z0-9_]*$`) — it's the key visitor-submitted form data will be keyed
-by once `invitations`/`checkin` are built — and must be unique within one
-category's schema (validated at the API boundary, `security-architecture.md`
-§4, not left to a DB constraint on a JSONB column). A `select`-type field
-must declare a non-empty `options` list — `checkbox` has no such requirement
-(it's a single boolean toggle here, not a multi-select group).
+`formSchema` is **deprecated** as of `openspec/changes/form-builder/`: the
+API no longer reads or writes it (a create/update request that still sends
+it has the field silently ignored). Category-specific registration fields
+are now authored in the `form_builder` capability instead, as ordinary
+Visitor Info fields with a conditional-visibility rule keyed on the
+selected category — see `docs/features/form_builder.md`. The column
+remains in the database for one release's burn-in before a follow-up
+migration drops it, since no code path ever consumed it.
 
 Whether a category requires approval is **not** a column on this table — it's
 purely a function of whether it has any `ApprovalWorkflowRule` rows. Zero
@@ -90,12 +76,12 @@ effect once `invitations` submits against them.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/v1/visitor-categories` | `visitor-categories:manage` | Create a category. 409s on duplicate `name`/`code`. |
-| GET | `/api/v1/visitor-categories` | `visitor-categories:view` | Paginated, sortable (`name`/`created_at`) list. |
+| GET | `/api/v1/visitor-categories` | `visitor-categories:view` | Paginated, sortable (`name`/`created_at`) list, optionally narrowed by `badgeColor` (exact match), `ndaRequirement`, and/or `escortRequirement`. |
 | GET | `/api/v1/visitor-categories/{id}` | `visitor-categories:view` | Fetch one category. |
 | PUT | `/api/v1/visitor-categories/{id}` | `visitor-categories:manage` | Update a category (partial). |
 | DELETE | `/api/v1/visitor-categories/{id}` | `visitor-categories:manage` | Soft-delete a category. |
 | POST | `/api/v1/approval-workflow-rules` | `approval-workflow-rules:manage` | Create a rule; 404s if `visitorCategoryId`/`approverRoleId` don't resolve, 409s on a duplicate `(category, stepOrder)`. |
-| GET | `/api/v1/approval-workflow-rules` | `approval-workflow-rules:view` | Paginated, sortable (`step_order`/`created_at`) list, optionally narrowed by `visitorCategoryId`. |
+| GET | `/api/v1/approval-workflow-rules` | `approval-workflow-rules:view` | Paginated, sortable (`step_order`/`created_at`) list, optionally narrowed by `visitorCategoryId` and/or `status` (`active`/`inactive`, mapped onto `is_active`). |
 | GET | `/api/v1/approval-workflow-rules/{id}` | `approval-workflow-rules:view` | Fetch one rule. |
 | PUT | `/api/v1/approval-workflow-rules/{id}` | `approval-workflow-rules:manage` | Update a rule (partial). |
 | DELETE | `/api/v1/approval-workflow-rules/{id}` | `approval-workflow-rules:manage` | Soft-delete a rule. |
