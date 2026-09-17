@@ -16,13 +16,47 @@ import type { SubmissionStatus } from '../Components/steps/ReviewConfirmStep'
 
 export interface VisitorRequestWizardInitialData {
   registrationType?: RegistrationType
-  primaryContact?: Partial<Pick<VisitorFormEntry, 'email' | 'phone'>>
+  // `fullName`/`preferredContactMethod`/`idProofType` are only populated for a
+  // returning visitor (visitor-return-history's prefill) — a fresh OTP
+  // verification only ever supplies `email`/`phone`. `idProofUrl`/`photoUrl`,
+  // when present, point at the visitor's prior ID-proof document/photo and
+  // are fetched and offered as a reusable existing file (see the effect in
+  // useVisitorRequestWizard below) rather than always requiring a fresh upload.
+  primaryContact?: Partial<Pick<VisitorFormEntry, 'fullName' | 'email' | 'phone' | 'preferredContactMethod' | 'idProofType'>> & {
+    idProofUrl?: string
+    photoUrl?: string
+  }
+}
+
+const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'application/pdf': 'pdf',
+}
+
+// Resolves a returning visitor's presigned ID-proof/photo URL into a real
+// `File`, so it can travel through the same fileRegistry/submit path as a
+// freshly picked file (design.md Decision 1). Throws on any fetch failure
+// (network, non-2xx, or CORS) — the caller falls back to a fresh-upload
+// field rather than surfacing this as a wizard-blocking error.
+async function fetchExistingFile(url: string, baseName: string): Promise<File> {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`Failed to fetch existing file (${response.status})`)
+  const blob = await response.blob()
+  const contentType = blob.type || 'application/octet-stream'
+  const extension = EXTENSION_BY_CONTENT_TYPE[contentType] ?? 'bin'
+  return new File([blob], `${baseName}.${extension}`, { type: contentType })
 }
 
 function buildInitialFormState(initial?: VisitorRequestWizardInitialData): VisitRequestFormState {
   const formState = createInitialFormState()
   if (initial?.registrationType) formState.registrationType = initial.registrationType
-  if (initial?.primaryContact) formState.primaryContact = { ...formState.primaryContact, ...initial.primaryContact }
+  if (initial?.primaryContact) {
+    // idProofUrl/photoUrl aren't part of VisitorFormEntry — they're resolved
+    // into real fileRefs by the existing-file effect below, not spread here.
+    const { idProofUrl, photoUrl, ...primaryContactFields } = initial.primaryContact
+    formState.primaryContact = { ...formState.primaryContact, ...primaryContactFields }
+  }
   return formState
 }
 
@@ -233,6 +267,58 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     previewUrlCache.current.set(fileRef, url)
     return url
   }
+
+  // Eagerly (not at submit time) resolve a returning visitor's existing
+  // ID-proof/photo URLs into real files, registered the same way a fresh
+  // upload would be — FileUploadField then renders them as an existing-file
+  // preview automatically once idProofFileRef/profileImageFileRef populate.
+  // Eager, not lazy: the presigned URLs expire, and the wizard can sit open
+  // for minutes before submit (design.md Decision 2). A fetch failure
+  // (expired signature, network, or CORS) is swallowed — that field just
+  // falls back to the normal empty fresh-upload control (Decision 3).
+  const initialIdProofUrl = initial?.primaryContact?.idProofUrl
+  const initialPhotoUrl = initial?.primaryContact?.photoUrl
+  useEffect(() => {
+    if (!initialIdProofUrl) return
+    let cancelled = false
+    fetchExistingFile(initialIdProofUrl, 'id-proof')
+      .then(async (file) => {
+        const fileRef = await uploadFile(file)
+        if (cancelled) return
+        setFormState((prev) => ({
+          ...prev,
+          primaryContact: { ...prev.primaryContact, idProofFileRef: fileRef, idProofFileName: file.name },
+        }))
+      })
+      .catch(() => {
+        // Leave idProofFileRef unset — the field renders as a normal,
+        // empty fresh-upload control.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [initialIdProofUrl])
+
+  useEffect(() => {
+    if (!initialPhotoUrl) return
+    let cancelled = false
+    fetchExistingFile(initialPhotoUrl, 'profile-photo')
+      .then(async (file) => {
+        const fileRef = await uploadFile(file)
+        if (cancelled) return
+        setFormState((prev) => ({
+          ...prev,
+          primaryContact: { ...prev.primaryContact, profileImageFileRef: fileRef, profileImageFileName: file.name },
+        }))
+      })
+      .catch(() => {
+        // Leave profileImageFileRef unset — the field renders as a normal,
+        // empty fresh-upload control.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [initialPhotoUrl])
 
   const updateFormState = (next: VisitRequestFormState) => {
     setFormState(next)

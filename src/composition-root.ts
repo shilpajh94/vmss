@@ -3,6 +3,7 @@ import type { VisitRequestRepository } from './data/repositories/visit-request-r
 import type { VisitRequestSummaryRepository } from './data/repositories/visit-request-summary-repository'
 import type { VisitTrackingRepository } from './data/repositories/visit-tracking-repository'
 import type { VisitorOtpRepository } from './data/repositories/visitor-otp-repository'
+import type { VisitorPortalRepository } from './data/repositories/visitor-portal-repository'
 import type { StaffAuthRepository } from './data/repositories/staff-auth-repository'
 import type { SsoAuthRepository } from './data/repositories/sso-auth-repository'
 import type { StaffVisitRequestRepository } from './data/repositories/staff-visit-request-repository'
@@ -30,6 +31,7 @@ import { DownloadAuditReportUseCase } from './data/use-cases/download-audit-repo
 import { TrackVisitRequestUseCase } from './data/use-cases/track-visit-request'
 import { RequestVisitorOtpUseCase } from './data/use-cases/request-visitor-otp'
 import { VerifyVisitorOtpUseCase } from './data/use-cases/verify-visitor-otp'
+import { GetVisitorPortalMeUseCase } from './data/use-cases/get-visitor-portal-me'
 import { LoginStaffUseCase } from './data/use-cases/login-staff'
 import { StartSsoLoginUseCase } from './data/use-cases/start-sso-login'
 import { ExchangeSsoCodeUseCase } from './data/use-cases/exchange-sso-code'
@@ -115,6 +117,7 @@ import { HttpVisitRequestRepository } from './infrastructure/visit-request-repos
 import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-request-summary-repository'
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
 import { HttpVisitorOtpRepository } from './infrastructure/visitor-otp-repository'
+import { HttpVisitorPortalRepository } from './infrastructure/visitor-portal-repository'
 import { HttpStaffAuthRepository } from './infrastructure/staff-auth-repository'
 import { HttpSsoAuthRepository } from './infrastructure/sso-auth-repository'
 import { HttpStaffVisitRequestRepository } from './infrastructure/staff-visit-request-repository'
@@ -140,6 +143,7 @@ export interface AppDependencies {
   trackVisitRequestUseCase: TrackVisitRequestUseCase
   requestVisitorOtpUseCase: RequestVisitorOtpUseCase
   verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase
+  getVisitorPortalMeUseCase: GetVisitorPortalMeUseCase
   loginStaffUseCase: LoginStaffUseCase
   startSsoLoginUseCase: StartSsoLoginUseCase
   exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase
@@ -234,12 +238,14 @@ export function createApp(): AppDependencies {
   let visitRequestSummaryRepository: VisitRequestSummaryRepository | undefined
   let visitTrackingRepository: VisitTrackingRepository | undefined
   let visitorOtpRepository: VisitorOtpRepository | undefined
+  let visitorPortalRepository: VisitorPortalRepository | undefined
   let staffAuthRepository: StaffAuthRepository | undefined
   let ssoAuthRepository: SsoAuthRepository | undefined
   let submitVisitRequestUseCase: SubmitVisitRequestUseCase | undefined
   let trackVisitRequestUseCase: TrackVisitRequestUseCase | undefined
   let requestVisitorOtpUseCase: RequestVisitorOtpUseCase | undefined
   let verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase | undefined
+  let getVisitorPortalMeUseCase: GetVisitorPortalMeUseCase | undefined
   let loginStaffUseCase: LoginStaffUseCase | undefined
   let startSsoLoginUseCase: StartSsoLoginUseCase | undefined
   let exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase | undefined
@@ -381,6 +387,16 @@ export function createApp(): AppDependencies {
   const resolveVerifyVisitorOtpUseCase = (): VerifyVisitorOtpUseCase => {
     verifyVisitorOtpUseCase ??= new VerifyVisitorOtpUseCase(resolveVisitorOtpRepository())
     return verifyVisitorOtpUseCase
+  }
+
+  const resolveVisitorPortalRepository = (): VisitorPortalRepository => {
+    visitorPortalRepository ??= new HttpVisitorPortalRepository(resolveApiClient())
+    return visitorPortalRepository
+  }
+
+  const resolveGetVisitorPortalMeUseCase = (): GetVisitorPortalMeUseCase => {
+    getVisitorPortalMeUseCase ??= new GetVisitorPortalMeUseCase(resolveVisitorPortalRepository())
+    return getVisitorPortalMeUseCase
   }
 
   const resolveStaffAuthRepository = (): StaffAuthRepository => {
@@ -929,6 +945,9 @@ export function createApp(): AppDependencies {
     },
     get verifyVisitorOtpUseCase() {
       return resolveVerifyVisitorOtpUseCase()
+    },
+    get getVisitorPortalMeUseCase() {
+      return resolveGetVisitorPortalMeUseCase()
     },
     get loginStaffUseCase() {
       return resolveLoginStaffUseCase()

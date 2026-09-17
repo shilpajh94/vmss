@@ -60,6 +60,19 @@ function humanizeDetailArray(detail: unknown[]): string | undefined {
   return issues.length > 0 ? issues.join(' ') : undefined
 }
 
+// Lets callers branch on the HTTP status (e.g. 401 vs 429 vs 404) without
+// losing the humanized message above — extends `Error` so every existing
+// `err instanceof Error ? err.message : ...` call site keeps working.
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 export function extractErrorMessage(body: unknown, status: number): string {
   if (body && typeof body === 'object') {
     if ('detail' in body) {

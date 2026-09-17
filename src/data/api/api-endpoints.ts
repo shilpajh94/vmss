@@ -19,6 +19,14 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: false,
   },
+  // Authenticated with the OTP flow's own short-lived proof token, passed as
+  // an explicit `Authorization` header by the caller — never the staff
+  // session token `hasToken: true` would read from sessionStorage.
+  GET_VISITOR_PORTAL_ME: {
+    endpoint: "/visitor-portal/me",
+    method: "GET",
+    hasToken: false,
+  },
   STAFF_LOGIN: {
     endpoint: "/auth/login",
     method: "POST",
