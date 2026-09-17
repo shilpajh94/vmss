@@ -1,6 +1,5 @@
-```yaml
 trigger:
-- development
+- none
 
 variables:
 - group: API-PROD
@@ -45,4 +44,4 @@ stages:
         containerRegistry: 'Harbor_Reg'
         repository: '$(dockerrepo)'
         command: 'push'
-```
+
