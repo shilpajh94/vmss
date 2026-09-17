@@ -681,6 +681,56 @@ async def test_publish_then_effective_form_reflects_edited_field(
     assert updated_field["label"] == "Updated Terms & Conditions"
 
 
+async def test_publish_default_scope_invalidates_branch_fallback_cache(
+    client: AsyncClient, user: User, branch: Branch, issue_token: Callable[[User], str]
+) -> None:
+    """Regression test: a branch with no published config of its own reads
+    the tenant-default snapshot (falls back), which used to get cached
+    under the *branch's* cache key rather than the default's. Publishing
+    the default scope only invalidated the default's own key, so a branch
+    riding the fallback kept serving a stale snapshot until its 5-minute
+    TTL expired on its own - the reported "toggling isRequired off doesn't
+    take effect immediately" bug. Caching the fallback under the default's
+    key means one publish invalidates it for every branch relying on it.
+    """
+    token = issue_token(user)
+    branch_headers = {**_auth(token), "X-Branch-ID": str(branch.id)}
+
+    # Warm the branch-scoped fallback cache before the branch has any
+    # published config of its own.
+    primed = await client.get("/api/v1/form-builder/effective", headers=branch_headers)
+    assert primed.status_code == 200
+    consent = next(s for s in primed.json()["data"] if s["key"] == "consent_agreement")
+    terms_field = next(f for f in consent["fields"] if f["key"] == "terms_accepted")
+    assert terms_field["isRequired"] is True
+
+    # Edit and publish the tenant-default scope only - the branch never
+    # publishes its own config.
+    step = await _get_default_step(client, token, "consent_agreement")
+    default_terms_field = next(f for f in step["fields"] if f["key"] == "terms_accepted")
+    update_response = await client.patch(
+        f"/api/v1/form-builder/fields/{default_terms_field['id']}",
+        json={"isRequired": False},
+        headers=_auth(token),
+    )
+    assert update_response.status_code == 200
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200
+
+    # The branch, still on the fallback path, must see the update
+    # immediately rather than a stale cached copy.
+    effective_response = await client.get("/api/v1/form-builder/effective", headers=branch_headers)
+    assert effective_response.status_code == 200
+    effective_consent = next(
+        s for s in effective_response.json()["data"] if s["key"] == "consent_agreement"
+    )
+    effective_terms_field = next(
+        f for f in effective_consent["fields"] if f["key"] == "terms_accepted"
+    )
+    assert effective_terms_field["isRequired"] is False
+
+
 async def test_publish_rejects_draft_with_dangling_visibility_reference(
     client: AsyncClient, user: User, issue_token: Callable[[User], str]
 ) -> None:

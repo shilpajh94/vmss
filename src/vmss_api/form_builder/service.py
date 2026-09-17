@@ -632,16 +632,37 @@ async def resolve_effective_form(
     Tenant-Level Default". Cached in Redis (design.md Decision 6) since this
     sits on the invitation/registration-submission hot path.
     """
-    cache_key = _cache_key(tenant_id, branch_id)
-    cached = await redis.get(cache_key)
+    branch_cache_key = _cache_key(tenant_id, branch_id)
+    default_cache_key = _cache_key(tenant_id, None)
+
+    cached = await redis.get(branch_cache_key)
     if cached is not None:
         result: list[dict[str, Any]] = json.loads(cached)
         return result
+    if branch_id is not None:
+        # A prior request for this branch may have fallen back to the
+        # tenant-default snapshot and cached it under `default_cache_key`
+        # (see below) rather than `branch_cache_key` - check there before
+        # hitting the DB so the fallback path stays cache-hot too.
+        cached_default = await redis.get(default_cache_key)
+        if cached_default is not None:
+            result = json.loads(cached_default)
+            return result
 
     version_repo = FormConfigVersionRepository(tenant_db)
     version = await version_repo.get_for_scope(branch_id)
-    if version is None and branch_id is not None:
+    if version is not None:
+        snapshot = version.snapshot
+        await redis.set(branch_cache_key, json.dumps(snapshot), ex=_CACHE_TTL_SECONDS)
+        return snapshot
+
+    if branch_id is not None:
         version = await version_repo.get_for_scope(None)
     snapshot = version.snapshot if version is not None else DEFAULT_EFFECTIVE_FORM
-    await redis.set(cache_key, json.dumps(snapshot), ex=_CACHE_TTL_SECONDS)
+    # Cache the tenant-default fallback under the default's own cache key
+    # (not the requesting branch's) so that publish(branch_id=None)'s single
+    # `redis.delete(_cache_key(tenant_id, None))` invalidates it for every
+    # branch currently riding the default, instead of leaving stale
+    # per-branch copies to expire on their own TTL.
+    await redis.set(default_cache_key, json.dumps(snapshot), ex=_CACHE_TTL_SECONDS)
     return snapshot
