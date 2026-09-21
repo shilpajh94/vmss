@@ -51,6 +51,27 @@ Both enum fields are validated at the API boundary (422 on an unrecognized
 value) the same way `fieldType`/`gateType` elsewhere in this codebase are —
 plain strings in the database, an `Enum` at the Pydantic layer.
 
+### Bulk-creating categories from a list of names
+
+`POST /visitor-categories/bulk` creates many categories from names alone —
+for onboarding a tenant with an existing list of category names, where
+typing each one through the single-create form individually doesn't scale.
+Each name's `code` is derived server-side the same way a Form Builder
+custom field's `key` is derived from its label (lowercase, non-alphanumeric
+runs collapsed to `_`, leading/trailing `_` trimmed) — the bulk request
+only accepts `names`, not full per-category records, so badge color, NDA
+requirement, escort requirement, and max duration aren't set by this path;
+an admin who wants those edits a bulk-created category individually
+afterward via the existing single-record form.
+
+Unlike single create's all-or-nothing 409, a name that collides with an
+existing category (by name or by its derived code) — or with an earlier
+name in the same request — is **skipped, not a batch-failing error**. The
+response reports every submitted name's outcome individually (`created` or
+`skipped`, with a reason for the latter), plus aggregate `createdCount`/
+`skippedCount`, so the caller can see exactly what happened without a
+follow-up lookup.
+
 ## ApprovalWorkflowRule
 
 One ordered step (`stepOrder`, starting at 1) in a category's approval chain:
@@ -76,6 +97,7 @@ effect once `invitations` submits against them.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/v1/visitor-categories` | `visitor-categories:manage` | Create a category. 409s on duplicate `name`/`code`. |
+| POST | `/api/v1/visitor-categories/bulk` | `visitor-categories:manage` | Create many categories from a list of `names`; per-name skip (not a batch 409) on a name/derived-code collision — see "Bulk-creating categories from a list of names" above. |
 | GET | `/api/v1/visitor-categories` | `visitor-categories:view` | Paginated, sortable (`name`/`created_at`) list, optionally narrowed by `badgeColor` (exact match), `ndaRequirement`, and/or `escortRequirement`. |
 | GET | `/api/v1/visitor-categories/{id}` | `visitor-categories:view` | Fetch one category. |
 | PUT | `/api/v1/visitor-categories/{id}` | `visitor-categories:manage` | Update a category (partial). |

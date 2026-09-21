@@ -127,6 +127,140 @@ async def test_create_visitor_category_requires_permission(
     assert response.status_code == 403
 
 
+# --- Visitor Category Bulk Create ------------------------------------------
+
+
+async def test_bulk_create_visitor_categories_success(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/visitor-categories/bulk",
+        json={"names": ["Laptop Service", "Interviews", "A.C. Worker"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["createdCount"] == 3
+    assert body["skippedCount"] == 0
+    assert [item["status"] for item in body["items"]] == ["created", "created", "created"]
+    assert [item["category"]["name"] for item in body["items"]] == [
+        "Laptop Service",
+        "Interviews",
+        "A.C. Worker",
+    ]
+    assert body["items"][2]["category"]["code"] == "a_c_worker"
+
+
+async def test_bulk_create_visitor_categories_skips_existing_name_and_code(
+    client: AsyncClient, user: User, db_session: AsyncSession, visitor_category: VisitorCategory
+) -> None:
+    """`visitor_category` fixture is name="Vendor"/code="VENDOR" — covers the
+    name-collision path. A second, separately-created category with a
+    lowercase code covers the derived-code-collision path distinctly.
+    """
+    other = VisitorCategoryFactory.build(id=uuid.uuid4(), name="Something Else", code="cool_beans")
+    db_session.add(other)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/visitor-categories/bulk",
+        json={"names": ["Vendor", "Cool Beans!", "Brand New Category"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["createdCount"] == 1
+    assert body["skippedCount"] == 2
+    items_by_name = {item["name"]: item for item in body["items"]}
+    assert items_by_name["Vendor"]["status"] == "skipped"
+    assert items_by_name["Vendor"]["reason"] == "Category name already exists"
+    assert items_by_name["Cool Beans!"]["status"] == "skipped"
+    assert items_by_name["Cool Beans!"]["reason"] == "Category code already exists"
+    assert items_by_name["Brand New Category"]["status"] == "created"
+
+
+async def test_bulk_create_visitor_categories_skips_duplicate_within_request(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/visitor-categories/bulk",
+        json={"names": ["Alpha", "Alpha"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["createdCount"] == 1
+    assert body["skippedCount"] == 1
+    assert body["items"][0]["status"] == "created"
+    assert body["items"][1]["status"] == "skipped"
+    assert body["items"][1]["reason"] == "Duplicate in this request"
+
+
+async def test_bulk_create_visitor_categories_empty_list_rejected(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/visitor-categories/bulk",
+        json={"names": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
+async def test_bulk_create_visitor_categories_blank_names_rejected(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/visitor-categories/bulk",
+        json={"names": ["   ", ""]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
+async def test_bulk_create_visitor_categories_requires_permission(
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user_without_permissions)
+    response = await client.post(
+        "/api/v1/visitor-categories/bulk",
+        json={"names": ["Vendor"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+async def test_bulk_create_visitor_categories_tenant_schema_isolation(
+    client: AsyncClient,
+    user: User,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """A category named "Vendor" already existing in a *different* tenant's
+    schema must not collide with this tenant's bulk-create request for the
+    same name — testing-standards.md §2.
+    """
+    other_schema = "tenant_other_test_bulk_visitor_category"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_session.add(VisitorCategory(id=uuid.uuid4(), name="Vendor", code="VENDOR"))
+        await other_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/visitor-categories/bulk",
+        json={"names": ["Vendor"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["createdCount"] == 1
+    assert body["items"][0]["status"] == "created"
+
+
 async def test_list_visitor_categories_no_auth_header_succeeds(
     client: AsyncClient, tenant: Tenant, visitor_category: VisitorCategory
 ) -> None:
