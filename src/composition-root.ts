@@ -92,6 +92,7 @@ import { DeleteSecurityGateUseCase } from './data/use-cases/delete-security-gate
 import { ListVisitorCategoriesUseCase } from './data/use-cases/list-visitor-categories'
 import { ListVisitorCategoriesPageUseCase } from './data/use-cases/list-visitor-categories-page'
 import { CreateVisitorCategoryUseCase } from './data/use-cases/create-visitor-category'
+import { BulkCreateVisitorCategoriesUseCase } from './data/use-cases/bulk-create-visitor-categories'
 import { UpdateVisitorCategoryUseCase } from './data/use-cases/update-visitor-category'
 import { DeleteVisitorCategoryUseCase } from './data/use-cases/delete-visitor-category'
 import { ListFormStepsUseCase } from './data/use-cases/list-form-steps'
@@ -207,6 +208,7 @@ export interface AppDependencies {
   listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase
   listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase
   createVisitorCategoryUseCase: CreateVisitorCategoryUseCase
+  bulkCreateVisitorCategoriesUseCase: BulkCreateVisitorCategoriesUseCase
   updateVisitorCategoryUseCase: UpdateVisitorCategoryUseCase
   deleteVisitorCategoryUseCase: DeleteVisitorCategoryUseCase
   listApprovalWorkflowRulesUseCase: ListApprovalWorkflowRulesUseCase
@@ -320,6 +322,7 @@ export function createApp(): AppDependencies {
   let listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase | undefined
   let listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase | undefined
   let createVisitorCategoryUseCase: CreateVisitorCategoryUseCase | undefined
+  let bulkCreateVisitorCategoriesUseCase: BulkCreateVisitorCategoriesUseCase | undefined
   let updateVisitorCategoryUseCase: UpdateVisitorCategoryUseCase | undefined
   let deleteVisitorCategoryUseCase: DeleteVisitorCategoryUseCase | undefined
   let formBuilderRepository: FormBuilderRepository | undefined
@@ -804,6 +807,11 @@ export function createApp(): AppDependencies {
     return createVisitorCategoryUseCase
   }
 
+  const resolveBulkCreateVisitorCategoriesUseCase = (): BulkCreateVisitorCategoriesUseCase => {
+    bulkCreateVisitorCategoriesUseCase ??= new BulkCreateVisitorCategoriesUseCase(resolveVisitorCategoryRepository())
+    return bulkCreateVisitorCategoriesUseCase
+  }
+
   const resolveUpdateVisitorCategoryUseCase = (): UpdateVisitorCategoryUseCase => {
     updateVisitorCategoryUseCase ??= new UpdateVisitorCategoryUseCase(resolveVisitorCategoryRepository())
     return updateVisitorCategoryUseCase
@@ -1130,6 +1138,9 @@ export function createApp(): AppDependencies {
     },
     get createVisitorCategoryUseCase() {
       return resolveCreateVisitorCategoryUseCase()
+    },
+    get bulkCreateVisitorCategoriesUseCase() {
+      return resolveBulkCreateVisitorCategoriesUseCase()
     },
     get updateVisitorCategoryUseCase() {
       return resolveUpdateVisitorCategoryUseCase()

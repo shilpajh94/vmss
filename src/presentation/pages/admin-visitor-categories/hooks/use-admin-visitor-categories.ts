@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import { usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
+import type { VisitorCategoryBulkCreateOut } from '../../../../domain/entities/visitor-category-out-schema'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
@@ -12,7 +13,12 @@ const PAGE_SIZE = 20
 
 export function useAdminVisitorCategories() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listVisitorCategoriesPageUseCase, deleteVisitorCategoryUseCase } = useAppDependencies()
+  const {
+    getCurrentStaffUserUseCase,
+    listVisitorCategoriesPageUseCase,
+    deleteVisitorCategoryUseCase,
+    bulkCreateVisitorCategoriesUseCase,
+  } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
@@ -24,6 +30,10 @@ export function useAdminVisitorCategories() {
 
   const [pendingDelete, setPendingDelete] = useState<VisitorCategory | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  const [isBulkAddOpen, setIsBulkAddOpen] = useState(false)
+  const [isBulkCreating, setIsBulkCreating] = useState(false)
+  const [bulkCreateResult, setBulkCreateResult] = useState<VisitorCategoryBulkCreateOut | undefined>(undefined)
 
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [badgeColorFilter, setBadgeColorFilter] = useState('')
@@ -83,7 +93,7 @@ export function useAdminVisitorCategories() {
     void loadVisitorCategories()
   }, [loadVisitorCategories])
 
-  const isActionInProgress = pendingDelete !== undefined || isDeleting
+  const isActionInProgress = pendingDelete !== undefined || isDeleting || isBulkAddOpen
   usePolling(() => void loadVisitorCategories({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
@@ -144,6 +154,34 @@ export function useAdminVisitorCategories() {
     }
   }, [pendingDelete, deleteVisitorCategoryUseCase, toast, loadVisitorCategories])
 
+  const openBulkAdd = useCallback(() => {
+    setBulkCreateResult(undefined)
+    setIsBulkAddOpen(true)
+  }, [])
+
+  const closeBulkAdd = useCallback(() => {
+    setIsBulkAddOpen(false)
+    setBulkCreateResult(undefined)
+  }, [])
+
+  const submitBulkAdd = useCallback(
+    async (names: string[]) => {
+      setIsBulkCreating(true)
+      try {
+        const result = await bulkCreateVisitorCategoriesUseCase.execute({ names })
+        setBulkCreateResult(result)
+        if (result.createdCount > 0) {
+          await loadVisitorCategories({ silent: true })
+        }
+      } catch {
+        toast.error('Something went wrong adding these categories. Please try again.')
+      } finally {
+        setIsBulkCreating(false)
+      }
+    },
+    [bulkCreateVisitorCategoriesUseCase, loadVisitorCategories, toast],
+  )
+
   return {
     currentUser,
     visitorCategories,
@@ -170,5 +208,11 @@ export function useAdminVisitorCategories() {
     requestDelete,
     cancelDelete,
     confirmDelete,
+    isBulkAddOpen,
+    openBulkAdd,
+    closeBulkAdd,
+    isBulkCreating,
+    bulkCreateResult,
+    submitBulkAdd,
   }
 }

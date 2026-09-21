@@ -1,4 +1,9 @@
-import type { VisitorCategory, VisitorCategoryInput } from '../../domain/entities/visitor-category-schema'
+import type { VisitorCategoryBulkCreateOut } from '../../domain/entities/visitor-category-out-schema'
+import type {
+  VisitorCategory,
+  VisitorCategoryBulkCreateInput,
+  VisitorCategoryInput,
+} from '../../domain/entities/visitor-category-schema'
 
 export interface ListVisitorCategoriesPageParams {
   page: number
@@ -17,6 +22,7 @@ export interface VisitorCategoryRepository {
   list(): Promise<VisitorCategory[]>
   listPage(params: ListVisitorCategoriesPageParams): Promise<VisitorCategoriesPage>
   create(input: VisitorCategoryInput): Promise<VisitorCategory>
+  bulkCreate(input: VisitorCategoryBulkCreateInput): Promise<VisitorCategoryBulkCreateOut>
   update(id: string, input: VisitorCategoryInput): Promise<VisitorCategory>
   remove(id: string): Promise<void>
 }
