@@ -1,3 +1,4 @@
+import re
 import uuid
 
 from fastapi import HTTPException, status
@@ -15,7 +16,12 @@ from vmss_api.visitors.schemas import (
     ApprovalWorkflowRuleUpdate,
     EscortRequirement,
     NdaRequirement,
+    VisitorCategoryBulkCreate,
+    VisitorCategoryBulkCreateItem,
+    VisitorCategoryBulkCreateItemStatus,
+    VisitorCategoryBulkCreateOut,
     VisitorCategoryCreate,
+    VisitorCategoryOut,
     VisitorCategoryUpdate,
 )
 
@@ -36,6 +42,16 @@ async def _commit_or_conflict(tenant_db: AsyncSession, conflict_detail: str) -> 
 
 
 # --- Visitor Category -----------------------------------------------------
+
+
+def _slugify(name: str) -> str:
+    """Derives a `code` from a category `name` for the bulk-create path,
+    which only collects names — same algorithm as `AddFieldModal.tsx`'s
+    `slugify` (VMMS_WEB), reimplemented here since bulk-create has no
+    client-side counterpart to run it in.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower())
+    return slug.strip("_")
 
 
 async def create_visitor_category(
@@ -62,6 +78,77 @@ async def create_visitor_category(
     await _commit_or_conflict(tenant_db, "Category name or code already exists")
     await tenant_db.refresh(category)
     return category
+
+
+async def bulk_create_visitor_categories(
+    tenant_db: AsyncSession, payload: VisitorCategoryBulkCreate
+) -> VisitorCategoryBulkCreateOut:
+    """Creates one `VisitorCategory` per name that doesn't collide with an
+    existing category (by name or derived code) or with an earlier name in
+    this same request — skip-and-report per name, not all-or-nothing like
+    `create_visitor_category`, since a bulk paste's whole point is
+    unattended batch processing (design.md's "Skip-and-report" decision).
+    """
+    repo = VisitorCategoryRepository(tenant_db)
+    seen_names: set[str] = set()
+    seen_codes: set[str] = set()
+    # (name, status, reason, category-row-if-created) — the row is refreshed
+    # and turned into a `VisitorCategoryOut` only after the batch commit
+    # below, once its server-generated fields (timestamps) are populated.
+    results: list[
+        tuple[str, VisitorCategoryBulkCreateItemStatus, str | None, VisitorCategory | None]
+    ] = []
+
+    for raw_name in payload.names:
+        name = raw_name.strip()
+        if not name:
+            continue
+
+        code = _slugify(name)
+        reason: str | None = None
+        if name in seen_names or code in seen_codes:
+            reason = "Duplicate in this request"
+        elif await repo.get_by_code(code) is not None:
+            reason = "Category code already exists"
+        elif await repo.get_by_name(name) is not None:
+            reason = "Category name already exists"
+
+        seen_names.add(name)
+        seen_codes.add(code)
+
+        if reason is not None:
+            results.append((name, VisitorCategoryBulkCreateItemStatus.skipped, reason, None))
+            continue
+
+        category = VisitorCategory(id=uuid.uuid4(), name=name, code=code)
+        tenant_db.add(category)
+        results.append((name, VisitorCategoryBulkCreateItemStatus.created, None, category))
+
+    await _commit_or_conflict(tenant_db, "One or more categories in this batch already exist")
+
+    items: list[VisitorCategoryBulkCreateItem] = []
+    created_count = 0
+    skipped_count = 0
+    for name, item_status, reason, category_row in results:
+        if category_row is not None:
+            await tenant_db.refresh(category_row)
+            items.append(
+                VisitorCategoryBulkCreateItem(
+                    name=name,
+                    status=item_status,
+                    category=VisitorCategoryOut.model_validate(category_row),
+                )
+            )
+            created_count += 1
+        else:
+            items.append(
+                VisitorCategoryBulkCreateItem(name=name, status=item_status, reason=reason)
+            )
+            skipped_count += 1
+
+    return VisitorCategoryBulkCreateOut(
+        items=items, created_count=created_count, skipped_count=skipped_count
+    )
 
 
 async def list_visitor_categories_page(
