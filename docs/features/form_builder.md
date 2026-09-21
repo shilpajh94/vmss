@@ -88,6 +88,29 @@ exempt, since their options aren't static). A field may declare
 dangling reference or a dependency cycle is rejected both at field-save
 time and again at publish time.
 
+## Field description, and editing options after creation
+
+A field's `helpText` is admin-authored static text shown to the visitor
+alongside the field itself — e.g. the actual body of a "Terms &
+Conditions" or "Data Processing Consent" statement on the Consent
+Agreement step — not a value the visitor fills in. It's settable for any
+field type from both the "Add New Custom Field" modal (at creation) and
+the Field Properties panel (after creation), the latter disabled when the
+field is locked, matching that field's label/placeholder inputs. The
+public/staff renderer (`DynamicField`) shows it under the field's own
+control, truncated to its first sentence with a "See more"/"See less"
+toggle, for every field type and step uniformly.
+
+`checkbox_list`, `dropdown_select`, and an optioned `toggle_switch`
+field's `options` were previously only settable once, at field creation
+(`AddFieldModal`) — the Field Properties panel had no options control at
+all, so an existing field's option list (e.g. Carried Items' `items`
+field) could never be revisited afterward. The panel now exposes an
+add/remove/reorder options editor for these field types, disabled when
+the field is locked; saving an option-required field down to zero options
+is rejected by the existing `update_field` validation, surfaced inline in
+the panel rather than only as a toast.
+
 ## Scoping and resolution
 
 `GET`/`POST`/etc. under `/form-builder/steps` and `/form-builder/fields`
