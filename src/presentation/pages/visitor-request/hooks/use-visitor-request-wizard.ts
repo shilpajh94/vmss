@@ -22,7 +22,9 @@ export interface VisitorRequestWizardInitialData {
   // when present, point at the visitor's prior ID-proof document/photo and
   // are fetched and offered as a reusable existing file (see the effect in
   // useVisitorRequestWizard below) rather than always requiring a fresh upload.
-  primaryContact?: Partial<Pick<VisitorFormEntry, 'fullName' | 'email' | 'phone' | 'preferredContactMethod' | 'idProofType'>> & {
+  primaryContact?: Partial<
+    Pick<VisitorFormEntry, 'fullName' | 'email' | 'phone' | 'preferredContactMethod' | 'idProofType' | 'visitorCategory'>
+  > & {
     idProofUrl?: string
     photoUrl?: string
   }
@@ -163,14 +165,22 @@ function validateStep(
 }
 
 export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialData, branches?: Branch[]) {
-  const { submitVisitRequestUseCase } = useAppDependencies()
+  const { submitVisitRequestUseCase, trackVisitRequestUseCase } = useAppDependencies()
 
   const [currentStep, setCurrentStep] = useState(0)
   const [formState, setFormState] = useState<VisitRequestFormState>(() => buildInitialFormState(initial))
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus>('idle')
   const [trackingId, setTrackingId] = useState<string | undefined>(undefined)
+  const [confirmedFullName, setConfirmedFullName] = useState<string | undefined>(undefined)
   const [submissionError, setSubmissionError] = useState<string | undefined>(undefined)
+
+  // Only ever set for a returning visitor's prefill (see
+  // VisitorRequestWizardInitialData's comment above) — the invitation-
+  // creation API silently discards any edited name for a contact it
+  // recognizes, so the field is locked for the rest of this session rather
+  // than letting the visitor type an edit that won't stick.
+  const [primaryContactNameLocked] = useState(() => Boolean(initial?.primaryContact?.fullName))
 
   // Resolved the same way `submit` below resolves it for the real
   // request — matching branch name against the publicly listed branches —
@@ -382,6 +392,16 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
       })
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')
+      // Best-effort: the create response never carries the primary contact's
+      // name (design.md Decision 3), so look it up via the same public
+      // tracking lookup the visitor-track-request capability uses. A
+      // failure here doesn't affect the already-successful submission.
+      trackVisitRequestUseCase
+        .execute(response.trackingId)
+        .then((lookup) => setConfirmedFullName(lookup.primaryContactFullName))
+        .catch(() => {
+          // Leave confirmedFullName unset — the success screen just omits it.
+        })
     } catch (error) {
       setSubmissionError(error instanceof Error ? error.message : 'Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
@@ -400,6 +420,7 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     getFilePreviewUrl,
     submissionStatus,
     trackingId,
+    confirmedFullName,
     submissionError,
     submit,
     activeSteps,
@@ -413,5 +434,6 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     visitorInfoCustomFields,
     visitDetailsCustomFields,
     vehicleInfoCustomFields,
+    primaryContactNameLocked,
   }
 }

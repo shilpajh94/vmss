@@ -37,6 +37,7 @@ export function StaffVisitorRegistrationPage() {
     getFilePreviewUrl,
     submissionStatus,
     trackingId,
+    confirmedFullName,
     submissionError,
     submit,
     reset,
@@ -175,6 +176,7 @@ export function StaffVisitorRegistrationPage() {
             formState={formState}
             status={submissionStatus}
             trackingId={trackingId}
+            confirmedFullName={confirmedFullName}
             errorMessage={submissionError}
             visitorCategories={visitorCategories}
             getFilePreviewUrl={getFilePreviewUrl}

@@ -7,6 +7,7 @@ import type { VisitorPortalRepository } from './data/repositories/visitor-portal
 import type { StaffAuthRepository } from './data/repositories/staff-auth-repository'
 import type { SsoAuthRepository } from './data/repositories/sso-auth-repository'
 import type { StaffVisitRequestRepository } from './data/repositories/staff-visit-request-repository'
+import type { StaffVisitorLookupRepository } from './data/repositories/staff-visitor-lookup-repository'
 import type { AuditTrailRepository } from './data/repositories/audit-trail-repository'
 import type { OrganisationConfigRepository } from './data/repositories/organisation-config-repository'
 import type { BranchRepository } from './data/repositories/branch-repository'
@@ -24,6 +25,7 @@ import type { NotificationRepository } from './data/repositories/notification-re
 import type { FormBuilderRepository } from './data/repositories/form-builder-repository'
 import { SubmitVisitRequestUseCase } from './data/use-cases/submit-visit-request'
 import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-visit-request'
+import { LookupStaffVisitorByEmailUseCase } from './data/use-cases/lookup-staff-visitor-by-email'
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
 import { RequestAuditReportUseCase } from './data/use-cases/request-audit-report'
 import { GetAuditReportUseCase } from './data/use-cases/get-audit-report'
@@ -121,6 +123,7 @@ import { HttpVisitorPortalRepository } from './infrastructure/visitor-portal-rep
 import { HttpStaffAuthRepository } from './infrastructure/staff-auth-repository'
 import { HttpSsoAuthRepository } from './infrastructure/sso-auth-repository'
 import { HttpStaffVisitRequestRepository } from './infrastructure/staff-visit-request-repository'
+import { HttpStaffVisitorLookupRepository } from './infrastructure/staff-visitor-lookup-repository'
 import { HttpAuditTrailRepository } from './infrastructure/audit-trail-repository'
 import { HttpOrganisationConfigRepository } from './infrastructure/organisation-config-repository'
 import { HttpBranchRepository } from './infrastructure/branch-repository'
@@ -158,6 +161,7 @@ export interface AppDependencies {
   delegateInvitationStepUseCase: DelegateInvitationStepUseCase
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
+  lookupStaffVisitorByEmailUseCase: LookupStaffVisitorByEmailUseCase
   getAuditTrailUseCase: GetAuditTrailUseCase
   requestAuditReportUseCase: RequestAuditReportUseCase
   getAuditReportUseCase: GetAuditReportUseCase
@@ -261,6 +265,8 @@ export function createApp(): AppDependencies {
   let getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase | undefined
   let staffVisitRequestRepository: StaffVisitRequestRepository | undefined
   let submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase | undefined
+  let staffVisitorLookupRepository: StaffVisitorLookupRepository | undefined
+  let lookupStaffVisitorByEmailUseCase: LookupStaffVisitorByEmailUseCase | undefined
   let auditTrailRepository: AuditTrailRepository | undefined
   let getAuditTrailUseCase: GetAuditTrailUseCase | undefined
   let requestAuditReportUseCase: RequestAuditReportUseCase | undefined
@@ -487,6 +493,16 @@ export function createApp(): AppDependencies {
   const resolveSubmitStaffVisitRequestUseCase = (): SubmitStaffVisitRequestUseCase => {
     submitStaffVisitRequestUseCase ??= new SubmitStaffVisitRequestUseCase(resolveStaffVisitRequestRepository())
     return submitStaffVisitRequestUseCase
+  }
+
+  const resolveStaffVisitorLookupRepository = (): StaffVisitorLookupRepository => {
+    staffVisitorLookupRepository ??= new HttpStaffVisitorLookupRepository(resolveApiClient())
+    return staffVisitorLookupRepository
+  }
+
+  const resolveLookupStaffVisitorByEmailUseCase = (): LookupStaffVisitorByEmailUseCase => {
+    lookupStaffVisitorByEmailUseCase ??= new LookupStaffVisitorByEmailUseCase(resolveStaffVisitorLookupRepository())
+    return lookupStaffVisitorByEmailUseCase
   }
 
   const resolveAuditTrailRepository = (): AuditTrailRepository => {
@@ -990,6 +1006,9 @@ export function createApp(): AppDependencies {
     },
     get submitStaffVisitRequestUseCase() {
       return resolveSubmitStaffVisitRequestUseCase()
+    },
+    get lookupStaffVisitorByEmailUseCase() {
+      return resolveLookupStaffVisitorByEmailUseCase()
     },
     get getAuditTrailUseCase() {
       return resolveGetAuditTrailUseCase()

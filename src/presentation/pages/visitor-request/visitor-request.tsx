@@ -47,6 +47,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     getFilePreviewUrl,
     submissionStatus,
     trackingId,
+    confirmedFullName,
     submissionError,
     submit,
     activeSteps,
@@ -60,6 +61,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     visitorInfoCustomFields,
     visitDetailsCustomFields,
     vehicleInfoCustomFields,
+    primaryContactNameLocked,
   } = useVisitorRequestWizard(initial, branches)
 
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
@@ -116,6 +118,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             onRegistrationTypeChange={(registrationType) => setFormState({ ...formState, registrationType })}
             primaryContact={formState.primaryContact}
             onPrimaryContactChange={(primaryContact) => setFormState({ ...formState, primaryContact })}
+            primaryContactNameLocked={primaryContactNameLocked}
             additionalVisitors={formState.additionalVisitors}
             onAdditionalVisitorsChange={(additionalVisitors) => setFormState({ ...formState, additionalVisitors })}
             uploadFile={uploadFile}
@@ -173,6 +176,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             formState={formState}
             status={submissionStatus}
             trackingId={trackingId}
+            confirmedFullName={confirmedFullName}
             errorMessage={submissionError}
             visitorCategories={visitorCategoriesState.categories}
             getFilePreviewUrl={getFilePreviewUrl}
@@ -242,6 +246,7 @@ function buildPrimaryContactPrefill(
     idProofType: prefill.idProofType ?? undefined,
     idProofUrl: prefill.idProofUrl ?? undefined,
     photoUrl: prefill.photoUrl ?? undefined,
+    visitorCategory: prefill.visitorCategoryId ?? undefined,
   }
 }
 

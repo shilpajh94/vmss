@@ -23,6 +23,7 @@ export const VisitorPrefillSchema = z.object({
   idProofType: z.string().nullable(),
   idProofUrl: z.string().nullish(),
   photoUrl: z.string().nullish(),
+  visitorCategoryId: z.string().nullable(),
 })
 
 export type VisitorPrefill = z.infer<typeof VisitorPrefillSchema>

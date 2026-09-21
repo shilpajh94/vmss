@@ -15,6 +15,27 @@ import {
   type StaffVisitRequestFormState,
 } from '../types'
 
+// Matches the input's own `type="email"` validation closely enough to gate
+// a lookup request without firing on every keystroke of a half-typed address.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+// Mirrors use-visitor-request-wizard.ts's matching helper — kept local
+// rather than shared across features for one small helper.
+const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'application/pdf': 'pdf',
+}
+
+async function fetchExistingStaffFile(url: string, baseName: string): Promise<File> {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`Failed to fetch existing file (${response.status})`)
+  const blob = await response.blob()
+  const contentType = blob.type || 'application/octet-stream'
+  const extension = EXTENSION_BY_CONTENT_TYPE[contentType] ?? 'bin'
+  return new File([blob], `${baseName}.${extension}`, { type: contentType })
+}
+
 function validateStaffVisitorContact(contact: StaffVisitorFormEntry, visitorInfoFields: VisitorInfoFieldState): Record<string, string> {
   const errors: Record<string, string> = {}
   if (!contact.fullName) errors.fullName = 'Full name is required.'
@@ -88,7 +109,7 @@ function validateStep(
 }
 
 export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
-  const { submitStaffVisitRequestUseCase } = useAppDependencies()
+  const { submitStaffVisitRequestUseCase, trackVisitRequestUseCase, lookupStaffVisitorByEmailUseCase } = useAppDependencies()
   const toast = useToast()
 
   const [currentStep, setCurrentStep] = useState(0)
@@ -96,7 +117,87 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus>('idle')
   const [trackingId, setTrackingId] = useState<string | undefined>(undefined)
+  const [confirmedFullName, setConfirmedFullName] = useState<string | undefined>(undefined)
   const [submissionError, setSubmissionError] = useState<string | undefined>(undefined)
+
+  // Debounced "email → prefill" lookup for the primary contact only (an
+  // additional group visitor's email isn't looked up). Tracks the last email
+  // a lookup was actually issued for so re-renders that don't change the
+  // email (e.g. typing into another field) don't re-trigger it.
+  const lastLookedUpEmailRef = useRef<string | null>(null)
+  useEffect(() => {
+    const email = formState.primaryContact.email.trim().toLowerCase()
+    if (!EMAIL_PATTERN.test(email) || lastLookedUpEmailRef.current === email) return
+
+    const timeoutId = setTimeout(() => {
+      lastLookedUpEmailRef.current = email
+      lookupStaffVisitorByEmailUseCase
+        .execute(email)
+        .then((match) => {
+          if (!match) return
+          setFormState((current) => {
+            // The staff member may have edited the email again while the
+            // request was in flight — only apply a match for the email it
+            // was actually issued for.
+            if (current.primaryContact.email.trim().toLowerCase() !== email) return current
+            return {
+              ...current,
+              primaryContact: {
+                ...current.primaryContact,
+                fullName: match.fullName,
+                phone: match.phone ?? current.primaryContact.phone,
+                preferredContactMethod: match.preferredContactMethod ?? current.primaryContact.preferredContactMethod,
+                visitorCategory: match.visitorCategoryId ?? current.primaryContact.visitorCategory,
+                idProofType: match.idProofType ?? current.primaryContact.idProofType,
+              },
+            }
+          })
+          toast.success('Existing visitor found — details prefilled.')
+
+          // Best-effort, same pattern as use-visitor-request-wizard.ts's
+          // existing-file reuse: fetch the signed URL into a real File and
+          // register it, so the upload control shows it prefilled instead
+          // of demanding a fresh upload. A fetch failure (expired
+          // signature, network) just leaves that field as a normal empty
+          // upload control — each file is independent of the other.
+          if (match.idProofUrl) {
+            fetchExistingStaffFile(match.idProofUrl, 'id-proof')
+              .then(async (file) => {
+                const fileRef = await uploadFile(file)
+                setFormState((current) => {
+                  if (current.primaryContact.email.trim().toLowerCase() !== email) return current
+                  return { ...current, primaryContact: { ...current.primaryContact, idProofFileRef: fileRef, idProofFileName: file.name } }
+                })
+              })
+              .catch(() => {
+                // Leave idProofFileRef unset — field renders as a normal, empty upload control.
+              })
+          }
+          if (match.photoUrl) {
+            fetchExistingStaffFile(match.photoUrl, 'profile-photo')
+              .then(async (file) => {
+                const fileRef = await uploadFile(file)
+                setFormState((current) => {
+                  if (current.primaryContact.email.trim().toLowerCase() !== email) return current
+                  return {
+                    ...current,
+                    primaryContact: { ...current.primaryContact, profileImageFileRef: fileRef, profileImageFileName: file.name },
+                  }
+                })
+              })
+              .catch(() => {
+                // Leave profileImageFileRef unset — field renders as a normal, empty upload control.
+              })
+          }
+        })
+        .catch(() => {
+          // No match, or the lookup failed — leave the form exactly as the
+          // staff member typed it.
+        })
+    }, 400)
+
+    return () => clearTimeout(timeoutId)
+  }, [formState.primaryContact.email, lookupStaffVisitorByEmailUseCase, toast])
 
   const branchId = useMemo(
     () => branches?.find((branch) => branch.name === formState.visitInfo.location)?.id,
@@ -222,6 +323,7 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     setErrors({})
     setSubmissionStatus('idle')
     setTrackingId(undefined)
+    setConfirmedFullName(undefined)
     setSubmissionError(undefined)
   }
 
@@ -257,6 +359,16 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')
       toast.success('Visitor registered successfully.')
+      // Best-effort: see use-visitor-request-wizard.ts's matching call —
+      // the create response never carries the primary contact's name, so
+      // look it up via the public tracking lookup instead. A failure here
+      // doesn't affect the already-successful submission.
+      trackVisitRequestUseCase
+        .execute(response.trackingId)
+        .then((lookup) => setConfirmedFullName(lookup.primaryContactFullName))
+        .catch(() => {
+          // Leave confirmedFullName unset — the success screen just omits it.
+        })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Something went wrong submitting your request. Please try again.'
       setSubmissionError(message)
@@ -277,6 +389,7 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     getFilePreviewUrl,
     submissionStatus,
     trackingId,
+    confirmedFullName,
     submissionError,
     submit,
     reset,

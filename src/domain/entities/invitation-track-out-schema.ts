@@ -3,6 +3,7 @@ import z from "zod"
 export const InvitationTrackOutSchema = z.object({
   trackingId: z.string(),
   status: z.string(),
+  primaryContactFullName: z.string().min(1),
   preferredVisitDate: z.string().nullable().optional(),
   submittedAt: z.string().nullable().optional(),
   hostNameOrEmail: z.string().nullable().optional(),

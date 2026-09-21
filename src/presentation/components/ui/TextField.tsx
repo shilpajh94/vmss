@@ -9,12 +9,31 @@ interface TextFieldProps {
   error?: string
   required?: boolean
   disabled?: boolean
+  // Distinct from `disabled`: the value stays legible and still submits as
+  // part of the form, it just can't be edited (e.g. a name locked because
+  // the server will silently discard any edit to it).
+  readOnly?: boolean
+  helperText?: string
   labelClassName?: string
   min?: string
   max?: string
 }
 
-export function TextField({ label, value, onChange, placeholder, type = 'text', error, required, disabled, labelClassName, min, max }: TextFieldProps) {
+export function TextField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = 'text',
+  error,
+  required,
+  disabled,
+  readOnly,
+  helperText,
+  labelClassName,
+  min,
+  max,
+}: TextFieldProps) {
   const inputId = useId()
 
   return (
@@ -43,12 +62,14 @@ export function TextField({ label, value, onChange, placeholder, type = 'text', 
         placeholder={placeholder}
         aria-required={required}
         disabled={disabled}
+        readOnly={readOnly}
         min={min}
         max={max}
         className={`rounded-lg border px-3 py-2 text-body text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60 ${
-          error ? 'border-danger' : 'border-border'
-        }`}
+          readOnly ? 'cursor-default bg-border-subtle text-text-muted' : ''
+        } ${error ? 'border-danger' : 'border-border'}`}
       />
+      {helperText && !error && <p className="text-caption text-text-muted">{helperText}</p>}
       {error && <p className="text-caption text-danger">{error}</p>}
     </div>
   )

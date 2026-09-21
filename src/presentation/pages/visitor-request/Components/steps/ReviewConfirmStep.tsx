@@ -40,6 +40,11 @@ interface ReviewConfirmStepProps {
   formState: ReviewableFormState
   status: SubmissionStatus
   trackingId?: string
+  /** The primary contact's confirmed name of record, looked up after a
+   * successful submission (design.md Decision 3) — may differ from what
+   * was submitted for a contact the server already knows, and may briefly
+   * be undefined while that lookup is still in flight. */
+  confirmedFullName?: string
   errorMessage?: string
   visitorCategories?: VisitorCategory[]
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
@@ -92,6 +97,7 @@ export function ReviewConfirmStep({
   formState,
   status,
   trackingId,
+  confirmedFullName,
   errorMessage,
   visitorCategories,
   getFilePreviewUrl,
@@ -108,6 +114,7 @@ export function ReviewConfirmStep({
         <h3 className="text-h3 text-text">Request Submitted</h3>
         <p className="text-body text-text-muted">Your visit request has been received. You can reference this tracking ID for any follow-up.</p>
         <p className="text-h2 text-primary">{trackingId}</p>
+        {confirmedFullName && <p className="text-body text-text-muted">Registered as: {confirmedFullName}</p>}
         {onGoHome && (
           <button
             type="button"
