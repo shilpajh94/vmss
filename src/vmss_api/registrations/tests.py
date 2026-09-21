@@ -242,6 +242,68 @@ async def test_create_group_walk_in_registration_success(
     assert invitation.source == "visitor_walk_in"
 
 
+# --- dedupe-repeat-visitor-registrations: returning primary contact --------
+# Walk-in registration shares `invitations/service.py::create_invitation`
+# verbatim, so the returning-primary-contact name lock
+# (`invitations/tests.py`'s own coverage) must hold here too — see
+# `specs/invitations/spec.md` (delta) "Walk-in registration applies the
+# same lock".
+
+
+async def test_walk_in_registration_returning_email_locks_full_name(
+    client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession
+) -> None:
+    email = "walkin.returning@example.com"
+
+    first_payload = _individual_payload()
+    first_payload["primaryContact"]["email"] = email
+    first_payload["primaryContact"]["fullName"] = "Original Walk-in Name"
+    await _create_walk_in_success(client, registration_device_raw_key, payload=first_payload)
+
+    second_payload = _individual_payload()
+    second_payload["primaryContact"]["email"] = email
+    second_payload["primaryContact"]["fullName"] = "Different Submitted Name"
+    second_data = await _create_walk_in_success(
+        client, registration_device_raw_key, payload=second_payload
+    )
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(
+        second_data["trackingId"]
+    )
+    assert invitation is not None
+    assert invitation.primary_contact_full_name == "Original Walk-in Name"
+
+
+async def test_walk_in_registration_phone_fallback_locks_name_and_email(
+    client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession
+) -> None:
+    phone = "+91 98765 00011"
+
+    first_payload = _individual_payload()
+    first_payload["primaryContact"]["email"] = "walkin.phone.fallback@example.com"
+    first_payload["primaryContact"]["fullName"] = "Phone Fallback Walk-in"
+    first_payload["primaryContact"]["phone"] = phone
+    await _create_walk_in_success(client, registration_device_raw_key, payload=first_payload)
+
+    second_payload = _individual_payload()
+    second_payload["primaryContact"] = {
+        "fullName": "Different Submitted Name",
+        "phone": phone,
+        "preferredContactMethod": "sms",
+        "idProofType": "Passport",
+    }
+    second_data = await _create_walk_in_success(
+        client, registration_device_raw_key, payload=second_payload
+    )
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(
+        second_data["trackingId"]
+    )
+    assert invitation is not None
+    assert invitation.primary_contact_full_name == "Phone Fallback Walk-in"
+    assert invitation.primary_contact_email == "walkin.phone.fallback@example.com"
+
+
 async def test_walk_in_registration_writes_audit_log_with_no_actor(
     client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession
 ) -> None:

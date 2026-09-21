@@ -1,3 +1,4 @@
+import uuid
 from datetime import date
 
 from vmss_api.core.schemas import CamelModel, PaginationMeta
@@ -32,6 +33,13 @@ class ReturningVisitorPrefill(CamelModel):
     `identity_verified` proof token rather than the staff-facing
     `documents:view` permission — this is the visitor viewing their own
     record, not a staff member viewing someone else's.
+
+    `visitor_category_id` is the raw category id only, matching the
+    id-only convention already used for this field on every other
+    invitation-facing response (`InvitationOut`, `InvitationListItemOut`) —
+    not a denormalized category name. A client needing the display name
+    resolves it against the existing public `GET /visitor-categories`
+    listing it already uses to populate its category picker.
     """
 
     full_name: str
@@ -41,6 +49,7 @@ class ReturningVisitorPrefill(CamelModel):
     id_proof_type: str | None
     id_proof_url: str | None
     photo_url: str | None
+    visitor_category_id: uuid.UUID | None
 
 
 class ReturningVisitorLookupOut(CamelModel):

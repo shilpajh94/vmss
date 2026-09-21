@@ -15,7 +15,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, EmailStr, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
@@ -47,6 +47,7 @@ from vmss_api.invitations.schemas import (
     InvitationEditRequest,
     InvitationExtendRequest,
     InvitationListItemOut,
+    InvitationLookupPrefillOut,
     InvitationOut,
     InvitationPrimaryContactCreate,
     InvitationQrCheckInOut,
@@ -1433,6 +1434,27 @@ async def list_invitations(
         page_size=page_size,
         total=total,
     )
+
+
+@router.get(
+    "/lookup-by-email",
+    response_model=Envelope[InvitationLookupPrefillOut | None],
+)
+async def lookup_invitation_by_email(
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("invitations:create"))],
+    email: Annotated[EmailStr, Query()],
+) -> JSONResponse:
+    """Staff-authenticated prefill lookup for the create-invitation
+    wizard's Primary Contact fields (add-invitation-lookup-by-email/
+    proposal.md) — `data: null` on no match is a normal case, not an error,
+    same convention `visitor_return_visit` already uses. `photoUrl` is
+    always resolved; `idProofUrl` only when `user` holds `documents:view`
+    at the matched invitation's branch (design.md).
+    """
+    result = await service.get_prefill_by_email(tenant_db, email, branch_scope, user)
+    return success_response(data=result)
 
 
 # --- API-12: public tracking lookup ------------------------------------------

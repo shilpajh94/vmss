@@ -1,12 +1,12 @@
 import uuid
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
-from factories import InvitationFactory
+from factories import InvitationFactory, VisitorCategoryFactory
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.security import create_access_token, create_identity_verified_token
@@ -95,6 +95,15 @@ async def test_returning_visitor_sees_history_and_prefill_from_most_recent_visit
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
     identifier = "jane@example.com"
+    older_category = VisitorCategoryFactory.build(
+        id=uuid.uuid4(), name="Old Category", code="OLD-CAT"
+    )
+    newer_category = VisitorCategoryFactory.build(
+        id=uuid.uuid4(), name="New Category", code="NEW-CAT"
+    )
+    db_session.add_all([older_category, newer_category])
+    await db_session.commit()
+
     older = _build_invitation(
         branch.id,
         primary_contact_full_name="J Doe",
@@ -107,6 +116,7 @@ async def test_returning_visitor_sees_history_and_prefill_from_most_recent_visit
         purpose_of_visit="Old meeting",
         preferred_visit_date=date.today() - timedelta(days=10),
         tracking_id="INV-OLDEST1",
+        visitor_category_id=older_category.id,
     )
     newer = _build_invitation(
         branch.id,
@@ -120,12 +130,19 @@ async def test_returning_visitor_sees_history_and_prefill_from_most_recent_visit
         purpose_of_visit="New meeting",
         preferred_visit_date=date.today(),
         tracking_id="INV-NEWEST1",
+        visitor_category_id=newer_category.id,
     )
     db_session.add_all([older, newer])
     await db_session.commit()
-    # Force distinguishable `created_at` ordering without relying on
-    # insertion order/clock resolution.
-    older.created_at = older.created_at - timedelta(days=1)
+    # Force distinguishable `created_at` ordering: polyfactory assigns each
+    # unset `Mapped[datetime]` field an independently random value (it has
+    # no notion of `server_default`), spanning arbitrary years — backdating
+    # only `older` relative to *itself* doesn't guarantee it sorts before
+    # `newer`'s own random value, since `newer`'s random timestamp could
+    # already be earlier. Pin both explicitly, relative to each other.
+    now = datetime.now(UTC)
+    newer.created_at = now
+    older.created_at = now - timedelta(days=1)
     await db_session.commit()
 
     token = _proof_token(tenant, identifier)
@@ -143,6 +160,8 @@ async def test_returning_visitor_sees_history_and_prefill_from_most_recent_visit
     # the visitor's own OTP-proven identity is the access check here, not
     # `documents:view` (there is no staff caller on this endpoint).
     assert prefill["idProofUrl"] is not None
+    # Drawn from the newer visit's category, not the older visit's.
+    assert prefill["visitorCategoryId"] == str(newer_category.id)
 
 
 async def test_prefill_missing_photo_and_id_proof_are_null_not_omitted(
@@ -167,6 +186,27 @@ async def test_prefill_missing_photo_and_id_proof_are_null_not_omitted(
     assert prefill["photoUrl"] is None
     assert "idProofUrl" in prefill
     assert prefill["idProofUrl"] is None
+
+
+async def test_prefill_missing_visitor_category_is_null_not_omitted(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    identifier = "no-category@example.com"
+    invitation = _build_invitation(
+        branch.id,
+        primary_contact_email=identifier,
+        primary_contact_phone=None,
+        visitor_category_id=None,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = _proof_token(tenant, identifier)
+    response = await client.get("/api/v1/visitor-portal/me", headers=_auth_headers(token))
+    assert response.status_code == 200
+    prefill = response.json()["data"]["prefill"]
+    assert "visitorCategoryId" in prefill
+    assert prefill["visitorCategoryId"] is None
 
 
 async def test_another_identifiers_visits_are_never_returned(

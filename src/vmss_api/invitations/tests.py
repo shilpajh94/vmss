@@ -1035,6 +1035,237 @@ async def test_create_group_invitation_visitor_missing_full_name_rejected(
     assert response.status_code == 422
 
 
+# --- dedupe-repeat-visitor-registrations: returning primary contact --------
+
+
+def _phone_only_primary_contact(payload: dict, *, full_name: str, phone: str) -> dict:
+    """Swaps `payload["primaryContact"]` to a phone-only contact (no email)
+    — `preferredContactMethod` must be `sms` in that case, per
+    `InvitationPrimaryContactCreate._check_contact`.
+    """
+    payload["primaryContact"] = {
+        "fullName": full_name,
+        "phone": phone,
+        "preferredContactMethod": "sms",
+        "idProofType": "Passport",
+    }
+    return payload
+
+
+async def test_create_invitation_first_time_email_uses_submitted_name(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["primaryContact"]["email"] = "first.timer@example.com"
+    payload["primaryContact"]["fullName"] = "First Timer"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.primary_contact_full_name == "First Timer"
+
+
+async def test_create_invitation_returning_email_locks_full_name(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    email = "priya.returning@example.com"
+
+    first_payload = _individual_payload()
+    first_payload["primaryContact"]["email"] = email
+    first_payload["primaryContact"]["fullName"] = "Priya Sharma"
+    await _create_invitation_success(client, token, branch, payload=first_payload)
+
+    second_payload = _individual_payload()
+    second_payload["primaryContact"]["email"] = email
+    second_payload["primaryContact"]["fullName"] = "Priya S."
+    second_data = await _create_invitation_success(client, token, branch, payload=second_payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(
+        second_data["trackingId"]
+    )
+    assert invitation is not None
+    assert invitation.primary_contact_full_name == "Priya Sharma"
+
+
+async def test_create_invitation_returning_email_other_fields_taken_fresh(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    email = "returning.other.fields@example.com"
+
+    first_payload = _individual_payload()
+    first_payload["primaryContact"]["email"] = email
+    first_payload["primaryContact"]["phone"] = "+91 90000 00001"
+    await _create_invitation_success(client, token, branch, payload=first_payload)
+
+    second_payload = _individual_payload()
+    second_payload["primaryContact"]["email"] = email
+    second_payload["primaryContact"]["phone"] = "+91 90000 99999"
+    second_payload["visitDetails"]["purposeOfVisit"] = "Follow-up Meeting"
+    second_data = await _create_invitation_success(client, token, branch, payload=second_payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(
+        second_data["trackingId"]
+    )
+    assert invitation is not None
+    assert invitation.primary_contact_phone == "+91 90000 99999"
+    assert invitation.visitor_category_id == _DEFAULT_VISITOR_CATEGORY_ID
+    assert invitation.purpose_of_visit == "Follow-up Meeting"
+
+
+async def test_create_invitation_denied_prior_invitation_still_locks_name(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    email = "once.denied@example.com"
+    prior = _build_invitation(
+        db_session,
+        branch.id,
+        status="denied",
+        primary_contact_full_name="Original Name",
+        primary_contact_email=email,
+        primary_contact_phone=None,
+    )
+    db_session.add(prior)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["primaryContact"]["email"] = email
+    payload["primaryContact"]["fullName"] = "Different Name"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.primary_contact_full_name == "Original Name"
+
+
+async def test_create_invitation_phone_fallback_locks_name_and_email(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    phone = "+91 99999 11111"
+
+    first_payload = _individual_payload()
+    first_payload["primaryContact"]["email"] = "phone.fallback@example.com"
+    first_payload["primaryContact"]["fullName"] = "Phone Fallback"
+    first_payload["primaryContact"]["phone"] = phone
+    await _create_invitation_success(client, token, branch, payload=first_payload)
+
+    second_payload = _phone_only_primary_contact(
+        _individual_payload(), full_name="Different Name", phone=phone
+    )
+    second_data = await _create_invitation_success(client, token, branch, payload=second_payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(
+        second_data["trackingId"]
+    )
+    assert invitation is not None
+    assert invitation.primary_contact_full_name == "Phone Fallback"
+    assert invitation.primary_contact_email == "phone.fallback@example.com"
+
+
+async def test_create_invitation_phone_fallback_no_match_is_first_time(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    payload = _phone_only_primary_contact(
+        _individual_payload(), full_name="Nobody Before", phone="+91 88888 22222"
+    )
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.primary_contact_full_name == "Nobody Before"
+    assert invitation.primary_contact_email is None
+
+
+async def test_create_invitation_new_email_not_rescued_by_phone_match(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    shared_phone = "+91 77777 33333"
+
+    first_payload = _individual_payload()
+    first_payload["primaryContact"]["email"] = "old.identity@example.com"
+    first_payload["primaryContact"]["fullName"] = "Old Identity"
+    first_payload["primaryContact"]["phone"] = shared_phone
+    await _create_invitation_success(client, token, branch, payload=first_payload)
+
+    second_payload = _individual_payload()
+    second_payload["primaryContact"]["email"] = "new.identity@example.com"
+    second_payload["primaryContact"]["fullName"] = "New Identity"
+    second_payload["primaryContact"]["phone"] = shared_phone
+    second_data = await _create_invitation_success(client, token, branch, payload=second_payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(
+        second_data["trackingId"]
+    )
+    assert invitation is not None
+    assert invitation.primary_contact_full_name == "New Identity"
+    assert invitation.primary_contact_email == "new.identity@example.com"
+
+
+async def test_create_invitation_returning_contact_creates_new_row_prior_unchanged(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    email = "two.visits@example.com"
+
+    first_payload = _individual_payload()
+    first_payload["primaryContact"]["email"] = email
+    first_payload["primaryContact"]["fullName"] = "Two Visits"
+    first_data = await _create_invitation_success(client, token, branch, payload=first_payload)
+
+    second_payload = _individual_payload()
+    second_payload["primaryContact"]["email"] = email
+    second_payload["primaryContact"]["fullName"] = "Renamed Attempt"
+    second_data = await _create_invitation_success(client, token, branch, payload=second_payload)
+
+    assert first_data["trackingId"] != second_data["trackingId"]
+    repo = InvitationRepository(db_session)
+    first_invitation = await repo.get_by_tracking_id(first_data["trackingId"])
+    second_invitation = await repo.get_by_tracking_id(second_data["trackingId"])
+    assert first_invitation is not None
+    assert second_invitation is not None
+    assert first_invitation.primary_contact_full_name == "Two Visits"
+    assert second_invitation.primary_contact_full_name == "Two Visits"
+
+
+async def test_create_group_invitation_covisitor_email_match_is_unaffected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """Co-visitors are never matched or locked — only the primary contact
+    is deduped by this change.
+    """
+    token = await _login(client, user.email)
+    covisitor_email = "recurring.covisitor@enterprise-ugo.co"
+
+    first_payload = _group_payload()
+    first_payload["primaryContact"]["email"] = "group.host.one@example.com"
+    first_payload["visitors"][0]["email"] = covisitor_email
+    first_payload["visitors"][0]["fullName"] = "Original Covisitor Name"
+    await _create_invitation_success(
+        client, token, branch, payload=first_payload, visitor_file_count=2
+    )
+
+    second_payload = _group_payload()
+    second_payload["primaryContact"]["email"] = "group.host.two@example.com"
+    second_payload["visitors"][0]["email"] = covisitor_email
+    second_payload["visitors"][0]["fullName"] = "New Submitted Covisitor Name"
+    second_data = await _create_invitation_success(
+        client, token, branch, payload=second_payload, visitor_file_count=2
+    )
+
+    invitation = await InvitationRepository(db_session).get_with_children(
+        uuid.UUID(second_data["id"])
+    )
+    assert invitation is not None
+    covisitor = next(v for v in invitation.visitors if v.email == covisitor_email)
+    assert covisitor.full_name == "New Submitted Covisitor Name"
+
+
 def test_invitation_payload_description_matches_schema_requirements() -> None:
     """Independently recomputes each schema's own `required` list (not by
     calling `router._required_fields_summary()` — that would just prove the
@@ -1393,6 +1624,68 @@ async def _branch_scoped_invitation_and_documents_viewer(
     return test_user
 
 
+async def _branch_scoped_invitation_creator(
+    db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
+) -> User:
+    """A caller whose only role grant is `invitations:create` at
+    `branch_id` — same shape as `_branch_scoped_invitation_viewer`, for
+    `GET /invitations/lookup-by-email`'s branch-scoped
+    `require_branch_scope("invitations:create")` gate
+    (add-invitation-lookup-by-email/design.md).
+    """
+    permission = PermissionFactory.build(
+        id=uuid.uuid4(), code="invitations:create", description="invitations:create"
+    )
+    role = RoleFactory.build(id=uuid.uuid4(), name="invitations-creator", permissions=[permission])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"creator-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Invitation Creator",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([permission, role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+async def _branch_scoped_invitation_creator_with_documents(
+    db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
+) -> User:
+    """Same as `_branch_scoped_invitation_creator` but additionally holds
+    `documents:view` at `branch_id` — for
+    `GET /invitations/lookup-by-email`'s `idProofUrl` gating (spec.md
+    "ID-proof URL Is Resolved With documents:view").
+    """
+    permissions = [
+        PermissionFactory.build(id=uuid.uuid4(), code=code, description=code)
+        for code in ("invitations:create", "documents:view")
+    ]
+    role = RoleFactory.build(
+        id=uuid.uuid4(), name="creator-with-documents", permissions=permissions
+    )
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"creator-docs-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Invitation Creator With Documents",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([*permissions, role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
 def _build_invitation(
     db_session: AsyncSession,
     branch_id: uuid.UUID,
@@ -1558,6 +1851,270 @@ async def test_list_invitations_without_branch_header_returns_every_authorized_b
     tracking_ids = {row["trackingId"] for row in response.json()["data"]}
     assert invitation.tracking_id in tracking_ids
     assert other_branch_invitation.tracking_id not in tracking_ids
+
+
+# --- add-invitation-lookup-by-email ------------------------------------------
+
+
+async def test_lookup_by_email_returns_most_recent_invitations_prefill_data(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    identifier = "jane@example.com"
+    older = _build_invitation(
+        db_session,
+        branch.id,
+        primary_contact_email=identifier,
+        primary_contact_full_name="J Doe",
+        tracking_id="INV-LOOKUP-OLD1",
+    )
+    newer = _build_invitation(
+        db_session,
+        branch.id,
+        primary_contact_email=identifier,
+        primary_contact_full_name="Jane Doe",
+        primary_contact_phone="1234567890",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_id_proof_type="passport",
+        visitor_category_id=_DEFAULT_VISITOR_CATEGORY_ID,
+        tracking_id="INV-LOOKUP-NEW1",
+    )
+    db_session.add_all([older, newer])
+    await db_session.commit()
+    now = datetime.now(UTC)
+    newer.created_at = now
+    older.created_at = now - timedelta(days=1)
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    token = issue_token(creator)
+    response = await client.get(
+        "/api/v1/invitations/lookup-by-email",
+        params={"email": identifier},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["fullName"] == "Jane Doe"
+    assert data["phone"] == "1234567890"
+    assert data["preferredContactMethod"] == "email"
+    assert data["idProofType"] == "passport"
+    assert data["visitorCategoryId"] == str(_DEFAULT_VISITOR_CATEGORY_ID)
+
+
+async def test_lookup_by_email_is_case_insensitive(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, primary_contact_email="Jane@Example.com")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    token = issue_token(creator)
+    response = await client.get(
+        "/api/v1/invitations/lookup-by-email",
+        params={"email": "jane@example.com"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"] is not None
+
+
+async def test_lookup_by_email_no_match_returns_null_data(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    token = issue_token(creator)
+    response = await client.get(
+        "/api/v1/invitations/lookup-by-email",
+        params={"email": "no-such-visitor@example.com"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"] is None
+
+
+async def test_lookup_by_email_match_at_unauthorized_branch_returns_null(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-LOOKUP-1")
+    db_session.add(other_branch)
+    await db_session.flush()
+
+    invitation = _build_invitation(
+        db_session, other_branch.id, primary_contact_email="only-at-other-branch@example.com"
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    token = issue_token(creator)
+    response = await client.get(
+        "/api/v1/invitations/lookup-by-email",
+        params={"email": "only-at-other-branch@example.com"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"] is None
+
+
+async def test_lookup_by_email_branch_header_excludes_matching_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-LOOKUP-2")
+    db_session.add(other_branch)
+    await db_session.flush()
+
+    invitation = _build_invitation(
+        db_session, other_branch.id, primary_contact_email="multi-branch-caller@example.com"
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    branch_role = UserBranchRole(
+        id=uuid.uuid4(), role=creator.branch_roles[0].role, branch_id=other_branch.id
+    )
+    creator.branch_roles.append(branch_role)
+    db_session.add(branch_role)
+    await db_session.commit()
+
+    token = issue_token(creator)
+    response = await client.get(
+        "/api/v1/invitations/lookup-by-email",
+        params={"email": "multi-branch-caller@example.com"},
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"] is None
+
+
+async def test_lookup_by_email_requires_invitations_create_permission(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """A caller holding only `invitations:view` (not `invitations:create`)
+    is rejected — this lookup only exists to prefill the create flow
+    (add-invitation-lookup-by-email/design.md "Permission").
+    """
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    token = issue_token(viewer)
+    response = await client.get(
+        "/api/v1/invitations/lookup-by-email",
+        params={"email": "anyone@example.com"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+async def test_lookup_by_email_photo_url_resolved_without_documents_view(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "Photo URL Is Always Resolved When Captured" — a face photo
+    isn't gated like an identity document in this codebase."""
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        primary_contact_email="has-documents@example.com",
+        primary_contact_id_proof_storage_key="docs/id.jpg",
+        primary_contact_photo_storage_key="docs/photo.jpg",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    token = issue_token(creator)
+    response = await client.get(
+        "/api/v1/invitations/lookup-by-email",
+        params={"email": "has-documents@example.com"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["photoUrl"] is not None
+
+
+async def test_lookup_by_email_id_proof_url_null_without_documents_view(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "ID-proof URL Is Null Without documents:view"."""
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        primary_contact_email="has-id-proof@example.com",
+        primary_contact_id_proof_storage_key="docs/id.jpg",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    token = issue_token(creator)
+    response = await client.get(
+        "/api/v1/invitations/lookup-by-email",
+        params={"email": "has-id-proof@example.com"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["idProofType"] is not None
+    assert data["idProofUrl"] is None
+
+
+async def test_lookup_by_email_id_proof_url_resolved_with_documents_view(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "ID-proof URL Is Resolved With documents:view"."""
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        primary_contact_email="has-id-proof-2@example.com",
+        primary_contact_id_proof_storage_key="docs/id.jpg",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator_with_documents(db_session, tenant, branch.id)
+    token = issue_token(creator)
+    response = await client.get(
+        "/api/v1/invitations/lookup-by-email",
+        params={"email": "has-id-proof-2@example.com"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["idProofUrl"] is not None
 
 
 async def test_list_invitations_filters_by_status_registration_type_and_source(

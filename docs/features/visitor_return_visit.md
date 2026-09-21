@@ -18,7 +18,7 @@ walk-in registration write to) by contact match, and is entirely additive:
 
 | Method | Path | Auth | Rate limit | Description |
 |---|---|---|---|---|
-| GET | `/api/v1/visitor-portal/me` | `identity_verified` proof token (bearer) | 20/minute per IP | Returns the verified identifier's own visit history (tracking ID, status, visit date, purpose — paginated) and, when at least one prior visit exists, a prefill payload (full name, email, phone, preferred contact method, ID proof type, ID proof URL, photo URL) drawn from the most recent one. A first-time identifier gets an empty history and a `null` prefill — a `200`, not an error. |
+| GET | `/api/v1/visitor-portal/me` | `identity_verified` proof token (bearer) | 20/minute per IP | Returns the verified identifier's own visit history (tracking ID, status, visit date, purpose — paginated) and, when at least one prior visit exists, a prefill payload (full name, email, phone, preferred contact method, ID proof type, ID proof URL, photo URL, visitor category ID) drawn from the most recent one. A first-time identifier gets an empty history and a `null` prefill — a `200`, not an error. |
 
 ## Authentication: the verified-contact proof token, not a session
 
@@ -64,6 +64,13 @@ form's field configuration. (An earlier revision of this endpoint used the
 `photoUrl` contract at runtime — a `invalid_type`/`undefined` validation
 error on `data.prefill.photoUrl` — confirming the client depends on this
 exact name.)
+
+`visitorCategoryId` follows the id-only convention already used for this
+field on every other invitation-facing response (`InvitationOut`,
+`InvitationListItemOut`) — the raw category id, not a denormalized name. A
+client needing the display name resolves it against the existing public
+`GET /visitor-categories` listing it already uses to populate its category
+picker.
 
 ## ID-proof document and photo access
 

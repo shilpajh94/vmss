@@ -31,6 +31,7 @@ async def _to_prefill(invitation: Invitation) -> ReturningVisitorPrefill:
         id_proof_type=invitation.primary_contact_id_proof_type,
         id_proof_url=await storage_url_for(id_proof_key) if id_proof_key is not None else None,
         photo_url=await storage_url_for(photo_key) if photo_key is not None else None,
+        visitor_category_id=invitation.visitor_category_id,
     )
 
 

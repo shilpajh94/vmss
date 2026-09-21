@@ -20,6 +20,7 @@ from vmss_api.core.redis import get_redis
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.storage import FileTooLargeError, UnsupportedFileTypeError, validate_upload
 from vmss_api.core.storage import save as storage_save
+from vmss_api.core.storage import url_for as storage_url_for
 from vmss_api.form_builder import service as form_builder_service
 from vmss_api.form_builder import validation as form_builder_validation
 from vmss_api.invitations import badge, push_notifications, tasks
@@ -35,6 +36,7 @@ from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.invitations.schemas import (
     InvitationCreate,
     InvitationEditRequest,
+    InvitationLookupPrefillOut,
     InvitationSortableField,
     RegistrationSource,
     VisitDetailsSubmit,
@@ -567,6 +569,34 @@ async def create_invitation(
     )
 
     repo = InvitationRepository(tenant_db)
+
+    # specs/invitations/spec.md (delta) "A Returning Primary Contact's Full
+    # Name Is Locked to Their Prior Invitation" / "...Matched by Phone Has
+    # Their Email Carried Forward". Email is the primary identity key; phone
+    # is only ever consulted when no email was submitted this visit, so a
+    # genuinely new (non-matching) email is never rescued by a phone match
+    # against a different prior invitation
+    # (dedupe-repeat-visitor-registrations/design.md Decision 5).
+    returning_contact: Invitation | None = None
+    if payload.primary_contact.email is not None:
+        returning_contact = await repo.get_latest_by_primary_contact_email(
+            payload.primary_contact.email
+        )
+    elif payload.primary_contact.phone is not None:
+        returning_contact = await repo.get_latest_by_primary_contact_phone(
+            payload.primary_contact.phone
+        )
+    primary_contact_full_name = (
+        returning_contact.primary_contact_full_name
+        if returning_contact is not None
+        else payload.primary_contact.full_name
+    )
+    primary_contact_email = (
+        returning_contact.primary_contact_email
+        if returning_contact is not None
+        else payload.primary_contact.email
+    )
+
     tracking_id = await _generate_unique_tracking_id(repo)
     now = datetime.now(UTC)
     expires_at = now + timedelta(hours=settings.invitation_token_ttl_hours)
@@ -641,8 +671,8 @@ async def create_invitation(
         expires_at=expires_at,
         submitted_at=now,
         approved_at=approved_at,
-        primary_contact_full_name=payload.primary_contact.full_name,
-        primary_contact_email=payload.primary_contact.email,
+        primary_contact_full_name=primary_contact_full_name,
+        primary_contact_email=primary_contact_email,
         primary_contact_phone=payload.primary_contact.phone,
         primary_contact_preferred_contact_method=(
             payload.primary_contact.preferred_contact_method.value
@@ -1528,4 +1558,38 @@ async def list_invitations_page(
         page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
+    )
+
+
+async def get_prefill_by_email(
+    tenant_db: AsyncSession, email: str, branch_scope: BranchScope, user: User
+) -> InvitationLookupPrefillOut | None:
+    """Backs `GET /invitations/lookup-by-email`
+    (`add-invitation-lookup-by-email/proposal.md`) — `None` on no match is
+    the normal, expected case, not an error (spec.md "No Matching
+    Invitation Returns Null Data, Not an Error"). `photo_url` is resolved
+    unconditionally; `id_proof_url` only when `user` holds `documents:view`
+    at the matched invitation's branch — same split
+    `router.py::_to_invitation_detail_out` uses for the staff detail view
+    (design.md "photoUrl unconditional, idProofUrl gated...")."""
+    invitation = await InvitationRepository(tenant_db).get_latest_for_prefill_by_email(
+        email, branch_scope
+    )
+    if invitation is None:
+        return None
+    include_documents = user.has_permission("documents:view", invitation.branch_id)
+    photo_key = invitation.primary_contact_photo_storage_key
+    id_proof_key = invitation.primary_contact_id_proof_storage_key
+    return InvitationLookupPrefillOut(
+        full_name=invitation.primary_contact_full_name,
+        phone=invitation.primary_contact_phone,
+        preferred_contact_method=invitation.primary_contact_preferred_contact_method,
+        visitor_category_id=invitation.visitor_category_id,
+        id_proof_type=invitation.primary_contact_id_proof_type,
+        photo_url=await storage_url_for(photo_key) if photo_key is not None else None,
+        id_proof_url=(
+            await storage_url_for(id_proof_key)
+            if include_documents and id_proof_key is not None
+            else None
+        ),
     )
