@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Modal } from '../../../components/ui/Modal'
+import { TextareaField } from '../../../components/ui/TextareaField'
 import { TextField } from '../../../components/ui/TextField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
 import { FIELD_TYPE_CATALOG, OPTION_REQUIRED_FIELD_TYPES } from '../field-type-catalog'
@@ -23,6 +24,7 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
   const [fieldType, setFieldType] = useState<FormFieldType>('text')
   const [label, setLabel] = useState('')
   const [placeholder, setPlaceholder] = useState('')
+  const [description, setDescription] = useState('')
   const [isRequired, setIsRequired] = useState(true)
   const [optionsText, setOptionsText] = useState('')
 
@@ -36,6 +38,7 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
     setFieldType('text')
     setLabel('')
     setPlaceholder('')
+    setDescription('')
     setIsRequired(true)
     setOptionsText('')
   }
@@ -49,6 +52,7 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
       key,
       label: label.trim(),
       placeholder: placeholder.trim() || undefined,
+      helpText: description.trim() || undefined,
       fieldType,
       isRequired,
       options: requiresOptions ? options : undefined,
@@ -91,6 +95,15 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <TextField label="Field Label" value={label} onChange={setLabel} placeholder="e.g. Company Name" required />
           <TextField label="Placeholder Text" value={placeholder} onChange={setPlaceholder} placeholder="e.g. Enter your company" />
+        </div>
+        <div className="mt-4">
+          <TextareaField
+            label="Description"
+            value={description}
+            onChange={setDescription}
+            placeholder="Static text shown to the visitor alongside this field, e.g. the terms & conditions body"
+            rows={3}
+          />
         </div>
         {requiresOptions && (
           <div className="mt-4">

@@ -112,15 +112,26 @@ export function useAdminFormBuilderStepEditor() {
     [updateFormFieldUseCase, branchId, toast, markDirty],
   )
 
+  // Returns `undefined` on success, or the backend's rejection message on
+  // failure (e.g. "must declare a non-empty options list") — the caller
+  // (`FieldPropertiesPanel`) awaits this to surface that message inline and
+  // revert any local draft it optimistically applied, rather than treating
+  // this as fire-and-forget the way `toggleFieldRequired`/`createField` do.
   const saveFieldProperties = useCallback(
-    async (fieldId: string, input: FormFieldUpdateInput) => {
+    async (fieldId: string, input: FormFieldUpdateInput): Promise<string | undefined> => {
       try {
         const updated = await updateFormFieldUseCase.execute(fieldId, input, branchId)
         setFields((current) => current.map((f) => (f.id === updated.id ? updated : f)))
         markDirty()
         toast.success('Field properties saved to draft. Publish to update the visitor form.')
-      } catch {
-        toast.error('Something went wrong saving this field. Please check for a conflicting conditional rule.')
+        return undefined
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Something went wrong saving this field. Please check for a conflicting conditional rule.'
+        toast.error(message)
+        return message
       }
     },
     [updateFormFieldUseCase, branchId, toast, markDirty],
