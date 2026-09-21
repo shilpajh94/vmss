@@ -1,4 +1,5 @@
 import { Checkbox } from '../ui/Checkbox'
+import { ExpandableText } from '../ui/ExpandableText'
 import { SelectField } from '../ui/SelectField'
 import { TextField } from '../ui/TextField'
 import { TextareaField } from '../ui/TextareaField'
@@ -22,16 +23,7 @@ const TEXT_LIKE_INPUT_TYPES: Partial<Record<FormFieldType, string>> = {
   time_picker: 'time',
 }
 
-/** Renders one form-builder field for the visitor-facing wizard, given its
- * current value and an onChange callback — the shared primitive behind
- * `ConsentStep`/`CarriedItemsStep`'s dynamic rendering (`form-builder`).
- * Covers every "simple" field type; `file_upload`/`dynamic_table`/
- * `signature_pad`/`rich_text_block` aren't wired up for inline rendering
- * yet (design.md's Non-Goals/known limitations) — neither default step
- * this serves today uses one, so this is a graceful fallback, not a gap in
- * what's actually exercised.
- */
-export function DynamicField({ field, value, onChange }: DynamicFieldProps) {
+function renderControl({ field, value, onChange }: DynamicFieldProps) {
   if (field.fieldType === 'toggle_switch' && (!field.options || field.options.length === 0)) {
     // A plain accept/decline toggle with no option set — e.g. a consent
     // statement — rendered as a checkbox to match the mockup.
@@ -106,5 +98,28 @@ export function DynamicField({ field, value, onChange }: DynamicFieldProps) {
     <p className="text-caption text-text-muted">
       &ldquo;{field.label}&rdquo; ({field.fieldType}) isn&apos;t supported inline yet.
     </p>
+  )
+}
+
+/** Renders one form-builder field for the visitor-facing wizard, given its
+ * current value and an onChange callback — the shared primitive behind
+ * `ConsentStep`/`CarriedItemsStep`'s dynamic rendering (`form-builder`).
+ * Covers every "simple" field type; `file_upload`/`dynamic_table`/
+ * `signature_pad`/`rich_text_block` aren't wired up for inline rendering
+ * yet (design.md's Non-Goals/known limitations) — neither default step
+ * this serves today uses one, so this is a graceful fallback, not a gap in
+ * what's actually exercised.
+ *
+ * `field.helpText` (an admin-authored description, e.g. a terms-and-
+ * conditions body) renders beneath the control for every branch above,
+ * truncated with a see-more/see-less toggle — wired here once rather than
+ * inside each branch, so no field type can forget it.
+ */
+export function DynamicField(props: DynamicFieldProps) {
+  return (
+    <div className="flex flex-col gap-2">
+      {renderControl(props)}
+      <ExpandableText text={props.field.helpText} />
+    </div>
   )
 }

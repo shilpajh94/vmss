@@ -319,6 +319,11 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: true,
   },
+  BULK_CREATE_VISITOR_CATEGORIES: {
+    endpoint: "/visitor-categories/bulk",
+    method: "POST",
+    hasToken: true,
+  },
   UPDATE_VISITOR_CATEGORY: {
     endpoint: "/visitor-categories/:id",
     method: "PUT",

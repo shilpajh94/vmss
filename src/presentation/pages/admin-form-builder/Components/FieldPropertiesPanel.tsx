@@ -1,8 +1,13 @@
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { useEffect, useState } from 'react'
+import { GridIcon, PlusIcon, XIcon } from '../../../components/icons'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
+import { TextareaField } from '../../../components/ui/TextareaField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
-import { fieldTypeLabel } from '../field-type-catalog'
+import { OPTION_REQUIRED_FIELD_TYPES, fieldTypeLabel } from '../field-type-catalog'
 import type {
   ConditionOperator,
   FormField,
@@ -12,14 +17,73 @@ import type {
 interface FieldPropertiesPanelProps {
   field: FormField
   siblingFields: FormField[]
-  onSave: (input: FormFieldUpdateInput) => void
+  onSave: (input: FormFieldUpdateInput) => Promise<string | undefined>
 }
 
 const NO_CONDITION_VALUE = '__none__'
 
+interface OptionDraftRow {
+  id: string
+  value: string
+}
+
+function toOptionDraftRows(options: string[] | null): OptionDraftRow[] {
+  return (options ?? []).map((value) => ({ id: crypto.randomUUID(), value }))
+}
+
+function optionsEditorIsShown(field: FormField): boolean {
+  if (OPTION_REQUIRED_FIELD_TYPES.includes(field.fieldType)) return true
+  return field.fieldType === 'toggle_switch' && field.options !== null
+}
+
+interface OptionRowProps {
+  row: OptionDraftRow
+  disabled: boolean
+  onChange: (value: string) => void
+  onRemove: () => void
+}
+
+function OptionRow({ row, disabled, onChange, onRemove }: OptionRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: row.id,
+    disabled,
+  })
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`flex items-center gap-2 ${isDragging ? 'opacity-60' : ''}`}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        disabled={disabled}
+        aria-label="Drag to reorder option"
+        className="cursor-grab text-text-faint disabled:cursor-not-allowed disabled:opacity-40 active:cursor-grabbing"
+      >
+        <GridIcon className="size-4" />
+      </button>
+      <input
+        value={row.value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        className="flex-1 rounded-lg border border-border px-3 py-2 text-body text-text focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60"
+      />
+      {!disabled && (
+        <button type="button" onClick={onRemove} aria-label="Remove option" className="text-danger">
+          <XIcon className="size-4" />
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldPropertiesPanelProps) {
   const [label, setLabel] = useState(field.label)
   const [placeholder, setPlaceholder] = useState(field.placeholder ?? '')
+  const [description, setDescription] = useState(field.helpText ?? '')
   const [isRequired, setIsRequired] = useState(field.isRequired)
   const [isActive, setIsActive] = useState(field.isActive)
   const [minLength, setMinLength] = useState(field.validationRules?.minLength?.toString() ?? '')
@@ -30,10 +94,24 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
   )
   const [conditionValue, setConditionValue] = useState(field.visibilityCondition?.value ?? '')
   const [width, setWidth] = useState(field.width)
+  const [optionRows, setOptionRows] = useState<OptionDraftRow[]>(() => toOptionDraftRows(field.options))
+  const [saveError, setSaveError] = useState<string | undefined>(undefined)
 
+  const optionSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+  const showOptionsEditor = optionsEditorIsShown(field)
+
+  // Deliberately keyed on `field.id`, not `field` itself: the parent page's
+  // 15s background poll (`usePolling` in `use-admin-form-builder-step-editor.ts`)
+  // hands this panel a brand-new `field` object on every tick even when
+  // nothing about the field actually changed, which — keyed on the object
+  // reference — was wiping out whatever the admin had typed/pasted and not
+  // yet saved. Re-seeding only when the *selected field itself* changes (a
+  // different id) is the correct trigger: a background refresh of the same
+  // field's unchanged data should never clobber an in-progress edit.
   useEffect(() => {
     setLabel(field.label)
     setPlaceholder(field.placeholder ?? '')
+    setDescription(field.helpText ?? '')
     setIsRequired(field.isRequired)
     setIsActive(field.isActive)
     setMinLength(field.validationRules?.minLength?.toString() ?? '')
@@ -42,11 +120,15 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
     setConditionOperator(field.visibilityCondition?.operator ?? 'equals')
     setConditionValue(field.visibilityCondition?.value ?? '')
     setWidth(field.width)
-  }, [field])
+    setOptionRows(toOptionDraftRows(field.options))
+    setSaveError(undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [field.id])
 
   const reset = () => {
     setLabel(field.label)
     setPlaceholder(field.placeholder ?? '')
+    setDescription(field.helpText ?? '')
     setIsRequired(field.isRequired)
     setIsActive(field.isActive)
     setMinLength(field.validationRules?.minLength?.toString() ?? '')
@@ -55,18 +137,51 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
     setConditionOperator(field.visibilityCondition?.operator ?? 'equals')
     setConditionValue(field.visibilityCondition?.value ?? '')
     setWidth(field.width)
+    setOptionRows(toOptionDraftRows(field.options))
+    setSaveError(undefined)
   }
 
-  const save = () => {
+  const updateOptionValue = (id: string, value: string) => {
+    setOptionRows((current) => current.map((row) => (row.id === id ? { ...row, value } : row)))
+  }
+
+  const removeOptionRow = (id: string) => {
+    setOptionRows((current) => current.filter((row) => row.id !== id))
+  }
+
+  const addOptionRow = () => {
+    setOptionRows((current) => [...current, { id: crypto.randomUUID(), value: '' }])
+  }
+
+  const handleOptionDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    setOptionRows((current) => {
+      const oldIndex = current.findIndex((row) => row.id === active.id)
+      const newIndex = current.findIndex((row) => row.id === over.id)
+      if (oldIndex === -1 || newIndex === -1) return current
+      const reordered = [...current]
+      const [moved] = reordered.splice(oldIndex, 1)
+      reordered.splice(newIndex, 0, moved)
+      return reordered
+    })
+  }
+
+  const save = async () => {
     const trimmedMin = minLength.trim()
     const trimmedMax = maxLength.trim()
 
-    onSave({
+    setSaveError(undefined)
+    const errorMessage = await onSave({
       label: label.trim(),
       placeholder: placeholder.trim() || undefined,
+      helpText: description.trim(),
       isRequired,
       isActive,
       width,
+      options: showOptionsEditor
+        ? optionRows.map((row) => row.value.trim()).filter((value) => value.length > 0)
+        : undefined,
       validationRules:
         trimmedMin || trimmedMax
           ? {
@@ -79,6 +194,15 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
           ? null
           : { fieldKey: conditionFieldKey, operator: conditionOperator, value: conditionValue },
     })
+
+    if (errorMessage) {
+      setSaveError(errorMessage)
+      if (errorMessage.toLowerCase().includes('options')) {
+        // Revert to the field's last-saved options rather than leaving the
+        // rejected (e.g. emptied) draft displayed as if it had been applied.
+        setOptionRows(toOptionDraftRows(field.options))
+      }
+    }
   }
 
   return (
@@ -104,6 +228,14 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
 
       <TextField label="Field Label" value={label} onChange={setLabel} required disabled={field.isLocked} />
       <TextField label="Placeholder Text" value={placeholder} onChange={setPlaceholder} disabled={field.isLocked} />
+      <TextareaField
+        label="Description"
+        value={description}
+        onChange={setDescription}
+        placeholder="Static text shown to the visitor alongside this field"
+        rows={3}
+        disabled={field.isLocked}
+      />
 
       <SelectField
         label="Field Type"
@@ -112,6 +244,40 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
         disabled
         options={[{ value: field.fieldType, label: fieldTypeLabel(field.fieldType) }]}
       />
+
+      {showOptionsEditor && (
+        <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
+          <p className="font-body text-sm font-semibold text-text">Options</p>
+          {field.isLocked && (
+            <p className="font-body text-xs text-text-muted">This field is locked and its options cannot be edited.</p>
+          )}
+          <DndContext sensors={optionSensors} collisionDetection={closestCenter} onDragEnd={handleOptionDragEnd}>
+            <SortableContext items={optionRows.map((row) => row.id)} strategy={verticalListSortingStrategy}>
+              <div className="flex flex-col gap-2">
+                {optionRows.map((row) => (
+                  <OptionRow
+                    key={row.id}
+                    row={row}
+                    disabled={field.isLocked}
+                    onChange={(value) => updateOptionValue(row.id, value)}
+                    onRemove={() => removeOptionRow(row.id)}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+          {!field.isLocked && (
+            <button
+              type="button"
+              onClick={addOptionRow}
+              className="flex items-center justify-center gap-2 self-start rounded-lg border border-dashed border-border px-3 py-2 font-body text-xs font-semibold text-admin-accent"
+            >
+              <PlusIcon className="size-3.5" />
+              Add option
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
         <p className="font-body text-sm font-semibold text-text">Validation Rules</p>
@@ -172,10 +338,12 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
         </div>
       </div>
 
+      {saveError && <p className="font-body text-sm text-danger">{saveError}</p>}
+
       <div className="flex items-center gap-3">
         <button
           type="button"
-          onClick={save}
+          onClick={() => void save()}
           className="flex-1 rounded-lg bg-admin-accent px-4 py-2.5 font-body text-sm font-semibold text-white"
         >
           Save Properties

@@ -132,7 +132,7 @@ export function AdminFormBuilderStepEditorPage() {
               <FieldPropertiesPanel
                 field={selectedField}
                 siblingFields={fields}
-                onSave={(input) => void saveFieldProperties(selectedField.id, input)}
+                onSave={(input) => saveFieldProperties(selectedField.id, input)}
               />
             )}
           </div>

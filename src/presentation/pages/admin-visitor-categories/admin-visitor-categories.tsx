@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router'
-import { PlusIcon, SlidersIcon } from '../../components/icons'
+import { PlusIcon, SlidersIcon, UploadIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { LoadingState } from '../../components/ui/LoadingState'
@@ -7,6 +7,7 @@ import { SelectField } from '../../components/ui/SelectField'
 import { Pagination } from '../../components/Pagination'
 import { PageContentLayout } from '../../components/PageContentLayout'
 import { usePageHeader } from '../../context/page-header-context'
+import { BulkAddCategoriesModal } from './Components/BulkAddCategoriesModal'
 import { VisitorCategoriesTable } from './Components/VisitorCategoriesTable'
 import { useAdminVisitorCategories } from './hooks/use-admin-visitor-categories'
 
@@ -37,6 +38,12 @@ export function AdminVisitorCategoriesPage() {
     requestDelete,
     cancelDelete,
     confirmDelete,
+    isBulkAddOpen,
+    openBulkAdd,
+    closeBulkAdd,
+    isBulkCreating,
+    bulkCreateResult,
+    submitBulkAdd,
   } = useAdminVisitorCategories()
 
   usePageHeader({ description: 'Define visitor classifications, compliance procedures, security rules and physical pass designs' })
@@ -57,6 +64,14 @@ export function AdminVisitorCategoriesPage() {
               >
                 <SlidersIcon className="size-3.5" />
                 Filters
+              </button>
+              <button
+                type="button"
+                onClick={openBulkAdd}
+                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
+              >
+                <UploadIcon className="size-3.5" />
+                Bulk Add
               </button>
               <button
                 type="button"
@@ -154,6 +169,14 @@ export function AdminVisitorCategoriesPage() {
         confirmLabel={isDeleting ? 'Deleting…' : 'Delete'}
         onConfirm={() => void confirmDelete()}
         onCancel={cancelDelete}
+      />
+
+      <BulkAddCategoriesModal
+        isOpen={isBulkAddOpen}
+        onClose={closeBulkAdd}
+        onSubmit={(names) => void submitBulkAdd(names)}
+        isSubmitting={isBulkCreating}
+        result={bulkCreateResult}
       />
     </PageContentLayout>
   )

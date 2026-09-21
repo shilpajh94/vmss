@@ -1,6 +1,7 @@
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GridIcon, PencilIcon, TrashIcon, XIcon } from '../../../components/icons'
+import { ExpandableText } from '../../../components/ui/ExpandableText'
 import { fieldTypeLabel } from '../field-type-catalog'
 import type { FormField } from '../../../../domain/entities/form-builder-schema'
 
@@ -33,18 +34,21 @@ export function SortableFieldRow({ field, isSelected, onSelect, onToggleRequired
         <GridIcon className="size-4" />
       </button>
 
-      <button type="button" onClick={onSelect} className="flex flex-1 items-center gap-3 text-left">
-        {field.isLocked && <XIcon className="size-3.5 shrink-0 text-text-faint" />}
-        <span className="font-body text-sm font-semibold text-text">{field.label}</span>
-        <span className="rounded-full bg-bg px-2 py-0.5 font-body text-[11px] font-medium text-text-muted">
-          {fieldTypeLabel(field.fieldType)}
-        </span>
-        {!field.isActive && (
-          <span className="rounded-full bg-neutral-subtle px-2 py-0.5 font-body text-[11px] font-medium text-text-faint">
-            Inactive
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <button type="button" onClick={onSelect} className="flex w-full items-center gap-3 text-left">
+          {field.isLocked && <XIcon className="size-3.5 shrink-0 text-text-faint" />}
+          <span className="font-body text-sm font-semibold text-text">{field.label}</span>
+          <span className="rounded-full bg-bg px-2 py-0.5 font-body text-[11px] font-medium text-text-muted">
+            {fieldTypeLabel(field.fieldType)}
           </span>
-        )}
-      </button>
+          {!field.isActive && (
+            <span className="rounded-full bg-neutral-subtle px-2 py-0.5 font-body text-[11px] font-medium text-text-faint">
+              Inactive
+            </span>
+          )}
+        </button>
+        <ExpandableText text={field.helpText} />
+      </div>
 
       <label className="flex items-center gap-2">
         <span className="font-body text-xs font-medium text-text-muted">Required</span>
