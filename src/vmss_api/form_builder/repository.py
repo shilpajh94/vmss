@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Collection
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +37,21 @@ class FormFieldRepository(TenantScopedRepository[FormField]):
             select(FormField)
             .where(FormField.step_id == step_id, FormField.deleted_at.is_(None))
             .order_by(FormField.order_index.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_for_steps(self, step_ids: Collection[uuid.UUID]) -> list[FormField]:
+        """Batched counterpart of `list_for_step` for a whole form's worth of
+        steps in one query (query-performance.md §2) — ordered by
+        `(step_id, order_index)` so a caller can group by `step_id` and each
+        group is already in the same per-step order `list_for_step` returns.
+        """
+        if not step_ids:
+            return []
+        stmt = (
+            select(FormField)
+            .where(FormField.step_id.in_(step_ids), FormField.deleted_at.is_(None))
+            .order_by(FormField.step_id, FormField.order_index.asc())
         )
         return list((await self.session.execute(stmt)).scalars().all())
 

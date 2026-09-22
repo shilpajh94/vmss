@@ -90,27 +90,32 @@ async def bulk_create_visitor_categories(
     unattended batch processing (design.md's "Skip-and-report" decision).
     """
     repo = VisitorCategoryRepository(tenant_db)
+    candidates = [(raw_name.strip(), _slugify(raw_name.strip())) for raw_name in payload.names]
+    candidates = [(name, code) for name, code in candidates if name]
+    # Pre-fetch every existing code/name the batch could collide with in two
+    # queries total, instead of one `get_by_code`/`get_by_name` pair per name
+    # (query-performance.md §2) — safe to compute once up front since the
+    # `seen_names`/`seen_codes` check below already catches an
+    # intra-batch duplicate before it would ever reach these sets.
+    existing_codes = await repo.get_existing_codes([code for _, code in candidates])
+    existing_names = await repo.get_existing_names([name for name, _ in candidates])
+
     seen_names: set[str] = set()
     seen_codes: set[str] = set()
-    # (name, status, reason, category-row-if-created) — the row is refreshed
-    # and turned into a `VisitorCategoryOut` only after the batch commit
-    # below, once its server-generated fields (timestamps) are populated.
-    results: list[
-        tuple[str, VisitorCategoryBulkCreateItemStatus, str | None, VisitorCategory | None]
-    ] = []
+    created_ids: list[uuid.UUID] = []
+    # (name, status, reason, id-if-created) — created rows are re-fetched in
+    # one batch query after the commit below, once their server-generated
+    # fields (timestamps) are populated.
+    _ResultRow = tuple[str, VisitorCategoryBulkCreateItemStatus, str | None, uuid.UUID | None]
+    results: list[_ResultRow] = []
 
-    for raw_name in payload.names:
-        name = raw_name.strip()
-        if not name:
-            continue
-
-        code = _slugify(name)
+    for name, code in candidates:
         reason: str | None = None
         if name in seen_names or code in seen_codes:
             reason = "Duplicate in this request"
-        elif await repo.get_by_code(code) is not None:
+        elif code in existing_codes:
             reason = "Category code already exists"
-        elif await repo.get_by_name(name) is not None:
+        elif name in existing_names:
             reason = "Category name already exists"
 
         seen_names.add(name)
@@ -120,23 +125,24 @@ async def bulk_create_visitor_categories(
             results.append((name, VisitorCategoryBulkCreateItemStatus.skipped, reason, None))
             continue
 
-        category = VisitorCategory(id=uuid.uuid4(), name=name, code=code)
-        tenant_db.add(category)
-        results.append((name, VisitorCategoryBulkCreateItemStatus.created, None, category))
+        category_id = uuid.uuid4()
+        tenant_db.add(VisitorCategory(id=category_id, name=name, code=code))
+        created_ids.append(category_id)
+        results.append((name, VisitorCategoryBulkCreateItemStatus.created, None, category_id))
 
     await _commit_or_conflict(tenant_db, "One or more categories in this batch already exist")
 
+    created_by_id = {c.id: c for c in await repo.list_by_ids(created_ids)}
     items: list[VisitorCategoryBulkCreateItem] = []
     created_count = 0
     skipped_count = 0
-    for name, item_status, reason, category_row in results:
-        if category_row is not None:
-            await tenant_db.refresh(category_row)
+    for name, item_status, reason, created_id in results:
+        if created_id is not None:
             items.append(
                 VisitorCategoryBulkCreateItem(
                     name=name,
                     status=item_status,
-                    category=VisitorCategoryOut.model_validate(category_row),
+                    category=VisitorCategoryOut.model_validate(created_by_id[created_id]),
                 )
             )
             created_count += 1

@@ -1,6 +1,7 @@
 import uuid
 from collections.abc import Callable
 
+import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -361,6 +362,203 @@ async def test_create_field_success(
     assert response.json()["data"]["key"] == "company_badge"
 
 
+async def test_list_fields_for_steps_groups_and_orders_fields_per_step(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Pins `service.list_fields_for_steps`'s per-step grouping/ordering
+    behavior before its per-step-loop query is batched into one
+    `WHERE step_id IN (...)` query (query-performance.md §2) — each step's
+    fields must come back exactly as `FormFieldRepository.list_for_step`
+    would return them individually: only that step's own fields, in
+    `order_index` order, with no cross-step leakage.
+    """
+    from vmss_api.form_builder import service
+    from vmss_api.form_builder.repository import FormStepRepository
+
+    token = issue_token(user)
+    carried_items = await _get_default_step(client, token, "carried_items")
+    vehicle_info = await _get_default_step(client, token, "vehicle_info")
+
+    async def _create_field(step_id: str, key: str) -> str:
+        response = await client.post(
+            f"/api/v1/form-builder/steps/{step_id}/fields",
+            json={"key": key, "label": key, "fieldType": "checkbox_list", "options": ["yes"]},
+            headers=_auth(token),
+        )
+        assert response.status_code == 201
+        return response.json()["data"]["id"]
+
+    ci_field_a = await _create_field(carried_items["id"], "ci_field_a")
+    ci_field_b = await _create_field(carried_items["id"], "ci_field_b")
+    vi_field_a = await _create_field(vehicle_info["id"], "vi_field_a")
+
+    steps = await FormStepRepository(db_session).list_for_scope(None)
+    fields_by_step = await service.list_fields_for_steps(db_session, steps)
+
+    ci_step_id = uuid.UUID(carried_items["id"])
+    vi_step_id = uuid.UUID(vehicle_info["id"])
+    ci_new_field_ids = [
+        str(f.id) for f in fields_by_step[ci_step_id] if f.key in {"ci_field_a", "ci_field_b"}
+    ]
+    assert ci_new_field_ids == [ci_field_a, ci_field_b]
+    assert [str(f.id) for f in fields_by_step[vi_step_id] if f.key == "vi_field_a"] == [vi_field_a]
+    # No cross-step leakage: vehicle_info's new field must not appear under carried_items.
+    assert vi_field_a not in [str(f.id) for f in fields_by_step[ci_step_id]]
+
+
+async def test_id_proof_type_options_cannot_be_emptied(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """make-id-proof-and-vehicle-type-configurable: `id_proof_type` is no
+    longer exempt from the options-required rule — its options are now the
+    real source of truth for what a submission may declare (unlike
+    `visitor_category`, whose real options live in a separate catalog), so
+    it needs the same non-empty-options guarantee any admin-authored
+    dropdown has. Rejected at update time, before a publish could ever see
+    an emptied state.
+    """
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visitor_info")
+    id_proof_type = next(f for f in step["fields"] if f["key"] == "id_proof_type")
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{id_proof_type['id']}",
+        json={"options": []},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_vehicle_type_options_cannot_be_emptied(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "vehicle_info")
+    vehicle_type = next(f for f in step["fields"] if f["key"] == "vehicle_type")
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{vehicle_type['id']}",
+        json={"options": []},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_visitor_category_remains_exempt_from_options_required(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """`visitor_category`'s real options come from the separate
+    VisitorCategory catalog, not this row's own `options` — it stays
+    exempt from the non-empty-options rule the narrowing in this change
+    now applies to every other system dropdown field."""
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visitor_info")
+    visitor_category = next(f for f in step["fields"] if f["key"] == "visitor_category")
+    assert visitor_category["options"] is None
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200, publish_response.text
+
+
+async def test_create_static_text_field_success(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "consent_agreement")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "terms_notice",
+            "label": "Terms & Conditions",
+            "fieldType": "static_text",
+            "helpText": "By continuing you agree to our terms.",
+        },
+        headers=_auth(token),
+    )
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["fieldType"] == "static_text"
+    assert data["isRequired"] is False
+    assert data["options"] is None
+    assert data["helpText"] == "By continuing you agree to our terms."
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200
+
+    effective_response = await client.get("/api/v1/form-builder/effective")
+    published_step = next(
+        s for s in effective_response.json()["data"] if s["key"] == "consent_agreement"
+    )
+    published_field = next(f for f in published_step["fields"] if f["key"] == "terms_notice")
+    assert published_field["fieldType"] == "static_text"
+    assert published_field["isRequired"] is False
+
+
+async def test_create_static_text_field_as_required_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "consent_agreement")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "terms_notice",
+            "label": "Terms & Conditions",
+            "fieldType": "static_text",
+            "helpText": "By continuing you agree to our terms.",
+            "isRequired": True,
+        },
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_create_static_text_field_without_help_text_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "consent_agreement")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "terms_notice", "label": "Terms & Conditions", "fieldType": "static_text"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_update_static_text_field_as_required_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "consent_agreement")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "terms_notice",
+            "label": "Terms & Conditions",
+            "fieldType": "static_text",
+            "helpText": "By continuing you agree to our terms.",
+        },
+        headers=_auth(token),
+    )
+    assert create_response.status_code == 201
+    field_id = create_response.json()["data"]["id"]
+
+    update_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"isRequired": True},
+        headers=_auth(token),
+    )
+    assert update_response.status_code == 422
+
+    unchanged = await client.get(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", headers=_auth(token)
+    )
+    saved_field = next(f for f in unchanged.json()["data"] if f["id"] == field_id)
+    assert saved_field["isRequired"] is False
+
+
 async def test_create_field_accepted_on_visitor_info(
     client: AsyncClient, user: User, issue_token: Callable[[User], str]
 ) -> None:
@@ -426,6 +624,401 @@ async def test_toggleable_field_can_be_deactivated(
     )
     assert response.status_code == 200
     assert response.json()["data"]["isActive"] is False
+
+
+async def test_locked_field_with_false_required_state_can_still_be_saved(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """Regression: the admin UI's save payload always resends every
+    property it manages, including `isRequired`/`isActive` at their
+    current (untouched) value — a locked field whose `isRequired` is
+    already `false` (e.g. Email) must not be rejected just because that
+    already-`false` value is present in the payload again. Only an actual
+    attempted `true` → `false` transition is rejected."""
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visitor_info")
+    email = next(f for f in step["fields"] if f["key"] == "email")
+    assert email["isLocked"] is True
+    assert email["isRequired"] is False
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{email['id']}",
+        json={"label": "Email Address", "isRequired": False, "isActive": True},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["label"] == "Email Address"
+
+
+async def test_toggleable_system_field_can_be_saved_with_unchanged_field_type_resent(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """Regression: the admin UI's save payload always resends `fieldType`
+    too — a system field's own (unchanged) type being present again must
+    not be rejected as "changing" it."""
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visit_details")
+    additional_notes = next(f for f in step["fields"] if f["key"] == "additional_notes")
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{additional_notes['id']}",
+        json={"fieldType": additional_notes["fieldType"], "isActive": False},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["isActive"] is False
+
+
+async def test_toggleable_retypeable_system_field_type_can_be_changed_directly(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """make-system-field-types-editable: a toggleable (unlocked) system
+    field not in the type-locked exclusion set — Additional Notes is a
+    plain `String` column with no cross-cutting backend consumer — is
+    editable directly, no unlock step needed, the same as its other
+    properties. Supersedes the old blanket "every isSystem field's type is
+    fixed" rule (`fix-field-type-editing-and-lock-ux`)."""
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visit_details")
+    additional_notes = next(f for f in step["fields"] if f["key"] == "additional_notes")
+    assert additional_notes["isLocked"] is False
+    assert additional_notes["isSystem"] is True
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{additional_notes['id']}",
+        json={"fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["fieldType"] == "text"
+
+
+async def test_locked_retypeable_system_field_type_can_be_changed(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """make-system-field-types-editable: a locked system field not in the
+    type-locked exclusion set — Full Name is a plain `String(255)` column
+    with no cross-cutting backend consumer — is retypeable. "Unlock to
+    Edit" is a frontend-only UX guard (`add-static-text-field-and-unlock-
+    toggle`'s design), not a backend permission boundary, so the API
+    itself does not require any "unlocked" signal."""
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visitor_info")
+    full_name = next(f for f in step["fields"] if f["key"] == "full_name")
+    assert full_name["isLocked"] is True
+    assert full_name["isSystem"] is True
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{full_name['id']}",
+        json={"fieldType": "textarea"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["fieldType"] == "textarea"
+
+
+@pytest.mark.parametrize(
+    ("step_key", "field_key", "attempted_type"),
+    [
+        ("visitor_info", "registration_type", "text"),
+        ("visitor_info", "email", "text"),
+        ("visitor_info", "phone", "text"),
+        ("visitor_info", "preferred_contact_method", "text"),
+        ("visitor_info", "visitor_category", "text"),
+        ("visitor_info", "id_proof_upload", "text"),
+        ("visitor_info", "profile_photo", "text"),
+        ("visit_details", "preferred_visit_date", "text"),
+        ("visit_details", "preferred_visit_time", "text"),
+    ],
+)
+async def test_excluded_system_field_type_cannot_be_changed(
+    client: AsyncClient,
+    user: User,
+    issue_token: Callable[[User], str],
+    step_key: str,
+    field_key: str,
+    attempted_type: str,
+) -> None:
+    """make-system-field-types-editable: fields whose value is consumed
+    elsewhere as a specific structured type (notification dispatch,
+    overstay detection, file storage, the Visitor Category catalog) stay
+    permanently type-fixed, regardless of lock state."""
+    token = issue_token(user)
+    step = await _get_default_step(client, token, step_key)
+    field = next(f for f in step["fields"] if f["key"] == field_key)
+    original_type = field["fieldType"]
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{field['id']}",
+        json={"fieldType": attempted_type},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+    unchanged = await _get_default_step(client, token, step_key)
+    unchanged_field = next(f for f in unchanged["fields"] if f["key"] == field_key)
+    assert unchanged_field["fieldType"] == original_type
+
+
+async def test_retypeable_system_field_to_option_required_type_without_options_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visit_details")
+    purpose_of_visit = next(f for f in step["fields"] if f["key"] == "purpose_of_visit")
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{purpose_of_visit['id']}",
+        json={"fieldType": "dropdown_select"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_retypeable_system_field_to_option_required_type_with_options_succeeds(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visit_details")
+    purpose_of_visit = next(f for f in step["fields"] if f["key"] == "purpose_of_visit")
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{purpose_of_visit['id']}",
+        json={"fieldType": "dropdown_select", "options": ["Meeting", "Delivery", "Interview"]},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["fieldType"] == "dropdown_select"
+    assert data["options"] == ["Meeting", "Delivery", "Interview"]
+
+
+async def test_custom_field_type_can_be_changed(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "notes", "label": "Notes", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert create_response.status_code == 201
+    field_id = create_response.json()["data"]["id"]
+
+    update_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"fieldType": "textarea"},
+        headers=_auth(token),
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["data"]["fieldType"] == "textarea"
+
+    fields_response = await client.get(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", headers=_auth(token)
+    )
+    saved = next(f for f in fields_response.json()["data"] if f["id"] == field_id)
+    assert saved["fieldType"] == "textarea"
+
+
+async def test_field_type_change_to_option_required_type_without_options_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "notes", "label": "Notes", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    field_id = create_response.json()["data"]["id"]
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"fieldType": "dropdown_select"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_field_type_change_to_option_required_type_with_options_succeeds(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "notes", "label": "Notes", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    field_id = create_response.json()["data"]["id"]
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"fieldType": "dropdown_select", "options": ["yes", "no"]},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["fieldType"] == "dropdown_select"
+    assert data["options"] == ["yes", "no"]
+
+
+async def test_field_type_change_away_from_option_bearing_type_clears_options(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "flavor",
+            "label": "Flavor",
+            "fieldType": "checkbox_list",
+            "options": ["sweet", "savory"],
+        },
+        headers=_auth(token),
+    )
+    field_id = create_response.json()["data"]["id"]
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["options"] is None
+
+
+async def test_field_type_change_to_static_text_still_required_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "notes", "label": "Notes", "fieldType": "text", "isRequired": True},
+        headers=_auth(token),
+    )
+    field_id = create_response.json()["data"]["id"]
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"fieldType": "static_text", "helpText": "Some content"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_field_type_change_to_static_text_without_help_text_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "notes", "label": "Notes", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    field_id = create_response.json()["data"]["id"]
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"fieldType": "static_text"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_field_type_change_away_from_static_text_lifts_constraints(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "notice",
+            "label": "Notice",
+            "fieldType": "static_text",
+            "helpText": "Some content",
+        },
+        headers=_auth(token),
+    )
+    field_id = create_response.json()["data"]["id"]
+
+    change_type_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert change_type_response.status_code == 200
+
+    require_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"isRequired": True},
+        headers=_auth(token),
+    )
+    assert require_response.status_code == 200
+    assert require_response.json()["data"]["isRequired"] is True
+
+
+async def test_publish_then_effective_form_reflects_field_type_change(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "notes", "label": "Notes", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    field_id = create_response.json()["data"]["id"]
+
+    update_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"fieldType": "textarea"},
+        headers=_auth(token),
+    )
+    assert update_response.status_code == 200
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200
+
+    effective_response = await client.get("/api/v1/form-builder/effective")
+    effective_step = next(
+        s for s in effective_response.json()["data"] if s["key"] == "carried_items"
+    )
+    effective_field = next(f for f in effective_step["fields"] if f["key"] == "notes")
+    assert effective_field["fieldType"] == "textarea"
+
+
+async def test_publish_then_effective_form_reflects_retyped_system_field(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """make-system-field-types-editable: a retyped *system* field's new
+    type publishes and resolves through `GET /form-builder/effective`
+    exactly like a retyped admin-authored field's already does."""
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visit_details")
+    additional_notes = next(f for f in step["fields"] if f["key"] == "additional_notes")
+
+    update_response = await client.patch(
+        f"/api/v1/form-builder/fields/{additional_notes['id']}",
+        json={"fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert update_response.status_code == 200
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200
+
+    effective_response = await client.get("/api/v1/form-builder/effective")
+    effective_step = next(
+        s for s in effective_response.json()["data"] if s["key"] == "visit_details"
+    )
+    effective_field = next(f for f in effective_step["fields"] if f["key"] == "additional_notes")
+    assert effective_field["fieldType"] == "text"
 
 
 async def test_conditional_visibility_dangling_reference_rejected(
@@ -681,6 +1274,45 @@ async def test_publish_then_effective_form_reflects_edited_field(
     assert updated_field["label"] == "Updated Terms & Conditions"
 
 
+async def test_publish_then_effective_form_reflects_edited_locked_field_label(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """add-static-text-field-and-unlock-toggle: the backend has never
+    rejected a label change on a locked field (only `isActive`/
+    `isRequired` -> `false` and delete/reorder are actually enforced) — the
+    admin UI's new "Unlock to Edit" control lifts a frontend-only guard on
+    top of this already-permissive contract (design.md Decision 6). This
+    confirms an edit to a locked field's label persists and, once
+    published, is what `GET /form-builder/effective` resolves — the exact
+    same function both the staff and visitor registration flows read from
+    (`invitations/service.py::create_invitation`,
+    `registrations/service.py::create_walk_in_registration`), so a single
+    check here covers both surfaces.
+    """
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visitor_info")
+    full_name = next(f for f in step["fields"] if f["key"] == "full_name")
+    assert full_name["isLocked"] is True
+
+    update_response = await client.patch(
+        f"/api/v1/form-builder/fields/{full_name['id']}",
+        json={"label": "Visitor's Full Legal Name"},
+        headers=_auth(token),
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["data"]["label"] == "Visitor's Full Legal Name"
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200
+
+    effective_response = await client.get("/api/v1/form-builder/effective")
+    effective_visitor_info = next(
+        s for s in effective_response.json()["data"] if s["key"] == "visitor_info"
+    )
+    updated_field = next(f for f in effective_visitor_info["fields"] if f["key"] == "full_name")
+    assert updated_field["label"] == "Visitor's Full Legal Name"
+
+
 async def test_publish_default_scope_invalidates_branch_fallback_cache(
     client: AsyncClient, user: User, branch: Branch, issue_token: Callable[[User], str]
 ) -> None:
@@ -801,6 +1433,46 @@ async def test_form_steps_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         found = await FormStepRepository(other_session).get(step_id)
         assert found is None
+
+
+async def test_field_type_change_tenant_schema_isolation(
+    client: AsyncClient,
+    user: User,
+    issue_token: Callable[[User], str],
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """testing-standards.md §2 — make-system-field-types-editable: a
+    system field's `field_type` change made under one tenant's schema
+    must not be visible from a session bound to a different tenant's
+    schema (each tenant has its own seeded copy of the same field key)."""
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visit_details")
+    additional_notes = next(f for f in step["fields"] if f["key"] == "additional_notes")
+
+    update_response = await client.patch(
+        f"/api/v1/form-builder/fields/{additional_notes['id']}",
+        json={"fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert update_response.status_code == 200
+
+    other_schema = "tenant_other_field_type_isolation_test"
+    await make_tenant_schema(other_schema)
+
+    from sqlalchemy import select
+
+    from vmss_api.form_builder.models import FormField
+
+    async with open_tenant_session(other_schema) as other_session:
+        # The other tenant's schema has no `form_fields` rows at all yet
+        # (nothing seeds it until that tenant's own first `GET
+        # /form-builder/steps` call) — so this tenant's field-type change
+        # cannot possibly be visible there, by construction.
+        result = await other_session.execute(
+            select(FormField).where(FormField.key == "additional_notes")
+        )
+        assert result.scalar_one_or_none() is None
 
 
 # --- fix-registration-host-role-crash: field-key uniqueness across a ------

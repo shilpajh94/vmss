@@ -2,7 +2,6 @@
 `add-identity-verification-otp/proposal.md` and `design.md`.
 """
 
-import json
 import uuid
 from typing import Annotated
 
@@ -10,8 +9,9 @@ import structlog
 from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import JSONResponse
 
+from vmss_api.core.idempotency import cache_response as _core_cache_response
+from vmss_api.core.idempotency import cached_response as _core_cached_response
 from vmss_api.core.rate_limit import limiter
-from vmss_api.core.redis import get_redis
 from vmss_api.core.responses import error_response, success_response
 from vmss_api.core.schemas import Envelope
 from vmss_api.identity_verification import service
@@ -30,8 +30,6 @@ from vmss_api.identity_verification.senders import (
 
 router = APIRouter(prefix="/identity-verification", tags=["identity-verification"])
 
-_IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
-
 _IDEMPOTENCY_KEY_HEADER = Header(
     alias="Idempotency-Key",
     description=(
@@ -42,37 +40,19 @@ _IDEMPOTENCY_KEY_HEADER = Header(
 )
 
 
-def _idempotency_cache_key(tenant_id: uuid.UUID, idempotency_key: str) -> str:
-    return f"vmss:{tenant_id}:identity-verification:idempotency:{idempotency_key}"
-
-
 async def _cached_response(
     tenant_id: uuid.UUID, idempotency_key: str | None
 ) -> JSONResponse | None:
     """api-conventions.md §3 — mirrors
     `invitations/router.py`'s `_cached_response`/`_cache_response` pair.
     """
-    if idempotency_key is None:
-        return None
-    redis = await get_redis()
-    cached = await redis.get(_idempotency_cache_key(tenant_id, idempotency_key))
-    if cached is None:
-        return None
-    payload = json.loads(cached)
-    return JSONResponse(content=payload["body"], status_code=payload["status"])
+    return await _core_cached_response(tenant_id, "identity-verification", idempotency_key)
 
 
 async def _cache_response(
     tenant_id: uuid.UUID, idempotency_key: str | None, response: JSONResponse
 ) -> None:
-    if idempotency_key is None:
-        return
-    redis = await get_redis()
-    await redis.set(
-        _idempotency_cache_key(tenant_id, idempotency_key),
-        json.dumps({"status": response.status_code, "body": json.loads(bytes(response.body))}),
-        ex=_IDEMPOTENCY_TTL_SECONDS,
-    )
+    await _core_cache_response(tenant_id, "identity-verification", idempotency_key, response)
 
 
 @router.post("/otp/request", response_model=Envelope[OtpRequestOut])

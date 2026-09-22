@@ -5,6 +5,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 
 import aiosmtplib
 import pytest
@@ -986,6 +987,131 @@ async def test_create_invitation_invalid_vehicle_type_rejected(
     payload["vehicles"] = [{"vehicleType": "spaceship", "licensePlate": "KA-01-AB-1234"}]
     response = await _create_invitation(client, token, branch, payload=payload)
     assert response.status_code == 422
+
+
+async def test_create_invitation_admin_added_id_proof_type_option_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """make-id-proof-and-vehicle-type-configurable: an ID proof type is no
+    longer a fixed enum — a value the admin has added to the branch's "ID
+    Proof Type" options is accepted, even though it isn't one of the
+    original four defaults."""
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        field_key="id_proof_type",
+        options=["Aadhaar Card", "Passport", "Driving License", "Other", "Voter ID"],
+    )
+
+    payload = _individual_payload()
+    payload["primaryContact"]["idProofType"] = "Voter ID"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_admin_added_vehicle_type_option_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="vehicle_info",
+        field_key="vehicle_type",
+        options=["2_wheeler", "4_wheeler", "heavy", "tricycle"],
+    )
+
+    payload = _individual_payload()
+    payload["vehicles"] = [{"vehicleType": "tricycle", "licensePlate": "KA-01-AB-1234"}]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_default_id_proof_and_vehicle_types_still_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A branch that has never customized "ID Proof Type"/"Vehicle Type"
+    still accepts every one of the original default options — confirms the
+    dynamic-validation switch is behavior-preserving for the common case."""
+    token = await _login(client, user.email)
+    payload = _group_payload()
+    payload["primaryContact"]["idProofType"] = "Aadhaar Card"
+    payload["visitors"][0]["idProofType"] = "Passport"
+    payload["visitors"][1]["idProofType"] = "Driving License"
+    payload["vehicles"] = [
+        {"vehicleType": "2_wheeler", "licensePlate": "KA-01-AB-1234"},
+        {"vehicleType": "4_wheeler", "licensePlate": "KA-05-CD-5678"},
+        {"vehicleType": "heavy", "licensePlate": "KA-09-EF-9012"},
+    ]
+    data = await _create_invitation_success(
+        client, token, branch, payload=payload, visitor_file_count=2
+    )
+    assert data["id"]
+
+
+async def test_create_invitation_retyped_system_field_matching_option_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """make-system-field-types-editable: once an admin retypes "Purpose of
+    Visit" to `dropdown_select` with configured options, a submission
+    matching one of those options is accepted."""
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        field_key="purpose_of_visit",
+        field_type="dropdown_select",
+        options=["Meeting", "Delivery", "Interview"],
+    )
+
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "Meeting"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_retyped_system_field_non_matching_option_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """make-system-field-types-editable: the same retyped field rejects a
+    submission that doesn't match any of its currently configured
+    options, mirroring the existing `idProofType`/`vehicleType`
+    unknown-option rejection."""
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        field_key="purpose_of_visit",
+        field_type="dropdown_select",
+        options=["Meeting", "Delivery", "Interview"],
+    )
+
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "Sightseeing"
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_system_field_still_default_type_accepts_free_text(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """make-system-field-types-editable: a system field left at its
+    default (non-option-bearing) type is validated as ordinary free text,
+    unaffected by this change — any non-empty string within the existing
+    length limit is accepted."""
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "Sightseeing and general curiosity"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
 
 
 async def test_create_invitation_invalid_carried_item_category_rejected(
@@ -8129,6 +8255,7 @@ async def _create_and_publish_custom_field(
     field_type: str = "text",
     is_required: bool = False,
     options: list[str] | None = None,
+    help_text: str | None = None,
 ) -> dict:
     """Admin-side setup: creates a new admin-authored field on `step_key`
     and publishes the branch's scope so `create_invitation` reads it.
@@ -8143,6 +8270,8 @@ async def _create_and_publish_custom_field(
         body["isRequired"] = True
     if options is not None:
         body["options"] = options
+    if help_text is not None:
+        body["helpText"] = help_text
     create_response = await client.post(
         f"/api/v1/form-builder/steps/{step['id']}/fields", json=body, headers=headers
     )
@@ -8151,6 +8280,45 @@ async def _create_and_publish_custom_field(
     publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
     assert publish_response.status_code == 200, publish_response.text
     return create_response.json()["data"]
+
+
+async def _update_and_publish_field_options(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    field_key: str,
+    options: list[str],
+    field_type: str | None = None,
+) -> dict:
+    """Admin-side setup: sets an existing (e.g. system-seeded) field's
+    options (and, optionally, its `field_type`) and publishes the
+    branch's scope so `create_invitation` reads it — used for
+    `id_proof_type`/`vehicle_type` (make-id-proof-and-vehicle-type-
+    configurable), whose options are editable even though the field
+    itself was seeded, not admin-created; `field_type` additionally
+    supports retyping a system field that isn't option-bearing by default
+    (e.g. "Purpose of Visit") to `dropdown_select`/`checkbox_list`
+    (make-system-field-types-editable).
+    """
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    fields_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert fields_response.status_code == 200, fields_response.text
+    step = next(s for s in fields_response.json()["data"] if s["key"] == step_key)
+    field = next(f for f in step["fields"] if f["key"] == field_key)
+
+    body: dict[str, Any] = {"options": options}
+    if field_type is not None:
+        body["fieldType"] = field_type
+    update_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field['id']}", json=body, headers=headers
+    )
+    assert update_response.status_code == 200, update_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    return update_response.json()["data"]
 
 
 async def test_create_invitation_captures_primary_contact_custom_field(
@@ -8269,6 +8437,30 @@ async def test_create_invitation_custom_field_missing_required_rejected(
     payload = _individual_payload()
     response = await _create_invitation(client, token, branch, payload=payload)
     assert response.status_code == 422
+
+
+async def test_create_invitation_static_text_field_needs_no_submitted_value(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/form-builder/spec.md (delta) "A `static_text` Field Renders
+    Admin-Authored Content With No Input Control" — a `static_text` field
+    (e.g. a Terms & Conditions block admin-authored on Visit Details)
+    collects no answer, so an invitation created without any submitted
+    value for its key must still succeed."""
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        key="visit_notice",
+        field_type="static_text",
+        help_text="Please arrive 10 minutes early.",
+    )
+
+    payload = _individual_payload()
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
 
 
 async def test_create_invitation_seeded_carried_items_field_unaffected_by_custom_field(

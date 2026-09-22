@@ -75,6 +75,76 @@ def allowed_carried_item_keys(effective_form: list[dict[str, Any]]) -> set[str]:
     return set(field["options"])
 
 
+def _find_field_by_key(
+    effective_form: list[dict[str, Any]], field_key: str
+) -> dict[str, Any] | None:
+    """Unlike `_find_field`, not scoped to one step — safe because a field
+    key is unique across a branch's entire active form (specs/form-builder/
+    spec.md "A Custom Field's Key Is Unique Across a Branch's Entire Active
+    Form"), so every caller here can look a system field up by key alone.
+    """
+    for step in effective_form:
+        field = next((f for f in step["fields"] if f["key"] == field_key), None)
+        if field is not None:
+            return field
+    return None
+
+
+_OPTION_BEARING_FIELD_TYPES = frozenset({"dropdown_select", "checkbox_list"})
+
+
+def allowed_options_for_system_field(
+    effective_form: list[dict[str, Any]], field_key: str
+) -> list[str] | None:
+    """specs/invitations/spec.md (delta) "A Retyped System Field's
+    Submitted Value Is Validated Against Its Currently Configured Type"
+    (make-system-field-types-editable) — generalizes what were
+    `allowed_id_proof_types`/`allowed_vehicle_types` to every system field
+    Form Builder allows to be retyped.
+
+    Three distinct outcomes, not two:
+    - The field isn't part of the branch's active configuration at all:
+      `[]` — nothing is a valid value (matches the pre-existing behavior
+      for a deactivated/absent `id_proof_type`/`vehicle_type`).
+    - The field is active but its *currently configured* type isn't
+      option-bearing (`dropdown_select`/`checkbox_list`) — e.g. an admin
+      retyped "Purpose of Visit" back to plain `text`: `None` — no options
+      constraint applies; the caller should fall back to ordinary
+      free-text validation instead of rejecting every value.
+    - The field is active and option-bearing: its currently published
+      `options` list (possibly empty, though publish validation prevents
+      that for any field not exempted via `_EXTERNALLY_CATALOGED_FIELD_KEYS`).
+    """
+    field = _find_field_by_key(effective_form, field_key)
+    if field is None:
+        return []
+    if field["fieldType"] not in _OPTION_BEARING_FIELD_TYPES:
+        return None
+    return list(field.get("options") or [])
+
+
+def allowed_id_proof_types(effective_form: list[dict[str, Any]]) -> set[str] | None:
+    """Thin wrapper over `allowed_options_for_system_field` — see
+    specs/invitations/spec.md (delta) "Every Visitor Has a Reachable
+    Contact and a Validated ID Proof". `None` means the field is currently
+    configured as a non-option-bearing type: the caller should skip the
+    allow-list check entirely rather than treat it as "nothing is valid".
+    """
+    options = allowed_options_for_system_field(effective_form, "id_proof_type")
+    return None if options is None else set(options)
+
+
+def allowed_vehicle_types(effective_form: list[dict[str, Any]]) -> set[str] | None:
+    """Thin wrapper over `allowed_options_for_system_field` — see
+    specs/invitations/spec.md (delta) "Carried Items and Vehicles Are
+    Optional Structured Declarations". `None` means the field is currently
+    configured as a non-option-bearing type: the caller should skip the
+    allow-list check entirely rather than treat it as "nothing is valid".
+    """
+    options = allowed_options_for_system_field(effective_form, "vehicle_type")
+    return None if options is None else set(options)
+
+
 # --- Admin-authored custom fields (add-generic-custom-field-support) -------
 #
 # `isSystem` is what distinguishes a step's seeded fields (full name, email,

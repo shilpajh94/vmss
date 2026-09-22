@@ -1,4 +1,3 @@
-import json
 import uuid
 from typing import Annotated
 
@@ -19,8 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.core.config import settings
+from vmss_api.core.idempotency import cache_response as _core_cache_response
+from vmss_api.core.idempotency import cached_response as _core_cached_response
 from vmss_api.core.rate_limit import limiter
-from vmss_api.core.redis import get_redis
 from vmss_api.core.responses import error_response, success_response
 from vmss_api.core.schemas import Envelope
 from vmss_api.invitations import service as invitations_service
@@ -41,16 +41,10 @@ from vmss_api.registrations.schemas import WalkInRegistrationCreate, WalkInRegis
 
 router = APIRouter(prefix="/registrations", tags=["registrations"])
 
-_IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
-
 # Byte-for-byte the same contract `POST /invitations` documents (design.md
 # Decision 2) — reused rather than restated so the two endpoints' docs can
 # never drift apart the way two hand-maintained copies eventually would.
 _PAYLOAD_DESCRIPTION = _INVITATION_PAYLOAD_DESCRIPTION
-
-
-def _idempotency_cache_key(tenant_id: uuid.UUID, idempotency_key: str) -> str:
-    return f"vmss:{tenant_id}:registrations:idempotency:{idempotency_key}"
 
 
 async def _cached_response(
@@ -60,27 +54,13 @@ async def _cached_response(
     submission with the same `Idempotency-Key` gets the original response
     back instead of creating a second registration.
     """
-    if idempotency_key is None:
-        return None
-    redis = await get_redis()
-    cached = await redis.get(_idempotency_cache_key(tenant_id, idempotency_key))
-    if cached is None:
-        return None
-    payload = json.loads(cached)
-    return JSONResponse(content=payload["body"], status_code=payload["status"])
+    return await _core_cached_response(tenant_id, "registrations", idempotency_key)
 
 
 async def _cache_response(
     tenant_id: uuid.UUID, idempotency_key: str | None, response: JSONResponse
 ) -> None:
-    if idempotency_key is None:
-        return
-    redis = await get_redis()
-    await redis.set(
-        _idempotency_cache_key(tenant_id, idempotency_key),
-        json.dumps({"status": response.status_code, "body": json.loads(bytes(response.body))}),
-        ex=_IDEMPOTENCY_TTL_SECONDS,
-    )
+    await _core_cache_response(tenant_id, "registrations", idempotency_key, response)
 
 
 @router.post(

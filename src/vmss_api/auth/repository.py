@@ -203,13 +203,28 @@ class UserRepository(TenantScopedRepository[User]):
         items = list((await self.session.execute(stmt)).scalars().all())
         return items, total
 
+    async def holds_role_at_branch(
+        self, user_id: uuid.UUID, role_id: uuid.UUID, branch_id: uuid.UUID
+    ) -> bool:
+        """Does `user_id` hold `role_id` via a `UserBranchRole` scoped to
+        `branch_id`, or company-wide (`branch_id IS NULL`)? The single-user
+        counterpart of `list_user_ids_holding_role_at_branch` below — used by
+        `approvals/service.py::_caller_matches_step` to check whether the
+        caller matches a role-identified approval step.
+        """
+        stmt = select(UserBranchRole.id).where(
+            UserBranchRole.user_id == user_id,
+            UserBranchRole.role_id == role_id,
+            (UserBranchRole.branch_id == branch_id) | (UserBranchRole.branch_id.is_(None)),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none() is not None
+
     async def list_user_ids_holding_role_at_branch(
         self, role_id: uuid.UUID, branch_id: uuid.UUID
     ) -> list[uuid.UUID]:
         """Every user holding `role_id` via a `UserBranchRole` scoped to
         `branch_id`, or company-wide (`branch_id IS NULL`) — the fan-out
-        counterpart of `approvals/service.py::_user_holds_role_at_branch`'s
-        single-user check, added for
+        counterpart of `holds_role_at_branch` above, added for
         add-invitation-push-notifications/design.md Decision 3 (push
         dispatch to "every user holding this step's role at this branch").
         """

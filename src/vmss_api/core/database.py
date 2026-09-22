@@ -172,6 +172,39 @@ class TenantScopedRepository[ModelT: _SoftDeletableModel]:
         items = list((await self.session.execute(stmt)).scalars().all())
         return items, total
 
+    async def paginate_with_joins(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        order_by: Any,
+        joins: Sequence[tuple[Any, Any]],
+        filters: Sequence[Any] = (),
+    ) -> tuple[list[ModelT], int]:
+        """Same count+page shape as `paginate`, for the `list_page` methods
+        that need to join to another table to express their caller's
+        authorized scope (e.g. `Floor`/`ReceptionDesk` have no `branch_id`
+        of their own — `FloorRepository.list_page` joins to `Building` to
+        filter by branch). `joins` is `(target, onclause)` pairs applied via
+        `.join()`, in order, to both the count and page queries.
+        """
+        count_stmt = select(func.count()).select_from(self.model)
+        stmt = select(self.model)
+        for target, onclause in joins:
+            count_stmt = count_stmt.join(target, onclause)
+            stmt = stmt.join(target, onclause)
+        conditions = (self.model.deleted_at.is_(None), *filters)
+        count_stmt = count_stmt.where(*conditions)
+        stmt = (
+            stmt.where(*conditions)
+            .order_by(order_by)
+            .limit(page_size)
+            .offset((page - 1) * page_size)
+        )
+        total = (await self.session.execute(count_stmt)).scalar_one()
+        items = list((await self.session.execute(stmt)).scalars().all())
+        return items, total
+
     async def list(self, *, limit: int = 50, offset: int = 0) -> list[ModelT]:
         stmt = select(self.model).where(self.model.deleted_at.is_(None)).limit(limit).offset(offset)
         return list((await self.session.execute(stmt)).scalars().all())

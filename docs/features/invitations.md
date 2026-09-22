@@ -115,6 +115,40 @@ reception, after triage) knows the actual answer. `purposeOfVisit` and
 `expectedDuration` remain required free-text fields; only `departmentToVisit`
 changed.
 
+### ID proof type and vehicle type are branch-configured, not fixed (`make-id-proof-and-vehicle-type-configurable`, **BREAKING**)
+
+`idProofType` (`primaryContact`/each `visitors[]` entry) and `vehicleType`
+(each `vehicles[]` entry) are plain strings, not a fixed server-side enum —
+a valid value is whatever the calling branch's currently published Form
+Builder "ID Proof Type"/"Vehicle Type" options declare
+(`GET /form-builder/effective`'s Visitor Info/Vehicle Info steps), the same
+"branch's currently configured options" contract `carriedItems.items` and
+`consents` already use. Submitting a value outside the branch's current
+options is rejected with `422`. A branch that has never customized either
+field accepts the original four ID proof types
+(`Aadhaar Card`/`Passport`/`Driving License`/`Other`) and three vehicle
+types (`2_wheeler`/`4_wheeler`/`heavy`) unchanged — those are the seeded
+defaults, not special-cased in code. See `docs/features/form_builder.md`
+for how an admin edits these two fields' options.
+
+### Retyped system fields and submission validation (`make-system-field-types-editable`)
+
+`fullName` (`primaryContact`/each `visitors[]` entry), `purposeOfVisit`,
+`departmentToVisit`, `expectedDuration`, `additionalNotes`
+(`visitDetails`), and `licensePlate` (each `vehicles[]` entry) can now
+also be retyped through Form Builder (see `docs/features/form_builder.md`
+"Changing an existing field's type"), extending the same dynamic
+validation `idProofType`/`vehicleType` already use: when a field's
+*currently configured* type is `dropdown_select`/`checkbox_list`, a
+submitted value must match one of the branch's currently published
+options for that field, rejected with `422` otherwise. When it's still
+its default (non-option-bearing) type, the submitted value is validated
+as ordinary free text, unchanged from before this change. `hostNameOrEmail`
+is not covered by this — its submitted value is always discarded (see
+"`hostId`/`hostNameOrEmail` are no longer resolved at creation" above), so
+there is nothing to validate regardless of how its Form Builder field is
+typed.
+
 ### Primary contact profile photo (`checkin-approval-workflow-improvements`, now mandatory per `require-primary-contact-photo`)
 
 Alongside each visitor's required ID-proof upload, `POST /invitations`

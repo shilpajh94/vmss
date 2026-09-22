@@ -3,12 +3,11 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from fastapi import HTTPException, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
-from vmss_api.auth.models import User, UserBranchRole
+from vmss_api.auth.models import User
 from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
 from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.invitations import push_notifications, tasks
@@ -34,12 +33,7 @@ async def _user_holds_role_at_branch(
     feature needed "does this user hold *this specific role*" as opposed to
     "does this user hold *some role granting this permission*".
     """
-    stmt = select(UserBranchRole.id).where(
-        UserBranchRole.user_id == user_id,
-        UserBranchRole.role_id == role_id,
-        (UserBranchRole.branch_id == branch_id) | (UserBranchRole.branch_id.is_(None)),
-    )
-    return (await tenant_db.execute(stmt)).scalar_one_or_none() is not None
+    return await UserRepository(tenant_db).holds_role_at_branch(user_id, role_id, branch_id)
 
 
 async def _caller_matches_step(

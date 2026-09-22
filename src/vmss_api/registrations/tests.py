@@ -187,6 +187,7 @@ async def _create_and_publish_custom_field(
     key: str,
     field_type: str = "text",
     is_required: bool = False,
+    help_text: str | None = None,
 ) -> None:
     """Admin-side setup shared by the custom-field tests below — same
     pattern as `invitations/tests.py::_create_and_publish_custom_field`,
@@ -200,6 +201,8 @@ async def _create_and_publish_custom_field(
     body: dict = {"key": key, "label": key.replace("_", " ").title(), "fieldType": field_type}
     if is_required:
         body["isRequired"] = True
+    if help_text is not None:
+        body["helpText"] = help_text
     create_response = await client.post(
         f"/api/v1/form-builder/steps/{step['id']}/fields", json=body, headers=headers
     )
@@ -863,6 +866,35 @@ async def test_walk_in_registration_custom_field_unknown_key_rejected(
     payload["customFieldValues"] = {"not_a_configured_field": "x"}
     response = await _create_walk_in(client, registration_device_raw_key, payload=payload)
     assert response.status_code == 422
+
+
+async def test_walk_in_registration_static_text_field_needs_no_submitted_value(
+    client: AsyncClient,
+    user: User,
+    registration_device_raw_key: str,
+    branch: Branch,
+) -> None:
+    """add-static-text-field-and-unlock-toggle: confirms the walk-in path
+    resolves the exact same effective form `create_invitation` does (both
+    call the identical `resolve_effective_form`) — a `static_text` field
+    collects no answer, so a walk-in submission with no value for its key
+    still succeeds, same as `invitations/tests.py::
+    test_create_invitation_static_text_field_needs_no_submitted_value`."""
+    admin_token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client,
+        admin_token,
+        branch,
+        step_key="visit_details",
+        key="visit_notice",
+        field_type="static_text",
+        help_text="Please arrive 10 minutes early.",
+    )
+
+    data = await _create_walk_in_success(
+        client, registration_device_raw_key, payload=_individual_payload()
+    )
+    assert data["trackingId"].startswith("INV-")
 
 
 # --- fix-registration-host-role-crash: default-host-role failure mode ------

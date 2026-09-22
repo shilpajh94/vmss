@@ -23,6 +23,7 @@ class FormFieldType(StrEnum):
     dynamic_table = "dynamic_table"
     rich_text_block = "rich_text_block"
     signature_pad = "signature_pad"
+    static_text = "static_text"
 
 
 # Field types whose value is meaningless without a declared option set — see
@@ -90,11 +91,21 @@ class FormFieldCreate(CamelModel):
             raise ValueError(f"A '{self.field_type}' field must declare a non-empty 'options' list")
         return self
 
+    @model_validator(mode="after")
+    def _check_static_text(self) -> Self:
+        if self.field_type == FormFieldType.static_text:
+            if self.is_required:
+                raise ValueError("A 'static_text' field cannot be required — it collects no value")
+            if not self.help_text or not self.help_text.strip():
+                raise ValueError("A 'static_text' field must declare non-empty 'helpText' content")
+        return self
+
 
 class FormFieldUpdate(CamelModel):
     label: str | None = Field(default=None, max_length=255)
     placeholder: str | None = Field(default=None, max_length=255)
     help_text: str | None = Field(default=None, max_length=500)
+    field_type: FormFieldType | None = None
     is_active: bool | None = None
     is_required: bool | None = None
     options: list[Annotated[str, Field(max_length=100)]] | None = Field(default=None, max_length=50)

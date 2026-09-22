@@ -23,8 +23,9 @@ from vmss_api.auth.audit import record_audit_log
 from vmss_api.auth.models import User
 from vmss_api.core.config import settings
 from vmss_api.core.deps import get_current_user, get_pagination, get_tenant, get_tenant_db
+from vmss_api.core.idempotency import cache_response as _core_cache_response
+from vmss_api.core.idempotency import cached_response as _core_cached_response
 from vmss_api.core.rate_limit import limiter
-from vmss_api.core.redis import get_redis
 from vmss_api.core.responses import (
     error_response,
     paginated_response,
@@ -76,7 +77,6 @@ from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/invitations", tags=["invitations"])
 
-_IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
 # Module-level singleton (ruff B008: a `File(...)` call as a literal argument
 # default is flagged the same as a mutable literal default) — an
 # `individual` registration simply sends no files under this field name.
@@ -657,10 +657,6 @@ async def _to_badge_out(invitation) -> BadgeOut:
     )
 
 
-def _idempotency_cache_key(tenant_id: uuid.UUID, idempotency_key: str) -> str:
-    return f"vmss:{tenant_id}:invitations:idempotency:{idempotency_key}"
-
-
 async def _cached_response(
     tenant_id: uuid.UUID, idempotency_key: str | None
 ) -> JSONResponse | None:
@@ -669,27 +665,13 @@ async def _cached_response(
     (which would otherwise create duplicate visitor rows and send a second
     confirmation email).
     """
-    if idempotency_key is None:
-        return None
-    redis = await get_redis()
-    cached = await redis.get(_idempotency_cache_key(tenant_id, idempotency_key))
-    if cached is None:
-        return None
-    payload = json.loads(cached)
-    return JSONResponse(content=payload["body"], status_code=payload["status"])
+    return await _core_cached_response(tenant_id, "invitations", idempotency_key)
 
 
 async def _cache_response(
     tenant_id: uuid.UUID, idempotency_key: str | None, response: JSONResponse
 ) -> None:
-    if idempotency_key is None:
-        return
-    redis = await get_redis()
-    await redis.set(
-        _idempotency_cache_key(tenant_id, idempotency_key),
-        json.dumps({"status": response.status_code, "body": json.loads(bytes(response.body))}),
-        ex=_IDEMPOTENCY_TTL_SECONDS,
-    )
+    await _core_cache_response(tenant_id, "invitations", idempotency_key, response)
 
 
 # --- API-09: employee creates a fully completed invitation ------------------

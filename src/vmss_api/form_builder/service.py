@@ -17,6 +17,7 @@ from vmss_api.form_builder.repository import (
 from vmss_api.form_builder.schemas import (
     OPTION_REQUIRED_TYPES,
     FormFieldCreate,
+    FormFieldType,
     FormFieldUpdate,
     FormStepCreate,
     FormStepUpdate,
@@ -209,15 +210,10 @@ async def list_fields_for_steps(
     """One query for every step's fields (query-performance.md §2), grouped
     by `step_id` — not a per-step call in a loop.
     """
-    field_repo = FormFieldRepository(tenant_db)
     fields_by_step: dict[uuid.UUID, list[FormField]] = {step.id: [] for step in steps}
-    for step in steps:
-        # list_for_step is already a single indexed query per step id; batched
-        # via one IN-query instead when the step count can grow beyond a
-        # handful (branches rarely exceed a dozen steps, so this stays a
-        # bounded, non-N+1-in-practice loop over a short list — see
-        # `FormFieldRepository.list_for_step`).
-        fields_by_step[step.id] = await field_repo.list_for_step(step.id)
+    all_fields = await FormFieldRepository(tenant_db).list_for_steps([step.id for step in steps])
+    for field in all_fields:
+        fields_by_step[field.step_id].append(field)
     return fields_by_step
 
 
@@ -425,27 +421,112 @@ async def create_field(
     return field_row
 
 
+# System-seeded field keys whose value is consumed elsewhere as a specific
+# structured type, not just rendered as form input, so their `field_type`
+# stays fixed regardless of lock state: `email`/`phone`/
+# `preferred_contact_method` back notification dispatch's deliverable
+# address/channel (`invitations/schemas.py::_require_reachable_contact`/
+# `_require_contact_for_method`); `registration_type` is a real enum and
+# `list_invitations` filter column; `preferred_visit_date`/
+# `preferred_visit_time` are real `Date`/`Time` DB columns consumed by
+# overstay detection and the emergency report; `id_proof_upload`/
+# `profile_photo` feed the file storage/PII pipeline;
+# `visitor_category`'s real options come from the separate Visitor
+# Category catalog (`_EXTERNALLY_CATALOGED_FIELD_KEYS`), not a `field_type`
+# it makes sense to change. Every other system field is a plain string
+# column with no such cross-cutting consumer, so its type is editable.
+_TYPE_LOCKED_SYSTEM_FIELD_KEYS = frozenset(
+    {
+        "registration_type",
+        "email",
+        "phone",
+        "preferred_contact_method",
+        "visitor_category",
+        "id_proof_upload",
+        "profile_photo",
+        "preferred_visit_date",
+        "preferred_visit_time",
+    }
+)
+
+
 async def update_field(
     tenant_db: AsyncSession, field_id: uuid.UUID, payload: FormFieldUpdate
 ) -> FormField:
     field_row = await get_field(tenant_db, field_id)
     changes = payload.model_dump(exclude_unset=True)
 
+    # Compares against an actual attempted transition, not merely whether
+    # the key is present — the admin UI's save payload always resends every
+    # property it manages (matching every other field's existing values
+    # when untouched), so treating mere presence as "a change" would reject
+    # an unrelated save (e.g. a label edit) on any already-`False`/already-
+    # unchanged property purely because the frontend re-sent its current
+    # value alongside it.
     if field_row.is_locked and (
-        changes.get("is_active") is False or changes.get("is_required") is False
+        (changes.get("is_active") is False and field_row.is_active)
+        or (changes.get("is_required") is False and field_row.is_required)
     ):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A locked field's active/required state cannot be changed",
         )
 
-    if "options" in changes:
-        new_options = changes["options"]
-        if _requires_static_options(field_row) and not new_options:
+    if (
+        "field_type" in changes
+        and field_row.key in _TYPE_LOCKED_SYSTEM_FIELD_KEYS
+        and changes["field_type"] != field_row.field_type
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="This field's type cannot be changed",
+        )
+
+    # Re-run field-creation's type-dependent checks against what this
+    # field's type/required/help_text/options will be *after* this update
+    # is applied — the payload's value where provided, the existing row's
+    # value otherwise — not just the row's current, pre-update state.
+    resulting_type = changes.get("field_type", field_row.field_type)
+    resulting_is_required = changes.get("is_required", field_row.is_required)
+    resulting_help_text = changes.get("help_text", field_row.help_text)
+    resulting_options = changes.get("options", field_row.options)
+
+    if resulting_type == FormFieldType.static_text:
+        if resulting_is_required:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"A '{field_row.field_type}' field must declare a non-empty 'options' list",
+                detail="A 'static_text' field cannot be required — it collects no value",
             )
+        if not resulting_help_text or not resulting_help_text.strip():
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="A 'static_text' field must declare non-empty 'helpText' content",
+            )
+
+    field_type_changing = "field_type" in changes and changes["field_type"] != field_row.field_type
+    resulting_needs_options = (
+        resulting_type in OPTION_REQUIRED_TYPES
+        and field_row.key not in _EXTERNALLY_CATALOGED_FIELD_KEYS
+    )
+    if resulting_needs_options and not resulting_options:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"A '{resulting_type}' field must declare a non-empty 'options' list",
+        )
+
+    if (
+        field_type_changing
+        and resulting_type not in OPTION_REQUIRED_TYPES
+        and "options" not in changes
+    ):
+        changes["options"] = None
+
+    if field_type_changing:
+        # `model_dump(exclude_unset=True)` keeps the Pydantic-typed enum
+        # member (`FormFieldType`), not a plain string — normalize before
+        # assigning to the column, matching `create_field`'s
+        # `payload.field_type.value`.
+        changes["field_type"] = changes["field_type"].value
 
     if "visibility_condition" in changes:
         fields_by_key = await _fields_by_key_for_step(tenant_db, field_row.step_id)
@@ -509,15 +590,23 @@ async def reorder_fields(
 # --- Publish / effective form --------------------------------------------------
 
 
+# Exempt from `_requires_static_options` below — the only field whose real
+# options come from somewhere other than its own `options` column: a live,
+# separately admin-managed catalog (the `VisitorCategory` list), resolved
+# at render time. Every other system-seeded dropdown/checkbox field (e.g.
+# `id_proof_type`, `vehicle_type`) has no such external catalog — its
+# `options` *is* the source of truth for what a submission may declare
+# (make-id-proof-and-vehicle-type-configurable), so it needs the same
+# non-empty-options guarantee any admin-authored field does.
+_EXTERNALLY_CATALOGED_FIELD_KEYS = frozenset({"visitor_category"})
+
+
 def _requires_static_options(field_row: FormField) -> bool:
-    """`is_system` fields opt out: a seeded system field like `visitor_info`
-    /`visitor_category` is a `dropdown_select` whose real options come from
-    a live catalog (the `VisitorCategory` list) resolved at render time, not
-    from this row's own `options` — the option-required rule exists for
-    admin-authored fields, where an empty `options` really would mean an
-    unusable input.
+    """See `_EXTERNALLY_CATALOGED_FIELD_KEYS` — every option-required field
+    needs non-empty `options` except the one whose real options come from
+    somewhere else entirely.
     """
-    return not field_row.is_system and field_row.field_type in {
+    return field_row.key not in _EXTERNALLY_CATALOGED_FIELD_KEYS and field_row.field_type in {
         t.value for t in OPTION_REQUIRED_TYPES
     }
 
