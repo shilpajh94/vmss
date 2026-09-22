@@ -7,14 +7,8 @@ import { TextField } from '../../../../components/ui/TextField'
 import type { FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
 
-const VEHICLE_TYPE_OPTIONS = [
-  { value: '2_wheeler', label: '2 Wheeler' },
-  { value: '4_wheeler', label: '4 Wheeler' },
-  { value: 'heavy', label: 'Heavy' },
-]
-
-function createEmptyVehicle(): Vehicle {
-  return { vehicleType: '2_wheeler', licensePlate: '', makeModel: '', color: '', customFieldValues: {} }
+function createEmptyVehicle(vehicleTypeOptions: string[]): Vehicle {
+  return { vehicleType: vehicleTypeOptions[0] ?? '', licensePlate: '', makeModel: '', color: '', customFieldValues: {} }
 }
 
 export interface VehicleInfoFieldState {
@@ -22,6 +16,10 @@ export interface VehicleInfoFieldState {
   makeModelRequired: boolean
   colorActive: boolean
   colorRequired: boolean
+  /** Branch-configured (form-builder) Vehicle Type choices — the field's
+   * own `options`, not a fixed set
+   * (make-id-proof-and-vehicle-type-configurable). */
+  vehicleTypeOptions: string[]
 }
 
 interface VehicleInfoStepProps {
@@ -47,7 +45,7 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
   const startAddVehicle = () => {
     setEditingIndex(null)
     setDraftErrors({})
-    setDraftVehicle(createEmptyVehicle())
+    setDraftVehicle(createEmptyVehicle(vehicleInfoFields.vehicleTypeOptions))
   }
 
   const startEditVehicle = (index: number) => {
@@ -126,7 +124,7 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
               {vehicles.map((vehicle, index) => (
                 <tr key={index} className="border-t border-border-subtle text-text">
                   <td className="px-4 py-2">{index + 1}</td>
-                  <td className="px-4 py-2">{VEHICLE_TYPE_OPTIONS.find((option) => option.value === vehicle.vehicleType)?.label}</td>
+                  <td className="px-4 py-2">{vehicle.vehicleType}</td>
                   <td className="px-4 py-2">{vehicle.licensePlate}</td>
                   <td className="px-4 py-2">{vehicle.makeModel}</td>
                   <td className="px-4 py-2">{vehicle.color}</td>
@@ -156,9 +154,9 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
           <div className="flex flex-col gap-1.5">
             <span className="text-body font-medium text-text">Vehicle Type</span>
             <SegmentedToggle
-              options={VEHICLE_TYPE_OPTIONS}
+              options={vehicleInfoFields.vehicleTypeOptions.map((option) => ({ value: option, label: option }))}
               value={draftVehicle.vehicleType}
-              onChange={(vehicleType) => setDraftVehicle({ ...draftVehicle, vehicleType: vehicleType as Vehicle['vehicleType'] })}
+              onChange={(vehicleType) => setDraftVehicle({ ...draftVehicle, vehicleType })}
               variant="pill"
             />
           </div>

@@ -1,6 +1,6 @@
 import z from 'zod'
 
-// Mirrors `form_builder/schemas.py::FormFieldType` (VMSS_API) — the 14
+// Mirrors `form_builder/schemas.py::FormFieldType` (VMSS_API) — the 15
 // supported field types a step's fields can be.
 export const FormFieldTypeSchema = z.enum([
   'text',
@@ -17,6 +17,7 @@ export const FormFieldTypeSchema = z.enum([
   'dynamic_table',
   'rich_text_block',
   'signature_pad',
+  'static_text',
 ])
 export type FormFieldType = z.infer<typeof FormFieldTypeSchema>
 
@@ -143,6 +144,7 @@ export interface FormFieldCreateInput {
 }
 
 export interface FormFieldUpdateInput {
+  fieldType?: FormFieldType
   label?: string
   placeholder?: string
   helpText?: string

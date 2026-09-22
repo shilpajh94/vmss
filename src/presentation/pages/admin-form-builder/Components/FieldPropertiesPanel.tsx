@@ -2,15 +2,23 @@ import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type D
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useEffect, useState } from 'react'
-import { GridIcon, PlusIcon, XIcon } from '../../../components/icons'
+import { GridIcon, LockIcon, PlusIcon, UnlockIcon, XIcon } from '../../../components/icons'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
 import { TextareaField } from '../../../components/ui/TextareaField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
-import { OPTION_REQUIRED_FIELD_TYPES, fieldTypeLabel } from '../field-type-catalog'
+import {
+  CONTENT_ONLY_FIELD_TYPES,
+  FIELD_TYPE_CATALOG,
+  OPTION_REQUIRED_FIELD_TYPES,
+  TYPE_LOCKED_SYSTEM_FIELD_KEYS,
+  fieldTypeLabel,
+  typeLockedFieldReason,
+} from '../field-type-catalog'
 import type {
   ConditionOperator,
   FormField,
+  FormFieldType,
   FormFieldUpdateInput,
 } from '../../../../domain/entities/form-builder-schema'
 
@@ -31,9 +39,9 @@ function toOptionDraftRows(options: string[] | null): OptionDraftRow[] {
   return (options ?? []).map((value) => ({ id: crypto.randomUUID(), value }))
 }
 
-function optionsEditorIsShown(field: FormField): boolean {
-  if (OPTION_REQUIRED_FIELD_TYPES.includes(field.fieldType)) return true
-  return field.fieldType === 'toggle_switch' && field.options !== null
+function optionsEditorIsShown(fieldType: FormFieldType, originalOptions: string[] | null): boolean {
+  if (OPTION_REQUIRED_FIELD_TYPES.includes(fieldType)) return true
+  return fieldType === 'toggle_switch' && originalOptions !== null
 }
 
 interface OptionRowProps {
@@ -81,6 +89,7 @@ function OptionRow({ row, disabled, onChange, onRemove }: OptionRowProps) {
 }
 
 export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldPropertiesPanelProps) {
+  const [fieldType, setFieldType] = useState<FormFieldType>(field.fieldType)
   const [label, setLabel] = useState(field.label)
   const [placeholder, setPlaceholder] = useState(field.placeholder ?? '')
   const [description, setDescription] = useState(field.helpText ?? '')
@@ -96,9 +105,22 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
   const [width, setWidth] = useState(field.width)
   const [optionRows, setOptionRows] = useState<OptionDraftRow[]>(() => toOptionDraftRows(field.options))
   const [saveError, setSaveError] = useState<string | undefined>(undefined)
+  // Session-scoped only — never persisted, never sent to the backend. A
+  // locked field's `isLocked` never changes; this just lifts the frontend's
+  // own disabled-input guard for label/placeholder/description/options
+  // while the admin is actively editing this field.
+  const [isUnlockedForEditing, setIsUnlockedForEditing] = useState(false)
 
   const optionSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
-  const showOptionsEditor = optionsEditorIsShown(field)
+  const showOptionsEditor = optionsEditorIsShown(fieldType, field.options)
+  const isContentOnly = CONTENT_ONLY_FIELD_TYPES.includes(fieldType)
+  const editableFieldsDisabled = field.isLocked && !isUnlockedForEditing
+  // A locked, retypeable field's Field Type control joins the same
+  // unlock gate as Label/Placeholder/Description/Options; a
+  // TYPE_LOCKED_SYSTEM_FIELD_KEYS field stays disabled regardless of
+  // lock/unlock state — its type isn't offered as editable at all.
+  const isTypeLockedField = TYPE_LOCKED_SYSTEM_FIELD_KEYS.has(field.key)
+  const fieldTypeDisabled = isTypeLockedField || editableFieldsDisabled
 
   // Deliberately keyed on `field.id`, not `field` itself: the parent page's
   // 15s background poll (`usePolling` in `use-admin-form-builder-step-editor.ts`)
@@ -109,6 +131,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
   // different id) is the correct trigger: a background refresh of the same
   // field's unchanged data should never clobber an in-progress edit.
   useEffect(() => {
+    setFieldType(field.fieldType)
     setLabel(field.label)
     setPlaceholder(field.placeholder ?? '')
     setDescription(field.helpText ?? '')
@@ -122,10 +145,12 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
     setWidth(field.width)
     setOptionRows(toOptionDraftRows(field.options))
     setSaveError(undefined)
+    setIsUnlockedForEditing(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [field.id])
 
   const reset = () => {
+    setFieldType(field.fieldType)
     setLabel(field.label)
     setPlaceholder(field.placeholder ?? '')
     setDescription(field.helpText ?? '')
@@ -139,6 +164,11 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
     setWidth(field.width)
     setOptionRows(toOptionDraftRows(field.options))
     setSaveError(undefined)
+  }
+
+  const relock = () => {
+    reset()
+    setIsUnlockedForEditing(false)
   }
 
   const updateOptionValue = (id: string, value: string) => {
@@ -173,10 +203,11 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
 
     setSaveError(undefined)
     const errorMessage = await onSave({
+      fieldType,
       label: label.trim(),
-      placeholder: placeholder.trim() || undefined,
+      placeholder: isContentOnly ? undefined : placeholder.trim() || undefined,
       helpText: description.trim(),
-      isRequired,
+      isRequired: isContentOnly ? false : isRequired,
       isActive,
       width,
       options: showOptionsEditor
@@ -213,9 +244,18 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
           <p className="font-body text-sm text-text-muted">Configuring "{field.label}"</p>
         </div>
         {field.isLocked ? (
-          <span className="shrink-0 rounded-full bg-neutral-subtle px-3 py-1 font-body text-[11px] font-bold tracking-wide text-text-faint uppercase">
-            Locked
-          </span>
+          <button
+            type="button"
+            onClick={() => (isUnlockedForEditing ? relock() : setIsUnlockedForEditing(true))}
+            className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 font-body text-[11px] font-bold tracking-wide uppercase ${
+              isUnlockedForEditing
+                ? 'bg-admin-accent/10 text-admin-accent'
+                : 'bg-neutral-subtle text-text-faint'
+            }`}
+          >
+            {isUnlockedForEditing ? <UnlockIcon className="size-3.5" /> : <LockIcon className="size-3.5" />}
+            {isUnlockedForEditing ? 'Lock' : 'Unlock to Edit'}
+          </button>
         ) : (
           <div className="flex shrink-0 items-center gap-2">
             <span className="font-body text-[11px] font-bold tracking-wide text-text-faint uppercase">
@@ -226,30 +266,43 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
         )}
       </div>
 
-      <TextField label="Field Label" value={label} onChange={setLabel} required disabled={field.isLocked} />
-      <TextField label="Placeholder Text" value={placeholder} onChange={setPlaceholder} disabled={field.isLocked} />
+      <TextField label={isContentOnly ? 'Title' : 'Field Label'} value={label} onChange={setLabel} required disabled={editableFieldsDisabled} />
+      {!isContentOnly && (
+        <TextField label="Placeholder Text" value={placeholder} onChange={setPlaceholder} disabled={editableFieldsDisabled} />
+      )}
       <TextareaField
-        label="Description"
+        label={isContentOnly ? 'Content' : 'Description'}
         value={description}
         onChange={setDescription}
         placeholder="Static text shown to the visitor alongside this field"
         rows={3}
-        disabled={field.isLocked}
+        disabled={editableFieldsDisabled}
       />
 
-      <SelectField
-        label="Field Type"
-        value={field.fieldType}
-        onChange={() => {}}
-        disabled
-        options={[{ value: field.fieldType, label: fieldTypeLabel(field.fieldType) }]}
-      />
+      <div>
+        <SelectField
+          label="Field Type"
+          value={fieldType}
+          onChange={(value) => setFieldType(value as FormFieldType)}
+          disabled={fieldTypeDisabled}
+          options={
+            fieldTypeDisabled
+              ? [{ value: fieldType, label: fieldTypeLabel(fieldType) }]
+              : FIELD_TYPE_CATALOG.map((entry) => ({ value: entry.type, label: entry.label }))
+          }
+        />
+        {isTypeLockedField && (
+          <p className="mt-1.5 font-body text-xs text-text-muted">{typeLockedFieldReason(field.key)}</p>
+        )}
+      </div>
 
       {showOptionsEditor && (
         <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
           <p className="font-body text-sm font-semibold text-text">Options</p>
-          {field.isLocked && (
-            <p className="font-body text-xs text-text-muted">This field is locked and its options cannot be edited.</p>
+          {editableFieldsDisabled && (
+            <p className="font-body text-xs text-text-muted">
+              This field is locked — select "Unlock to Edit" above to change its options.
+            </p>
           )}
           <DndContext sensors={optionSensors} collisionDetection={closestCenter} onDragEnd={handleOptionDragEnd}>
             <SortableContext items={optionRows.map((row) => row.id)} strategy={verticalListSortingStrategy}>
@@ -258,7 +311,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
                   <OptionRow
                     key={row.id}
                     row={row}
-                    disabled={field.isLocked}
+                    disabled={editableFieldsDisabled}
                     onChange={(value) => updateOptionValue(row.id, value)}
                     onRemove={() => removeOptionRow(row.id)}
                   />
@@ -266,7 +319,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
               </div>
             </SortableContext>
           </DndContext>
-          {!field.isLocked && (
+          {!editableFieldsDisabled && (
             <button
               type="button"
               onClick={addOptionRow}
@@ -279,17 +332,21 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
         </div>
       )}
 
-      <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
-        <p className="font-body text-sm font-semibold text-text">Validation Rules</p>
-        <ToggleSwitch checked={isRequired} onChange={setIsRequired} label="Required Field" />
-        {field.isLocked && (
-          <p className="font-body text-xs text-text-muted">This field is locked and always active/required.</p>
-        )}
-        <div className="grid grid-cols-2 gap-3">
-          <TextField label="Min Length" value={minLength} onChange={setMinLength} type="number" />
-          <TextField label="Max Length" value={maxLength} onChange={setMaxLength} type="number" />
+      {!isContentOnly && (
+        <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
+          <p className="font-body text-sm font-semibold text-text">Validation Rules</p>
+          <ToggleSwitch checked={isRequired} onChange={setIsRequired} label="Required Field" />
+          {field.isLocked && (
+            <p className="font-body text-xs text-text-muted">
+              This field's required/active state is locked and cannot be changed, even when unlocked for editing.
+            </p>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <TextField label="Min Length" value={minLength} onChange={setMinLength} type="number" />
+            <TextField label="Max Length" value={maxLength} onChange={setMaxLength} type="number" />
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
         <p className="font-body text-sm font-semibold text-text">Conditional Visibility</p>

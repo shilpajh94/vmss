@@ -36,6 +36,10 @@ function buildInitialFormState(initial?: VisitorRequestWizardInitialData): Visit
 export interface VisitorInfoFieldState {
   idProofActive: boolean
   idProofRequired: boolean
+  /** Branch-configured (form-builder) ID Proof Type choices — the
+   * field's own `options`, not a fixed set
+   * (make-id-proof-and-vehicle-type-configurable). */
+  idProofOptions: string[]
   profilePhotoActive: boolean
   profilePhotoRequired: boolean
 }
@@ -161,10 +165,12 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
   )
   const visitorInfoFields = useMemo<VisitorInfoFieldState>(() => {
     const idProofUpload = findField(effectiveFormSteps, 'visitor_info', 'id_proof_upload')
+    const idProofType = findField(effectiveFormSteps, 'visitor_info', 'id_proof_type')
     const profilePhoto = findField(effectiveFormSteps, 'visitor_info', 'profile_photo')
     return {
       idProofActive: idProofUpload !== undefined,
       idProofRequired: idProofUpload?.isRequired ?? false,
+      idProofOptions: idProofType?.options ?? [],
       profilePhotoActive: profilePhoto !== undefined,
       profilePhotoRequired: profilePhoto?.isRequired ?? false,
     }
@@ -176,11 +182,13 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
   const vehicleInfoFields = useMemo(() => {
     const makeModel = findField(effectiveFormSteps, 'vehicle_info', 'make_model')
     const color = findField(effectiveFormSteps, 'vehicle_info', 'color')
+    const vehicleType = findField(effectiveFormSteps, 'vehicle_info', 'vehicle_type')
     return {
       makeModelActive: makeModel !== undefined,
       makeModelRequired: makeModel?.isRequired ?? false,
       colorActive: color !== undefined,
       colorRequired: color?.isRequired ?? false,
+      vehicleTypeOptions: vehicleType?.options ?? [],
     }
   }, [effectiveFormSteps])
   // Admin-authored (non-system) fields per step, passed to each step's

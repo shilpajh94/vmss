@@ -2,7 +2,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GridIcon, PencilIcon, TrashIcon, XIcon } from '../../../components/icons'
 import { ExpandableText } from '../../../components/ui/ExpandableText'
-import { fieldTypeLabel } from '../field-type-catalog'
+import { CONTENT_ONLY_FIELD_TYPES, fieldTypeLabel } from '../field-type-catalog'
 import type { FormField } from '../../../../domain/entities/form-builder-schema'
 
 interface SortableFieldRowProps {
@@ -50,17 +50,19 @@ export function SortableFieldRow({ field, isSelected, onSelect, onToggleRequired
         <ExpandableText text={field.helpText} />
       </div>
 
-      <label className="flex items-center gap-2">
-        <span className="font-body text-xs font-medium text-text-muted">Required</span>
-        <input
-          type="checkbox"
-          role="switch"
-          checked={field.isRequired}
-          disabled={field.isLocked}
-          onChange={onToggleRequired}
-          className="size-4 disabled:opacity-50"
-        />
-      </label>
+      {!CONTENT_ONLY_FIELD_TYPES.includes(field.fieldType) && (
+        <label className="flex items-center gap-2">
+          <span className="font-body text-xs font-medium text-text-muted">Required</span>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={field.isRequired}
+            disabled={field.isLocked}
+            onChange={onToggleRequired}
+            className="size-4 disabled:opacity-50"
+          />
+        </label>
+      )}
 
       <button type="button" onClick={onSelect} aria-label="Edit field" className="text-text-faint hover:text-text">
         <PencilIcon className="size-4" />

@@ -7,15 +7,6 @@ import type { FormField } from '../../../../../domain/entities/form-builder-sche
 import type { VisitorInfoFieldState } from '../../hooks/use-visitor-request-wizard'
 import type { VisitorCategoriesFieldState, VisitorFormEntry } from '../../types'
 
-// Values must match the backend's `idProofType` enum for
-// POST /registrations/walk-in exactly (validated server-side against these 4 strings).
-const ID_PROOF_OPTIONS = [
-  { value: 'Aadhaar Card', label: 'Aadhaar Card' },
-  { value: 'Passport', label: 'Passport' },
-  { value: 'Driving License', label: 'Driving License' },
-  { value: 'Other', label: 'Other' },
-]
-
 const ID_PROOF_ALLOWED_TYPES = ['image/png', 'image/jpeg', 'application/pdf']
 const PROFILE_IMAGE_ALLOWED_TYPES = ['image/png', 'image/jpeg']
 
@@ -144,7 +135,7 @@ export function VisitorFieldsForm({
           <SelectField
             label="ID Proof Type"
             placeholder="Select ID type"
-            options={ID_PROOF_OPTIONS}
+            options={visitorInfoFields.idProofOptions.map((option) => ({ value: option, label: option }))}
             value={value.idProofType}
             onChange={(idProofType) => onChange({ ...value, idProofType })}
             error={errors?.idProofType}

@@ -6,7 +6,7 @@ import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visitor-request-wizard'
 import type { FormField } from '../../../../domain/entities/form-builder-schema'
 import { createEmptyStaffVisitorFormEntry, type StaffVisitorFormEntry } from '../types'
-import { ID_PROOF_ALLOWED_TYPES, ID_PROOF_OPTIONS } from './constants'
+import { ID_PROOF_ALLOWED_TYPES } from './constants'
 import { InlineFileUpload } from './InlineFileUpload'
 
 interface AddVisitorFormProps {
@@ -75,7 +75,7 @@ export function AddVisitorForm({
               <SelectField
                 label="ID Proof Type"
                 placeholder="Select ID type"
-                options={ID_PROOF_OPTIONS}
+                options={visitorInfoFields.idProofOptions.map((option) => ({ value: option, label: option }))}
                 value={draft.idProofType}
                 onChange={(idProofType) => setDraft({ ...draft, idProofType })}
               />
