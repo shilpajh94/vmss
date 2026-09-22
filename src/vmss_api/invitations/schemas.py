@@ -245,6 +245,16 @@ class InvitationCreate(CamelModel):
     custom_field_values: dict[Annotated[str, Field(max_length=100)], Any] = Field(
         default_factory=dict, max_length=50
     )
+    # Per-instance answers for any admin-defined repeatable field group on a
+    # step other than Visitor Info/Vehicle Info (add-repeatable-field-
+    # groups) — keyed by group key, an ordered list of that group's answer
+    # maps, one per submitted instance. Validated dynamically against the
+    # effective form's group definitions (min/max instance count, and each
+    # instance's own field values) in
+    # `invitations/service.py::create_invitation`, not by this schema.
+    group_values: dict[Annotated[str, Field(max_length=100)], list[dict[str, Any]]] = Field(
+        default_factory=dict, max_length=20
+    )
 
     @model_validator(mode="after")
     def _check_visitor_list_matches_registration_type(self) -> Self:
@@ -409,6 +419,7 @@ class InvitationCheckInOut(CamelModel):
     carried_items: list[str]
     carried_items_description: str | None
     custom_field_values: dict[str, Any]
+    group_field_values: dict[str, list[dict[str, Any]]]
     visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 
@@ -442,6 +453,7 @@ class InvitationTrackingOut(CamelModel):
     carried_items: list[str]
     carried_items_description: str | None
     custom_field_values: dict[str, Any]
+    group_field_values: dict[str, list[dict[str, Any]]]
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -506,6 +518,7 @@ class InvitationDetailOut(CamelModel):
     carried_items: list[str]
     carried_items_description: str | None
     custom_field_values: dict[str, Any]
+    group_field_values: dict[str, list[dict[str, Any]]]
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -637,6 +650,7 @@ class InvitationQrCheckInOut(CamelModel):
     carried_items: list[str]
     carried_items_description: str | None
     custom_field_values: dict[str, Any]
+    group_field_values: dict[str, list[dict[str, Any]]]
     submitted_at: datetime | None
     approved_at: datetime | None
     checked_in_at: datetime | None

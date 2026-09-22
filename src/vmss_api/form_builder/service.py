@@ -8,15 +8,18 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.form_builder.defaults import DEFAULT_EFFECTIVE_FORM, DEFAULT_STEP_SPECS
-from vmss_api.form_builder.models import FormConfigVersion, FormField, FormStep
+from vmss_api.form_builder.models import FormConfigVersion, FormField, FormFieldGroup, FormStep
 from vmss_api.form_builder.repository import (
     FormConfigVersionRepository,
+    FormFieldGroupRepository,
     FormFieldRepository,
     FormStepRepository,
 )
 from vmss_api.form_builder.schemas import (
     OPTION_REQUIRED_TYPES,
     FormFieldCreate,
+    FormFieldGroupCreate,
+    FormFieldGroupUpdate,
     FormFieldType,
     FormFieldUpdate,
     FormStepCreate,
@@ -68,11 +71,33 @@ async def _materialize_defaults_if_empty(
         )
         tenant_db.add(step)
         await tenant_db.flush()
+        group_ids_by_key: dict[str, uuid.UUID] = {}
+        for group_order, group_spec in enumerate(step_spec.groups):
+            group = FormFieldGroup(
+                id=uuid.uuid4(),
+                step_id=step.id,
+                branch_id=branch_id,
+                key=group_spec.key,
+                name=group_spec.name,
+                is_system=True,
+                is_locked=True,
+                is_repeatable=group_spec.is_repeatable,
+                min_instances=group_spec.min_instances,
+                max_instances=group_spec.max_instances,
+                visibility_condition=group_spec.visibility_condition,
+                order_index=group_order,
+            )
+            tenant_db.add(group)
+            await tenant_db.flush()
+            group_ids_by_key[group_spec.key] = group.id
         for field_order, field_spec in enumerate(step_spec.fields):
             tenant_db.add(
                 FormField(
                     id=uuid.uuid4(),
                     step_id=step.id,
+                    group_id=group_ids_by_key.get(field_spec.group_key)
+                    if field_spec.group_key
+                    else None,
                     key=field_spec.key,
                     label=field_spec.label,
                     placeholder=field_spec.placeholder,
@@ -110,6 +135,7 @@ async def _ensure_scope_seeded(tenant_db: AsyncSession, branch_id: uuid.UUID | N
         await _materialize_defaults_if_empty(tenant_db, branch_id=None)
         source_steps = await step_repo.list_for_scope(None)
     field_repo = FormFieldRepository(tenant_db)
+    group_repo = FormFieldGroupRepository(tenant_db)
     for source_step in source_steps:
         new_step = FormStep(
             id=uuid.uuid4(),
@@ -125,11 +151,42 @@ async def _ensure_scope_seeded(tenant_db: AsyncSession, branch_id: uuid.UUID | N
         )
         tenant_db.add(new_step)
         await tenant_db.flush()
+        new_group_ids_by_source_id: dict[uuid.UUID, uuid.UUID] = {}
+        for source_group in await group_repo.list_for_step(source_step.id):
+            new_group = FormFieldGroup(
+                id=uuid.uuid4(),
+                step_id=new_step.id,
+                branch_id=branch_id,
+                key=source_group.key,
+                name=source_group.name,
+                is_system=source_group.is_system,
+                is_locked=source_group.is_locked,
+                is_repeatable=source_group.is_repeatable,
+                min_instances=source_group.min_instances,
+                max_instances=source_group.max_instances,
+                # Dropped, not copied — same posture as a field's own
+                # `visibility_condition` a few lines below: the condition's
+                # `fieldKey` is only meaningful once matched back to a real
+                # field row on the *new* step, and cloning already forgoes
+                # that reconciliation for fields, so groups stay consistent
+                # with them rather than silently inserting an unvalidated
+                # condition via direct row construction.
+                visibility_condition=None,
+                order_index=source_group.order_index,
+            )
+            tenant_db.add(new_group)
+            await tenant_db.flush()
+            new_group_ids_by_source_id[source_group.id] = new_group.id
         for source_field in await field_repo.list_for_step(source_step.id):
             tenant_db.add(
                 FormField(
                     id=uuid.uuid4(),
                     step_id=new_step.id,
+                    group_id=(
+                        new_group_ids_by_source_id.get(source_field.group_id)
+                        if source_field.group_id
+                        else None
+                    ),
                     key=source_field.key,
                     label=source_field.label,
                     placeholder=source_field.placeholder,
@@ -368,6 +425,37 @@ def _check_visibility_condition(
         current = current_condition["fieldKey"] if current_condition else None
 
 
+def _check_group_visibility_condition(
+    fields_by_key: dict[str, FormField],
+    group_id: uuid.UUID | None,
+    condition: dict[str, Any] | None,
+) -> None:
+    """specs/form-builder/spec.md "A Field Group May Declare Conditional
+    Visibility": the referenced field must exist on the same step, and
+    must not itself be a member of the group whose condition it's on (a
+    group-level self-reference). No transitive-cycle walk is needed here
+    — nothing can reference a group's own condition, so a group can never
+    sit inside a cycle (design.md Decision 7 of
+    `add-repeatable-field-groups`). `group_id` is `None` at group-creation
+    time, when the group has no member fields yet and self-reference is
+    therefore impossible.
+    """
+    if condition is None:
+        return
+    target_key = condition["fieldKey"]
+    target_field = fields_by_key.get(target_key)
+    if target_field is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Conditional visibility must reference another field in the same step",
+        )
+    if group_id is not None and target_field.group_id == group_id:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="A group's conditional visibility cannot reference one of its own member fields",
+        )
+
+
 async def create_field(
     tenant_db: AsyncSession, step_id: uuid.UUID, payload: FormFieldCreate
 ) -> FormField:
@@ -385,6 +473,13 @@ async def create_field(
             status.HTTP_409_CONFLICT,
             detail="Field key already exists on another step of this branch's form",
         )
+    if payload.group_id is not None:
+        group = await FormFieldGroupRepository(tenant_db).get(payload.group_id)
+        if group is None or group.step_id != step_id:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="groupId must reference a group on this step",
+            )
     fields_by_key = await _fields_by_key_for_step(tenant_db, step_id)
     condition = (
         payload.visibility_condition.model_dump(mode="json", by_alias=True)
@@ -396,6 +491,7 @@ async def create_field(
     field_row = FormField(
         id=uuid.uuid4(),
         step_id=step.id,
+        group_id=payload.group_id,
         key=payload.key,
         label=payload.label,
         placeholder=payload.placeholder,
@@ -455,6 +551,14 @@ async def update_field(
 ) -> FormField:
     field_row = await get_field(tenant_db, field_id)
     changes = payload.model_dump(exclude_unset=True)
+
+    if "group_id" in changes and changes["group_id"] is not None:
+        group = await FormFieldGroupRepository(tenant_db).get(changes["group_id"])
+        if group is None or group.step_id != field_row.step_id:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="groupId must reference a group on this field's step",
+            )
 
     # Compares against an actual attempted transition, not merely whether
     # the key is present — the admin UI's save payload always resends every
@@ -587,6 +691,164 @@ async def reorder_fields(
     return await repo.list_for_step(step_id)
 
 
+# --- Field Group CRUD -----------------------------------------------------------
+
+
+async def list_groups_for_steps(
+    tenant_db: AsyncSession, steps: list[FormStep]
+) -> dict[uuid.UUID, list[FormFieldGroup]]:
+    groups_by_step: dict[uuid.UUID, list[FormFieldGroup]] = {step.id: [] for step in steps}
+    all_groups = await FormFieldGroupRepository(tenant_db).list_for_steps(
+        [step.id for step in steps]
+    )
+    for group in all_groups:
+        groups_by_step[group.step_id].append(group)
+    return groups_by_step
+
+
+async def get_group(tenant_db: AsyncSession, group_id: uuid.UUID) -> FormFieldGroup:
+    group = await FormFieldGroupRepository(tenant_db).get(group_id)
+    if group is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Field group not found")
+    return group
+
+
+# specs/form-builder/spec.md "Vehicle Info and Visitor Info Are Seeded as
+# Locked, Repeatable Groups" — Visitor Info's co-visitor cardinality is
+# governed exclusively by the registration-type rule, so its group exposes
+# no admin-configurable minimum/maximum, unlike Vehicle Info's.
+_NO_INSTANCE_RANGE_SYSTEM_GROUP_KEYS = frozenset({"visitors"})
+
+
+async def create_group(
+    tenant_db: AsyncSession, step_id: uuid.UUID, payload: FormFieldGroupCreate
+) -> FormFieldGroup:
+    step = await get_step(tenant_db, step_id)
+    repo = FormFieldGroupRepository(tenant_db)
+    if await repo.get_by_key(step_id, payload.key) is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Group key already exists on this step"
+        )
+    if (
+        await repo.get_by_key_in_branch(step.branch_id, payload.key, exclude_step_id=step_id)
+        is not None
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Group key already exists on another step of this branch's form",
+        )
+    condition = (
+        payload.visibility_condition.model_dump(mode="json", by_alias=True)
+        if payload.visibility_condition
+        else None
+    )
+    fields_by_key = await _fields_by_key_for_step(tenant_db, step_id)
+    _check_group_visibility_condition(fields_by_key, None, condition)
+    existing_groups = await repo.list_for_step(step_id)
+    max_order = max((g.order_index for g in existing_groups), default=-1)
+    group = FormFieldGroup(
+        id=uuid.uuid4(),
+        step_id=step.id,
+        branch_id=step.branch_id,
+        key=payload.key,
+        name=payload.name,
+        is_system=False,
+        is_locked=False,
+        is_repeatable=payload.is_repeatable,
+        min_instances=payload.min_instances,
+        max_instances=payload.max_instances,
+        visibility_condition=condition,
+        order_index=max_order + 1,
+    )
+    tenant_db.add(group)
+    await tenant_db.commit()
+    await tenant_db.refresh(group)
+    return group
+
+
+async def update_group(
+    tenant_db: AsyncSession, group_id: uuid.UUID, payload: FormFieldGroupUpdate
+) -> FormFieldGroup:
+    group = await get_group(tenant_db, group_id)
+    changes = payload.model_dump(exclude_unset=True)
+
+    if group.is_locked and changes.get("is_repeatable") is False:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="A locked group cannot be made non-repeatable",
+        )
+    if group.key in _NO_INSTANCE_RANGE_SYSTEM_GROUP_KEYS and (
+        "min_instances" in changes or "max_instances" in changes
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="This group's instance count is governed by registration type, not a "
+            "configurable range",
+        )
+
+    resulting_min = changes.get("min_instances", group.min_instances)
+    resulting_max = changes.get("max_instances", group.max_instances)
+    if resulting_min is not None and resulting_max is not None and resulting_min > resulting_max:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="minInstances must not be greater than maxInstances",
+        )
+
+    if "visibility_condition" in changes:
+        fields_by_key = await _fields_by_key_for_step(tenant_db, group.step_id)
+        condition = (
+            payload.visibility_condition.model_dump(mode="json", by_alias=True)
+            if payload.visibility_condition
+            else None
+        )
+        _check_group_visibility_condition(fields_by_key, group.id, condition)
+        changes["visibility_condition"] = condition
+
+    for attr, value in changes.items():
+        setattr(group, attr, value)
+    await tenant_db.commit()
+    await tenant_db.refresh(group)
+    return group
+
+
+async def delete_group(tenant_db: AsyncSession, group_id: uuid.UUID) -> None:
+    group = await get_group(tenant_db, group_id)
+    if group.is_locked:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="A locked group cannot be removed"
+        )
+    field_repo = FormFieldRepository(tenant_db)
+    for field_row in await field_repo.list_for_step(group.step_id):
+        if field_row.group_id == group.id:
+            field_row.group_id = None
+    await FormFieldGroupRepository(tenant_db).soft_delete(group)
+    await tenant_db.commit()
+
+
+async def reorder_groups(
+    tenant_db: AsyncSession, step_id: uuid.UUID, ordered_ids: list[uuid.UUID]
+) -> list[FormFieldGroup]:
+    repo = FormFieldGroupRepository(tenant_db)
+    groups = await repo.list_for_step(step_id)
+    groups_by_id = {g.id: g for g in groups}
+    if set(ordered_ids) != set(groups_by_id):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="orderedIds must contain exactly this step's current group ids",
+        )
+    current_order = [g.id for g in sorted(groups, key=lambda g: g.order_index)]
+    _assert_locked_positions_unchanged(
+        current_order,
+        ordered_ids,
+        groups_by_id,
+        detail="A locked group's position cannot be changed by reordering",
+    )
+    for index, group_id in enumerate(ordered_ids):
+        groups_by_id[group_id].order_index = index
+    await tenant_db.commit()
+    return await repo.list_for_step(step_id)
+
+
 # --- Publish / effective form --------------------------------------------------
 
 
@@ -631,7 +893,14 @@ def _validate_draft_for_publish(
             )
 
 
-def _step_to_snapshot(step: FormStep, fields: list[FormField]) -> dict[str, Any]:
+def _step_to_snapshot(
+    step: FormStep, fields: list[FormField], groups: list[FormFieldGroup]
+) -> dict[str, Any]:
+    sorted_fields = sorted(fields, key=lambda x: x.order_index)
+    field_keys_by_group_id: dict[uuid.UUID, list[str]] = {g.id: [] for g in groups}
+    for f in sorted_fields:
+        if f.group_id in field_keys_by_group_id:
+            field_keys_by_group_id[f.group_id].append(f.key)
     return {
         "id": str(step.id),
         "branchId": str(step.branch_id) if step.branch_id else None,
@@ -643,10 +912,28 @@ def _step_to_snapshot(step: FormStep, fields: list[FormField]) -> dict[str, Any]
         "isLocked": step.is_locked,
         "isActive": step.is_active,
         "orderIndex": step.order_index,
+        "groups": [
+            {
+                "id": str(g.id),
+                "stepId": str(g.step_id),
+                "key": g.key,
+                "name": g.name,
+                "isSystem": g.is_system,
+                "isLocked": g.is_locked,
+                "isRepeatable": g.is_repeatable,
+                "minInstances": g.min_instances,
+                "maxInstances": g.max_instances,
+                "visibilityCondition": g.visibility_condition,
+                "orderIndex": g.order_index,
+                "fieldKeys": field_keys_by_group_id.get(g.id, []),
+            }
+            for g in sorted(groups, key=lambda x: x.order_index)
+        ],
         "fields": [
             {
                 "id": str(f.id),
                 "stepId": str(f.step_id),
+                "groupId": str(f.group_id) if f.group_id else None,
                 "key": f.key,
                 "label": f.label,
                 "placeholder": f.placeholder,
@@ -662,7 +949,7 @@ def _step_to_snapshot(step: FormStep, fields: list[FormField]) -> dict[str, Any]
                 "width": f.width,
                 "orderIndex": f.order_index,
             }
-            for f in sorted(fields, key=lambda x: x.order_index)
+            for f in sorted_fields
         ],
     }
 
@@ -684,15 +971,21 @@ async def publish(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Nothing to publish for this scope"
         )
     fields_by_step = await list_fields_for_steps(tenant_db, steps)
+    groups_by_step = await list_groups_for_steps(tenant_db, steps)
     _validate_draft_for_publish(steps, fields_by_step)
 
     snapshot = [
-        _step_to_snapshot(step, fields_by_step.get(step.id, []))
+        _step_to_snapshot(step, fields_by_step.get(step.id, []), groups_by_step.get(step.id, []))
         for step in sorted(steps, key=lambda s: s.order_index)
         if step.is_active
     ]
     for step_snapshot in snapshot:
         step_snapshot["fields"] = [f for f in step_snapshot["fields"] if f["isActive"]]
+        active_field_keys = {f["key"] for f in step_snapshot["fields"]}
+        for group_snapshot in step_snapshot["groups"]:
+            group_snapshot["fieldKeys"] = [
+                k for k in group_snapshot["fieldKeys"] if k in active_field_keys
+            ]
 
     version_repo = FormConfigVersionRepository(tenant_db)
     existing = await version_repo.get_for_scope(branch_id)

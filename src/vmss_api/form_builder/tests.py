@@ -1547,3 +1547,464 @@ async def test_create_field_distinct_keys_across_steps_succeed(
         headers=_auth(token),
     )
     assert second.status_code == 201
+
+
+# --- add-repeatable-field-groups: field groups -------------------------------
+
+
+async def test_seeded_vehicle_info_group_is_locked_repeatable_and_owns_its_fields(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "vehicle_info")
+    [group] = step["groups"]
+    assert group["key"] == "vehicles"
+    assert group["isSystem"] is True
+    assert group["isLocked"] is True
+    assert group["isRepeatable"] is True
+    assert group["minInstances"] is None
+    assert group["maxInstances"] is None
+    grouped_field_keys = {f["key"] for f in step["fields"] if f["groupId"] == group["id"]}
+    assert grouped_field_keys == {"vehicle_type", "license_plate", "make_model", "color"}
+
+
+async def test_seeded_visitor_info_group_has_no_admin_editable_instance_range(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """add-repeatable-field-groups (revised): the group's `maxInstances` is
+    seeded from `settings.invitation_max_group_visitors` (the sole
+    enforcement path for the group-visitor-count cap) but isn't
+    admin-editable — see `test_visitor_group_instance_range_cannot_be_set`.
+    """
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visitor_info")
+    [group] = step["groups"]
+    assert group["key"] == "visitors"
+    assert group["isRepeatable"] is True
+    assert group["minInstances"] is None
+    assert group["maxInstances"] == settings.invitation_max_group_visitors
+
+
+async def test_create_group_success(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={"key": "parcels", "name": "Parcels", "isRepeatable": True, "minInstances": 1},
+        headers=_auth(token),
+    )
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["key"] == "parcels"
+    assert body["isSystem"] is False
+    assert body["isLocked"] is False
+    assert body["minInstances"] == 1
+    assert body["maxInstances"] is None
+
+
+async def test_create_group_requires_manage_permission(
+    client: AsyncClient,
+    user: User,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    other_token = issue_token(user_without_permissions)
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={"key": "parcels", "name": "Parcels"},
+        headers=_auth(other_token),
+    )
+    assert response.status_code == 403
+
+
+async def test_create_group_max_less_than_min_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={
+            "key": "parcels",
+            "name": "Parcels",
+            "isRepeatable": True,
+            "minInstances": 5,
+            "maxInstances": 2,
+        },
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_group_key_collision_on_same_step_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    first = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={"key": "parcels", "name": "Parcels"},
+        headers=_auth(token),
+    )
+    assert first.status_code == 201
+    second = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={"key": "parcels", "name": "Parcels Again"},
+        headers=_auth(token),
+    )
+    assert second.status_code == 409
+
+
+async def test_group_key_collision_on_different_step_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    carried_items_step = await _get_default_step(client, token, "carried_items")
+    first = await client.post(
+        f"/api/v1/form-builder/steps/{carried_items_step['id']}/groups",
+        json={"key": "shared_group_key", "name": "First"},
+        headers=_auth(token),
+    )
+    assert first.status_code == 201
+
+    visit_details_step = await _get_default_step(client, token, "visit_details")
+    second = await client.post(
+        f"/api/v1/form-builder/steps/{visit_details_step['id']}/groups",
+        json={"key": "shared_group_key", "name": "Second"},
+        headers=_auth(token),
+    )
+    assert second.status_code == 409
+
+
+async def test_locked_vehicle_group_cannot_be_deleted(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "vehicle_info")
+    [group] = step["groups"]
+    response = await client.delete(
+        f"/api/v1/form-builder/groups/{group['id']}", headers=_auth(token)
+    )
+    assert response.status_code == 422
+
+
+async def test_locked_vehicle_group_cannot_be_made_non_repeatable(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "vehicle_info")
+    [group] = step["groups"]
+    response = await client.patch(
+        f"/api/v1/form-builder/groups/{group['id']}",
+        json={"isRepeatable": False},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_locked_vehicle_group_instance_range_is_configurable(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "vehicle_info")
+    [group] = step["groups"]
+    response = await client.patch(
+        f"/api/v1/form-builder/groups/{group['id']}",
+        json={"maxInstances": 5},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["maxInstances"] == 5
+
+
+async def test_visitor_group_instance_range_cannot_be_set(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visitor_info")
+    [group] = step["groups"]
+    response = await client.patch(
+        f"/api/v1/form-builder/groups/{group['id']}",
+        json={"minInstances": 1},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_delete_custom_group_ungroups_its_fields(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    group = (
+        await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/groups",
+            json={"key": "parcels", "name": "Parcels"},
+            headers=_auth(token),
+        )
+    ).json()["data"]
+    field_row = (
+        await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/fields",
+            json={
+                "key": "parcel_weight",
+                "label": "Parcel Weight",
+                "fieldType": "text",
+                "groupId": group["id"],
+            },
+            headers=_auth(token),
+        )
+    ).json()["data"]
+    assert field_row["groupId"] == group["id"]
+
+    delete_response = await client.delete(
+        f"/api/v1/form-builder/groups/{group['id']}", headers=_auth(token)
+    )
+    assert delete_response.status_code == 204
+
+    fields_response = await client.get(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", headers=_auth(token)
+    )
+    parcel_weight = next(f for f in fields_response.json()["data"] if f["key"] == "parcel_weight")
+    assert parcel_weight["groupId"] is None
+
+
+async def test_publish_then_effective_form_includes_group_definition(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    group = (
+        await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/groups",
+            json={"key": "parcels", "name": "Parcels", "isRepeatable": True, "minInstances": 1},
+            headers=_auth(token),
+        )
+    ).json()["data"]
+    await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "parcel_weight",
+            "label": "Parcel Weight",
+            "fieldType": "text",
+            "groupId": group["id"],
+        },
+        headers=_auth(token),
+    )
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200
+
+    effective_response = await client.get("/api/v1/form-builder/effective")
+    effective_carried_items = next(
+        s for s in effective_response.json()["data"] if s["key"] == "carried_items"
+    )
+    published_group = next(g for g in effective_carried_items["groups"] if g["key"] == "parcels")
+    assert published_group["isRepeatable"] is True
+    assert published_group["minInstances"] == 1
+    assert published_group["fieldKeys"] == ["parcel_weight"]
+
+
+async def test_group_tenant_schema_isolation(
+    client: AsyncClient,
+    user: User,
+    issue_token: Callable[[User], str],
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """testing-standards.md §2's mandatory tenant-isolation case: a custom
+    field group created in this tenant's schema must not be visible from a
+    session bound to a different tenant's schema.
+    """
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={"key": "isolation_group", "name": "Isolation Group"},
+        headers=_auth(token),
+    )
+    group_id = uuid.UUID(create_response.json()["data"]["id"])
+
+    other_schema = "tenant_other_field_group_test"
+    await make_tenant_schema(other_schema)
+
+    from vmss_api.form_builder.repository import FormFieldGroupRepository
+
+    async with open_tenant_session(other_schema) as other_session:
+        found = await FormFieldGroupRepository(other_session).get(group_id)
+        assert found is None
+
+
+# --- add-repeatable-field-groups (revised): group conditional visibility ----
+
+
+async def test_create_group_with_valid_visibility_condition_succeeds(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    watched_field = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "requires_extra_gear", "label": "Extra Gear?", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    watched_field_key = watched_field.json()["data"]["key"]
+
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={
+            "key": "extra_gear_details",
+            "name": "Extra Gear Details",
+            "visibilityCondition": {
+                "fieldKey": watched_field_key,
+                "operator": "equals",
+                "value": "yes",
+            },
+        },
+        headers=_auth(token),
+    )
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["visibilityCondition"] == {
+        "fieldKey": watched_field_key,
+        "operator": "equals",
+        "value": "yes",
+    }
+
+
+async def test_create_group_with_dangling_visibility_condition_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={
+            "key": "conditional_group",
+            "name": "Conditional Group",
+            "visibilityCondition": {
+                "fieldKey": "does_not_exist",
+                "operator": "equals",
+                "value": "yes",
+            },
+        },
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_update_group_visibility_condition_self_reference_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    """specs/form-builder/spec.md "A Field Group May Declare Conditional
+    Visibility" — a group's condition cannot watch one of its own member
+    fields.
+    """
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    group = (
+        await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/groups",
+            json={"key": "self_ref_group", "name": "Self Ref Group"},
+            headers=_auth(token),
+        )
+    ).json()["data"]
+    member_field = (
+        await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/fields",
+            json={
+                "key": "member_field",
+                "label": "Member Field",
+                "fieldType": "text",
+                "groupId": group["id"],
+            },
+            headers=_auth(token),
+        )
+    ).json()["data"]
+
+    response = await client.patch(
+        f"/api/v1/form-builder/groups/{group['id']}",
+        json={
+            "visibilityCondition": {
+                "fieldKey": member_field["key"],
+                "operator": "equals",
+                "value": "x",
+            }
+        },
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_update_group_visibility_condition_referencing_other_step_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    carried_items_step = await _get_default_step(client, token, "carried_items")
+    group = (
+        await client.post(
+            f"/api/v1/form-builder/steps/{carried_items_step['id']}/groups",
+            json={"key": "cross_step_group", "name": "Cross Step Group"},
+            headers=_auth(token),
+        )
+    ).json()["data"]
+
+    response = await client.patch(
+        f"/api/v1/form-builder/groups/{group['id']}",
+        json={
+            "visibilityCondition": {
+                "fieldKey": "registration_type",  # lives on visitor_info, not carried_items
+                "operator": "equals",
+                "value": "group",
+            }
+        },
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_publish_then_effective_form_includes_group_visibility_condition(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    watched_field = (
+        await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/fields",
+            json={"key": "trigger_field", "label": "Trigger Field", "fieldType": "text"},
+            headers=_auth(token),
+        )
+    ).json()["data"]
+    await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={
+            "key": "conditional_parcels",
+            "name": "Conditional Parcels",
+            "visibilityCondition": {
+                "fieldKey": watched_field["key"],
+                "operator": "equals",
+                "value": "yes",
+            },
+        },
+        headers=_auth(token),
+    )
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200
+
+    effective_response = await client.get("/api/v1/form-builder/effective")
+    effective_carried_items = next(
+        s for s in effective_response.json()["data"] if s["key"] == "carried_items"
+    )
+    published_group = next(
+        g for g in effective_carried_items["groups"] if g["key"] == "conditional_parcels"
+    )
+    assert published_group["visibilityCondition"] == {
+        "fieldKey": watched_field["key"],
+        "operator": "equals",
+        "value": "yes",
+    }

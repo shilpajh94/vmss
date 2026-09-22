@@ -75,6 +75,78 @@ materializes a scope's draft on first touch, and the in-code fallback
 a tenant/branch that never opens Form Builder still gets sensible,
 pre-`form-builder` behavior with zero admin action required.
 
+## Field groups
+
+A step's fields can be organized into named **`FormFieldGroup`**s
+(`key`, `name`, `isSystem`, `isLocked`, `isRepeatable`, `minInstances`,
+`maxInstances`, `orderIndex`) — an ungrouped field (`FormField.groupId =
+null`) still renders/submits as a flat step-level field, unchanged from
+before groups existed. A group marked `isRepeatable` lets the visitor-
+facing form submit `minInstances`..`maxInstances` independent copies of
+the group's fields (either bound `null` = unset, meaning no floor/ceiling)
+— e.g. an admin-authored "Parcels" group on Carried Items with a "Weight"
+field, letting a visitor declare several parcels each with their own
+weight, the same way Vehicle Info already lets a visitor add several
+vehicles.
+
+Vehicle Info's vehicle fields and Visitor Info's co-visitor fields are
+each seeded as a single, locked, repeatable group (`vehicles`/`visitors`)
+— generalizing what used to be two separate hardcoded "add another"
+implementations onto this one mechanism. Vehicle Info's group behaves like
+any other repeatable group (admin-configurable `minInstances`/
+`maxInstances`, enforced on invitation/registration submission). Visitor
+Info's group's cardinality *floor* is governed exclusively by the
+existing `registrationType` rule (individual = no co-visitors, group =
+one or more); it exposes no admin-editable `minInstances`/`maxInstances`
+controls at all — a second, independent range on the same group would
+conflict with that rule. Its *ceiling*, however, is enforced through this
+same group's `maxInstances`, seeded at migration/provisioning time from
+`INVITATION_MAX_GROUP_VISITORS` (previously a standalone, undocumented
+settings check in `invitations/service.py` — now retired in favor of this
+one group-instance-count mechanism, the same path Vehicle Info's ceiling
+already went through). Changing that ceiling today requires a data
+migration or manual DB update per branch, not an admin UI action or an
+env-var change — a deliberate trade-off for having a single source of
+truth (see `openspec/changes/add-repeatable-field-groups/design.md`'s
+revised Decision 5).
+
+A group's `key` is unique across a branch's entire active form, the same
+uniqueness scope a field's `key` already has, since a submission addresses
+a group's instances by key without a step qualifier. Vehicle Info's and
+Visitor Info's own vehicle/vehicle-plate-etc. and visitor answers keep
+their existing dedicated storage (`InvitationVehicle`/`InvitationVisitor`
+— see `docs/features/invitations.md`); every other repeatable group's
+per-instance answers round-trip through `Invitation.groupFieldValues`, an
+ordered list of answer maps per group key.
+
+### Conditional groups
+
+A group may also declare `visibilityCondition`
+(`{fieldKey, operator, value}`, `operator` one of `equals`/`not_equals`)
+— the same shape a field's own condition already uses — referencing
+another field on the *same step*. The group, and every field inside it,
+is shown only when that condition holds; independent of `isRepeatable`, a
+group can be conditional only, repeatable only, both, or neither. A
+group's condition cannot reference one of its own member fields (a
+group-level self-reference), mirroring a field's own self-reference
+rejection — but unlike a field's condition, a group's never needs a
+transitive-cycle check, since nothing can reference a *group's* condition
+in the first place (only a `fieldKey` is ever a watchable target).
+
+When a group is hidden by its condition, none of its fields are treated
+as required for that submission — regardless of each field's own
+`isRequired` flag — and a repeatable hidden group's configured minimum
+instance count isn't enforced either (a visitor who was never shown the
+group can't be expected to have filled it in; its maximum still applies
+if instances were submitted anyway). This is genuinely new evaluation
+logic, and it's scoped to groups only: a plain field's own
+`visibilityCondition` is still checked only at authoring time (dangling
+reference / cycle prevention) — it is not evaluated against submitted
+values to skip that field's own required-check. A field with both
+`isRequired` and its own `visibilityCondition`, hidden or not, still
+blocks submission if empty, unless that field also happens to belong to a
+hidden group.
+
 ## Field types
 
 `text`, `email`, `phone`, `number`, `dropdown_select`, `date_picker`,
@@ -219,6 +291,11 @@ TTL) and invalidated synchronously by `publish`.
 | PATCH | `/api/v1/form-builder/fields/{id}` | `form-builder:manage` | Update a field; 422 on a locked-field active/required change, a type change for one of the fixed type-locked keys (see "Changing an existing field's type"), a `static_text` field marked required, an option-required type with no options, or an invalid visibility condition. |
 | DELETE | `/api/v1/form-builder/fields/{id}` | `form-builder:manage` | Soft-delete a field; 422 if locked. |
 | POST | `/api/v1/form-builder/steps/{id}/fields/reorder` | `form-builder:manage` | Reorder a step's fields. |
+| GET | `/api/v1/form-builder/steps/{id}/groups` | `form-builder:view` | List a step's field groups. |
+| POST | `/api/v1/form-builder/steps/{id}/groups` | `form-builder:manage` | Create a field group on a step. |
+| PATCH | `/api/v1/form-builder/groups/{id}` | `form-builder:manage` | Update a group (including `visibilityCondition`); 422 on a locked group made non-repeatable, an invalid `minInstances`/`maxInstances` range, a range change on Visitor Info's group, a dangling `visibilityCondition` reference, or a condition referencing one of the group's own member fields. |
+| DELETE | `/api/v1/form-builder/groups/{id}` | `form-builder:manage` | Soft-delete a group (ungroups its fields first); 422 if locked. |
+| POST | `/api/v1/form-builder/steps/{id}/groups/reorder` | `form-builder:manage` | Reorder a step's groups. |
 | POST | `/api/v1/form-builder/publish` | `form-builder:manage` | Re-validate and publish the resolved scope's draft; bumps `version`. |
 | GET | `/api/v1/form-builder/effective` | none (public) | The currently live form for the resolved (or default) branch. |
 
@@ -253,6 +330,15 @@ current catalog — safe to re-run (every step is idempotent). See
 `openspec/changes/fix-form-builder-audit-gaps/design.md` for how this was
 found and why the fix covers both the schema and the RBAC catalog, not just
 the missing tables.
+
+Field groups (`form_field_groups`, migration `b8e3f4a1c6d2`) backfill the
+`vehicles`/`visitors` groups for every existing branch's Vehicle Info/
+Visitor Info steps as part of the same migration run, but do **not**
+force-republish any already-published `FormConfigVersion` — a pre-existing
+snapshot with no group data simply behaves as an unlimited repeatable
+group (today's actual Vehicle Info behavior) until an admin next publishes
+that scope. See `openspec/changes/add-repeatable-field-groups/design.md`
+Risks/Migration Plan.
 
 ## Locked-position ordering
 

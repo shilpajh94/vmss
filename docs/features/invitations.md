@@ -131,6 +131,52 @@ types (`2_wheeler`/`4_wheeler`/`heavy`) unchanged — those are the seeded
 defaults, not special-cased in code. See `docs/features/form_builder.md`
 for how an admin edits these two fields' options.
 
+### Vehicle count and admin-defined repeatable groups (`add-repeatable-field-groups`)
+
+The number of `vehicles[]` entries a request may declare is now checked
+against the branch's currently published Vehicle Info field-group instance
+range (`GET /form-builder/effective`'s Vehicle Info step, `groups[].key ==
+"vehicles"`) instead of being unconditionally unlimited — a branch that
+has never configured a minimum/maximum still accepts any number of
+vehicles, including zero, unchanged from before this change.
+
+The number of `visitors[]` entries a `group` registration may declare is
+similarly checked against Visitor Info's field group's `maxInstances`
+(`groups[].key == "visitors"`) — this **replaces** the previous
+`INVITATION_MAX_GROUP_VISITORS` settings-based rejection (still 20 by
+default, seeded into that group at migration time), so a client that was
+relying on the old 422 message text should expect the same status code
+via a different underlying check. Unlike Vehicle Info's group, Visitor
+Info's isn't admin-editable through the Form Builder API — see
+`docs/features/form_builder.md`'s "Field groups" for why.
+
+An admin can also define a **repeatable field group** on any other step
+(e.g. a "Parcels" group on Carried Items), optionally made **conditional**
+on another field's value, through Form Builder — see
+`docs/features/form_builder.md` "Field groups"/"Conditional groups".
+`POST /invitations` (and `POST /registrations/walk-in`) accepts that
+group's answers as an optional top-level `groupValues: Record<string,
+object[]>` map, keyed by group key: each entry is an ordered array of
+that group's per-instance answer maps, one per instance the visitor
+filled in. A submission naming a group key the branch's active form
+doesn't define, or supplying more instances than that group's currently
+published `maxInstances`, is rejected with `422` before any invitation is
+created — the same "validate everything, then persist" ordering ID-proof
+file validation already uses, so one invalid instance never leaves a
+partially-created invitation behind. Every response that already returns
+`customFieldValues` (`GET /invitations/{id}`, the tracking lookup, the
+canonical check-in response, and the QR check-in/check-out response) now
+also returns `groupFieldValues` in the same shape, alongside it.
+
+**When a group is hidden** by its `visibilityCondition` (evaluated against
+the same request's own submitted values), the request is accepted even if
+that group's fields would otherwise be required, and even if fewer
+instances are submitted than the group's configured minimum — a visitor
+who was never shown the group can't be expected to have filled it in. Its
+maximum still applies if instances are submitted anyway, and any value
+that is supplied for a hidden group's field is still validated against
+that field's own type/options/length rules.
+
 ### Retyped system fields and submission validation (`make-system-field-types-editable`)
 
 `fullName` (`primaryContact`/each `visitors[]` entry), `purposeOfVisit`,

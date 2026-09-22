@@ -19,9 +19,12 @@ from vmss_api.form_builder.deps import (
     public_tenant_db,
     require_form_scope,
 )
-from vmss_api.form_builder.models import FormField, FormStep
+from vmss_api.form_builder.models import FormField, FormFieldGroup, FormStep
 from vmss_api.form_builder.schemas import (
     FormFieldCreate,
+    FormFieldGroupCreate,
+    FormFieldGroupOut,
+    FormFieldGroupUpdate,
     FormFieldOut,
     FormFieldUpdate,
     FormStepCreate,
@@ -35,7 +38,26 @@ from vmss_api.tenant.models import Tenant
 router = APIRouter(prefix="/form-builder", tags=["form-builder"])
 
 
-def _step_out(step: FormStep, fields: list[FormField]) -> FormStepOut:
+def _group_out(group: FormFieldGroup, fields: list[FormField]) -> FormFieldGroupOut:
+    return FormFieldGroupOut(
+        id=group.id,
+        step_id=group.step_id,
+        key=group.key,
+        name=group.name,
+        is_system=group.is_system,
+        is_locked=group.is_locked,
+        is_repeatable=group.is_repeatable,
+        min_instances=group.min_instances,
+        max_instances=group.max_instances,
+        visibility_condition=group.visibility_condition,
+        order_index=group.order_index,
+        field_ids=[f.id for f in fields if f.group_id == group.id],
+    )
+
+
+def _step_out(
+    step: FormStep, fields: list[FormField], groups: list[FormFieldGroup] | None = None
+) -> FormStepOut:
     return FormStepOut(
         id=step.id,
         branch_id=step.branch_id,
@@ -50,6 +72,7 @@ def _step_out(step: FormStep, fields: list[FormField]) -> FormStepOut:
         fields=[
             FormFieldOut.model_validate(f) for f in sorted(fields, key=lambda x: x.order_index)
         ],
+        groups=[_group_out(g, fields) for g in sorted(groups or [], key=lambda x: x.order_index)],
     )
 
 
@@ -74,7 +97,12 @@ async def list_steps(
 ) -> JSONResponse:
     steps = await service.list_steps(tenant_db, branch_id)
     fields_by_step = await service.list_fields_for_steps(tenant_db, steps)
-    return success_response(data=[_step_out(s, fields_by_step.get(s.id, [])) for s in steps])
+    groups_by_step = await service.list_groups_for_steps(tenant_db, steps)
+    return success_response(
+        data=[
+            _step_out(s, fields_by_step.get(s.id, []), groups_by_step.get(s.id, [])) for s in steps
+        ]
+    )
 
 
 @router.post("/steps", response_model=Envelope[FormStepOut], status_code=status.HTTP_201_CREATED)
@@ -84,7 +112,7 @@ async def create_step(
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
 ) -> JSONResponse:
     step = await service.create_step(tenant_db, branch_id, payload)
-    return success_response(data=_step_out(step, []), status_code=status.HTTP_201_CREATED)
+    return success_response(data=_step_out(step, [], []), status_code=status.HTTP_201_CREATED)
 
 
 @router.patch("/steps/{step_id}", response_model=Envelope[FormStepOut])
@@ -98,7 +126,8 @@ async def update_step(
     _ensure_in_scope(step.branch_id, branch_id)
     step = await service.update_step(tenant_db, step_id, payload)
     fields = await service.list_fields_for_steps(tenant_db, [step])
-    return success_response(data=_step_out(step, fields.get(step.id, [])))
+    groups = await service.list_groups_for_steps(tenant_db, [step])
+    return success_response(data=_step_out(step, fields.get(step.id, []), groups.get(step.id, [])))
 
 
 @router.delete("/steps/{step_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -120,7 +149,12 @@ async def reorder_steps(
 ) -> JSONResponse:
     steps = await service.reorder_steps(tenant_db, branch_id, payload.ordered_ids)
     fields_by_step = await service.list_fields_for_steps(tenant_db, steps)
-    return success_response(data=[_step_out(s, fields_by_step.get(s.id, [])) for s in steps])
+    groups_by_step = await service.list_groups_for_steps(tenant_db, steps)
+    return success_response(
+        data=[
+            _step_out(s, fields_by_step.get(s.id, []), groups_by_step.get(s.id, [])) for s in steps
+        ]
+    )
 
 
 # --- Fields ---------------------------------------------------------------------
@@ -199,6 +233,82 @@ async def reorder_fields(
     _ensure_in_scope(step.branch_id, branch_id)
     fields = await service.reorder_fields(tenant_db, step_id, payload.ordered_ids)
     return success_response(data=[FormFieldOut.model_validate(f) for f in fields])
+
+
+# --- Field Groups --------------------------------------------------------------
+
+
+@router.get("/steps/{step_id}/groups", response_model=Envelope[list[FormFieldGroupOut]])
+async def list_groups(
+    step_id: uuid.UUID,
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:view"))],
+) -> JSONResponse:
+    step = await service.get_step(tenant_db, step_id)
+    _ensure_in_scope(step.branch_id, branch_id)
+    fields = (await service.list_fields_for_steps(tenant_db, [step])).get(step.id, [])
+    groups = (await service.list_groups_for_steps(tenant_db, [step])).get(step.id, [])
+    return success_response(
+        data=[_group_out(g, fields) for g in sorted(groups, key=lambda x: x.order_index)]
+    )
+
+
+@router.post(
+    "/steps/{step_id}/groups",
+    response_model=Envelope[FormFieldGroupOut],
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_group(
+    step_id: uuid.UUID,
+    payload: FormFieldGroupCreate,
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+) -> JSONResponse:
+    step = await service.get_step(tenant_db, step_id)
+    _ensure_in_scope(step.branch_id, branch_id)
+    group = await service.create_group(tenant_db, step_id, payload)
+    return success_response(data=_group_out(group, []), status_code=status.HTTP_201_CREATED)
+
+
+@router.patch("/groups/{group_id}", response_model=Envelope[FormFieldGroupOut])
+async def update_group(
+    group_id: uuid.UUID,
+    payload: FormFieldGroupUpdate,
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+) -> JSONResponse:
+    group = await service.get_group(tenant_db, group_id)
+    step = await service.get_step(tenant_db, group.step_id)
+    _ensure_in_scope(step.branch_id, branch_id)
+    group = await service.update_group(tenant_db, group_id, payload)
+    fields = (await service.list_fields_for_steps(tenant_db, [step])).get(step.id, [])
+    return success_response(data=_group_out(group, fields))
+
+
+@router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_group(
+    group_id: uuid.UUID,
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+) -> None:
+    group = await service.get_group(tenant_db, group_id)
+    step = await service.get_step(tenant_db, group.step_id)
+    _ensure_in_scope(step.branch_id, branch_id)
+    await service.delete_group(tenant_db, group_id)
+
+
+@router.post("/steps/{step_id}/groups/reorder", response_model=Envelope[list[FormFieldGroupOut]])
+async def reorder_groups(
+    step_id: uuid.UUID,
+    payload: ReorderRequest,
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+) -> JSONResponse:
+    step = await service.get_step(tenant_db, step_id)
+    _ensure_in_scope(step.branch_id, branch_id)
+    groups = await service.reorder_groups(tenant_db, step_id, payload.ordered_ids)
+    fields = (await service.list_fields_for_steps(tenant_db, [step])).get(step.id, [])
+    return success_response(data=[_group_out(g, fields) for g in groups])
 
 
 # --- Publish / effective form ----------------------------------------------------

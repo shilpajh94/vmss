@@ -368,13 +368,6 @@ async def create_invitation(
     authenticated staff creator to record
     (add-walkin-visitor-registration/design.md Decision 1).
     """
-    if len(payload.visitors) > settings.invitation_max_group_visitors:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"A group registration may not list more than "
-            f"{settings.invitation_max_group_visitors} visitors",
-        )
-
     # Validated before any file I/O, same "fail fast" reasoning as the
     # optional catalog ids resolved right below.
     visitor_category_id = await _resolve_active_category(tenant_db, payload.visitor_category_id)
@@ -533,6 +526,46 @@ async def create_invitation(
             detail=f"Unknown vehicle type(s): {', '.join(sorted(invalid_vehicle_types))}",
         )
 
+    # specs/invitations/spec.md (delta) "Carried Items and Vehicles Are
+    # Optional Structured Declarations" (add-repeatable-field-groups) — the
+    # declared vehicle count must fall within the branch's currently
+    # published Vehicle Info group instance range.
+    vehicle_group = form_builder_validation.vehicle_info_group(effective_form)
+    try:
+        form_builder_validation.validate_group_instance_count(
+            vehicle_group, len(payload.vehicles), scope="This invitation"
+        )
+    except HTTPException:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="group_instance_count",
+            reason="vehicle_count_out_of_range",
+            count=len(payload.vehicles),
+        )
+        raise
+
+    # specs/invitations/spec.md (delta) "A Group Registration's Visitor
+    # Count Is Capped By the Visitor Info Group's Configured Maximum"
+    # (add-repeatable-field-groups) — retires the standalone
+    # `settings.invitation_max_group_visitors` check in favor of this
+    # group's own `maxInstances`, the same enforcement path every other
+    # group already uses.
+    visitor_group = form_builder_validation.visitor_info_group(effective_form)
+    try:
+        form_builder_validation.validate_group_instance_count(
+            visitor_group, len(payload.visitors), scope="A group registration"
+        )
+    except HTTPException:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="group_instance_count",
+            reason="visitor_count_out_of_range",
+            count=len(payload.visitors),
+        )
+        raise
+
     # specs/invitations/spec.md (delta) "Consent Is Mandatory and Recorded"
     # — the payload must not introduce a consent key outside the calling
     # branch's currently configured Consent Agreement set, mirroring the
@@ -621,10 +654,16 @@ async def create_invitation(
     )
 
     def _validate_custom_fields(
-        fields: list[dict[str, Any]], values: dict[str, Any], *, scope: str
+        fields: list[dict[str, Any]],
+        values: dict[str, Any],
+        *,
+        scope: str,
+        skip_required: bool = False,
     ) -> None:
         try:
-            form_builder_validation.validate_custom_field_values(fields, values, scope=scope)
+            form_builder_validation.validate_custom_field_values(
+                fields, values, scope=scope, skip_required=skip_required
+            )
         except HTTPException:
             logger.warning(
                 "registration_form_config_validation_failed",
@@ -650,6 +689,73 @@ async def create_invitation(
     _validate_custom_fields(
         invitation_scope_custom_fields, payload.custom_field_values, scope="the invitation"
     )
+
+    # specs/invitations/spec.md (delta) "An Admin-Defined Repeatable Group's
+    # Answers Are Accepted as an Array of Per-Instance Values"
+    # (add-repeatable-field-groups) — every admin-defined group's submitted
+    # instance count must fall within its configured range, and each
+    # instance's values must validate against that group's own fields.
+    custom_groups = form_builder_validation.custom_groups_for_invitation_scope(effective_form)
+    custom_groups_by_key = {group["key"]: group for group in custom_groups}
+    unknown_group_keys = set(payload.group_values) - set(custom_groups_by_key)
+    if unknown_group_keys:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="group_key",
+            reason="unknown_group_key",
+            keys=sorted(unknown_group_keys),
+        )
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unknown field group key(s): {', '.join(sorted(unknown_group_keys))}",
+        )
+    # specs/invitations/spec.md (delta) "A Hidden Custom Field Group's
+    # Fields Are Not Required At Submission" (add-repeatable-field-groups)
+    # — the values map a custom group's own `visibilityCondition` is
+    # evaluated against: every invitation-scope locked field a group could
+    # watch (Visit Details/Carried Items' own seeded fields), merged with
+    # the invitation-level admin-authored answers a group's condition could
+    # equally watch.
+    invitation_scope_values: dict[str, Any] = {
+        "purpose_of_visit": visit_details["purpose_of_visit"],
+        "expected_duration": visit_details["expected_duration"],
+        "department_to_visit": visit_details["department_to_visit"],
+        "additional_notes": payload.visit_details.additional_notes,
+        "preferred_visit_date": str(payload.visit_details.preferred_visit_date),
+        "preferred_visit_time": str(payload.visit_details.preferred_visit_time),
+        "items": payload.carried_items.items,
+        "item_description": payload.carried_items.item_description,
+        **payload.custom_field_values,
+    }
+
+    for group_key, group in custom_groups_by_key.items():
+        instances = payload.group_values.get(group_key, [])
+        is_visible = form_builder_validation.is_group_visible(group, invitation_scope_values)
+        try:
+            form_builder_validation.validate_group_instance_count(
+                group,
+                len(instances),
+                scope=f"Field group '{group['name']}'",
+                skip_minimum=not is_visible,
+            )
+        except HTTPException:
+            logger.warning(
+                "registration_form_config_validation_failed",
+                branch_id=str(branch_id),
+                check="group_instance_count",
+                reason="custom_group_count_out_of_range",
+                group=group_key,
+                count=len(instances),
+            )
+            raise
+        for index, instance in enumerate(instances):
+            _validate_custom_fields(
+                group["fields"],
+                instance,
+                scope=f"'{group['name']}' instance {index + 1}",
+                skip_required=not is_visible,
+            )
 
     repo = InvitationRepository(tenant_db)
     tracking_id = await _generate_unique_tracking_id(repo)
@@ -755,6 +861,7 @@ async def create_invitation(
         consents=dict(payload.consents),
         consent_recorded_at=now,
         custom_field_values=dict(payload.custom_field_values),
+        group_field_values={key: list(value) for key, value in payload.group_values.items()},
     )
     tenant_db.add(invitation)
 

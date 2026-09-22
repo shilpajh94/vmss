@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.core.database import TenantScopedRepository
-from vmss_api.form_builder.models import FormConfigVersion, FormField, FormStep
+from vmss_api.form_builder.models import FormConfigVersion, FormField, FormFieldGroup, FormStep
 
 
 class FormStepRepository(TenantScopedRepository[FormStep]):
@@ -85,6 +85,52 @@ class FormFieldRepository(TenantScopedRepository[FormField]):
         )
         if exclude_step_id is not None:
             stmt = stmt.where(FormField.step_id != exclude_step_id)
+        return (await self.session.execute(stmt)).scalars().first()
+
+
+class FormFieldGroupRepository(TenantScopedRepository[FormFieldGroup]):
+    model = FormFieldGroup
+
+    async def list_for_step(self, step_id: uuid.UUID) -> list[FormFieldGroup]:
+        stmt = (
+            select(FormFieldGroup)
+            .where(FormFieldGroup.step_id == step_id, FormFieldGroup.deleted_at.is_(None))
+            .order_by(FormFieldGroup.order_index.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_for_steps(self, step_ids: Collection[uuid.UUID]) -> list[FormFieldGroup]:
+        if not step_ids:
+            return []
+        stmt = (
+            select(FormFieldGroup)
+            .where(FormFieldGroup.step_id.in_(step_ids), FormFieldGroup.deleted_at.is_(None))
+            .order_by(FormFieldGroup.step_id, FormFieldGroup.order_index.asc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_by_key(self, step_id: uuid.UUID, key: str) -> FormFieldGroup | None:
+        stmt = select(FormFieldGroup).where(
+            FormFieldGroup.step_id == step_id,
+            FormFieldGroup.key == key,
+            FormFieldGroup.deleted_at.is_(None),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_key_in_branch(
+        self, branch_id: uuid.UUID | None, key: str, *, exclude_step_id: uuid.UUID | None = None
+    ) -> FormFieldGroup | None:
+        """specs/form-builder/spec.md "A Field Group's Key Is Unique Across
+        a Branch's Entire Active Form" — mirrors
+        `FormFieldRepository.get_by_key_in_branch`.
+        """
+        stmt = select(FormFieldGroup).where(
+            FormFieldGroup.branch_id == branch_id,
+            FormFieldGroup.key == key,
+            FormFieldGroup.deleted_at.is_(None),
+        )
+        if exclude_step_id is not None:
+            stmt = stmt.where(FormFieldGroup.step_id != exclude_step_id)
         return (await self.session.execute(stmt)).scalars().first()
 
 

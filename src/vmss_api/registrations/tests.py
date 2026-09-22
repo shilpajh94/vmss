@@ -999,3 +999,92 @@ async def test_walk_in_registration_branch_config_mismatch_logs_enforced_branch(
     assert entry["branch_id"] == str(branch.id)
     assert entry["branch_id"] != str(other_branch.id)
     assert entry["check"] == "consent_key"
+
+
+# --- add-repeatable-field-groups: group instance-count enforcement ----------
+
+
+async def _update_and_publish_group_range(
+    client: AsyncClient,
+    admin_token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    group_key: str,
+    min_instances: int | None = None,
+    max_instances: int | None = None,
+) -> None:
+    """Same pattern as `invitations/tests.py`'s helper of the same name,
+    duplicated here for the reason `_create_and_publish_custom_field` above
+    already documents."""
+    headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+    group = next(g for g in step["groups"] if g["key"] == group_key)
+
+    body: dict = {}
+    if min_instances is not None:
+        body["minInstances"] = min_instances
+    if max_instances is not None:
+        body["maxInstances"] = max_instances
+    update_response = await client.patch(
+        f"/api/v1/form-builder/groups/{group['id']}", json=body, headers=headers
+    )
+    assert update_response.status_code == 200, update_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+
+
+async def test_walk_in_vehicle_count_below_configured_minimum_rejected(
+    client: AsyncClient,
+    branch: Branch,
+    user: User,
+    registration_device_raw_key: str,
+) -> None:
+    admin_token = await _login(client, user.email)
+    await _update_and_publish_group_range(
+        client, admin_token, branch, step_key="vehicle_info", group_key="vehicles", min_instances=1
+    )
+    payload = _individual_payload()
+    payload["vehicles"] = []
+    response = await _create_walk_in(client, registration_device_raw_key, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_walk_in_group_instance_count_mismatch_is_logged_with_enforced_branch(
+    client: AsyncClient,
+    branch: Branch,
+    user: User,
+    registration_device_raw_key: str,
+    db_session: AsyncSession,
+) -> None:
+    """specs/registrations/spec.md (delta) "A Configuration Mismatch Is
+    Logged With the Enforced Branch" (add-repeatable-field-groups) — a
+    group instance-count rejection is logged the same way a required-field/
+    custom-field/consent-key mismatch already is, identifying the
+    server-resolved branch.
+    """
+    admin_token = await _login(client, user.email)
+    await _update_and_publish_group_range(
+        client, admin_token, branch, step_key="vehicle_info", group_key="vehicles", max_instances=1
+    )
+    payload = _individual_payload()
+    payload["vehicles"] = [
+        {"vehicleType": "2_wheeler", "licensePlate": "KA-01-AB-1234"},
+        {"vehicleType": "4_wheeler", "licensePlate": "KA-05-CD-5678"},
+    ]
+
+    with capture_logs() as captured:
+        response = await _create_walk_in(client, registration_device_raw_key, payload=payload)
+
+    assert response.status_code == 422
+    matching_entries = [
+        e for e in captured if e["event"] == "registration_form_config_validation_failed"
+    ]
+    assert matching_entries, "expected a form-config-validation-failed log entry"
+    entry = matching_entries[-1]
+    assert entry["log_level"] == "warning"
+    assert entry["branch_id"] == str(branch.id)
+    assert entry["check"] == "group_instance_count"

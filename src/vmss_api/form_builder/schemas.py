@@ -80,6 +80,11 @@ class FormFieldCreate(CamelModel):
     help_text: str | None = Field(default=None, max_length=500)
     field_type: FormFieldType
     is_required: bool = False
+    # Which of the step's field groups this field belongs to, or `None` to
+    # leave it ungrouped (a flat step-level field) — see
+    # `specs/form-builder/spec.md` "A Step's Fields May Be Organized Into
+    # Named, Repeatable Field Groups".
+    group_id: uuid.UUID | None = None
     options: list[Annotated[str, Field(max_length=100)]] | None = Field(default=None, max_length=50)
     validation_rules: ValidationRules | None = None
     visibility_condition: VisibilityCondition | None = None
@@ -102,6 +107,7 @@ class FormFieldCreate(CamelModel):
 
 
 class FormFieldUpdate(CamelModel):
+    group_id: uuid.UUID | None = None
     label: str | None = Field(default=None, max_length=255)
     placeholder: str | None = Field(default=None, max_length=255)
     help_text: str | None = Field(default=None, max_length=500)
@@ -117,6 +123,7 @@ class FormFieldUpdate(CamelModel):
 class FormFieldOut(CamelModel):
     id: uuid.UUID
     step_id: uuid.UUID
+    group_id: uuid.UUID | None
     key: str
     label: str
     placeholder: str | None
@@ -131,6 +138,61 @@ class FormFieldOut(CamelModel):
     visibility_condition: VisibilityCondition | None
     width: FieldWidth
     order_index: int
+
+
+class FormFieldGroupCreate(CamelModel):
+    key: str = Field(max_length=100, pattern=r"^[a-z][a-z0-9_]*$")
+    name: str = Field(max_length=255)
+    is_repeatable: bool = False
+    min_instances: int | None = Field(default=None, ge=0)
+    max_instances: int | None = Field(default=None, ge=0)
+    # Same shape/rules as `FormFieldCreate.visibility_condition` — see
+    # `specs/form-builder/spec.md` "A Field Group May Declare Conditional
+    # Visibility". Independent of `is_repeatable`.
+    visibility_condition: VisibilityCondition | None = None
+
+    @model_validator(mode="after")
+    def _check_instance_range(self) -> Self:
+        if (
+            self.min_instances is not None
+            and self.max_instances is not None
+            and self.min_instances > self.max_instances
+        ):
+            raise ValueError("minInstances must not be greater than maxInstances")
+        return self
+
+
+class FormFieldGroupUpdate(CamelModel):
+    name: str | None = Field(default=None, max_length=255)
+    is_repeatable: bool | None = None
+    min_instances: int | None = Field(default=None, ge=0)
+    max_instances: int | None = Field(default=None, ge=0)
+    visibility_condition: VisibilityCondition | None = None
+
+    @model_validator(mode="after")
+    def _check_instance_range(self) -> Self:
+        if (
+            self.min_instances is not None
+            and self.max_instances is not None
+            and self.min_instances > self.max_instances
+        ):
+            raise ValueError("minInstances must not be greater than maxInstances")
+        return self
+
+
+class FormFieldGroupOut(CamelModel):
+    id: uuid.UUID
+    step_id: uuid.UUID
+    key: str
+    name: str
+    is_system: bool
+    is_locked: bool
+    is_repeatable: bool
+    min_instances: int | None
+    max_instances: int | None
+    visibility_condition: VisibilityCondition | None
+    order_index: int
+    field_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class FormStepCreate(CamelModel):
@@ -159,6 +221,7 @@ class FormStepOut(CamelModel):
     is_active: bool
     order_index: int
     fields: list[FormFieldOut] = Field(default_factory=list)
+    groups: list[FormFieldGroupOut] = Field(default_factory=list)
 
 
 class ReorderRequest(CamelModel):

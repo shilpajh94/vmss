@@ -429,6 +429,7 @@ async def _to_qr_check_in_out(
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
         custom_field_values=invitation.custom_field_values,
+        group_field_values=invitation.group_field_values,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
         checked_in_at=invitation.checked_in_at,
@@ -496,6 +497,7 @@ async def _to_tracking_out(
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
         custom_field_values=invitation.custom_field_values,
+        group_field_values=invitation.group_field_values,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
@@ -547,6 +549,7 @@ async def _to_check_in_out(
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
         custom_field_values=invitation.custom_field_values,
+        group_field_values=invitation.group_field_values,
         visitors=await _to_visitor_outs(invitation.visitors),
         vehicles=[
             InvitationVehicleOut(
@@ -614,6 +617,7 @@ async def _to_invitation_detail_out(
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
         custom_field_values=invitation.custom_field_values,
+        group_field_values=invitation.group_field_values,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,

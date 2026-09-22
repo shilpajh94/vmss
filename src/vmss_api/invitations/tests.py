@@ -906,12 +906,34 @@ async def test_create_group_invitation_with_empty_visitor_list_rejected(
 
 
 async def test_create_group_invitation_exceeding_max_visitors_rejected(
-    client: AsyncClient, user: User, branch: Branch, monkeypatch
+    client: AsyncClient, user: User, branch: Branch
 ) -> None:
-    monkeypatch.setattr(settings, "invitation_max_group_visitors", 1)
+    """add-repeatable-field-groups (revised): the group-visitor-count cap
+    is now enforced through Visitor Info's seeded group `maxInstances`
+    (`settings.invitation_max_group_visitors`'s value at seed time — 20 by
+    default), not a live-monkeypatchable settings check. Visitor Info's
+    group has no admin-editable range (`_NO_INSTANCE_RANGE_SYSTEM_GROUP_KEYS`),
+    so this exercises the seeded default directly by exceeding it, rather
+    than lowering it via the Form Builder API the way
+    `test_create_invitation_vehicle_count_above_configured_maximum_rejected`
+    can for Vehicle Info's (admin-editable) group.
+    """
     token = await _login(client, user.email)
+    payload = _group_payload()
+    payload["visitors"] = [
+        {
+            "fullName": f"Extra Visitor {i}",
+            "email": f"extra.visitor.{i}@example.com",
+            "idProofType": "Passport",
+        }
+        for i in range(settings.invitation_max_group_visitors + 1)
+    ]
     response = await _create_invitation(
-        client, token, branch, payload=_group_payload(), visitor_file_count=2
+        client,
+        token,
+        branch,
+        payload=payload,
+        visitor_file_count=settings.invitation_max_group_visitors + 1,
     )
     assert response.status_code == 422
 
@@ -1050,6 +1072,370 @@ async def test_create_invitation_default_id_proof_and_vehicle_types_still_accept
     data = await _create_invitation_success(
         client, token, branch, payload=payload, visitor_file_count=2
     )
+    assert data["id"]
+
+
+# --- add-repeatable-field-groups: group instance-count enforcement ----------
+
+
+async def _update_and_publish_group_range(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    group_key: str,
+    min_instances: int | None = None,
+    max_instances: int | None = None,
+) -> dict:
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+    group = next(g for g in step["groups"] if g["key"] == group_key)
+
+    body: dict[str, Any] = {}
+    if min_instances is not None:
+        body["minInstances"] = min_instances
+    if max_instances is not None:
+        body["maxInstances"] = max_instances
+    update_response = await client.patch(
+        f"/api/v1/form-builder/groups/{group['id']}", json=body, headers=headers
+    )
+    assert update_response.status_code == 200, update_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    return update_response.json()["data"]
+
+
+async def _create_and_publish_custom_group(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    group_key: str,
+    field_key: str,
+    min_instances: int | None = None,
+    max_instances: int | None = None,
+    field_type: str = "text",
+    is_required: bool = False,
+    options: list[str] | None = None,
+    visibility_condition: dict[str, Any] | None = None,
+) -> dict:
+    """Admin-side setup: creates a repeatable field group with one field on
+    `step_key` and publishes the branch's scope so `create_invitation`
+    reads it. `visibility_condition`, if supplied, is applied to the group
+    itself after creation (add-repeatable-field-groups) — its `fieldKey`
+    must reference an existing field on the same step other than this
+    group's own.
+    """
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+
+    group_body: dict[str, Any] = {"key": group_key, "name": group_key.title(), "isRepeatable": True}
+    if min_instances is not None:
+        group_body["minInstances"] = min_instances
+    if max_instances is not None:
+        group_body["maxInstances"] = max_instances
+    group_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups", json=group_body, headers=headers
+    )
+    assert group_response.status_code == 201, group_response.text
+    group = group_response.json()["data"]
+
+    field_body: dict[str, Any] = {
+        "key": field_key,
+        "label": field_key.replace("_", " ").title(),
+        "fieldType": field_type,
+        "isRequired": is_required,
+        "groupId": group["id"],
+    }
+    if options is not None:
+        field_body["options"] = options
+    field_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", json=field_body, headers=headers
+    )
+    assert field_response.status_code == 201, field_response.text
+
+    if visibility_condition is not None:
+        condition_response = await client.patch(
+            f"/api/v1/form-builder/groups/{group['id']}",
+            json={"visibilityCondition": visibility_condition},
+            headers=headers,
+        )
+        assert condition_response.status_code == 200, condition_response.text
+        group = condition_response.json()["data"]
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    return group
+
+
+async def test_create_invitation_vehicle_count_below_configured_minimum_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _update_and_publish_group_range(
+        client, token, branch, step_key="vehicle_info", group_key="vehicles", min_instances=1
+    )
+    payload = _individual_payload()
+    payload["vehicles"] = []
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_vehicle_count_above_configured_maximum_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _update_and_publish_group_range(
+        client, token, branch, step_key="vehicle_info", group_key="vehicles", max_instances=1
+    )
+    payload = _individual_payload()
+    payload["vehicles"] = [
+        {"vehicleType": "2_wheeler", "licensePlate": "KA-01-AB-1234"},
+        {"vehicleType": "4_wheeler", "licensePlate": "KA-05-CD-5678"},
+    ]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_vehicle_count_within_configured_range_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _update_and_publish_group_range(
+        client,
+        token,
+        branch,
+        step_key="vehicle_info",
+        group_key="vehicles",
+        min_instances=1,
+        max_instances=3,
+    )
+    payload = _individual_payload()
+    payload["vehicles"] = [{"vehicleType": "2_wheeler", "licensePlate": "KA-01-AB-1234"}]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_custom_group_instances_within_range_persisted(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="parcels",
+        field_key="parcel_weight",
+        min_instances=1,
+        max_instances=3,
+    )
+    payload = _individual_payload()
+    payload["groupValues"] = {
+        "parcels": [{"parcel_weight": "2kg"}, {"parcel_weight": "5kg"}],
+    }
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.group_field_values == {
+        "parcels": [{"parcel_weight": "2kg"}, {"parcel_weight": "5kg"}]
+    }
+
+
+async def test_create_invitation_custom_group_below_minimum_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="parcels",
+        field_key="parcel_weight",
+        min_instances=1,
+    )
+    payload = _individual_payload()
+    payload["groupValues"] = {"parcels": []}
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_custom_group_above_maximum_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="parcels",
+        field_key="parcel_weight",
+        max_instances=1,
+    )
+    payload = _individual_payload()
+    payload["groupValues"] = {"parcels": [{"parcel_weight": "2kg"}, {"parcel_weight": "5kg"}]}
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_unknown_group_key_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["groupValues"] = {"not_a_real_group": [{"foo": "bar"}]}
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_one_invalid_group_instance_rejects_whole_request(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="parcels",
+        field_key="parcel_weight",
+        is_required=True,
+    )
+    payload = _individual_payload()
+    payload["groupValues"] = {
+        "parcels": [{"parcel_weight": "2kg"}, {}],  # second instance missing required field
+    }
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+    invitations = await InvitationRepository(db_session).list_by_primary_contact_email(
+        payload["primaryContact"]["email"]
+    )
+    assert invitations == []
+
+
+# --- add-repeatable-field-groups (revised): hidden custom group skips ------
+# required-field validation ---------------------------------------------------
+
+
+async def test_create_invitation_hidden_group_required_field_not_required(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "A Hidden Custom Field Group's
+    Fields Are Not Required At Submission" — the group's condition watches
+    Carried Items' own seeded `itemDescription` field; leaving it at its
+    default (not "trigger") hides the group, so its required field can be
+    omitted.
+    """
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="conditional_parcels",
+        field_key="parcel_weight",
+        is_required=True,
+        visibility_condition={
+            "fieldKey": "item_description",
+            "operator": "equals",
+            "value": "trigger",
+        },
+    )
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": [], "itemDescription": "not the trigger value"}
+    payload["groupValues"] = {"conditional_parcels": [{}]}
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_visible_group_required_field_still_required(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="conditional_parcels",
+        field_key="parcel_weight",
+        is_required=True,
+        visibility_condition={
+            "fieldKey": "item_description",
+            "operator": "equals",
+            "value": "trigger",
+        },
+    )
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": [], "itemDescription": "trigger"}
+    payload["groupValues"] = {"conditional_parcels": [{}]}
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_hidden_group_supplied_value_still_validated(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A hidden group's field isn't required, but a value supplied anyway
+    is still validated against its own type/options rules."""
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="conditional_parcels",
+        field_key="parcel_weight",
+        field_type="dropdown_select",
+        options=["light", "heavy"],
+        visibility_condition={
+            "fieldKey": "item_description",
+            "operator": "equals",
+            "value": "trigger",
+        },
+    )
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": [], "itemDescription": "not the trigger value"}
+    payload["groupValues"] = {"conditional_parcels": [{"parcel_weight": "not_a_real_option"}]}
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_hidden_group_instance_minimum_not_enforced(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A hidden group's configured minimum instance count can't be met by
+    a visitor who was never shown it (specs/invitations/spec.md delta)."""
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="conditional_parcels",
+        field_key="parcel_weight",
+        min_instances=1,
+        visibility_condition={
+            "fieldKey": "item_description",
+            "operator": "equals",
+            "value": "trigger",
+        },
+    )
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": [], "itemDescription": "not the trigger value"}
+    payload["groupValues"] = {"conditional_parcels": []}
+    data = await _create_invitation_success(client, token, branch, payload=payload)
     assert data["id"]
 
 
