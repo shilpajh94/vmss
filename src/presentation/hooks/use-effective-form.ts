@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAppDependencies } from '../context/app-dependencies-context'
-import type { FormField, FormStep } from '../../domain/entities/form-builder-schema'
+import type { EffectiveFormStep, FormField } from '../../domain/entities/form-builder-schema'
 
 /** Fetches the calling branch's currently *published* Form Builder
  * configuration (`GET /form-builder/effective` — no permission gate, safe
@@ -12,12 +12,12 @@ import type { FormField, FormStep } from '../../domain/entities/form-builder-sch
  * components (`ConsentStep`, `CarriedItemsStep`) for their field sets.
  */
 export function useEffectiveForm(branchId: string | undefined): {
-  steps: FormStep[]
+  steps: EffectiveFormStep[]
   isLoading: boolean
   error: boolean
 } {
   const { getEffectiveFormUseCase } = useAppDependencies()
-  const [steps, setSteps] = useState<FormStep[]>([])
+  const [steps, setSteps] = useState<EffectiveFormStep[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(false)
 
@@ -50,7 +50,7 @@ export function useEffectiveForm(branchId: string | undefined): {
   return { steps, isLoading, error }
 }
 
-export function findStepFields(steps: FormStep[], stepKey: string): FormField[] {
+export function findStepFields(steps: EffectiveFormStep[], stepKey: string): FormField[] {
   return steps.find((step) => step.key === stepKey)?.fields ?? []
 }
 
@@ -60,6 +60,6 @@ export function findStepFields(steps: FormStep[], stepKey: string): FormField[] 
  * are the same fact — mirrors how `form_builder/validation.py::is_field_required`
  * reads it server-side.
  */
-export function findField(steps: FormStep[], stepKey: string, fieldKey: string): FormField | undefined {
+export function findField(steps: EffectiveFormStep[], stepKey: string, fieldKey: string): FormField | undefined {
   return findStepFields(steps, stepKey).find((field) => field.key === fieldKey)
 }

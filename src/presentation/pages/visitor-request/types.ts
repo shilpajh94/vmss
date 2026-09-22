@@ -80,6 +80,13 @@ export type ConsentFormState = Record<string, boolean>
 // `consent` below regardless of whether they're seeded or admin-authored.
 export type CustomFieldValues = Record<string, DynamicFieldValue>
 
+// One custom (admin-defined) repeatable field group's current instances,
+// keyed by the group's own `key` — the wizard-side counterpart of the wire
+// contract's `groupValues` (add-repeatable-field-groups). Every instance is
+// a flat answer map keyed by that group's field keys, matching how
+// `RepeatableFieldGroup` reads/writes them via `CustomFieldsSection`.
+export type GroupValues = Record<string, Record<string, DynamicFieldValue>[]>
+
 export interface VisitRequestFormState {
   registrationType: RegistrationType
   primaryContact: VisitorFormEntry
@@ -89,6 +96,7 @@ export interface VisitRequestFormState {
   vehicles: Vehicle[]
   consent: ConsentFormState
   customFieldValues: CustomFieldValues
+  groupValues: GroupValues
 }
 
 export function createInitialFormState(): VisitRequestFormState {
@@ -109,6 +117,7 @@ export function createInitialFormState(): VisitRequestFormState {
     vehicles: [],
     consent: {},
     customFieldValues: {},
+    groupValues: {},
   }
 }
 
@@ -153,5 +162,6 @@ export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
     vehicles: formState.vehicles,
     consents: formState.consent,
     customFieldValues: formState.customFieldValues,
+    groupValues: formState.groupValues,
   }
 }

@@ -35,6 +35,14 @@ export const VisitRequestSchema = z.object({
   // (system or admin-authored) continue to flow through `consents` above
   // instead, unaffected by this field.
   customFieldValues: z.record(z.string(), z.unknown()).optional(),
+  // Per-instance answers for a custom (admin-defined) repeatable field group
+  // (add-repeatable-field-groups) — keyed by the group's own `key`, an
+  // ordered array of that group's per-instance answer maps, each keyed by
+  // the group's field keys. The two built-in repeatable groups ("vehicles"/
+  // "visitors") keep submitting through their own dedicated `vehicles`/
+  // `visitors` fields above instead — this is only for a group an admin
+  // defines beyond those two.
+  groupValues: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))).optional(),
 })
 
 export type VisitRequest = z.infer<typeof VisitRequestSchema>

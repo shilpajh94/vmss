@@ -1,5 +1,5 @@
 import { prettifyKey } from '../../utils/prettify-key'
-import type { FormStep } from '../../../domain/entities/form-builder-schema'
+import type { EffectiveFormStep } from '../../../domain/entities/form-builder-schema'
 
 // Matches `VMSS_API/src/vmss_api/form_builder/defaults.py`'s seeded step
 // keys. Shared by both the visitor-request and staff-visitor-registration
@@ -35,7 +35,7 @@ export function isCanonicalStepKey(key: string): key is StepKey {
  * the historical built-in label for a canonical step, otherwise a
  * prettified version of the key (for a custom step with no name).
  */
-export function resolveStepLabel(step: FormStep): string {
+export function resolveStepLabel(step: EffectiveFormStep): string {
   if (step.name) return step.name
   if (isCanonicalStepKey(step.key)) return CANONICAL_STEP_LABELS[step.key]
   return prettifyKey(step.key)
@@ -53,6 +53,6 @@ export function getSkeletonStepLabels(): string[] {
  * what both wizards' sidebar/stepper and step-content routing render from,
  * instead of a hardcoded list of all six canonical steps.
  */
-export function getActiveSteps(steps: FormStep[]): FormStep[] {
+export function getActiveSteps(steps: EffectiveFormStep[]): EffectiveFormStep[] {
   return [...steps].filter((step) => step.isActive).sort((a, b) => a.orderIndex - b.orderIndex)
 }

@@ -105,6 +105,11 @@ import { CreateFormFieldUseCase } from './data/use-cases/create-form-field'
 import { UpdateFormFieldUseCase } from './data/use-cases/update-form-field'
 import { DeleteFormFieldUseCase } from './data/use-cases/delete-form-field'
 import { ReorderFormFieldsUseCase } from './data/use-cases/reorder-form-fields'
+import { ListFormFieldGroupsUseCase } from './data/use-cases/list-form-field-groups'
+import { CreateFormFieldGroupUseCase } from './data/use-cases/create-form-field-group'
+import { UpdateFormFieldGroupUseCase } from './data/use-cases/update-form-field-group'
+import { DeleteFormFieldGroupUseCase } from './data/use-cases/delete-form-field-group'
+import { ReorderFormFieldGroupsUseCase } from './data/use-cases/reorder-form-field-groups'
 import { PublishFormConfigUseCase } from './data/use-cases/publish-form-config'
 import { GetEffectiveFormUseCase } from './data/use-cases/get-effective-form'
 import { ListApprovalWorkflowRulesUseCase } from './data/use-cases/list-approval-workflow-rules'
@@ -226,6 +231,11 @@ export interface AppDependencies {
   updateFormFieldUseCase: UpdateFormFieldUseCase
   deleteFormFieldUseCase: DeleteFormFieldUseCase
   reorderFormFieldsUseCase: ReorderFormFieldsUseCase
+  listFormFieldGroupsUseCase: ListFormFieldGroupsUseCase
+  createFormFieldGroupUseCase: CreateFormFieldGroupUseCase
+  updateFormFieldGroupUseCase: UpdateFormFieldGroupUseCase
+  deleteFormFieldGroupUseCase: DeleteFormFieldGroupUseCase
+  reorderFormFieldGroupsUseCase: ReorderFormFieldGroupsUseCase
   publishFormConfigUseCase: PublishFormConfigUseCase
   getEffectiveFormUseCase: GetEffectiveFormUseCase
 }
@@ -336,6 +346,11 @@ export function createApp(): AppDependencies {
   let updateFormFieldUseCase: UpdateFormFieldUseCase | undefined
   let deleteFormFieldUseCase: DeleteFormFieldUseCase | undefined
   let reorderFormFieldsUseCase: ReorderFormFieldsUseCase | undefined
+  let listFormFieldGroupsUseCase: ListFormFieldGroupsUseCase | undefined
+  let createFormFieldGroupUseCase: CreateFormFieldGroupUseCase | undefined
+  let updateFormFieldGroupUseCase: UpdateFormFieldGroupUseCase | undefined
+  let deleteFormFieldGroupUseCase: DeleteFormFieldGroupUseCase | undefined
+  let reorderFormFieldGroupsUseCase: ReorderFormFieldGroupsUseCase | undefined
   let publishFormConfigUseCase: PublishFormConfigUseCase | undefined
   let getEffectiveFormUseCase: GetEffectiveFormUseCase | undefined
   let approvalWorkflowRuleRepository: ApprovalWorkflowRuleRepository | undefined
@@ -877,6 +892,31 @@ export function createApp(): AppDependencies {
     return reorderFormFieldsUseCase
   }
 
+  const resolveListFormFieldGroupsUseCase = (): ListFormFieldGroupsUseCase => {
+    listFormFieldGroupsUseCase ??= new ListFormFieldGroupsUseCase(resolveFormBuilderRepository())
+    return listFormFieldGroupsUseCase
+  }
+
+  const resolveCreateFormFieldGroupUseCase = (): CreateFormFieldGroupUseCase => {
+    createFormFieldGroupUseCase ??= new CreateFormFieldGroupUseCase(resolveFormBuilderRepository())
+    return createFormFieldGroupUseCase
+  }
+
+  const resolveUpdateFormFieldGroupUseCase = (): UpdateFormFieldGroupUseCase => {
+    updateFormFieldGroupUseCase ??= new UpdateFormFieldGroupUseCase(resolveFormBuilderRepository())
+    return updateFormFieldGroupUseCase
+  }
+
+  const resolveDeleteFormFieldGroupUseCase = (): DeleteFormFieldGroupUseCase => {
+    deleteFormFieldGroupUseCase ??= new DeleteFormFieldGroupUseCase(resolveFormBuilderRepository())
+    return deleteFormFieldGroupUseCase
+  }
+
+  const resolveReorderFormFieldGroupsUseCase = (): ReorderFormFieldGroupsUseCase => {
+    reorderFormFieldGroupsUseCase ??= new ReorderFormFieldGroupsUseCase(resolveFormBuilderRepository())
+    return reorderFormFieldGroupsUseCase
+  }
+
   const resolvePublishFormConfigUseCase = (): PublishFormConfigUseCase => {
     publishFormConfigUseCase ??= new PublishFormConfigUseCase(resolveFormBuilderRepository())
     return publishFormConfigUseCase
@@ -1192,6 +1232,21 @@ export function createApp(): AppDependencies {
     },
     get reorderFormFieldsUseCase() {
       return resolveReorderFormFieldsUseCase()
+    },
+    get listFormFieldGroupsUseCase() {
+      return resolveListFormFieldGroupsUseCase()
+    },
+    get createFormFieldGroupUseCase() {
+      return resolveCreateFormFieldGroupUseCase()
+    },
+    get updateFormFieldGroupUseCase() {
+      return resolveUpdateFormFieldGroupUseCase()
+    },
+    get deleteFormFieldGroupUseCase() {
+      return resolveDeleteFormFieldGroupUseCase()
+    },
+    get reorderFormFieldGroupsUseCase() {
+      return resolveReorderFormFieldGroupsUseCase()
     },
     get publishFormConfigUseCase() {
       return resolvePublishFormConfigUseCase()

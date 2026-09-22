@@ -414,6 +414,31 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: true,
   },
+  LIST_FORM_FIELD_GROUPS: {
+    endpoint: "/form-builder/steps/:stepId/groups",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_FORM_FIELD_GROUP: {
+    endpoint: "/form-builder/steps/:stepId/groups",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_FORM_FIELD_GROUP: {
+    endpoint: "/form-builder/groups/:id",
+    method: "PATCH",
+    hasToken: true,
+  },
+  DELETE_FORM_FIELD_GROUP: {
+    endpoint: "/form-builder/groups/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  REORDER_FORM_FIELD_GROUPS: {
+    endpoint: "/form-builder/steps/:stepId/groups/reorder",
+    method: "POST",
+    hasToken: true,
+  },
   PUBLISH_FORM_CONFIG: {
     endpoint: "/form-builder/publish",
     method: "POST",

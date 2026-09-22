@@ -184,6 +184,8 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             step={activeStep}
             value={formState.customFieldValues}
             onChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
+            groupValues={formState.groupValues}
+            onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
           />
         )}
 

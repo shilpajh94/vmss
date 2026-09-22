@@ -4,6 +4,7 @@ interface TextFieldProps {
   label: string
   value: string
   onChange: (value: string) => void
+  onBlur?: () => void
   placeholder?: string
   type?: string
   error?: string
@@ -14,7 +15,20 @@ interface TextFieldProps {
   max?: string
 }
 
-export function TextField({ label, value, onChange, placeholder, type = 'text', error, required, disabled, labelClassName, min, max }: TextFieldProps) {
+export function TextField({
+  label,
+  value,
+  onChange,
+  onBlur,
+  placeholder,
+  type = 'text',
+  error,
+  required,
+  disabled,
+  labelClassName,
+  min,
+  max,
+}: TextFieldProps) {
   const inputId = useId()
 
   return (
@@ -28,6 +42,7 @@ export function TextField({ label, value, onChange, placeholder, type = 'text', 
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
         onClick={(event) => {
           // Firefox (and some Chromium builds) only open the native date/time
           // picker when the click lands exactly on the tiny calendar icon.
