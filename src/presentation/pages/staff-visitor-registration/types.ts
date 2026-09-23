@@ -1,6 +1,13 @@
 import type { Vehicle } from '../../../domain/entities/vehicle-schema'
 import type { StaffVisitRequest } from '../../../domain/entities/staff-visit-request-schema'
-import type { CarriedItemsFormState, ConsentFormState, CustomFieldValues, RegistrationType, VisitInfoFormState } from '../visitor-request/types'
+import type {
+  CarriedItemsFormState,
+  ConsentFormState,
+  CustomFieldValues,
+  GroupValues,
+  RegistrationType,
+  VisitInfoFormState,
+} from '../visitor-request/types'
 
 export interface StaffVisitorFormEntry {
   fullName: string
@@ -39,6 +46,7 @@ export interface StaffVisitRequestFormState {
   vehicles: Vehicle[]
   consent: ConsentFormState
   customFieldValues: CustomFieldValues
+  groupValues: GroupValues
 }
 
 export function createInitialStaffFormState(): StaffVisitRequestFormState {
@@ -59,6 +67,7 @@ export function createInitialStaffFormState(): StaffVisitRequestFormState {
     vehicles: [],
     consent: {},
     customFieldValues: {},
+    groupValues: {},
   }
 }
 
@@ -99,5 +108,6 @@ export function toStaffVisitRequest(formState: StaffVisitRequestFormState): Staf
     vehicles: formState.vehicles,
     consents: formState.consent,
     customFieldValues: formState.customFieldValues,
+    groupValues: formState.groupValues,
   }
 }

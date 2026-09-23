@@ -29,6 +29,7 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
   const [optionsText, setOptionsText] = useState('')
 
   const requiresOptions = OPTION_REQUIRED_FIELD_TYPES.includes(fieldType)
+  const isContentOnly = fieldType === 'static_text'
   const options = optionsText
     .split(',')
     .map((option) => option.trim())
@@ -47,14 +48,15 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
     const key = slugify(label)
     if (!key) return
     if (requiresOptions && options.length === 0) return
+    if (isContentOnly && !description.trim()) return
 
     onCreate({
       key,
       label: label.trim(),
-      placeholder: placeholder.trim() || undefined,
+      placeholder: isContentOnly ? undefined : placeholder.trim() || undefined,
       helpText: description.trim() || undefined,
       fieldType,
-      isRequired,
+      isRequired: isContentOnly ? false : isRequired,
       options: requiresOptions ? options : undefined,
     })
     reset()
@@ -92,16 +94,28 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
 
       <div>
         <p className="mb-2 font-body text-sm font-semibold text-text">Configure Properties</p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <TextField label="Field Label" value={label} onChange={setLabel} placeholder="e.g. Company Name" required />
-          <TextField label="Placeholder Text" value={placeholder} onChange={setPlaceholder} placeholder="e.g. Enter your company" />
+        <div className={`grid grid-cols-1 gap-4 ${isContentOnly ? '' : 'sm:grid-cols-2'}`}>
+          <TextField
+            label={isContentOnly ? 'Title' : 'Field Label'}
+            value={label}
+            onChange={setLabel}
+            placeholder={isContentOnly ? 'e.g. Terms & Conditions' : 'e.g. Company Name'}
+            required
+          />
+          {!isContentOnly && (
+            <TextField label="Placeholder Text" value={placeholder} onChange={setPlaceholder} placeholder="e.g. Enter your company" />
+          )}
         </div>
         <div className="mt-4">
           <TextareaField
-            label="Description"
+            label={isContentOnly ? 'Content' : 'Description'}
             value={description}
             onChange={setDescription}
-            placeholder="Static text shown to the visitor alongside this field, e.g. the terms & conditions body"
+            placeholder={
+              isContentOnly
+                ? 'The text visitors will see, e.g. your Terms & Conditions body'
+                : 'Static text shown to the visitor alongside this field, e.g. the terms & conditions body'
+            }
             rows={3}
           />
         </div>
@@ -116,13 +130,15 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
             />
           </div>
         )}
-        <div className="mt-4 flex items-center justify-between rounded-lg border border-border px-4 py-3">
-          <div>
-            <p className="font-body text-sm font-semibold text-text">Required Field</p>
-            <p className="font-body text-xs text-text-muted">This field must be filled to proceed</p>
+        {!isContentOnly && (
+          <div className="mt-4 flex items-center justify-between rounded-lg border border-border px-4 py-3">
+            <div>
+              <p className="font-body text-sm font-semibold text-text">Required Field</p>
+              <p className="font-body text-xs text-text-muted">This field must be filled to proceed</p>
+            </div>
+            <ToggleSwitch checked={isRequired} onChange={setIsRequired} label="" />
           </div>
-          <ToggleSwitch checked={isRequired} onChange={setIsRequired} label="" />
-        </div>
+        )}
       </div>
 
       <div className="flex items-center justify-end gap-3">

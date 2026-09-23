@@ -24,6 +24,14 @@ const TEXT_LIKE_INPUT_TYPES: Partial<Record<FormFieldType, string>> = {
 }
 
 function renderControl({ field, value, onChange }: DynamicFieldProps) {
+  if (field.fieldType === 'static_text') {
+    // Display-only content block: no input control, collects no answer.
+    // Its body renders via the wrapper's unconditional `ExpandableText`
+    // call below, the same mechanism every other field type's description
+    // already uses.
+    return <p className="text-body font-semibold text-text">{field.label}</p>
+  }
+
   if (field.fieldType === 'toggle_switch' && (!field.options || field.options.length === 0)) {
     // A plain accept/decline toggle with no option set — e.g. a consent
     // statement — rendered as a checkbox to match the mockup.

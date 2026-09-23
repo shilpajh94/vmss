@@ -7,7 +7,7 @@ import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visi
 import type { FormField } from '../../../../domain/entities/form-builder-schema'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffVisitorFormEntry } from '../types'
-import { ID_PROOF_ALLOWED_TYPES, ID_PROOF_OPTIONS, PROFILE_IMAGE_ALLOWED_TYPES } from './constants'
+import { ID_PROOF_ALLOWED_TYPES, PROFILE_IMAGE_ALLOWED_TYPES } from './constants'
 import { InlineFileUpload } from './InlineFileUpload'
 
 interface PrimaryContactCardProps {
@@ -103,7 +103,7 @@ export function PrimaryContactCard({
               <SelectField
                 label="ID Proof Type"
                 placeholder="Select ID type"
-                options={ID_PROOF_OPTIONS}
+                options={visitorInfoFields.idProofOptions.map((option) => ({ value: option, label: option }))}
                 value={value.idProofType}
                 onChange={(idProofType) => onChange({ ...value, idProofType })}
                 error={errors.idProofType}

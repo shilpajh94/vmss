@@ -29,6 +29,8 @@ export const StaffVisitRequestSchema = z.object({
   consents: z.record(z.string(), z.boolean()),
   // See visit-request-schema.ts's matching comment.
   customFieldValues: z.record(z.string(), z.unknown()).optional(),
+  // See visit-request-schema.ts's matching comment.
+  groupValues: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))).optional(),
 })
 
 export type StaffVisitRequest = z.infer<typeof StaffVisitRequestSchema>

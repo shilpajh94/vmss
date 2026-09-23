@@ -1,5 +1,5 @@
 import type { FormBuilderRepository } from '../repositories/form-builder-repository'
-import type { FormStep } from '../../domain/entities/form-builder-schema'
+import type { EffectiveFormStep } from '../../domain/entities/form-builder-schema'
 
 export class GetEffectiveFormUseCase {
   private readonly formBuilderRepository: FormBuilderRepository
@@ -8,7 +8,7 @@ export class GetEffectiveFormUseCase {
     this.formBuilderRepository = formBuilderRepository
   }
 
-  async execute(branchId: string | undefined): Promise<FormStep[]> {
+  async execute(branchId: string | undefined): Promise<EffectiveFormStep[]> {
     return this.formBuilderRepository.getEffectiveForm(branchId)
   }
 }

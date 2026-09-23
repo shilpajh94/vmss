@@ -2,8 +2,10 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GridIcon, PencilIcon, TrashIcon, XIcon } from '../../../components/icons'
 import { ExpandableText } from '../../../components/ui/ExpandableText'
-import { fieldTypeLabel } from '../field-type-catalog'
-import type { FormField } from '../../../../domain/entities/form-builder-schema'
+import { CONTENT_ONLY_FIELD_TYPES, fieldTypeLabel } from '../field-type-catalog'
+import type { FormField, FormFieldGroup } from '../../../../domain/entities/form-builder-schema'
+
+const UNGROUPED_VALUE = '__ungrouped__'
 
 interface SortableFieldRowProps {
   field: FormField
@@ -11,9 +13,14 @@ interface SortableFieldRowProps {
   onSelect: () => void
   onToggleRequired: () => void
   onDelete: () => void
+  /** The step's groups, for the group-assignment dropdown — empty when the
+   * step has none, in which case the dropdown doesn't render at all
+   * (add-repeatable-field-groups). */
+  groups: FormFieldGroup[]
+  onAssignGroup: (groupId: string | null) => void
 }
 
-export function SortableFieldRow({ field, isSelected, onSelect, onToggleRequired, onDelete }: SortableFieldRowProps) {
+export function SortableFieldRow({ field, isSelected, onSelect, onToggleRequired, onDelete, groups, onAssignGroup }: SortableFieldRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: field.id })
 
   return (
@@ -50,17 +57,35 @@ export function SortableFieldRow({ field, isSelected, onSelect, onToggleRequired
         <ExpandableText text={field.helpText} />
       </div>
 
-      <label className="flex items-center gap-2">
-        <span className="font-body text-xs font-medium text-text-muted">Required</span>
-        <input
-          type="checkbox"
-          role="switch"
-          checked={field.isRequired}
-          disabled={field.isLocked}
-          onChange={onToggleRequired}
-          className="size-4 disabled:opacity-50"
-        />
-      </label>
+      {groups.length > 0 && (
+        <select
+          value={field.groupId ?? UNGROUPED_VALUE}
+          onChange={(event) => onAssignGroup(event.target.value === UNGROUPED_VALUE ? null : event.target.value)}
+          aria-label="Assign to group"
+          className="rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-xs text-text focus:outline-none focus:ring-2 focus:ring-admin-accent"
+        >
+          <option value={UNGROUPED_VALUE}>Ungrouped</option>
+          {groups.map((group) => (
+            <option key={group.id} value={group.id}>
+              {group.name}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {!CONTENT_ONLY_FIELD_TYPES.includes(field.fieldType) && (
+        <label className="flex items-center gap-2">
+          <span className="font-body text-xs font-medium text-text-muted">Required</span>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={field.isRequired}
+            disabled={field.isLocked}
+            onChange={onToggleRequired}
+            className="size-4 disabled:opacity-50"
+          />
+        </label>
+      )}
 
       <button type="button" onClick={onSelect} aria-label="Edit field" className="text-text-faint hover:text-text">
         <PencilIcon className="size-4" />
