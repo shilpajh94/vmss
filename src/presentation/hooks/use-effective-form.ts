@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAppDependencies } from '../context/app-dependencies-context'
-import type { EffectiveFormStep, FormField } from '../../domain/entities/form-builder-schema'
+import type { EffectiveFormFieldGroup, EffectiveFormStep, FormField } from '../../domain/entities/form-builder-schema'
 
 /** Fetches the calling branch's currently *published* Form Builder
  * configuration (`GET /form-builder/effective` — no permission gate, safe
@@ -52,6 +52,14 @@ export function useEffectiveForm(branchId: string | undefined): {
 
 export function findStepFields(steps: EffectiveFormStep[], stepKey: string): FormField[] {
   return steps.find((step) => step.key === stepKey)?.fields ?? []
+}
+
+/** A step's admin-defined field groups (add-repeatable-field-groups /
+ * add-conditional-field-groups) — used alongside `findStepFields` by any
+ * step, built-in or custom, that renders its own groups (see
+ * `FieldGroupsSection`). */
+export function findStepGroups(steps: EffectiveFormStep[], stepKey: string): EffectiveFormFieldGroup[] {
+  return steps.find((step) => step.key === stepKey)?.groups ?? []
 }
 
 /** A single toggleable field's active/required state, per its presence in

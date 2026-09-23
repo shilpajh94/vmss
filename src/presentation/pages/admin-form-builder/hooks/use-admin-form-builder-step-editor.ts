@@ -189,9 +189,16 @@ export function useAdminFormBuilderStepEditor() {
   const openAddField = useCallback(() => setIsAddFieldOpen(true), [])
   const closeAddField = useCallback(() => setIsAddFieldOpen(false), [])
 
+  // Returns `undefined` on success, or the backend's rejection message on
+  // failure (e.g. a duplicate field key on this step) — same convention as
+  // `saveFieldProperties`. `AddFieldModal` awaits this so it can keep the
+  // modal open with the user's input intact and show the real reason inline,
+  // instead of silently resetting the form on every click (which made a
+  // failed create look identical to a successful one, and invited an
+  // accidental duplicate re-submission — see AddFieldModal.tsx).
   const createField = useCallback(
-    async (input: FormFieldCreateInput) => {
-      if (!stepId) return
+    async (input: FormFieldCreateInput): Promise<string | undefined> => {
+      if (!stepId) return undefined
       try {
         const created = await createFormFieldUseCase.execute(stepId, input, branchId)
         setFields((current) => [...current, created].sort((a, b) => a.orderIndex - b.orderIndex))
@@ -199,8 +206,12 @@ export function useAdminFormBuilderStepEditor() {
         markDirty()
         toast.success('Field created in draft. Publish to update the visitor form.')
         setIsAddFieldOpen(false)
-      } catch {
-        toast.error('Something went wrong creating the field. Please try again.')
+        return undefined
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Something went wrong creating the field. Please try again.'
+        toast.error(message)
+        return message
       }
     },
     [stepId, createFormFieldUseCase, branchId, toast, markDirty],

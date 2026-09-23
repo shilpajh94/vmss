@@ -52,10 +52,15 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     consentFields,
     visitorInfoFields,
     additionalNotesActive,
+    purposeOfVisitOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
+    visitorInfoGroups,
+    visitorInfoAllFields,
     visitDetailsCustomFields,
     vehicleInfoCustomFields,
+    vehicleInfoGroups,
+    vehicleInfoAllFields,
   } = useVisitorRequestWizard(initial, branches)
 
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
@@ -112,8 +117,6 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             onRegistrationTypeChange={(registrationType) => setFormState({ ...formState, registrationType })}
             primaryContact={formState.primaryContact}
             onPrimaryContactChange={(primaryContact) => setFormState({ ...formState, primaryContact })}
-            additionalVisitors={formState.additionalVisitors}
-            onAdditionalVisitorsChange={(additionalVisitors) => setFormState({ ...formState, additionalVisitors })}
             uploadFile={uploadFile}
             getFilePreviewUrl={getFilePreviewUrl}
             errors={errors}
@@ -121,6 +124,10 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             onRetryVisitorCategories={loadVisitorCategories}
             visitorInfoFields={visitorInfoFields}
             customFields={visitorInfoCustomFields}
+            groups={visitorInfoGroups}
+            groupFields={visitorInfoAllFields}
+            groupValues={formState.groupValues}
+            onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'visit_details' && (
@@ -131,6 +138,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             branches={branches}
             buildings={buildings}
             additionalNotesActive={additionalNotesActive}
+            purposeOfVisitOptions={purposeOfVisitOptions}
             customFields={visitDetailsCustomFields}
             customFieldValues={formState.customFieldValues}
             onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
@@ -153,6 +161,10 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             errors={errors}
             vehicleInfoFields={vehicleInfoFields}
             customFields={vehicleInfoCustomFields}
+            groups={vehicleInfoGroups}
+            groupFields={vehicleInfoAllFields}
+            groupValues={formState.groupValues}
+            onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'consent_agreement' && (

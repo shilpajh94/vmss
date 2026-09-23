@@ -47,10 +47,15 @@ export function StaffVisitorRegistrationPage() {
     consentFields,
     visitorInfoFields,
     additionalNotesActive,
+    purposeOfVisitOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
+    visitorInfoGroups,
+    visitorInfoAllFields,
     visitDetailsCustomFields,
     vehicleInfoCustomFields,
+    vehicleInfoGroups,
+    vehicleInfoAllFields,
   } = useStaffVisitorRegistrationWizard(branches)
 
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
@@ -119,14 +124,16 @@ export function StaffVisitorRegistrationPage() {
             onRegistrationTypeChange={(registrationType) => setFormState({ ...formState, registrationType })}
             primaryContact={formState.primaryContact}
             onPrimaryContactChange={(primaryContact) => setFormState({ ...formState, primaryContact })}
-            additionalVisitors={formState.additionalVisitors}
-            onAdditionalVisitorsChange={(additionalVisitors) => setFormState({ ...formState, additionalVisitors })}
             uploadFile={uploadFile}
             getFilePreviewUrl={getFilePreviewUrl}
             errors={errors}
             visitorCategories={visitorCategories}
             visitorInfoFields={visitorInfoFields}
             customFields={visitorInfoCustomFields}
+            groups={visitorInfoGroups}
+            groupFields={visitorInfoAllFields}
+            groupValues={formState.groupValues}
+            onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'visit_details' && (
@@ -137,6 +144,7 @@ export function StaffVisitorRegistrationPage() {
             branches={branches}
             buildings={buildings}
             additionalNotesActive={additionalNotesActive}
+            purposeOfVisitOptions={purposeOfVisitOptions}
             customFields={visitDetailsCustomFields}
             customFieldValues={formState.customFieldValues}
             onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
@@ -159,6 +167,10 @@ export function StaffVisitorRegistrationPage() {
             errors={errors}
             vehicleInfoFields={vehicleInfoFields}
             customFields={vehicleInfoCustomFields}
+            groups={vehicleInfoGroups}
+            groupFields={vehicleInfoAllFields}
+            groupValues={formState.groupValues}
+            onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'consent_agreement' && (

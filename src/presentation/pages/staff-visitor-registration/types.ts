@@ -77,7 +77,8 @@ function toStaffVisitor(entry: StaffVisitorFormEntry) {
     email: entry.email,
     phone: entry.phone,
     preferredContactMethod: entry.preferredContactMethod,
-    idProofType: entry.idProofType,
+    // See visitor-request/types.ts's matching comment.
+    idProofType: entry.idProofType || undefined,
     customFieldValues: entry.customFieldValues,
   }
 }

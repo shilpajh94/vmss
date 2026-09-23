@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
-import { findField, findStepFields, useEffectiveForm } from '../../../hooks/use-effective-form'
+import { findField, findStepFields, findStepGroups, useEffectiveForm } from '../../../hooks/use-effective-form'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
 import type { Branch } from '../../../../domain/entities/branch-schema'
@@ -94,9 +94,6 @@ function validateStep(
 ): Record<string, string> {
   if (stepKey === 'visitor_info') {
     const errors = validateVisitorContact(formState.primaryContact, true, visitorInfoFields)
-    if (formState.registrationType === 'group' && formState.additionalVisitors.length === 0) {
-      errors.additionalVisitors = 'Add at least one visitor to continue.'
-    }
     return errors
   }
 
@@ -179,6 +176,16 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     () => findField(effectiveFormSteps, 'visit_details', 'additional_notes') !== undefined,
     [effectiveFormSteps],
   )
+  // Branch-configured (form-builder) Purpose of Visit choices — the field's
+  // own `options`, same pattern as `idProofOptions`/`vehicleTypeOptions`
+  // below (make-id-proof-and-vehicle-type-configurable). `VisitInfoStep`
+  // falls back to its hardcoded default list when this is empty, since
+  // Purpose of Visit (unlike ID Proof/Vehicle Type) always renders
+  // regardless of any active/inactive state.
+  const purposeOfVisitOptions = useMemo(
+    () => findField(effectiveFormSteps, 'visit_details', 'purpose_of_visit')?.options ?? [],
+    [effectiveFormSteps],
+  )
   const vehicleInfoFields = useMemo(() => {
     const makeModel = findField(effectiveFormSteps, 'vehicle_info', 'make_model')
     const color = findField(effectiveFormSteps, 'vehicle_info', 'color')
@@ -194,18 +201,49 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
   // Admin-authored (non-system) fields per step, passed to each step's
   // generic custom-fields section (add-generic-custom-field-support). Every
   // step now accepts new fields, not only the "fully configurable" ones.
-  const visitorInfoCustomFields = useMemo(
+  //
+  // Visitor Info's own *admin-authored* field groups (add-repeatable-field-groups /
+  // add-conditional-field-groups) render separately, through
+  // `FieldGroupsSection` (see `VisitorInfoStep`) — a field assigned to one of
+  // them (`field.groupId` set) is excluded here so it isn't also flattened
+  // into the plain per-visitor custom-fields list. The seeded system group
+  // ("visitors") is excluded from this list entirely — the backend won't
+  // allow it to be made non-repeatable (it's a locked system group), so
+  // there's no bespoke Visitor Details/"+ Add Visitor" UI for it any more;
+  // an admin-created group (e.g. "Additional Visitors") is the supported
+  // way to collect more than one visitor now, via `FieldGroupsSection`.
+  const visitorInfoGroups = useMemo(
+    () => findStepGroups(effectiveFormSteps, 'visitor_info').filter((group) => !group.isSystem),
+    [effectiveFormSteps],
+  )
+  const visitorInfoAllFields = useMemo(
     () => findStepFields(effectiveFormSteps, 'visitor_info').filter((field) => !field.isSystem),
     [effectiveFormSteps],
   )
+  const visitorInfoCustomFields = useMemo(() => {
+    const groupedFieldKeys = new Set(visitorInfoGroups.flatMap((group) => group.fieldKeys))
+    return visitorInfoAllFields.filter((field) => !groupedFieldKeys.has(field.key))
+  }, [visitorInfoAllFields, visitorInfoGroups])
   const visitDetailsCustomFields = useMemo(
     () => findStepFields(effectiveFormSteps, 'visit_details').filter((field) => !field.isSystem),
     [effectiveFormSteps],
   )
-  const vehicleInfoCustomFields = useMemo(
+  // Vehicle Info's own admin-defined field groups, rendered via
+  // `FieldGroupsSection` in `VehicleInfoStep` — see the matching Visitor
+  // Info comment above. The seeded "vehicles" system group is excluded; it
+  // already has its own bespoke Add Vehicle UI.
+  const vehicleInfoGroups = useMemo(
+    () => findStepGroups(effectiveFormSteps, 'vehicle_info').filter((group) => !group.isSystem),
+    [effectiveFormSteps],
+  )
+  const vehicleInfoAllFields = useMemo(
     () => findStepFields(effectiveFormSteps, 'vehicle_info').filter((field) => !field.isSystem),
     [effectiveFormSteps],
   )
+  const vehicleInfoCustomFields = useMemo(() => {
+    const groupedFieldKeys = new Set(vehicleInfoGroups.flatMap((group) => group.fieldKeys))
+    return vehicleInfoAllFields.filter((field) => !groupedFieldKeys.has(field.key))
+  }, [vehicleInfoAllFields, vehicleInfoGroups])
   const lastStepIndex = activeSteps.length > 0 ? activeSteps.length - 1 : 0
 
   // The active step set can change mid-session once `branchId` resolves
@@ -331,9 +369,14 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     consentFields,
     visitorInfoFields,
     additionalNotesActive,
+    purposeOfVisitOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
+    visitorInfoGroups,
+    visitorInfoAllFields,
     visitDetailsCustomFields,
     vehicleInfoCustomFields,
+    vehicleInfoGroups,
+    vehicleInfoAllFields,
   }
 }

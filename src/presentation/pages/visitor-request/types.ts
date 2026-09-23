@@ -127,7 +127,11 @@ export function toVisitor(entry: VisitorFormEntry): Visitor {
     email: entry.email,
     phone: entry.phone,
     preferredContactMethod: entry.preferredContactMethod,
-    idProofType: entry.idProofType,
+    // Omitted rather than sent as `''` when ID Proof Type isn't
+    // active/required for this branch and the visitor left it blank — the
+    // backend validates any *present* value against its known ID proof
+    // types and rejects an empty string as unrecognized.
+    idProofType: entry.idProofType || undefined,
     customFieldValues: entry.customFieldValues,
   }
 }

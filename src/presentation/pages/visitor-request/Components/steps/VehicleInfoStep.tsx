@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { CustomFieldsSection } from '../../../../components/dynamic-fields/CustomFieldsSection'
 import type { DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
+import { resolveGroupFlatValues } from '../../../../components/dynamic-fields/field-group-visibility'
+import { FieldGroupsSection } from '../../../../components/dynamic-fields/FieldGroupsSection'
 import { formatDynamicFieldValue } from '../../../../components/dynamic-fields/format-dynamic-field-value'
+import type { GroupInstance } from '../../../../components/dynamic-fields/RepeatableFieldGroup'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
 import { TextField } from '../../../../components/ui/TextField'
-import type { FormField } from '../../../../../domain/entities/form-builder-schema'
+import type { EffectiveFormFieldGroup, FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
 
 function createEmptyVehicle(vehicleTypeOptions: string[]): Vehicle {
@@ -35,9 +38,29 @@ interface VehicleInfoStepProps {
    * (add-generic-custom-field-support) — each vehicle's own answers live
    * on its own `customFieldValues`, independent of every other vehicle's. */
   customFields: FormField[]
+  /** Vehicle Info's own admin-defined field groups
+   * (add-repeatable-field-groups / add-conditional-field-groups), rendered
+   * once for the whole step (not per-vehicle) via `FieldGroupsSection` —
+   * same pattern as the Visitor Info step's own groups. */
+  groups: EffectiveFormFieldGroup[]
+  /** Every non-system Vehicle Info field, including grouped ones — used to
+   * resolve `groups`' `fieldKeys` (`customFields` above excludes them). */
+  groupFields: FormField[]
+  groupValues: Record<string, GroupInstance[]>
+  onGroupValuesChange: (groupValues: Record<string, GroupInstance[]>) => void
 }
 
-export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields, customFields }: VehicleInfoStepProps) {
+export function VehicleInfoStep({
+  vehicles,
+  onChange,
+  errors,
+  vehicleInfoFields,
+  customFields,
+  groups,
+  groupFields,
+  groupValues,
+  onGroupValuesChange,
+}: VehicleInfoStepProps) {
   const [draftVehicle, setDraftVehicle] = useState<Vehicle | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [draftErrors, setDraftErrors] = useState<Record<string, string>>({})
@@ -87,6 +110,12 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
   const removeVehicle = (index: number) => {
     onChange(vehicles.filter((_, vehicleIndex) => vehicleIndex !== index))
   }
+
+  // Unlike Visitor Info, Vehicle Info has no single step-level "current"
+  // entry to seed a group condition from — every field lives on a specific
+  // vehicle instance, not the step itself — so this only resolves values
+  // from the step's own non-repeatable groups (see `resolveGroupFlatValues`).
+  const groupFlatValues = resolveGroupFlatValues(groups, groupValues, {})
 
   return (
     <div className="flex flex-col gap-4">
@@ -205,6 +234,14 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
           </div>
         </div>
       )}
+
+      <FieldGroupsSection
+        groups={groups}
+        fields={groupFields}
+        flatValues={groupFlatValues}
+        groupValues={groupValues}
+        onGroupValuesChange={onGroupValuesChange}
+      />
     </div>
   )
 }

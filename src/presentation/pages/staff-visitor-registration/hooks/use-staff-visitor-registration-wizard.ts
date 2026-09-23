@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { findField, findStepFields, useEffectiveForm } from '../../../hooks/use-effective-form'
+import { findField, findStepFields, findStepGroups, useEffectiveForm } from '../../../hooks/use-effective-form'
 import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visitor-request-wizard'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
@@ -52,9 +52,6 @@ function validateStep(
 ): Record<string, string> {
   if (stepKey === 'visitor_info') {
     const errors = validateStaffVisitorContact(formState.primaryContact, visitorInfoFields)
-    if (formState.registrationType === 'group' && formState.additionalVisitors.length === 0) {
-      errors.additionalVisitors = 'Add at least one visitor to continue.'
-    }
     return errors
   }
 
@@ -130,6 +127,11 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     () => findField(effectiveFormSteps, 'visit_details', 'additional_notes') !== undefined,
     [effectiveFormSteps],
   )
+  // See use-visitor-request-wizard.ts's matching comment.
+  const purposeOfVisitOptions = useMemo(
+    () => findField(effectiveFormSteps, 'visit_details', 'purpose_of_visit')?.options ?? [],
+    [effectiveFormSteps],
+  )
   const vehicleInfoFields = useMemo(() => {
     const makeModel = findField(effectiveFormSteps, 'vehicle_info', 'make_model')
     const color = findField(effectiveFormSteps, 'vehicle_info', 'color')
@@ -142,20 +144,37 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
       vehicleTypeOptions: vehicleType?.options ?? [],
     }
   }, [effectiveFormSteps])
-  // Admin-authored (non-system) fields per step — see
-  // use-visitor-request-wizard.ts's matching comment.
-  const visitorInfoCustomFields = useMemo(
+  // Admin-authored (non-system) fields per step, and Visitor Info's own
+  // field groups — see use-visitor-request-wizard.ts's matching comment.
+  const visitorInfoGroups = useMemo(
+    () => findStepGroups(effectiveFormSteps, 'visitor_info').filter((group) => !group.isSystem),
+    [effectiveFormSteps],
+  )
+  const visitorInfoAllFields = useMemo(
     () => findStepFields(effectiveFormSteps, 'visitor_info').filter((field) => !field.isSystem),
     [effectiveFormSteps],
   )
+  const visitorInfoCustomFields = useMemo(() => {
+    const groupedFieldKeys = new Set(visitorInfoGroups.flatMap((group) => group.fieldKeys))
+    return visitorInfoAllFields.filter((field) => !groupedFieldKeys.has(field.key))
+  }, [visitorInfoAllFields, visitorInfoGroups])
   const visitDetailsCustomFields = useMemo(
     () => findStepFields(effectiveFormSteps, 'visit_details').filter((field) => !field.isSystem),
     [effectiveFormSteps],
   )
-  const vehicleInfoCustomFields = useMemo(
+  // See use-visitor-request-wizard.ts's matching comment.
+  const vehicleInfoGroups = useMemo(
+    () => findStepGroups(effectiveFormSteps, 'vehicle_info').filter((group) => !group.isSystem),
+    [effectiveFormSteps],
+  )
+  const vehicleInfoAllFields = useMemo(
     () => findStepFields(effectiveFormSteps, 'vehicle_info').filter((field) => !field.isSystem),
     [effectiveFormSteps],
   )
+  const vehicleInfoCustomFields = useMemo(() => {
+    const groupedFieldKeys = new Set(vehicleInfoGroups.flatMap((group) => group.fieldKeys))
+    return vehicleInfoAllFields.filter((field) => !groupedFieldKeys.has(field.key))
+  }, [vehicleInfoAllFields, vehicleInfoGroups])
   const lastStepIndex = activeSteps.length > 0 ? activeSteps.length - 1 : 0
 
   // See use-visitor-request-wizard.ts's matching effect for why this is needed.
@@ -291,9 +310,14 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     consentFields,
     visitorInfoFields,
     additionalNotesActive,
+    purposeOfVisitOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
+    visitorInfoGroups,
+    visitorInfoAllFields,
     visitDetailsCustomFields,
     vehicleInfoCustomFields,
+    vehicleInfoGroups,
+    vehicleInfoAllFields,
   }
 }
