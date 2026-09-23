@@ -905,18 +905,17 @@ async def test_create_group_invitation_with_empty_visitor_list_rejected(
     assert response.status_code == 422
 
 
-async def test_create_group_invitation_exceeding_max_visitors_rejected(
+async def test_create_group_invitation_exceeding_former_max_visitors_accepted(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
-    """add-repeatable-field-groups (revised): the group-visitor-count cap
-    is now enforced through Visitor Info's seeded group `maxInstances`
-    (`settings.invitation_max_group_visitors`'s value at seed time — 20 by
-    default), not a live-monkeypatchable settings check. Visitor Info's
-    group has no admin-editable range (`_NO_INSTANCE_RANGE_SYSTEM_GROUP_KEYS`),
-    so this exercises the seeded default directly by exceeding it, rather
-    than lowering it via the Form Builder API the way
-    `test_create_invitation_vehicle_count_above_configured_maximum_rejected`
-    can for Vehicle Info's (admin-editable) group.
+    """Visitor Info's seeded group is no longer repeatable (`isRepeatable`
+    now seeded `False` — see `defaults.py`'s "visitors" group), which is a
+    deliberate product decision to retire the group-visitor-count cap
+    entirely: `validate_group_instance_count` skips all enforcement for a
+    non-repeatable group (`form_builder/validation.py`), so
+    `settings.invitation_max_group_visitors` no longer bounds a group
+    registration's visitor count at all. This supersedes the old
+    `test_create_group_invitation_exceeding_max_visitors_rejected`.
     """
     token = await _login(client, user.email)
     payload = _group_payload()
@@ -928,14 +927,14 @@ async def test_create_group_invitation_exceeding_max_visitors_rejected(
         }
         for i in range(settings.invitation_max_group_visitors + 1)
     ]
-    response = await _create_invitation(
+    data = await _create_invitation_success(
         client,
         token,
         branch,
         payload=payload,
         visitor_file_count=settings.invitation_max_group_visitors + 1,
     )
-    assert response.status_code == 422
+    assert data["id"]
 
 
 async def test_create_group_invitation_visitor_file_count_mismatch_rejected(
@@ -1437,6 +1436,226 @@ async def test_create_invitation_hidden_group_instance_minimum_not_enforced(
     payload["groupValues"] = {"conditional_parcels": []}
     data = await _create_invitation_success(client, token, branch, payload=payload)
     assert data["id"]
+
+
+async def test_create_invitation_hidden_visitor_info_group_required_field_not_required(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Same rule as above (`test_create_invitation_hidden_group_required_field_not_required`)
+    but for a custom group defined directly on Visitor Info — unlike a
+    field simply assigned to that step, a *grouped* field on Visitor
+    Info/Vehicle Info is now excluded from the flat per-visitor
+    `customFieldValues` check entirely and validated only through
+    `groupValues`, the same as every other admin-defined group
+    (`custom_groups_for_invitation_scope`). Regression test: the group's
+    condition watches `registration_type`, so an individual registration
+    never shows it and mustn't be blocked on its required field, whether or
+    not the client even sends a `groupValues` entry for it.
+    """
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        group_key="additional_visitors",
+        field_key="name",
+        is_required=True,
+        visibility_condition={
+            "fieldKey": "registration_type",
+            "operator": "equals",
+            "value": "group",
+        },
+    )
+    payload = _individual_payload()
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_visible_visitor_info_group_required_field_still_required(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """The same Visitor Info group's required field is still enforced for
+    a registration type that does show it, once an instance is actually
+    submitted via `groupValues`."""
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        group_key="additional_visitors",
+        field_key="name",
+        is_required=True,
+        visibility_condition={
+            "fieldKey": "registration_type",
+            "operator": "equals",
+            "value": "group",
+        },
+    )
+    payload = _group_payload()
+    payload["groupValues"] = {"additional_visitors": [{}]}
+    response = await _create_invitation(
+        client, token, branch, payload=payload, visitor_file_count=2
+    )
+    assert response.status_code == 422
+
+
+async def test_create_invitation_group_registration_via_visitor_info_custom_group_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression test for the "Group registration must list at least one
+    visitor" bug: a branch that collects additional visitors through an
+    admin-defined repeatable group on Visitor Info (rather than the fixed
+    `visitors` list — the built-in "Visitors" system group is no longer
+    admin-configurable, `form_builder/defaults.py`) can submit a group
+    registration with `visitors: []` and its visitor data in `groupValues`
+    instead, and it's accepted end to end: the structural "at least one
+    visitor" check accepts a non-empty `groupValues` entry
+    (`invitations/schemas.py`), and the group's own required field is
+    validated per submitted instance.
+    """
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        group_key="additional_visitors",
+        field_key="name",
+        is_required=True,
+    )
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groupValues"] = {"additional_visitors": [{"name": "Extra One"}, {"name": "Extra Two"}]}
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_get_invitation_detail_surfaces_visitor_info_group_visitors(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression test for "GET /invitations/:id doesn't reflect visitors
+    collected via a custom field group": `visitors` in the detail response
+    must include a synthesized entry per instance of a Visitor Info group's
+    submitted `groupValues`, not just the legacy `visitors` relation (which
+    stays empty when a branch collects extras this way instead)."""
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        group_key="additional_visitors",
+        field_key="name",
+        is_required=True,
+    )
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groupValues"] = {"additional_visitors": [{"name": "Extra One"}, {"name": "Extra Two"}]}
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    body = detail_response.json()["data"]
+    assert body["groupFieldValues"] == {
+        "additional_visitors": [{"name": "Extra One"}, {"name": "Extra Two"}]
+    }
+    names = sorted(v["fullName"] for v in body["visitors"])
+    assert names == ["Extra One", "Extra Two"]
+    for visitor_out in body["visitors"]:
+        assert visitor_out["idProofType"] is None
+        assert visitor_out["email"] is None
+
+
+async def test_get_invitation_detail_group_visitor_email_and_phone_mapped_by_field_type(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Follow-up regression test: once a Visitor Info group has its own
+    `email`/`phone`-typed fields alongside its name field, the synthesized
+    visitor entry picks those values up too, not just `fullName` — matched
+    by Form Builder's `fieldType`, since there's no other reliable signal
+    for which of an admin's arbitrary field keys means what.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == "visitor_info")
+
+    group_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={"key": "additional_visitors", "name": "Additional Visitors", "isRepeatable": True},
+        headers=headers,
+    )
+    assert group_response.status_code == 201, group_response.text
+    group = group_response.json()["data"]
+
+    for field_key, field_type in (
+        ("name", "text"),
+        ("email_address", "email"),
+        ("contact_number", "phone"),
+    ):
+        field_response = await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/fields",
+            json={
+                "key": field_key,
+                "label": field_key.replace("_", " ").title(),
+                "fieldType": field_type,
+                "isRequired": False,
+                "groupId": group["id"],
+            },
+            headers=headers,
+        )
+        assert field_response.status_code == 201, field_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groupValues"] = {
+        "additional_visitors": [
+            {
+                "name": "Extra One",
+                "email_address": "extra.one@example.com",
+                "contact_number": "+1 555 000 1111",
+            }
+        ]
+    }
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(f"/api/v1/invitations/{data['id']}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    [visitor_out] = detail_response.json()["data"]["visitors"]
+    assert visitor_out["fullName"] == "Extra One"
+    assert visitor_out["email"] == "extra.one@example.com"
+    assert visitor_out["phone"] == "+1 555 000 1111"
+    assert visitor_out["idProofType"] is None
+    assert visitor_out["idProofUrl"] is None
+
+
+async def test_get_invitation_detail_includes_primary_contact_email_and_phone(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression test: `primaryContactEmail`/`primaryContactPhone` were
+    captured at submission but never returned by `GET /invitations/:id`."""
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["primaryContact"]["phone"] = "+91 90000 00000"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    body = detail_response.json()["data"]
+    assert body["primaryContactEmail"] == payload["primaryContact"]["email"]
+    assert body["primaryContactPhone"] == payload["primaryContact"]["phone"]
 
 
 async def test_create_invitation_retyped_system_field_matching_option_accepted(
