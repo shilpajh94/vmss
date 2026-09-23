@@ -77,7 +77,7 @@ class FormFieldCreate(CamelModel):
     key: str = Field(max_length=100, pattern=r"^[a-z][a-z0-9_]*$")
     label: str = Field(max_length=255)
     placeholder: str | None = Field(default=None, max_length=255)
-    help_text: str | None = Field(default=None, max_length=500)
+    help_text: str | None = Field(default=None, max_length=1000)
     field_type: FormFieldType
     is_required: bool = False
     # Which of the step's field groups this field belongs to, or `None` to
@@ -110,7 +110,7 @@ class FormFieldUpdate(CamelModel):
     group_id: uuid.UUID | None = None
     label: str | None = Field(default=None, max_length=255)
     placeholder: str | None = Field(default=None, max_length=255)
-    help_text: str | None = Field(default=None, max_length=500)
+    help_text: str | None = Field(default=None, max_length=1000)
     field_type: FormFieldType | None = None
     is_active: bool | None = None
     is_required: bool | None = None

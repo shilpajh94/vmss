@@ -1638,6 +1638,239 @@ async def test_get_invitation_detail_group_visitor_email_and_phone_mapped_by_fie
     assert visitor_out["idProofUrl"] is None
 
 
+# --- add-group-field-file-upload: a custom group's own file_upload field ----
+
+
+async def _create_and_publish_additional_visitors_group(
+    client: AsyncClient, headers: dict[str, str], *, id_upload_required: bool
+) -> dict:
+    """Admin-side setup shared by the `groupFieldFiles` tests below: a
+    repeatable "Additional Visitors" group on Visitor Info with a required
+    `name` field and its own `file_upload`-typed field (`id_upload`).
+    """
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == "visitor_info")
+
+    group_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={"key": "additional_visitors", "name": "Additional Visitors", "isRepeatable": True},
+        headers=headers,
+    )
+    assert group_response.status_code == 201, group_response.text
+    group = group_response.json()["data"]
+
+    for field_key, field_type, is_required in (
+        ("name", "text", True),
+        ("id_upload", "file_upload", id_upload_required),
+    ):
+        field_response = await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/fields",
+            json={
+                "key": field_key,
+                "label": field_key.replace("_", " ").title(),
+                "fieldType": field_type,
+                "isRequired": is_required,
+                "groupId": group["id"],
+            },
+            headers=headers,
+        )
+        assert field_response.status_code == 201, field_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    return group
+
+
+async def test_create_invitation_group_file_upload_stored_and_surfaced_on_read(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A custom Visitor Info group's own `file_upload`-typed field is
+    accepted via the `groupFieldFiles[<groupKey>]` multipart convention
+    (order-matched to `groupValues[<groupKey>]` instances), stored, and
+    resolved back to `idProofUrl` on `GET /invitations/:id` — matching the
+    fixed `visitors[].idProofUrl` behavior for the same caller permission
+    (`documents:view`, held by the `user` fixture).
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    await _create_and_publish_additional_visitors_group(client, headers, id_upload_required=False)
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groupValues"] = {"additional_visitors": [{"name": "Extra One"}, {"name": "Extra Two"}]}
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("groupFieldFiles[additional_visitors]", ("extra1.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("groupFieldFiles[additional_visitors]", ("extra2.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    detail_response = await client.get(f"/api/v1/invitations/{invitation_id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    visitors = sorted(detail_response.json()["data"]["visitors"], key=lambda v: v["fullName"])
+    assert [v["fullName"] for v in visitors] == ["Extra One", "Extra Two"]
+    for visitor_out in visitors:
+        assert visitor_out["idProofUrl"] is not None
+
+
+async def test_create_invitation_group_file_upload_required_missing_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A group's `file_upload` field marked required rejects a submission
+    that doesn't upload a matching file for every instance — the group
+    counterpart of the fixed `visitors` list's own ID-proof-count check.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    await _create_and_publish_additional_visitors_group(client, headers, id_upload_required=True)
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groupValues"] = {"additional_visitors": [{"name": "Extra One"}]}
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_create_invitation_group_file_upload_extra_files_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """More `groupFieldFiles[<groupKey>]` files than submitted instances is
+    rejected, same as an over-long `visitorIdProofFiles` list."""
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    await _create_and_publish_additional_visitors_group(client, headers, id_upload_required=False)
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groupValues"] = {"additional_visitors": [{"name": "Extra One"}]}
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("groupFieldFiles[additional_visitors]", ("extra1.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("groupFieldFiles[additional_visitors]", ("extra2.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_create_invitation_group_file_upload_json_value_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A client-supplied JSON value for a group's `file_upload` field is
+    rejected outright rather than silently ignored — the file is the only
+    valid source of that field's answer (`service.py::_group_field_file_key`).
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    await _create_and_publish_additional_visitors_group(client, headers, id_upload_required=False)
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groupValues"] = {
+        "additional_visitors": [{"name": "Extra One", "id_upload": "not-a-file"}]
+    }
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_get_invitation_detail_group_visitor_id_proof_url_omitted_without_documents_view(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    tenant: Tenant,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Counterpart of the happy-path test above — a caller holding
+    `invitations:view` but not `documents:view` sees `idProofUrl` `null`
+    for a group-collected visitor too, matching `_to_visitor_detail_outs`'s
+    existing gating for the fixed `visitors` list.
+    """
+    admin_token = await _login(client, user.email)
+    admin_headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
+    await _create_and_publish_additional_visitors_group(
+        client, admin_headers, id_upload_required=False
+    )
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groupValues"] = {"additional_visitors": [{"name": "Extra One"}]}
+    create_response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("groupFieldFiles[additional_visitors]", ("extra1.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=admin_headers,
+    )
+    assert create_response.status_code == 201, create_response.text
+    invitation_id = create_response.json()["data"]["id"]
+
+    # Not `_branch_scoped_invitation_viewer(db_session, tenant, branch.id)`:
+    # that helper creates its own `Permission(code="invitations:view")` row,
+    # which collides with the one the `user` fixture above already created
+    # (global `permissions.code` is unique) — reuses that existing row
+    # instead of inserting a duplicate.
+    existing_permission = (
+        await db_session.execute(select(Permission).where(Permission.code == "invitations:view"))
+    ).scalar_one()
+    viewer_role = RoleFactory.build(
+        id=uuid.uuid4(), name="invitations-viewer-no-documents", permissions=[existing_permission]
+    )
+    viewer_branch_role = UserBranchRole(id=uuid.uuid4(), role=viewer_role, branch_id=branch.id)
+    viewer = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"viewer-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Invitation Viewer",
+        branch_roles=[viewer_branch_role],
+    )
+    db_session.add_all([viewer_role, viewer])
+    await db_session.flush()
+    db_session.add(TenantUserIndex(email=viewer.email, tenant_id=tenant.id, user_id=viewer.id))
+    await db_session.commit()
+
+    viewer_token = issue_token(viewer)
+    detail_response = await client.get(
+        f"/api/v1/invitations/{invitation_id}",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    [visitor_out] = detail_response.json()["data"]["visitors"]
+    assert visitor_out["fullName"] == "Extra One"
+    assert visitor_out["idProofUrl"] is None
+
+
 async def test_get_invitation_detail_includes_primary_contact_email_and_phone(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:

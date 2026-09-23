@@ -137,7 +137,7 @@ class FormField(Base, TimestampMixin):
     key: Mapped[str] = mapped_column(String(100))
     label: Mapped[str] = mapped_column(String(255))
     placeholder: Mapped[str | None] = mapped_column(String(255))
-    help_text: Mapped[str | None] = mapped_column(String(500))
+    help_text: Mapped[str | None] = mapped_column(String(1000))
     field_type: Mapped[str] = mapped_column(String(30))
     is_system: Mapped[bool] = mapped_column(Boolean, default=False)
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)

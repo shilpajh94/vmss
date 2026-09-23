@@ -15,6 +15,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.core.config import settings
@@ -123,6 +124,14 @@ async def create_walk_in_registration(
     pre-registration") and creates the same kind of record, tagged
     `source: "visitor_walk_in"`, with no check-in performed
     (`add-walkin-visitor-registration/design.md` Non-Goals).
+
+    An admin-defined repeatable group's own `file_upload`-typed field
+    follows the same `groupFieldFiles[<groupKey>]` convention documented on
+    `POST /invitations` (`invitations/router.py::create_invitation`) — a
+    multipart list part, order-matched to that group's
+    `payload.groupValues[<groupKey>]` instances, read via `request.form()`
+    since the group key is branch-specific and unknown at route-declaration
+    time.
     """
     cached = await _cached_response(device.tenant.id, idempotency_key)
     if cached is not None:
@@ -152,6 +161,23 @@ async def create_walk_in_registration(
     )
     visitor_photo_contents = [await f.read(photo_limit) for f in visitor_photo_files]
 
+    # `groupFieldFiles[<groupKey>]` isn't a declared parameter above since
+    # `<groupKey>` is branch-specific (see the docstring). Starlette caches
+    # the parsed multipart body on `request`, so this reuses the same parse
+    # the `payload`/`primary_contact_*`/`visitor_*` params already
+    # triggered rather than re-reading the request body — identical to
+    # `invitations/router.py::create_invitation`.
+    form_data = await request.form()
+    group_field_file_contents: dict[str, list[bytes]] = {}
+    for key in set(form_data.keys()):
+        if key.startswith("groupFieldFiles[") and key.endswith("]"):
+            group_key = key[len("groupFieldFiles[") : -1]
+            group_field_file_contents[group_key] = [
+                await value.read(id_proof_limit)
+                for value in form_data.getlist(key)
+                if isinstance(value, StarletteUploadFile)
+            ]
+
     invitation = await service.create_walk_in_registration(
         tenant_db,
         create_payload,
@@ -161,6 +187,7 @@ async def create_walk_in_registration(
         visitor_id_proof_contents=visitor_contents,
         primary_contact_photo_content=primary_photo_content,
         visitor_photo_contents=visitor_photo_contents,
+        group_field_file_contents=group_field_file_contents,
     )
     background_tasks.add_task(
         record_audit_log,
