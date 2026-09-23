@@ -23,6 +23,11 @@ interface VisitInfoStepProps {
    * form-builder configuration (see design.md Decision 3 / Risks).
    */
   additionalNotesActive: boolean
+  /** Branch-configured (form-builder) Purpose of Visit choices — the
+   * field's own `options`, not a fixed set
+   * (make-id-proof-and-vehicle-type-configurable). Empty when unset, in
+   * which case this step falls back to its hardcoded default list. */
+  purposeOfVisitOptions: string[]
   /** Admin-authored (non-system) Visit Details fields
    * (add-generic-custom-field-support). */
   customFields: FormField[]
@@ -44,10 +49,13 @@ export function VisitInfoStep({
   branches,
   buildings,
   additionalNotesActive,
+  purposeOfVisitOptions,
   customFields,
   customFieldValues,
   onCustomFieldValuesChange,
 }: VisitInfoStepProps) {
+  const purposeOptions =
+    purposeOfVisitOptions.length > 0 ? purposeOfVisitOptions.map((option) => ({ value: option, label: option })) : PURPOSE_OPTIONS
   const selectedBranch = branches?.find((branch) => branch.name === value.location)
   const buildingOptions = (selectedBranch ? buildings?.filter((building) => building.branchId === selectedBranch.id) : buildings)?.map(
     (building) => ({ value: building.name, label: building.name }),
@@ -64,7 +72,7 @@ export function VisitInfoStep({
         <SelectField
           label="Purpose of Visit"
           placeholder="Select purpose"
-          options={PURPOSE_OPTIONS}
+          options={purposeOptions}
           value={value.purpose}
           onChange={(purpose) => onChange({ ...value, purpose })}
           error={errors.purpose}

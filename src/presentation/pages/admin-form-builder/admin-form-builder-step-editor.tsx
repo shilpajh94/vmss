@@ -1,6 +1,6 @@
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { LayersIcon, PlusIcon } from '../../components/icons'
+import { LayersIcon, LockIcon, PlusIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { PageContentLayout } from '../../components/PageContentLayout'
@@ -12,6 +12,19 @@ import { GroupCard } from './Components/GroupCard'
 import { SortableFieldRow } from './Components/SortableFieldRow'
 import { SortableGroupCard } from './Components/SortableGroupCard'
 import { useAdminFormBuilderStepEditor } from './hooks/use-admin-form-builder-step-editor'
+
+// "Host" and "Department to Visit" are seeded/locked Visit Details fields
+// the registration wizard's Visit Details step never actually collects any
+// more (see visitor-request/Components/steps/VisitInfoStep.tsx's file
+// comment — role-based-invitation-workflow moved both off the
+// visitor-facing form). Toggling or reordering them in this editor has no
+// effect on the live form, so they're hidden from this list entirely
+// rather than left as confusingly-inert controls. They're locked fields
+// with no delete action anyway — this only affects what's *displayed*,
+// never any backend state.
+const HIDDEN_DEAD_FIELD_LABELS_BY_STEP: Record<string, ReadonlySet<string>> = {
+  visit_details: new Set(['Host', 'Department to Visit']),
+}
 
 export function AdminFormBuilderStepEditorPage() {
   const {
@@ -53,13 +66,16 @@ export function AdminFormBuilderStepEditorPage() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
+  const hiddenFieldLabels = step ? HIDDEN_DEAD_FIELD_LABELS_BY_STEP[step.key] : undefined
+  const visibleFields = hiddenFieldLabels ? fields.filter((f) => !hiddenFieldLabels.has(f.label)) : fields
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    const oldIndex = fields.findIndex((f) => f.id === active.id)
-    const newIndex = fields.findIndex((f) => f.id === over.id)
+    const oldIndex = visibleFields.findIndex((f) => f.id === active.id)
+    const newIndex = visibleFields.findIndex((f) => f.id === over.id)
     if (oldIndex === -1 || newIndex === -1) return
-    const reordered = [...fields]
+    const reordered = [...visibleFields]
     const [moved] = reordered.splice(oldIndex, 1)
     reordered.splice(newIndex, 0, moved)
     void reorderFields(reordered.map((f) => f.id))
@@ -186,11 +202,34 @@ export function AdminFormBuilderStepEditorPage() {
                   <span className="font-body text-xs text-text-muted">Drag rows to reorder</span>
                 </div>
 
+                {/* "Location" isn't a real Form Builder field — it's hardcoded
+                 * in the Visit Details step, always required, and populated
+                 * from the Branches list rather than admin-typed options (see
+                 * visitor-request/Components/steps/VisitInfoStep.tsx). Shown
+                 * here read-only, purely so it's not invisible to admins
+                 * comparing this list against the live form. */}
+                {step?.key === 'visit_details' && (
+                  <div className="flex items-center gap-3 rounded-xl border border-border bg-bg px-4 py-3 opacity-80">
+                    <LockIcon className="size-3.5 shrink-0 text-text-faint" />
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                      <div className="flex items-center gap-3">
+                        <span className="font-body text-sm font-semibold text-text">Location</span>
+                        <span className="rounded-full bg-surface px-2 py-0.5 font-body text-[11px] font-medium text-text-muted">
+                          Dropdown Select
+                        </span>
+                      </div>
+                      <p className="font-body text-xs text-text-muted">
+                        Always required. Populated from your Branches list — not configurable here.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                  <SortableContext items={fields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
+                  <SortableContext items={visibleFields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
                     <div className="flex flex-col gap-2">
-                      {fields.map((field, index) => {
-                        const previousGroupId = index > 0 ? fields[index - 1].groupId : undefined
+                      {visibleFields.map((field, index) => {
+                        const previousGroupId = index > 0 ? visibleFields[index - 1].groupId : undefined
                         const group = field.groupId ? groups.find((g) => g.id === field.groupId) : undefined
                         return (
                           <div key={field.id} className="flex flex-col gap-2">
@@ -244,7 +283,7 @@ export function AdminFormBuilderStepEditorPage() {
         )}
       </div>
 
-      <AddFieldModal isOpen={isAddFieldOpen} onClose={closeAddField} onCreate={(input) => void createField(input)} />
+      <AddFieldModal isOpen={isAddFieldOpen} onClose={closeAddField} onCreate={createField} />
       <CreateGroupModal isOpen={isAddGroupOpen} onClose={closeAddGroup} onCreate={(input) => void createGroup(input)} />
 
       <ConfirmDialog

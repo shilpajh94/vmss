@@ -1,7 +1,8 @@
-import { CustomFieldsSection } from '../../../../components/dynamic-fields/CustomFieldsSection'
 import { DynamicField, type DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
-import { RepeatableFieldGroup, type GroupInstance } from '../../../../components/dynamic-fields/RepeatableFieldGroup'
-import type { EffectiveFormStep, VisibilityCondition } from '../../../../../domain/entities/form-builder-schema'
+import { resolveGroupFlatValues } from '../../../../components/dynamic-fields/field-group-visibility'
+import { FieldGroupsSection } from '../../../../components/dynamic-fields/FieldGroupsSection'
+import type { GroupInstance } from '../../../../components/dynamic-fields/RepeatableFieldGroup'
+import type { EffectiveFormStep } from '../../../../../domain/entities/form-builder-schema'
 
 interface GenericConfiguredStepProps {
   step: EffectiveFormStep
@@ -37,34 +38,16 @@ interface GenericConfiguredStepProps {
  *
  * A group's own `visibilityCondition` (add-conditional-field-groups) is
  * evaluated against the step's currently-known flat values before deciding
- * whether to render it at all — see `isGroupVisible` below.
+ * whether to render it at all — see `FieldGroupsSection`/`isGroupVisible`.
  */
 export function GenericConfiguredStep({ step, value, onChange, groupValues, onGroupValuesChange }: GenericConfiguredStepProps) {
   const groupedFieldKeys = new Set(step.groups.flatMap((group) => group.fieldKeys))
   const ungroupedFields = step.fields.filter((field) => !groupedFieldKeys.has(field.key))
-  const orderedGroups = [...step.groups].sort((a, b) => a.orderIndex - b.orderIndex)
 
-  // A condition can only ever watch a field on the same step. The only
-  // fields this component can resolve a single, unambiguous current value
-  // for are: an ungrouped field (`value`) and a field belonging to a
-  // *non-repeatable* group (its one instance, `groupValues[key][0]`). A
-  // field inside a *repeatable* group has zero-to-many instances, so there
-  // is no single current value to compare against — a group conditioned on
-  // such a field is a known limitation (see file-level comment) and simply
-  // won't resolve to visible.
-  const flatValues: Record<string, DynamicFieldValue> = { ...value }
-  for (const otherGroup of step.groups) {
-    if (otherGroup.isRepeatable) continue
-    const singleInstance = groupValues[otherGroup.key]?.[0]
-    if (!singleInstance) continue
-    for (const fieldKey of otherGroup.fieldKeys) {
-      if (fieldKey in singleInstance) flatValues[fieldKey] = singleInstance[fieldKey]
-    }
-  }
-
-  const setGroupInstances = (groupKey: string, instances: GroupInstance[]) => {
-    onGroupValuesChange({ ...groupValues, [groupKey]: instances })
-  }
+  // A condition can only ever watch a field on the same step — see
+  // `resolveGroupFlatValues`'s own comment for what this can and can't
+  // resolve.
+  const flatValues: Record<string, DynamicFieldValue> = resolveGroupFlatValues(step.groups, groupValues, value)
 
   return (
     <div className="flex flex-col gap-4">
@@ -82,57 +65,13 @@ export function GenericConfiguredStep({ step, value, onChange, groupValues, onGr
           />
         ))}
       </div>
-      {orderedGroups.map((group) => {
-        if (!isGroupVisible(group.visibilityCondition, flatValues)) return null
-
-        const groupFields = group.fieldKeys
-          .map((fieldKey) => step.fields.find((field) => field.key === fieldKey))
-          .filter((field): field is (typeof step.fields)[number] => field !== undefined)
-
-        if (!group.isRepeatable) {
-          const singleInstance = groupValues[group.key]?.[0] ?? {}
-          return (
-            <div key={group.id} className="flex flex-col gap-4 rounded-lg border border-border-subtle bg-surface p-4">
-              <h3 className="text-h3 text-text">{group.name}</h3>
-              <CustomFieldsSection
-                fields={groupFields}
-                value={singleInstance}
-                onChange={(instance) => setGroupInstances(group.key, [instance])}
-              />
-            </div>
-          )
-        }
-
-        return (
-          <RepeatableFieldGroup
-            key={group.id}
-            groupName={group.name}
-            fields={groupFields}
-            minInstances={group.minInstances}
-            maxInstances={group.maxInstances}
-            instances={groupValues[group.key] ?? []}
-            onChange={(instances) => setGroupInstances(group.key, instances)}
-          />
-        )
-      })}
+      <FieldGroupsSection
+        groups={step.groups}
+        fields={step.fields}
+        flatValues={flatValues}
+        groupValues={groupValues}
+        onGroupValuesChange={onGroupValuesChange}
+      />
     </div>
   )
-}
-
-/** Pure evaluator for a `FormFieldGroup`'s `visibilityCondition`
- * (add-conditional-field-groups) — `null` means always visible. Plain
- * string comparison against the watched field's current value, same
- * `equals`/`not_equals` semantics `FormFieldGroupCreate`/`Update`'s schema
- * documents; a value the frontend can't currently resolve (see the
- * `flatValues` comment above) is treated as an empty string, matching how
- * an unanswered field would compare. Scoped to this file since nothing
- * else evaluates a `VisibilityCondition` at runtime yet. */
-function isGroupVisible(
-  condition: VisibilityCondition | null,
-  values: Record<string, DynamicFieldValue>,
-): boolean {
-  if (!condition) return true
-  const actual = values[condition.fieldKey]
-  const matches = (Array.isArray(actual) ? actual.join(',') : (actual ?? '').toString()) === condition.value
-  return condition.operator === 'equals' ? matches : !matches
 }

@@ -9,7 +9,9 @@ export const VisitorSchema = z
     email: z.string().email().optional(),
     phone: z.string().min(1).optional(),
     preferredContactMethod: z.enum(["email", "sms"]).optional(),
-    idProofType: z.string().min(1),
+    // Branch-configurable (form-builder) — not every branch requires or
+    // even shows ID Proof Type, so it's omitted rather than sent empty.
+    idProofType: z.string().min(1).optional(),
     // This visitor's own answers for any admin-authored Visitor Info field
     // (add-generic-custom-field-support) — keyed by field key, validated
     // server-side against the resolved branch's published form.
