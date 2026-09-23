@@ -235,24 +235,43 @@ def allowed_vehicle_types(effective_form: list[dict[str, Any]]) -> set[str] | No
 def custom_fields_for_step(
     effective_form: list[dict[str, Any]], step_key: str
 ) -> list[dict[str, Any]]:
-    """Every admin-authored (non-system) field on one active step."""
+    """Every admin-authored (non-system), ungrouped field on one active
+    step. Excludes a field assigned to a field group
+    (`field["groupId"] is not None`), the same as
+    `custom_fields_for_invitation_scope` below — that field's answer is
+    captured per-instance through `groupValues` instead
+    (add-repeatable-field-groups), via `custom_groups_for_invitation_scope`,
+    which (unlike this function) does *not* exclude Visitor Info/Vehicle
+    Info: a repeatable group on either step (e.g. an "Additional Visitors"
+    group replacing the fixed `visitors` list's cardinality limit) needs
+    the same array-of-instances submission shape every other group uses.
+    """
     step = _find_step(effective_form, step_key)
     if step is None:
         return []
-    return [field for field in step["fields"] if not field["isSystem"]]
+    return [
+        field for field in step["fields"] if not field["isSystem"] and field.get("groupId") is None
+    ]
 
 
 _NON_GENERIC_SCOPE_STEP_KEYS = ("visitor_info", "vehicle_info", "consent_agreement")
 """Steps excluded from `custom_fields_for_invitation_scope` because every
-field they carry — including an admin-authored one — is already captured
-by a step-specific mechanism, not the generic `customFieldValues` map:
-Visitor Info/Vehicle Info fields are per-visitor/per-vehicle (see
+ungrouped field they carry — including an admin-authored one — is already
+captured by a step-specific mechanism, not the generic `customFieldValues`
+map: Visitor Info/Vehicle Info fields are per-visitor/per-vehicle (see
 `custom_fields_for_step`), and *every* Consent Agreement field (system or
 not) has always flowed through `consents`/`allowed_consent_keys`/
 `required_consent_keys` above — that's the step's own generic mechanism,
 predating this module's custom-field support, and folding its fields into
 `customFieldValues` too would require the same key in two payload maps at
-once."""
+once. A *grouped* field on Visitor Info/Vehicle Info is unaffected by this
+set — see `custom_groups_for_invitation_scope`'s own, narrower exclusion."""
+
+_NO_GENERIC_GROUP_STEP_KEYS = ("consent_agreement",)
+"""Steps excluded from `custom_groups_for_invitation_scope` — narrower than
+`_NON_GENERIC_SCOPE_STEP_KEYS` above: Consent Agreement has no notion of a
+repeatable group (consent is answered once, through `consents`), but
+Visitor Info/Vehicle Info do — see `custom_fields_for_step`."""
 
 
 def custom_fields_for_invitation_scope(
@@ -283,28 +302,66 @@ def custom_fields_for_invitation_scope(
 def custom_groups_for_invitation_scope(
     effective_form: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Every field group defined on a step other than Visitor Info/Vehicle
-    Info/Consent Agreement (`_NON_GENERIC_SCOPE_STEP_KEYS`) — i.e. every
-    admin-defined custom group, whose instances are submitted via the
-    invitation payload's `groupValues` map, keyed by group key
-    (specs/invitations/spec.md (delta) "An Admin-Defined Repeatable Group's
-    Answers Are Accepted as an Array of Per-Instance Values"). Each
-    returned group dict is augmented with a `"fields"` list — that group's
-    own field definitions, resolved by the field keys it references — so a
-    caller can validate one instance's values with
-    `validate_custom_field_values` directly.
+    """Every *admin-defined* (non-system) field group defined on a step
+    other than Consent Agreement (`_NO_GENERIC_GROUP_STEP_KEYS`), whose
+    instances are submitted via the invitation payload's `groupValues` map,
+    keyed by group key (specs/invitations/spec.md (delta) "An Admin-Defined
+    Repeatable Group's Answers Are Accepted as an Array of Per-Instance
+    Values"). Excludes the seeded system groups ("vehicles" on Vehicle
+    Info, "visitors" on Visitor Info) even though those live on steps this
+    function otherwise covers — their cardinality is the `vehicles`/
+    `visitors` payload lists' own length, validated separately by
+    `vehicle_info_group`/`visitor_info_group`, not by a submitted
+    `groupValues` entry (which they never have one of). Each returned group
+    dict is augmented with a `"fields"` list — that group's own field
+    definitions, resolved by the field keys it references — so a caller can
+    validate one instance's values with `validate_custom_field_values`
+    directly.
     """
     groups: list[dict[str, Any]] = []
     for step in effective_form:
-        if step["key"] in _NON_GENERIC_SCOPE_STEP_KEYS:
+        if step["key"] in _NO_GENERIC_GROUP_STEP_KEYS:
             continue
         fields_by_key = {field["key"]: field for field in step["fields"]}
         for group in step.get("groups", []):
+            if group["isSystem"]:
+                continue
             group_fields = [
                 fields_by_key[key] for key in group.get("fieldKeys", []) if key in fields_by_key
             ]
             groups.append({**group, "fields": group_fields})
     return groups
+
+
+def custom_groups_for_step(
+    effective_form: list[dict[str, Any]], step_key: str
+) -> dict[str, dict[str, Any]]:
+    """Every admin-defined (non-system) field group on one active step,
+    keyed by group key — used by a caller that needs to know which
+    `groupValues` keys "belong" to a specific step (e.g.
+    `invitations/router.py` synthesizing a visitor-shaped entry from a
+    Visitor Info group's submitted instances), where
+    `custom_groups_for_invitation_scope`'s branch-wide, presentation-
+    agnostic list isn't scoped narrowly enough. Each returned group dict is
+    augmented with a `"fields"` list the same way
+    `custom_groups_for_invitation_scope` augments its groups, so a caller
+    can inspect a member field's `fieldType` (e.g. to pick out an `email`/
+    `phone`-typed field for a visitor-shaped presentation), not just its key.
+    """
+    step = _find_step(effective_form, step_key)
+    if step is None:
+        return {}
+    fields_by_key = {field["key"]: field for field in step["fields"]}
+    return {
+        group["key"]: {
+            **group,
+            "fields": [
+                fields_by_key[key] for key in group.get("fieldKeys", []) if key in fields_by_key
+            ],
+        }
+        for group in step.get("groups", [])
+        if not group["isSystem"]
+    }
 
 
 def _validate_value_against_field(field: dict[str, Any], value: Any) -> None:

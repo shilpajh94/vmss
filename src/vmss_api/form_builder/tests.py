@@ -1571,16 +1571,19 @@ async def test_seeded_vehicle_info_group_is_locked_repeatable_and_owns_its_field
 async def test_seeded_visitor_info_group_has_no_admin_editable_instance_range(
     client: AsyncClient, user: User, issue_token: Callable[[User], str]
 ) -> None:
-    """add-repeatable-field-groups (revised): the group's `maxInstances` is
-    seeded from `settings.invitation_max_group_visitors` (the sole
-    enforcement path for the group-visitor-count cap) but isn't
-    admin-editable — see `test_visitor_group_instance_range_cannot_be_set`.
+    """add-repeatable-field-groups (revised): the group's `minInstances`/
+    `maxInstances` aren't admin-editable — see
+    `test_visitor_group_instance_range_cannot_be_set`. `isRepeatable` is now
+    seeded `False` (a deliberate product decision to retire the
+    group-visitor-count cap `maxInstances` used to enforce — see
+    `invitations/tests.py::test_create_group_invitation_exceeding_former_max_visitors_accepted`),
+    so `maxInstances` is seeded but no longer enforces anything.
     """
     token = issue_token(user)
     step = await _get_default_step(client, token, "visitor_info")
     [group] = step["groups"]
     assert group["key"] == "visitors"
-    assert group["isRepeatable"] is True
+    assert group["isRepeatable"] is False
     assert group["minInstances"] is None
     assert group["maxInstances"] == settings.invitation_max_group_visitors
 

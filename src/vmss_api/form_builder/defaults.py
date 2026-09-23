@@ -165,7 +165,7 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
             DefaultGroupSpec(
                 key="visitors",
                 name="Visitors",
-                is_repeatable=True,
+                is_repeatable=False,
                 max_instances=settings.invitation_max_group_visitors,
             ),
         ],

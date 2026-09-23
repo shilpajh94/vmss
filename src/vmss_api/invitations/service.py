@@ -716,8 +716,13 @@ async def create_invitation(
     # evaluated against: every invitation-scope locked field a group could
     # watch (Visit Details/Carried Items' own seeded fields), merged with
     # the invitation-level admin-authored answers a group's condition could
-    # equally watch.
+    # equally watch. `registration_type` is included so a group defined
+    # directly on Visitor Info/Vehicle Info (e.g. an "Additional Visitors"
+    # group replacing the fixed `visitors` list) can watch it too — the
+    # same system field its own step's `is_field_required`/retyping checks
+    # reference.
     invitation_scope_values: dict[str, Any] = {
+        "registration_type": payload.registration_type,
         "purpose_of_visit": visit_details["purpose_of_visit"],
         "expected_duration": visit_details["expected_duration"],
         "department_to_visit": visit_details["department_to_visit"],
@@ -1085,6 +1090,25 @@ async def get_invitation_location(
     return await InvitationRepository(tenant_db).get_location(
         branch_id=invitation.branch_id, department_id=invitation.department_id
     )
+
+
+async def get_visitor_info_groups(
+    tenant_db: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
+) -> dict[str, dict[str, Any]]:
+    """Every admin-defined field group currently published on Visitor Info
+    for this branch, keyed by group key — backs
+    `invitations/router.py::_group_collected_visitor_detail_outs`, which
+    synthesizes a visitor-shaped `InvitationDetailOut.visitors` entry from
+    such a group's submitted `groupValues` instances (the built-in
+    "Visitors" system group is no longer admin-configurable,
+    `form_builder/defaults.py`, so a branch needing more than its fixed
+    cardinality collects extra visitors through a group like this instead).
+    """
+    redis = await get_redis()
+    effective_form = await form_builder_service.resolve_effective_form(
+        tenant_db, redis, tenant_id=tenant.id, branch_id=branch_id
+    )
+    return form_builder_validation.custom_groups_for_step(effective_form, "visitor_info")
 
 
 async def deny_invitation(

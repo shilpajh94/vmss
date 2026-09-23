@@ -1,6 +1,6 @@
 import json
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
@@ -565,6 +565,62 @@ async def _to_check_in_out(
     )
 
 
+def _group_collected_visitor_detail_outs(
+    invitation, visitor_info_groups: dict[str, dict[str, Any]]
+) -> list[InvitationVisitorDetailOut]:
+    """A branch that collects additional visitors through an admin-defined
+    repeatable group on Visitor Info instead of the fixed `visitors` list
+    (the built-in "Visitors" system group is no longer admin-configurable
+    — `form_builder/defaults.py`) has that data in `group_field_values`,
+    not `visitors`. Synthesizes a visitor-shaped entry per submitted
+    instance of such a group so it surfaces through the same `visitors`
+    array/UI rendering, with no separate response shape for the frontend to
+    special-case.
+
+    There's no reserved "this is the name field" marker on a group — an
+    admin's field keys are arbitrary — so `fullName` falls back to the
+    group's first-configured field's value (`fieldKeys[0]`, the only
+    ordering signal available). `email`/`phone` instead use Form Builder's
+    own typed field system: the group's first field of `fieldType`
+    `"email"`/`"phone"` (there can be at most a handful of fields per
+    group, so "first" only matters if an admin adds more than one of the
+    same type). Every field the client actually submitted is still in
+    `customFieldValues` regardless. `idProofType`/`idProofUrl` stay `None`:
+    unlike the dedicated `visitors`/`primaryContact` id-proof multipart
+    parts, there is no generic file-upload capability for an admin-defined
+    custom field yet, so there is no document to resolve a URL from and no
+    reliable signal for which field (if any) names a proof type. `id` is
+    derived (`uuid5`, not random) so repeated reads of the same invitation
+    return stable ids.
+    """
+    results: list[InvitationVisitorDetailOut] = []
+    for group_key, instances in invitation.group_field_values.items():
+        group = visitor_info_groups.get(group_key)
+        if group is None:
+            continue
+        fields = group.get("fields") or []
+        name_field_key = next(iter(group.get("fieldKeys", [])), None)
+        email_field_key = next((f["key"] for f in fields if f["fieldType"] == "email"), None)
+        phone_field_key = next((f["key"] for f in fields if f["fieldType"] == "phone"), None)
+        for index, instance in enumerate(instances):
+            display_name = instance.get(name_field_key) if name_field_key else None
+            email = instance.get(email_field_key) if email_field_key else None
+            phone = instance.get(phone_field_key) if phone_field_key else None
+            results.append(
+                InvitationVisitorDetailOut(
+                    id=uuid.uuid5(invitation.id, f"{group_key}:{index}"),
+                    full_name=str(display_name) if display_name else "Additional Visitor",
+                    email=str(email) if email else None,
+                    phone=str(phone) if phone else None,
+                    id_proof_type=None,
+                    id_proof_url=None,
+                    photo_url=None,
+                    custom_field_values=instance,
+                )
+            )
+    return results
+
+
 async def _to_invitation_detail_out(
     invitation,
     current_approval_step: CurrentApprovalStepOut | None = None,
@@ -573,6 +629,7 @@ async def _to_invitation_detail_out(
     department: Department | None,
     building: Building | None,
     include_documents: bool,
+    visitor_info_groups: dict[str, dict[str, Any]],
 ) -> InvitationDetailOut:
     branch_out, building_out, department_out = _to_location_outs(branch, department, building)
     return InvitationDetailOut(
@@ -589,6 +646,8 @@ async def _to_invitation_detail_out(
         visitor_category_id=invitation.visitor_category_id,
         current_approval_step=current_approval_step,
         primary_contact_full_name=invitation.primary_contact_full_name,
+        primary_contact_email=invitation.primary_contact_email,
+        primary_contact_phone=invitation.primary_contact_phone,
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
         ),
@@ -634,9 +693,12 @@ async def _to_invitation_detail_out(
         watchlist_override_at=invitation.watchlist_override_at,
         watchlist_override_reason=invitation.watchlist_override_reason,
         watchlist_override_by_user_id=invitation.watchlist_override_by_user_id,
-        visitors=await _to_visitor_detail_outs(
-            invitation.visitors, include_documents=include_documents
-        ),
+        visitors=[
+            *await _to_visitor_detail_outs(
+                invitation.visitors, include_documents=include_documents
+            ),
+            *_group_collected_visitor_detail_outs(invitation, visitor_info_groups),
+        ],
         vehicles=[
             InvitationVehicleOut(
                 id=v.id,
@@ -1471,6 +1533,7 @@ async def get_invitation_detail(
     invitation_id: uuid.UUID,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
+    tenant: Annotated[Tenant, Depends(get_tenant)],
 ) -> JSONResponse:
     """Authenticated, branch-scoped single-invitation detail view (spec.md
     "Authenticated Detail Lookup by Invitation ID") — the staff-facing
@@ -1480,6 +1543,9 @@ async def get_invitation_detail(
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:view", invitation.branch_id)
     current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
     branch, department, building = await service.get_invitation_location(tenant_db, invitation)
+    visitor_info_groups = await service.get_visitor_info_groups(
+        tenant_db, tenant, invitation.branch_id
+    )
     include_documents = user.has_permission("documents:view", invitation.branch_id)
     return success_response(
         data=await _to_invitation_detail_out(
@@ -1489,5 +1555,6 @@ async def get_invitation_detail(
             department=department,
             building=building,
             include_documents=include_documents,
+            visitor_info_groups=visitor_info_groups,
         )
     )

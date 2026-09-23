@@ -772,7 +772,11 @@ async def update_group(
     group = await get_group(tenant_db, group_id)
     changes = payload.model_dump(exclude_unset=True)
 
-    if group.is_locked and changes.get("is_repeatable") is False:
+    if (
+        group.is_locked
+        and group.key not in _NO_INSTANCE_RANGE_SYSTEM_GROUP_KEYS
+        and changes.get("is_repeatable") is False
+    ):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A locked group cannot be made non-repeatable",
