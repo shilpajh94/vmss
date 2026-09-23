@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { extractGroupFieldFiles } from '../../../components/dynamic-fields/field-group-visibility'
 import { findField, findStepFields, findStepGroups, useEffectiveForm } from '../../../hooks/use-effective-form'
 import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visitor-request-wizard'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
@@ -269,12 +270,19 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
       .map((visitor) => (visitor.idProofFileRef ? fileRegistry.current.get(visitor.idProofFileRef) : undefined))
       .filter((file): file is File => file !== undefined)
 
+    // See use-visitor-request-wizard.ts's matching comment.
+    const { sanitizedGroupValues, groupFieldFiles } = extractGroupFieldFiles(
+      effectiveFormSteps,
+      formState.groupValues,
+      fileRegistry.current,
+    )
+
     setSubmissionStatus('submitting')
     setSubmissionError(undefined)
     try {
       const response = await submitStaffVisitRequestUseCase.execute(
-        toStaffVisitRequest(formState),
-        { primaryContactIdProofFile, primaryContactPhotoFile, visitorIdProofFiles },
+        toStaffVisitRequest({ ...formState, groupValues: sanitizedGroupValues }),
+        { primaryContactIdProofFile, primaryContactPhotoFile, visitorIdProofFiles, groupFieldFiles },
         branchId,
       )
       setTrackingId(response.trackingId)

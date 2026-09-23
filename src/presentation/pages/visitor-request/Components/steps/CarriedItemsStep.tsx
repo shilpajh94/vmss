@@ -21,6 +21,10 @@ interface CarriedItemsStepProps {
    */
   customFieldValues: Record<string, DynamicFieldValue>
   onCustomFieldValuesChange: (value: Record<string, DynamicFieldValue>) => void
+  /** Required for an active `file_upload` custom field to render a working
+   * upload control instead of falling back to "not supported". */
+  uploadFile?: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
 }
 
 export function CarriedItemsStep({
@@ -30,6 +34,8 @@ export function CarriedItemsStep({
   onChange,
   customFieldValues,
   onCustomFieldValuesChange,
+  uploadFile,
+  getFilePreviewUrl,
 }: CarriedItemsStepProps) {
   if (isLoading) {
     return (
@@ -76,6 +82,8 @@ export function CarriedItemsStep({
         fields={fields.filter((field) => !field.isSystem)}
         value={customFieldValues}
         onChange={onCustomFieldValuesChange}
+        uploadFile={uploadFile}
+        getFilePreviewUrl={getFilePreviewUrl}
       />
       {fields.length === 0 && <p className="text-body text-text-muted">No details are required for this step.</p>}
     </div>

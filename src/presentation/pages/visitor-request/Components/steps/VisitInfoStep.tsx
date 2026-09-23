@@ -33,6 +33,10 @@ interface VisitInfoStepProps {
   customFields: FormField[]
   customFieldValues: Record<string, DynamicFieldValue>
   onCustomFieldValuesChange: (value: Record<string, DynamicFieldValue>) => void
+  /** Required for an active `file_upload` custom field to render a working
+   * upload control instead of falling back to "not supported". */
+  uploadFile?: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
 }
 
 // Neither host nor department is collected here anymore
@@ -53,6 +57,8 @@ export function VisitInfoStep({
   customFields,
   customFieldValues,
   onCustomFieldValuesChange,
+  uploadFile,
+  getFilePreviewUrl,
 }: VisitInfoStepProps) {
   const purposeOptions =
     purposeOfVisitOptions.length > 0 ? purposeOfVisitOptions.map((option) => ({ value: option, label: option })) : PURPOSE_OPTIONS
@@ -153,7 +159,13 @@ export function VisitInfoStep({
           onChange={(notes) => onChange({ ...value, notes })}
         />
       )}
-      <CustomFieldsSection fields={customFields} value={customFieldValues} onChange={onCustomFieldValuesChange} />
+      <CustomFieldsSection
+        fields={customFields}
+        value={customFieldValues}
+        onChange={onCustomFieldValuesChange}
+        uploadFile={uploadFile}
+        getFilePreviewUrl={getFilePreviewUrl}
+      />
     </div>
   )
 }

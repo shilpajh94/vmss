@@ -1,5 +1,5 @@
 import type { DynamicFieldValue } from './DynamicField'
-import type { EffectiveFormFieldGroup, VisibilityCondition } from '../../../domain/entities/form-builder-schema'
+import type { EffectiveFormFieldGroup, EffectiveFormStep, VisibilityCondition } from '../../../domain/entities/form-builder-schema'
 import type { GroupInstance } from './RepeatableFieldGroup'
 
 /** Pure evaluator for a `FormFieldGroup`'s `visibilityCondition`
@@ -43,4 +43,64 @@ export function resolveGroupFlatValues(
     }
   }
   return flatValues
+}
+
+export interface ExtractedGroupFieldFiles {
+  sanitizedGroupValues: Record<string, GroupInstance[]>
+  groupFieldFiles: Record<string, File[]>
+}
+
+/** A group's first `file_upload`-typed field, addressed by `fieldKeys`
+ * against the step's own field list — mirrors VMSS_API's
+ * `invitations/service.py::_group_field_file_key` exactly: only that one
+ * field is ever eligible to travel as a multipart file. */
+function groupFileFieldKey(group: EffectiveFormFieldGroup, stepFields: EffectiveFormStep['fields']): string | undefined {
+  return group.fieldKeys
+    .map((fieldKey) => stepFields.find((field) => field.key === fieldKey))
+    .find((field) => field?.fieldType === 'file_upload')?.key
+}
+
+/** Pulls each admin-defined field group's `file_upload` field answer out of
+ * `groupValues` and resolves it to the real `File` `uploadFile` registered
+ * in `fileRegistry` (add-group-field-file-upload). The backend only ever
+ * accepts that field's answer as a multipart `groupFieldFiles[<groupKey>]`
+ * list, order-matched to that group's `groupValues[<groupKey>]` instances —
+ * the same "list, order-matched to instances" convention already used for
+ * `visitorIdProofFiles`/`visitor_id_proof_files` — and rejects the instance
+ * outright (422) if the field is still present as a JSON value, so it must
+ * be stripped from every instance here rather than merely left alongside
+ * the resolved file (see VMSS_API's `docs/features/invitations.md`
+ * "Repeatable group file uploads").
+ */
+export function extractGroupFieldFiles(
+  steps: EffectiveFormStep[],
+  groupValues: Record<string, GroupInstance[]>,
+  fileRegistry: Map<string, File>,
+): ExtractedGroupFieldFiles {
+  const sanitizedGroupValues: Record<string, GroupInstance[]> = { ...groupValues }
+  const groupFieldFiles: Record<string, File[]> = {}
+
+  for (const step of steps) {
+    for (const group of step.groups) {
+      const fileFieldKey = groupFileFieldKey(group, step.fields)
+      const instances = groupValues[group.key]
+      if (!fileFieldKey || !instances || instances.length === 0) continue
+
+      const files: File[] = []
+      sanitizedGroupValues[group.key] = instances.map((instance) => {
+        if (!(fileFieldKey in instance)) return instance
+        const fileValue = instance[fileFieldKey]
+        if (fileValue !== undefined && typeof fileValue === 'object' && !Array.isArray(fileValue)) {
+          const file = fileRegistry.get(fileValue.fileRef)
+          if (file) files.push(file)
+        }
+        const sanitizedInstance: GroupInstance = { ...instance }
+        delete sanitizedInstance[fileFieldKey]
+        return sanitizedInstance
+      })
+      if (files.length > 0) groupFieldFiles[group.key] = files
+    }
+  }
+
+  return { sanitizedGroupValues, groupFieldFiles }
 }

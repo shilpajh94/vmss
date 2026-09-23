@@ -12,6 +12,10 @@ interface CustomFieldsSectionProps {
   fields: FormField[]
   value: Record<string, DynamicFieldValue>
   onChange: (value: Record<string, DynamicFieldValue>) => void
+  /** Required for an active `file_upload` field among `fields` to render a
+   * working upload control instead of falling back to "not supported". */
+  uploadFile?: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
 }
 
 /** Renders whatever admin-authored fields a step has beyond its own fixed/
@@ -20,7 +24,7 @@ interface CustomFieldsSectionProps {
  * when `fields` is empty, so a step with no admin-added fields looks
  * unchanged from before this component existed.
  */
-export function CustomFieldsSection({ fields, value, onChange }: CustomFieldsSectionProps) {
+export function CustomFieldsSection({ fields, value, onChange, uploadFile, getFilePreviewUrl }: CustomFieldsSectionProps) {
   if (fields.length === 0) return null
   return (
     <div className="flex flex-col gap-4">
@@ -30,6 +34,8 @@ export function CustomFieldsSection({ fields, value, onChange }: CustomFieldsSec
           field={field}
           value={value[field.key]}
           onChange={(fieldValue) => onChange({ ...value, [field.key]: fieldValue })}
+          uploadFile={uploadFile}
+          getFilePreviewUrl={getFilePreviewUrl}
         />
       ))}
     </div>

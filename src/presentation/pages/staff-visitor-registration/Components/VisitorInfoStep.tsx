@@ -86,6 +86,8 @@ export function VisitorInfoStep({
         flatValues={groupFlatValues}
         groupValues={groupValues}
         onGroupValuesChange={onGroupValuesChange}
+        uploadFile={uploadFile}
+        getFilePreviewUrl={getFilePreviewUrl}
       />
     </div>
   )
