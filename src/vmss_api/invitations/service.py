@@ -18,7 +18,12 @@ from vmss_api.core.config import settings
 from vmss_api.core.logging import logger
 from vmss_api.core.redis import get_redis
 from vmss_api.core.schemas import BranchScope, SortOrder
-from vmss_api.core.storage import FileTooLargeError, UnsupportedFileTypeError, validate_upload
+from vmss_api.core.storage import (
+    FileTooLargeError,
+    UnsupportedFileTypeError,
+    validate_image_only,
+    validate_upload,
+)
 from vmss_api.core.storage import save as storage_save
 from vmss_api.form_builder import service as form_builder_service
 from vmss_api.form_builder import validation as form_builder_validation
@@ -158,22 +163,13 @@ def _validate_id_proof(content: bytes, max_size: int) -> str:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
 
-_PHOTO_CONTENT_TYPES = {"image/jpeg", "image/png"}
-
-
 def _validate_photo(content: bytes, max_size: int) -> str:
     """Same content-sniffing/size approach as `_validate_id_proof`, but
     image-only (no PDF) — a profile photo, unlike an ID-proof scan, is never
     a document (checkin-approval-workflow-improvements spec.md "Visitor and
     Primary Contact Registration Optionally Captures a Profile Photo").
     """
-    content_type = _validate_id_proof(content, max_size)
-    if content_type not in _PHOTO_CONTENT_TYPES:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Unsupported photo type: {content_type!r}",
-        )
-    return content_type
+    return validate_image_only(content, max_size_bytes=max_size, field_label="photo")
 
 
 async def _resolve_visit_detail_ids(
@@ -372,13 +368,6 @@ async def create_invitation(
     authenticated staff creator to record
     (add-walkin-visitor-registration/design.md Decision 1).
     """
-    if len(payload.visitors) > settings.invitation_max_group_visitors:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"A group registration may not list more than "
-            f"{settings.invitation_max_group_visitors} visitors",
-        )
-
     # Validated before any file I/O, same "fail fast" reasoning as the
     # optional catalog ids resolved right below.
     visitor_category_id = await _resolve_active_category(tenant_db, payload.visitor_category_id)
@@ -404,6 +393,8 @@ async def create_invitation(
     required_consent_keys = form_builder_validation.required_consent_keys(effective_form)
     allowed_consent_keys = form_builder_validation.allowed_consent_keys(effective_form)
     allowed_carried_item_keys = form_builder_validation.allowed_carried_item_keys(effective_form)
+    allowed_id_proof_types = form_builder_validation.allowed_id_proof_types(effective_form)
+    allowed_vehicle_types = form_builder_validation.allowed_vehicle_types(effective_form)
 
     # ID proof: every visitor (primary + each co-visitor) supplies one,
     # matched 1:1, unless the calling branch has deactivated it — see
@@ -455,6 +446,34 @@ async def create_invitation(
             detail="More ID proof files were uploaded than visitors listed",
         )
 
+    # specs/invitations/spec.md (delta) "Every Visitor Has a Reachable
+    # Contact and a Validated ID Proof" — a supplied ID proof type must be
+    # one of the calling branch's currently configured options, mirroring
+    # the carried-items/consent-keys allow-list checks below
+    # (make-id-proof-and-vehicle-type-configurable).
+    supplied_id_proof_types = {
+        v.id_proof_type for v in payload.visitors if v.id_proof_type is not None
+    }
+    if payload.primary_contact.id_proof_type is not None:
+        supplied_id_proof_types.add(payload.primary_contact.id_proof_type)
+    invalid_id_proof_types = (
+        set()
+        if allowed_id_proof_types is None
+        else supplied_id_proof_types - allowed_id_proof_types
+    )
+    if invalid_id_proof_types:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="id_proof_type",
+            reason="unknown_id_proof_type",
+            values=sorted(invalid_id_proof_types),
+        )
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unknown ID proof type(s): {', '.join(sorted(invalid_id_proof_types))}",
+        )
+
     if photo_required and primary_contact_photo_content is None:
         logger.warning(
             "registration_form_config_validation_failed",
@@ -484,6 +503,68 @@ async def create_invitation(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown carried item(s): {', '.join(sorted(invalid_items))}",
         )
+
+    # specs/invitations/spec.md (delta) "Carried Items and Vehicles Are
+    # Optional Structured Declarations" — a declared vehicle's type must be
+    # one of the calling branch's currently configured Vehicle Type options
+    # (make-id-proof-and-vehicle-type-configurable).
+    invalid_vehicle_types = (
+        set()
+        if allowed_vehicle_types is None
+        else {v.vehicle_type for v in payload.vehicles} - allowed_vehicle_types
+    )
+    if invalid_vehicle_types:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="vehicle_type",
+            reason="unknown_vehicle_type",
+            values=sorted(invalid_vehicle_types),
+        )
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unknown vehicle type(s): {', '.join(sorted(invalid_vehicle_types))}",
+        )
+
+    # specs/invitations/spec.md (delta) "Carried Items and Vehicles Are
+    # Optional Structured Declarations" (add-repeatable-field-groups) — the
+    # declared vehicle count must fall within the branch's currently
+    # published Vehicle Info group instance range.
+    vehicle_group = form_builder_validation.vehicle_info_group(effective_form)
+    try:
+        form_builder_validation.validate_group_instance_count(
+            vehicle_group, len(payload.vehicles), scope="This invitation"
+        )
+    except HTTPException:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="group_instance_count",
+            reason="vehicle_count_out_of_range",
+            count=len(payload.vehicles),
+        )
+        raise
+
+    # specs/invitations/spec.md (delta) "A Group Registration's Visitor
+    # Count Is Capped By the Visitor Info Group's Configured Maximum"
+    # (add-repeatable-field-groups) — retires the standalone
+    # `settings.invitation_max_group_visitors` check in favor of this
+    # group's own `maxInstances`, the same enforcement path every other
+    # group already uses.
+    visitor_group = form_builder_validation.visitor_info_group(effective_form)
+    try:
+        form_builder_validation.validate_group_instance_count(
+            visitor_group, len(payload.visitors), scope="A group registration"
+        )
+    except HTTPException:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="group_instance_count",
+            reason="visitor_count_out_of_range",
+            count=len(payload.visitors),
+        )
+        raise
 
     # specs/invitations/spec.md (delta) "Consent Is Mandatory and Recorded"
     # — the payload must not introduce a consent key outside the calling
@@ -520,6 +601,43 @@ async def create_invitation(
             detail=f"Missing required consent(s): {', '.join(sorted(missing_consents))}",
         )
 
+    # specs/invitations/spec.md (delta) "A Retyped System Field's
+    # Submitted Value Is Validated Against Its Currently Configured Type"
+    # (make-system-field-types-editable) — every other system field Form
+    # Builder allows to be retyped, checked in one loop rather than a
+    # near-duplicate `if` block per key. `host` is deliberately excluded:
+    # `VisitDetailsSubmit.host_name_or_email` is always discarded by
+    # `_resolve_visit_detail_ids` (role-based-invitation-workflow), so
+    # there is no persisted value to validate.
+    retypeable_field_values: list[tuple[str, str | None]] = [
+        ("full_name", payload.primary_contact.full_name),
+        *[("full_name", visitor.full_name) for visitor in payload.visitors],
+        ("purpose_of_visit", visit_details["purpose_of_visit"]),
+        ("department_to_visit", visit_details["department_to_visit"]),
+        ("expected_duration", visit_details["expected_duration"]),
+        ("additional_notes", payload.visit_details.additional_notes),
+        *[("license_plate", vehicle.license_plate) for vehicle in payload.vehicles],
+    ]
+    for field_key, value in retypeable_field_values:
+        if value is None:
+            continue
+        allowed_values = form_builder_validation.allowed_options_for_system_field(
+            effective_form, field_key
+        )
+        if allowed_values is not None and value not in allowed_values:
+            logger.warning(
+                "registration_form_config_validation_failed",
+                branch_id=str(branch_id),
+                check="retypeable_system_field",
+                reason="unknown_option",
+                field=field_key,
+                value=value,
+            )
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Invalid value for '{field_key}': {value!r}",
+            )
+
     # specs/invitations/spec.md (delta) "Invitation Creation Captures
     # Admin-Defined Custom Field Answers" — each admin-authored field's
     # answer is validated at the same scope its step's own fields are
@@ -536,10 +654,16 @@ async def create_invitation(
     )
 
     def _validate_custom_fields(
-        fields: list[dict[str, Any]], values: dict[str, Any], *, scope: str
+        fields: list[dict[str, Any]],
+        values: dict[str, Any],
+        *,
+        scope: str,
+        skip_required: bool = False,
     ) -> None:
         try:
-            form_builder_validation.validate_custom_field_values(fields, values, scope=scope)
+            form_builder_validation.validate_custom_field_values(
+                fields, values, scope=scope, skip_required=skip_required
+            )
         except HTTPException:
             logger.warning(
                 "registration_form_config_validation_failed",
@@ -565,6 +689,73 @@ async def create_invitation(
     _validate_custom_fields(
         invitation_scope_custom_fields, payload.custom_field_values, scope="the invitation"
     )
+
+    # specs/invitations/spec.md (delta) "An Admin-Defined Repeatable Group's
+    # Answers Are Accepted as an Array of Per-Instance Values"
+    # (add-repeatable-field-groups) — every admin-defined group's submitted
+    # instance count must fall within its configured range, and each
+    # instance's values must validate against that group's own fields.
+    custom_groups = form_builder_validation.custom_groups_for_invitation_scope(effective_form)
+    custom_groups_by_key = {group["key"]: group for group in custom_groups}
+    unknown_group_keys = set(payload.group_values) - set(custom_groups_by_key)
+    if unknown_group_keys:
+        logger.warning(
+            "registration_form_config_validation_failed",
+            branch_id=str(branch_id),
+            check="group_key",
+            reason="unknown_group_key",
+            keys=sorted(unknown_group_keys),
+        )
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unknown field group key(s): {', '.join(sorted(unknown_group_keys))}",
+        )
+    # specs/invitations/spec.md (delta) "A Hidden Custom Field Group's
+    # Fields Are Not Required At Submission" (add-repeatable-field-groups)
+    # — the values map a custom group's own `visibilityCondition` is
+    # evaluated against: every invitation-scope locked field a group could
+    # watch (Visit Details/Carried Items' own seeded fields), merged with
+    # the invitation-level admin-authored answers a group's condition could
+    # equally watch.
+    invitation_scope_values: dict[str, Any] = {
+        "purpose_of_visit": visit_details["purpose_of_visit"],
+        "expected_duration": visit_details["expected_duration"],
+        "department_to_visit": visit_details["department_to_visit"],
+        "additional_notes": payload.visit_details.additional_notes,
+        "preferred_visit_date": str(payload.visit_details.preferred_visit_date),
+        "preferred_visit_time": str(payload.visit_details.preferred_visit_time),
+        "items": payload.carried_items.items,
+        "item_description": payload.carried_items.item_description,
+        **payload.custom_field_values,
+    }
+
+    for group_key, group in custom_groups_by_key.items():
+        instances = payload.group_values.get(group_key, [])
+        is_visible = form_builder_validation.is_group_visible(group, invitation_scope_values)
+        try:
+            form_builder_validation.validate_group_instance_count(
+                group,
+                len(instances),
+                scope=f"Field group '{group['name']}'",
+                skip_minimum=not is_visible,
+            )
+        except HTTPException:
+            logger.warning(
+                "registration_form_config_validation_failed",
+                branch_id=str(branch_id),
+                check="group_instance_count",
+                reason="custom_group_count_out_of_range",
+                group=group_key,
+                count=len(instances),
+            )
+            raise
+        for index, instance in enumerate(instances):
+            _validate_custom_fields(
+                group["fields"],
+                instance,
+                scope=f"'{group['name']}' instance {index + 1}",
+                skip_required=not is_visible,
+            )
 
     repo = InvitationRepository(tenant_db)
     tracking_id = await _generate_unique_tracking_id(repo)
@@ -647,11 +838,7 @@ async def create_invitation(
         primary_contact_preferred_contact_method=(
             payload.primary_contact.preferred_contact_method.value
         ),
-        primary_contact_id_proof_type=(
-            payload.primary_contact.id_proof_type.value
-            if payload.primary_contact.id_proof_type is not None
-            else None
-        ),
+        primary_contact_id_proof_type=payload.primary_contact.id_proof_type,
         primary_contact_id_proof_storage_key=primary_key,
         primary_contact_photo_storage_key=primary_photo_key,
         primary_contact_custom_field_values=dict(payload.primary_contact.custom_field_values),
@@ -674,6 +861,7 @@ async def create_invitation(
         consents=dict(payload.consents),
         consent_recorded_at=now,
         custom_field_values=dict(payload.custom_field_values),
+        group_field_values={key: list(value) for key, value in payload.group_values.items()},
     )
     tenant_db.add(invitation)
 
@@ -684,9 +872,7 @@ async def create_invitation(
             full_name=visitor.full_name,
             email=visitor.email,
             phone=visitor.phone,
-            id_proof_type=(
-                visitor.id_proof_type.value if visitor.id_proof_type is not None else None
-            ),
+            id_proof_type=visitor.id_proof_type,
             # ID-proof files are order-matched but, when the branch has
             # deactivated ID proof, may be entirely absent or shorter than
             # the visitor list — same "beyond the supplied count simply has
@@ -723,7 +909,7 @@ async def create_invitation(
         InvitationVehicle(
             id=uuid.uuid4(),
             invitation_id=invitation.id,
-            vehicle_type=vehicle.vehicle_type.value,
+            vehicle_type=vehicle.vehicle_type,
             license_plate=vehicle.license_plate,
             make_model=vehicle.make_model,
             color=vehicle.color,

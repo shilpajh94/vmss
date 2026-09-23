@@ -194,6 +194,13 @@ class Invitation(Base, TimestampMixin):
     # (`design.md` Decision 1/2).
     custom_field_values: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
+    # --- Repeatable field group answers (add-repeatable-field-groups) --------
+    # Keyed by `FormFieldGroup.key`, holding an ordered list of per-instance
+    # answer maps, for any repeatable group other than the seeded Vehicle
+    # Info/Visitor Info groups (which keep their own dedicated
+    # `InvitationVehicle`/`InvitationVisitor` tables — design.md Decision 2/3).
+    group_field_values: Mapped[dict[str, list[dict[str, Any]]]] = mapped_column(JSONB, default=dict)
+
     # --- Lifecycle: denial (add-invitation-lifecycle-actions/design.md) ----
     denial_reason: Mapped[str | None] = mapped_column(String(500))
     denied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

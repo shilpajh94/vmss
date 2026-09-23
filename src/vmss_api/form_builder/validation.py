@@ -25,6 +25,45 @@ def _find_field(
     return next((field for field in step["fields"] if field["key"] == field_key), None)
 
 
+def _find_group(
+    effective_form: list[dict[str, Any]], step_key: str, group_key: str
+) -> dict[str, Any] | None:
+    step = _find_step(effective_form, step_key)
+    if step is None:
+        return None
+    return next((group for group in step.get("groups", []) if group["key"] == group_key), None)
+
+
+def validate_group_instance_count(
+    group: dict[str, Any] | None, count: int, *, scope: str, skip_minimum: bool = False
+) -> None:
+    """specs/form-builder/spec.md "A Field Group May Be Marked Repeatable
+    With a Configurable Instance Range" — enforces the same min/max check
+    for Vehicle Info's group, Visitor Info's group (called only where its
+    range is meaningful — see callers), and any admin-defined custom group.
+    A missing or non-repeatable group has nothing to enforce. `skip_minimum`
+    is set by a caller that has determined the group is currently hidden
+    (specs/invitations/spec.md "A Hidden Custom Field Group's Fields Are
+    Not Required At Submission") — a visitor who was never shown the group
+    cannot be expected to have met its floor, but its ceiling still applies
+    if instances were submitted anyway.
+    """
+    if group is None or not group.get("isRepeatable"):
+        return
+    min_instances = group.get("minInstances") or 0
+    max_instances = group.get("maxInstances")
+    if not skip_minimum and count < min_instances:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"{scope} requires at least {min_instances} instance(s) of '{group['name']}'",
+        )
+    if max_instances is not None and count > max_instances:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"{scope} allows at most {max_instances} instance(s) of '{group['name']}'",
+        )
+
+
 def is_field_required(
     effective_form: list[dict[str, Any]], step_key: str, field_key: str, *, default: bool
 ) -> bool:
@@ -75,6 +114,112 @@ def allowed_carried_item_keys(effective_form: list[dict[str, Any]]) -> set[str]:
     return set(field["options"])
 
 
+def _find_field_by_key(
+    effective_form: list[dict[str, Any]], field_key: str
+) -> dict[str, Any] | None:
+    """Unlike `_find_field`, not scoped to one step — safe because a field
+    key is unique across a branch's entire active form (specs/form-builder/
+    spec.md "A Custom Field's Key Is Unique Across a Branch's Entire Active
+    Form"), so every caller here can look a system field up by key alone.
+    """
+    for step in effective_form:
+        field = next((f for f in step["fields"] if f["key"] == field_key), None)
+        if field is not None:
+            return field
+    return None
+
+
+_OPTION_BEARING_FIELD_TYPES = frozenset({"dropdown_select", "checkbox_list"})
+
+
+def allowed_options_for_system_field(
+    effective_form: list[dict[str, Any]], field_key: str
+) -> list[str] | None:
+    """specs/invitations/spec.md (delta) "A Retyped System Field's
+    Submitted Value Is Validated Against Its Currently Configured Type"
+    (make-system-field-types-editable) — generalizes what were
+    `allowed_id_proof_types`/`allowed_vehicle_types` to every system field
+    Form Builder allows to be retyped.
+
+    Three distinct outcomes, not two:
+    - The field isn't part of the branch's active configuration at all:
+      `[]` — nothing is a valid value (matches the pre-existing behavior
+      for a deactivated/absent `id_proof_type`/`vehicle_type`).
+    - The field is active but its *currently configured* type isn't
+      option-bearing (`dropdown_select`/`checkbox_list`) — e.g. an admin
+      retyped "Purpose of Visit" back to plain `text`: `None` — no options
+      constraint applies; the caller should fall back to ordinary
+      free-text validation instead of rejecting every value.
+    - The field is active and option-bearing: its currently published
+      `options` list (possibly empty, though publish validation prevents
+      that for any field not exempted via `_EXTERNALLY_CATALOGED_FIELD_KEYS`).
+    """
+    field = _find_field_by_key(effective_form, field_key)
+    if field is None:
+        return []
+    if field["fieldType"] not in _OPTION_BEARING_FIELD_TYPES:
+        return None
+    return list(field.get("options") or [])
+
+
+def allowed_id_proof_types(effective_form: list[dict[str, Any]]) -> set[str] | None:
+    """Thin wrapper over `allowed_options_for_system_field` — see
+    specs/invitations/spec.md (delta) "Every Visitor Has a Reachable
+    Contact and a Validated ID Proof". `None` means the field is currently
+    configured as a non-option-bearing type: the caller should skip the
+    allow-list check entirely rather than treat it as "nothing is valid".
+    """
+    options = allowed_options_for_system_field(effective_form, "id_proof_type")
+    return None if options is None else set(options)
+
+
+def vehicle_info_group(effective_form: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """specs/form-builder/spec.md "Vehicle Info and Visitor Info Are Seeded
+    as Locked, Repeatable Groups" — the seeded "vehicles" group on Vehicle
+    Info, or `None` if the branch's active configuration has no such group
+    (e.g. Vehicle Info is deactivated).
+    """
+    return _find_group(effective_form, "vehicle_info", "vehicles")
+
+
+def visitor_info_group(effective_form: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """specs/form-builder/spec.md "Vehicle Info and Visitor Info Are Seeded
+    as Locked, Repeatable Groups" — the seeded "visitors" group on Visitor
+    Info, whose `maxInstances` is the sole enforcement point for the
+    group-registration visitor-count cap (add-repeatable-field-groups,
+    revised Decision 5) — or `None` if the branch's active configuration
+    has no such group (e.g. Visitor Info is deactivated, though it's a
+    locked step and can't be in practice).
+    """
+    return _find_group(effective_form, "visitor_info", "visitors")
+
+
+def is_group_visible(group: dict[str, Any], values: dict[str, Any]) -> bool:
+    """specs/form-builder/spec.md "A Field Group May Declare Conditional
+    Visibility" — evaluates the group's `visibilityCondition` against the
+    values map for the scope its fields are answered at (the same map
+    `validate_custom_field_values` validates that scope's fields against).
+    A group with no condition is always visible.
+    """
+    condition = group.get("visibilityCondition")
+    if condition is None:
+        return True
+    actual_value = values.get(condition["fieldKey"])
+    matches = actual_value == condition["value"]
+    return matches if condition["operator"] == "equals" else not matches
+
+
+def allowed_vehicle_types(effective_form: list[dict[str, Any]]) -> set[str] | None:
+    """Thin wrapper over `allowed_options_for_system_field` — see
+    specs/invitations/spec.md (delta) "Carried Items and Vehicles Are
+    Optional Structured Declarations". `None` means the field is currently
+    configured as a non-option-bearing type: the caller should skip the
+    allow-list check entirely rather than treat it as "nothing is valid".
+    """
+    options = allowed_options_for_system_field(effective_form, "vehicle_type")
+    return None if options is None else set(options)
+
+
 # --- Admin-authored custom fields (add-generic-custom-field-support) -------
 #
 # `isSystem` is what distinguishes a step's seeded fields (full name, email,
@@ -118,15 +263,48 @@ def custom_fields_for_invitation_scope(
     except the ones in `_NON_GENERIC_SCOPE_STEP_KEYS`
     (`add-generic-custom-field-support/design.md` Decision 1/2). Covers
     Visit Details, Carried Items (beyond its own `items` field), and any
-    custom step.
+    custom step. Excludes a field assigned to a field group
+    (`field["groupId"] is not None`) — that field's answer is captured
+    per-instance through `groupValues` instead
+    (add-repeatable-field-groups); including it here too would validate it
+    twice, once as a flat invitation-level answer and once per group
+    instance, rejecting a submission that only ever answered it the
+    group's way.
     """
     return [
         field
         for step in effective_form
         if step["key"] not in _NON_GENERIC_SCOPE_STEP_KEYS
         for field in step["fields"]
-        if not field["isSystem"]
+        if not field["isSystem"] and field.get("groupId") is None
     ]
+
+
+def custom_groups_for_invitation_scope(
+    effective_form: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Every field group defined on a step other than Visitor Info/Vehicle
+    Info/Consent Agreement (`_NON_GENERIC_SCOPE_STEP_KEYS`) — i.e. every
+    admin-defined custom group, whose instances are submitted via the
+    invitation payload's `groupValues` map, keyed by group key
+    (specs/invitations/spec.md (delta) "An Admin-Defined Repeatable Group's
+    Answers Are Accepted as an Array of Per-Instance Values"). Each
+    returned group dict is augmented with a `"fields"` list — that group's
+    own field definitions, resolved by the field keys it references — so a
+    caller can validate one instance's values with
+    `validate_custom_field_values` directly.
+    """
+    groups: list[dict[str, Any]] = []
+    for step in effective_form:
+        if step["key"] in _NON_GENERIC_SCOPE_STEP_KEYS:
+            continue
+        fields_by_key = {field["key"]: field for field in step["fields"]}
+        for group in step.get("groups", []):
+            group_fields = [
+                fields_by_key[key] for key in group.get("fieldKeys", []) if key in fields_by_key
+            ]
+            groups.append({**group, "fields": group_fields})
+    return groups
 
 
 def _validate_value_against_field(field: dict[str, Any], value: Any) -> None:
@@ -178,7 +356,11 @@ def _validate_value_against_field(field: dict[str, Any], value: Any) -> None:
 
 
 def validate_custom_field_values(
-    fields: list[dict[str, Any]], values: dict[str, Any], *, scope: str
+    fields: list[dict[str, Any]],
+    values: dict[str, Any],
+    *,
+    scope: str,
+    skip_required: bool = False,
 ) -> None:
     """specs/invitations/spec.md (delta) "Invitation Creation Captures
     Admin-Defined Custom Field Answers" — `fields` is the admin-authored
@@ -186,7 +368,11 @@ def validate_custom_field_values(
     `custom_fields_for_invitation_scope`), `values` the caller-supplied
     `customFieldValues` map for that same scope. `scope` is only used to
     make a rejection's error message identify which visitor/vehicle/
-    invitation-level map it came from.
+    invitation-level map it came from. `skip_required` is set by a caller
+    that has already determined the fields' owning group is currently
+    hidden (specs/form-builder/spec.md "A Hidden Field Group Skips
+    Required-Field Validation For Its Fields") — a supplied value is still
+    validated even when its requiredness check is skipped.
     """
     fields_by_key = {field["key"]: field for field in fields}
     unknown_keys = set(values) - set(fields_by_key)
@@ -195,14 +381,15 @@ def validate_custom_field_values(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown custom field key(s) for {scope}: {', '.join(sorted(unknown_keys))}",
         )
-    missing_required = {field["key"] for field in fields if field["isRequired"]} - set(values)
-    if missing_required:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                f"Missing required custom field(s) for {scope}: "
-                f"{', '.join(sorted(missing_required))}"
-            ),
-        )
+    if not skip_required:
+        missing_required = {field["key"] for field in fields if field["isRequired"]} - set(values)
+        if missing_required:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Missing required custom field(s) for {scope}: "
+                    f"{', '.join(sorted(missing_required))}"
+                ),
+            )
     for key, value in values.items():
         _validate_value_against_field(fields_by_key[key], value)

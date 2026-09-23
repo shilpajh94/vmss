@@ -55,19 +55,6 @@ class ContactMethod(StrEnum):
     sms = "sms"
 
 
-class IdProofType(StrEnum):
-    aadhaar_card = "Aadhaar Card"
-    passport = "Passport"
-    driving_license = "Driving License"
-    other = "Other"
-
-
-class VehicleType(StrEnum):
-    two_wheeler = "2_wheeler"
-    four_wheeler = "4_wheeler"
-    heavy = "heavy"
-
-
 def _require_reachable_contact(email: str | None, phone: str | None) -> None:
     """Shared rule for every visitor entry (spec.md "Each Visitor Has at
     Least One Reachable Contact and an ID Proof"): at least one of
@@ -103,8 +90,13 @@ class VisitorSubmit(CamelModel):
     phone: str | None = Field(default=None, max_length=50)
     # Optional (form-builder): whether ID proof is captured at all is now
     # branch-configurable — see `invitations/service.py::create_invitation`'s
-    # dynamic requiredness check against the effective form.
-    id_proof_type: IdProofType | None = None
+    # dynamic requiredness check against the effective form. Plain string,
+    # not a fixed enum (make-id-proof-and-vehicle-type-configurable): a
+    # valid value is whatever the calling branch's published Visitor Info
+    # "ID Proof Type" field currently declares as an option — validated
+    # dynamically in `invitations/service.py::create_invitation`, not by
+    # this schema, mirroring `CarriedItemsSubmit.items` below.
+    id_proof_type: str | None = Field(default=None, max_length=100)
     # This visitor's own answers for any admin-authored Visitor Info field
     # (add-generic-custom-field-support), keyed by field key — validated
     # dynamically against the effective form in
@@ -159,7 +151,12 @@ class CarriedItemsSubmit(CamelModel):
 
 
 class VehicleSubmit(CamelModel):
-    vehicle_type: VehicleType
+    # Plain string, not a fixed enum (make-id-proof-and-vehicle-type-
+    # configurable): a valid value is whatever the calling branch's
+    # published Vehicle Info "Vehicle Type" field currently declares as an
+    # option — validated dynamically in
+    # `invitations/service.py::create_invitation`, not by this schema.
+    vehicle_type: str = Field(max_length=50)
     license_plate: str = Field(max_length=50)
     make_model: str | None = Field(default=None, max_length=255)
     color: str | None = Field(default=None, max_length=50)
@@ -181,7 +178,7 @@ class InvitationPrimaryContactCreate(CamelModel):
     phone: str | None = Field(default=None, max_length=50)
     preferred_contact_method: ContactMethod = ContactMethod.email
     # Optional (form-builder) — see `VisitorSubmit.id_proof_type`.
-    id_proof_type: IdProofType | None = None
+    id_proof_type: str | None = Field(default=None, max_length=100)
     # See `VisitorSubmit.custom_field_values` — the primary contact's own
     # answers for any admin-authored Visitor Info field.
     custom_field_values: dict[Annotated[str, Field(max_length=100)], Any] = Field(
@@ -247,6 +244,16 @@ class InvitationCreate(CamelModel):
     # `invitations/service.py::create_invitation`, not by this schema.
     custom_field_values: dict[Annotated[str, Field(max_length=100)], Any] = Field(
         default_factory=dict, max_length=50
+    )
+    # Per-instance answers for any admin-defined repeatable field group on a
+    # step other than Visitor Info/Vehicle Info (add-repeatable-field-
+    # groups) — keyed by group key, an ordered list of that group's answer
+    # maps, one per submitted instance. Validated dynamically against the
+    # effective form's group definitions (min/max instance count, and each
+    # instance's own field values) in
+    # `invitations/service.py::create_invitation`, not by this schema.
+    group_values: dict[Annotated[str, Field(max_length=100)], list[dict[str, Any]]] = Field(
+        default_factory=dict, max_length=20
     )
 
     @model_validator(mode="after")
@@ -412,6 +419,7 @@ class InvitationCheckInOut(CamelModel):
     carried_items: list[str]
     carried_items_description: str | None
     custom_field_values: dict[str, Any]
+    group_field_values: dict[str, list[dict[str, Any]]]
     visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 
@@ -445,6 +453,7 @@ class InvitationTrackingOut(CamelModel):
     carried_items: list[str]
     carried_items_description: str | None
     custom_field_values: dict[str, Any]
+    group_field_values: dict[str, list[dict[str, Any]]]
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -509,6 +518,7 @@ class InvitationDetailOut(CamelModel):
     carried_items: list[str]
     carried_items_description: str | None
     custom_field_values: dict[str, Any]
+    group_field_values: dict[str, list[dict[str, Any]]]
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -640,6 +650,7 @@ class InvitationQrCheckInOut(CamelModel):
     carried_items: list[str]
     carried_items_description: str | None
     custom_field_values: dict[str, Any]
+    group_field_values: dict[str, list[dict[str, Any]]]
     submitted_at: datetime | None
     approved_at: datetime | None
     checked_in_at: datetime | None

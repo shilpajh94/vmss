@@ -115,6 +115,86 @@ reception, after triage) knows the actual answer. `purposeOfVisit` and
 `expectedDuration` remain required free-text fields; only `departmentToVisit`
 changed.
 
+### ID proof type and vehicle type are branch-configured, not fixed (`make-id-proof-and-vehicle-type-configurable`, **BREAKING**)
+
+`idProofType` (`primaryContact`/each `visitors[]` entry) and `vehicleType`
+(each `vehicles[]` entry) are plain strings, not a fixed server-side enum —
+a valid value is whatever the calling branch's currently published Form
+Builder "ID Proof Type"/"Vehicle Type" options declare
+(`GET /form-builder/effective`'s Visitor Info/Vehicle Info steps), the same
+"branch's currently configured options" contract `carriedItems.items` and
+`consents` already use. Submitting a value outside the branch's current
+options is rejected with `422`. A branch that has never customized either
+field accepts the original four ID proof types
+(`Aadhaar Card`/`Passport`/`Driving License`/`Other`) and three vehicle
+types (`2_wheeler`/`4_wheeler`/`heavy`) unchanged — those are the seeded
+defaults, not special-cased in code. See `docs/features/form_builder.md`
+for how an admin edits these two fields' options.
+
+### Vehicle count and admin-defined repeatable groups (`add-repeatable-field-groups`)
+
+The number of `vehicles[]` entries a request may declare is now checked
+against the branch's currently published Vehicle Info field-group instance
+range (`GET /form-builder/effective`'s Vehicle Info step, `groups[].key ==
+"vehicles"`) instead of being unconditionally unlimited — a branch that
+has never configured a minimum/maximum still accepts any number of
+vehicles, including zero, unchanged from before this change.
+
+The number of `visitors[]` entries a `group` registration may declare is
+similarly checked against Visitor Info's field group's `maxInstances`
+(`groups[].key == "visitors"`) — this **replaces** the previous
+`INVITATION_MAX_GROUP_VISITORS` settings-based rejection (still 20 by
+default, seeded into that group at migration time), so a client that was
+relying on the old 422 message text should expect the same status code
+via a different underlying check. Unlike Vehicle Info's group, Visitor
+Info's isn't admin-editable through the Form Builder API — see
+`docs/features/form_builder.md`'s "Field groups" for why.
+
+An admin can also define a **repeatable field group** on any other step
+(e.g. a "Parcels" group on Carried Items), optionally made **conditional**
+on another field's value, through Form Builder — see
+`docs/features/form_builder.md` "Field groups"/"Conditional groups".
+`POST /invitations` (and `POST /registrations/walk-in`) accepts that
+group's answers as an optional top-level `groupValues: Record<string,
+object[]>` map, keyed by group key: each entry is an ordered array of
+that group's per-instance answer maps, one per instance the visitor
+filled in. A submission naming a group key the branch's active form
+doesn't define, or supplying more instances than that group's currently
+published `maxInstances`, is rejected with `422` before any invitation is
+created — the same "validate everything, then persist" ordering ID-proof
+file validation already uses, so one invalid instance never leaves a
+partially-created invitation behind. Every response that already returns
+`customFieldValues` (`GET /invitations/{id}`, the tracking lookup, the
+canonical check-in response, and the QR check-in/check-out response) now
+also returns `groupFieldValues` in the same shape, alongside it.
+
+**When a group is hidden** by its `visibilityCondition` (evaluated against
+the same request's own submitted values), the request is accepted even if
+that group's fields would otherwise be required, and even if fewer
+instances are submitted than the group's configured minimum — a visitor
+who was never shown the group can't be expected to have filled it in. Its
+maximum still applies if instances are submitted anyway, and any value
+that is supplied for a hidden group's field is still validated against
+that field's own type/options/length rules.
+
+### Retyped system fields and submission validation (`make-system-field-types-editable`)
+
+`fullName` (`primaryContact`/each `visitors[]` entry), `purposeOfVisit`,
+`departmentToVisit`, `expectedDuration`, `additionalNotes`
+(`visitDetails`), and `licensePlate` (each `vehicles[]` entry) can now
+also be retyped through Form Builder (see `docs/features/form_builder.md`
+"Changing an existing field's type"), extending the same dynamic
+validation `idProofType`/`vehicleType` already use: when a field's
+*currently configured* type is `dropdown_select`/`checkbox_list`, a
+submitted value must match one of the branch's currently published
+options for that field, rejected with `422` otherwise. When it's still
+its default (non-option-bearing) type, the submitted value is validated
+as ordinary free text, unchanged from before this change. `hostNameOrEmail`
+is not covered by this — its submitted value is always discarded (see
+"`hostId`/`hostNameOrEmail` are no longer resolved at creation" above), so
+there is nothing to validate regardless of how its Form Builder field is
+typed.
+
 ### Primary contact profile photo (`checkin-approval-workflow-improvements`, now mandatory per `require-primary-contact-photo`)
 
 Alongside each visitor's required ID-proof upload, `POST /invitations`

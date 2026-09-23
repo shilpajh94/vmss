@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Collection
 from typing import Any
 
 from sqlalchemy import select
@@ -45,6 +46,40 @@ class VisitorCategoryRepository(TenantScopedRepository[VisitorCategory]):
             VisitorCategory.name == name, VisitorCategory.deleted_at.is_(None)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_existing_codes(self, codes: Collection[str]) -> set[str]:
+        """Batch lookup for `service.py::bulk_create_visitor_categories` —
+        one `WHERE code IN (...)` for the whole requested batch, instead of
+        one `get_by_code` call per name. See query-performance.md §2.
+        """
+        if not codes:
+            return set()
+        stmt = select(VisitorCategory.code).where(
+            VisitorCategory.code.in_(codes), VisitorCategory.deleted_at.is_(None)
+        )
+        return set((await self.session.execute(stmt)).scalars().all())
+
+    async def get_existing_names(self, names: Collection[str]) -> set[str]:
+        """Batch counterpart of `get_existing_codes` for names."""
+        if not names:
+            return set()
+        stmt = select(VisitorCategory.name).where(
+            VisitorCategory.name.in_(names), VisitorCategory.deleted_at.is_(None)
+        )
+        return set((await self.session.execute(stmt)).scalars().all())
+
+    async def list_by_ids(self, ids: Collection[uuid.UUID]) -> list[VisitorCategory]:
+        """Batch re-fetch for `service.py::bulk_create_visitor_categories`,
+        used once after a bulk-insert commit to pick up server-generated
+        timestamp columns for every created row in one query instead of one
+        `session.refresh()` per row.
+        """
+        if not ids:
+            return []
+        stmt = select(VisitorCategory).where(
+            VisitorCategory.id.in_(ids), VisitorCategory.deleted_at.is_(None)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_page(
         self,
