@@ -211,6 +211,12 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     __model__ = Invitation
     deleted_at = None
     status = "submitted"
+    # The router maps this plain string column back through `ContactMethod`
+    # when serializing detail/tracking responses — same rationale as
+    # `_build_invitation`'s `registration_type`/`source` defaults in
+    # `invitations/tests.py`, applied at the factory level since every
+    # caller of this factory needs a valid value, not just that helper.
+    primary_contact_preferred_contact_method = "email"
     # See module docstring — polyfactory's default String(20) generator can
     # produce an empty string, which broke every test keying off tracking_id
     # in a URL path.

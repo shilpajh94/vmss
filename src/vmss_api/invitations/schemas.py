@@ -318,6 +318,8 @@ class InvitationListItemOut(CamelModel):
     status: str
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
+    primary_contact_email: str | None = None
+    primary_contact_phone: str | None = None
     primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
     expires_at: datetime
@@ -516,13 +518,17 @@ class InvitationDetailOut(CamelModel):
     primary_contact_full_name: str
     primary_contact_email: str | None = None
     primary_contact_phone: str | None = None
+    primary_contact_preferred_contact_method: ContactMethod
     primary_contact_photo_url: str | None = None
     primary_contact_id_proof_type: str | None = None
     primary_contact_id_proof_url: str | None = None
     primary_contact_custom_field_values: dict[str, Any]
     purpose_of_visit: str | None
+    purpose_id: uuid.UUID | None = None
     host_name_or_email: str | None
     host_id: uuid.UUID | None = None
+    duration_id: uuid.UUID | None = None
+    department_id: uuid.UUID | None = None
     poc_user_id: uuid.UUID | None = None
     poc_role_id: uuid.UUID | None = None
     poc_name: str | None = None
@@ -537,6 +543,8 @@ class InvitationDetailOut(CamelModel):
     additional_notes: str | None
     carried_items: list[str]
     carried_items_description: str | None
+    consents: dict[str, bool]
+    consent_recorded_at: datetime | None = None
     custom_field_values: dict[str, Any]
     group_field_values: dict[str, list[dict[str, Any]]]
     expires_at: datetime

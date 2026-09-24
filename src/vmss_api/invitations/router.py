@@ -39,6 +39,7 @@ from vmss_api.invitations.deps import track_default_tenant, track_default_tenant
 from vmss_api.invitations.schemas import (
     BadgeOut,
     CarriedItemsSubmit,
+    ContactMethod,
     InvitationBranchOut,
     InvitationBuildingOut,
     InvitationCheckInOut,
@@ -460,6 +461,8 @@ async def _to_list_item_out(invitation) -> InvitationListItemOut:
         status=invitation.status,
         visitor_category_id=invitation.visitor_category_id,
         primary_contact_full_name=invitation.primary_contact_full_name,
+        primary_contact_email=invitation.primary_contact_email,
+        primary_contact_phone=invitation.primary_contact_phone,
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
         ),
@@ -671,6 +674,9 @@ async def _to_invitation_detail_out(
         primary_contact_full_name=invitation.primary_contact_full_name,
         primary_contact_email=invitation.primary_contact_email,
         primary_contact_phone=invitation.primary_contact_phone,
+        primary_contact_preferred_contact_method=ContactMethod(
+            invitation.primary_contact_preferred_contact_method
+        ),
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
         ),
@@ -682,8 +688,11 @@ async def _to_invitation_detail_out(
         ),
         primary_contact_custom_field_values=invitation.primary_contact_custom_field_values,
         purpose_of_visit=invitation.purpose_of_visit,
+        purpose_id=invitation.purpose_id,
         host_name_or_email=invitation.host_name_or_email,
         host_id=invitation.host_id,
+        duration_id=invitation.duration_id,
+        department_id=invitation.department_id,
         poc_user_id=invitation.poc_user_id,
         poc_role_id=invitation.poc_role_id,
         poc_name=invitation.poc_name,
@@ -698,6 +707,8 @@ async def _to_invitation_detail_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
+        consents=invitation.consents,
+        consent_recorded_at=invitation.consent_recorded_at,
         custom_field_values=invitation.custom_field_values,
         group_field_values=invitation.group_field_values,
         expires_at=invitation.expires_at,
@@ -746,6 +757,37 @@ async def _to_badge_out(invitation) -> BadgeOut:
         issued_at=invitation.badge_issued_at,
         reprint_count=invitation.badge_reprint_count,
     )
+
+
+async def _parse_prefixed_multipart_files(
+    form_data, prefix: str, *, limit: int
+) -> dict[str, list[bytes]]:
+    """Parses every `<prefix>[<key>]` multipart list part into
+    `{key: [bytes, ...]}` — the shared convention `groupFieldFiles`
+    (add-group-field-file-upload) and `customFieldFiles`/
+    `primaryContactCustomFieldFiles`/`visitorCustomFieldFiles`/
+    `vehicleCustomFieldFiles` (add-inline-custom-field-file-upload) all use,
+    since `<key>` (a group key or a field key) is branch-specific and
+    unknown at route-declaration time — read via `request.form()` instead of
+    a declared `File(...)` param. Filtered against Starlette's own
+    `UploadFile` (not `fastapi.UploadFile`, a subclass FastAPI only
+    constructs for its own declared `File(...)` params) —
+    `request.form()`'s multipart parser builds the Starlette one directly,
+    so `isinstance(value, fastapi.UploadFile)` here would silently match
+    nothing. Shared by `registrations/router.py::create_walk_in_registration`
+    as well, which accepts the identical contract.
+    """
+    result: dict[str, list[bytes]] = {}
+    marker = f"{prefix}["
+    for key in set(form_data.keys()):
+        if key.startswith(marker) and key.endswith("]"):
+            field_key = key[len(marker) : -1]
+            result[field_key] = [
+                await value.read(limit)
+                for value in form_data.getlist(key)
+                if isinstance(value, StarletteUploadFile)
+            ]
+    return result
 
 
 async def _cached_response(
@@ -851,6 +893,27 @@ async def create_invitation(
     a declared parameter, since the set of valid keys isn't known until
     `service.create_invitation` resolves the branch's active Form Builder
     configuration.
+
+    An admin-defined `file_upload`-typed field that is *not* assigned to a
+    group (add-inline-custom-field-file-upload) — e.g. an "additional
+    document" field added directly on Visitor Info — uses the same
+    `request.form()` convention, one multipart part per scope, keyed by
+    field key (not group key, so — unlike a group — every `file_upload`
+    field at a scope is supported, not just the first):
+    - `primaryContactCustomFieldFiles[<fieldKey>]` — at most one file,
+      paired with `payload.primaryContact.customFieldValues`.
+    - `visitorCustomFieldFiles[<fieldKey>]` — order-matched to
+      `payload.visitors`, same convention as `visitorIdProofFiles`.
+    - `vehicleCustomFieldFiles[<fieldKey>]` — order-matched to
+      `payload.vehicles`.
+    - `customFieldFiles[<fieldKey>]` — at most one file, paired with the
+      invitation-level `payload.customFieldValues` (Visit Details/Carried
+      Items/a custom step).
+
+    In every case, the field's key must be **omitted** (or `null`) from the
+    corresponding `customFieldValues` map — supplying any other value for it
+    is rejected with `422`, never silently overwritten; the file is the only
+    valid source of that field's answer.
     """
     cached = await _cached_response(tenant.id, idempotency_key)
     if cached is not None:
@@ -891,26 +954,28 @@ async def create_invitation(
     )
     visitor_photo_contents = [await f.read(photo_limit) for f in visitor_photo_files]
 
-    # See the docstring above: `groupFieldFiles[<groupKey>]` isn't a
-    # declared parameter since `<groupKey>` is branch-specific. Starlette
-    # caches the parsed multipart body on `request`, so this reuses the same
-    # parse the `payload`/`primary_contact_*`/`visitor_*` params above
-    # already triggered rather than re-reading the request body. Filtered
-    # against Starlette's own `UploadFile` (not `fastapi.UploadFile`, a
-    # subclass FastAPI only constructs for its own declared `File(...)`
-    # params) — `request.form()`'s multipart parser builds the Starlette
-    # one directly, so `isinstance(value, fastapi.UploadFile)` here would
-    # silently match nothing.
+    # See `_parse_prefixed_multipart_files`'s docstring: none of these are
+    # declared params since the field/group key inside each `[...]` is
+    # branch-specific. Starlette caches the parsed multipart body on
+    # `request`, so this reuses the same parse the `payload`/
+    # `primary_contact_*`/`visitor_*` params above already triggered rather
+    # than re-reading the request body.
     form_data = await request.form()
-    group_field_file_contents: dict[str, list[bytes]] = {}
-    for key in set(form_data.keys()):
-        if key.startswith("groupFieldFiles[") and key.endswith("]"):
-            group_key = key[len("groupFieldFiles[") : -1]
-            group_field_file_contents[group_key] = [
-                await value.read(id_proof_limit)
-                for value in form_data.getlist(key)
-                if isinstance(value, StarletteUploadFile)
-            ]
+    group_field_file_contents = await _parse_prefixed_multipart_files(
+        form_data, "groupFieldFiles", limit=id_proof_limit
+    )
+    primary_contact_custom_field_file_contents = await _parse_prefixed_multipart_files(
+        form_data, "primaryContactCustomFieldFiles", limit=id_proof_limit
+    )
+    visitor_custom_field_file_contents = await _parse_prefixed_multipart_files(
+        form_data, "visitorCustomFieldFiles", limit=id_proof_limit
+    )
+    vehicle_custom_field_file_contents = await _parse_prefixed_multipart_files(
+        form_data, "vehicleCustomFieldFiles", limit=id_proof_limit
+    )
+    custom_field_file_contents = await _parse_prefixed_multipart_files(
+        form_data, "customFieldFiles", limit=id_proof_limit
+    )
 
     invitation = await service.create_invitation(
         tenant_db,
@@ -923,6 +988,10 @@ async def create_invitation(
         primary_contact_photo_content=primary_photo_content,
         visitor_photo_contents=visitor_photo_contents,
         group_field_file_contents=group_field_file_contents,
+        primary_contact_custom_field_file_contents=primary_contact_custom_field_file_contents,
+        visitor_custom_field_file_contents=visitor_custom_field_file_contents,
+        vehicle_custom_field_file_contents=vehicle_custom_field_file_contents,
+        custom_field_file_contents=custom_field_file_contents,
     )
     background_tasks.add_task(
         record_audit_log,

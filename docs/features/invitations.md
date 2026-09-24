@@ -211,6 +211,47 @@ instance *n* in `groupValues[<groupKey>]`.
 `POST /registrations/walk-in` accepts the identical `groupFieldFiles[...]`
 contract — see `docs/features/registrations.md`.
 
+### Inline (non-grouped) custom-field file uploads (`add-inline-custom-field-file-upload`)
+
+An admin-authored `file_upload`-typed field that is *not* assigned to a
+repeatable field group (e.g. an "additional document" field added directly
+on Visitor Info, not one of its groups) — the standalone counterpart of the
+repeatable-group case above. Unlike a group (whose multipart part is keyed
+by group key alone, so only the group's *first* `file_upload` field is
+read), each of these fields has its own multipart part keyed by field key,
+so every `file_upload` field at a scope is supported, not just one.
+
+Four scopes, one multipart convention each:
+
+| Scope | Multipart part | Shape |
+|---|---|---|
+| Primary contact (Visitor Info) | `primaryContactCustomFieldFiles[<fieldKey>]` | At most one file. |
+| Each co-visitor (Visitor Info) | `visitorCustomFieldFiles[<fieldKey>]` | Order-matched list, same convention as `visitor_id_proof_files`. |
+| Each vehicle (Vehicle Info) | `vehicleCustomFieldFiles[<fieldKey>]` | Order-matched list, same convention as the visitor case. |
+| Invitation-level (Visit Details/Carried Items/a custom step) | `customFieldFiles[<fieldKey>]` | At most one file. |
+
+- The field's key must be **omitted** (or `null`) in the corresponding
+  `customFieldValues` map — supplying any other value for it is rejected
+  with `422` (`"'<fieldKey>' for <scope> must be uploaded as a file, not
+  supplied as a value"`), never silently overwritten, same rule as the
+  repeatable-group case.
+- If the field is required, every applicable instance (the primary contact;
+  each visitor; each vehicle; the invitation itself) must have a matching
+  file — a count mismatch is rejected with `422`. More files than instances
+  (or more than one file for a single-instance scope) is also rejected.
+- Accepted files are validated and stored the same way a group's own
+  `file_upload` field is (`_validate_id_proof`, `core/storage.py::save`,
+  category `invitations/custom-fields`), and the resulting storage key is
+  written back into the persisted `customFieldValues`/
+  `primaryContactCustomFieldValues` map — never a client-supplied value. As
+  with `groupFieldValues`, no reader resolves this storage key to a signed
+  URL yet — the response carries the raw key.
+
+`POST /registrations/walk-in` accepts the identical
+`primaryContactCustomFieldFiles[...]`/`visitorCustomFieldFiles[...]`/
+`vehicleCustomFieldFiles[...]`/`customFieldFiles[...]` contract — see
+`docs/features/registrations.md`.
+
 ### Retyped system fields and submission validation (`make-system-field-types-editable`)
 
 `fullName` (`primaryContact`/each `visitors[]` entry), `purposeOfVisit`,
