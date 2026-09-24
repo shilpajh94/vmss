@@ -2,6 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { extractGroupFieldFiles } from '../../../components/dynamic-fields/field-group-visibility'
+import type { DynamicFieldValue } from '../../../components/dynamic-fields/DynamicField'
+import {
+  extractListCustomFieldFiles,
+  extractSingleCustomFieldFiles,
+  fileUploadFieldKeysOf,
+  findInvitationFileUploadFields,
+  hasMissingRequiredCustomFieldFile,
+  requiredFileUploadFieldKeysOf,
+} from '../../../components/dynamic-fields/custom-field-files'
 import { findField, findStepFields, findStepGroups, useEffectiveForm } from '../../../hooks/use-effective-form'
 import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visitor-request-wizard'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
@@ -176,6 +185,23 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     const groupedFieldKeys = new Set(vehicleInfoGroups.flatMap((group) => group.fieldKeys))
     return vehicleInfoAllFields.filter((field) => !groupedFieldKeys.has(field.key))
   }, [vehicleInfoAllFields, vehicleInfoGroups])
+  // See use-visitor-request-wizard.ts's matching comment.
+  const visitorInfoFileUploadKeys = useMemo(() => fileUploadFieldKeysOf(visitorInfoCustomFields), [visitorInfoCustomFields])
+  const visitorInfoRequiredFileUploadKeys = useMemo(
+    () => requiredFileUploadFieldKeysOf(visitorInfoCustomFields),
+    [visitorInfoCustomFields],
+  )
+  const vehicleInfoFileUploadKeys = useMemo(() => fileUploadFieldKeysOf(vehicleInfoCustomFields), [vehicleInfoCustomFields])
+  const vehicleInfoRequiredFileUploadKeys = useMemo(
+    () => requiredFileUploadFieldKeysOf(vehicleInfoCustomFields),
+    [vehicleInfoCustomFields],
+  )
+  const invitationFileUploadFields = useMemo(() => findInvitationFileUploadFields(effectiveFormSteps), [effectiveFormSteps])
+  const invitationFileUploadKeys = useMemo(() => invitationFileUploadFields.map((field) => field.key), [invitationFileUploadFields])
+  const invitationRequiredFileUploadKeys = useMemo(
+    () => invitationFileUploadFields.filter((field) => field.isRequired).map((field) => field.key),
+    [invitationFileUploadFields],
+  )
   const lastStepIndex = activeSteps.length > 0 ? activeSteps.length - 1 : 0
 
   // See use-visitor-request-wizard.ts's matching effect for why this is needed.
@@ -259,7 +285,19 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     const branchId = branches?.find((branch) => branch.name === formState.visitInfo.location)?.id
     const idProofMissing = visitorInfoFields.idProofActive && visitorInfoFields.idProofRequired && !primaryContactIdProofFile
     const photoMissing = visitorInfoFields.profilePhotoActive && visitorInfoFields.profilePhotoRequired && !primaryContactPhotoFile
-    if (idProofMissing || photoMissing || !branchId) {
+    // See use-visitor-request-wizard.ts's matching comment.
+    const missingRequiredCustomFieldFile =
+      hasMissingRequiredCustomFieldFile(visitorInfoRequiredFileUploadKeys, [formState.primaryContact.customFieldValues]) ||
+      hasMissingRequiredCustomFieldFile(
+        visitorInfoRequiredFileUploadKeys,
+        formState.additionalVisitors.map((visitor) => visitor.customFieldValues),
+      ) ||
+      hasMissingRequiredCustomFieldFile(
+        vehicleInfoRequiredFileUploadKeys,
+        formState.vehicles.map((vehicle) => vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined),
+      ) ||
+      hasMissingRequiredCustomFieldFile(invitationRequiredFileUploadKeys, [formState.customFieldValues])
+    if (idProofMissing || photoMissing || missingRequiredCustomFieldFile || !branchId) {
       setSubmissionError('Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
       toast.error('Something went wrong submitting your request. Please try again.')
@@ -277,12 +315,55 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
       fileRegistry.current,
     )
 
+    // See use-visitor-request-wizard.ts's matching comment.
+    const { sanitizedValues: sanitizedPrimaryContactCustomFieldValues, files: primaryContactCustomFieldFiles } =
+      extractSingleCustomFieldFiles(visitorInfoFileUploadKeys, formState.primaryContact.customFieldValues, fileRegistry.current)
+    const { sanitizedValuesList: sanitizedVisitorCustomFieldValuesList, filesByKey: visitorCustomFieldFiles } =
+      extractListCustomFieldFiles(
+        visitorInfoFileUploadKeys,
+        formState.additionalVisitors.map((visitor) => visitor.customFieldValues),
+        fileRegistry.current,
+      )
+    const { sanitizedValuesList: sanitizedVehicleCustomFieldValuesList, filesByKey: vehicleCustomFieldFiles } =
+      extractListCustomFieldFiles(
+        vehicleInfoFileUploadKeys,
+        formState.vehicles.map((vehicle) => vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined),
+        fileRegistry.current,
+      )
+    const { sanitizedValues: sanitizedCustomFieldValues, files: customFieldFiles } = extractSingleCustomFieldFiles(
+      invitationFileUploadKeys,
+      formState.customFieldValues,
+      fileRegistry.current,
+    )
+
     setSubmissionStatus('submitting')
     setSubmissionError(undefined)
     try {
       const response = await submitStaffVisitRequestUseCase.execute(
-        toStaffVisitRequest({ ...formState, groupValues: sanitizedGroupValues }),
-        { primaryContactIdProofFile, primaryContactPhotoFile, visitorIdProofFiles, groupFieldFiles },
+        toStaffVisitRequest({
+          ...formState,
+          groupValues: sanitizedGroupValues,
+          customFieldValues: sanitizedCustomFieldValues,
+          primaryContact: { ...formState.primaryContact, customFieldValues: sanitizedPrimaryContactCustomFieldValues },
+          additionalVisitors: formState.additionalVisitors.map((visitor, index) => ({
+            ...visitor,
+            customFieldValues: sanitizedVisitorCustomFieldValuesList[index],
+          })),
+          vehicles: formState.vehicles.map((vehicle, index) => ({
+            ...vehicle,
+            customFieldValues: sanitizedVehicleCustomFieldValuesList[index],
+          })),
+        }),
+        {
+          primaryContactIdProofFile,
+          primaryContactPhotoFile,
+          visitorIdProofFiles,
+          groupFieldFiles,
+          primaryContactCustomFieldFiles,
+          visitorCustomFieldFiles,
+          vehicleCustomFieldFiles,
+          customFieldFiles,
+        },
         branchId,
       )
       setTrackingId(response.trackingId)

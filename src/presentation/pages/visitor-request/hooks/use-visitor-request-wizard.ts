@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { extractGroupFieldFiles } from '../../../components/dynamic-fields/field-group-visibility'
+import type { DynamicFieldValue } from '../../../components/dynamic-fields/DynamicField'
+import {
+  extractListCustomFieldFiles,
+  extractSingleCustomFieldFiles,
+  fileUploadFieldKeysOf,
+  findInvitationFileUploadFields,
+  hasMissingRequiredCustomFieldFile,
+  requiredFileUploadFieldKeysOf,
+} from '../../../components/dynamic-fields/custom-field-files'
 import { findField, findStepFields, findStepGroups, useEffectiveForm } from '../../../hooks/use-effective-form'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
@@ -245,6 +254,27 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     const groupedFieldKeys = new Set(vehicleInfoGroups.flatMap((group) => group.fieldKeys))
     return vehicleInfoAllFields.filter((field) => !groupedFieldKeys.has(field.key))
   }, [vehicleInfoAllFields, vehicleInfoGroups])
+  // Ungrouped `file_upload` fields' keys, per bucket — backend's "inline
+  // file-upload custom fields" contract (2026-09-24). See `submit` below,
+  // and `custom-field-files.ts` for why each bucket needs its own
+  // extraction (grouped file fields are unaffected, still handled by
+  // `extractGroupFieldFiles`).
+  const visitorInfoFileUploadKeys = useMemo(() => fileUploadFieldKeysOf(visitorInfoCustomFields), [visitorInfoCustomFields])
+  const visitorInfoRequiredFileUploadKeys = useMemo(
+    () => requiredFileUploadFieldKeysOf(visitorInfoCustomFields),
+    [visitorInfoCustomFields],
+  )
+  const vehicleInfoFileUploadKeys = useMemo(() => fileUploadFieldKeysOf(vehicleInfoCustomFields), [vehicleInfoCustomFields])
+  const vehicleInfoRequiredFileUploadKeys = useMemo(
+    () => requiredFileUploadFieldKeysOf(vehicleInfoCustomFields),
+    [vehicleInfoCustomFields],
+  )
+  const invitationFileUploadFields = useMemo(() => findInvitationFileUploadFields(effectiveFormSteps), [effectiveFormSteps])
+  const invitationFileUploadKeys = useMemo(() => invitationFileUploadFields.map((field) => field.key), [invitationFileUploadFields])
+  const invitationRequiredFileUploadKeys = useMemo(
+    () => invitationFileUploadFields.filter((field) => field.isRequired).map((field) => field.key),
+    [invitationFileUploadFields],
+  )
   const lastStepIndex = activeSteps.length > 0 ? activeSteps.length - 1 : 0
 
   // The active step set can change mid-session once `branchId` resolves
@@ -323,7 +353,22 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
       : undefined
     const idProofMissing = visitorInfoFields.idProofActive && visitorInfoFields.idProofRequired && !primaryContactIdProofFile
     const photoMissing = visitorInfoFields.profilePhotoActive && visitorInfoFields.profilePhotoRequired && !primaryContactPhotoFile
-    if (idProofMissing || photoMissing) {
+    // A required ungrouped `file_upload` field (Visitor Info/Vehicle Info/
+    // any other step) must have a real file for the primary contact, every
+    // visitor, every vehicle, or the invitation itself — same "block before
+    // the backend 422s" posture as the two checks above.
+    const missingRequiredCustomFieldFile =
+      hasMissingRequiredCustomFieldFile(visitorInfoRequiredFileUploadKeys, [formState.primaryContact.customFieldValues]) ||
+      hasMissingRequiredCustomFieldFile(
+        visitorInfoRequiredFileUploadKeys,
+        formState.additionalVisitors.map((visitor) => visitor.customFieldValues),
+      ) ||
+      hasMissingRequiredCustomFieldFile(
+        vehicleInfoRequiredFileUploadKeys,
+        formState.vehicles.map((vehicle) => vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined),
+      ) ||
+      hasMissingRequiredCustomFieldFile(invitationRequiredFileUploadKeys, [formState.customFieldValues])
+    if (idProofMissing || photoMissing || missingRequiredCustomFieldFile) {
       setSubmissionError('Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
       return
@@ -344,16 +389,55 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
       fileRegistry.current,
     )
 
+    // Ungrouped `file_upload` fields go through their own bucket per where
+    // they live — see `custom-field-files.ts`.
+    const { sanitizedValues: sanitizedPrimaryContactCustomFieldValues, files: primaryContactCustomFieldFiles } =
+      extractSingleCustomFieldFiles(visitorInfoFileUploadKeys, formState.primaryContact.customFieldValues, fileRegistry.current)
+    const { sanitizedValuesList: sanitizedVisitorCustomFieldValuesList, filesByKey: visitorCustomFieldFiles } =
+      extractListCustomFieldFiles(
+        visitorInfoFileUploadKeys,
+        formState.additionalVisitors.map((visitor) => visitor.customFieldValues),
+        fileRegistry.current,
+      )
+    const { sanitizedValuesList: sanitizedVehicleCustomFieldValuesList, filesByKey: vehicleCustomFieldFiles } =
+      extractListCustomFieldFiles(
+        vehicleInfoFileUploadKeys,
+        formState.vehicles.map((vehicle) => vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined),
+        fileRegistry.current,
+      )
+    const { sanitizedValues: sanitizedCustomFieldValues, files: customFieldFiles } = extractSingleCustomFieldFiles(
+      invitationFileUploadKeys,
+      formState.customFieldValues,
+      fileRegistry.current,
+    )
+
     setSubmissionStatus('submitting')
     setSubmissionError(undefined)
     try {
       const response = await submitVisitRequestUseCase.execute(
-        toVisitRequest({ ...formState, groupValues: sanitizedGroupValues }),
+        toVisitRequest({
+          ...formState,
+          groupValues: sanitizedGroupValues,
+          customFieldValues: sanitizedCustomFieldValues,
+          primaryContact: { ...formState.primaryContact, customFieldValues: sanitizedPrimaryContactCustomFieldValues },
+          additionalVisitors: formState.additionalVisitors.map((visitor, index) => ({
+            ...visitor,
+            customFieldValues: sanitizedVisitorCustomFieldValuesList[index],
+          })),
+          vehicles: formState.vehicles.map((vehicle, index) => ({
+            ...vehicle,
+            customFieldValues: sanitizedVehicleCustomFieldValuesList[index],
+          })),
+        }),
         {
           primaryContactIdProofFile,
           primaryContactPhotoFile,
           visitorIdProofFiles,
           groupFieldFiles,
+          primaryContactCustomFieldFiles,
+          visitorCustomFieldFiles,
+          vehicleCustomFieldFiles,
+          customFieldFiles,
         },
       )
       setTrackingId(response.trackingId)
