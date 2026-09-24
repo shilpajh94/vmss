@@ -46,7 +46,6 @@ export function StaffVisitorRegistrationPage() {
     carriedItemsFields,
     consentFields,
     visitorInfoFields,
-    additionalNotesActive,
     purposeOfVisitOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
@@ -143,7 +142,6 @@ export function StaffVisitorRegistrationPage() {
             errors={errors}
             branches={branches}
             buildings={buildings}
-            additionalNotesActive={additionalNotesActive}
             purposeOfVisitOptions={purposeOfVisitOptions}
             customFields={visitDetailsCustomFields}
             customFieldValues={formState.customFieldValues}

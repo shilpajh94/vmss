@@ -129,10 +129,6 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
       profilePhotoRequired: profilePhoto?.isRequired ?? false,
     }
   }, [effectiveFormSteps])
-  const additionalNotesActive = useMemo(
-    () => findField(effectiveFormSteps, 'visit_details', 'additional_notes') !== undefined,
-    [effectiveFormSteps],
-  )
   // See use-visitor-request-wizard.ts's matching comment.
   const purposeOfVisitOptions = useMemo(
     () => findField(effectiveFormSteps, 'visit_details', 'purpose_of_visit')?.options ?? [],
@@ -394,7 +390,6 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     carriedItemsFields,
     consentFields,
     visitorInfoFields,
-    additionalNotesActive,
     purposeOfVisitOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
