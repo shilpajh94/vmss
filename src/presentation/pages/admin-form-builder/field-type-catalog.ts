@@ -92,11 +92,9 @@ export function typeLockedFieldReason(key: string): string {
  * System-seeded field keys whose row can't be deleted from the admin Form
  * Builder, independent of the field's own `isLocked` flag (which already
  * hides Delete on its own — this is an additional, key-based guard for
- * fields `isLocked` doesn't cover). `expected_duration` is always rendered
- * by the visitor-facing wizards regardless of form-builder configuration
- * (see `VisitInfoStep.tsx`'s docblock: "structurally required by the
- * backend regardless of form-builder configuration") — deleting its row
- * here would desync the admin's view of the form from what visitors
- * actually see, without changing what's shown to them at all.
+ * fields `isLocked` doesn't cover). Empty for now — `expected_duration` was
+ * the only entry, locked because the visitor-facing wizards used to render
+ * it unconditionally; the wizards no longer collect that field at all, so
+ * the row is a normal, deletable system field like any other.
  */
-export const DELETE_LOCKED_SYSTEM_FIELD_KEYS: ReadonlySet<string> = new Set(['expected_duration'])
+export const DELETE_LOCKED_SYSTEM_FIELD_KEYS: ReadonlySet<string> = new Set([])

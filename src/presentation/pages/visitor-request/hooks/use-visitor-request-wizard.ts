@@ -114,11 +114,6 @@ function validateStep(
     if (!visitInfo.preferredDate) errors.preferredDate = 'Preferred visit date is required.'
     else if (visitInfo.preferredDate < todayAsDateInputValue()) errors.preferredDate = 'Preferred visit date cannot be in the past.'
     if (!visitInfo.preferredTime) errors.preferredTime = 'Preferred visit time is required.'
-    // `expected_duration` is structurally required by the backend
-    // regardless of form-builder configuration (see design.md Decision 3 /
-    // Risks) - always validated here, unlike the other Visit Details
-    // toggleable fields.
-    if (!visitInfo.expectedDuration) errors.expectedDuration = 'Expected duration is required.'
     if (!visitInfo.location) errors.location = 'Location is required.'
     if (!visitInfo.building) errors.building = 'Building is required.'
     return errors
@@ -194,16 +189,6 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
   // regardless of any active/inactive state.
   const purposeOfVisitOptions = useMemo(
     () => findField(effectiveFormSteps, 'visit_details', 'purpose_of_visit')?.options ?? [],
-    [effectiveFormSteps],
-  )
-  // Same pattern as `purposeOfVisitOptions` — the admin's configured choices
-  // for Expected Duration, falling back to the hardcoded default list when
-  // empty. `expected_duration` is a system field with no active/inactive
-  // gating (the field itself is always required, per its own comment where
-  // it's rendered), but its *options* were never wired to form-builder at
-  // all until now — this only fixes that, not the requiredness gap.
-  const expectedDurationOptions = useMemo(
-    () => findField(effectiveFormSteps, 'visit_details', 'expected_duration')?.options ?? [],
     [effectiveFormSteps],
   )
   const vehicleInfoFields = useMemo(() => {
@@ -480,7 +465,6 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     visitorInfoFields,
     additionalNotesActive,
     purposeOfVisitOptions,
-    expectedDurationOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
     visitorInfoGroups,

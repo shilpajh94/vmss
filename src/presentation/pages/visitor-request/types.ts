@@ -52,7 +52,6 @@ export interface VisitInfoFormState {
   purpose: string
   preferredDate: string
   preferredTime: string
-  expectedDuration: string
   location: string
   building: string
   notes: string
@@ -108,7 +107,6 @@ export function createInitialFormState(): VisitRequestFormState {
       purpose: '',
       preferredDate: '',
       preferredTime: '',
-      expectedDuration: '',
       location: '',
       building: '',
       notes: '',
@@ -156,7 +154,6 @@ export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
       purposeOfVisit: formState.visitInfo.purpose,
       preferredVisitDate: formState.visitInfo.preferredDate,
       preferredVisitTime: formState.visitInfo.preferredTime,
-      expectedDuration: formState.visitInfo.expectedDuration,
       additionalNotes: formState.visitInfo.notes,
     },
     carriedItems: {

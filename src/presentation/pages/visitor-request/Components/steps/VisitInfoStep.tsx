@@ -8,7 +8,6 @@ import type { Building } from '../../../../../domain/entities/building-schema'
 import type { FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { VisitInfoFormState } from '../../types'
 import { todayAsDateInputValue } from '../../../../utils/local-date-input-value'
-import { EXPECTED_DURATION_OPTIONS as DURATION_OPTIONS } from '../../../../utils/expected-duration-options'
 import { PURPOSE_OF_VISIT_OPTIONS as PURPOSE_OPTIONS } from '../../../../utils/purpose-of-visit-options'
 
 interface VisitInfoStepProps {
@@ -18,22 +17,13 @@ interface VisitInfoStepProps {
   branches?: Branch[]
   buildings?: Building[]
   /** Branch-configured (form-builder) active state for the toggleable
-   * "Additional Notes" field. `expected_duration` itself is intentionally
-   * not gated the same way — it's structurally required by the backend
-   * regardless of form-builder configuration (see design.md Decision 3 /
-   * Risks), so it always renders. Its *options* ARE branch-configured,
-   * though — see `expectedDurationOptions` below.
-   */
+   * "Additional Notes" field. */
   additionalNotesActive: boolean
   /** Branch-configured (form-builder) Purpose of Visit choices — the
    * field's own `options`, not a fixed set
    * (make-id-proof-and-vehicle-type-configurable). Empty when unset, in
    * which case this step falls back to its hardcoded default list. */
   purposeOfVisitOptions: string[]
-  /** Branch-configured (form-builder) Expected Duration choices, same
-   * pattern as `purposeOfVisitOptions` — empty when unset, in which case
-   * this step falls back to `EXPECTED_DURATION_OPTIONS`. */
-  expectedDurationOptions: string[]
   /** Admin-authored (non-system) Visit Details fields
    * (add-generic-custom-field-support). */
   customFields: FormField[]
@@ -60,7 +50,6 @@ export function VisitInfoStep({
   buildings,
   additionalNotesActive,
   purposeOfVisitOptions,
-  expectedDurationOptions,
   customFields,
   customFieldValues,
   onCustomFieldValuesChange,
@@ -69,8 +58,6 @@ export function VisitInfoStep({
 }: VisitInfoStepProps) {
   const purposeOptions =
     purposeOfVisitOptions.length > 0 ? purposeOfVisitOptions.map((option) => ({ value: option, label: option })) : PURPOSE_OPTIONS
-  const durationOptions =
-    expectedDurationOptions.length > 0 ? expectedDurationOptions.map((option) => ({ value: option, label: option })) : DURATION_OPTIONS
   const selectedBranch = branches?.find((branch) => branch.name === value.location)
   const buildingOptions = (selectedBranch ? buildings?.filter((building) => building.branchId === selectedBranch.id) : buildings)?.map(
     (building) => ({ value: building.name, label: building.name }),
@@ -108,15 +95,6 @@ export function VisitInfoStep({
           value={value.preferredTime}
           onChange={(preferredTime) => onChange({ ...value, preferredTime })}
           error={errors.preferredTime}
-          required
-        />
-        <SelectField
-          label="Expected Duration"
-          placeholder="Select duration"
-          options={durationOptions}
-          value={value.expectedDuration}
-          onChange={(expectedDuration) => onChange({ ...value, expectedDuration })}
-          error={errors.expectedDuration}
           required
         />
         {branches ? (

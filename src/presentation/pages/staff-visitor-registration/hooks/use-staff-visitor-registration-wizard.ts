@@ -72,10 +72,6 @@ function validateStep(
     if (!visitInfo.preferredDate) errors.preferredDate = 'Preferred visit date is required.'
     else if (visitInfo.preferredDate < todayAsDateInputValue()) errors.preferredDate = 'Preferred visit date cannot be in the past.'
     if (!visitInfo.preferredTime) errors.preferredTime = 'Preferred visit time is required.'
-    // `expected_duration` is structurally required by the backend
-    // regardless of form-builder configuration — see
-    // use-visitor-request-wizard.ts's matching comment.
-    if (!visitInfo.expectedDuration) errors.expectedDuration = 'Expected duration is required.'
     if (!visitInfo.location) errors.location = 'Location is required.'
     if (!visitInfo.building) errors.building = 'Building is required.'
     return errors
@@ -140,11 +136,6 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
   // See use-visitor-request-wizard.ts's matching comment.
   const purposeOfVisitOptions = useMemo(
     () => findField(effectiveFormSteps, 'visit_details', 'purpose_of_visit')?.options ?? [],
-    [effectiveFormSteps],
-  )
-  // See use-visitor-request-wizard.ts's matching comment.
-  const expectedDurationOptions = useMemo(
-    () => findField(effectiveFormSteps, 'visit_details', 'expected_duration')?.options ?? [],
     [effectiveFormSteps],
   )
   const vehicleInfoFields = useMemo(() => {
@@ -405,7 +396,6 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     visitorInfoFields,
     additionalNotesActive,
     purposeOfVisitOptions,
-    expectedDurationOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
     visitorInfoGroups,
