@@ -1801,6 +1801,150 @@ async def test_create_invitation_group_file_upload_json_value_rejected(
     assert response.status_code == 422, response.text
 
 
+async def test_create_invitation_inline_custom_field_file_upload_stored_on_read(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """An admin-authored `file_upload` field directly on Visitor Info (not
+    assigned to a group) is accepted via the `primaryContactCustomFieldFiles
+    [<fieldKey>]`/`visitorCustomFieldFiles[<fieldKey>]` multipart
+    convention and stored — the standalone counterpart of
+    `groupFieldFiles[<groupKey>]` above (add-inline-custom-field-file-upload).
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="pic", field_type="file_upload"
+    )
+
+    payload = _group_payload()
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v0.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v1.jpg", _jpeg_bytes(), "image/jpeg")),
+            (
+                "primaryContactCustomFieldFiles[pic]",
+                ("primary-pic.jpg", _jpeg_bytes(), "image/jpeg"),
+            ),
+            ("visitorCustomFieldFiles[pic]", ("v0-pic.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitorCustomFieldFiles[pic]", ("v1-pic.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    detail_response = await client.get(f"/api/v1/invitations/{invitation_id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    body = detail_response.json()["data"]
+    assert body["primaryContactCustomFieldValues"]["pic"]
+    for visitor_out in body["visitors"]:
+        assert visitor_out["customFieldValues"]["pic"]
+
+
+async def test_create_invitation_inline_custom_field_file_upload_required_missing_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A required, ungrouped `file_upload` field on Visitor Info rejects a
+    submission missing a file for any visitor — the standalone counterpart
+    of `test_create_invitation_group_file_upload_required_missing_rejected`.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        key="pic",
+        field_type="file_upload",
+        is_required=True,
+    )
+
+    payload = _group_payload()
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v0.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v1.jpg", _jpeg_bytes(), "image/jpeg")),
+            (
+                "primaryContactCustomFieldFiles[pic]",
+                ("primary-pic.jpg", _jpeg_bytes(), "image/jpeg"),
+            ),
+            # Only one of the two visitors' required files supplied.
+            ("visitorCustomFieldFiles[pic]", ("v0-pic.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_create_invitation_inline_custom_field_file_upload_json_value_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A client-supplied JSON value for an ungrouped `file_upload` field is
+    rejected outright rather than silently ignored — the file is the only
+    valid source of that field's answer, same rule as a group's own
+    `file_upload` field.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="pic", field_type="file_upload"
+    )
+
+    payload = _individual_payload()
+    payload["primaryContact"]["customFieldValues"] = {"pic": "not-a-file"}
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_create_invitation_inline_invitation_level_custom_field_file_upload_stored(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """The invitation-level (Visit Details/Carried Items/custom step)
+    counterpart — a single file via `customFieldFiles[<fieldKey>]`, no
+    per-visitor/vehicle order-matching involved.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visit_details", key="cost_note", field_type="file_upload"
+    )
+
+    payload = _individual_payload()
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("customFieldFiles[cost_note]", ("note.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    detail_response = await client.get(f"/api/v1/invitations/{invitation_id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    assert detail_response.json()["data"]["customFieldValues"]["cost_note"]
+
+
 async def test_get_invitation_detail_group_visitor_id_proof_url_omitted_without_documents_view(
     client: AsyncClient,
     user: User,
@@ -2401,6 +2545,8 @@ async def test_list_invitations_success(
         "status",
         "visitorCategoryId",
         "primaryContactFullName",
+        "primaryContactEmail",
+        "primaryContactPhone",
         "primaryContactPhotoUrl",
         "purposeOfVisit",
         "expiresAt",
@@ -2409,6 +2555,8 @@ async def test_list_invitations_success(
     }
     assert row["visitorCategoryId"] is None
     assert row["primaryContactPhotoUrl"] is None
+    assert row["primaryContactEmail"] == invitation.primary_contact_email
+    assert row["primaryContactPhone"] == invitation.primary_contact_phone
 
 
 async def test_list_invitations_surfaces_primary_contact_photo_url(

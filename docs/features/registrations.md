@@ -153,6 +153,17 @@ of the file is rejected with a 422. See `docs/features/invitations.md`'s
 "Repeatable group file uploads" section for the full validation/storage
 behavior — it is shared verbatim via `invitations.service.create_invitation`.
 
+### Inline (non-grouped) custom-field file uploads (`add-inline-custom-field-file-upload`)
+
+`POST /registrations/walk-in` accepts the identical
+`primaryContactCustomFieldFiles[<fieldKey>]`/`visitorCustomFieldFiles[<fieldKey>]`/
+`vehicleCustomFieldFiles[<fieldKey>]`/`customFieldFiles[<fieldKey>]`
+contract `POST /invitations` does, for an admin-authored `file_upload`
+field that isn't assigned to a group — see `docs/features/invitations.md`'s
+"Inline (non-grouped) custom-field file uploads" section for the full
+validation/storage behavior, again shared verbatim via
+`invitations.service.create_invitation`.
+
 ## File uploads (API-14)
 
 ID-proof uploads go through the same `core/storage.py::validate_upload` +

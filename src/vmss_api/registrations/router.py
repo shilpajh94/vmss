@@ -15,7 +15,6 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.core.config import settings
@@ -29,6 +28,7 @@ from vmss_api.invitations.router import (
     _INVITATION_PAYLOAD_EXAMPLES,
     _NO_VISITOR_FILES,
     _NO_VISITOR_PHOTOS,
+    _parse_prefixed_multipart_files,
     to_invitation_out,
 )
 from vmss_api.invitations.router import _PAYLOAD_DESCRIPTION as _INVITATION_PAYLOAD_DESCRIPTION
@@ -131,7 +131,10 @@ async def create_walk_in_registration(
     multipart list part, order-matched to that group's
     `payload.groupValues[<groupKey>]` instances, read via `request.form()`
     since the group key is branch-specific and unknown at route-declaration
-    time.
+    time. An inline (non-grouped) admin-defined `file_upload` field follows
+    the identical `primaryContactCustomFieldFiles[<fieldKey>]`/
+    `visitorCustomFieldFiles[<fieldKey>]`/`vehicleCustomFieldFiles[<fieldKey>]`/
+    `customFieldFiles[<fieldKey>]` contract also documented there.
     """
     cached = await _cached_response(device.tenant.id, idempotency_key)
     if cached is not None:
@@ -161,22 +164,28 @@ async def create_walk_in_registration(
     )
     visitor_photo_contents = [await f.read(photo_limit) for f in visitor_photo_files]
 
-    # `groupFieldFiles[<groupKey>]` isn't a declared parameter above since
-    # `<groupKey>` is branch-specific (see the docstring). Starlette caches
-    # the parsed multipart body on `request`, so this reuses the same parse
-    # the `payload`/`primary_contact_*`/`visitor_*` params already
+    # None of these are declared parameters above since the field/group key
+    # inside each `[...]` is branch-specific (see the docstring). Starlette
+    # caches the parsed multipart body on `request`, so this reuses the same
+    # parse the `payload`/`primary_contact_*`/`visitor_*` params already
     # triggered rather than re-reading the request body — identical to
     # `invitations/router.py::create_invitation`.
     form_data = await request.form()
-    group_field_file_contents: dict[str, list[bytes]] = {}
-    for key in set(form_data.keys()):
-        if key.startswith("groupFieldFiles[") and key.endswith("]"):
-            group_key = key[len("groupFieldFiles[") : -1]
-            group_field_file_contents[group_key] = [
-                await value.read(id_proof_limit)
-                for value in form_data.getlist(key)
-                if isinstance(value, StarletteUploadFile)
-            ]
+    group_field_file_contents = await _parse_prefixed_multipart_files(
+        form_data, "groupFieldFiles", limit=id_proof_limit
+    )
+    primary_contact_custom_field_file_contents = await _parse_prefixed_multipart_files(
+        form_data, "primaryContactCustomFieldFiles", limit=id_proof_limit
+    )
+    visitor_custom_field_file_contents = await _parse_prefixed_multipart_files(
+        form_data, "visitorCustomFieldFiles", limit=id_proof_limit
+    )
+    vehicle_custom_field_file_contents = await _parse_prefixed_multipart_files(
+        form_data, "vehicleCustomFieldFiles", limit=id_proof_limit
+    )
+    custom_field_file_contents = await _parse_prefixed_multipart_files(
+        form_data, "customFieldFiles", limit=id_proof_limit
+    )
 
     invitation = await service.create_walk_in_registration(
         tenant_db,
@@ -188,6 +197,10 @@ async def create_walk_in_registration(
         primary_contact_photo_content=primary_photo_content,
         visitor_photo_contents=visitor_photo_contents,
         group_field_file_contents=group_field_file_contents,
+        primary_contact_custom_field_file_contents=primary_contact_custom_field_file_contents,
+        visitor_custom_field_file_contents=visitor_custom_field_file_contents,
+        vehicle_custom_field_file_contents=vehicle_custom_field_file_contents,
+        custom_field_file_contents=custom_field_file_contents,
     )
     background_tasks.add_task(
         record_audit_log,
