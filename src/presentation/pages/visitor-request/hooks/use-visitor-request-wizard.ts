@@ -196,6 +196,16 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     () => findField(effectiveFormSteps, 'visit_details', 'purpose_of_visit')?.options ?? [],
     [effectiveFormSteps],
   )
+  // Same pattern as `purposeOfVisitOptions` — the admin's configured choices
+  // for Expected Duration, falling back to the hardcoded default list when
+  // empty. `expected_duration` is a system field with no active/inactive
+  // gating (the field itself is always required, per its own comment where
+  // it's rendered), but its *options* were never wired to form-builder at
+  // all until now — this only fixes that, not the requiredness gap.
+  const expectedDurationOptions = useMemo(
+    () => findField(effectiveFormSteps, 'visit_details', 'expected_duration')?.options ?? [],
+    [effectiveFormSteps],
+  )
   const vehicleInfoFields = useMemo(() => {
     const makeModel = findField(effectiveFormSteps, 'vehicle_info', 'make_model')
     const color = findField(effectiveFormSteps, 'vehicle_info', 'color')
@@ -470,6 +480,7 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     visitorInfoFields,
     additionalNotesActive,
     purposeOfVisitOptions,
+    expectedDurationOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
     visitorInfoGroups,

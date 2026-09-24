@@ -1,7 +1,11 @@
 import z from 'zod'
 
-// Mirrors `form_builder/schemas.py::FormFieldType` (VMSS_API) — the 15
-// supported field types a step's fields can be.
+// Mirrors `form_builder/schemas.py::FormFieldType` (VMSS_API) — the 14
+// supported field types a step's fields can be. `dynamic_table`,
+// `rich_text_block`, `signature_pad` were removed (never had capture UI,
+// validation, or rendering); `checkbox_single`/`radio_button` were added —
+// see openspec/changes/archive/2026-09-24-update-form-field-type-catalog/
+// in VMSS_API and this repo's update-form-field-type-catalog change.
 export const FormFieldTypeSchema = z.enum([
   'text',
   'email',
@@ -12,11 +16,10 @@ export const FormFieldTypeSchema = z.enum([
   'time_picker',
   'toggle_switch',
   'checkbox_list',
+  'checkbox_single',
+  'radio_button',
   'file_upload',
   'textarea',
-  'dynamic_table',
-  'rich_text_block',
-  'signature_pad',
   'static_text',
 ])
 export type FormFieldType = z.infer<typeof FormFieldTypeSchema>
@@ -63,6 +66,12 @@ export const FormFieldOutSchema = z.object({
   visibilityCondition: VisibilityConditionSchema.nullable(),
   width: FieldWidthSchema,
   orderIndex: z.number(),
+  // When true, the visitor-facing renderer hides `label` as visible text —
+  // it stays the field's accessible name (e.g. via a visually-hidden but
+  // still-linked <label>) rather than disappearing from the accessibility
+  // tree entirely. Purely a rendering flag; doesn't affect `isRequired`
+  // enforcement.
+  hideLabel: z.boolean(),
 })
 export type FormField = z.infer<typeof FormFieldOutSchema>
 
@@ -222,6 +231,7 @@ export interface FormFieldCreateInput {
   validationRules?: ValidationRules
   visibilityCondition?: VisibilityCondition
   width?: FieldWidth
+  hideLabel?: boolean
 }
 
 export interface FormFieldUpdateInput {
@@ -238,6 +248,7 @@ export interface FormFieldUpdateInput {
   validationRules?: ValidationRules | null
   visibilityCondition?: VisibilityCondition | null
   width?: FieldWidth
+  hideLabel?: boolean
 }
 
 export interface FormFieldGroupCreateInput {

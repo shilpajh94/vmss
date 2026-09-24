@@ -18,9 +18,11 @@ interface VisitInfoStepProps {
   branches?: Branch[]
   buildings?: Building[]
   /** Branch-configured (form-builder) active state for the toggleable
-   * "Additional Notes" field. `expected_duration` is intentionally not
-   * gated here — it's structurally required by the backend regardless of
-   * form-builder configuration (see design.md Decision 3 / Risks).
+   * "Additional Notes" field. `expected_duration` itself is intentionally
+   * not gated the same way — it's structurally required by the backend
+   * regardless of form-builder configuration (see design.md Decision 3 /
+   * Risks), so it always renders. Its *options* ARE branch-configured,
+   * though — see `expectedDurationOptions` below.
    */
   additionalNotesActive: boolean
   /** Branch-configured (form-builder) Purpose of Visit choices — the
@@ -28,6 +30,10 @@ interface VisitInfoStepProps {
    * (make-id-proof-and-vehicle-type-configurable). Empty when unset, in
    * which case this step falls back to its hardcoded default list. */
   purposeOfVisitOptions: string[]
+  /** Branch-configured (form-builder) Expected Duration choices, same
+   * pattern as `purposeOfVisitOptions` — empty when unset, in which case
+   * this step falls back to `EXPECTED_DURATION_OPTIONS`. */
+  expectedDurationOptions: string[]
   /** Admin-authored (non-system) Visit Details fields
    * (add-generic-custom-field-support). */
   customFields: FormField[]
@@ -54,6 +60,7 @@ export function VisitInfoStep({
   buildings,
   additionalNotesActive,
   purposeOfVisitOptions,
+  expectedDurationOptions,
   customFields,
   customFieldValues,
   onCustomFieldValuesChange,
@@ -62,6 +69,8 @@ export function VisitInfoStep({
 }: VisitInfoStepProps) {
   const purposeOptions =
     purposeOfVisitOptions.length > 0 ? purposeOfVisitOptions.map((option) => ({ value: option, label: option })) : PURPOSE_OPTIONS
+  const durationOptions =
+    expectedDurationOptions.length > 0 ? expectedDurationOptions.map((option) => ({ value: option, label: option })) : DURATION_OPTIONS
   const selectedBranch = branches?.find((branch) => branch.name === value.location)
   const buildingOptions = (selectedBranch ? buildings?.filter((building) => building.branchId === selectedBranch.id) : buildings)?.map(
     (building) => ({ value: building.name, label: building.name }),
@@ -104,7 +113,7 @@ export function VisitInfoStep({
         <SelectField
           label="Expected Duration"
           placeholder="Select duration"
-          options={DURATION_OPTIONS}
+          options={durationOptions}
           value={value.expectedDuration}
           onChange={(expectedDuration) => onChange({ ...value, expectedDuration })}
           error={errors.expectedDuration}

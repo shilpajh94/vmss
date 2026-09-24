@@ -349,3 +349,10 @@ export const UnlockIcon = createIcon(
     <path d="M7 11V7a5 5 0 0 1 9.9-1" />
   </>,
 )
+
+export const CircleDotIcon = createIcon(
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="12" r="1" fill="currentColor" />
+  </>,
+)

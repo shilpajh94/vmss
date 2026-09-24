@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { Checkbox } from '../ui/Checkbox'
 import { ExpandableText } from '../ui/ExpandableText'
 import { FileUploadField } from '../ui/FileUploadField'
@@ -45,7 +46,7 @@ const TEXT_LIKE_INPUT_TYPES: Partial<Record<FormFieldType, string>> = {
 // ID proof, the more permissive of the two.
 const FILE_UPLOAD_ALLOWED_TYPES = ['image/png', 'image/jpeg', 'application/pdf']
 
-function renderControl({ field, value, onChange, uploadFile, getFilePreviewUrl }: DynamicFieldProps) {
+function renderControl({ field, value, onChange, uploadFile, getFilePreviewUrl }: DynamicFieldProps, radioGroupName: string) {
   if (field.fieldType === 'file_upload' && uploadFile) {
     const fileValue = value && typeof value === 'object' && !Array.isArray(value) ? value : undefined
     return (
@@ -58,23 +59,30 @@ function renderControl({ field, value, onChange, uploadFile, getFilePreviewUrl }
         onUpload={uploadFile}
         onFileRefChange={(fileRef, fileName) => onChange(fileRef && fileName ? { fileRef, fileName } : undefined)}
         required={field.isRequired}
+        labelClassName={field.hideLabel ? 'sr-only' : undefined}
       />
     )
   }
 
   if (field.fieldType === 'static_text') {
     // Display-only content block: no input control, collects no answer.
-    // Its body renders via the wrapper's unconditional `ExpandableText`
-    // call below, the same mechanism every other field type's description
-    // already uses.
-    return <p className="text-body font-semibold text-text">{field.label}</p>
+    // `field.label` is an admin-facing title only (shown as "Title" in the
+    // Form Builder), not visitor-facing copy — rendering it as a heading
+    // here produced a redundant/mismatched double heading whenever an
+    // admin's `helpText` (the actual visitor-facing "Content") already
+    // opens with its own title line, which is the common case. Render only
+    // `helpText`, in body weight rather than the wrapper's usual muted
+    // caption styling, since for this field type it IS the content, not a
+    // secondary hint under some other control.
+    return <p className="whitespace-pre-wrap text-body text-text">{field.helpText}</p>
   }
 
-  if (field.fieldType === 'toggle_switch' && (!field.options || field.options.length === 0)) {
+  if (field.fieldType === 'checkbox_single' || (field.fieldType === 'toggle_switch' && (!field.options || field.options.length === 0))) {
     // A plain accept/decline toggle with no option set — e.g. a consent
-    // statement — rendered as a checkbox to match the mockup.
+    // statement — rendered as a checkbox to match the mockup. `checkbox_single`
+    // is the same boolean/no-options shape, so it shares this branch.
     return (
-      <Checkbox checked={Boolean(value)} onChange={(checked) => onChange(checked)}>
+      <Checkbox checked={Boolean(value)} onChange={(checked) => onChange(checked)} hideLabel={field.hideLabel}>
         {field.label}
       </Checkbox>
     )
@@ -85,7 +93,7 @@ function renderControl({ field, value, onChange, uploadFile, getFilePreviewUrl }
     const selected = Array.isArray(value) ? value : []
     return (
       <div className="flex flex-col gap-2">
-        <p className="text-body font-medium text-text">{field.label}</p>
+        <p className={field.hideLabel ? 'sr-only' : 'text-body font-medium text-text'}>{field.label}</p>
         {options.map((option) => (
           <div key={option} className="rounded-lg border border-border px-4 py-3">
             <Checkbox
@@ -111,7 +119,29 @@ function renderControl({ field, value, onChange, uploadFile, getFilePreviewUrl }
         required={field.isRequired}
         placeholder={field.placeholder ?? 'Select'}
         options={(field.options ?? []).map((option) => ({ value: option, label: prettifyKey(option) }))}
+        labelClassName={field.hideLabel ? 'sr-only' : undefined}
       />
+    )
+  }
+
+  if (field.fieldType === 'radio_button') {
+    const options = field.options ?? []
+    return (
+      <div className="flex flex-col gap-2">
+        <p className={field.hideLabel ? 'sr-only' : 'text-body font-medium text-text'}>{field.label}</p>
+        {options.map((option) => (
+          <label key={option} className="flex items-center gap-2 rounded-lg border border-border px-4 py-3 text-body text-text">
+            <input
+              type="radio"
+              name={radioGroupName}
+              checked={value === option}
+              onChange={() => onChange(option)}
+              className="size-4 border-border text-primary focus:outline-none focus:ring-2 focus:ring-secondary-accent"
+            />
+            {prettifyKey(option)}
+          </label>
+        ))}
+      </div>
     )
   }
 
@@ -122,6 +152,7 @@ function renderControl({ field, value, onChange, uploadFile, getFilePreviewUrl }
         value={typeof value === 'string' ? value : ''}
         onChange={onChange}
         placeholder={field.placeholder ?? undefined}
+        labelClassName={field.hideLabel ? 'sr-only' : undefined}
       />
     )
   }
@@ -136,6 +167,7 @@ function renderControl({ field, value, onChange, uploadFile, getFilePreviewUrl }
         onChange={onChange}
         placeholder={field.placeholder ?? undefined}
         required={field.isRequired}
+        labelClassName={field.hideLabel ? 'sr-only' : undefined}
       />
     )
   }
@@ -150,22 +182,29 @@ function renderControl({ field, value, onChange, uploadFile, getFilePreviewUrl }
 /** Renders one form-builder field for the visitor-facing wizard, given its
  * current value and an onChange callback — the shared primitive behind
  * `ConsentStep`/`CarriedItemsStep`'s dynamic rendering (`form-builder`).
- * Covers every "simple" field type plus `file_upload` (when the caller
- * threads through `uploadFile`); `dynamic_table`/`signature_pad`/
- * `rich_text_block` still aren't wired up for inline rendering (design.md's
- * Non-Goals/known limitations) — no step this serves today uses one, so
- * this is a graceful fallback, not a gap in what's actually exercised.
+ * Covers every currently-supported field type plus `file_upload` (when the
+ * caller threads through `uploadFile`); an unrecognized `fieldType` falls
+ * back to a generic "isn't supported inline yet" message rather than
+ * throwing, so a future catalog change degrades gracefully here too.
  *
- * `field.helpText` (an admin-authored description, e.g. a terms-and-
- * conditions body) renders in full beneath the control for every branch
- * above — wired here once rather than inside each branch, so no field type
- * can forget it.
+ * `field.helpText` (an admin-authored description, e.g. a hint under an
+ * input) renders in full beneath the control for every branch above —
+ * wired here once rather than inside each branch, so no field type can
+ * forget it. `static_text` is the one exception: its own branch already
+ * renders `helpText` as its main content (see that branch's comment), so
+ * showing it again here would duplicate it.
+ *
+ * `radio_button`'s native `name` grouping is scoped to this component
+ * instance via `useId()` — a repeatable field group renders the same
+ * `field.id` once per instance/row, and a shared literal `name` across rows
+ * would make the browser treat every row's radios as one group.
  */
 export function DynamicField(props: DynamicFieldProps) {
+  const radioGroupName = useId()
   return (
     <div className="flex flex-col gap-2">
-      {renderControl(props)}
-      <ExpandableText text={props.field.helpText} />
+      {renderControl(props, radioGroupName)}
+      {props.field.fieldType !== 'static_text' && <ExpandableText text={props.field.helpText} />}
     </div>
   )
 }

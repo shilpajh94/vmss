@@ -1,21 +1,20 @@
 import {
   AlignLeftIcon,
   CalendarIcon,
+  CheckIcon,
   ChevronDownIcon,
+  CircleDotIcon,
   ClockIcon,
-  FileTextIcon,
-  GridIcon,
   HashIcon,
   ListChecksIcon,
   MailIcon,
-  PenToolIcon,
   PhoneIcon,
   ToggleLeftIcon,
   UploadIcon,
 } from '../../components/icons'
 import type { FormFieldType } from '../../../domain/entities/form-builder-schema'
 
-export const OPTION_REQUIRED_FIELD_TYPES: readonly FormFieldType[] = ['dropdown_select', 'checkbox_list']
+export const OPTION_REQUIRED_FIELD_TYPES: readonly FormFieldType[] = ['dropdown_select', 'checkbox_list', 'radio_button']
 
 export interface FieldTypeMeta {
   type: FormFieldType
@@ -33,11 +32,10 @@ export const FIELD_TYPE_CATALOG: FieldTypeMeta[] = [
   { type: 'time_picker', label: 'Time Picker', icon: ClockIcon },
   { type: 'toggle_switch', label: 'Toggle / Switch', icon: ToggleLeftIcon },
   { type: 'checkbox_list', label: 'Checkbox List', icon: ListChecksIcon },
+  { type: 'checkbox_single', label: 'Checkbox Single', icon: CheckIcon },
+  { type: 'radio_button', label: 'Radio Button', icon: CircleDotIcon },
   { type: 'file_upload', label: 'File Upload', icon: UploadIcon },
   { type: 'textarea', label: 'Textarea', icon: AlignLeftIcon },
-  { type: 'dynamic_table', label: 'Dynamic Table', icon: GridIcon },
-  { type: 'rich_text_block', label: 'Rich Text Block', icon: FileTextIcon },
-  { type: 'signature_pad', label: 'Signature Pad', icon: PenToolIcon },
   { type: 'static_text', label: 'Static Text', icon: AlignLeftIcon },
 ]
 
@@ -89,3 +87,16 @@ const TYPE_LOCKED_FIELD_REASONS: Record<string, string> = {
 export function typeLockedFieldReason(key: string): string {
   return TYPE_LOCKED_FIELD_REASONS[key] ?? "This field's type can't be changed."
 }
+
+/**
+ * System-seeded field keys whose row can't be deleted from the admin Form
+ * Builder, independent of the field's own `isLocked` flag (which already
+ * hides Delete on its own — this is an additional, key-based guard for
+ * fields `isLocked` doesn't cover). `expected_duration` is always rendered
+ * by the visitor-facing wizards regardless of form-builder configuration
+ * (see `VisitInfoStep.tsx`'s docblock: "structurally required by the
+ * backend regardless of form-builder configuration") — deleting its row
+ * here would desync the admin's view of the form from what visitors
+ * actually see, without changing what's shown to them at all.
+ */
+export const DELETE_LOCKED_SYSTEM_FIELD_KEYS: ReadonlySet<string> = new Set(['expected_duration'])

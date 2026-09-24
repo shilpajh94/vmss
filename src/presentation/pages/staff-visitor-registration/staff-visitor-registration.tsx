@@ -48,6 +48,7 @@ export function StaffVisitorRegistrationPage() {
     visitorInfoFields,
     additionalNotesActive,
     purposeOfVisitOptions,
+    expectedDurationOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
     visitorInfoGroups,
@@ -145,6 +146,7 @@ export function StaffVisitorRegistrationPage() {
             buildings={buildings}
             additionalNotesActive={additionalNotesActive}
             purposeOfVisitOptions={purposeOfVisitOptions}
+            expectedDurationOptions={expectedDurationOptions}
             customFields={visitDetailsCustomFields}
             customFieldValues={formState.customFieldValues}
             onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}

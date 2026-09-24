@@ -71,3 +71,24 @@ export function findStepGroups(steps: EffectiveFormStep[], stepKey: string): Eff
 export function findField(steps: EffectiveFormStep[], stepKey: string, fieldKey: string): FormField | undefined {
   return findStepFields(steps, stepKey).find((field) => field.key === fieldKey)
 }
+
+/** Cross-step field lookup, for a read-only context (an invitation's detail
+ * view) where a flat answer map's keys aren't scoped to a known step —
+ * unlike `findField`, which requires one. */
+export function findFieldByKey(steps: EffectiveFormStep[], fieldKey: string): FormField | undefined {
+  for (const step of steps) {
+    const field = step.fields.find((candidate) => candidate.key === fieldKey)
+    if (field) return field
+  }
+  return undefined
+}
+
+/** Cross-step group lookup, mirroring `findFieldByKey` — resolves a
+ * `groupFieldValues` key to its admin-defined name/fieldKeys ordering. */
+export function findGroupByKey(steps: EffectiveFormStep[], groupKey: string): EffectiveFormFieldGroup | undefined {
+  for (const step of steps) {
+    const group = step.groups.find((candidate) => candidate.key === groupKey)
+    if (group) return group
+  }
+  return undefined
+}
