@@ -172,6 +172,21 @@ def _validate_photo(content: bytes, max_size: int) -> str:
     return validate_image_only(content, max_size_bytes=max_size, field_label="photo")
 
 
+def _group_field_file_key(group: dict[str, Any]) -> str | None:
+    """The key of `group`'s own `file_upload`-typed field, or `None` if it
+    has none (add-group-field-file-upload). Mirrors the "first field of a
+    given `fieldType`" convention `invitations/router.py::
+    _group_collected_visitor_detail_outs` already uses for `email`/`phone`
+    — only the first such field is supported; a group defining more than
+    one `file_upload` field is unusual enough that "first" is an acceptable
+    simplification, same as that function's own.
+    """
+    return next(
+        (field["key"] for field in group.get("fields", []) if field["fieldType"] == "file_upload"),
+        None,
+    )
+
+
 async def _resolve_visit_detail_ids(
     tenant_db: AsyncSession, visit_details: VisitDetailsSubmit
 ) -> dict[str, Any]:
@@ -350,6 +365,7 @@ async def create_invitation(
     visitor_id_proof_contents: list[bytes],
     primary_contact_photo_content: bytes | None,
     visitor_photo_contents: list[bytes],
+    group_field_file_contents: dict[str, list[bytes]] | None = None,
     source: RegistrationSource = RegistrationSource.staff_pre_registration,
 ) -> Invitation:
     """API-09 (and, via `source=visitor_walk_in`, API-13). Creates a fully
@@ -363,6 +379,17 @@ async def create_invitation(
     — see `add-invitation-approval-flow-and-role-resync/design.md` Decision
     1. Either way, the corresponding notification is enqueued
     (API-11) — never sent inline (`background-jobs.md` §5).
+
+    `group_field_file_contents` (add-group-field-file-upload) is keyed by
+    admin-defined group key, each value an order-matched list of raw file
+    bytes for that group's own `file_upload`-typed field, one per submitted
+    instance in `payload.group_values[group_key]` — the router's counterpart
+    to `visitor_id_proof_contents` for the fixed `visitors` list, since a
+    custom group's field keys are branch-specific and unknown at route
+    -declaration time. Only a group with exactly one `file_upload` field is
+    supported; that field's *client-supplied JSON value*, if any, is
+    rejected (`_group_field_file_key` below) — the file is the only valid
+    source of that field's answer.
 
     `created_by_user_id` is `None` for a walk-in registration — there is no
     authenticated staff creator to record
@@ -734,9 +761,13 @@ async def create_invitation(
         **payload.custom_field_values,
     }
 
+    # Reused below (`group_field_file_contents` validation/storage) so that
+    # phase doesn't have to recompute a group's visibility a second time.
+    group_visibility: dict[str, bool] = {}
     for group_key, group in custom_groups_by_key.items():
         instances = payload.group_values.get(group_key, [])
         is_visible = form_builder_validation.is_group_visible(group, invitation_scope_values)
+        group_visibility[group_key] = is_visible
         try:
             form_builder_validation.validate_group_instance_count(
                 group,
@@ -754,9 +785,29 @@ async def create_invitation(
                 count=len(instances),
             )
             raise
+        file_field_key = _group_field_file_key(group)
+        # A `file_upload` field's answer can only come from
+        # `group_field_file_contents` below — never from the JSON instance
+        # dict, which has no way to carry raw file bytes — so it's excluded
+        # from the generic (JSON-value) validation pass here, and any value
+        # a caller supplied for it anyway is rejected outright rather than
+        # silently ignored (add-group-field-file-upload).
+        validated_fields = (
+            group["fields"]
+            if file_field_key is None
+            else [field for field in group["fields"] if field["key"] != file_field_key]
+        )
         for index, instance in enumerate(instances):
+            if file_field_key is not None and instance.get(file_field_key) is not None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        f"'{file_field_key}' in '{group['name']}' instance {index + 1} must be "
+                        "uploaded as a file, not supplied as a value"
+                    ),
+                )
             _validate_custom_fields(
-                group["fields"],
+                validated_fields,
                 instance,
                 scope=f"'{group['name']}' instance {index + 1}",
                 skip_required=not is_visible,
@@ -804,6 +855,38 @@ async def create_invitation(
         _validate_photo(content, max_photo_size) for content in visitor_photo_contents
     ]
 
+    # Group-instance file uploads (add-group-field-file-upload): validated
+    # up front, same "fail before any storage write" ordering as the block
+    # above — `group_field_content_types[group_key][index]` pairs with
+    # `group_field_file_contents[group_key][index]` for the storage phase
+    # below. A group with no `file_upload` field, or with none of its
+    # instances' files supplied, is skipped entirely.
+    group_field_file_contents = group_field_file_contents or {}
+    group_field_keys: dict[str, str] = {}
+    group_field_content_types: dict[str, list[str]] = {}
+    for group_key, group in custom_groups_by_key.items():
+        file_field_key = _group_field_file_key(group)
+        if file_field_key is None:
+            continue
+        group_field_keys[group_key] = file_field_key
+        instances = payload.group_values.get(group_key, [])
+        files = group_field_file_contents.get(group_key, [])
+        field = next(f for f in group["fields"] if f["key"] == file_field_key)
+        is_required = bool(field["isRequired"]) and group_visibility[group_key]
+        if is_required and len(files) != len(instances):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Field group '{group['name']}' requires an uploaded file for every instance"
+                ),
+            )
+        if not is_required and len(files) > len(instances):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"More files were uploaded than instances of '{group['name']}'",
+            )
+        group_field_content_types[group_key] = [_validate_id_proof(f, max_size) for f in files]
+
     primary_key = (
         await storage_save(
             tenant.id,
@@ -824,6 +907,18 @@ async def create_invitation(
         if primary_contact_photo_content is not None and primary_photo_content_type is not None
         else None
     )
+    for group_key, file_field_key in group_field_keys.items():
+        instances = payload.group_values.get(group_key, [])
+        files = group_field_file_contents.get(group_key, [])
+        content_types = group_field_content_types[group_key]
+        for index, content in enumerate(files):
+            storage_key = await storage_save(
+                tenant.id, "invitations/group-files", content, content_types[index]
+            )
+            # Mutates the same dict `payload.group_values[group_key][index]`
+            # references — persisted below via `group_field_values`, never
+            # the client-supplied value for this key (rejected earlier).
+            instances[index][file_field_key] = storage_key
 
     invitation = Invitation(
         id=uuid.uuid4(),

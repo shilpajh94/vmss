@@ -140,6 +140,19 @@ version). Co-visitor (`visitor_photo_files`) entries remain optional. See
 `docs/features/invitations.md`'s "Primary contact profile photo" section
 for the full behavior.
 
+### Repeatable form-builder group file uploads (`add-group-field-file-upload`)
+
+`POST /registrations/walk-in` accepts an admin-defined repeatable group's
+own `file_upload`-typed field the same way `POST /invitations` does: one
+multipart list part named `groupFieldFiles[<groupKey>]`, order-matched to
+that group's `payload.groupValues[<groupKey>]` instances — no `instanceIndex`
+or field key in the part name, since only a group's first `file_upload`
+field is supported. The file field must be omitted (or `null`) from the
+corresponding `groupValues` instance dict; supplying a value there instead
+of the file is rejected with a 422. See `docs/features/invitations.md`'s
+"Repeatable group file uploads" section for the full validation/storage
+behavior — it is shared verbatim via `invitations.service.create_invitation`.
+
 ## File uploads (API-14)
 
 ID-proof uploads go through the same `core/storage.py::validate_upload` +

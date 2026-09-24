@@ -1088,3 +1088,88 @@ async def test_walk_in_group_instance_count_mismatch_is_logged_with_enforced_bra
     assert entry["log_level"] == "warning"
     assert entry["branch_id"] == str(branch.id)
     assert entry["check"] == "group_instance_count"
+
+
+# --- add-group-field-file-upload: a custom group's own file_upload field ----
+
+
+async def _create_and_publish_additional_visitors_group(
+    client: AsyncClient, admin_token: str, branch: Branch
+) -> None:
+    """Same pattern as `invitations/tests.py::_create_and_publish_additional_visitors_group`,
+    duplicated here for the reason `_create_and_publish_custom_field` above
+    already documents: a repeatable "Additional Visitors" group on Visitor
+    Info with a required `name` field and its own `file_upload`-typed field
+    (`id_upload`).
+    """
+    headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == "visitor_info")
+
+    group_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={"key": "additional_visitors", "name": "Additional Visitors", "isRepeatable": True},
+        headers=headers,
+    )
+    assert group_response.status_code == 201, group_response.text
+
+    for field_key, field_type, is_required in (
+        ("name", "text", True),
+        ("id_upload", "file_upload", False),
+    ):
+        field_response = await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/fields",
+            json={
+                "key": field_key,
+                "label": field_key.replace("_", " ").title(),
+                "fieldType": field_type,
+                "isRequired": is_required,
+                "groupId": group_response.json()["data"]["id"],
+            },
+            headers=headers,
+        )
+        assert field_response.status_code == 201, field_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+
+
+async def test_walk_in_registration_group_file_upload_stored_and_surfaced_on_read(
+    client: AsyncClient, user: User, branch: Branch, registration_device_raw_key: str
+) -> None:
+    """A custom Visitor Info group's own `file_upload`-typed field is
+    accepted on `POST /registrations/walk-in` via the same
+    `groupFieldFiles[<groupKey>]` multipart convention `POST /invitations`
+    documents (order-matched to `groupValues[<groupKey>]` instances) —
+    closing the gap where walk-in registration declared the same repeatable
+    -group contract but never parsed or forwarded the multipart part.
+    """
+    admin_token = await _login(client, user.email)
+    await _create_and_publish_additional_visitors_group(client, admin_token, branch)
+
+    payload = _individual_payload()
+    payload["groupValues"] = {"additional_visitors": [{"name": "Extra One"}, {"name": "Extra Two"}]}
+    response = await client.post(
+        "/api/v1/registrations/walk-in",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("groupFieldFiles[additional_visitors]", ("extra1.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("groupFieldFiles[additional_visitors]", ("extra2.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers={"X-Device-Key": registration_device_raw_key},
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    admin_headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
+    detail_response = await client.get(
+        f"/api/v1/invitations/{invitation_id}", headers=admin_headers
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    visitors = sorted(detail_response.json()["data"]["visitors"], key=lambda v: v["fullName"])
+    assert [v["fullName"] for v in visitors] == ["Extra One", "Extra Two"]
+    for visitor_out in visitors:
+        assert visitor_out["idProofUrl"] is not None

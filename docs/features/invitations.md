@@ -177,6 +177,40 @@ maximum still applies if instances are submitted anyway, and any value
 that is supplied for a hidden group's field is still validated against
 that field's own type/options/length rules.
 
+### Repeatable group file uploads (`add-group-field-file-upload`)
+
+If a repeatable field group has its own `file_upload`-typed field (Form
+Builder field type `file_upload`), that field's answer can only come from a
+multipart file — never a JSON value in `groupValues`. Only a group's
+**first** `file_upload` field is read; a group with more than one is
+supported for definition but only the first is ever populated this way.
+
+The client sends one multipart **list** part named
+`groupFieldFiles[<groupKey>]`, **order-matched** to that same group's
+`payload.groupValues[<groupKey>]` instances — the same "list, order-matched
+to instances" convention `visitorIdProofFiles`/`visitor_id_proof_files`
+already uses for the fixed `visitors` list. There is no `instanceIndex` or
+field key encoded in the part name: file *n* in the list pairs with
+instance *n* in `groupValues[<groupKey>]`.
+
+- The instance dict must **omit** that field (or send `null`) in
+  `groupValues` — supplying any other value for it is rejected with `422`
+  (`"'<fieldKey>' in '<groupName>' instance <n> must be uploaded as a file,
+  not supplied as a value"`), never silently overwritten.
+- If the field is required (and the group is visible), every instance must
+  have a matching file — a count mismatch is rejected with `422`
+  (`"Field group '<groupName>' requires an uploaded file for every
+  instance"`). More files than instances is also rejected (`422`, `"More
+  files were uploaded than instances of '<groupName>'"`).
+- Accepted files are validated the same way a top-level ID-proof upload is
+  (`_validate_id_proof`), stored via the same `core/storage.py::save`
+  interface under the `invitations/group-files` category, and the
+  resulting storage key is written back into that instance's field in the
+  persisted `groupFieldValues` — never a client-supplied value.
+
+`POST /registrations/walk-in` accepts the identical `groupFieldFiles[...]`
+contract — see `docs/features/registrations.md`.
+
 ### Retyped system fields and submission validation (`make-system-field-types-editable`)
 
 `fullName` (`primaryContact`/each `visitors[]` entry), `purposeOfVisit`,

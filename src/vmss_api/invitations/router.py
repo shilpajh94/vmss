@@ -17,6 +17,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.auth.audit import record_audit_log
@@ -565,8 +566,8 @@ async def _to_check_in_out(
     )
 
 
-def _group_collected_visitor_detail_outs(
-    invitation, visitor_info_groups: dict[str, dict[str, Any]]
+async def _group_collected_visitor_detail_outs(
+    invitation, visitor_info_groups: dict[str, dict[str, Any]], *, include_documents: bool
 ) -> list[InvitationVisitorDetailOut]:
     """A branch that collects additional visitors through an admin-defined
     repeatable group on Visitor Info instead of the fixed `visitors` list
@@ -585,13 +586,19 @@ def _group_collected_visitor_detail_outs(
     `"email"`/`"phone"` (there can be at most a handful of fields per
     group, so "first" only matters if an admin adds more than one of the
     same type). Every field the client actually submitted is still in
-    `customFieldValues` regardless. `idProofType`/`idProofUrl` stay `None`:
-    unlike the dedicated `visitors`/`primaryContact` id-proof multipart
-    parts, there is no generic file-upload capability for an admin-defined
-    custom field yet, so there is no document to resolve a URL from and no
-    reliable signal for which field (if any) names a proof type. `id` is
-    derived (`uuid5`, not random) so repeated reads of the same invitation
-    return stable ids.
+    `customFieldValues` regardless.
+
+    `idProofUrl` (add-group-field-file-upload) resolves the same way:
+    `service.create_invitation` already overwrote the group's first
+    `file_upload`-typed field's value with a storage key at submission
+    time (never a client-supplied value — see
+    `service.py::_group_field_file_key`), so this only has to resolve that
+    key to a URL, gated by `include_documents` (`documents:view`) the same
+    as `_to_visitor_detail_outs`'s `idProofUrl`. `idProofType` has no
+    `fieldType` of its own to key off the way email/phone do, so it's
+    populated only when the group happens to define a field literally keyed
+    `id_proof_type` — the same key the fixed `visitors`/`primaryContact`
+    system field uses — rather than inventing a new convention.
     """
     results: list[InvitationVisitorDetailOut] = []
     for group_key, instances in invitation.group_field_values.items():
@@ -602,18 +609,34 @@ def _group_collected_visitor_detail_outs(
         name_field_key = next(iter(group.get("fieldKeys", [])), None)
         email_field_key = next((f["key"] for f in fields if f["fieldType"] == "email"), None)
         phone_field_key = next((f["key"] for f in fields if f["fieldType"] == "phone"), None)
+        id_proof_url_field_key = next(
+            (f["key"] for f in fields if f["fieldType"] == "file_upload"), None
+        )
+        id_proof_type_field_key = next(
+            (f["key"] for f in fields if f["key"] == "id_proof_type"), None
+        )
         for index, instance in enumerate(instances):
             display_name = instance.get(name_field_key) if name_field_key else None
             email = instance.get(email_field_key) if email_field_key else None
             phone = instance.get(phone_field_key) if phone_field_key else None
+            id_proof_type = (
+                instance.get(id_proof_type_field_key) if id_proof_type_field_key else None
+            )
+            id_proof_storage_key = (
+                instance.get(id_proof_url_field_key) if id_proof_url_field_key else None
+            )
             results.append(
                 InvitationVisitorDetailOut(
                     id=uuid.uuid5(invitation.id, f"{group_key}:{index}"),
                     full_name=str(display_name) if display_name else "Additional Visitor",
                     email=str(email) if email else None,
                     phone=str(phone) if phone else None,
-                    id_proof_type=None,
-                    id_proof_url=None,
+                    id_proof_type=str(id_proof_type) if id_proof_type else None,
+                    id_proof_url=(
+                        await _resolve_document_url(id_proof_storage_key)
+                        if id_proof_storage_key and include_documents
+                        else None
+                    ),
                     photo_url=None,
                     custom_field_values=instance,
                 )
@@ -697,7 +720,9 @@ async def _to_invitation_detail_out(
             *await _to_visitor_detail_outs(
                 invitation.visitors, include_documents=include_documents
             ),
-            *_group_collected_visitor_detail_outs(invitation, visitor_info_groups),
+            *await _group_collected_visitor_detail_outs(
+                invitation, visitor_info_groups, include_documents=include_documents
+            ),
         ],
         vehicles=[
             InvitationVehicleOut(
@@ -750,6 +775,7 @@ async def _cache_response(
     openapi_extra=_INVITATION_PAYLOAD_EXAMPLES,
 )
 async def create_invitation(
+    request: Request,
     background_tasks: BackgroundTasks,
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
@@ -812,6 +838,19 @@ async def create_invitation(
     returns a tracking ID (design.md Decisions 1 and 2). A retried request
     reuses the same `Idempotency-Key` semantics (`api-conventions.md` §3) so
     it can't create a second invitation.
+
+    An admin-defined repeatable group's own `file_upload`-typed field
+    (add-group-field-file-upload) has no fixed multipart parameter — its
+    group key is branch-specific and unknown at route-declaration time —
+    so it isn't one of the typed `File(...)` params above. Instead, for a
+    group with such a field, the caller sends one multipart list part named
+    `groupFieldFiles[<groupKey>]`, order-matched to that same group's
+    `payload.groupValues[<groupKey>]` instances (the same "list, order
+    matched to instances" convention `visitorIdProofFiles` already uses for
+    the fixed `visitors` list). Read below via `request.form()` rather than
+    a declared parameter, since the set of valid keys isn't known until
+    `service.create_invitation` resolves the branch's active Form Builder
+    configuration.
     """
     cached = await _cached_response(tenant.id, idempotency_key)
     if cached is not None:
@@ -852,6 +891,27 @@ async def create_invitation(
     )
     visitor_photo_contents = [await f.read(photo_limit) for f in visitor_photo_files]
 
+    # See the docstring above: `groupFieldFiles[<groupKey>]` isn't a
+    # declared parameter since `<groupKey>` is branch-specific. Starlette
+    # caches the parsed multipart body on `request`, so this reuses the same
+    # parse the `payload`/`primary_contact_*`/`visitor_*` params above
+    # already triggered rather than re-reading the request body. Filtered
+    # against Starlette's own `UploadFile` (not `fastapi.UploadFile`, a
+    # subclass FastAPI only constructs for its own declared `File(...)`
+    # params) — `request.form()`'s multipart parser builds the Starlette
+    # one directly, so `isinstance(value, fastapi.UploadFile)` here would
+    # silently match nothing.
+    form_data = await request.form()
+    group_field_file_contents: dict[str, list[bytes]] = {}
+    for key in set(form_data.keys()):
+        if key.startswith("groupFieldFiles[") and key.endswith("]"):
+            group_key = key[len("groupFieldFiles[") : -1]
+            group_field_file_contents[group_key] = [
+                await value.read(id_proof_limit)
+                for value in form_data.getlist(key)
+                if isinstance(value, StarletteUploadFile)
+            ]
+
     invitation = await service.create_invitation(
         tenant_db,
         create_payload,
@@ -862,6 +922,7 @@ async def create_invitation(
         visitor_id_proof_contents=visitor_contents,
         primary_contact_photo_content=primary_photo_content,
         visitor_photo_contents=visitor_photo_contents,
+        group_field_file_contents=group_field_file_contents,
     )
     background_tasks.add_task(
         record_audit_log,
