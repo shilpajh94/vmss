@@ -148,6 +148,8 @@ export function StaffVisitorRegistrationPage() {
             customFields={visitDetailsCustomFields}
             customFieldValues={formState.customFieldValues}
             onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'carried_items' && (
@@ -158,6 +160,8 @@ export function StaffVisitorRegistrationPage() {
             onChange={(carriedItems) => setFormState({ ...formState, carriedItems })}
             customFieldValues={formState.customFieldValues}
             onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'vehicle_info' && (
@@ -171,6 +175,8 @@ export function StaffVisitorRegistrationPage() {
             groupFields={vehicleInfoAllFields}
             groupValues={formState.groupValues}
             onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'consent_agreement' && (
@@ -192,6 +198,10 @@ export function StaffVisitorRegistrationPage() {
             getFilePreviewUrl={getFilePreviewUrl}
             vehicleCustomFields={vehicleInfoCustomFields}
             carriedItemsCustomFields={carriedItemsFields.filter((field) => !field.isSystem)}
+            visitorInfoGroups={visitorInfoGroups}
+            visitorInfoAllFields={visitorInfoAllFields}
+            vehicleInfoGroups={vehicleInfoGroups}
+            vehicleInfoAllFields={vehicleInfoAllFields}
             onBack={goBack}
             onSubmit={submit}
             onGoHome={cancelRegistration}
@@ -205,6 +215,8 @@ export function StaffVisitorRegistrationPage() {
             onChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
             groupValues={formState.groupValues}
             onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
         )}
       </div>

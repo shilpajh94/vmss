@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { extractGroupFieldFiles } from '../../../components/dynamic-fields/field-group-visibility'
 import { findField, findStepFields, findStepGroups, useEffectiveForm } from '../../../hooks/use-effective-form'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
@@ -332,14 +333,29 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
       .map((visitor) => (visitor.idProofFileRef ? fileRegistry.current.get(visitor.idProofFileRef) : undefined))
       .filter((file): file is File => file !== undefined)
 
+    // Admin-defined field groups' own `file_upload` fields (e.g. "id_upload"
+    // on a custom "Additional Visitors" group) go through the same
+    // fileRef-registry indirection as the fields above, but the backend
+    // only accepts that answer as a multipart `groupFieldFiles[<groupKey>]`
+    // part — never as a JSON value in `groupValues` (add-group-field-file-upload).
+    const { sanitizedGroupValues, groupFieldFiles } = extractGroupFieldFiles(
+      effectiveFormSteps,
+      formState.groupValues,
+      fileRegistry.current,
+    )
+
     setSubmissionStatus('submitting')
     setSubmissionError(undefined)
     try {
-      const response = await submitVisitRequestUseCase.execute(toVisitRequest(formState), {
-        primaryContactIdProofFile,
-        primaryContactPhotoFile,
-        visitorIdProofFiles,
-      })
+      const response = await submitVisitRequestUseCase.execute(
+        toVisitRequest({ ...formState, groupValues: sanitizedGroupValues }),
+        {
+          primaryContactIdProofFile,
+          primaryContactPhotoFile,
+          visitorIdProofFiles,
+          groupFieldFiles,
+        },
+      )
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')
     } catch (error) {

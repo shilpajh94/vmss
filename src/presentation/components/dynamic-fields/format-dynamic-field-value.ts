@@ -17,5 +17,7 @@ export function formatDynamicFieldValue(field: FormField, value: DynamicFieldVal
     return value.length > 0 ? value.map(prettifyKey).join(', ') : EMPTY_VALUE
   }
 
+  if (typeof value === 'object') return value.fileName
+
   return field.options && field.options.length > 0 ? prettifyKey(value) : value
 }

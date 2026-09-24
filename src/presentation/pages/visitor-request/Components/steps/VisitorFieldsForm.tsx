@@ -175,6 +175,8 @@ export function VisitorFieldsForm({
             fields={customFields}
             value={value.customFieldValues}
             onChange={(customFieldValues) => onChange({ ...value, customFieldValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
         </div>
       )}

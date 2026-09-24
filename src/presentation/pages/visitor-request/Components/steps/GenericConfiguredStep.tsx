@@ -14,6 +14,11 @@ interface GenericConfiguredStepProps {
    * A group absent from this map renders with zero instances. */
   groupValues: Record<string, GroupInstance[]>
   onGroupValuesChange: (groupValues: Record<string, GroupInstance[]>) => void
+  /** Required for an active `file_upload` field on this step (grouped or
+   * not) to render a working upload control instead of falling back to
+   * "not supported". */
+  uploadFile?: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
 }
 
 /** Renders a registration step whose `key` isn't one of the wizard's six
@@ -40,7 +45,15 @@ interface GenericConfiguredStepProps {
  * evaluated against the step's currently-known flat values before deciding
  * whether to render it at all — see `FieldGroupsSection`/`isGroupVisible`.
  */
-export function GenericConfiguredStep({ step, value, onChange, groupValues, onGroupValuesChange }: GenericConfiguredStepProps) {
+export function GenericConfiguredStep({
+  step,
+  value,
+  onChange,
+  groupValues,
+  onGroupValuesChange,
+  uploadFile,
+  getFilePreviewUrl,
+}: GenericConfiguredStepProps) {
   const groupedFieldKeys = new Set(step.groups.flatMap((group) => group.fieldKeys))
   const ungroupedFields = step.fields.filter((field) => !groupedFieldKeys.has(field.key))
 
@@ -62,6 +75,8 @@ export function GenericConfiguredStep({ step, value, onChange, groupValues, onGr
             field={field}
             value={value[field.key]}
             onChange={(fieldValue) => onChange({ ...value, [field.key]: fieldValue })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
         ))}
       </div>
@@ -71,6 +86,8 @@ export function GenericConfiguredStep({ step, value, onChange, groupValues, onGr
         flatValues={flatValues}
         groupValues={groupValues}
         onGroupValuesChange={onGroupValuesChange}
+        uploadFile={uploadFile}
+        getFilePreviewUrl={getFilePreviewUrl}
       />
     </div>
   )

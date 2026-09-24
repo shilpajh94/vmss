@@ -12,6 +12,13 @@ export interface InvitationSubmissionFiles {
   primaryContactIdProofFile: File | undefined
   primaryContactPhotoFile: File | undefined
   visitorIdProofFiles: File[]
+  // Admin-defined field groups' own `file_upload` field answers
+  // (add-group-field-file-upload), keyed by the group's `key` — each
+  // value is that group's file list, order-matched to
+  // `payload.groupValues[<groupKey>]` instances. Built by
+  // `extractGroupFieldFiles`, which also strips the field from `payload`'s
+  // `groupValues` JSON (the backend rejects it if both are present).
+  groupFieldFiles: Record<string, File[]>
 }
 
 export interface VisitRequestRepository {

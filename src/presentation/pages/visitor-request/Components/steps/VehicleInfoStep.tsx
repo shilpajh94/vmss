@@ -48,6 +48,11 @@ interface VehicleInfoStepProps {
   groupFields: FormField[]
   groupValues: Record<string, GroupInstance[]>
   onGroupValuesChange: (groupValues: Record<string, GroupInstance[]>) => void
+  /** Required for an active `file_upload` field among `customFields`/one of
+   * `groups` to render a working upload control instead of falling back to
+   * "not supported". */
+  uploadFile?: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
 }
 
 export function VehicleInfoStep({
@@ -60,6 +65,8 @@ export function VehicleInfoStep({
   groupFields,
   groupValues,
   onGroupValuesChange,
+  uploadFile,
+  getFilePreviewUrl,
 }: VehicleInfoStepProps) {
   const [draftVehicle, setDraftVehicle] = useState<Vehicle | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
@@ -223,6 +230,8 @@ export function VehicleInfoStep({
             fields={customFields}
             value={(draftVehicle.customFieldValues ?? {}) as Record<string, DynamicFieldValue>}
             onChange={(customFieldValues) => setDraftVehicle({ ...draftVehicle, customFieldValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
           <div className="flex gap-3">
             <button type="button" onClick={commitDraft} className="rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white">
@@ -241,6 +250,8 @@ export function VehicleInfoStep({
         flatValues={groupFlatValues}
         groupValues={groupValues}
         onGroupValuesChange={onGroupValuesChange}
+        uploadFile={uploadFile}
+        getFilePreviewUrl={getFilePreviewUrl}
       />
     </div>
   )

@@ -10,7 +10,21 @@
 // not a valid email address...". The standard `{"detail": [{loc, msg}]}` shape
 // is also handled directly, in case a future endpoint uses it.
 
-const PYDANTIC_ISSUE_PATTERN = /^([\w.]+)\n\s+(.+?)\s*\[type=[^\]]*\]\s*$/gm
+// The field-path line is absent for model-level (`@model_validator`) errors, so it's optional here.
+const PYDANTIC_ISSUE_PATTERN = /^(?:([\w.]+)\n)?\s*(.+?)\s*\[type=[^\]]*\]\s*$/gm
+
+// Known backend messages rewritten in plain, actionable language for end users.
+const KNOWN_MESSAGES: Record<string, string> = {
+  'A group registration must list at least one visitor':
+    'Please add at least one visitor to the group before submitting.',
+}
+
+// Pydantic wraps custom validator errors as "Value error, <message>"; strip that prefix
+// and swap in friendlier copy for messages we recognize.
+function cleanMessage(msg: string): string {
+  const stripped = msg.replace(/^Value error,\s*/, '').trim()
+  return KNOWN_MESSAGES[stripped] ?? stripped
+}
 
 function toTitleCase(value: string): string {
   const words = value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ')
@@ -37,7 +51,9 @@ function humanizePydanticDump(raw: string): string {
   let match: RegExpExecArray | null
   PYDANTIC_ISSUE_PATTERN.lastIndex = 0
   while ((match = PYDANTIC_ISSUE_PATTERN.exec(raw)) !== null) {
-    issues.push(`${describeFieldPath(match[1])}: ${match[2].trim()}`)
+    const loc = match[1]
+    const msg = cleanMessage(match[2].trim())
+    issues.push(loc ? `${describeFieldPath(loc)}: ${msg}` : msg)
   }
   return issues.length > 0 ? issues.join(' ') : raw
 }
@@ -51,7 +67,7 @@ function humanizeDetailArray(detail: unknown[]): string | undefined {
   const issues = detail
     .filter((item): item is FastApiIssue => typeof item === 'object' && item !== null)
     .map((item) => {
-      const msg = typeof item.msg === 'string' ? item.msg : undefined
+      const msg = typeof item.msg === 'string' ? cleanMessage(item.msg) : undefined
       if (!msg) return undefined
       const loc = Array.isArray(item.loc) ? item.loc.filter((part) => part !== 'body').join('.') : undefined
       return loc ? `${describeFieldPath(loc)}: ${msg}` : msg

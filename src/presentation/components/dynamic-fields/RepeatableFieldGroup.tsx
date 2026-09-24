@@ -17,6 +17,10 @@ interface RepeatableFieldGroupProps {
   maxInstances: number | null
   instances: GroupInstance[]
   onChange: (instances: GroupInstance[]) => void
+  /** Required for an active `file_upload` field among `fields` to render a
+   * working upload control instead of falling back to "not supported". */
+  uploadFile?: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
 }
 
 /** Generalizes `VehicleInfoStep`'s add/edit/remove-instance-row UI (a table
@@ -28,7 +32,16 @@ interface RepeatableFieldGroupProps {
  * than being rebased onto this, since each has extra per-entity fields
  * (vehicle type, ID-proof upload) this generic shape doesn't model.
  */
-export function RepeatableFieldGroup({ groupName, fields, minInstances, maxInstances, instances, onChange }: RepeatableFieldGroupProps) {
+export function RepeatableFieldGroup({
+  groupName,
+  fields,
+  minInstances,
+  maxInstances,
+  instances,
+  onChange,
+  uploadFile,
+  getFilePreviewUrl,
+}: RepeatableFieldGroupProps) {
   const [draft, setDraft] = useState<GroupInstance | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [draftError, setDraftError] = useState<string | undefined>(undefined)
@@ -155,7 +168,7 @@ export function RepeatableFieldGroup({ groupName, fields, minInstances, maxInsta
         <div className="flex flex-col gap-4 rounded-lg border border-border-subtle bg-bg p-4">
           <h4 className="text-body font-semibold text-text">{editingIndex === null ? `Add ${groupName}` : `Edit ${groupName}`}</h4>
           {fields.length > 0 ? (
-            <CustomFieldsSection fields={fields} value={draft} onChange={setDraft} />
+            <CustomFieldsSection fields={fields} value={draft} onChange={setDraft} uploadFile={uploadFile} getFilePreviewUrl={getFilePreviewUrl} />
           ) : (
             // No fields configured on this group yet — nothing to render, but
             // instances can still be added/removed as bare rows.

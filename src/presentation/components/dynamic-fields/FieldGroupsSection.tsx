@@ -15,6 +15,11 @@ interface FieldGroupsSectionProps {
   flatValues: Record<string, DynamicFieldValue>
   groupValues: Record<string, GroupInstance[]>
   onGroupValuesChange: (groupValues: Record<string, GroupInstance[]>) => void
+  /** Required for an active `file_upload` field on one of `groups` to
+   * render a working upload control instead of falling back to "not
+   * supported". */
+  uploadFile?: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
 }
 
 /** Renders a step's admin-defined field groups (add-repeatable-field-groups /
@@ -27,7 +32,15 @@ interface FieldGroupsSectionProps {
  * Visitor Info step (its built-in step's groups), which otherwise have no
  * component in common.
  */
-export function FieldGroupsSection({ groups, fields, flatValues, groupValues, onGroupValuesChange }: FieldGroupsSectionProps) {
+export function FieldGroupsSection({
+  groups,
+  fields,
+  flatValues,
+  groupValues,
+  onGroupValuesChange,
+  uploadFile,
+  getFilePreviewUrl,
+}: FieldGroupsSectionProps) {
   const orderedGroups = [...groups].sort((a, b) => a.orderIndex - b.orderIndex)
 
   const setGroupInstances = (groupKey: string, instances: GroupInstance[]) => {
@@ -52,6 +65,8 @@ export function FieldGroupsSection({ groups, fields, flatValues, groupValues, on
                 fields={groupFields}
                 value={singleInstance}
                 onChange={(instance) => setGroupInstances(group.key, [instance])}
+                uploadFile={uploadFile}
+                getFilePreviewUrl={getFilePreviewUrl}
               />
             </div>
           )
@@ -66,6 +81,8 @@ export function FieldGroupsSection({ groups, fields, flatValues, groupValues, on
             maxInstances={group.maxInstances}
             instances={groupValues[group.key] ?? []}
             onChange={(instances) => setGroupInstances(group.key, instances)}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
         )
       })}
