@@ -250,7 +250,6 @@ export function ReviewConfirmStep({
           ['Purpose', formState.visitInfo.purpose],
           ['Date', formState.visitInfo.preferredDate],
           ['Time', formState.visitInfo.preferredTime],
-          ['Duration', formState.visitInfo.expectedDuration],
           ['Location', formState.visitInfo.location],
           ['Building', formState.visitInfo.building],
           ['Additional Notes', formState.visitInfo.notes],

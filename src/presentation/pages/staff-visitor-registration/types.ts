@@ -58,7 +58,6 @@ export function createInitialStaffFormState(): StaffVisitRequestFormState {
       purpose: '',
       preferredDate: '',
       preferredTime: '',
-      expectedDuration: '',
       location: '',
       building: '',
       notes: '',
@@ -99,7 +98,6 @@ export function toStaffVisitRequest(formState: StaffVisitRequestFormState): Staf
       purposeOfVisit: formState.visitInfo.purpose,
       preferredVisitDate: formState.visitInfo.preferredDate,
       preferredVisitTime: formState.visitInfo.preferredTime,
-      expectedDuration: formState.visitInfo.expectedDuration,
       additionalNotes: formState.visitInfo.notes,
     },
     carriedItems: {

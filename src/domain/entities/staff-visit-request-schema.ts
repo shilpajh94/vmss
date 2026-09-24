@@ -16,7 +16,6 @@ export const StaffVisitRequestSchema = z.object({
     purposeOfVisit: z.string().min(1),
     preferredVisitDate: z.string().min(1),
     preferredVisitTime: z.string().min(1),
-    expectedDuration: z.string().min(1),
     additionalNotes: z.string().optional(),
   }),
   carriedItems: z.object({

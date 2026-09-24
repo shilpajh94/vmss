@@ -53,7 +53,6 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     visitorInfoFields,
     additionalNotesActive,
     purposeOfVisitOptions,
-    expectedDurationOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
     visitorInfoGroups,
@@ -140,7 +139,6 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             buildings={buildings}
             additionalNotesActive={additionalNotesActive}
             purposeOfVisitOptions={purposeOfVisitOptions}
-            expectedDurationOptions={expectedDurationOptions}
             customFields={visitDetailsCustomFields}
             customFieldValues={formState.customFieldValues}
             onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}

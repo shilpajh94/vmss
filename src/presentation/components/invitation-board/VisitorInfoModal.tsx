@@ -262,7 +262,6 @@ export function VisitorInfoModal({
               <Field label="Host" value={detail.hostNameOrEmail ?? '—'} />
               <Field label="Point of Contact" value={pointOfContact ?? '—'} />
               <Field label="Department" value={detail.departmentToVisit ?? '—'} />
-              <Field label="Expected duration" value={detail.expectedDuration ?? '—'} />
               {detail.rescheduleCount > 0 ? (
                 <>
                   {detail.previousPreferredVisitDate && detail.previousPreferredVisitTime ? (
