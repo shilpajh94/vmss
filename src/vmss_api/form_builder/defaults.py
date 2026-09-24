@@ -206,7 +206,7 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
                 "Expected Duration",
                 "text",
                 is_locked=False,
-                is_required=True,
+                is_required=False,
             ),
             DefaultFieldSpec(
                 "additional_notes",

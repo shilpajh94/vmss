@@ -1,6 +1,7 @@
 import secrets
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -434,6 +435,11 @@ async def create_invitation(
     photo_required = form_builder_validation.is_field_required(
         effective_form, "visitor_info", "profile_photo", default=False
     )
+    # No requiredness check for "Expected Duration" (unlike ID proof/photo
+    # above) — the visitor-facing wizards no longer collect this field at
+    # all (make-expected-duration-optional), so there's no client left that
+    # could ever satisfy a branch-configured requirement for it; enforcing
+    # one here would just permanently reject every submission instead.
     required_consent_keys = form_builder_validation.required_consent_keys(effective_form)
     allowed_consent_keys = form_builder_validation.allowed_consent_keys(effective_form)
     allowed_carried_item_keys = form_builder_validation.allowed_carried_item_keys(effective_form)
@@ -1073,10 +1079,12 @@ async def create_invitation(
     # "content-type validate, then store, then write the storage key back"
     # shape as the group loop above, keyed by field key rather than group
     # key. Storage key, never the raw upload, lands in the persisted
-    # `customFieldValues`/`primaryContactCustomFieldValues` map, consistent
-    # with `groupFieldValues` returning a storage key rather than a
-    # resolved URL for its own `file_upload` field (no reader resolves it
-    # to a signed URL yet — see the matching note on `groupFieldValues`).
+    # `customFieldValues`/`primaryContactCustomFieldValues` map, same as
+    # `groupFieldValues`'s own `file_upload` field — all three are resolved
+    # to a signed URL on read by `invitations/router.py`'s
+    # `_resolve_custom_field_file_values` (add-generic-custom-field-file-
+    # url-resolution), keyed off `InvitationDetailFormContext`'s file-field
+    # sets below.
     primary_contact_custom_field_storage: dict[str, str] = {}
     for key, files in primary_contact_custom_field_file_contents.items():
         if not files:
@@ -1405,23 +1413,62 @@ async def get_invitation_location(
     )
 
 
-async def get_visitor_info_groups(
-    tenant_db: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
-) -> dict[str, dict[str, Any]]:
-    """Every admin-defined field group currently published on Visitor Info
-    for this branch, keyed by group key — backs
-    `invitations/router.py::_group_collected_visitor_detail_outs`, which
-    synthesizes a visitor-shaped `InvitationDetailOut.visitors` entry from
-    such a group's submitted `groupValues` instances (the built-in
-    "Visitors" system group is no longer admin-configurable,
-    `form_builder/defaults.py`, so a branch needing more than its fixed
-    cardinality collects extra visitors through a group like this instead).
+@dataclass(frozen=True)
+class InvitationDetailFormContext:
+    """Per-branch form-builder lookups `invitations/router.py`'s detail-view
+    serializers need to render `GET /invitations/{id}` (add-generic-custom-
+    field-file-url-resolution): `visitor_info_groups` (unchanged — backs
+    `_group_collected_visitor_detail_outs`'s visitor synthesis), plus which
+    `file_upload`-typed field keys appear in each of `customFieldValues`/
+    `primaryContactCustomFieldValues`/a `groupFieldValues` instance, so those
+    readers know which raw storage keys need resolving to a signed URL
+    rather than being serialized straight from the ORM (see the note on
+    `service.py::create_invitation`'s `customFieldValues`/
+    `primaryContactCustomFieldValues`/`groupFieldValues` storage — "no reader
+    resolves it to a signed URL yet").
     """
+
+    visitor_info_groups: dict[str, dict[str, Any]]
+    invitation_scope_file_keys: set[str]
+    visitor_info_file_keys: set[str]
+    group_file_keys: dict[str, set[str]]
+
+
+async def get_invitation_detail_form_context(
+    tenant_db: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
+) -> InvitationDetailFormContext:
+    """Resolves `branch_id`'s effective form once and derives every
+    form-shape lookup the detail view's serializers need, rather than each
+    one separately re-resolving it (still a Redis round-trip per call even
+    though `resolve_effective_form` itself is cache-backed)."""
     redis = await get_redis()
     effective_form = await form_builder_service.resolve_effective_form(
         tenant_db, redis, tenant_id=tenant.id, branch_id=branch_id
     )
-    return form_builder_validation.custom_groups_for_step(effective_form, "visitor_info")
+    visitor_info_file_keys = {
+        field["key"]
+        for field in form_builder_validation.custom_fields_for_step(effective_form, "visitor_info")
+        if field["fieldType"] == "file_upload"
+    }
+    invitation_scope_file_keys = {
+        field["key"]
+        for field in form_builder_validation.custom_fields_for_invitation_scope(effective_form)
+        if field["fieldType"] == "file_upload"
+    }
+    group_file_keys = {
+        group["key"]: {
+            field["key"] for field in group["fields"] if field["fieldType"] == "file_upload"
+        }
+        for group in form_builder_validation.custom_groups_for_invitation_scope(effective_form)
+    }
+    return InvitationDetailFormContext(
+        visitor_info_groups=form_builder_validation.custom_groups_for_step(
+            effective_form, "visitor_info"
+        ),
+        invitation_scope_file_keys=invitation_scope_file_keys,
+        visitor_info_file_keys=visitor_info_file_keys,
+        group_file_keys=group_file_keys,
+    )
 
 
 async def deny_invitation(

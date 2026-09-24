@@ -2251,6 +2251,35 @@ async def test_track_by_tracking_id_individual_success(
     assert body["departmentToVisit"] == "Human Resources"
 
 
+async def test_track_by_tracking_id_masks_custom_file_upload_field_raw_storage_key(
+    client: AsyncClient, user: User, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-generic-custom-field-file-url-resolution, extended to the public
+    tracking-lookup response — same posture as the QR/check-in-by-tracking-
+    id counterparts: a `file_upload`-typed custom field's raw storage key
+    must never reach this unauthenticated caller.
+    """
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="pic", field_type="file_upload"
+    )
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        primary_contact_custom_field_values={
+            "pic": "vmss:tenant:invitations/custom-fields:primary-pic.jpg"
+        },
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/v1/invitations/track", params={"trackingId": invitation.tracking_id}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["primaryContactCustomFieldValues"]["pic"] is None
+
+
 async def test_track_by_tracking_id_group_success(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
@@ -5432,6 +5461,36 @@ async def test_public_check_in_by_tracking_id_success(
     assert invitation.checked_in_by_user_id is None
 
 
+async def test_public_check_in_by_tracking_id_masks_custom_file_upload_field_raw_storage_key(
+    client: AsyncClient, user: User, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-generic-custom-field-file-url-resolution, extended to the public
+    tracking-ID check-in response — same posture as the QR counterpart
+    (`test_qr_check_in_response_masks_custom_file_upload_field_raw_storage_
+    key`): a `file_upload`-typed custom field's raw storage key must never
+    reach this unauthenticated caller.
+    """
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="pic", field_type="file_upload"
+    )
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        primary_contact_custom_field_values={
+            "pic": "vmss:tenant:invitations/custom-fields:primary-pic.jpg"
+        },
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+    assert response.json()["data"]["primaryContactCustomFieldValues"]["pic"] is None
+
+
 async def test_public_check_in_non_approved_rejected(
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
@@ -6342,6 +6401,39 @@ async def test_qr_check_in_response_includes_id_proof_type_but_never_a_document_
     [visitor_out] = data["visitors"]
     assert visitor_out["idProofType"] == co_visitor.id_proof_type
     assert "idProofUrl" not in visitor_out
+
+
+async def test_qr_check_in_response_masks_custom_file_upload_field_raw_storage_key(
+    client: AsyncClient, user: User, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-generic-custom-field-file-url-resolution, extended to the public
+    QR check-in response: a `file_upload`-typed custom field is present as
+    a *key* (unlike the removed `idProofUrl` above, there's no dedicated
+    schema field to omit — the key lives inside the generic
+    `customFieldValues` map) but its *value* must never be the raw storage
+    key `create_invitation` persisted, since this endpoint has no
+    authenticated caller to check `documents:view` against — same posture
+    as `test_qr_check_in_response_includes_id_proof_type_but_never_a_
+    document_url`.
+    """
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="pic", field_type="file_upload"
+    )
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        primary_contact_custom_field_values={
+            "pic": "vmss:tenant:invitations/custom-fields:primary-pic.jpg"
+        },
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    qr_check_in_token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{qr_check_in_token}/check-in")
+    assert response.status_code == 200
+    assert response.json()["data"]["primaryContactCustomFieldValues"]["pic"] is None
 
 
 async def test_qr_check_in_and_check_out_response_include_resolved_branch_building_department(
@@ -9212,6 +9304,29 @@ async def test_create_invitation_consent_not_required_when_branch_deactivates_it
     del payload["consents"]["safety_guidelines_accepted"]
     response = await _create_invitation(client, token, branch, payload=payload)
     assert response.status_code == 201, response.text
+
+
+async def test_create_invitation_expected_duration_optional(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """"Expected Duration" is no longer collected by either visitor-facing
+    wizard at all (make-expected-duration-optional), so `create_invitation`
+    must accept a submission that omits it regardless of the branch's own
+    Form Builder configuration for the field — unlike ID proof/photo, there
+    is no requiredness check for it any more.
+    """
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    del payload["visitDetails"]["expectedDuration"]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 201, response.text
+
+    tracking_id = response.json()["data"]["trackingId"]
+    track_response = await client.get(
+        "/api/v1/invitations/track", params={"trackingId": tracking_id}
+    )
+    assert track_response.status_code == 200, track_response.text
+    assert track_response.json()["data"]["expectedDuration"] is None
 
 
 async def test_create_invitation_carried_item_allowed_when_branch_adds_custom_item(
