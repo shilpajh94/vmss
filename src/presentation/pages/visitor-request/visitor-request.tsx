@@ -51,7 +51,6 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     carriedItemsFields,
     consentFields,
     visitorInfoFields,
-    additionalNotesActive,
     purposeOfVisitOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
@@ -137,7 +136,6 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             errors={errors}
             branches={branches}
             buildings={buildings}
-            additionalNotesActive={additionalNotesActive}
             purposeOfVisitOptions={purposeOfVisitOptions}
             customFields={visitDetailsCustomFields}
             customFieldValues={formState.customFieldValues}

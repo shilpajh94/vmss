@@ -177,10 +177,6 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
       profilePhotoRequired: profilePhoto?.isRequired ?? false,
     }
   }, [effectiveFormSteps])
-  const additionalNotesActive = useMemo(
-    () => findField(effectiveFormSteps, 'visit_details', 'additional_notes') !== undefined,
-    [effectiveFormSteps],
-  )
   // Branch-configured (form-builder) Purpose of Visit choices — the field's
   // own `options`, same pattern as `idProofOptions`/`vehicleTypeOptions`
   // below (make-id-proof-and-vehicle-type-configurable). `VisitInfoStep`
@@ -463,7 +459,6 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     carriedItemsFields,
     consentFields,
     visitorInfoFields,
-    additionalNotesActive,
     purposeOfVisitOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,

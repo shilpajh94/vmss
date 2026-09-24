@@ -2,7 +2,6 @@ import { CustomFieldsSection } from '../../../../components/dynamic-fields/Custo
 import type { DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
 import { SelectField } from '../../../../components/ui/SelectField'
 import { TextField } from '../../../../components/ui/TextField'
-import { TextareaField } from '../../../../components/ui/TextareaField'
 import type { Branch } from '../../../../../domain/entities/branch-schema'
 import type { Building } from '../../../../../domain/entities/building-schema'
 import type { FormField } from '../../../../../domain/entities/form-builder-schema'
@@ -16,9 +15,6 @@ interface VisitInfoStepProps {
   errors: Record<string, string>
   branches?: Branch[]
   buildings?: Building[]
-  /** Branch-configured (form-builder) active state for the toggleable
-   * "Additional Notes" field. */
-  additionalNotesActive: boolean
   /** Branch-configured (form-builder) Purpose of Visit choices — the
    * field's own `options`, not a fixed set
    * (make-id-proof-and-vehicle-type-configurable). Empty when unset, in
@@ -48,7 +44,6 @@ export function VisitInfoStep({
   errors,
   branches,
   buildings,
-  additionalNotesActive,
   purposeOfVisitOptions,
   customFields,
   customFieldValues,
@@ -138,14 +133,6 @@ export function VisitInfoStep({
           />
         )}
       </div>
-      {additionalNotesActive && (
-        <TextareaField
-          label="Additional Notes / Special Requirements"
-          placeholder="Any special requirements, accessibility needs, or notes for the host…"
-          value={value.notes}
-          onChange={(notes) => onChange({ ...value, notes })}
-        />
-      )}
       <CustomFieldsSection
         fields={customFields}
         value={customFieldValues}
