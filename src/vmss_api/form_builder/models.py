@@ -152,6 +152,7 @@ class FormField(Base, TimestampMixin):
     # Conditional Visibility".
     visibility_condition: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     width: Mapped[str] = mapped_column(String(10), default="full")
+    hide_label: Mapped[bool] = mapped_column(Boolean, default=False)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
 
 

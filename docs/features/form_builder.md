@@ -20,7 +20,12 @@ custom fields, conditional visibility — without a code change.
 - **`FormField`** — one field within a step (`key`, `label`, `placeholder`,
   `helpText`, `fieldType`, `isSystem`, `isLocked`, `isActive`,
   `isRequired`, `options`, `validationRules`, `visibilityCondition`,
-  `width`, `orderIndex`).
+  `width`, `hideLabel`, `orderIndex`). `hideLabel` (default `false`) is a
+  display-only flag: `label` is still mandatory and still used as the
+  field's accessible name and in validation error messages, but when
+  `hideLabel` is `true` the visitor-facing renderer omits the visible
+  label text — the same posture as `width`, not consulted by submission
+  validation at all.
 - **`FormConfigVersion`** — the *published* snapshot for one scope
   (`branchId` nullable), overwritten in place on every publish. No version
   history is kept in this iteration — publishing atomically replaces the
@@ -150,10 +155,12 @@ hidden group.
 ## Field types
 
 `text`, `email`, `phone`, `number`, `dropdown_select`, `date_picker`,
-`time_picker`, `toggle_switch`, `checkbox_list`, `file_upload`, `textarea`,
-`dynamic_table`, `rich_text_block`, `signature_pad`, `static_text`.
-`dropdown_select` and `checkbox_list` must declare a non-empty `options`
-list. `visitor_category` is the sole exception: its real options come from
+`time_picker`, `toggle_switch`, `checkbox_list`, `checkbox_single`,
+`radio_button`, `file_upload`, `textarea`, `static_text`.
+`dropdown_select`, `checkbox_list`, and `radio_button` must declare a
+non-empty `options` list; `checkbox_single` is a lone boolean field and
+declares none, the same as an option-free `toggle_switch`.
+`visitor_category` is the sole exception: its real options come from
 the separate, admin-managed Visitor Categories catalog, not this row's own
 `options`, so it's exempt from the non-empty-options rule
 (`_EXTERNALLY_CATALOGED_FIELD_KEYS` in `form_builder/service.py`). Every
@@ -193,8 +200,8 @@ more"/"See less" toggle, for every field type and step uniformly — for a
 `static_text` field, which has no input control of its own, this is the
 block's entire body content.
 
-`checkbox_list`, `dropdown_select`, and an optioned `toggle_switch`
-field's `options` were previously only settable once, at field creation
+`checkbox_list`, `dropdown_select`, `radio_button`, and an optioned
+`toggle_switch` field's `options` were previously only settable once, at field creation
 (`AddFieldModal`) — the Field Properties panel had no options control at
 all, so an existing field's option list (e.g. Carried Items' `items`
 field) could never be revisited afterward. The panel now exposes an
@@ -447,8 +454,12 @@ form" instead of implying the change is already live.
 
 Still entirely unbuilt: the `VisitorCategory.form_schema` column drop
 (`tasks.md` §5.2, deliberately deferred for a burn-in period), and inline
-rendering of `file_upload`/`dynamic_table`/`signature_pad`/`rich_text_block`
-fields on any step (`DynamicField` shows a "not supported inline yet"
-placeholder for these today) — `custom_field_values` storage now exists for
-every step (`add-generic-custom-field-support`), but only for the field
-types `DynamicField` can actually render/collect a value for.
+rendering of `file_upload` fields on any step (`DynamicField` shows a "not
+supported inline yet" placeholder for these today) — `custom_field_values`
+storage now exists for every step (`add-generic-custom-field-support`),
+but only for the field types `DynamicField` can actually render/collect a
+value for. `dynamic_table`, `rich_text_block`, and `signature_pad` were
+removed from the field-type catalog entirely
+(`update-form-field-type-catalog`) rather than left as an unbuilt-inline
+case, since none had a capture UI, submission validation, or rendering
+behavior to begin with.

@@ -129,7 +129,7 @@ def _find_field_by_key(
     return None
 
 
-_OPTION_BEARING_FIELD_TYPES = frozenset({"dropdown_select", "checkbox_list"})
+_OPTION_BEARING_FIELD_TYPES = frozenset({"dropdown_select", "checkbox_list", "radio_button"})
 
 
 def allowed_options_for_system_field(
@@ -146,7 +146,7 @@ def allowed_options_for_system_field(
       `[]` — nothing is a valid value (matches the pre-existing behavior
       for a deactivated/absent `id_proof_type`/`vehicle_type`).
     - The field is active but its *currently configured* type isn't
-      option-bearing (`dropdown_select`/`checkbox_list`) — e.g. an admin
+      option-bearing (`dropdown_select`/`checkbox_list`/`radio_button`) — e.g. an admin
       retyped "Purpose of Visit" back to plain `text`: `None` — no options
       constraint applies; the caller should fall back to ordinary
       free-text validation instead of rejecting every value.
@@ -387,7 +387,9 @@ def _validate_value_against_field(field: dict[str, Any], value: Any) -> None:
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Invalid option(s) for custom field '{field['key']}'",
             )
-    elif (field_type == "dropdown_select" and options and value not in options) or (
+    elif (
+        field_type in ("dropdown_select", "radio_button") and options and value not in options
+    ) or (
         field_type == "toggle_switch"
         and options
         and not isinstance(value, bool)
