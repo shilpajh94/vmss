@@ -2082,6 +2082,53 @@ async def test_create_invitation_retyped_system_field_non_matching_option_reject
     assert response.status_code == 422
 
 
+async def test_create_invitation_retyped_radio_button_field_matching_option_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """update-form-field-type-catalog: `radio_button` is validated at
+    submission the same way `dropdown_select` is — a value matching one
+    of the field's configured options is accepted."""
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        field_key="purpose_of_visit",
+        field_type="radio_button",
+        options=["Meeting", "Delivery", "Interview"],
+    )
+
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "Meeting"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_retyped_radio_button_field_non_matching_option_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """update-form-field-type-catalog: the same retyped `radio_button`
+    field rejects a submission that doesn't match any of its currently
+    configured options, mirroring `dropdown_select`'s unknown-option
+    rejection."""
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        field_key="purpose_of_visit",
+        field_type="radio_button",
+        options=["Meeting", "Delivery", "Interview"],
+    )
+
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "Sightseeing"
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
 async def test_create_invitation_system_field_still_default_type_accepts_free_text(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
@@ -9242,6 +9289,7 @@ async def _create_and_publish_custom_field(
     is_required: bool = False,
     options: list[str] | None = None,
     help_text: str | None = None,
+    hide_label: bool = False,
 ) -> dict:
     """Admin-side setup: creates a new admin-authored field on `step_key`
     and publishes the branch's scope so `create_invitation` reads it.
@@ -9258,6 +9306,8 @@ async def _create_and_publish_custom_field(
         body["options"] = options
     if help_text is not None:
         body["helpText"] = help_text
+    if hide_label:
+        body["hideLabel"] = True
     create_response = await client.post(
         f"/api/v1/form-builder/steps/{step['id']}/fields", json=body, headers=headers
     )
@@ -9470,6 +9520,29 @@ async def test_create_invitation_custom_field_missing_required_rejected(
     token = await _login(client, user.email)
     await _create_and_publish_custom_field(
         client, token, branch, step_key="visit_details", key="cost_center", is_required=True
+    )
+
+    payload = _individual_payload()
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_hidden_label_custom_field_missing_required_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """update-form-field-hide-label-option: `hideLabel` is a display-only
+    property — a required field with its label hidden still rejects a
+    missing submitted value the same way an always-visible required field
+    does."""
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        key="cost_center",
+        is_required=True,
+        hide_label=True,
     )
 
     payload = _individual_payload()

@@ -362,6 +362,74 @@ async def test_create_field_success(
     assert response.json()["data"]["key"] == "company_badge"
 
 
+async def test_create_radio_button_field_without_options_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "shirt_size", "label": "Shirt Size", "fieldType": "radio_button"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
+async def test_create_radio_button_field_with_options_succeeds(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "shirt_size",
+            "label": "Shirt Size",
+            "fieldType": "radio_button",
+            "options": ["S", "M", "L"],
+        },
+        headers=_auth(token),
+    )
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["fieldType"] == "radio_button"
+    assert data["options"] == ["S", "M", "L"]
+
+
+async def test_create_checkbox_single_field_without_options_succeeds(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "terms_agreed",
+            "label": "I agree to the terms",
+            "fieldType": "checkbox_single",
+        },
+        headers=_auth(token),
+    )
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["fieldType"] == "checkbox_single"
+    assert data["options"] is None
+
+
+@pytest.mark.parametrize("removed_type", ["dynamic_table", "rich_text_block", "signature_pad"])
+async def test_create_field_with_removed_type_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str], removed_type: str
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "legacy_field", "label": "Legacy Field", "fieldType": removed_type},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
 async def test_list_fields_for_steps_groups_and_orders_fields_per_step(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -864,6 +932,26 @@ async def test_field_type_change_to_option_required_type_with_options_succeeds(
     assert data["options"] == ["yes", "no"]
 
 
+async def test_field_type_change_to_radio_button_without_options_rejected(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "notes", "label": "Notes", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    field_id = create_response.json()["data"]["id"]
+
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"fieldType": "radio_button"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 422
+
+
 async def test_field_type_change_away_from_option_bearing_type_clears_options(
     client: AsyncClient, user: User, issue_token: Callable[[User], str]
 ) -> None:
@@ -1247,6 +1335,104 @@ async def test_publish_then_effective_form_includes_new_field(
     assert company_badge is not None
     assert company_badge["label"] == "Company Badge"
     assert company_badge["options"] == ["yes"]
+
+
+async def test_create_field_with_hide_label_true(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "company_badge",
+            "label": "Company Badge",
+            "fieldType": "text",
+            "hideLabel": True,
+        },
+        headers=_auth(token),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["hideLabel"] is True
+
+
+async def test_create_field_defaults_hide_label_false(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "company_badge", "label": "Company Badge", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["hideLabel"] is False
+
+
+async def test_update_field_toggles_hide_label(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "company_badge", "label": "Company Badge", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    field_id = create_response.json()["data"]["id"]
+
+    update_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"hideLabel": True},
+        headers=_auth(token),
+    )
+    assert update_response.status_code == 200, update_response.text
+    assert update_response.json()["data"]["hideLabel"] is True
+
+    fields_response = await client.get(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", headers=_auth(token)
+    )
+    saved = next(f for f in fields_response.json()["data"] if f["id"] == field_id)
+    assert saved["hideLabel"] is True
+
+    revert_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"hideLabel": False},
+        headers=_auth(token),
+    )
+    assert revert_response.status_code == 200, revert_response.text
+    assert revert_response.json()["data"]["hideLabel"] is False
+
+
+async def test_publish_then_effective_form_reflects_hide_label(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "company_badge",
+            "label": "Company Badge",
+            "fieldType": "text",
+            "hideLabel": True,
+        },
+        headers=_auth(token),
+    )
+    assert create_response.status_code == 201
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert publish_response.status_code == 200
+
+    effective_response = await client.get("/api/v1/form-builder/effective")
+    effective_carried_items = next(
+        s for s in effective_response.json()["data"] if s["key"] == "carried_items"
+    )
+    company_badge = next(
+        f for f in effective_carried_items["fields"] if f["key"] == "company_badge"
+    )
+    assert company_badge["hideLabel"] is True
 
 
 async def test_publish_then_effective_form_reflects_edited_field(

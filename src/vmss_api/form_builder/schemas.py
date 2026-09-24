@@ -18,11 +18,10 @@ class FormFieldType(StrEnum):
     time_picker = "time_picker"
     toggle_switch = "toggle_switch"
     checkbox_list = "checkbox_list"
+    checkbox_single = "checkbox_single"
+    radio_button = "radio_button"
     file_upload = "file_upload"
     textarea = "textarea"
-    dynamic_table = "dynamic_table"
-    rich_text_block = "rich_text_block"
-    signature_pad = "signature_pad"
     static_text = "static_text"
 
 
@@ -30,8 +29,11 @@ class FormFieldType(StrEnum):
 # specs/form-builder/spec.md "Field Types Are Constrained To a Supported
 # Set". `toggle_switch` MAY also carry options (e.g. Registration Type:
 # individual/group) but doesn't require them — some toggles are a plain
-# on/off with no named option list.
-OPTION_REQUIRED_TYPES = frozenset({FormFieldType.dropdown_select, FormFieldType.checkbox_list})
+# on/off with no named option list. `checkbox_single` is likewise
+# option-free — it's a lone boolean, not a set of choices.
+OPTION_REQUIRED_TYPES = frozenset(
+    {FormFieldType.dropdown_select, FormFieldType.checkbox_list, FormFieldType.radio_button}
+)
 
 
 class FieldWidth(StrEnum):
@@ -89,6 +91,7 @@ class FormFieldCreate(CamelModel):
     validation_rules: ValidationRules | None = None
     visibility_condition: VisibilityCondition | None = None
     width: FieldWidth = FieldWidth.full
+    hide_label: bool = False
 
     @model_validator(mode="after")
     def _check_options(self) -> Self:
@@ -118,6 +121,7 @@ class FormFieldUpdate(CamelModel):
     validation_rules: ValidationRules | None = None
     visibility_condition: VisibilityCondition | None = None
     width: FieldWidth | None = None
+    hide_label: bool | None = None
 
 
 class FormFieldOut(CamelModel):
@@ -137,6 +141,7 @@ class FormFieldOut(CamelModel):
     validation_rules: ValidationRules | None
     visibility_condition: VisibilityCondition | None
     width: FieldWidth
+    hide_label: bool
     order_index: int
 
 

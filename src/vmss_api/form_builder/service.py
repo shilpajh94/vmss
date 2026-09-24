@@ -111,6 +111,7 @@ async def _materialize_defaults_if_empty(
                     validation_rules=None,
                     visibility_condition=None,
                     width="full",
+                    hide_label=False,
                     order_index=field_order,
                 )
             )
@@ -200,6 +201,7 @@ async def _ensure_scope_seeded(tenant_db: AsyncSession, branch_id: uuid.UUID | N
                     validation_rules=source_field.validation_rules,
                     visibility_condition=None,  # re-validated per new step below if re-set later
                     width=source_field.width,
+                    hide_label=source_field.hide_label,
                     order_index=source_field.order_index,
                 )
             )
@@ -509,6 +511,7 @@ async def create_field(
         ),
         visibility_condition=condition,
         width=payload.width.value,
+        hide_label=payload.hide_label,
         order_index=max_order + 1,
     )
     tenant_db.add(field_row)
@@ -951,6 +954,7 @@ def _step_to_snapshot(
                 "validationRules": f.validation_rules,
                 "visibilityCondition": f.visibility_condition,
                 "width": f.width,
+                "hideLabel": f.hide_label,
                 "orderIndex": f.order_index,
             }
             for f in sorted_fields
