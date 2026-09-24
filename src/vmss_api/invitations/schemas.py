@@ -122,7 +122,14 @@ class VisitDetailsSubmit(CamelModel):
     host_name_or_email: str | None = Field(default=None, max_length=255)
     preferred_visit_date: date
     preferred_visit_time: time
-    expected_duration: str = Field(max_length=50)
+    # Unconditionally optional (make-expected-duration-optional) — unlike
+    # `purpose_of_visit`/the date/time fields above, which stay hardcoded
+    # required. Neither visitor-facing wizard collects this field any more,
+    # so there's no dynamic branch-config required-check for it either
+    # (see `create_invitation`'s note next to `id_proof_required`/
+    # `photo_required`) — hardcoding it required here would reject every
+    # submission unconditionally, since no client could ever supply it.
+    expected_duration: str | None = Field(default=None, max_length=50)
     # Optional (allow-optional-department-at-creation) — a visitor or the
     # staff member creating an invitation on their behalf often doesn't know
     # the receiving organisation's internal department structure. Left
