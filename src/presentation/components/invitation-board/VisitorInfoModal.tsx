@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
+import type { InvitationDetail, InvitationVehicle } from '../../../domain/entities/invitation-detail-schema'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { Modal } from '../ui/Modal'
 import { CalendarClockIcon, ShieldIcon, TagIcon } from '../icons'
@@ -156,6 +156,8 @@ export function VisitorInfoModal({
           <div className="flex flex-col gap-3">
             <SectionLabel>Visit details</SectionLabel>
             <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
+              <Field label="Email" value={detail.primaryContactEmail ?? '—'} />
+              <Field label="Phone" value={detail.primaryContactPhone ?? '—'} />
               <Field label="Purpose" value={detail.purposeOfVisit} />
               <Field label="Host" value={detail.hostNameOrEmail ?? '—'} />
               <Field label="Point of Contact" value={pointOfContact ?? '—'} />
@@ -184,6 +186,11 @@ export function VisitorInfoModal({
                 <Field label="Scheduled" value={`${detail.preferredVisitDate} ${detail.preferredVisitTime}`} />
               ) : null}
               {detail.carriedItems.length > 0 ? <Field label="Carried items" value={detail.carriedItems.join(', ')} /> : null}
+              {detail.carriedItemsDescription ? (
+                <div className="col-span-2">
+                  <Field label="Carried items description" value={detail.carriedItemsDescription} />
+                </div>
+              ) : null}
               <IdProofField label="ID proof" type={detail.primaryContactIdProofType} url={detail.primaryContactIdProofUrl} />
               {detail.additionalNotes ? (
                 <div className="col-span-2">
@@ -226,6 +233,22 @@ export function VisitorInfoModal({
                         View ID
                       </a>
                     ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {detail.vehicles.length > 0 ? (
+            <div className="flex flex-col gap-3">
+              <SectionLabel>{`Vehicles (${detail.vehicles.length})`}</SectionLabel>
+              <div className="flex flex-col gap-2">
+                {detail.vehicles.map((vehicle: InvitationVehicle, index) => (
+                  <div key={vehicle.id ?? index} className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl border border-border-subtle p-3">
+                    <Field label="Type" value={vehicle.vehicleType ?? '—'} />
+                    <Field label="License plate" value={vehicle.licensePlate ?? '—'} />
+                    <Field label="Make/Model" value={vehicle.makeModel ?? '—'} />
+                    <Field label="Color" value={vehicle.color ?? '—'} />
                   </div>
                 ))}
               </div>

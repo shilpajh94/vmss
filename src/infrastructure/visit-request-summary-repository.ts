@@ -74,7 +74,11 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
     const response = await this.apiClient.makeRequest<InvitationActionResult>({
       endpointConfig: API_ENDPOINTS.EDIT_INVITATION,
       pathParams: { id },
-      body: fields,
+      // `pocUserId` is a UUID column server-side; the form seeds it to `''`
+      // when the invitation has no POC yet, and an empty string fails the
+      // backend's UUID parser ("expected length 32... found 0") instead of
+      // being treated as "unchanged". Omit it entirely unless one was picked.
+      body: { ...fields, pocUserId: fields.pocUserId || undefined },
       parserSchema: InvitationActionResultSchema,
     })
 

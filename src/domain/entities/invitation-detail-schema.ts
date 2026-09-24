@@ -26,6 +26,19 @@ export const InvitationVisitorSchema = z.object({
 
 export type InvitationVisitor = z.infer<typeof InvitationVisitorSchema>
 
+// Wire shape of each `data.vehicles[]` entry on GET /invitations/:id —
+// fields kept `.nullish()` since the exact response shape for this array
+// (submitted via `VehicleSchema` at POST time) hasn't been confirmed yet.
+export const InvitationVehicleSchema = z.object({
+  id: z.string().nullish(),
+  vehicleType: z.string().nullish(),
+  licensePlate: z.string().nullish(),
+  makeModel: z.string().nullish(),
+  color: z.string().nullish(),
+})
+
+export type InvitationVehicle = z.infer<typeof InvitationVehicleSchema>
+
 export const InvitationDetailSchema = z.object({
   id: z.string().min(1),
   branchId: z.string().nullable(),
@@ -36,6 +49,8 @@ export const InvitationDetailSchema = z.object({
   registrationType: z.enum(["individual", "group"]),
   visitorCategoryId: z.string().nullable(),
   primaryContactFullName: z.string().min(1),
+  primaryContactEmail: z.string().nullish(),
+  primaryContactPhone: z.string().nullish(),
   primaryContactPhotoUrl: z.string().nullish(),
   primaryContactIdProofType: z.string().nullish(),
   primaryContactIdProofUrl: z.string().nullish(),
@@ -74,7 +89,7 @@ export const InvitationDetailSchema = z.object({
   watchlistOverrideReason: z.string().nullable(),
   watchlistOverrideByUserId: z.string().nullable(),
   visitors: z.array(InvitationVisitorSchema),
-  vehicles: z.array(z.unknown()),
+  vehicles: z.array(InvitationVehicleSchema),
 })
 
 export type InvitationDetail = z.infer<typeof InvitationDetailSchema>
