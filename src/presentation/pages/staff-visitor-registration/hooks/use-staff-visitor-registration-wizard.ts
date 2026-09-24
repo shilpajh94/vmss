@@ -142,6 +142,11 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     () => findField(effectiveFormSteps, 'visit_details', 'purpose_of_visit')?.options ?? [],
     [effectiveFormSteps],
   )
+  // See use-visitor-request-wizard.ts's matching comment.
+  const expectedDurationOptions = useMemo(
+    () => findField(effectiveFormSteps, 'visit_details', 'expected_duration')?.options ?? [],
+    [effectiveFormSteps],
+  )
   const vehicleInfoFields = useMemo(() => {
     const makeModel = findField(effectiveFormSteps, 'vehicle_info', 'make_model')
     const color = findField(effectiveFormSteps, 'vehicle_info', 'color')
@@ -400,6 +405,7 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     visitorInfoFields,
     additionalNotesActive,
     purposeOfVisitOptions,
+    expectedDurationOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
     visitorInfoGroups,

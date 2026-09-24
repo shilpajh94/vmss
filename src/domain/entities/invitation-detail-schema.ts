@@ -54,6 +54,13 @@ export const InvitationDetailSchema = z.object({
   primaryContactPhotoUrl: z.string().nullish(),
   primaryContactIdProofType: z.string().nullish(),
   primaryContactIdProofUrl: z.string().nullish(),
+  // Admin-configured (form-builder) field answers — flat maps keyed by
+  // `FormField.key`/`EffectiveFormFieldGroup.key`, rendered generically in
+  // VisitorInfoModal via `findFieldByKey`/`findGroupByKey` rather than typed
+  // field-by-field, since the field set varies per branch/publish.
+  primaryContactCustomFieldValues: z.record(z.string(), z.unknown()).default({}),
+  customFieldValues: z.record(z.string(), z.unknown()).default({}),
+  groupFieldValues: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))).default({}),
   purposeOfVisit: z.string().min(1),
   hostNameOrEmail: z.string().nullable(),
   hostId: z.string().nullable(),

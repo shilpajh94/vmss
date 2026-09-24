@@ -2,7 +2,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GridIcon, PencilIcon, TrashIcon, XIcon } from '../../../components/icons'
 import { ExpandableText } from '../../../components/ui/ExpandableText'
-import { CONTENT_ONLY_FIELD_TYPES, fieldTypeLabel } from '../field-type-catalog'
+import { CONTENT_ONLY_FIELD_TYPES, DELETE_LOCKED_SYSTEM_FIELD_KEYS, fieldTypeLabel } from '../field-type-catalog'
 import type { FormField, FormFieldGroup } from '../../../../domain/entities/form-builder-schema'
 
 const UNGROUPED_VALUE = '__ungrouped__'
@@ -90,7 +90,7 @@ export function SortableFieldRow({ field, isSelected, onSelect, onToggleRequired
       <button type="button" onClick={onSelect} aria-label="Edit field" className="text-text-faint hover:text-text">
         <PencilIcon className="size-4" />
       </button>
-      {!field.isLocked && (
+      {!field.isLocked && !DELETE_LOCKED_SYSTEM_FIELD_KEYS.has(field.key) && (
         <button type="button" onClick={onDelete} aria-label="Delete field" className="text-danger">
           <TrashIcon className="size-4" />
         </button>

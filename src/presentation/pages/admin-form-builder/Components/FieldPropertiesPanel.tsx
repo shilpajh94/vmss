@@ -94,6 +94,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
   const [placeholder, setPlaceholder] = useState(field.placeholder ?? '')
   const [description, setDescription] = useState(field.helpText ?? '')
   const [isRequired, setIsRequired] = useState(field.isRequired)
+  const [hideLabel, setHideLabel] = useState(field.hideLabel)
   const [isActive, setIsActive] = useState(field.isActive)
   const [minLength, setMinLength] = useState(field.validationRules?.minLength?.toString() ?? '')
   const [maxLength, setMaxLength] = useState(field.validationRules?.maxLength?.toString() ?? '')
@@ -121,6 +122,14 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
   // lock/unlock state — its type isn't offered as editable at all.
   const isTypeLockedField = TYPE_LOCKED_SYSTEM_FIELD_KEYS.has(field.key)
   const fieldTypeDisabled = isTypeLockedField || editableFieldsDisabled
+  // If this field is already on a type the catalog no longer offers (e.g.
+  // one left over from before a type was retired), the picker still needs
+  // to show it selected — appending it keeps the <select>'s `value` from
+  // pointing at a nonexistent option, without offering it as a new choice
+  // anywhere else (it's simply not in FIELD_TYPE_CATALOG).
+  const fieldTypeOptions = FIELD_TYPE_CATALOG.some((entry) => entry.type === fieldType)
+    ? FIELD_TYPE_CATALOG.map((entry) => ({ value: entry.type, label: entry.label }))
+    : [...FIELD_TYPE_CATALOG.map((entry) => ({ value: entry.type, label: entry.label })), { value: fieldType, label: fieldTypeLabel(fieldType) }]
 
   // Deliberately keyed on `field.id`, not `field` itself: the parent page's
   // 15s background poll (`usePolling` in `use-admin-form-builder-step-editor.ts`)
@@ -136,6 +145,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
     setPlaceholder(field.placeholder ?? '')
     setDescription(field.helpText ?? '')
     setIsRequired(field.isRequired)
+    setHideLabel(field.hideLabel)
     setIsActive(field.isActive)
     setMinLength(field.validationRules?.minLength?.toString() ?? '')
     setMaxLength(field.validationRules?.maxLength?.toString() ?? '')
@@ -155,6 +165,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
     setPlaceholder(field.placeholder ?? '')
     setDescription(field.helpText ?? '')
     setIsRequired(field.isRequired)
+    setHideLabel(field.hideLabel)
     setIsActive(field.isActive)
     setMinLength(field.validationRules?.minLength?.toString() ?? '')
     setMaxLength(field.validationRules?.maxLength?.toString() ?? '')
@@ -208,6 +219,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
       placeholder: isContentOnly ? undefined : placeholder.trim() || undefined,
       helpText: description.trim(),
       isRequired: isContentOnly ? false : isRequired,
+      hideLabel: isContentOnly ? false : hideLabel,
       isActive,
       width,
       options: showOptionsEditor
@@ -285,11 +297,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
           value={fieldType}
           onChange={(value) => setFieldType(value as FormFieldType)}
           disabled={fieldTypeDisabled}
-          options={
-            fieldTypeDisabled
-              ? [{ value: fieldType, label: fieldTypeLabel(fieldType) }]
-              : FIELD_TYPE_CATALOG.map((entry) => ({ value: entry.type, label: entry.label }))
-          }
+          options={fieldTypeDisabled ? [{ value: fieldType, label: fieldTypeLabel(fieldType) }] : fieldTypeOptions}
         />
         {isTypeLockedField && (
           <p className="mt-1.5 font-body text-xs text-text-muted">{typeLockedFieldReason(field.key)}</p>
@@ -336,6 +344,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
         <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
           <p className="font-body text-sm font-semibold text-text">Validation Rules</p>
           <ToggleSwitch checked={isRequired} onChange={setIsRequired} label="Required Field" />
+          <ToggleSwitch checked={hideLabel} onChange={setHideLabel} label="Hide Label" />
           {field.isLocked && (
             <p className="font-body text-xs text-text-muted">
               This field's required/active state is locked and cannot be changed, even when unlocked for editing.
