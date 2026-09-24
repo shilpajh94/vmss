@@ -9181,6 +9181,58 @@ async def test_create_invitation_captures_primary_contact_custom_field(
     }
 
 
+async def test_create_invitation_captures_primary_contact_custom_field_on_system_group(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """An admin-authored custom field can be attached to the seeded
+    (system) "visitors" group on Visitor Info — that group is never
+    surfaced by `custom_groups_for_invitation_scope`/`custom_groups_for_step`
+    (its cardinality is the `visitors` payload list's own length, not a
+    `groupValues` entry), so such a field's answer must still be accepted
+    through the ordinary per-visitor `customFieldValues` map, the same as
+    an ungrouped field. Regression test: `custom_fields_for_step` used to
+    exclude any field with a `groupId`, including one on this system group,
+    which meant the field's answer was rejected as unknown no matter which
+    payload map it was submitted through.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == "visitor_info")
+    [visitors_group] = step["groups"]
+    assert visitors_group["key"] == "visitors"
+    assert visitors_group["isSystem"] is True
+
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "purpose_note",
+            "label": "Purpose Note",
+            "fieldType": "text",
+            "groupId": visitors_group["id"],
+        },
+        headers=headers,
+    )
+    assert create_response.status_code == 201, create_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+
+    payload = _individual_payload()
+    payload["primaryContact"]["customFieldValues"] = {"purpose_note": "some value"}
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers=headers,
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    assert detail_response.json()["data"]["primaryContactCustomFieldValues"] == {
+        "purpose_note": "some value"
+    }
+
+
 async def test_create_invitation_captures_co_visitor_custom_fields_independently(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:

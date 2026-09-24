@@ -235,22 +235,35 @@ def allowed_vehicle_types(effective_form: list[dict[str, Any]]) -> set[str] | No
 def custom_fields_for_step(
     effective_form: list[dict[str, Any]], step_key: str
 ) -> list[dict[str, Any]]:
-    """Every admin-authored (non-system), ungrouped field on one active
-    step. Excludes a field assigned to a field group
-    (`field["groupId"] is not None`), the same as
-    `custom_fields_for_invitation_scope` below — that field's answer is
-    captured per-instance through `groupValues` instead
-    (add-repeatable-field-groups), via `custom_groups_for_invitation_scope`,
-    which (unlike this function) does *not* exclude Visitor Info/Vehicle
-    Info: a repeatable group on either step (e.g. an "Additional Visitors"
-    group replacing the fixed `visitors` list's cardinality limit) needs
-    the same array-of-instances submission shape every other group uses.
+    """Every admin-authored (non-system) field on one active step whose
+    answer belongs in that step's per-instance `customFieldValues` map —
+    i.e. every such field except one assigned to an admin-defined
+    (non-system) field group, whose answer is instead captured per-instance
+    through `groupValues` (add-repeatable-field-groups), via
+    `custom_groups_for_invitation_scope`.
+
+    A field assigned to a *system* group (the seeded "vehicles"/"visitors"
+    group on Vehicle Info/Visitor Info) is deliberately **included** here,
+    not excluded: `custom_groups_for_invitation_scope`/`custom_groups_for_step`
+    never surface a system group (their cardinality is the `vehicles`/
+    `visitors` payload lists' own length, not a `groupValues` entry), so an
+    admin-authored field an admin attaches to one of those system groups has
+    no `groupValues` home to be captured through — its only route is this
+    step's ordinary per-visitor/per-vehicle `customFieldValues` map, the same
+    as an ungrouped field. Excluding it here as well as from every
+    `groupValues` mechanism would silently orphan it: creatable in Form
+    Builder, but never validated or collected anywhere.
     """
     step = _find_step(effective_form, step_key)
     if step is None:
         return []
+    non_system_group_ids = {
+        group["id"] for group in step.get("groups", []) if not group["isSystem"]
+    }
     return [
-        field for field in step["fields"] if not field["isSystem"] and field.get("groupId") is None
+        field
+        for field in step["fields"]
+        if not field["isSystem"] and field.get("groupId") not in non_system_group_ids
     ]
 
 
