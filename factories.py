@@ -230,6 +230,13 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     # hint, and produces a random scalar-valued dict that fails
     # `InvitationDetailOut`/etc.'s stricter Pydantic type.
     group_field_values: dict[str, list[dict[str, Any]]] = {}
+    # restructure-walkin-payload-by-field-id: these are now read back keyed
+    # by field id (`router.py::_dict_to_custom_fields`/`_dict_to_consents`
+    # parse every key as a UUID) — a polyfactory-generated random string key
+    # would fail that parse for every test that doesn't actually exercise
+    # custom-field content, same rationale as `group_field_values` above.
+    custom_field_values: dict[str, Any] = {}
+    primary_contact_custom_field_values: dict[str, Any] = {}
     visitors: list[InvitationVisitor] = []
     vehicles: list[InvitationVehicle] = []
     # Same FK-safety rationale as `BranchFactory.contact_person_user_id`:
@@ -305,11 +312,17 @@ class InvitationVisitorFactory(SQLAlchemyFactory[InvitationVisitor]):
     # checkin-approval-workflow-improvements: nullable, optional — see
     # InvitationFactory.primary_contact_photo_storage_key above.
     photo_storage_key = None
+    # restructure-walkin-payload-by-field-id: see
+    # InvitationFactory.custom_field_values above.
+    custom_field_values: dict[str, Any] = {}
 
 
 class InvitationVehicleFactory(SQLAlchemyFactory[InvitationVehicle]):
     __model__ = InvitationVehicle
     deleted_at = None
+    # restructure-walkin-payload-by-field-id: see
+    # InvitationFactory.custom_field_values above.
+    custom_field_values: dict[str, Any] = {}
 
 
 class RegistrationDeviceKeyFactory(SQLAlchemyFactory[RegistrationDeviceKey]):

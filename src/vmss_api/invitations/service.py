@@ -173,17 +173,18 @@ def _validate_photo(content: bytes, max_size: int) -> str:
     return validate_image_only(content, max_size_bytes=max_size, field_label="photo")
 
 
-def _group_field_file_key(group: dict[str, Any]) -> str | None:
-    """The key of `group`'s own `file_upload`-typed field, or `None` if it
+def _group_field_file_id(group: dict[str, Any]) -> str | None:
+    """The id of `group`'s own `file_upload`-typed field, or `None` if it
     has none (add-group-field-file-upload). Mirrors the "first field of a
     given `fieldType`" convention `invitations/router.py::
     _group_collected_visitor_detail_outs` already uses for `email`/`phone`
     — only the first such field is supported; a group defining more than
     one `file_upload` field is unusual enough that "first" is an acceptable
-    simplification, same as that function's own.
+    simplification, same as that function's own. Referenced by id
+    (restructure-walkin-payload-by-field-id), never by key.
     """
     return next(
-        (field["key"] for field in group.get("fields", []) if field["fieldType"] == "file_upload"),
+        (field["id"] for field in group.get("fields", []) if field["fieldType"] == "file_upload"),
         None,
     )
 
@@ -386,14 +387,15 @@ async def create_invitation(
     (API-11) — never sent inline (`background-jobs.md` §5).
 
     `group_field_file_contents` (add-group-field-file-upload) is keyed by
-    admin-defined group key, each value an order-matched list of raw file
-    bytes for that group's own `file_upload`-typed field, one per submitted
-    instance in `payload.group_values[group_key]` — the router's counterpart
-    to `visitor_id_proof_contents` for the fixed `visitors` list, since a
-    custom group's field keys are branch-specific and unknown at route
+    admin-defined group id (restructure-walkin-payload-by-field-id), each
+    value an order-matched list of raw file bytes for that group's own
+    `file_upload`-typed field, one per submitted instance in
+    `payload.group_values[group_id]` — the router's counterpart to
+    `visitor_id_proof_contents` for the fixed `visitors` list, since a
+    custom group's fields are branch-specific and unknown at route
     -declaration time. Only a group with exactly one `file_upload` field is
     supported; that field's *client-supplied JSON value*, if any, is
-    rejected (`_group_field_file_key` below) — the file is the only valid
+    rejected (`_group_field_file_id` below) — the file is the only valid
     source of that field's answer.
 
     `primary_contact_custom_field_file_contents`/`visitor_custom_field_file_contents`/
@@ -401,11 +403,11 @@ async def create_invitation(
     (add-inline-custom-field-file-upload) are the standalone (non-grouped)
     counterpart to `group_field_file_contents` above — an admin-authored
     `file_upload` field directly on Visitor Info/Vehicle Info/any other step,
-    not one assigned to a repeatable group. Each is keyed by field key (not
-    group key, so — unlike a group — every `file_upload` field at a scope is
+    not one assigned to a repeatable group. Each is keyed by field id (not
+    group id, so — unlike a group — every `file_upload` field at a scope is
     supported, not just the first), the primary-contact/invitation-level
-    dicts holding an at-most-one-element list per key, the visitor/vehicle
-    ones an order-matched list per key, one entry per submitted
+    dicts holding an at-most-one-element list per id, the visitor/vehicle
+    ones an order-matched list per id, one entry per submitted
     `payload.visitors`/`payload.vehicles` row. Same "file is the only valid
     source of that field's answer" rule as the group case.
 
@@ -440,8 +442,8 @@ async def create_invitation(
     # all (make-expected-duration-optional), so there's no client left that
     # could ever satisfy a branch-configured requirement for it; enforcing
     # one here would just permanently reject every submission instead.
-    required_consent_keys = form_builder_validation.required_consent_keys(effective_form)
-    allowed_consent_keys = form_builder_validation.allowed_consent_keys(effective_form)
+    required_consent_field_ids = form_builder_validation.required_consent_field_ids(effective_form)
+    allowed_consent_field_ids = form_builder_validation.allowed_consent_field_ids(effective_form)
     allowed_carried_item_keys = form_builder_validation.allowed_carried_item_keys(effective_form)
     allowed_id_proof_types = form_builder_validation.allowed_id_proof_types(effective_form)
     allowed_vehicle_types = form_builder_validation.allowed_vehicle_types(effective_form)
@@ -617,34 +619,38 @@ async def create_invitation(
         raise
 
     # specs/invitations/spec.md (delta) "Consent Is Mandatory and Recorded"
-    # — the payload must not introduce a consent key outside the calling
-    # branch's currently configured Consent Agreement set, mirroring the
-    # carried-items allow-list check above.
-    invalid_consent_keys = set(payload.consents) - allowed_consent_keys
-    if invalid_consent_keys:
+    # (restructure-walkin-payload-by-field-id) — the payload must not
+    # introduce a `fieldId` outside the calling branch's currently
+    # configured Consent Agreement set, mirroring the carried-items
+    # allow-list check above. A `fieldId` belonging to a different branch's
+    # form is rejected here identically — `allowed_consent_field_ids` only
+    # ever reflects the resolved branch's own effective form.
+    consents_dict = payload.consents_dict
+    invalid_consent_field_ids = set(consents_dict) - allowed_consent_field_ids
+    if invalid_consent_field_ids:
         logger.warning(
             "registration_form_config_validation_failed",
             branch_id=str(branch_id),
-            check="consent_key",
-            reason="unknown_consent_key",
-            keys=sorted(invalid_consent_keys),
+            check="consent_field_id",
+            reason="unknown_consent_field_id",
+            field_ids=sorted(invalid_consent_field_ids),
         )
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Unknown consent key(s): {', '.join(sorted(invalid_consent_keys))}",
+            detail=f"Unknown consent field id(s): {', '.join(sorted(invalid_consent_field_ids))}",
         )
 
     # ... and every consent the calling branch's Consent Agreement step
     # marks required must be accepted.
-    accepted_consent_keys = {key for key, accepted in payload.consents.items() if accepted}
-    missing_consents = required_consent_keys - accepted_consent_keys
+    accepted_consent_field_ids = {fid for fid, accepted in consents_dict.items() if accepted}
+    missing_consents = required_consent_field_ids - accepted_consent_field_ids
     if missing_consents:
         logger.warning(
             "registration_form_config_validation_failed",
             branch_id=str(branch_id),
-            check="consent_key",
+            check="consent_field_id",
             reason="missing_required_consent",
-            keys=sorted(missing_consents),
+            field_ids=sorted(missing_consents),
         )
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -711,6 +717,28 @@ async def create_invitation(
         effective_form
     )
 
+    # The primary contact's Visitor Info-step answers are sourced from the
+    # invitation-level `customFields` array rather than a nested
+    # `primaryContact.customFields` — there is exactly one primary contact
+    # per invitation, so partitioning the flat, field-id-keyed map by which
+    # step a field belongs to unambiguously recovers "the primary contact's
+    # answers" without a separate nested array. Each `visitors[i]` entry
+    # still answers Visitor Info fields through its own nested `customFields`
+    # array (`VisitorSubmit.custom_field_values`), since a group registration
+    # has more than one such answer set and a flat map can't distinguish
+    # whose answer is whose.
+    visitor_info_field_ids = {field["id"] for field in visitor_info_custom_fields}
+    primary_contact_custom_field_values = {
+        field_id: value
+        for field_id, value in payload.custom_field_values.items()
+        if field_id in visitor_info_field_ids
+    }
+    invitation_level_custom_field_values = {
+        field_id: value
+        for field_id, value in payload.custom_field_values.items()
+        if field_id not in visitor_info_field_ids
+    }
+
     def _validate_custom_fields(
         fields: list[dict[str, Any]],
         values: dict[str, Any],
@@ -734,80 +762,82 @@ async def create_invitation(
     # An admin-authored `file_upload` field on an ordinary (non-grouped)
     # step (add-inline-custom-field-file-upload) — a co-visitor "additional
     # document" field, say — can only be answered from a multipart file,
-    # never a JSON value in `customFieldValues`, same rule
-    # `_group_field_file_key`/the group-instance loop below already applies
+    # never a JSON value in `customFields`, same rule
+    # `_group_field_file_id`/the group-instance loop below already applies
     # to a group's own `file_upload` field. Unlike a group (where only the
-    # first `file_upload` field is read, since the group key alone can't
+    # first `file_upload` field is read, since the group id alone can't
     # disambiguate which field a file belongs to), each of these fields has
-    # its own multipart part name (`customFieldFiles[<fieldKey>]` etc. — see
+    # its own multipart part name (`customFieldFiles[<fieldId>]` etc. — see
     # `router.py::create_invitation`), so every `file_upload` field at a
-    # given scope is supported, not just the first.
-    visitor_info_file_keys = {
-        field["key"] for field in visitor_info_custom_fields if field["fieldType"] == "file_upload"
+    # given scope is supported, not just the first. Referenced by field id
+    # throughout (restructure-walkin-payload-by-field-id), never by key.
+    visitor_info_file_ids = {
+        field["id"] for field in visitor_info_custom_fields if field["fieldType"] == "file_upload"
     }
-    vehicle_info_file_keys = {
-        field["key"] for field in vehicle_info_custom_fields if field["fieldType"] == "file_upload"
+    vehicle_info_file_ids = {
+        field["id"] for field in vehicle_info_custom_fields if field["fieldType"] == "file_upload"
     }
-    invitation_scope_file_keys = {
-        field["key"]
+    invitation_scope_file_ids = {
+        field["id"]
         for field in invitation_scope_custom_fields
         if field["fieldType"] == "file_upload"
     }
 
     def _reject_json_value_for_file_fields(
-        values: dict[str, Any], file_keys: set[str], *, scope: str
+        values: dict[str, Any], file_ids: set[str], *, scope: str
     ) -> None:
-        for key in file_keys:
-            if values.get(key) is not None:
+        for field_id in file_ids:
+            if values.get(field_id) is not None:
                 logger.warning(
                     "registration_form_config_validation_failed",
                     branch_id=str(branch_id),
                     check="custom_field",
                     reason="file_field_value_supplied_inline",
-                    field=key,
+                    field_id=field_id,
                     scope=scope,
                 )
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=(
-                        f"'{key}' for {scope} must be uploaded as a file, not supplied as a value"
+                        f"'{field_id}' for {scope} must be uploaded as a file, "
+                        "not supplied as a value"
                     ),
                 )
 
     _reject_json_value_for_file_fields(
-        payload.primary_contact.custom_field_values,
-        visitor_info_file_keys,
+        primary_contact_custom_field_values,
+        visitor_info_file_ids,
         scope="the primary contact",
     )
     _validate_custom_fields(
-        [f for f in visitor_info_custom_fields if f["key"] not in visitor_info_file_keys],
-        payload.primary_contact.custom_field_values,
+        [f for f in visitor_info_custom_fields if f["id"] not in visitor_info_file_ids],
+        primary_contact_custom_field_values,
         scope="the primary contact",
     )
     for index, visitor in enumerate(payload.visitors):
         _reject_json_value_for_file_fields(
-            visitor.custom_field_values, visitor_info_file_keys, scope=f"visitor {index + 1}"
+            visitor.custom_field_values, visitor_info_file_ids, scope=f"visitor {index + 1}"
         )
         _validate_custom_fields(
-            [f for f in visitor_info_custom_fields if f["key"] not in visitor_info_file_keys],
+            [f for f in visitor_info_custom_fields if f["id"] not in visitor_info_file_ids],
             visitor.custom_field_values,
             scope=f"visitor {index + 1}",
         )
     for index, vehicle in enumerate(payload.vehicles):
         _reject_json_value_for_file_fields(
-            vehicle.custom_field_values, vehicle_info_file_keys, scope=f"vehicle {index + 1}"
+            vehicle.custom_field_values, vehicle_info_file_ids, scope=f"vehicle {index + 1}"
         )
         _validate_custom_fields(
-            [f for f in vehicle_info_custom_fields if f["key"] not in vehicle_info_file_keys],
+            [f for f in vehicle_info_custom_fields if f["id"] not in vehicle_info_file_ids],
             vehicle.custom_field_values,
             scope=f"vehicle {index + 1}",
         )
     _reject_json_value_for_file_fields(
-        payload.custom_field_values, invitation_scope_file_keys, scope="the invitation"
+        invitation_level_custom_field_values, invitation_scope_file_ids, scope="the invitation"
     )
     _validate_custom_fields(
-        [f for f in invitation_scope_custom_fields if f["key"] not in invitation_scope_file_keys],
-        payload.custom_field_values,
+        [f for f in invitation_scope_custom_fields if f["id"] not in invitation_scope_file_ids],
+        invitation_level_custom_field_values,
         scope="the invitation",
     )
 
@@ -820,62 +850,65 @@ async def create_invitation(
     vehicle_custom_field_file_contents = vehicle_custom_field_file_contents or {}
     custom_field_file_contents = custom_field_file_contents or {}
     for field in visitor_info_custom_fields:
-        key = field["key"]
-        if key not in visitor_info_file_keys:
+        field_id = field["id"]
+        if field_id not in visitor_info_file_ids:
             continue
-        primary_files = primary_contact_custom_field_file_contents.get(key, [])
+        label = field.get("label") or field_id
+        primary_files = primary_contact_custom_field_file_contents.get(field_id, [])
         if len(primary_files) > 1:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Only one file may be uploaded for '{key}'",
+                detail=f"Only one file may be uploaded for '{label}'",
             )
         if field["isRequired"] and not primary_files:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"'{key}' requires an uploaded file for the primary contact",
+                detail=f"'{label}' requires an uploaded file for the primary contact",
             )
-        visitor_files = visitor_custom_field_file_contents.get(key, [])
+        visitor_files = visitor_custom_field_file_contents.get(field_id, [])
         if field["isRequired"]:
             if len(visitor_files) != len(payload.visitors):
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=f"'{key}' requires an uploaded file for every visitor",
+                    detail=f"'{label}' requires an uploaded file for every visitor",
                 )
         elif len(visitor_files) > len(payload.visitors):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"More '{key}' files were uploaded than visitors listed",
+                detail=f"More '{label}' files were uploaded than visitors listed",
             )
     for field in vehicle_info_custom_fields:
-        key = field["key"]
-        if key not in vehicle_info_file_keys:
+        field_id = field["id"]
+        if field_id not in vehicle_info_file_ids:
             continue
-        vehicle_files = vehicle_custom_field_file_contents.get(key, [])
+        label = field.get("label") or field_id
+        vehicle_files = vehicle_custom_field_file_contents.get(field_id, [])
         if field["isRequired"]:
             if len(vehicle_files) != len(payload.vehicles):
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=f"'{key}' requires an uploaded file for every vehicle",
+                    detail=f"'{label}' requires an uploaded file for every vehicle",
                 )
         elif len(vehicle_files) > len(payload.vehicles):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"More '{key}' files were uploaded than vehicles listed",
+                detail=f"More '{label}' files were uploaded than vehicles listed",
             )
     for field in invitation_scope_custom_fields:
-        key = field["key"]
-        if key not in invitation_scope_file_keys:
+        field_id = field["id"]
+        if field_id not in invitation_scope_file_ids:
             continue
-        files = custom_field_file_contents.get(key, [])
+        label = field.get("label") or field_id
+        files = custom_field_file_contents.get(field_id, [])
         if len(files) > 1:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Only one file may be uploaded for '{key}'",
+                detail=f"Only one file may be uploaded for '{label}'",
             )
         if field["isRequired"] and not files:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"'{key}' requires an uploaded file",
+                detail=f"'{label}' requires an uploaded file",
             )
 
     # specs/invitations/spec.md (delta) "An Admin-Defined Repeatable Group's
@@ -884,19 +917,19 @@ async def create_invitation(
     # instance count must fall within its configured range, and each
     # instance's values must validate against that group's own fields.
     custom_groups = form_builder_validation.custom_groups_for_invitation_scope(effective_form)
-    custom_groups_by_key = {group["key"]: group for group in custom_groups}
-    unknown_group_keys = set(payload.group_values) - set(custom_groups_by_key)
-    if unknown_group_keys:
+    custom_groups_by_id = {group["id"]: group for group in custom_groups}
+    unknown_group_ids = set(payload.group_values) - set(custom_groups_by_id)
+    if unknown_group_ids:
         logger.warning(
             "registration_form_config_validation_failed",
             branch_id=str(branch_id),
-            check="group_key",
-            reason="unknown_group_key",
-            keys=sorted(unknown_group_keys),
+            check="group_id",
+            reason="unknown_group_id",
+            group_ids=sorted(unknown_group_ids),
         )
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Unknown field group key(s): {', '.join(sorted(unknown_group_keys))}",
+            detail=f"Unknown field group id(s): {', '.join(sorted(unknown_group_ids))}",
         )
     # specs/invitations/spec.md (delta) "A Hidden Custom Field Group's
     # Fields Are Not Required At Submission" (add-repeatable-field-groups)
@@ -909,6 +942,19 @@ async def create_invitation(
     # group replacing the fixed `visitors` list) can watch it too — the
     # same system field its own step's `is_field_required`/retyping checks
     # reference.
+    #
+    # `VisibilityCondition.field_key` (form-builder's own authoring-time
+    # config — out of this change's scope, see design.md Non-Goals)
+    # references a field by *key*, not id, so the invitation-level custom
+    # field answers merged in here are re-keyed from `fieldId` back to
+    # `key` for exactly this evaluation, without changing the id-keyed
+    # representation used everywhere else (`payload.custom_field_values`).
+    invitation_scope_fields_by_id = {f["id"]: f for f in invitation_scope_custom_fields}
+    custom_field_values_by_key = {
+        invitation_scope_fields_by_id[field_id]["key"]: value
+        for field_id, value in payload.custom_field_values.items()
+        if field_id in invitation_scope_fields_by_id
+    }
     invitation_scope_values: dict[str, Any] = {
         "registration_type": payload.registration_type,
         "purpose_of_visit": visit_details["purpose_of_visit"],
@@ -919,16 +965,16 @@ async def create_invitation(
         "preferred_visit_time": str(payload.visit_details.preferred_visit_time),
         "items": payload.carried_items.items,
         "item_description": payload.carried_items.item_description,
-        **payload.custom_field_values,
+        **custom_field_values_by_key,
     }
 
     # Reused below (`group_field_file_contents` validation/storage) so that
     # phase doesn't have to recompute a group's visibility a second time.
     group_visibility: dict[str, bool] = {}
-    for group_key, group in custom_groups_by_key.items():
-        instances = payload.group_values.get(group_key, [])
+    for group_id, group in custom_groups_by_id.items():
+        instances = payload.group_values.get(group_id, [])
         is_visible = form_builder_validation.is_group_visible(group, invitation_scope_values)
-        group_visibility[group_key] = is_visible
+        group_visibility[group_id] = is_visible
         try:
             form_builder_validation.validate_group_instance_count(
                 group,
@@ -942,11 +988,11 @@ async def create_invitation(
                 branch_id=str(branch_id),
                 check="group_instance_count",
                 reason="custom_group_count_out_of_range",
-                group=group_key,
+                group_id=group_id,
                 count=len(instances),
             )
             raise
-        file_field_key = _group_field_file_key(group)
+        file_field_id = _group_field_file_id(group)
         # A `file_upload` field's answer can only come from
         # `group_field_file_contents` below — never from the JSON instance
         # dict, which has no way to carry raw file bytes — so it's excluded
@@ -955,15 +1001,15 @@ async def create_invitation(
         # silently ignored (add-group-field-file-upload).
         validated_fields = (
             group["fields"]
-            if file_field_key is None
-            else [field for field in group["fields"] if field["key"] != file_field_key]
+            if file_field_id is None
+            else [field for field in group["fields"] if field["id"] != file_field_id]
         )
         for index, instance in enumerate(instances):
-            if file_field_key is not None and instance.get(file_field_key) is not None:
+            if file_field_id is not None and instance.get(file_field_id) is not None:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=(
-                        f"'{file_field_key}' in '{group['name']}' instance {index + 1} must be "
+                        f"'{file_field_id}' in '{group['name']}' instance {index + 1} must be "
                         "uploaded as a file, not supplied as a value"
                     ),
                 )
@@ -1023,17 +1069,17 @@ async def create_invitation(
     # below. A group with no `file_upload` field, or with none of its
     # instances' files supplied, is skipped entirely.
     group_field_file_contents = group_field_file_contents or {}
-    group_field_keys: dict[str, str] = {}
+    group_field_ids: dict[str, str] = {}
     group_field_content_types: dict[str, list[str]] = {}
-    for group_key, group in custom_groups_by_key.items():
-        file_field_key = _group_field_file_key(group)
-        if file_field_key is None:
+    for group_id, group in custom_groups_by_id.items():
+        file_field_id = _group_field_file_id(group)
+        if file_field_id is None:
             continue
-        group_field_keys[group_key] = file_field_key
-        instances = payload.group_values.get(group_key, [])
-        files = group_field_file_contents.get(group_key, [])
-        field = next(f for f in group["fields"] if f["key"] == file_field_key)
-        is_required = bool(field["isRequired"]) and group_visibility[group_key]
+        group_field_ids[group_id] = file_field_id
+        instances = payload.group_values.get(group_id, [])
+        files = group_field_file_contents.get(group_id, [])
+        field = next(f for f in group["fields"] if f["id"] == file_field_id)
+        is_required = bool(field["isRequired"]) and group_visibility[group_id]
         if is_required and len(files) != len(instances):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1046,7 +1092,7 @@ async def create_invitation(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"More files were uploaded than instances of '{group['name']}'",
             )
-        group_field_content_types[group_key] = [_validate_id_proof(f, max_size) for f in files]
+        group_field_content_types[group_id] = [_validate_id_proof(f, max_size) for f in files]
 
     primary_key = (
         await storage_save(
@@ -1068,18 +1114,18 @@ async def create_invitation(
         if primary_contact_photo_content is not None and primary_photo_content_type is not None
         else None
     )
-    for group_key, file_field_key in group_field_keys.items():
-        instances = payload.group_values.get(group_key, [])
-        files = group_field_file_contents.get(group_key, [])
-        content_types = group_field_content_types[group_key]
+    for group_id, file_field_id in group_field_ids.items():
+        instances = payload.group_values.get(group_id, [])
+        files = group_field_file_contents.get(group_id, [])
+        content_types = group_field_content_types[group_id]
         for index, content in enumerate(files):
             storage_key = await storage_save(
                 tenant.id, "invitations/group-files", content, content_types[index]
             )
-            # Mutates the same dict `payload.group_values[group_key][index]`
+            # Mutates the same dict `payload.group_values[group_id][index]`
             # references — persisted below via `group_field_values`, never
-            # the client-supplied value for this key (rejected earlier).
-            instances[index][file_field_key] = storage_key
+            # the client-supplied value for this field id (rejected earlier).
+            instances[index][file_field_id] = storage_key
 
     # Inline (non-grouped) custom-field file uploads
     # (add-inline-custom-field-file-upload): validated for presence/count
@@ -1156,7 +1202,7 @@ async def create_invitation(
         primary_contact_id_proof_storage_key=primary_key,
         primary_contact_photo_storage_key=primary_photo_key,
         primary_contact_custom_field_values={
-            **payload.primary_contact.custom_field_values,
+            **primary_contact_custom_field_values,
             **primary_contact_custom_field_storage,
         },
         purpose_of_visit=visit_details["purpose_of_visit"],
@@ -1175,9 +1221,9 @@ async def create_invitation(
         department_id=visit_details["department_id"],
         carried_items=list(payload.carried_items.items),
         carried_items_description=payload.carried_items.item_description,
-        consents=dict(payload.consents),
+        consents=dict(consents_dict),
         consent_recorded_at=now,
-        custom_field_values={**payload.custom_field_values, **custom_field_storage},
+        custom_field_values={**invitation_level_custom_field_values, **custom_field_storage},
         group_field_values={key: list(value) for key, value in payload.group_values.items()},
     )
     tenant_db.add(invitation)
@@ -1425,22 +1471,23 @@ async def get_invitation_location(
 class InvitationDetailFormContext:
     """Per-branch form-builder lookups `invitations/router.py`'s detail-view
     serializers need to render `GET /invitations/{id}` (add-generic-custom-
-    field-file-url-resolution): `visitor_info_groups` (unchanged — backs
-    `_group_collected_visitor_detail_outs`'s visitor synthesis), plus which
-    `file_upload`-typed field keys appear in each of `customFieldValues`/
-    `primaryContactCustomFieldValues`/a vehicle's `customFieldValues`/a
-    `groupFieldValues` instance, so those readers know which raw storage
-    keys need resolving to a signed URL rather than being serialized
-    straight from the ORM (see the note on `service.py::create_invitation`'s
+    field-file-url-resolution): `visitor_info_groups` (keyed by group id —
+    backs `_group_collected_visitor_detail_outs`'s visitor synthesis), plus
+    which `file_upload`-typed field ids appear in each of `customFields`/
+    `primaryContactCustomFields`/a vehicle's `customFields`/a `groups`
+    instance (restructure-walkin-payload-by-field-id — referenced by id,
+    never by key), so those readers know which raw storage keys need
+    resolving to a signed URL rather than being serialized straight from
+    the ORM (see the note on `service.py::create_invitation`'s
     `customFieldValues`/`primaryContactCustomFieldValues`/`groupFieldValues`
     storage — "no reader resolves it to a signed URL yet").
     """
 
     visitor_info_groups: dict[str, dict[str, Any]]
-    invitation_scope_file_keys: set[str]
-    visitor_info_file_keys: set[str]
-    vehicle_info_file_keys: set[str]
-    group_file_keys: dict[str, set[str]]
+    invitation_scope_file_ids: set[str]
+    visitor_info_file_ids: set[str]
+    vehicle_info_file_ids: set[str]
+    group_file_ids: dict[str, set[str]]
 
 
 async def get_invitation_detail_form_context(
@@ -1454,24 +1501,24 @@ async def get_invitation_detail_form_context(
     effective_form = await form_builder_service.resolve_effective_form(
         tenant_db, redis, tenant_id=tenant.id, branch_id=branch_id
     )
-    visitor_info_file_keys = {
-        field["key"]
+    visitor_info_file_ids = {
+        field["id"]
         for field in form_builder_validation.custom_fields_for_step(effective_form, "visitor_info")
         if field["fieldType"] == "file_upload"
     }
-    vehicle_info_file_keys = {
-        field["key"]
+    vehicle_info_file_ids = {
+        field["id"]
         for field in form_builder_validation.custom_fields_for_step(effective_form, "vehicle_info")
         if field["fieldType"] == "file_upload"
     }
-    invitation_scope_file_keys = {
-        field["key"]
+    invitation_scope_file_ids = {
+        field["id"]
         for field in form_builder_validation.custom_fields_for_invitation_scope(effective_form)
         if field["fieldType"] == "file_upload"
     }
-    group_file_keys = {
-        group["key"]: {
-            field["key"] for field in group["fields"] if field["fieldType"] == "file_upload"
+    group_file_ids = {
+        group["id"]: {
+            field["id"] for field in group["fields"] if field["fieldType"] == "file_upload"
         }
         for group in form_builder_validation.custom_groups_for_invitation_scope(effective_form)
     }
@@ -1479,10 +1526,10 @@ async def get_invitation_detail_form_context(
         visitor_info_groups=form_builder_validation.custom_groups_for_step(
             effective_form, "visitor_info"
         ),
-        invitation_scope_file_keys=invitation_scope_file_keys,
-        visitor_info_file_keys=visitor_info_file_keys,
-        vehicle_info_file_keys=vehicle_info_file_keys,
-        group_file_keys=group_file_keys,
+        invitation_scope_file_ids=invitation_scope_file_ids,
+        visitor_info_file_ids=visitor_info_file_ids,
+        vehicle_info_file_ids=vehicle_info_file_ids,
+        group_file_ids=group_file_ids,
     )
 
 

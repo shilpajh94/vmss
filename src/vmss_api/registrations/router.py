@@ -126,15 +126,16 @@ async def create_walk_in_registration(
     (`add-walkin-visitor-registration/design.md` Non-Goals).
 
     An admin-defined repeatable group's own `file_upload`-typed field
-    follows the same `groupFieldFiles[<groupKey>]` convention documented on
+    follows the same `groupFieldFiles[<groupId>]` convention documented on
     `POST /invitations` (`invitations/router.py::create_invitation`) — a
-    multipart list part, order-matched to that group's
-    `payload.groupValues[<groupKey>]` instances, read via `request.form()`
-    since the group key is branch-specific and unknown at route-declaration
-    time. An inline (non-grouped) admin-defined `file_upload` field follows
-    the identical `primaryContactCustomFieldFiles[<fieldKey>]`/
-    `visitorCustomFieldFiles[<fieldKey>]`/`vehicleCustomFieldFiles[<fieldKey>]`/
-    `customFieldFiles[<fieldKey>]` contract also documented there.
+    multipart list part, order-matched to that group's `payload.groups`
+    entry's `instances`, read via `request.form()` since the group id is
+    branch-specific and unknown at route-declaration time
+    (restructure-walkin-payload-by-field-id). An inline (non-grouped)
+    admin-defined `file_upload` field follows the identical
+    `primaryContactCustomFieldFiles[<fieldId>]`/
+    `visitorCustomFieldFiles[<fieldId>]`/`vehicleCustomFieldFiles[<fieldId>]`/
+    `customFieldFiles[<fieldId>]` contract also documented there.
     """
     cached = await _cached_response(device.tenant.id, idempotency_key)
     if cached is not None:
