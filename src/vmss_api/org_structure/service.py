@@ -46,6 +46,8 @@ from vmss_api.org_structure.schemas import (
     FloorCreate,
     FloorUpdate,
     GateType,
+    ProvisionBuilding,
+    ProvisionFloor,
     ReceptionDeskCreate,
     ReceptionDeskUpdate,
     SecurityGateCreate,
@@ -477,11 +479,15 @@ async def provision_branch(
     # No ORM `relationship()` links `Branch`/`Building`/`Floor`/... to each
     # other (only raw FK columns — see org_structure/models.py), so the
     # flush's cross-class insert ordering isn't guided by a dependency graph
-    # the way it would be with declared relationships. An explicit `flush()`
-    # after each parent is added, before any child referencing its id is
-    # added, forces the parent's row to exist in the database first — same
-    # fix `rbac_catalog.py::seed_default_roles` applies between permissions
-    # and roles. Still one `commit()` for the whole tree at the end.
+    # the way it would be with declared relationships. A `flush()` after
+    # every row at one level is added, before any child referencing that
+    # level's ids is added, forces those rows to exist in the database
+    # first — same fix `rbac_catalog.py::seed_default_roles` applies between
+    # permissions and roles. One flush per level (branch, buildings, floors)
+    # rather than one per row: every id is already client-generated via
+    # `uuid.uuid4()` above, so nothing needs a flush to *learn* an id, only
+    # to make a referenced parent row visible before its children insert.
+    # Still one `commit()` for the whole tree at the end.
     await tenant_db.flush()
 
     counts = ProvisionCounts()
@@ -492,9 +498,9 @@ async def provision_branch(
     # request rather than reset per floor.
     seen_department_codes: set[str] = set()
 
+    building_entries: list[tuple[Building, ProvisionBuilding]] = []
     for building_payload in payload.buildings:
         _reject_duplicate(seen_building_codes, building_payload.code, what="building")
-
         building = Building(
             id=uuid.uuid4(),
             branch_id=branch.id,
@@ -502,10 +508,14 @@ async def provision_branch(
             code=building_payload.code,
             address=building_payload.address,
         )
-        tenant_db.add(building)
-        await tenant_db.flush()
+        building_entries.append((building, building_payload))
         counts.buildings += 1
 
+    tenant_db.add_all(building for building, _ in building_entries)
+    await tenant_db.flush()
+
+    floor_entries: list[tuple[Floor, ProvisionFloor]] = []
+    for building, building_payload in building_entries:
         seen_floor_numbers: set[int] = set()
         for floor_payload in building_payload.floors:
             if floor_payload.floor_number in seen_floor_numbers:
@@ -524,36 +534,40 @@ async def provision_branch(
                 name=floor_payload.name,
                 floor_number=floor_payload.floor_number,
             )
-            tenant_db.add(floor)
-            await tenant_db.flush()
+            floor_entries.append((floor, floor_payload))
             counts.floors += 1
 
-            for department_payload in floor_payload.departments:
-                _reject_duplicate(seen_department_codes, department_payload.code, what="department")
-                tenant_db.add(
-                    Department(
-                        id=uuid.uuid4(),
-                        branch_id=branch.id,
-                        floor_id=floor.id,
-                        name=department_payload.name,
-                        code=department_payload.code,
-                    )
-                )
-                counts.departments += 1
+    tenant_db.add_all(floor for floor, _ in floor_entries)
+    await tenant_db.flush()
 
-            seen_desk_codes: set[str] = set()
-            for desk_payload in floor_payload.reception_desks:
-                _reject_duplicate(seen_desk_codes, desk_payload.code, what="reception desk")
-                tenant_db.add(
-                    ReceptionDesk(
-                        id=uuid.uuid4(),
-                        floor_id=floor.id,
-                        name=desk_payload.name,
-                        code=desk_payload.code,
-                    )
+    for floor, floor_payload in floor_entries:
+        for department_payload in floor_payload.departments:
+            _reject_duplicate(seen_department_codes, department_payload.code, what="department")
+            tenant_db.add(
+                Department(
+                    id=uuid.uuid4(),
+                    branch_id=branch.id,
+                    floor_id=floor.id,
+                    name=department_payload.name,
+                    code=department_payload.code,
                 )
-                counts.reception_desks += 1
+            )
+            counts.departments += 1
 
+        seen_desk_codes: set[str] = set()
+        for desk_payload in floor_payload.reception_desks:
+            _reject_duplicate(seen_desk_codes, desk_payload.code, what="reception desk")
+            tenant_db.add(
+                ReceptionDesk(
+                    id=uuid.uuid4(),
+                    floor_id=floor.id,
+                    name=desk_payload.name,
+                    code=desk_payload.code,
+                )
+            )
+            counts.reception_desks += 1
+
+    for building, building_payload in building_entries:
         for gate_payload in building_payload.security_gates:
             _reject_duplicate(seen_gate_codes, gate_payload.code, what="security gate")
             tenant_db.add(

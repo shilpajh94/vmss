@@ -31,8 +31,8 @@ from vmss_api.core.security import (
     hash_password,
     verify_password,
 )
-from vmss_api.core.storage import FileTooLargeError, UnsupportedFileTypeError, validate_upload
 from vmss_api.core.storage import save as storage_save
+from vmss_api.core.storage import validate_image_only
 from vmss_api.org_structure.repository import BranchRepository, DepartmentRepository
 from vmss_api.platform.repository import TenantUserIndexRepository
 from vmss_api.tenant.models import Tenant
@@ -558,9 +558,6 @@ async def list_employee_directory(
     )
 
 
-_AVATAR_CONTENT_TYPES = {"image/jpeg", "image/png"}
-
-
 async def upload_avatar(
     tenant_db: AsyncSession, *, tenant_id: uuid.UUID, user: User, content: bytes
 ) -> User:
@@ -574,17 +571,9 @@ async def upload_avatar(
     rejected upload, `user`'s existing avatar (if any) is left unchanged —
     validation runs before any write.
     """
-    try:
-        content_type = validate_upload(
-            content, max_size_bytes=settings.avatar_max_upload_size_bytes
-        )
-    except (UnsupportedFileTypeError, FileTooLargeError) as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
-    if content_type not in _AVATAR_CONTENT_TYPES:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Unsupported avatar type: {content_type!r}",
-        )
+    content_type = validate_image_only(
+        content, max_size_bytes=settings.avatar_max_upload_size_bytes, field_label="avatar"
+    )
     storage_key = await storage_save(tenant_id, "auth/avatars", content, content_type)
     user.avatar_url = storage_key
     await tenant_db.commit()

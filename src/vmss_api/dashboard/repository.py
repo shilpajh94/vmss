@@ -5,17 +5,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.core.schemas import BranchScope, SortOrder
+from vmss_api.core.tenancy import branch_filter as _core_branch_filter
 from vmss_api.invitations.models import Invitation
 
 _CHECKED_IN_STATUSES = ("checked_in", "checked_out")
 
 
 def _branch_filter(branch_scope: BranchScope) -> Any | None:
-    """Same `BranchScope` -> filter-clause translation as
-    `invitations/repository.py::_branch_filter`: `None` (no filter) for a
-    company-wide "all" scope, otherwise `Invitation.branch_id IN (...)`.
+    """`Invitation.branch_id`-bound wrapper around the shared
+    `core.tenancy.branch_filter`.
     """
-    return None if branch_scope == "all" else Invitation.branch_id.in_(branch_scope)
+    return _core_branch_filter(Invitation.branch_id, branch_scope)
 
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:

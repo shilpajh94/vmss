@@ -9,6 +9,7 @@ from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.auth.models import UserBranchRole
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import BranchScope, SortOrder
+from vmss_api.core.tenancy import branch_filter as _core_branch_filter
 from vmss_api.invitations.models import (
     Invitation,
     InvitationQRCode,
@@ -19,11 +20,10 @@ from vmss_api.org_structure.models import Branch, Building, Department, Floor
 
 
 def _branch_filter(branch_scope: BranchScope) -> Any | None:
-    """Same `BranchScope` -> filter-clause translation as
-    `org_structure/repository.py::_branch_filter`: `None` (no filter) for a
-    company-wide "all" scope, otherwise `Invitation.branch_id IN (...)`.
+    """`Invitation.branch_id`-bound wrapper around the shared
+    `core.tenancy.branch_filter`.
     """
-    return None if branch_scope == "all" else Invitation.branch_id.in_(branch_scope)
+    return _core_branch_filter(Invitation.branch_id, branch_scope)
 
 
 def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) -> Any:

@@ -1,8 +1,8 @@
 import uuid
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from vmss_api.core.schemas import CamelModel
 
@@ -67,6 +67,34 @@ class VisitorCategoryOut(CamelModel):
     nda_requirement: str | None
     escort_requirement: str | None
     max_duration_minutes: int | None
+
+
+class VisitorCategoryBulkCreate(CamelModel):
+    names: list[Annotated[str, Field(max_length=100)]] = Field(max_length=500)
+
+    @model_validator(mode="after")
+    def _check_names(self) -> Self:
+        if not any(name.strip() for name in self.names):
+            raise ValueError("'names' must contain at least one non-blank entry")
+        return self
+
+
+class VisitorCategoryBulkCreateItemStatus(StrEnum):
+    created = "created"
+    skipped = "skipped"
+
+
+class VisitorCategoryBulkCreateItem(CamelModel):
+    name: str
+    status: VisitorCategoryBulkCreateItemStatus
+    reason: str | None = None
+    category: VisitorCategoryOut | None = None
+
+
+class VisitorCategoryBulkCreateOut(CamelModel):
+    items: list[VisitorCategoryBulkCreateItem]
+    created_count: int
+    skipped_count: int
 
 
 class ApprovalWorkflowRuleCreate(CamelModel):

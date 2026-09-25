@@ -20,6 +20,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from vmss_api.core.config import settings
+
 _NAMESPACE = uuid.UUID("d8f6e6b2-6f3b-4a8a-9d3a-2f2a6b1c4e10")
 
 
@@ -42,6 +44,24 @@ class DefaultFieldSpec:
     options: list[str] | None = None
     placeholder: str | None = None
     help_text: str | None = None
+    # Which of the step's `DefaultGroupSpec.key`s this field belongs to, or
+    # `None` to remain a flat step-level field
+    # (add-repeatable-field-groups).
+    group_key: str | None = None
+
+
+@dataclass
+class DefaultGroupSpec:
+    key: str
+    name: str
+    is_repeatable: bool
+    min_instances: int | None = None
+    max_instances: int | None = None
+    # `{"fieldKey": str, "operator": ..., "value": str}` or `None` — none of
+    # today's seeded groups are conditional, but the field exists so the
+    # effective-form shape matches an admin-authored conditional group's
+    # (add-repeatable-field-groups).
+    visibility_condition: dict[str, Any] | None = None
 
 
 @dataclass
@@ -52,6 +72,7 @@ class DefaultStepSpec:
     icon: str | None = None
     description: str | None = None
     fields: list[DefaultFieldSpec] = field(default_factory=list)
+    groups: list[DefaultGroupSpec] = field(default_factory=list)
 
 
 DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
@@ -69,9 +90,30 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
                 is_required=True,
                 options=["individual", "group"],
             ),
-            DefaultFieldSpec("full_name", "Full Name", "text", is_locked=True, is_required=True),
-            DefaultFieldSpec("email", "Email", "email", is_locked=True, is_required=False),
-            DefaultFieldSpec("phone", "Phone", "phone", is_locked=True, is_required=False),
+            DefaultFieldSpec(
+                "full_name",
+                "Full Name",
+                "text",
+                is_locked=True,
+                is_required=True,
+                group_key="visitors",
+            ),
+            DefaultFieldSpec(
+                "email",
+                "Email",
+                "email",
+                is_locked=True,
+                is_required=False,
+                group_key="visitors",
+            ),
+            DefaultFieldSpec(
+                "phone",
+                "Phone",
+                "phone",
+                is_locked=True,
+                is_required=False,
+                group_key="visitors",
+            ),
             DefaultFieldSpec(
                 "visitor_category",
                 "Visitor Category",
@@ -94,12 +136,37 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
                 is_locked=False,
                 is_required=True,
                 options=["Aadhaar Card", "Passport", "Driving License", "Other"],
+                group_key="visitors",
             ),
             DefaultFieldSpec(
-                "id_proof_upload", "Upload ID", "file_upload", is_locked=False, is_required=True
+                "id_proof_upload",
+                "Upload ID",
+                "file_upload",
+                is_locked=False,
+                is_required=True,
+                group_key="visitors",
             ),
             DefaultFieldSpec(
-                "profile_photo", "Profile Photo", "file_upload", is_locked=False, is_required=True
+                "profile_photo",
+                "Profile Photo",
+                "file_upload",
+                is_locked=False,
+                is_required=True,
+                group_key="visitors",
+            ),
+        ],
+        groups=[
+            # `max_instances` is seeded from the settings constant this
+            # change retires as a standalone enforcement path — see
+            # `invitations/service.py`'s `visitor_info_group` check and
+            # `openspec/changes/add-repeatable-field-groups/design.md`'s
+            # revised Decision 5. Not admin-editable via the Form Builder
+            # API (`form_builder/service.py::_NO_INSTANCE_RANGE_SYSTEM_GROUP_KEYS`).
+            DefaultGroupSpec(
+                key="visitors",
+                name="Visitors",
+                is_repeatable=False,
+                max_instances=settings.invitation_max_group_visitors,
             ),
         ],
     ),
@@ -139,7 +206,7 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
                 "Expected Duration",
                 "text",
                 is_locked=False,
-                is_required=True,
+                is_required=False,
             ),
             DefaultFieldSpec(
                 "additional_notes",
@@ -194,14 +261,35 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
                 is_locked=True,
                 is_required=True,
                 options=["2_wheeler", "4_wheeler", "heavy"],
+                group_key="vehicles",
             ),
             DefaultFieldSpec(
-                "license_plate", "License Plate", "text", is_locked=True, is_required=True
+                "license_plate",
+                "License Plate",
+                "text",
+                is_locked=True,
+                is_required=True,
+                group_key="vehicles",
             ),
             DefaultFieldSpec(
-                "make_model", "Make / Model", "text", is_locked=False, is_required=False
+                "make_model",
+                "Make / Model",
+                "text",
+                is_locked=False,
+                is_required=False,
+                group_key="vehicles",
             ),
-            DefaultFieldSpec("color", "Color", "text", is_locked=False, is_required=False),
+            DefaultFieldSpec(
+                "color",
+                "Color",
+                "text",
+                is_locked=False,
+                is_required=False,
+                group_key="vehicles",
+            ),
+        ],
+        groups=[
+            DefaultGroupSpec(key="vehicles", name="Vehicles", is_repeatable=True),
         ],
     ),
     DefaultStepSpec(
@@ -250,6 +338,7 @@ def _field_to_effective_dict(
     return {
         "id": str(_stable_id("field", step_key, spec.key)),
         "stepId": str(_stable_id("step", step_key)),
+        "groupId": str(_stable_id("group", step_key, spec.group_key)) if spec.group_key else None,
         "key": spec.key,
         "label": spec.label,
         "placeholder": spec.placeholder,
@@ -267,7 +356,30 @@ def _field_to_effective_dict(
     }
 
 
+def _group_to_effective_dict(
+    step_key: str, order_index: int, spec: DefaultGroupSpec, field_keys: list[str]
+) -> dict[str, Any]:
+    return {
+        "id": str(_stable_id("group", step_key, spec.key)),
+        "stepId": str(_stable_id("step", step_key)),
+        "key": spec.key,
+        "name": spec.name,
+        "isSystem": True,
+        "isLocked": True,
+        "isRepeatable": spec.is_repeatable,
+        "minInstances": spec.min_instances,
+        "maxInstances": spec.max_instances,
+        "visibilityCondition": spec.visibility_condition,
+        "orderIndex": order_index,
+        "fieldKeys": field_keys,
+    }
+
+
 def _step_to_effective_dict(order_index: int, spec: DefaultStepSpec) -> dict[str, Any]:
+    field_keys_by_group_key: dict[str, list[str]] = {g.key: [] for g in spec.groups}
+    for f in spec.fields:
+        if f.group_key in field_keys_by_group_key:
+            field_keys_by_group_key[f.group_key].append(f.key)
     return {
         "id": str(_stable_id("step", spec.key)),
         "branchId": None,
@@ -279,6 +391,10 @@ def _step_to_effective_dict(order_index: int, spec: DefaultStepSpec) -> dict[str
         "isLocked": spec.is_locked,
         "isActive": True,
         "orderIndex": order_index,
+        "groups": [
+            _group_to_effective_dict(spec.key, i, g, field_keys_by_group_key.get(g.key, []))
+            for i, g in enumerate(spec.groups)
+        ],
         "fields": [_field_to_effective_dict(spec.key, i, f) for i, f in enumerate(spec.fields)],
     }
 

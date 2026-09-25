@@ -798,6 +798,26 @@ async def test_provision_branch_duplicate_department_code_in_request_conflict(
     assert response.status_code == 409
 
 
+async def test_provision_branch_duplicate_building_code_in_request_conflict(
+    client: AsyncClient, user: User
+) -> None:
+    """Pins current single-conflict error behavior before
+    `service.py::provision_branch`'s per-row flushes are batched into one
+    flush per level (query-performance.md §3) — a building-code duplicate
+    within one request must still 409, the same as before that change.
+    """
+    token = await _login(client, user.email)
+    payload = _provision_payload()
+    second_building = dict(payload["buildings"][0])
+    second_building["floors"] = []
+    second_building["securityGates"] = []
+    payload["buildings"].append(second_building)
+    response = await client.post(
+        "/api/v1/branches/provision", json=payload, headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 409
+
+
 async def test_provision_branch_rolls_back_nothing_committed_on_conflict(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:

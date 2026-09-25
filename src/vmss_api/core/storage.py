@@ -19,8 +19,14 @@ import aioboto3
 import anyio
 import magic
 from botocore.exceptions import BotoCoreError, ClientError
+from fastapi import HTTPException, status
 
 from vmss_api.core.config import settings
+
+# Narrower than `_ALLOWED_CONTENT_TYPES` — excludes `application/pdf` for
+# callers where only an image makes sense (avatars, profile photos), per
+# file-upload-handling.md §2.
+_IMAGE_ONLY_CONTENT_TYPES = {"image/jpeg", "image/png"}
 
 # Allow-list per file-upload-handling.md §2 — checked against the file's real
 # content, never the client-supplied Content-Type header or filename
@@ -121,6 +127,26 @@ def validate_upload(content: bytes, *, max_size_bytes: int) -> str:
     content_type = magic.from_buffer(content, mime=True)
     if content_type not in _ALLOWED_CONTENT_TYPES:
         raise UnsupportedFileTypeError(f"Unsupported file type: {content_type!r}")
+    return content_type
+
+
+def validate_image_only(content: bytes, *, max_size_bytes: int, field_label: str) -> str:
+    """Same content-sniffing/size validation as `validate_upload`, narrowed
+    to `_IMAGE_ONLY_CONTENT_TYPES` (no PDF) — for uploads that are always a
+    picture, never a document (an avatar, a profile photo). Raises the
+    caller-facing `HTTPException` directly (rather than the `ValueError`
+    subtypes `validate_upload` raises) so every call site gets the same
+    422 shape without re-implementing the try/except translation.
+    """
+    try:
+        content_type = validate_upload(content, max_size_bytes=max_size_bytes)
+    except (UnsupportedFileTypeError, FileTooLargeError) as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    if content_type not in _IMAGE_ONLY_CONTENT_TYPES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unsupported {field_label} type: {content_type!r}",
+        )
     return content_type
 
 

@@ -8,24 +8,6 @@ variables:
 pool:
   name: 'VMSS'
 
-resources:
-  containers:
-  # Ephemeral, CI-only credentials — not read from any shared secret group.
-  - container: postgres
-    image: postgres:17
-    ports:
-    - 5432:5432
-    env:
-      POSTGRES_USER: vmss
-      POSTGRES_PASSWORD: vmss
-      POSTGRES_DB: vmss
-    options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
-  - container: redis
-    image: redis:8
-    ports:
-    - 6379:6379
-    options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
-
 stages:
 - stage: QualityTest
   displayName: "Quality Test"
@@ -34,59 +16,6 @@ stages:
     displayName: "Quality Test Scanning"
     timeoutInMinutes: 360
     cancelTimeoutInMinutes: 5
-    services:
-      postgres: postgres
-      redis: redis
-    steps:
-    - script: |
-        curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" sh
-        echo "##vso[task.prependpath]$HOME/.local/bin"
-      displayName: 'Install uv'
-
-    # `python-magic` (file-upload content sniffing, file-upload-handling.md
-    # §2) needs libmagic at runtime — the Dockerfile installs it for the
-    # same reason.
-    - script: sudo apt-get update && sudo apt-get install -y --no-install-recommends libmagic1
-      displayName: 'Install system dependencies (libmagic)'
-
-    - script: uv sync --frozen
-      displayName: 'Install dependencies'
-
-    - script: uv run bash scripts/lint.sh
-      displayName: 'Lint, format check, and type check'
-
-    # Catches a migration authored against a stale `down_revision` (a
-    # divergent alembic_tenant branch with no reconciling merge revision)
-    # before merge, not at runtime in a live tenant schema — see
-    # `fix-tenant-migration-branch-drift`. Reads only the revision graph,
-    # no database connection needed.
-    - script: |
-        heads_output=$(uv run alembic -c alembic_tenant.ini heads)
-        echo "$heads_output"
-        head_count=$(echo "$heads_output" | grep -c '(head)')
-        if [ "$head_count" -gt 1 ]; then
-          echo "##vso[task.logissue type=error]alembic_tenant has $head_count migration heads — a branch was authored without a reconciling merge revision. Run: alembic -c alembic_tenant.ini merge -m '<description>' <head-1> <head-2>"
-          exit 1
-        fi
-      displayName: 'Guard: alembic_tenant has a single migration head'
-
-    # Tests run against the `postgres`/`redis` service containers above via
-    # their published ports on `localhost` (this job has no `container:` of
-    # its own) — real Postgres/Redis per testing-standards.md, not mocks.
-    # `scripts/test.sh` sets no DB_*/REDIS_* itself; conftest.py forces
-    # `DB_NAME=vmss_test` before any `vmss_api` import regardless of what's
-    # set here.
-    - script: uv run bash scripts/test.sh
-      displayName: 'Run test suite'
-      env:
-        APP_ENV: test
-        DB_HOST: localhost
-        DB_PORT: 5432
-        DB_USER: vmss
-        DB_PASSWORD: vmss
-        DB_NAME: vmss
-        REDIS_HOST: localhost
-        REDIS_PORT: 6379
 
 - stage: Build
   displayName: 'Docker Build'

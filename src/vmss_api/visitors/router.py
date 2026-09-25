@@ -28,6 +28,8 @@ from vmss_api.visitors.schemas import (
     ApprovalWorkflowRuleUpdate,
     EscortRequirement,
     NdaRequirement,
+    VisitorCategoryBulkCreate,
+    VisitorCategoryBulkCreateOut,
     VisitorCategoryCreate,
     VisitorCategoryOut,
     VisitorCategorySortableField,
@@ -94,6 +96,33 @@ async def create_visitor_category(
     return success_response(
         data=VisitorCategoryOut.model_validate(category), status_code=status.HTTP_201_CREATED
     )
+
+
+@category_router.post(
+    "/bulk",
+    response_model=Envelope[VisitorCategoryBulkCreateOut],
+    dependencies=[Depends(require_permission("visitor-categories:manage"))],
+    status_code=status.HTTP_201_CREATED,
+)
+async def bulk_create_visitor_categories(
+    payload: VisitorCategoryBulkCreate,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    result = await service.bulk_create_visitor_categories(tenant_db, payload)
+    for item in result.items:
+        if item.category is not None:
+            _queue_audit(
+                background_tasks,
+                tenant,
+                user,
+                action="visitor_category_created",
+                entity_type="VisitorCategory",
+                entity_id=item.category.id,
+            )
+    return success_response(data=result, status_code=status.HTTP_201_CREATED)
 
 
 @category_router.get(

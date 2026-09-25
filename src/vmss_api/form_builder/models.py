@@ -54,6 +54,60 @@ class FormStep(Base, TimestampMixin):
     order_index: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class FormFieldGroup(Base, TimestampMixin):
+    """A named cluster of a `FormStep`'s fields (`specs/form-builder/spec.md`
+    "A Step's Fields May Be Organized Into Named, Repeatable Field
+    Groups"). When `is_repeatable` is set, the visitor-facing form lets the
+    caller submit `min_instances`..`max_instances` (either bound `None` =
+    unset) repetitions of the group's fields, each its own independent
+    answer set — generalizing Vehicle Info's/Visitor Info's previously
+    hard-coded "add another" behavior (design.md Decision 3/4 of
+    `add-repeatable-field-groups`) to any step. A non-repeatable group is
+    always exactly one instance.
+    """
+
+    __tablename__ = "form_field_groups"
+    __table_args__ = (
+        Index(
+            "uq_form_field_group_branch_key",
+            "branch_id",
+            "key",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND branch_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_form_field_group_default_key",
+            "key",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND branch_id IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    step_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("form_steps.id"), index=True)
+    # Denormalized copy of the owning step's `branch_id`, needed only so the
+    # two unique indexes above can enforce branch-wide (not just per-step)
+    # group-key uniqueness the same way `uq_form_field_step_key`-style
+    # indexes do for steps — kept in sync by `service.py` whenever a group
+    # is created (a group is never moved to a different step/scope).
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("branches.id"), index=True)
+    key: Mapped[str] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(255))
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_repeatable: Mapped[bool] = mapped_column(Boolean, default=False)
+    min_instances: Mapped[int | None] = mapped_column(Integer)
+    max_instances: Mapped[int | None] = mapped_column(Integer)
+    # `{"fieldKey": str, "operator": "equals" | "not_equals", "value": str}`
+    # or `None` — same shape as `FormField.visibility_condition`, referencing
+    # another field on the *same step* (specs/form-builder/spec.md "A Field
+    # Group May Declare Conditional Visibility"). Independent of
+    # `is_repeatable`: a group can be conditional only, repeatable only,
+    # both, or neither.
+    visibility_condition: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class FormField(Base, TimestampMixin):
     """One draft field within a `FormStep`. `is_locked` fields reject any
     attempt to change `is_active`/`is_required` via the API (a "system
@@ -75,10 +129,15 @@ class FormField(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     step_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("form_steps.id"), index=True)
+    # Nullable: a field with no group assignment renders/submits as a flat
+    # step-level field, unchanged from before field groups existed.
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("form_field_groups.id"), index=True
+    )
     key: Mapped[str] = mapped_column(String(100))
     label: Mapped[str] = mapped_column(String(255))
     placeholder: Mapped[str | None] = mapped_column(String(255))
-    help_text: Mapped[str | None] = mapped_column(String(500))
+    help_text: Mapped[str | None] = mapped_column(String(1000))
     field_type: Mapped[str] = mapped_column(String(30))
     is_system: Mapped[bool] = mapped_column(Boolean, default=False)
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -93,6 +152,7 @@ class FormField(Base, TimestampMixin):
     # Conditional Visibility".
     visibility_condition: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     width: Mapped[str] = mapped_column(String(10), default="full")
+    hide_label: Mapped[bool] = mapped_column(Boolean, default=False)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
 
 

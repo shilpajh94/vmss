@@ -20,7 +20,12 @@ custom fields, conditional visibility — without a code change.
 - **`FormField`** — one field within a step (`key`, `label`, `placeholder`,
   `helpText`, `fieldType`, `isSystem`, `isLocked`, `isActive`,
   `isRequired`, `options`, `validationRules`, `visibilityCondition`,
-  `width`, `orderIndex`).
+  `width`, `hideLabel`, `orderIndex`). `hideLabel` (default `false`) is a
+  display-only flag: `label` is still mandatory and still used as the
+  field's accessible name and in validation error messages, but when
+  `hideLabel` is `true` the visitor-facing renderer omits the visible
+  label text — the same posture as `width`, not consulted by submission
+  validation at all.
 - **`FormConfigVersion`** — the *published* snapshot for one scope
   (`branchId` nullable), overwritten in place on every publish. No version
   history is kept in this iteration — publishing atomically replaces the
@@ -75,18 +80,194 @@ materializes a scope's draft on first touch, and the in-code fallback
 a tenant/branch that never opens Form Builder still gets sensible,
 pre-`form-builder` behavior with zero admin action required.
 
+## Field groups
+
+A step's fields can be organized into named **`FormFieldGroup`**s
+(`key`, `name`, `isSystem`, `isLocked`, `isRepeatable`, `minInstances`,
+`maxInstances`, `orderIndex`) — an ungrouped field (`FormField.groupId =
+null`) still renders/submits as a flat step-level field, unchanged from
+before groups existed. A group marked `isRepeatable` lets the visitor-
+facing form submit `minInstances`..`maxInstances` independent copies of
+the group's fields (either bound `null` = unset, meaning no floor/ceiling)
+— e.g. an admin-authored "Parcels" group on Carried Items with a "Weight"
+field, letting a visitor declare several parcels each with their own
+weight, the same way Vehicle Info already lets a visitor add several
+vehicles.
+
+Vehicle Info's vehicle fields and Visitor Info's co-visitor fields are
+each seeded as a single, locked, repeatable group (`vehicles`/`visitors`)
+— generalizing what used to be two separate hardcoded "add another"
+implementations onto this one mechanism. Vehicle Info's group behaves like
+any other repeatable group (admin-configurable `minInstances`/
+`maxInstances`, enforced on invitation/registration submission). Visitor
+Info's group's cardinality *floor* is governed exclusively by the
+existing `registrationType` rule (individual = no co-visitors, group =
+one or more); it exposes no admin-editable `minInstances`/`maxInstances`
+controls at all — a second, independent range on the same group would
+conflict with that rule. Its *ceiling*, however, is enforced through this
+same group's `maxInstances`, seeded at migration/provisioning time from
+`INVITATION_MAX_GROUP_VISITORS` (previously a standalone, undocumented
+settings check in `invitations/service.py` — now retired in favor of this
+one group-instance-count mechanism, the same path Vehicle Info's ceiling
+already went through). Changing that ceiling today requires a data
+migration or manual DB update per branch, not an admin UI action or an
+env-var change — a deliberate trade-off for having a single source of
+truth (see `openspec/changes/add-repeatable-field-groups/design.md`'s
+revised Decision 5).
+
+A group's `key` is unique across a branch's entire active form, the same
+uniqueness scope a field's `key` already has, since a submission addresses
+a group's instances by key without a step qualifier. Vehicle Info's and
+Visitor Info's own vehicle/vehicle-plate-etc. and visitor answers keep
+their existing dedicated storage (`InvitationVehicle`/`InvitationVisitor`
+— see `docs/features/invitations.md`); every other repeatable group's
+per-instance answers round-trip through `Invitation.groupFieldValues`, an
+ordered list of answer maps per group key.
+
+### Conditional groups
+
+A group may also declare `visibilityCondition`
+(`{fieldKey, operator, value}`, `operator` one of `equals`/`not_equals`)
+— the same shape a field's own condition already uses — referencing
+another field on the *same step*. The group, and every field inside it,
+is shown only when that condition holds; independent of `isRepeatable`, a
+group can be conditional only, repeatable only, both, or neither. A
+group's condition cannot reference one of its own member fields (a
+group-level self-reference), mirroring a field's own self-reference
+rejection — but unlike a field's condition, a group's never needs a
+transitive-cycle check, since nothing can reference a *group's* condition
+in the first place (only a `fieldKey` is ever a watchable target).
+
+When a group is hidden by its condition, none of its fields are treated
+as required for that submission — regardless of each field's own
+`isRequired` flag — and a repeatable hidden group's configured minimum
+instance count isn't enforced either (a visitor who was never shown the
+group can't be expected to have filled it in; its maximum still applies
+if instances were submitted anyway). This is genuinely new evaluation
+logic, and it's scoped to groups only: a plain field's own
+`visibilityCondition` is still checked only at authoring time (dangling
+reference / cycle prevention) — it is not evaluated against submitted
+values to skip that field's own required-check. A field with both
+`isRequired` and its own `visibilityCondition`, hidden or not, still
+blocks submission if empty, unless that field also happens to belong to a
+hidden group.
+
 ## Field types
 
 `text`, `email`, `phone`, `number`, `dropdown_select`, `date_picker`,
-`time_picker`, `toggle_switch`, `checkbox_list`, `file_upload`, `textarea`,
-`dynamic_table`, `rich_text_block`, `signature_pad`. `dropdown_select` and
-`checkbox_list` must declare a non-empty `options` list (system fields
-whose real options come from a live catalog — e.g. Visitor Category — are
-exempt, since their options aren't static). A field may declare
-`visibilityCondition` (`{fieldKey, operator, value}`, `operator` one of
-`equals`/`not_equals`) referencing another field in the *same* step; a
-dangling reference or a dependency cycle is rejected both at field-save
-time and again at publish time.
+`time_picker`, `toggle_switch`, `checkbox_list`, `checkbox_single`,
+`radio_button`, `file_upload`, `textarea`, `static_text`.
+`dropdown_select`, `checkbox_list`, and `radio_button` must declare a
+non-empty `options` list; `checkbox_single` is a lone boolean field and
+declares none, the same as an option-free `toggle_switch`.
+`visitor_category` is the sole exception: its real options come from
+the separate, admin-managed Visitor Categories catalog, not this row's own
+`options`, so it's exempt from the non-empty-options rule
+(`_EXTERNALLY_CATALOGED_FIELD_KEYS` in `form_builder/service.py`). Every
+other system-seeded dropdown field — including `id_proof_type` and
+`vehicle_type` (`make-id-proof-and-vehicle-type-configurable`) — has no
+such external catalog: its `options` **is** the source of truth for what a
+visitor/staff submission may declare for that field, validated dynamically
+in `invitations/service.py::create_invitation`
+(`allowed_id_proof_types`/`allowed_vehicle_types`), so it needs the same
+non-empty-options guarantee any admin-authored dropdown has. A field may
+declare `visibilityCondition` (`{fieldKey, operator, value}`,
+`operator` one of `equals`/`not_equals`) referencing another field in the
+*same* step; a dangling reference or a dependency cycle is rejected both at
+field-save time and again at publish time.
+
+`static_text` is a display-only content block, not an input: its `label`
+renders as a heading and its `helpText` as the full body beneath it (e.g.
+an actual Terms & Conditions statement authored by the admin), on both the
+staff and visitor forms. It collects no answer, so it can never be marked
+required — `FormFieldCreate`/`update_field` reject `isRequired=true` for
+this type — and it must declare non-empty `helpText` at creation (a
+heading with no body serves no purpose).
+
+## Field description, and editing options after creation
+
+A field's `helpText` is admin-authored static text shown to the visitor
+alongside the field itself — e.g. the actual body of a "Terms &
+Conditions" or "Data Processing Consent" statement on the Consent
+Agreement step — not a value the visitor fills in. It's settable for any
+field type from both the "Add New Custom Field" modal (at creation) and
+the Field Properties panel (after creation), the latter disabled for a
+locked field unless the admin has unlocked it for editing (see "Unlocking
+a locked field to edit it" below), matching that field's label/placeholder
+inputs. The public/staff renderer (`DynamicField`) shows it under the
+field's own control, truncated to its first sentence with a "See
+more"/"See less" toggle, for every field type and step uniformly — for a
+`static_text` field, which has no input control of its own, this is the
+block's entire body content.
+
+`checkbox_list`, `dropdown_select`, `radio_button`, and an optioned
+`toggle_switch` field's `options` were previously only settable once, at field creation
+(`AddFieldModal`) — the Field Properties panel had no options control at
+all, so an existing field's option list (e.g. Carried Items' `items`
+field) could never be revisited afterward. The panel now exposes an
+add/remove/reorder options editor for these field types, disabled for a
+locked field unless the admin has unlocked it for editing; saving an
+option-required field down to zero options is rejected by the existing
+`update_field` validation, surfaced inline in the panel rather than only
+as a toast.
+
+## Changing an existing field's type
+
+A field's type is editable after creation from the Field Properties
+panel's "Field Type" dropdown for every field **except** a fixed set of
+system-seeded fields whose value is consumed elsewhere in the backend as
+a specific structured type, not just rendered as form input
+(`_TYPE_LOCKED_SYSTEM_FIELD_KEYS` in `form_builder/service.py`):
+
+| Key | Why its type is fixed |
+|---|---|
+| `email`, `phone`, `preferredContactMethod` | Coupled together by `_require_reachable_contact`/`_require_contact_for_method` (`invitations/schemas.py`) and consumed as the literal deliverable address/channel by notification dispatch. |
+| `registrationType` | A real `RegistrationType` enum, a `list_invitations` filter column, and drives `_check_visitor_list_matches_registration_type`. |
+| `preferredVisitDate`, `preferredVisitTime` | Real `Date`/`Time` (not `String`) database columns, consumed as true date/time values by overstay detection and the emergency "who's inside" report. |
+| `idProofUpload`, `profilePhoto` | `file_upload` fields feeding the document/photo storage and PII-handling pipeline — their value is a stored file reference, not form input. |
+| `visitorCategory` | Its real options come from the separate Visitor Category catalog, not this field's own `options` list. |
+
+Every other field — including every other system field, locked or
+toggleable (Full Name, Purpose of Visit, Host, Department to Visit,
+License Plate, Expected Duration, Additional Notes, ID Proof Type,
+Vehicle Type) — is retypeable. Changing it re-runs the same
+type-dependent checks field creation already applies, against the
+field's *resulting* state (the update's own values where provided, the
+field's existing saved values otherwise): a type change to
+`dropdown_select`/`checkbox_list` needs a non-empty `options` list (either
+already saved or supplied in the same request); a type change to
+`static_text` is rejected if the field is still `isRequired=true` or has
+no `helpText`. Changing a field's type away from an option-bearing type
+clears its stored `options` (they don't apply to the new type).
+
+For a retypeable field's submission-time validation, see "Retyped system
+fields and submission validation" in `docs/features/invitations.md`.
+
+## Unlocking a locked field to edit it
+
+A locked field's Label, Placeholder, Description, Field Type, and (if
+option-bearing) Options controls are disabled by default in the Field
+Properties panel, matching its permanently-locked position/deletion
+protection — Field Type only for a locked field whose type isn't one of
+the fixed keys in the table above; those stay disabled regardless of lock
+state. An admin can select "Unlock to Edit" on a locked field to enable
+those controls for that field and save changes to them — e.g. rewording a
+mandatory field's label, adding an option to a locked dropdown, or
+retyping "Full Name" from a plain text input to a textarea. This does
+**not** extend to the field's Required/Active state: that stays governed
+by the existing locked-field enforcement (`update_field` rejects
+`isActive`/`isRequired` → `false`) whether or not the field has been
+unlocked for editing, since those fields back non-nullable database
+columns. The unlock state is local to the open Field Properties panel
+(not persisted server-side, and not a new `FormField` column) —
+switching to a different field, or re-locking, discards any unsaved
+edits and returns the panel to its default locked/disabled state. The
+backend itself has never rejected a label/placeholder/`helpText`/
+`options`/`fieldType` change on a locked field (only `isActive`/
+`isRequired` → `false` and delete/reorder are actually enforced
+server-side) — the lock this UI shows and lets an admin lift is a
+deliberate UX guard against accidental edits, not a backend permission
+boundary.
 
 ## Scoping and resolution
 
@@ -114,9 +295,14 @@ TTL) and invalidated synchronously by `publish`.
 | POST | `/api/v1/form-builder/steps/reorder` | `form-builder:manage` | Reorder the scope's steps (`orderedIds`). |
 | GET | `/api/v1/form-builder/steps/{id}/fields` | `form-builder:view` | List a step's fields. |
 | POST | `/api/v1/form-builder/steps/{id}/fields` | `form-builder:manage` | Add a field. |
-| PATCH | `/api/v1/form-builder/fields/{id}` | `form-builder:manage` | Update a field; 422 on a locked-field active/required change, an option-required type with no options, or an invalid visibility condition. |
+| PATCH | `/api/v1/form-builder/fields/{id}` | `form-builder:manage` | Update a field; 422 on a locked-field active/required change, a type change for one of the fixed type-locked keys (see "Changing an existing field's type"), a `static_text` field marked required, an option-required type with no options, or an invalid visibility condition. |
 | DELETE | `/api/v1/form-builder/fields/{id}` | `form-builder:manage` | Soft-delete a field; 422 if locked. |
 | POST | `/api/v1/form-builder/steps/{id}/fields/reorder` | `form-builder:manage` | Reorder a step's fields. |
+| GET | `/api/v1/form-builder/steps/{id}/groups` | `form-builder:view` | List a step's field groups. |
+| POST | `/api/v1/form-builder/steps/{id}/groups` | `form-builder:manage` | Create a field group on a step. |
+| PATCH | `/api/v1/form-builder/groups/{id}` | `form-builder:manage` | Update a group (including `visibilityCondition`); 422 on a locked group made non-repeatable, an invalid `minInstances`/`maxInstances` range, a range change on Visitor Info's group, a dangling `visibilityCondition` reference, or a condition referencing one of the group's own member fields. |
+| DELETE | `/api/v1/form-builder/groups/{id}` | `form-builder:manage` | Soft-delete a group (ungroups its fields first); 422 if locked. |
+| POST | `/api/v1/form-builder/steps/{id}/groups/reorder` | `form-builder:manage` | Reorder a step's groups. |
 | POST | `/api/v1/form-builder/publish` | `form-builder:manage` | Re-validate and publish the resolved scope's draft; bumps `version`. |
 | GET | `/api/v1/form-builder/effective` | none (public) | The currently live form for the resolved (or default) branch. |
 
@@ -151,6 +337,15 @@ current catalog — safe to re-run (every step is idempotent). See
 `openspec/changes/fix-form-builder-audit-gaps/design.md` for how this was
 found and why the fix covers both the schema and the RBAC catalog, not just
 the missing tables.
+
+Field groups (`form_field_groups`, migration `b8e3f4a1c6d2`) backfill the
+`vehicles`/`visitors` groups for every existing branch's Vehicle Info/
+Visitor Info steps as part of the same migration run, but do **not**
+force-republish any already-published `FormConfigVersion` — a pre-existing
+snapshot with no group data simply behaves as an unlimited repeatable
+group (today's actual Vehicle Info behavior) until an admin next publishes
+that scope. See `openspec/changes/add-repeatable-field-groups/design.md`
+Risks/Migration Plan.
 
 ## Locked-position ordering
 
@@ -259,8 +454,12 @@ form" instead of implying the change is already live.
 
 Still entirely unbuilt: the `VisitorCategory.form_schema` column drop
 (`tasks.md` §5.2, deliberately deferred for a burn-in period), and inline
-rendering of `file_upload`/`dynamic_table`/`signature_pad`/`rich_text_block`
-fields on any step (`DynamicField` shows a "not supported inline yet"
-placeholder for these today) — `custom_field_values` storage now exists for
-every step (`add-generic-custom-field-support`), but only for the field
-types `DynamicField` can actually render/collect a value for.
+rendering of `file_upload` fields on any step (`DynamicField` shows a "not
+supported inline yet" placeholder for these today) — `custom_field_values`
+storage now exists for every step (`add-generic-custom-field-support`),
+but only for the field types `DynamicField` can actually render/collect a
+value for. `dynamic_table`, `rich_text_block`, and `signature_pad` were
+removed from the field-type catalog entirely
+(`update-form-field-type-catalog`) rather than left as an unbuilt-inline
+case, since none had a capture UI, submission validation, or rendering
+behavior to begin with.

@@ -116,6 +116,175 @@ reception, after triage) knows the actual answer. `purposeOfVisit` and
 `expectedDuration` remain required free-text fields; only `departmentToVisit`
 changed.
 
+### ID proof type and vehicle type are branch-configured, not fixed (`make-id-proof-and-vehicle-type-configurable`, **BREAKING**)
+
+`idProofType` (`primaryContact`/each `visitors[]` entry) and `vehicleType`
+(each `vehicles[]` entry) are plain strings, not a fixed server-side enum —
+a valid value is whatever the calling branch's currently published Form
+Builder "ID Proof Type"/"Vehicle Type" options declare
+(`GET /form-builder/effective`'s Visitor Info/Vehicle Info steps), the same
+"branch's currently configured options" contract `carriedItems.items` and
+`consents` already use. Submitting a value outside the branch's current
+options is rejected with `422`. A branch that has never customized either
+field accepts the original four ID proof types
+(`Aadhaar Card`/`Passport`/`Driving License`/`Other`) and three vehicle
+types (`2_wheeler`/`4_wheeler`/`heavy`) unchanged — those are the seeded
+defaults, not special-cased in code. See `docs/features/form_builder.md`
+for how an admin edits these two fields' options.
+
+### Vehicle count and admin-defined repeatable groups (`add-repeatable-field-groups`)
+
+The number of `vehicles[]` entries a request may declare is now checked
+against the branch's currently published Vehicle Info field-group instance
+range (`GET /form-builder/effective`'s Vehicle Info step, `groups[].key ==
+"vehicles"`) instead of being unconditionally unlimited — a branch that
+has never configured a minimum/maximum still accepts any number of
+vehicles, including zero, unchanged from before this change.
+
+The number of `visitors[]` entries a `group` registration may declare is
+similarly checked against Visitor Info's field group's `maxInstances`
+(`groups[].key == "visitors"`) — this **replaces** the previous
+`INVITATION_MAX_GROUP_VISITORS` settings-based rejection (still 20 by
+default, seeded into that group at migration time), so a client that was
+relying on the old 422 message text should expect the same status code
+via a different underlying check. Unlike Vehicle Info's group, Visitor
+Info's isn't admin-editable through the Form Builder API — see
+`docs/features/form_builder.md`'s "Field groups" for why.
+
+An admin can also define a **repeatable field group** on any other step
+(e.g. a "Parcels" group on Carried Items), optionally made **conditional**
+on another field's value, through Form Builder — see
+`docs/features/form_builder.md` "Field groups"/"Conditional groups".
+`POST /invitations` (and `POST /registrations/walk-in`) accepts that
+group's answers as an optional top-level `groupValues: Record<string,
+object[]>` map, keyed by group key: each entry is an ordered array of
+that group's per-instance answer maps, one per instance the visitor
+filled in. A submission naming a group key the branch's active form
+doesn't define, or supplying more instances than that group's currently
+published `maxInstances`, is rejected with `422` before any invitation is
+created — the same "validate everything, then persist" ordering ID-proof
+file validation already uses, so one invalid instance never leaves a
+partially-created invitation behind. Every response that already returns
+`customFieldValues` (`GET /invitations/{id}`, the tracking lookup, the
+canonical check-in response, and the QR check-in/check-out response) now
+also returns `groupFieldValues` in the same shape, alongside it.
+
+**When a group is hidden** by its `visibilityCondition` (evaluated against
+the same request's own submitted values), the request is accepted even if
+that group's fields would otherwise be required, and even if fewer
+instances are submitted than the group's configured minimum — a visitor
+who was never shown the group can't be expected to have filled it in. Its
+maximum still applies if instances are submitted anyway, and any value
+that is supplied for a hidden group's field is still validated against
+that field's own type/options/length rules.
+
+### Repeatable group file uploads (`add-group-field-file-upload`)
+
+If a repeatable field group has its own `file_upload`-typed field (Form
+Builder field type `file_upload`), that field's answer can only come from a
+multipart file — never a JSON value in `groupValues`. Only a group's
+**first** `file_upload` field is read; a group with more than one is
+supported for definition but only the first is ever populated this way.
+
+The client sends one multipart **list** part named
+`groupFieldFiles[<groupKey>]`, **order-matched** to that same group's
+`payload.groupValues[<groupKey>]` instances — the same "list, order-matched
+to instances" convention `visitorIdProofFiles`/`visitor_id_proof_files`
+already uses for the fixed `visitors` list. There is no `instanceIndex` or
+field key encoded in the part name: file *n* in the list pairs with
+instance *n* in `groupValues[<groupKey>]`.
+
+- The instance dict must **omit** that field (or send `null`) in
+  `groupValues` — supplying any other value for it is rejected with `422`
+  (`"'<fieldKey>' in '<groupName>' instance <n> must be uploaded as a file,
+  not supplied as a value"`), never silently overwritten.
+- If the field is required (and the group is visible), every instance must
+  have a matching file — a count mismatch is rejected with `422`
+  (`"Field group '<groupName>' requires an uploaded file for every
+  instance"`). More files than instances is also rejected (`422`, `"More
+  files were uploaded than instances of '<groupName>'"`).
+- Accepted files are validated the same way a top-level ID-proof upload is
+  (`_validate_id_proof`), stored via the same `core/storage.py::save`
+  interface under the `invitations/group-files` category, and the
+  resulting storage key is written back into that instance's field in the
+  persisted `groupFieldValues` — never a client-supplied value.
+
+`POST /registrations/walk-in` accepts the identical `groupFieldFiles[...]`
+contract — see `docs/features/registrations.md`.
+
+### Inline (non-grouped) custom-field file uploads (`add-inline-custom-field-file-upload`)
+
+An admin-authored `file_upload`-typed field that is *not* assigned to a
+repeatable field group (e.g. an "additional document" field added directly
+on Visitor Info, not one of its groups) — the standalone counterpart of the
+repeatable-group case above. Unlike a group (whose multipart part is keyed
+by group key alone, so only the group's *first* `file_upload` field is
+read), each of these fields has its own multipart part keyed by field key,
+so every `file_upload` field at a scope is supported, not just one.
+
+Four scopes, one multipart convention each:
+
+| Scope | Multipart part | Shape |
+|---|---|---|
+| Primary contact (Visitor Info) | `primaryContactCustomFieldFiles[<fieldKey>]` | At most one file. |
+| Each co-visitor (Visitor Info) | `visitorCustomFieldFiles[<fieldKey>]` | Order-matched list, same convention as `visitor_id_proof_files`. |
+| Each vehicle (Vehicle Info) | `vehicleCustomFieldFiles[<fieldKey>]` | Order-matched list, same convention as the visitor case. |
+| Invitation-level (Visit Details/Carried Items/a custom step) | `customFieldFiles[<fieldKey>]` | At most one file. |
+
+- The field's key must be **omitted** (or `null`) in the corresponding
+  `customFieldValues` map — supplying any other value for it is rejected
+  with `422` (`"'<fieldKey>' for <scope> must be uploaded as a file, not
+  supplied as a value"`), never silently overwritten, same rule as the
+  repeatable-group case.
+- If the field is required, every applicable instance (the primary contact;
+  each visitor; each vehicle; the invitation itself) must have a matching
+  file — a count mismatch is rejected with `422`. More files than instances
+  (or more than one file for a single-instance scope) is also rejected.
+- Accepted files are validated and stored the same way a group's own
+  `file_upload` field is (`_validate_id_proof`, `core/storage.py::save`,
+  category `invitations/custom-fields`), and the resulting storage key is
+  written back into the persisted `customFieldValues`/
+  `primaryContactCustomFieldValues`/a vehicle's own `customFieldValues` map —
+  never a client-supplied value. Every reader
+  (`router.py::_resolve_custom_field_file_values`/`_resolve_group_field_
+  values`, applied to the invitation, primary contact, every visitor, every
+  vehicle, and every `groupFieldValues` instance alike) resolves that
+  storage key to a signed, time-boxed URL (`core/storage.py::url_for`)
+  before it reaches a response — gated by the caller's `documents:view`
+  grant for the invitation's branch the same way `photoUrl`/`idProofUrl`
+  already are: a caller without that permission gets `null` for the field
+  instead of either the raw key or a usable URL, never a fallback that
+  leaks the key.
+- The file-field keys resolved this way are always the branch's *current*
+  effective form. If a field's type is changed after invitations already
+  hold data under its key (or the key is reused by a different field), an
+  older instance's value may not be a storage key at all — that's resolved
+  to `null` too, rather than passed to `core/storage.py::url_for`, which
+  can only sign an actual string key.
+
+`POST /registrations/walk-in` accepts the identical
+`primaryContactCustomFieldFiles[...]`/`visitorCustomFieldFiles[...]`/
+`vehicleCustomFieldFiles[...]`/`customFieldFiles[...]` contract — see
+`docs/features/registrations.md`.
+
+### Retyped system fields and submission validation (`make-system-field-types-editable`)
+
+`fullName` (`primaryContact`/each `visitors[]` entry), `purposeOfVisit`,
+`departmentToVisit`, `expectedDuration`, `additionalNotes`
+(`visitDetails`), and `licensePlate` (each `vehicles[]` entry) can now
+also be retyped through Form Builder (see `docs/features/form_builder.md`
+"Changing an existing field's type"), extending the same dynamic
+validation `idProofType`/`vehicleType` already use: when a field's
+*currently configured* type is `dropdown_select`/`checkbox_list`, a
+submitted value must match one of the branch's currently published
+options for that field, rejected with `422` otherwise. When it's still
+its default (non-option-bearing) type, the submitted value is validated
+as ordinary free text, unchanged from before this change. `hostNameOrEmail`
+is not covered by this — its submitted value is always discarded (see
+"`hostId`/`hostNameOrEmail` are no longer resolved at creation" above), so
+there is nothing to validate regardless of how its Form Builder field is
+typed.
+
 ### Primary contact profile photo (`checkin-approval-workflow-improvements`, now mandatory per `require-primary-contact-photo`)
 
 Alongside each visitor's required ID-proof upload, `POST /invitations`
