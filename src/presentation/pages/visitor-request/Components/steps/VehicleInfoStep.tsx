@@ -1,20 +1,17 @@
 import { useState } from 'react'
 import { CustomFieldsSection } from '../../../../components/dynamic-fields/CustomFieldsSection'
 import type { DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
+import { resolveGroupFlatValues } from '../../../../components/dynamic-fields/field-group-visibility'
+import { FieldGroupsSection } from '../../../../components/dynamic-fields/FieldGroupsSection'
 import { formatDynamicFieldValue } from '../../../../components/dynamic-fields/format-dynamic-field-value'
+import type { GroupInstance } from '../../../../components/dynamic-fields/RepeatableFieldGroup'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
 import { TextField } from '../../../../components/ui/TextField'
-import type { FormField } from '../../../../../domain/entities/form-builder-schema'
+import type { EffectiveFormFieldGroup, FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
 
-const VEHICLE_TYPE_OPTIONS = [
-  { value: '2_wheeler', label: '2 Wheeler' },
-  { value: '4_wheeler', label: '4 Wheeler' },
-  { value: 'heavy', label: 'Heavy' },
-]
-
-function createEmptyVehicle(): Vehicle {
-  return { vehicleType: '2_wheeler', licensePlate: '', makeModel: '', color: '', customFieldValues: {} }
+function createEmptyVehicle(vehicleTypeOptions: string[]): Vehicle {
+  return { vehicleType: vehicleTypeOptions[0] ?? '', licensePlate: '', makeModel: '', color: '', customFieldValues: {} }
 }
 
 export interface VehicleInfoFieldState {
@@ -22,6 +19,10 @@ export interface VehicleInfoFieldState {
   makeModelRequired: boolean
   colorActive: boolean
   colorRequired: boolean
+  /** Branch-configured (form-builder) Vehicle Type choices — the field's
+   * own `options`, not a fixed set
+   * (make-id-proof-and-vehicle-type-configurable). */
+  vehicleTypeOptions: string[]
 }
 
 interface VehicleInfoStepProps {
@@ -37,9 +38,36 @@ interface VehicleInfoStepProps {
    * (add-generic-custom-field-support) — each vehicle's own answers live
    * on its own `customFieldValues`, independent of every other vehicle's. */
   customFields: FormField[]
+  /** Vehicle Info's own admin-defined field groups
+   * (add-repeatable-field-groups / add-conditional-field-groups), rendered
+   * once for the whole step (not per-vehicle) via `FieldGroupsSection` —
+   * same pattern as the Visitor Info step's own groups. */
+  groups: EffectiveFormFieldGroup[]
+  /** Every non-system Vehicle Info field, including grouped ones — used to
+   * resolve `groups`' `fieldKeys` (`customFields` above excludes them). */
+  groupFields: FormField[]
+  groupValues: Record<string, GroupInstance[]>
+  onGroupValuesChange: (groupValues: Record<string, GroupInstance[]>) => void
+  /** Required for an active `file_upload` field among `customFields`/one of
+   * `groups` to render a working upload control instead of falling back to
+   * "not supported". */
+  uploadFile?: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
 }
 
-export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields, customFields }: VehicleInfoStepProps) {
+export function VehicleInfoStep({
+  vehicles,
+  onChange,
+  errors,
+  vehicleInfoFields,
+  customFields,
+  groups,
+  groupFields,
+  groupValues,
+  onGroupValuesChange,
+  uploadFile,
+  getFilePreviewUrl,
+}: VehicleInfoStepProps) {
   const [draftVehicle, setDraftVehicle] = useState<Vehicle | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [draftErrors, setDraftErrors] = useState<Record<string, string>>({})
@@ -47,7 +75,7 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
   const startAddVehicle = () => {
     setEditingIndex(null)
     setDraftErrors({})
-    setDraftVehicle(createEmptyVehicle())
+    setDraftVehicle(createEmptyVehicle(vehicleInfoFields.vehicleTypeOptions))
   }
 
   const startEditVehicle = (index: number) => {
@@ -90,6 +118,12 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
     onChange(vehicles.filter((_, vehicleIndex) => vehicleIndex !== index))
   }
 
+  // Unlike Visitor Info, Vehicle Info has no single step-level "current"
+  // entry to seed a group condition from — every field lives on a specific
+  // vehicle instance, not the step itself — so this only resolves values
+  // from the step's own non-repeatable groups (see `resolveGroupFlatValues`).
+  const groupFlatValues = resolveGroupFlatValues(groups, groupValues, {})
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -126,7 +160,7 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
               {vehicles.map((vehicle, index) => (
                 <tr key={index} className="border-t border-border-subtle text-text">
                   <td className="px-4 py-2">{index + 1}</td>
-                  <td className="px-4 py-2">{VEHICLE_TYPE_OPTIONS.find((option) => option.value === vehicle.vehicleType)?.label}</td>
+                  <td className="px-4 py-2">{vehicle.vehicleType}</td>
                   <td className="px-4 py-2">{vehicle.licensePlate}</td>
                   <td className="px-4 py-2">{vehicle.makeModel}</td>
                   <td className="px-4 py-2">{vehicle.color}</td>
@@ -156,9 +190,9 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
           <div className="flex flex-col gap-1.5">
             <span className="text-body font-medium text-text">Vehicle Type</span>
             <SegmentedToggle
-              options={VEHICLE_TYPE_OPTIONS}
+              options={vehicleInfoFields.vehicleTypeOptions.map((option) => ({ value: option, label: option }))}
               value={draftVehicle.vehicleType}
-              onChange={(vehicleType) => setDraftVehicle({ ...draftVehicle, vehicleType: vehicleType as Vehicle['vehicleType'] })}
+              onChange={(vehicleType) => setDraftVehicle({ ...draftVehicle, vehicleType })}
               variant="pill"
             />
           </div>
@@ -196,6 +230,8 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
             fields={customFields}
             value={(draftVehicle.customFieldValues ?? {}) as Record<string, DynamicFieldValue>}
             onChange={(customFieldValues) => setDraftVehicle({ ...draftVehicle, customFieldValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
           <div className="flex gap-3">
             <button type="button" onClick={commitDraft} className="rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white">
@@ -207,6 +243,16 @@ export function VehicleInfoStep({ vehicles, onChange, errors, vehicleInfoFields,
           </div>
         </div>
       )}
+
+      <FieldGroupsSection
+        groups={groups}
+        fields={groupFields}
+        flatValues={groupFlatValues}
+        groupValues={groupValues}
+        onGroupValuesChange={onGroupValuesChange}
+        uploadFile={uploadFile}
+        getFilePreviewUrl={getFilePreviewUrl}
+      />
     </div>
   )
 }

@@ -336,6 +336,11 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: true,
   },
+  BULK_CREATE_VISITOR_CATEGORIES: {
+    endpoint: "/visitor-categories/bulk",
+    method: "POST",
+    hasToken: true,
+  },
   UPDATE_VISITOR_CATEGORY: {
     endpoint: "/visitor-categories/:id",
     method: "PUT",
@@ -423,6 +428,31 @@ export const API_ENDPOINTS = {
   },
   REORDER_FORM_FIELDS: {
     endpoint: "/form-builder/steps/:stepId/fields/reorder",
+    method: "POST",
+    hasToken: true,
+  },
+  LIST_FORM_FIELD_GROUPS: {
+    endpoint: "/form-builder/steps/:stepId/groups",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_FORM_FIELD_GROUP: {
+    endpoint: "/form-builder/steps/:stepId/groups",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_FORM_FIELD_GROUP: {
+    endpoint: "/form-builder/groups/:id",
+    method: "PATCH",
+    hasToken: true,
+  },
+  DELETE_FORM_FIELD_GROUP: {
+    endpoint: "/form-builder/groups/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  REORDER_FORM_FIELD_GROUPS: {
+    endpoint: "/form-builder/steps/:stepId/groups/reorder",
     method: "POST",
     hasToken: true,
   },

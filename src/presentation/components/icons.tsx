@@ -335,3 +335,24 @@ export const PenToolIcon = createIcon(
     <circle cx="11" cy="11" r="2" />
   </>,
 )
+
+export const LockIcon = createIcon(
+  <>
+    <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </>,
+)
+
+export const UnlockIcon = createIcon(
+  <>
+    <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+  </>,
+)
+
+export const CircleDotIcon = createIcon(
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="12" r="1" fill="currentColor" />
+  </>,
+)

@@ -7,11 +7,17 @@ import type {
   VisitorCategoryRepository,
 } from '../data/repositories/visitor-category-repository'
 import {
+  VisitorCategoryBulkCreateResponseSchema,
   VisitorCategoryListResponseSchema,
   VisitorCategoryResponseSchema,
+  type VisitorCategoryBulkCreateOut,
   type VisitorCategoryOut,
 } from '../domain/entities/visitor-category-out-schema'
-import type { VisitorCategory, VisitorCategoryInput } from '../domain/entities/visitor-category-schema'
+import type {
+  VisitorCategory,
+  VisitorCategoryBulkCreateInput,
+  VisitorCategoryInput,
+} from '../domain/entities/visitor-category-schema'
 
 function toVisitorCategory(visitorCategoryOut: VisitorCategoryOut): VisitorCategory {
   return {
@@ -73,6 +79,16 @@ export class HttpVisitorCategoryRepository implements VisitorCategoryRepository 
     })
 
     return toVisitorCategory(response.data)
+  }
+
+  async bulkCreate(input: VisitorCategoryBulkCreateInput): Promise<VisitorCategoryBulkCreateOut> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.BULK_CREATE_VISITOR_CATEGORIES,
+      body: { names: input.names },
+      parserSchema: VisitorCategoryBulkCreateResponseSchema,
+    })
+
+    return response.data
   }
 
   async update(id: string, input: VisitorCategoryInput): Promise<VisitorCategory> {

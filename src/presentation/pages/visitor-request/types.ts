@@ -52,10 +52,8 @@ export interface VisitInfoFormState {
   purpose: string
   preferredDate: string
   preferredTime: string
-  expectedDuration: string
   location: string
   building: string
-  notes: string
 }
 
 export interface CarriedItemsFormState {
@@ -80,6 +78,13 @@ export type ConsentFormState = Record<string, boolean>
 // `consent` below regardless of whether they're seeded or admin-authored.
 export type CustomFieldValues = Record<string, DynamicFieldValue>
 
+// One custom (admin-defined) repeatable field group's current instances,
+// keyed by the group's own `key` — the wizard-side counterpart of the wire
+// contract's `groupValues` (add-repeatable-field-groups). Every instance is
+// a flat answer map keyed by that group's field keys, matching how
+// `RepeatableFieldGroup` reads/writes them via `CustomFieldsSection`.
+export type GroupValues = Record<string, Record<string, DynamicFieldValue>[]>
+
 export interface VisitRequestFormState {
   registrationType: RegistrationType
   primaryContact: VisitorFormEntry
@@ -89,6 +94,7 @@ export interface VisitRequestFormState {
   vehicles: Vehicle[]
   consent: ConsentFormState
   customFieldValues: CustomFieldValues
+  groupValues: GroupValues
 }
 
 export function createInitialFormState(): VisitRequestFormState {
@@ -100,15 +106,14 @@ export function createInitialFormState(): VisitRequestFormState {
       purpose: '',
       preferredDate: '',
       preferredTime: '',
-      expectedDuration: '',
       location: '',
       building: '',
-      notes: '',
     },
     carriedItems: { categories: [], description: '' },
     vehicles: [],
     consent: {},
     customFieldValues: {},
+    groupValues: {},
   }
 }
 
@@ -118,7 +123,11 @@ export function toVisitor(entry: VisitorFormEntry): Visitor {
     email: entry.email,
     phone: entry.phone,
     preferredContactMethod: entry.preferredContactMethod,
-    idProofType: entry.idProofType,
+    // Omitted rather than sent as `''` when ID Proof Type isn't
+    // active/required for this branch and the visitor left it blank — the
+    // backend validates any *present* value against its known ID proof
+    // types and rejects an empty string as unrecognized.
+    idProofType: entry.idProofType || undefined,
     customFieldValues: entry.customFieldValues,
   }
 }
@@ -143,8 +152,6 @@ export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
       purposeOfVisit: formState.visitInfo.purpose,
       preferredVisitDate: formState.visitInfo.preferredDate,
       preferredVisitTime: formState.visitInfo.preferredTime,
-      expectedDuration: formState.visitInfo.expectedDuration,
-      additionalNotes: formState.visitInfo.notes,
     },
     carriedItems: {
       items: formState.carriedItems.categories,
@@ -153,5 +160,6 @@ export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
     vehicles: formState.vehicles,
     consents: formState.consent,
     customFieldValues: formState.customFieldValues,
+    groupValues: formState.groupValues,
   }
 }

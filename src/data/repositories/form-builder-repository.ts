@@ -1,6 +1,10 @@
 import type {
+  EffectiveFormStep,
   FormField,
   FormFieldCreateInput,
+  FormFieldGroup,
+  FormFieldGroupCreateInput,
+  FormFieldGroupUpdateInput,
   FormFieldUpdateInput,
   FormStep,
   FormStepCreateInput,
@@ -23,6 +27,11 @@ export interface FormBuilderRepository {
   updateField(id: string, input: FormFieldUpdateInput, branchId: string | undefined): Promise<FormField>
   deleteField(id: string, branchId: string | undefined): Promise<void>
   reorderFields(stepId: string, orderedIds: string[], branchId: string | undefined): Promise<FormField[]>
+  listGroups(stepId: string, branchId: string | undefined): Promise<FormFieldGroup[]>
+  createGroup(stepId: string, input: FormFieldGroupCreateInput, branchId: string | undefined): Promise<FormFieldGroup>
+  updateGroup(id: string, input: FormFieldGroupUpdateInput, branchId: string | undefined): Promise<FormFieldGroup>
+  deleteGroup(id: string, branchId: string | undefined): Promise<void>
+  reorderGroups(stepId: string, orderedIds: string[], branchId: string | undefined): Promise<FormFieldGroup[]>
   publish(branchId: string | undefined): Promise<PublishResult>
-  getEffectiveForm(branchId: string | undefined): Promise<FormStep[]>
+  getEffectiveForm(branchId: string | undefined): Promise<EffectiveFormStep[]>
 }

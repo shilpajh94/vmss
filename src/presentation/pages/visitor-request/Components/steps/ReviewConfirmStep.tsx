@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react'
-import type { CarriedItemsFormState, ConsentFormState, CustomFieldValues, RegistrationType, VisitInfoFormState } from '../../types'
+import type { CarriedItemsFormState, ConsentFormState, CustomFieldValues, GroupValues, RegistrationType, VisitInfoFormState } from '../../types'
 import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
-import type { FormField } from '../../../../../domain/entities/form-builder-schema'
+import type { EffectiveFormFieldGroup, FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
 import { Spinner } from '../../../../components/ui/LoadingState'
 import { FileTextIcon } from '../../../../components/icons'
 import { getFilePreviewKind } from '../../../../utils/file-preview-kind'
 import { prettifyKey } from '../../../../utils/prettify-key'
 import { formatDynamicFieldValue } from '../../../../components/dynamic-fields/format-dynamic-field-value'
+import { isGroupVisible, resolveGroupFlatValues } from '../../../../components/dynamic-fields/field-group-visibility'
 import type { DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
 
 export type SubmissionStatus = 'idle' | 'submitting' | 'success' | 'error'
@@ -23,6 +24,10 @@ export interface ReviewVisitorSummary {
   idProofFileName?: string
   profileImageFileRef?: string
   profileImageFileName?: string
+  /** The primary contact's own answers to admin-authored Visitor Info
+   * fields — needed so a group's `visibilityCondition` watching one of them
+   * can be resolved the same way `VisitorInfoStep` resolves it. */
+  customFieldValues?: Record<string, DynamicFieldValue>
 }
 
 export interface ReviewableFormState {
@@ -34,6 +39,7 @@ export interface ReviewableFormState {
   vehicles: Vehicle[]
   consent: ConsentFormState
   customFieldValues: CustomFieldValues
+  groupValues: GroupValues
 }
 
 interface ReviewConfirmStepProps {
@@ -54,6 +60,15 @@ interface ReviewConfirmStepProps {
   /** Active Carried Items custom fields, for labeling values pulled from
    * `formState.customFieldValues` (form-builder). */
   carriedItemsCustomFields?: FormField[]
+  /** Visitor Info's own admin-defined field groups (e.g. an "Additional
+   * Visitors" group) plus every field they reference, so group instances —
+   * otherwise invisible here, since they live in `formState.groupValues`,
+   * not `additionalVisitors` — can be summarized below (add-repeatable-field-groups). */
+  visitorInfoGroups?: EffectiveFormFieldGroup[]
+  visitorInfoAllFields?: FormField[]
+  /** Same as above, for Vehicle Info's own field groups. */
+  vehicleInfoGroups?: EffectiveFormFieldGroup[]
+  vehicleInfoAllFields?: FormField[]
   onBack: () => void
   onSubmit: () => void
   onGoHome?: () => void
@@ -93,6 +108,53 @@ function FilePreviewCell({ fileName, previewUrl }: { fileName?: string; previewU
   )
 }
 
+/** One `SummarySection` per visible field group (add-repeatable-field-groups
+ * / add-conditional-field-groups) — mirrors `FieldGroupsSection`'s
+ * gating/instance logic, but read-only. Each repeatable group gets one row
+ * per instance per field; a non-repeatable group's single instance lives at
+ * `groupValues[key][0]`, matching how `FieldGroupsSection` stores it. */
+function GroupSummarySections({
+  groups,
+  fields,
+  groupValues,
+  flatValues,
+}: {
+  groups: EffectiveFormFieldGroup[]
+  fields: FormField[]
+  groupValues: GroupValues
+  flatValues: Record<string, DynamicFieldValue>
+}) {
+  const orderedGroups = [...groups].sort((a, b) => a.orderIndex - b.orderIndex)
+
+  return (
+    <>
+      {orderedGroups.map((group) => {
+        if (!isGroupVisible(group.visibilityCondition, flatValues)) return null
+
+        const groupFields = group.fieldKeys
+          .map((fieldKey) => fields.find((field) => field.key === fieldKey))
+          .filter((field): field is FormField => field !== undefined)
+        const instances = groupValues[group.key] ?? []
+
+        if (instances.length === 0) return null
+
+        return (
+          <SummarySection
+            key={group.id}
+            title={group.isRepeatable ? `${group.name} (${instances.length})` : group.name}
+            rows={instances.flatMap((instance, index) =>
+              groupFields.map((field): [string, ReactNode] => [
+                group.isRepeatable ? `${group.name} ${index + 1} — ${field.label}` : field.label,
+                formatDynamicFieldValue(field, instance[field.key]),
+              ]),
+            )}
+          />
+        )
+      })}
+    </>
+  )
+}
+
 export function ReviewConfirmStep({
   formState,
   status,
@@ -103,6 +165,10 @@ export function ReviewConfirmStep({
   getFilePreviewUrl,
   vehicleCustomFields = [],
   carriedItemsCustomFields = [],
+  visitorInfoGroups = [],
+  visitorInfoAllFields = [],
+  vehicleInfoGroups = [],
+  vehicleInfoAllFields = [],
   onBack,
   onSubmit,
   onGoHome,
@@ -133,6 +199,15 @@ export function ReviewConfirmStep({
 
   const visitorCategoryName = (id: string) => visitorCategories?.find((category) => category.id === id)?.name ?? id
   const preferredContactMethodLabel = (method?: 'email' | 'sms') => (method === 'sms' ? 'SMS' : method === 'email' ? 'Email' : '')
+
+  // Matches the seed values each step itself resolves group conditions
+  // against (see VisitorInfoStep/VehicleInfoStep) — a group's condition can
+  // only watch a field on its own step.
+  const visitorGroupFlatValues = resolveGroupFlatValues(visitorInfoGroups, formState.groupValues, {
+    registration_type: formState.registrationType,
+    ...formState.primaryContact.customFieldValues,
+  })
+  const vehicleGroupFlatValues = resolveGroupFlatValues(vehicleInfoGroups, formState.groupValues, {})
 
   return (
     <div className="flex flex-col gap-6">
@@ -169,16 +244,21 @@ export function ReviewConfirmStep({
         })}
       />
 
+      <GroupSummarySections
+        groups={visitorInfoGroups}
+        fields={visitorInfoAllFields}
+        groupValues={formState.groupValues}
+        flatValues={visitorGroupFlatValues}
+      />
+
       <SummarySection
         title="Visit Info"
         rows={[
           ['Purpose', formState.visitInfo.purpose],
           ['Date', formState.visitInfo.preferredDate],
           ['Time', formState.visitInfo.preferredTime],
-          ['Duration', formState.visitInfo.expectedDuration],
           ['Location', formState.visitInfo.location],
           ['Building', formState.visitInfo.building],
-          ['Additional Notes', formState.visitInfo.notes],
         ]}
       />
 
@@ -209,6 +289,13 @@ export function ReviewConfirmStep({
               ])
             : [['Vehicles', 'None declared']]
         }
+      />
+
+      <GroupSummarySections
+        groups={vehicleInfoGroups}
+        fields={vehicleInfoAllFields}
+        groupValues={formState.groupValues}
+        flatValues={vehicleGroupFlatValues}
       />
 
       <SummarySection

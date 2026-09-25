@@ -18,6 +18,27 @@ export class HttpVisitRequestRepository implements VisitRequestRepository {
     for (const file of files.visitorIdProofFiles) {
       formData.append('visitor_id_proof_files', file)
     }
+    for (const [groupKey, groupFiles] of Object.entries(files.groupFieldFiles)) {
+      for (const file of groupFiles) {
+        formData.append(`groupFieldFiles[${groupKey}]`, file)
+      }
+    }
+    for (const [fieldKey, file] of Object.entries(files.primaryContactCustomFieldFiles)) {
+      formData.append(`primaryContactCustomFieldFiles[${fieldKey}]`, file)
+    }
+    for (const [fieldKey, fieldFiles] of Object.entries(files.visitorCustomFieldFiles)) {
+      for (const file of fieldFiles) {
+        formData.append(`visitorCustomFieldFiles[${fieldKey}]`, file)
+      }
+    }
+    for (const [fieldKey, fieldFiles] of Object.entries(files.vehicleCustomFieldFiles)) {
+      for (const file of fieldFiles) {
+        formData.append(`vehicleCustomFieldFiles[${fieldKey}]`, file)
+      }
+    }
+    for (const [fieldKey, file] of Object.entries(files.customFieldFiles)) {
+      formData.append(`customFieldFiles[${fieldKey}]`, file)
+    }
 
     const envelope = await this.apiClient.makeMultipartRequest({
       endpointConfig: API_ENDPOINTS.CREATE_VISIT_REQUEST,

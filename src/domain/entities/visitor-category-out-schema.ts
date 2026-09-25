@@ -37,3 +37,28 @@ export const VisitorCategoryListResponseSchema = z.object({
 })
 
 export type VisitorCategoryListResponse = z.infer<typeof VisitorCategoryListResponseSchema>
+
+export const VisitorCategoryBulkCreateItemSchema = z.object({
+  name: z.string(),
+  status: z.enum(["created", "skipped"]),
+  reason: z.string().nullable(),
+  category: VisitorCategoryOutSchema.nullable(),
+})
+
+export type VisitorCategoryBulkCreateItem = z.infer<typeof VisitorCategoryBulkCreateItemSchema>
+
+export const VisitorCategoryBulkCreateOutSchema = z.object({
+  items: z.array(VisitorCategoryBulkCreateItemSchema),
+  createdCount: z.number(),
+  skippedCount: z.number(),
+})
+
+export type VisitorCategoryBulkCreateOut = z.infer<typeof VisitorCategoryBulkCreateOutSchema>
+
+export const VisitorCategoryBulkCreateResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: VisitorCategoryBulkCreateOutSchema,
+})
+
+export type VisitorCategoryBulkCreateResponse = z.infer<typeof VisitorCategoryBulkCreateResponseSchema>

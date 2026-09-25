@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Modal } from '../../../components/ui/Modal'
+import { TextareaField } from '../../../components/ui/TextareaField'
 import { TextField } from '../../../components/ui/TextField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
 import { FIELD_TYPE_CATALOG, OPTION_REQUIRED_FIELD_TYPES } from '../field-type-catalog'
@@ -8,7 +9,11 @@ import type { FormFieldCreateInput, FormFieldType } from '../../../../domain/ent
 interface AddFieldModalProps {
   isOpen: boolean
   onClose: () => void
-  onCreate: (input: FormFieldCreateInput) => void
+  /** Returns `undefined` on success, or the backend's rejection message
+   * (e.g. a duplicate field key on this step) on failure — awaited so the
+   * modal can keep the user's input in place and show the real reason
+   * inline, rather than resetting on every click regardless of outcome. */
+  onCreate: (input: FormFieldCreateInput) => Promise<string | undefined>
 }
 
 function slugify(label: string): string {
@@ -23,10 +28,14 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
   const [fieldType, setFieldType] = useState<FormFieldType>('text')
   const [label, setLabel] = useState('')
   const [placeholder, setPlaceholder] = useState('')
+  const [description, setDescription] = useState('')
   const [isRequired, setIsRequired] = useState(true)
   const [optionsText, setOptionsText] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [createError, setCreateError] = useState<string | undefined>(undefined)
 
   const requiresOptions = OPTION_REQUIRED_FIELD_TYPES.includes(fieldType)
+  const isContentOnly = fieldType === 'static_text'
   const options = optionsText
     .split(',')
     .map((option) => option.trim())
@@ -36,23 +45,38 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
     setFieldType('text')
     setLabel('')
     setPlaceholder('')
+    setDescription('')
     setIsRequired(true)
     setOptionsText('')
+    setCreateError(undefined)
   }
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const key = slugify(label)
     if (!key) return
     if (requiresOptions && options.length === 0) return
+    if (isContentOnly && !description.trim()) return
 
-    onCreate({
+    setIsSubmitting(true)
+    setCreateError(undefined)
+    const errorMessage = await onCreate({
       key,
       label: label.trim(),
-      placeholder: placeholder.trim() || undefined,
+      placeholder: isContentOnly ? undefined : placeholder.trim() || undefined,
+      helpText: description.trim() || undefined,
       fieldType,
-      isRequired,
+      isRequired: isContentOnly ? false : isRequired,
       options: requiresOptions ? options : undefined,
     })
+    setIsSubmitting(false)
+    // On failure, the user's input stays exactly as typed so they can fix
+    // it and retry — resetting it here (as before) discarded their work and
+    // gave no visible sign of what went wrong beyond a toast, which made an
+    // accidental duplicate re-submission easy.
+    if (errorMessage) {
+      setCreateError(errorMessage)
+      return
+    }
     reset()
   }
 
@@ -88,9 +112,30 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
 
       <div>
         <p className="mb-2 font-body text-sm font-semibold text-text">Configure Properties</p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <TextField label="Field Label" value={label} onChange={setLabel} placeholder="e.g. Company Name" required />
-          <TextField label="Placeholder Text" value={placeholder} onChange={setPlaceholder} placeholder="e.g. Enter your company" />
+        <div className={`grid grid-cols-1 gap-4 ${isContentOnly ? '' : 'sm:grid-cols-2'}`}>
+          <TextField
+            label={isContentOnly ? 'Title' : 'Field Label'}
+            value={label}
+            onChange={setLabel}
+            placeholder={isContentOnly ? 'e.g. Terms & Conditions' : 'e.g. Company Name'}
+            required
+          />
+          {!isContentOnly && (
+            <TextField label="Placeholder Text" value={placeholder} onChange={setPlaceholder} placeholder="e.g. Enter your company" />
+          )}
+        </div>
+        <div className="mt-4">
+          <TextareaField
+            label={isContentOnly ? 'Content' : 'Description'}
+            value={description}
+            onChange={setDescription}
+            placeholder={
+              isContentOnly
+                ? 'The text visitors will see, e.g. your Terms & Conditions body'
+                : 'Static text shown to the visitor alongside this field, e.g. the terms & conditions body'
+            }
+            rows={3}
+          />
         </div>
         {requiresOptions && (
           <div className="mt-4">
@@ -103,14 +148,18 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
             />
           </div>
         )}
-        <div className="mt-4 flex items-center justify-between rounded-lg border border-border px-4 py-3">
-          <div>
-            <p className="font-body text-sm font-semibold text-text">Required Field</p>
-            <p className="font-body text-xs text-text-muted">This field must be filled to proceed</p>
+        {!isContentOnly && (
+          <div className="mt-4 flex items-center justify-between rounded-lg border border-border px-4 py-3">
+            <div>
+              <p className="font-body text-sm font-semibold text-text">Required Field</p>
+              <p className="font-body text-xs text-text-muted">This field must be filled to proceed</p>
+            </div>
+            <ToggleSwitch checked={isRequired} onChange={setIsRequired} label="" />
           </div>
-          <ToggleSwitch checked={isRequired} onChange={setIsRequired} label="" />
-        </div>
+        )}
       </div>
+
+      {createError && <p className="font-body text-xs text-danger">{createError}</p>}
 
       <div className="flex items-center justify-end gap-3">
         <button
@@ -122,10 +171,11 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
         </button>
         <button
           type="button"
-          onClick={handleCreate}
-          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white"
+          onClick={() => void handleCreate()}
+          disabled={isSubmitting}
+          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
-          + Create Field
+          {isSubmitting ? 'Creating…' : '+ Create Field'}
         </button>
       </div>
     </Modal>

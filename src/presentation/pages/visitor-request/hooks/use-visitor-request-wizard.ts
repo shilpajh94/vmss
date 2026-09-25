@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
-import { findField, findStepFields, useEffectiveForm } from '../../../hooks/use-effective-form'
+import { extractGroupFieldFiles } from '../../../components/dynamic-fields/field-group-visibility'
+import type { DynamicFieldValue } from '../../../components/dynamic-fields/DynamicField'
+import {
+  extractListCustomFieldFiles,
+  extractSingleCustomFieldFiles,
+  fileUploadFieldKeysOf,
+  findInvitationFileUploadFields,
+  hasMissingRequiredCustomFieldFile,
+  requiredFileUploadFieldKeysOf,
+} from '../../../components/dynamic-fields/custom-field-files'
+import { findField, findStepFields, findStepGroups, useEffectiveForm } from '../../../hooks/use-effective-form'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
 import type { Branch } from '../../../../domain/entities/branch-schema'
@@ -72,6 +82,10 @@ function buildInitialFormState(initial?: VisitorRequestWizardInitialData): Visit
 export interface VisitorInfoFieldState {
   idProofActive: boolean
   idProofRequired: boolean
+  /** Branch-configured (form-builder) ID Proof Type choices — the
+   * field's own `options`, not a fixed set
+   * (make-id-proof-and-vehicle-type-configurable). */
+  idProofOptions: string[]
   profilePhotoActive: boolean
   profilePhotoRequired: boolean
 }
@@ -126,9 +140,6 @@ function validateStep(
 ): Record<string, string> {
   if (stepKey === 'visitor_info') {
     const errors = validateVisitorContact(formState.primaryContact, true, visitorInfoFields)
-    if (formState.registrationType === 'group' && formState.additionalVisitors.length === 0) {
-      errors.additionalVisitors = 'Add at least one visitor to continue.'
-    }
     return errors
   }
 
@@ -139,11 +150,6 @@ function validateStep(
     if (!visitInfo.preferredDate) errors.preferredDate = 'Preferred visit date is required.'
     else if (visitInfo.preferredDate < todayAsDateInputValue()) errors.preferredDate = 'Preferred visit date cannot be in the past.'
     if (!visitInfo.preferredTime) errors.preferredTime = 'Preferred visit time is required.'
-    // `expected_duration` is structurally required by the backend
-    // regardless of form-builder configuration (see design.md Decision 3 /
-    // Risks) - always validated here, unlike the other Visit Details
-    // toggleable fields.
-    if (!visitInfo.expectedDuration) errors.expectedDuration = 'Expected duration is required.'
     if (!visitInfo.location) errors.location = 'Location is required.'
     if (!visitInfo.building) errors.building = 'Building is required.'
     return errors
@@ -205,42 +211,104 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
   )
   const visitorInfoFields = useMemo<VisitorInfoFieldState>(() => {
     const idProofUpload = findField(effectiveFormSteps, 'visitor_info', 'id_proof_upload')
+    const idProofType = findField(effectiveFormSteps, 'visitor_info', 'id_proof_type')
     const profilePhoto = findField(effectiveFormSteps, 'visitor_info', 'profile_photo')
     return {
       idProofActive: idProofUpload !== undefined,
       idProofRequired: idProofUpload?.isRequired ?? false,
+      idProofOptions: idProofType?.options ?? [],
       profilePhotoActive: profilePhoto !== undefined,
       profilePhotoRequired: profilePhoto?.isRequired ?? false,
     }
   }, [effectiveFormSteps])
-  const additionalNotesActive = useMemo(
-    () => findField(effectiveFormSteps, 'visit_details', 'additional_notes') !== undefined,
+  // Branch-configured (form-builder) Purpose of Visit choices — the field's
+  // own `options`, same pattern as `idProofOptions`/`vehicleTypeOptions`
+  // below (make-id-proof-and-vehicle-type-configurable). `VisitInfoStep`
+  // falls back to its hardcoded default list when this is empty, since
+  // Purpose of Visit (unlike ID Proof/Vehicle Type) always renders
+  // regardless of any active/inactive state.
+  const purposeOfVisitOptions = useMemo(
+    () => findField(effectiveFormSteps, 'visit_details', 'purpose_of_visit')?.options ?? [],
     [effectiveFormSteps],
   )
   const vehicleInfoFields = useMemo(() => {
     const makeModel = findField(effectiveFormSteps, 'vehicle_info', 'make_model')
     const color = findField(effectiveFormSteps, 'vehicle_info', 'color')
+    const vehicleType = findField(effectiveFormSteps, 'vehicle_info', 'vehicle_type')
     return {
       makeModelActive: makeModel !== undefined,
       makeModelRequired: makeModel?.isRequired ?? false,
       colorActive: color !== undefined,
       colorRequired: color?.isRequired ?? false,
+      vehicleTypeOptions: vehicleType?.options ?? [],
     }
   }, [effectiveFormSteps])
   // Admin-authored (non-system) fields per step, passed to each step's
   // generic custom-fields section (add-generic-custom-field-support). Every
   // step now accepts new fields, not only the "fully configurable" ones.
-  const visitorInfoCustomFields = useMemo(
+  //
+  // Visitor Info's own *admin-authored* field groups (add-repeatable-field-groups /
+  // add-conditional-field-groups) render separately, through
+  // `FieldGroupsSection` (see `VisitorInfoStep`) — a field assigned to one of
+  // them (`field.groupId` set) is excluded here so it isn't also flattened
+  // into the plain per-visitor custom-fields list. The seeded system group
+  // ("visitors") is excluded from this list entirely — the backend won't
+  // allow it to be made non-repeatable (it's a locked system group), so
+  // there's no bespoke Visitor Details/"+ Add Visitor" UI for it any more;
+  // an admin-created group (e.g. "Additional Visitors") is the supported
+  // way to collect more than one visitor now, via `FieldGroupsSection`.
+  const visitorInfoGroups = useMemo(
+    () => findStepGroups(effectiveFormSteps, 'visitor_info').filter((group) => !group.isSystem),
+    [effectiveFormSteps],
+  )
+  const visitorInfoAllFields = useMemo(
     () => findStepFields(effectiveFormSteps, 'visitor_info').filter((field) => !field.isSystem),
     [effectiveFormSteps],
   )
+  const visitorInfoCustomFields = useMemo(() => {
+    const groupedFieldKeys = new Set(visitorInfoGroups.flatMap((group) => group.fieldKeys))
+    return visitorInfoAllFields.filter((field) => !groupedFieldKeys.has(field.key))
+  }, [visitorInfoAllFields, visitorInfoGroups])
   const visitDetailsCustomFields = useMemo(
     () => findStepFields(effectiveFormSteps, 'visit_details').filter((field) => !field.isSystem),
     [effectiveFormSteps],
   )
-  const vehicleInfoCustomFields = useMemo(
+  // Vehicle Info's own admin-defined field groups, rendered via
+  // `FieldGroupsSection` in `VehicleInfoStep` — see the matching Visitor
+  // Info comment above. The seeded "vehicles" system group is excluded; it
+  // already has its own bespoke Add Vehicle UI.
+  const vehicleInfoGroups = useMemo(
+    () => findStepGroups(effectiveFormSteps, 'vehicle_info').filter((group) => !group.isSystem),
+    [effectiveFormSteps],
+  )
+  const vehicleInfoAllFields = useMemo(
     () => findStepFields(effectiveFormSteps, 'vehicle_info').filter((field) => !field.isSystem),
     [effectiveFormSteps],
+  )
+  const vehicleInfoCustomFields = useMemo(() => {
+    const groupedFieldKeys = new Set(vehicleInfoGroups.flatMap((group) => group.fieldKeys))
+    return vehicleInfoAllFields.filter((field) => !groupedFieldKeys.has(field.key))
+  }, [vehicleInfoAllFields, vehicleInfoGroups])
+  // Ungrouped `file_upload` fields' keys, per bucket — backend's "inline
+  // file-upload custom fields" contract (2026-09-24). See `submit` below,
+  // and `custom-field-files.ts` for why each bucket needs its own
+  // extraction (grouped file fields are unaffected, still handled by
+  // `extractGroupFieldFiles`).
+  const visitorInfoFileUploadKeys = useMemo(() => fileUploadFieldKeysOf(visitorInfoCustomFields), [visitorInfoCustomFields])
+  const visitorInfoRequiredFileUploadKeys = useMemo(
+    () => requiredFileUploadFieldKeysOf(visitorInfoCustomFields),
+    [visitorInfoCustomFields],
+  )
+  const vehicleInfoFileUploadKeys = useMemo(() => fileUploadFieldKeysOf(vehicleInfoCustomFields), [vehicleInfoCustomFields])
+  const vehicleInfoRequiredFileUploadKeys = useMemo(
+    () => requiredFileUploadFieldKeysOf(vehicleInfoCustomFields),
+    [vehicleInfoCustomFields],
+  )
+  const invitationFileUploadFields = useMemo(() => findInvitationFileUploadFields(effectiveFormSteps), [effectiveFormSteps])
+  const invitationFileUploadKeys = useMemo(() => invitationFileUploadFields.map((field) => field.key), [invitationFileUploadFields])
+  const invitationRequiredFileUploadKeys = useMemo(
+    () => invitationFileUploadFields.filter((field) => field.isRequired).map((field) => field.key),
+    [invitationFileUploadFields],
   )
   const lastStepIndex = activeSteps.length > 0 ? activeSteps.length - 1 : 0
 
@@ -372,7 +440,22 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
       : undefined
     const idProofMissing = visitorInfoFields.idProofActive && visitorInfoFields.idProofRequired && !primaryContactIdProofFile
     const photoMissing = visitorInfoFields.profilePhotoActive && visitorInfoFields.profilePhotoRequired && !primaryContactPhotoFile
-    if (idProofMissing || photoMissing) {
+    // A required ungrouped `file_upload` field (Visitor Info/Vehicle Info/
+    // any other step) must have a real file for the primary contact, every
+    // visitor, every vehicle, or the invitation itself — same "block before
+    // the backend 422s" posture as the two checks above.
+    const missingRequiredCustomFieldFile =
+      hasMissingRequiredCustomFieldFile(visitorInfoRequiredFileUploadKeys, [formState.primaryContact.customFieldValues]) ||
+      hasMissingRequiredCustomFieldFile(
+        visitorInfoRequiredFileUploadKeys,
+        formState.additionalVisitors.map((visitor) => visitor.customFieldValues),
+      ) ||
+      hasMissingRequiredCustomFieldFile(
+        vehicleInfoRequiredFileUploadKeys,
+        formState.vehicles.map((vehicle) => vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined),
+      ) ||
+      hasMissingRequiredCustomFieldFile(invitationRequiredFileUploadKeys, [formState.customFieldValues])
+    if (idProofMissing || photoMissing || missingRequiredCustomFieldFile) {
       setSubmissionError('Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
       return
@@ -382,14 +465,68 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
       .map((visitor) => (visitor.idProofFileRef ? fileRegistry.current.get(visitor.idProofFileRef) : undefined))
       .filter((file): file is File => file !== undefined)
 
+    // Admin-defined field groups' own `file_upload` fields (e.g. "id_upload"
+    // on a custom "Additional Visitors" group) go through the same
+    // fileRef-registry indirection as the fields above, but the backend
+    // only accepts that answer as a multipart `groupFieldFiles[<groupKey>]`
+    // part — never as a JSON value in `groupValues` (add-group-field-file-upload).
+    const { sanitizedGroupValues, groupFieldFiles } = extractGroupFieldFiles(
+      effectiveFormSteps,
+      formState.groupValues,
+      fileRegistry.current,
+    )
+
+    // Ungrouped `file_upload` fields go through their own bucket per where
+    // they live — see `custom-field-files.ts`.
+    const { sanitizedValues: sanitizedPrimaryContactCustomFieldValues, files: primaryContactCustomFieldFiles } =
+      extractSingleCustomFieldFiles(visitorInfoFileUploadKeys, formState.primaryContact.customFieldValues, fileRegistry.current)
+    const { sanitizedValuesList: sanitizedVisitorCustomFieldValuesList, filesByKey: visitorCustomFieldFiles } =
+      extractListCustomFieldFiles(
+        visitorInfoFileUploadKeys,
+        formState.additionalVisitors.map((visitor) => visitor.customFieldValues),
+        fileRegistry.current,
+      )
+    const { sanitizedValuesList: sanitizedVehicleCustomFieldValuesList, filesByKey: vehicleCustomFieldFiles } =
+      extractListCustomFieldFiles(
+        vehicleInfoFileUploadKeys,
+        formState.vehicles.map((vehicle) => vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined),
+        fileRegistry.current,
+      )
+    const { sanitizedValues: sanitizedCustomFieldValues, files: customFieldFiles } = extractSingleCustomFieldFiles(
+      invitationFileUploadKeys,
+      formState.customFieldValues,
+      fileRegistry.current,
+    )
+
     setSubmissionStatus('submitting')
     setSubmissionError(undefined)
     try {
-      const response = await submitVisitRequestUseCase.execute(toVisitRequest(formState), {
-        primaryContactIdProofFile,
-        primaryContactPhotoFile,
-        visitorIdProofFiles,
-      })
+      const response = await submitVisitRequestUseCase.execute(
+        toVisitRequest({
+          ...formState,
+          groupValues: sanitizedGroupValues,
+          customFieldValues: sanitizedCustomFieldValues,
+          primaryContact: { ...formState.primaryContact, customFieldValues: sanitizedPrimaryContactCustomFieldValues },
+          additionalVisitors: formState.additionalVisitors.map((visitor, index) => ({
+            ...visitor,
+            customFieldValues: sanitizedVisitorCustomFieldValuesList[index],
+          })),
+          vehicles: formState.vehicles.map((vehicle, index) => ({
+            ...vehicle,
+            customFieldValues: sanitizedVehicleCustomFieldValuesList[index],
+          })),
+        }),
+        {
+          primaryContactIdProofFile,
+          primaryContactPhotoFile,
+          visitorIdProofFiles,
+          groupFieldFiles,
+          primaryContactCustomFieldFiles,
+          visitorCustomFieldFiles,
+          vehicleCustomFieldFiles,
+          customFieldFiles,
+        },
+      )
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')
       // Best-effort: the create response never carries the primary contact's
@@ -429,11 +566,15 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     carriedItemsFields,
     consentFields,
     visitorInfoFields,
-    additionalNotesActive,
+    purposeOfVisitOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
+    visitorInfoGroups,
+    visitorInfoAllFields,
     visitDetailsCustomFields,
     vehicleInfoCustomFields,
     primaryContactNameLocked,
+    vehicleInfoGroups,
+    vehicleInfoAllFields,
   }
 }

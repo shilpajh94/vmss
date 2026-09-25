@@ -56,12 +56,16 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     carriedItemsFields,
     consentFields,
     visitorInfoFields,
-    additionalNotesActive,
+    purposeOfVisitOptions,
     vehicleInfoFields,
     visitorInfoCustomFields,
+    visitorInfoGroups,
+    visitorInfoAllFields,
     visitDetailsCustomFields,
     vehicleInfoCustomFields,
     primaryContactNameLocked,
+    vehicleInfoGroups,
+    vehicleInfoAllFields,
   } = useVisitorRequestWizard(initial, branches)
 
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
@@ -119,8 +123,6 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             primaryContact={formState.primaryContact}
             onPrimaryContactChange={(primaryContact) => setFormState({ ...formState, primaryContact })}
             primaryContactNameLocked={primaryContactNameLocked}
-            additionalVisitors={formState.additionalVisitors}
-            onAdditionalVisitorsChange={(additionalVisitors) => setFormState({ ...formState, additionalVisitors })}
             uploadFile={uploadFile}
             getFilePreviewUrl={getFilePreviewUrl}
             errors={errors}
@@ -128,6 +130,10 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             onRetryVisitorCategories={loadVisitorCategories}
             visitorInfoFields={visitorInfoFields}
             customFields={visitorInfoCustomFields}
+            groups={visitorInfoGroups}
+            groupFields={visitorInfoAllFields}
+            groupValues={formState.groupValues}
+            onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'visit_details' && (
@@ -137,10 +143,12 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             errors={errors}
             branches={branches}
             buildings={buildings}
-            additionalNotesActive={additionalNotesActive}
+            purposeOfVisitOptions={purposeOfVisitOptions}
             customFields={visitDetailsCustomFields}
             customFieldValues={formState.customFieldValues}
             onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'carried_items' && (
@@ -151,6 +159,8 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             onChange={(carriedItems) => setFormState({ ...formState, carriedItems })}
             customFieldValues={formState.customFieldValues}
             onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'vehicle_info' && (
@@ -160,6 +170,12 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             errors={errors}
             vehicleInfoFields={vehicleInfoFields}
             customFields={vehicleInfoCustomFields}
+            groups={vehicleInfoGroups}
+            groupFields={vehicleInfoAllFields}
+            groupValues={formState.groupValues}
+            onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
         )}
         {!isFormConfigLoading && !formConfigError && activeStep?.key === 'consent_agreement' && (
@@ -182,6 +198,10 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             getFilePreviewUrl={getFilePreviewUrl}
             vehicleCustomFields={vehicleInfoCustomFields}
             carriedItemsCustomFields={carriedItemsFields.filter((field) => !field.isSystem)}
+            visitorInfoGroups={visitorInfoGroups}
+            visitorInfoAllFields={visitorInfoAllFields}
+            vehicleInfoGroups={vehicleInfoGroups}
+            vehicleInfoAllFields={vehicleInfoAllFields}
             onBack={goBack}
             onSubmit={submit}
             onGoHome={() => navigate('/')}
@@ -192,6 +212,10 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             step={activeStep}
             value={formState.customFieldValues}
             onChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
+            groupValues={formState.groupValues}
+            onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
           />
         )}
 

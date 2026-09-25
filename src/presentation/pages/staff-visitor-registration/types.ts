@@ -1,6 +1,13 @@
 import type { Vehicle } from '../../../domain/entities/vehicle-schema'
 import type { StaffVisitRequest } from '../../../domain/entities/staff-visit-request-schema'
-import type { CarriedItemsFormState, ConsentFormState, CustomFieldValues, RegistrationType, VisitInfoFormState } from '../visitor-request/types'
+import type {
+  CarriedItemsFormState,
+  ConsentFormState,
+  CustomFieldValues,
+  GroupValues,
+  RegistrationType,
+  VisitInfoFormState,
+} from '../visitor-request/types'
 
 export interface StaffVisitorFormEntry {
   fullName: string
@@ -39,6 +46,7 @@ export interface StaffVisitRequestFormState {
   vehicles: Vehicle[]
   consent: ConsentFormState
   customFieldValues: CustomFieldValues
+  groupValues: GroupValues
 }
 
 export function createInitialStaffFormState(): StaffVisitRequestFormState {
@@ -50,15 +58,14 @@ export function createInitialStaffFormState(): StaffVisitRequestFormState {
       purpose: '',
       preferredDate: '',
       preferredTime: '',
-      expectedDuration: '',
       location: '',
       building: '',
-      notes: '',
     },
     carriedItems: { categories: [], description: '' },
     vehicles: [],
     consent: {},
     customFieldValues: {},
+    groupValues: {},
   }
 }
 
@@ -68,7 +75,8 @@ function toStaffVisitor(entry: StaffVisitorFormEntry) {
     email: entry.email,
     phone: entry.phone,
     preferredContactMethod: entry.preferredContactMethod,
-    idProofType: entry.idProofType,
+    // See visitor-request/types.ts's matching comment.
+    idProofType: entry.idProofType || undefined,
     customFieldValues: entry.customFieldValues,
   }
 }
@@ -89,8 +97,6 @@ export function toStaffVisitRequest(formState: StaffVisitRequestFormState): Staf
       purposeOfVisit: formState.visitInfo.purpose,
       preferredVisitDate: formState.visitInfo.preferredDate,
       preferredVisitTime: formState.visitInfo.preferredTime,
-      expectedDuration: formState.visitInfo.expectedDuration,
-      additionalNotes: formState.visitInfo.notes,
     },
     carriedItems: {
       items: formState.carriedItems.categories,
@@ -99,5 +105,6 @@ export function toStaffVisitRequest(formState: StaffVisitRequestFormState): Staf
     vehicles: formState.vehicles,
     consents: formState.consent,
     customFieldValues: formState.customFieldValues,
+    groupValues: formState.groupValues,
   }
 }
