@@ -664,7 +664,15 @@ async def create_invitation(
         *[("full_name", visitor.full_name) for visitor in payload.visitors],
         ("purpose_of_visit", visit_details["purpose_of_visit"]),
         ("department_to_visit", visit_details["department_to_visit"]),
-        ("expected_duration", visit_details["expected_duration"]),
+        # Blank normalized to `None` here specifically (unlike the other
+        # entries in this list): "Expected Duration" is unconditionally
+        # optional and no visitor-facing wizard collects it any more
+        # (make-expected-duration-optional, see the `id_proof_required`/
+        # `photo_required` note above) — a walk-in/staff client that still
+        # submits `""` for it means "not answered," not "answered with an
+        # invalid option," so it must skip the allow-list check the same
+        # way an omitted value does.
+        ("expected_duration", visit_details["expected_duration"] or None),
         ("additional_notes", payload.visit_details.additional_notes),
         *[("license_plate", vehicle.license_plate) for vehicle in payload.vehicles],
     ]
@@ -1420,17 +1428,18 @@ class InvitationDetailFormContext:
     field-file-url-resolution): `visitor_info_groups` (unchanged — backs
     `_group_collected_visitor_detail_outs`'s visitor synthesis), plus which
     `file_upload`-typed field keys appear in each of `customFieldValues`/
-    `primaryContactCustomFieldValues`/a `groupFieldValues` instance, so those
-    readers know which raw storage keys need resolving to a signed URL
-    rather than being serialized straight from the ORM (see the note on
-    `service.py::create_invitation`'s `customFieldValues`/
-    `primaryContactCustomFieldValues`/`groupFieldValues` storage — "no reader
-    resolves it to a signed URL yet").
+    `primaryContactCustomFieldValues`/a vehicle's `customFieldValues`/a
+    `groupFieldValues` instance, so those readers know which raw storage
+    keys need resolving to a signed URL rather than being serialized
+    straight from the ORM (see the note on `service.py::create_invitation`'s
+    `customFieldValues`/`primaryContactCustomFieldValues`/`groupFieldValues`
+    storage — "no reader resolves it to a signed URL yet").
     """
 
     visitor_info_groups: dict[str, dict[str, Any]]
     invitation_scope_file_keys: set[str]
     visitor_info_file_keys: set[str]
+    vehicle_info_file_keys: set[str]
     group_file_keys: dict[str, set[str]]
 
 
@@ -1450,6 +1459,11 @@ async def get_invitation_detail_form_context(
         for field in form_builder_validation.custom_fields_for_step(effective_form, "visitor_info")
         if field["fieldType"] == "file_upload"
     }
+    vehicle_info_file_keys = {
+        field["key"]
+        for field in form_builder_validation.custom_fields_for_step(effective_form, "vehicle_info")
+        if field["fieldType"] == "file_upload"
+    }
     invitation_scope_file_keys = {
         field["key"]
         for field in form_builder_validation.custom_fields_for_invitation_scope(effective_form)
@@ -1467,6 +1481,7 @@ async def get_invitation_detail_form_context(
         ),
         invitation_scope_file_keys=invitation_scope_file_keys,
         visitor_info_file_keys=visitor_info_file_keys,
+        vehicle_info_file_keys=vehicle_info_file_keys,
         group_file_keys=group_file_keys,
     )
 

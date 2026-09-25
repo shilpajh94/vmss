@@ -243,9 +243,23 @@ Four scopes, one multipart convention each:
   `file_upload` field is (`_validate_id_proof`, `core/storage.py::save`,
   category `invitations/custom-fields`), and the resulting storage key is
   written back into the persisted `customFieldValues`/
-  `primaryContactCustomFieldValues` map — never a client-supplied value. As
-  with `groupFieldValues`, no reader resolves this storage key to a signed
-  URL yet — the response carries the raw key.
+  `primaryContactCustomFieldValues`/a vehicle's own `customFieldValues` map —
+  never a client-supplied value. Every reader
+  (`router.py::_resolve_custom_field_file_values`/`_resolve_group_field_
+  values`, applied to the invitation, primary contact, every visitor, every
+  vehicle, and every `groupFieldValues` instance alike) resolves that
+  storage key to a signed, time-boxed URL (`core/storage.py::url_for`)
+  before it reaches a response — gated by the caller's `documents:view`
+  grant for the invitation's branch the same way `photoUrl`/`idProofUrl`
+  already are: a caller without that permission gets `null` for the field
+  instead of either the raw key or a usable URL, never a fallback that
+  leaks the key.
+- The file-field keys resolved this way are always the branch's *current*
+  effective form. If a field's type is changed after invitations already
+  hold data under its key (or the key is reused by a different field), an
+  older instance's value may not be a storage key at all — that's resolved
+  to `null` too, rather than passed to `core/storage.py::url_for`, which
+  can only sign an actual string key.
 
 `POST /registrations/walk-in` accepts the identical
 `primaryContactCustomFieldFiles[...]`/`visitorCustomFieldFiles[...]`/
