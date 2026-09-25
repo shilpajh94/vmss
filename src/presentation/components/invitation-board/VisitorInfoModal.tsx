@@ -3,7 +3,7 @@ import type { InvitationDetail, InvitationVehicle } from '../../../domain/entiti
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
 import { Modal } from '../ui/Modal'
-import { CalendarClockIcon, ShieldIcon, TagIcon } from '../icons'
+import { CalendarClockIcon, ShieldIcon } from '../icons'
 import { formatDateTime } from '../../utils/format-time'
 import { resolvePointOfContactLabel } from '../../utils/approval-step-label'
 import { prettifyKey } from '../../utils/prettify-key'
@@ -109,6 +109,45 @@ function Field({ label, value }: { label: string; value: string }) {
   )
 }
 
+function isFileUrl(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && (value.startsWith('/') || value.startsWith('http'))
+}
+
+/** Renders a `file_upload` custom-field answer as "View" link(s). The
+ * backend resolves these to signed URLs before returning
+ * `GET /invitations/:id` (same as the hardcoded photo/ID-proof fields) —
+ * but a submission from before that fix may still carry the raw opaque
+ * storage key (e.g. `vmss:<tenant>:...`), so fall back to a plain
+ * indicator when a value doesn't look like a URL. */
+function FileValueField({ label, value }: { label: string; value: unknown }) {
+  const values = Array.isArray(value) ? value : [value]
+  const urls = values.filter(isFileUrl)
+
+  if (urls.length === 0) {
+    const hasValue = values.some((item) => item !== undefined && item !== null && item !== '')
+    return <Field label={label} value={hasValue ? 'File uploaded' : '—'} />
+  }
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-overline text-text-faint">{label}</span>
+      <span className="flex flex-wrap items-center gap-2 font-body text-[13px] font-medium text-text">
+        {urls.map((url, index) => (
+          <a
+            key={url}
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="font-body text-[12px] font-semibold text-secondary-accent hover:underline"
+          >
+            {urls.length > 1 ? `View ${index + 1}` : 'View'}
+          </a>
+        ))}
+      </span>
+    </div>
+  )
+}
+
 function SectionLabel({ children }: { children: string }) {
   return <h3 className="text-overline text-text-faint">{children}</h3>
 }
@@ -119,20 +158,11 @@ function SectionLabel({ children }: { children: string }) {
  * work with, so this can't reuse `formatDynamicFieldValue` as-is. `field` is
  * `undefined` when the key no longer matches any published form-builder
  * field (e.g. removed after this invitation was submitted); the value still
- * renders, just without options-aware prettifying. */
+ * renders, just without options-aware prettifying. `file_upload` fields are
+ * rendered separately via `FileValueField`, not through this formatter. */
 function formatRawFieldValue(value: unknown, field?: FormField): string {
   if (value === undefined || value === null || value === '') return '—'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
-  // A `file_upload` answer is an opaque backend storage reference (e.g.
-  // `vmss:<tenant>:invitations/photos:<uuid>.jpg`) here, not a filename or a
-  // resolvable URL — GET /invitations/:id has no signed-URL equivalent for
-  // generic custom fields (unlike the hardcoded primaryContact photo/
-  // ID-proof fields, which the backend already resolves), so there's
-  // nothing to link to yet. Show a plain indicator rather than the raw ref.
-  if (field?.fieldType === 'file_upload') {
-    if (Array.isArray(value)) return value.length > 0 ? `${value.length} file${value.length > 1 ? 's' : ''} uploaded` : '—'
-    return 'File uploaded'
-  }
   if (Array.isArray(value)) {
     if (value.length === 0) return '—'
     return value.map((item) => (typeof item === 'string' ? prettifyKey(item) : String(item))).join(', ')
@@ -159,7 +189,9 @@ function CustomFieldValueFields({ values, steps }: { values: Record<string, unkn
     <>
       {entries.map(([key, value]) => {
         const field = findFieldByKey(steps, key)
-        return <Field key={key} label={field?.label ?? prettifyKey(key)} value={formatRawFieldValue(value, field)} />
+        const label = field?.label ?? prettifyKey(key)
+        if (field?.fieldType === 'file_upload') return <FileValueField key={key} label={label} value={value} />
+        return <Field key={key} label={label} value={formatRawFieldValue(value, field)} />
       })}
     </>
   )
@@ -193,7 +225,9 @@ function GroupFieldValuesSections({
                 <div key={index} className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl border border-border-subtle p-3">
                   {orderedKeys(instance).map((key) => {
                     const field = findFieldByKey(steps, key)
-                    return <Field key={key} label={field?.label ?? prettifyKey(key)} value={formatRawFieldValue(instance[key], field)} />
+                    const label = field?.label ?? prettifyKey(key)
+                    if (field?.fieldType === 'file_upload') return <FileValueField key={key} label={label} value={instance[key]} />
+                    return <Field key={key} label={label} value={formatRawFieldValue(instance[key], field)} />
                   })}
                 </div>
               ))}
@@ -309,45 +343,6 @@ export function VisitorInfoModal({
             </div>
           ) : null}
 
-          {detail.visitors.length > 0 ? (
-            <div className="flex flex-col gap-3">
-              <SectionLabel>{`Group visitors (${detail.visitors.length})`}</SectionLabel>
-              <div className="flex flex-col gap-2">
-                {detail.visitors.map((visitor) => (
-                  <div key={visitor.id} className="flex items-center gap-3 rounded-xl border border-border-subtle p-3">
-                    <Avatar
-                      fullName={visitor.fullName}
-                      photoUrl={visitor.photoUrl}
-                      sizeClassName="size-8 text-xs"
-                      toneClassName="bg-neutral-subtle text-text"
-                    />
-                    <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-3 gap-y-0.5">
-                      <p className="col-span-2 truncate font-body text-[13px] font-semibold text-text">{visitor.fullName}</p>
-                      <p className="truncate font-body text-[11px] text-text-muted">{visitor.email ?? '—'}</p>
-                      <p className="truncate font-body text-[11px] text-text-muted">{visitor.phone ?? '—'}</p>
-                    </div>
-                    {visitor.idProofType ? (
-                      <span className="flex shrink-0 items-center gap-1 rounded-full bg-neutral-subtle px-2 py-0.5 font-body text-[10px] font-semibold whitespace-nowrap text-text-muted">
-                        <TagIcon className="size-2.5" />
-                        {visitor.idProofType}
-                      </span>
-                    ) : null}
-                    {visitor.idProofUrl ? (
-                      <a
-                        href={visitor.idProofUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="shrink-0 font-body text-[11px] font-semibold whitespace-nowrap text-secondary-accent hover:underline"
-                      >
-                        View ID
-                      </a>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
           {detail.vehicles.length > 0 ? (
             <div className="flex flex-col gap-3">
               <SectionLabel>{`Vehicles (${detail.vehicles.length})`}</SectionLabel>
@@ -358,6 +353,7 @@ export function VisitorInfoModal({
                     <Field label="License plate" value={vehicle.licensePlate ?? '—'} />
                     <Field label="Make/Model" value={vehicle.makeModel ?? '—'} />
                     <Field label="Color" value={vehicle.color ?? '—'} />
+                    <CustomFieldValueFields values={vehicle.customFieldValues} steps={formSteps} />
                   </div>
                 ))}
               </div>
