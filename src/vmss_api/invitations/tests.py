@@ -1721,6 +1721,41 @@ async def test_create_invitation_group_file_upload_stored_and_surfaced_on_read(
         assert visitor_out["idProofUrl"] is not None
 
 
+async def test_get_invitation_detail_non_string_group_file_field_value_resolves_to_null(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """Regression: a group's `file_upload`-typed field key (`id_upload`) is
+    resolved against the branch's *current* effective form, not the form as
+    it stood when this instance's data was written. If a field was ever
+    reused/retyped so an older instance holds a non-string value under that
+    key (bool/number/list/dict rather than a storage key), both
+    `_resolve_custom_field_file_values` (feeding `groupFieldValues`) and
+    `_group_collected_visitor_detail_outs` (feeding the synthesized
+    visitor's `idProofUrl`) used to call `storage_url_for` -> `quote()`
+    unconditionally, which raises `TypeError: quote_from_bytes() expected
+    bytes` for anything that isn't `str`/`bytes` and 500s the whole detail
+    endpoint. Both must instead treat a non-string value as "no file".
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    await _create_and_publish_additional_visitors_group(client, headers, id_upload_required=False)
+
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        group_field_values={"additional_visitors": [{"name": "Extra One", "id_upload": True}]},
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    detail_response = await client.get(f"/api/v1/invitations/{invitation.id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    body = detail_response.json()["data"]
+    assert body["groupFieldValues"]["additional_visitors"][0]["id_upload"] is None
+    [visitor_out] = [v for v in body["visitors"] if v["fullName"] == "Extra One"]
+    assert visitor_out["idProofUrl"] is None
+
+
 async def test_create_invitation_group_file_upload_required_missing_rejected(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
@@ -1840,9 +1875,71 @@ async def test_create_invitation_inline_custom_field_file_upload_stored_on_read(
     detail_response = await client.get(f"/api/v1/invitations/{invitation_id}", headers=headers)
     assert detail_response.status_code == 200, detail_response.text
     body = detail_response.json()["data"]
-    assert body["primaryContactCustomFieldValues"]["pic"]
+
+    def _assert_resolved_file_url(value: str) -> None:
+        # Must be a signed, fetchable URL — not the raw `vmss:...` storage
+        # key a pre-fix reader would have serialized verbatim.
+        assert value
+        assert not value.startswith("vmss:")
+        assert "/api/v1/files/" in value or value.startswith("http")
+
+    _assert_resolved_file_url(body["primaryContactCustomFieldValues"]["pic"])
     for visitor_out in body["visitors"]:
-        assert visitor_out["customFieldValues"]["pic"]
+        _assert_resolved_file_url(visitor_out["customFieldValues"]["pic"])
+
+
+async def test_create_invitation_vehicle_custom_field_file_upload_resolved_on_read(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression: vehicle-level `file_upload` custom-field answers must
+    resolve to a signed URL on `GET /invitations/:id` the same as the
+    identical visitor/primary-contact/invitation/group paths — previously
+    `_to_invitation_detail_out`'s vehicle construction passed
+    `v.custom_field_values` straight through unresolved, leaking the raw
+    `vmss:...` storage key.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="vehicle_info",
+        key="registration_doc",
+        field_type="file_upload",
+    )
+
+    payload = _group_payload()
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v0.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v1.jpg", _jpeg_bytes(), "image/jpeg")),
+            (
+                "vehicleCustomFieldFiles[registration_doc]",
+                ("v0-doc.jpg", _jpeg_bytes(), "image/jpeg"),
+            ),
+            (
+                "vehicleCustomFieldFiles[registration_doc]",
+                ("v1-doc.jpg", _jpeg_bytes(), "image/jpeg"),
+            ),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    detail_response = await client.get(f"/api/v1/invitations/{invitation_id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    vehicles = detail_response.json()["data"]["vehicles"]
+    for vehicle_out in vehicles:
+        value = vehicle_out["customFieldValues"]["registration_doc"]
+        assert value
+        assert not value.startswith("vmss:")
+        assert "/api/v1/files/" in value or value.startswith("http")
 
 
 async def test_create_invitation_inline_custom_field_file_upload_required_missing_rejected(
@@ -9309,7 +9406,7 @@ async def test_create_invitation_consent_not_required_when_branch_deactivates_it
 async def test_create_invitation_expected_duration_optional(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
-    """"Expected Duration" is no longer collected by either visitor-facing
+    """ "Expected Duration" is no longer collected by either visitor-facing
     wizard at all (make-expected-duration-optional), so `create_invitation`
     must accept a submission that omits it regardless of the branch's own
     Form Builder configuration for the field — unlike ID proof/photo, there

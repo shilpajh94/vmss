@@ -344,6 +344,14 @@ async def _resolve_custom_field_file_values(
     `None` for these keys rather than the raw key or a resolved URL, since
     a generic file-upload field is exactly the kind of place an ID scan or
     other sensitive document can end up.
+
+    `file_keys` reflects the branch's *current* effective form, not the form
+    as it was when `values` was persisted — if a field's type was changed to
+    `file_upload` (or its key reused) after older invitations already stored
+    a non-file value under that key, `values[key]` may be a bool/number/list/
+    dict rather than a storage key. `_resolve_document_url` -> `storage_url_
+    for` -> `quote()` crashes on anything that isn't `str`/`bytes`, so such
+    values are treated as "no file" (`None`) rather than passed to it.
     """
     if not file_keys:
         return values
@@ -351,7 +359,12 @@ async def _resolve_custom_field_file_values(
     for key in file_keys:
         if key not in resolved:
             continue
-        resolved[key] = await _resolve_document_url(resolved[key]) if include_documents else None
+        storage_key = resolved[key]
+        resolved[key] = (
+            await _resolve_document_url(storage_key)
+            if include_documents and isinstance(storage_key, str)
+            else None
+        )
     return resolved
 
 
@@ -526,7 +539,11 @@ async def _to_qr_check_in_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
-                custom_field_values=v.custom_field_values,
+                custom_field_values=await _resolve_custom_field_file_values(
+                    v.custom_field_values,
+                    form_context.vehicle_info_file_keys,
+                    include_documents=False,
+                ),
             )
             for v in invitation.vehicles
         ],
@@ -609,7 +626,11 @@ async def _to_tracking_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
-                custom_field_values=v.custom_field_values,
+                custom_field_values=await _resolve_custom_field_file_values(
+                    v.custom_field_values,
+                    form_context.vehicle_info_file_keys,
+                    include_documents=False,
+                ),
             )
             for v in invitation.vehicles
         ],
@@ -673,7 +694,11 @@ async def _to_check_in_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
-                custom_field_values=v.custom_field_values,
+                custom_field_values=await _resolve_custom_field_file_values(
+                    v.custom_field_values,
+                    form_context.vehicle_info_file_keys,
+                    include_documents=False,
+                ),
             )
             for v in invitation.vehicles
         ],
@@ -749,7 +774,7 @@ async def _group_collected_visitor_detail_outs(
                     id_proof_type=str(id_proof_type) if id_proof_type else None,
                     id_proof_url=(
                         await _resolve_document_url(id_proof_storage_key)
-                        if id_proof_storage_key and include_documents
+                        if isinstance(id_proof_storage_key, str) and include_documents
                         else None
                     ),
                     photo_url=None,
@@ -871,7 +896,11 @@ async def _to_invitation_detail_out(
                 license_plate=v.license_plate,
                 make_model=v.make_model,
                 color=v.color,
-                custom_field_values=v.custom_field_values,
+                custom_field_values=await _resolve_custom_field_file_values(
+                    v.custom_field_values,
+                    form_context.vehicle_info_file_keys,
+                    include_documents=include_documents,
+                ),
             )
             for v in invitation.vehicles
         ],
