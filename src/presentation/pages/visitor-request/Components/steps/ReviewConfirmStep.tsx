@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react'
-import type { CarriedItemsFormState, ConsentFormState, CustomFieldValues, GroupValues, RegistrationType, VisitInfoFormState } from '../../types'
-import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
+import type {
+  CarriedItemsFormState,
+  ConsentFormState,
+  CustomFieldValues,
+  GroupValues,
+  RegistrationType,
+  VehicleFormEntry,
+  VisitInfoFormState,
+} from '../../types'
 import type { EffectiveFormFieldGroup, FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
 import { Spinner } from '../../../../components/ui/LoadingState'
@@ -36,7 +43,7 @@ export interface ReviewableFormState {
   additionalVisitors: ReviewVisitorSummary[]
   visitInfo: VisitInfoFormState
   carriedItems: CarriedItemsFormState
-  vehicles: Vehicle[]
+  vehicles: VehicleFormEntry[]
   consent: ConsentFormState
   customFieldValues: CustomFieldValues
   groupValues: GroupValues
@@ -64,6 +71,10 @@ interface ReviewConfirmStepProps {
   /** Same as above, for Vehicle Info's own field groups. */
   vehicleInfoGroups?: EffectiveFormFieldGroup[]
   vehicleInfoAllFields?: FormField[]
+  /** Same as above, for Carried Items' own field groups (e.g. a repeatable
+   * "Items Carried" group). */
+  carriedItemsGroups?: EffectiveFormFieldGroup[]
+  carriedItemsAllFields?: FormField[]
   onBack: () => void
   onSubmit: () => void
   onGoHome?: () => void
@@ -163,6 +174,8 @@ export function ReviewConfirmStep({
   visitorInfoAllFields = [],
   vehicleInfoGroups = [],
   vehicleInfoAllFields = [],
+  carriedItemsGroups = [],
+  carriedItemsAllFields = [],
   onBack,
   onSubmit,
   onGoHome,
@@ -201,6 +214,7 @@ export function ReviewConfirmStep({
     ...formState.primaryContact.customFieldValues,
   })
   const vehicleGroupFlatValues = resolveGroupFlatValues(vehicleInfoGroups, formState.groupValues, {})
+  const carriedItemsGroupFlatValues = resolveGroupFlatValues(carriedItemsGroups, formState.groupValues, formState.customFieldValues)
 
   return (
     <div className="flex flex-col gap-6">
@@ -267,6 +281,13 @@ export function ReviewConfirmStep({
             ],
           ),
         ]}
+      />
+
+      <GroupSummarySections
+        groups={carriedItemsGroups}
+        fields={carriedItemsAllFields}
+        groupValues={formState.groupValues}
+        flatValues={carriedItemsGroupFlatValues}
       />
 
       <SummarySection
