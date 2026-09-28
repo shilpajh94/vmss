@@ -301,20 +301,23 @@ unchanged — file uploads are a separate channel from the plain-JSON one.
 ### Retyped system fields and submission validation (`make-system-field-types-editable`)
 
 `fullName` (`primaryContact`/each `visitors[]` entry), `purposeOfVisit`,
-`departmentToVisit`, `expectedDuration`, `additionalNotes`
-(`visitDetails`), and `licensePlate` (each `vehicles[]` entry) can now
-also be retyped through Form Builder (see `docs/features/form_builder.md`
-"Changing an existing field's type"), extending the same dynamic
-validation `idProofType`/`vehicleType` already use: when a field's
-*currently configured* type is `dropdown_select`/`checkbox_list`, a
-submitted value must match one of the branch's currently published
-options for that field, rejected with `422` otherwise. When it's still
-its default (non-option-bearing) type, the submitted value is validated
-as ordinary free text, unchanged from before this change. `hostNameOrEmail`
-is not covered by this — its submitted value is always discarded (see
-"`hostId`/`hostNameOrEmail` are no longer resolved at creation" above), so
-there is nothing to validate regardless of how its Form Builder field is
-typed.
+`expectedDuration`, `additionalNotes` (`visitDetails`), and
+`licensePlate` (each `vehicles[]` entry) can now also be retyped through
+Form Builder (see `docs/features/form_builder.md` "Changing an existing
+field's type"), extending the same dynamic validation
+`idProofType`/`vehicleType` already use: when a field's *currently
+configured* type is `dropdown_select`/`checkbox_list`, a submitted value
+must match one of the branch's currently published options for that
+field, rejected with `422` otherwise. When it's still its default
+(non-option-bearing) type, the submitted value is validated as ordinary
+free text, unchanged from before this change. `hostNameOrEmail` and
+`departmentToVisit` are not covered by this — neither is a Form Builder
+field any more (`remove-dead-host-department-system-fields`): `host`'s
+submitted value is always discarded (see "`hostId`/`hostNameOrEmail` are
+no longer resolved at creation" above), and `departmentToVisit` is always
+validated as ordinary free text (or resolved from the `departmentId`
+catalog — see "Optional catalog ids on visit details" above), never
+gated by a Form Builder option list.
 
 ### Primary contact profile photo (`checkin-approval-workflow-improvements`, now mandatory per `require-primary-contact-photo`)
 

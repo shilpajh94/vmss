@@ -179,7 +179,6 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
             DefaultFieldSpec(
                 "purpose_of_visit", "Purpose of Visit", "text", is_locked=True, is_required=True
             ),
-            DefaultFieldSpec("host", "Host", "text", is_locked=True, is_required=False),
             DefaultFieldSpec(
                 "preferred_visit_date",
                 "Preferred Visit Date",
@@ -193,13 +192,6 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
                 "time_picker",
                 is_locked=True,
                 is_required=True,
-            ),
-            DefaultFieldSpec(
-                "department_to_visit",
-                "Department to Visit",
-                "text",
-                is_locked=True,
-                is_required=False,
             ),
             DefaultFieldSpec(
                 "expected_duration",

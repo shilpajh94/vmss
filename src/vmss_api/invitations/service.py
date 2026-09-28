@@ -2,7 +2,7 @@ import secrets
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -95,6 +95,18 @@ def _resolve_tenant_timezone(tenant: Tenant) -> ZoneInfo:
     except ZoneInfoNotFoundError:
         logger.warning("invitations_invalid_tenant_timezone", tenant_timezone=tenant.timezone)
         return ZoneInfo("UTC")
+
+
+def _end_of_visit_day_utc(visit_date: date, tenant: Tenant) -> datetime:
+    """Access for an approved visit is valid through the end of the visit
+    day itself, not the fixed creation-time TTL `expires_at` starts out
+    with — computed in the tenant's local timezone (the same zone
+    `check_in_by_qr_token`'s same-day gate uses) and converted to UTC for
+    storage.
+    """
+    tz = _resolve_tenant_timezone(tenant)
+    local_end = datetime.combine(visit_date, time(23, 59, 59), tzinfo=tz)
+    return local_end.astimezone(UTC)
 
 
 async def _notify_host(
@@ -661,15 +673,21 @@ async def create_invitation(
     # Submitted Value Is Validated Against Its Currently Configured Type"
     # (make-system-field-types-editable) — every other system field Form
     # Builder allows to be retyped, checked in one loop rather than a
-    # near-duplicate `if` block per key. `host` is deliberately excluded:
-    # `VisitDetailsSubmit.host_name_or_email` is always discarded by
-    # `_resolve_visit_detail_ids` (role-based-invitation-workflow), so
-    # there is no persisted value to validate.
+    # near-duplicate `if` block per key. `host`/`department_to_visit` are
+    # deliberately excluded: neither is a Form Builder field any more
+    # (remove-dead-host-department-system-fields) — `host_name_or_email` is
+    # always discarded by `_resolve_visit_detail_ids`
+    # (role-based-invitation-workflow), and `department_to_visit` is always
+    # free text or resolved from the `departmentId` catalog above, never
+    # constrained by a Form Builder-configured option list. Including
+    # either here would trip `allowed_options_for_system_field`'s
+    # "field isn't part of the active configuration at all" branch — `[]`,
+    # rejecting every value — since the field no longer exists in the
+    # effective form at all.
     retypeable_field_values: list[tuple[str, str | None]] = [
         ("full_name", payload.primary_contact.full_name),
         *[("full_name", visitor.full_name) for visitor in payload.visitors],
         ("purpose_of_visit", visit_details["purpose_of_visit"]),
-        ("department_to_visit", visit_details["department_to_visit"]),
         # Blank normalized to `None` here specifically (unlike the other
         # entries in this list): "Expected Duration" is unconditionally
         # optional and no visitor-facing wizard collects it any more
@@ -1023,7 +1041,7 @@ async def create_invitation(
     repo = InvitationRepository(tenant_db)
     tracking_id = await _generate_unique_tracking_id(repo)
     now = datetime.now(UTC)
-    expires_at = now + timedelta(hours=settings.invitation_token_ttl_hours)
+    expires_at = _end_of_visit_day_utc(payload.visit_details.preferred_visit_date, tenant)
     max_size = settings.invitation_max_upload_size_bytes
 
     # Resolved once, at creation, rather than recomputed later — an
@@ -1427,7 +1445,14 @@ async def approve_invitation(
             status.HTTP_409_CONFLICT,
             detail="Invitation has a configured approval workflow; approve its steps instead",
         )
-    updated = await InvitationRepository(tenant_db).approve_if_submitted(invitation.id)
+    expires_at = (
+        _end_of_visit_day_utc(invitation.preferred_visit_date, tenant)
+        if invitation.preferred_visit_date is not None
+        else None
+    )
+    updated = await InvitationRepository(tenant_db).approve_if_submitted(
+        invitation.id, expires_at=expires_at
+    )
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not awaiting approval")
     qr_code = await _issue_qr_code(tenant_db, updated, tenant=tenant)
@@ -1770,10 +1795,16 @@ async def reschedule_invitation(
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
         )
+    expires_at = (
+        _end_of_visit_day_utc(preferred_visit_date, tenant)
+        if invitation.status == "approved"
+        else None
+    )
     updated = await InvitationRepository(tenant_db).reschedule_if_eligible(
         invitation.id,
         preferred_visit_date=preferred_visit_date,
         preferred_visit_time=preferred_visit_time,
+        expires_at=expires_at,
     )
     if updated is None:
         raise HTTPException(

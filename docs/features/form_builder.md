@@ -50,7 +50,7 @@ Within a step, each field is one of three tiers:
 
 - **Locked** (`isLocked=true`): always active and required; the field
   endpoint rejects any attempt to change either. E.g. full name, email,
-  phone, visitor category (Visitor Info); purpose of visit, host,
+  phone, visitor category (Visitor Info); purpose of visit,
   preferred date/time (Visit Details); vehicle type, license plate
   (Vehicle Info).
 - **Toggleable**: an admin may activate/deactivate and (for an option-set
@@ -228,9 +228,9 @@ a specific structured type, not just rendered as form input
 | `visitorCategory` | Its real options come from the separate Visitor Category catalog, not this field's own `options` list. |
 
 Every other field — including every other system field, locked or
-toggleable (Full Name, Purpose of Visit, Host, Department to Visit,
-License Plate, Expected Duration, Additional Notes, ID Proof Type,
-Vehicle Type) — is retypeable. Changing it re-runs the same
+toggleable (Full Name, Purpose of Visit, License Plate, Expected
+Duration, Additional Notes, ID Proof Type, Vehicle Type) — is
+retypeable. Changing it re-runs the same
 type-dependent checks field creation already applies, against the
 field's *resulting* state (the update's own values where provided, the
 field's existing saved values otherwise): a type change to

@@ -231,7 +231,7 @@ def allowed_vehicle_types(effective_form: list[dict[str, Any]]) -> set[str] | No
 # --- Admin-authored custom fields (add-generic-custom-field-support) -------
 #
 # `isSystem` is what distinguishes a step's seeded fields (full name, email,
-# category, purpose, host, the Carried Items `items` field, the Vehicle Info
+# category, purpose, the Carried Items `items` field, the Vehicle Info
 # `license_plate` field, ...) — already handled by their own dedicated typed
 # columns/checks above — from an admin-authored field added on top of them,
 # whose answer is captured generically via `customFieldValues` instead. This
