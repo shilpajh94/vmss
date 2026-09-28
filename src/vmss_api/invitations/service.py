@@ -1132,18 +1132,24 @@ async def create_invitation(
         if primary_contact_photo_content is not None and primary_photo_content_type is not None
         else None
     )
+    # `payload.group_values` is a plain (uncached) property that rebuilds a
+    # brand-new dict from `payload.groups` on every access — mutating one
+    # access's result (as this loop used to) is silently discarded once
+    # `group_field_values` below re-reads the property fresh. So the storage
+    # keys are collected separately here and merged in at persistence time,
+    # the same "validate/store, then merge back" shape as
+    # `custom_field_storage`/`primary_contact_custom_field_storage`.
+    group_field_storage: dict[str, dict[int, dict[str, str]]] = {}
     for group_id, file_field_id in group_field_ids.items():
-        instances = payload.group_values.get(group_id, [])
         files = group_field_file_contents.get(group_id, [])
         content_types = group_field_content_types[group_id]
         for index, content in enumerate(files):
             storage_key = await storage_save(
                 tenant.id, "invitations/group-files", content, content_types[index]
             )
-            # Mutates the same dict `payload.group_values[group_id][index]`
-            # references — persisted below via `group_field_values`, never
-            # the client-supplied value for this field id (rejected earlier).
-            instances[index][file_field_id] = storage_key
+            group_field_storage.setdefault(group_id, {}).setdefault(index, {})[
+                file_field_id
+            ] = storage_key
 
     # Inline (non-grouped) custom-field file uploads
     # (add-inline-custom-field-file-upload): validated for presence/count
@@ -1242,7 +1248,13 @@ async def create_invitation(
         consents=dict(consents_dict),
         consent_recorded_at=now,
         custom_field_values={**invitation_level_custom_field_values, **custom_field_storage},
-        group_field_values={key: list(value) for key, value in payload.group_values.items()},
+        group_field_values={
+            group_id: [
+                {**instance, **group_field_storage.get(group_id, {}).get(index, {})}
+                for index, instance in enumerate(instances)
+            ]
+            for group_id, instances in payload.group_values.items()
+        },
     )
     tenant_db.add(invitation)
 
