@@ -1,5 +1,8 @@
 import z from "zod"
 
+// Doesn't carry its own `customFields` — every Vehicle Info answer flows
+// through the request's single top-level `customFields` array instead, see
+// visitor-schema.ts's matching comment.
 export const VehicleSchema = z.object({
   // Plain string, not a fixed enum (make-id-proof-and-vehicle-type-
   // configurable): a valid value is whatever the calling branch's
@@ -9,9 +12,6 @@ export const VehicleSchema = z.object({
   licensePlate: z.string().min(1),
   makeModel: z.string().min(1),
   color: z.string().min(1),
-  // This vehicle's own answers for any admin-authored Vehicle Info field
-  // beyond the locked license-plate field (add-generic-custom-field-support).
-  customFieldValues: z.record(z.string(), z.unknown()).optional(),
 })
 
 export type Vehicle = z.infer<typeof VehicleSchema>

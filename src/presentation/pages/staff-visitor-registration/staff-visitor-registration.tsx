@@ -44,6 +44,9 @@ export function StaffVisitorRegistrationPage() {
     isFormConfigLoading,
     formConfigError,
     carriedItemsFields,
+    carriedItemsCustomFields,
+    carriedItemsGroups,
+    carriedItemsAllFields,
     consentFields,
     visitorInfoFields,
     purposeOfVisitOptions,
@@ -156,8 +159,13 @@ export function StaffVisitorRegistrationPage() {
             isLoading={false}
             value={formState.carriedItems}
             onChange={(carriedItems) => setFormState({ ...formState, carriedItems })}
+            customFields={carriedItemsCustomFields}
             customFieldValues={formState.customFieldValues}
             onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
+            groups={carriedItemsGroups}
+            groupFields={carriedItemsAllFields}
+            groupValues={formState.groupValues}
+            onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
             uploadFile={uploadFile}
             getFilePreviewUrl={getFilePreviewUrl}
           />
@@ -195,11 +203,13 @@ export function StaffVisitorRegistrationPage() {
             visitorCategories={visitorCategories}
             getFilePreviewUrl={getFilePreviewUrl}
             vehicleCustomFields={vehicleInfoCustomFields}
-            carriedItemsCustomFields={carriedItemsFields.filter((field) => !field.isSystem)}
+            carriedItemsCustomFields={carriedItemsCustomFields}
             visitorInfoGroups={visitorInfoGroups}
             visitorInfoAllFields={visitorInfoAllFields}
             vehicleInfoGroups={vehicleInfoGroups}
             vehicleInfoAllFields={vehicleInfoAllFields}
+            carriedItemsGroups={carriedItemsGroups}
+            carriedItemsAllFields={carriedItemsAllFields}
             onBack={goBack}
             onSubmit={submit}
             onGoHome={cancelRegistration}

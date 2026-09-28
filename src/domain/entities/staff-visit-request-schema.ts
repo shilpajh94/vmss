@@ -1,6 +1,7 @@
 import z from "zod"
 import { VehicleSchema } from "./vehicle-schema"
 import { StaffVisitorSchema } from "./staff-visitor-schema"
+import { ConsentAnswerSchema, FieldAnswerSchema, GroupAnswerSchema } from "./form-field-answer-schema"
 
 // Wire shape of the JSON-encoded `payload` field for POST /invitations
 // (identical contract to POST /registrations/walk-in, see visit-request-schema.ts).
@@ -11,24 +12,29 @@ export const StaffVisitRequestSchema = z.object({
   registrationType: z.enum(["individual", "group"]),
   visitorCategoryId: z.string().min(1),
   primaryContact: StaffVisitorSchema,
-  visitors: z.array(StaffVisitorSchema),
+  // See visit-request-schema.ts's matching comment — safe to omit when empty.
+  visitors: z.array(StaffVisitorSchema).optional(),
   visitDetails: z.object({
     purposeOfVisit: z.string().min(1),
     preferredVisitDate: z.string().min(1),
     preferredVisitTime: z.string().min(1),
   }),
-  carriedItems: z.object({
-    items: z.array(z.string()),
-    itemDescription: z.string().optional(),
-  }),
-  vehicles: z.array(VehicleSchema),
-  // Dynamic, branch-configured keys (form-builder) — see
-  // visit-request-schema.ts's matching comment.
-  consents: z.record(z.string(), z.boolean()),
+  // See visit-request-schema.ts's matching comment — safe to omit when empty.
+  carriedItems: z
+    .object({
+      items: z.array(z.string()),
+      itemDescription: z.string().optional(),
+    })
+    .optional(),
   // See visit-request-schema.ts's matching comment.
-  customFieldValues: z.record(z.string(), z.unknown()).optional(),
+  vehicles: z.array(VehicleSchema).optional(),
+  // Addressed by fieldId — see visit-request-schema.ts's matching comment.
+  // NOTE: omitting this when empty is expected to fail backend validation.
+  consents: z.array(ConsentAnswerSchema).optional(),
   // See visit-request-schema.ts's matching comment.
-  groupValues: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))).optional(),
+  customFields: z.array(FieldAnswerSchema).optional(),
+  // See visit-request-schema.ts's matching comment.
+  groups: z.array(GroupAnswerSchema).optional(),
 })
 
 export type StaffVisitRequest = z.infer<typeof StaffVisitRequestSchema>
