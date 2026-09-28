@@ -1,5 +1,6 @@
 import type { DynamicFieldValue } from './DynamicField'
-import type { EffectiveFormFieldGroup, EffectiveFormStep, VisibilityCondition } from '../../../domain/entities/form-builder-schema'
+import type { EffectiveFormFieldGroup, EffectiveFormStep, FormField, VisibilityCondition } from '../../../domain/entities/form-builder-schema'
+import type { GroupAnswer } from '../../../domain/entities/form-field-answer-schema'
 import type { GroupInstance } from './RepeatableFieldGroup'
 
 /** Pure evaluator for a `FormFieldGroup`'s `visibilityCondition`
@@ -50,27 +51,36 @@ export interface ExtractedGroupFieldFiles {
   groupFieldFiles: Record<string, File[]>
 }
 
-/** A group's first `file_upload`-typed field, addressed by `fieldKeys`
- * against the step's own field list — mirrors VMSS_API's
+/** Every field actually belonging to `group`, per the field's own
+ * authoritative `groupId` — NOT resolved via `group.fieldKeys` matched
+ * against the step's full field list, since a key can collide with an
+ * ungrouped field or another group's field on the same step (that
+ * ambiguity caused `toGroupAnswers` to attribute a foreign field's id to
+ * this group; see restructure-walkin-payload-by-field-id). */
+function groupMemberFields(group: EffectiveFormFieldGroup, stepFields: EffectiveFormStep['fields']): FormField[] {
+  return stepFields.filter((field) => field.groupId === group.id)
+}
+
+/** A group's first `file_upload`-typed field — mirrors VMSS_API's
  * `invitations/service.py::_group_field_file_key` exactly: only that one
  * field is ever eligible to travel as a multipart file. */
-function groupFileFieldKey(group: EffectiveFormFieldGroup, stepFields: EffectiveFormStep['fields']): string | undefined {
-  return group.fieldKeys
-    .map((fieldKey) => stepFields.find((field) => field.key === fieldKey))
-    .find((field) => field?.fieldType === 'file_upload')?.key
+function groupFileField(group: EffectiveFormFieldGroup, stepFields: EffectiveFormStep['fields']): FormField | undefined {
+  return groupMemberFields(group, stepFields).find((field) => field.fieldType === 'file_upload')
 }
 
 /** Pulls each admin-defined field group's `file_upload` field answer out of
  * `groupValues` and resolves it to the real `File` `uploadFile` registered
  * in `fileRegistry` (add-group-field-file-upload). The backend only ever
- * accepts that field's answer as a multipart `groupFieldFiles[<groupKey>]`
- * list, order-matched to that group's `groupValues[<groupKey>]` instances —
- * the same "list, order-matched to instances" convention already used for
- * `visitorIdProofFiles`/`visitor_id_proof_files` — and rejects the instance
- * outright (422) if the field is still present as a JSON value, so it must
- * be stripped from every instance here rather than merely left alongside
- * the resolved file (see VMSS_API's `docs/features/invitations.md`
- * "Repeatable group file uploads").
+ * accepts that field's answer as a multipart `groupFieldFiles[<groupId>]`
+ * list, order-matched to that group's instances — the same "list,
+ * order-matched to instances" convention already used for
+ * `visitorIdProofFiles` — and rejects the instance outright (422) if the
+ * field is still present as a JSON value, so it must be stripped from every
+ * instance here rather than merely left alongside the resolved file (see
+ * VMSS_API's `docs/features/invitations.md` "Repeatable group file
+ * uploads"). `sanitizedGroupValues` stays keyed by the group's `key`
+ * (internal wizard state); only the returned `groupFieldFiles` map is keyed
+ * by `id` (the wire contract's file part key).
  */
 export function extractGroupFieldFiles(
   steps: EffectiveFormStep[],
@@ -82,25 +92,47 @@ export function extractGroupFieldFiles(
 
   for (const step of steps) {
     for (const group of step.groups) {
-      const fileFieldKey = groupFileFieldKey(group, step.fields)
+      const fileField = groupFileField(group, step.fields)
       const instances = groupValues[group.key]
-      if (!fileFieldKey || !instances || instances.length === 0) continue
+      if (!fileField || !instances || instances.length === 0) continue
 
       const files: File[] = []
       sanitizedGroupValues[group.key] = instances.map((instance) => {
-        if (!(fileFieldKey in instance)) return instance
-        const fileValue = instance[fileFieldKey]
+        if (!(fileField.key in instance)) return instance
+        const fileValue = instance[fileField.key]
         if (fileValue !== undefined && typeof fileValue === 'object' && !Array.isArray(fileValue)) {
           const file = fileRegistry.get(fileValue.fileRef)
           if (file) files.push(file)
         }
         const sanitizedInstance: GroupInstance = { ...instance }
-        delete sanitizedInstance[fileFieldKey]
+        delete sanitizedInstance[fileField.key]
         return sanitizedInstance
       })
-      if (files.length > 0) groupFieldFiles[group.key] = files
+      if (files.length > 0) groupFieldFiles[group.id] = files
     }
   }
 
   return { sanitizedGroupValues, groupFieldFiles }
+}
+
+/** Converts every admin-defined field group's current instances (internal
+ * wizard state, keyed by `key`) into the wire contract's `groups` array,
+ * addressed by `groupId`/`fieldId` (restructure-walkin-payload-by-field-id).
+ * A group with zero instances is omitted entirely. */
+export function toGroupAnswers(steps: EffectiveFormStep[], groupValues: Record<string, GroupInstance[]>): GroupAnswer[] {
+  const answers: GroupAnswer[] = []
+  for (const step of steps) {
+    for (const group of step.groups) {
+      const instances = groupValues[group.key]
+      if (!instances || instances.length === 0) continue
+      const groupFields = groupMemberFields(group, step.fields)
+      answers.push({
+        groupId: group.id,
+        instances: instances.map((instance) =>
+          groupFields.filter((field) => field.key in instance).map((field) => ({ fieldId: field.id, value: instance[field.key] })),
+        ),
+      })
+    }
+  }
+  return answers
 }

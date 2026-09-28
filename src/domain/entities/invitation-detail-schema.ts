@@ -1,4 +1,5 @@
 import z from "zod"
+import { FieldAnswerSchema, GroupAnswerSchema } from "./form-field-answer-schema"
 
 export const CurrentApprovalStepSchema = z.object({
   id: z.string().min(1),
@@ -22,10 +23,13 @@ export const InvitationVisitorSchema = z.object({
   idProofType: z.string().nullable(),
   photoUrl: z.string().nullish(),
   idProofUrl: z.string().nullish(),
-  // Backend resolves `file_upload` answers here to signed URLs the same way
-  // it does for `customFieldValues`/`primaryContactCustomFieldValues`, gated
-  // by the caller's `documents:view` grant (InvitationVisitorDetailOut).
-  customFieldValues: z.record(z.string(), z.unknown()).default({}),
+  // fieldId-addressed, same wire shape as the submission-side `customFields`
+  // (`InvitationVisitorDetailOut.custom_fields: list[CustomFieldValue]`) —
+  // NOT a flat key-based map. Backend resolves `file_upload` answers here to
+  // signed URLs the same way it does for `customFields`/
+  // `primaryContactCustomFields`, gated by the caller's `documents:view`
+  // grant (InvitationVisitorDetailOut).
+  customFields: z.array(FieldAnswerSchema).default([]),
 })
 
 export type InvitationVisitor = z.infer<typeof InvitationVisitorSchema>
@@ -39,14 +43,15 @@ export const InvitationVehicleSchema = z.object({
   licensePlate: z.string().nullish(),
   makeModel: z.string().nullish(),
   color: z.string().nullish(),
-  // NOTE: unlike visitors/primary-contact/invitation/group scopes, the
-  // backend does not yet resolve `file_upload` answers here to signed URLs
-  // (InvitationVehicleOut.custom_field_values is passed through raw in
-  // _to_invitation_detail_out) — a file_upload field's value may still be an
-  // opaque storage key. VisitorInfoModal's FileValueField already falls back
-  // to a plain "File uploaded" indicator for non-URL values, so this is safe
-  // to render now; revisit once the backend adds resolution for vehicles too.
-  customFieldValues: z.record(z.string(), z.unknown()).default({}),
+  // fieldId-addressed, same wire shape as `InvitationVisitorSchema.customFields`
+  // (`InvitationVehicleOut.custom_fields: list[CustomFieldValue]`). NOTE:
+  // unlike visitors/primary-contact/invitation/group scopes, the backend
+  // does not yet resolve `file_upload` answers here to signed URLs — a
+  // file_upload field's value may still be an opaque storage key.
+  // VisitorInfoModal's FileValueField already falls back to a plain "File
+  // uploaded" indicator for non-URL values, so this is safe to render now;
+  // revisit once the backend adds resolution for vehicles too.
+  customFields: z.array(FieldAnswerSchema).default([]),
 })
 
 export type InvitationVehicle = z.infer<typeof InvitationVehicleSchema>
@@ -66,13 +71,16 @@ export const InvitationDetailSchema = z.object({
   primaryContactPhotoUrl: z.string().nullish(),
   primaryContactIdProofType: z.string().nullish(),
   primaryContactIdProofUrl: z.string().nullish(),
-  // Admin-configured (form-builder) field answers — flat maps keyed by
-  // `FormField.key`/`EffectiveFormFieldGroup.key`, rendered generically in
-  // VisitorInfoModal via `findFieldByKey`/`findGroupByKey` rather than typed
-  // field-by-field, since the field set varies per branch/publish.
-  primaryContactCustomFieldValues: z.record(z.string(), z.unknown()).default({}),
-  customFieldValues: z.record(z.string(), z.unknown()).default({}),
-  groupFieldValues: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))).default({}),
+  // Admin-configured (form-builder) field answers — fieldId/groupId-addressed,
+  // matching `InvitationDetailOut`'s `primary_contact_custom_fields`/
+  // `custom_fields`/`groups` (VMSS_API `invitations/schemas.py`), the same
+  // wire shape the submission side uses (`VisitRequestSchema`'s
+  // `customFields`/`groups`). Rendered generically in VisitorInfoModal via
+  // `findFieldById`/`findGroupById` rather than typed field-by-field, since
+  // the field set varies per branch/publish.
+  primaryContactCustomFields: z.array(FieldAnswerSchema).default([]),
+  customFields: z.array(FieldAnswerSchema).default([]),
+  groups: z.array(GroupAnswerSchema).default([]),
   purposeOfVisit: z.string().min(1),
   hostNameOrEmail: z.string().nullable(),
   hostId: z.string().nullable(),

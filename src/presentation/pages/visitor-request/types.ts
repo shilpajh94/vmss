@@ -1,8 +1,11 @@
 import type { DynamicFieldValue } from '../../components/dynamic-fields/DynamicField'
+import { toConsentAnswers, toFieldAnswers } from '../../components/dynamic-fields/field-answers'
+import { toGroupAnswers } from '../../components/dynamic-fields/field-group-visibility'
 import type { Vehicle } from '../../../domain/entities/vehicle-schema'
 import type { Visitor } from '../../../domain/entities/visitor-schema'
 import type { VisitorCategory } from '../../../domain/entities/visitor-category-schema'
 import type { VisitRequest } from '../../../domain/entities/visit-request-schema'
+import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
 
 export type RegistrationType = 'individual' | 'group'
 
@@ -13,6 +16,15 @@ export type RegistrationType = 'individual' | 'group'
 export interface VisitorCategoriesFieldState {
   status: 'loading' | 'error' | 'loaded'
   categories: VisitorCategory[]
+}
+
+// Wizard-internal vehicle state — same shape as the wire contract's
+// `Vehicle`, except `customFieldValues` stays a flat, key-indexed map here
+// (matching every other step's internal state) rather than the wire
+// contract's fieldId-indexed `customFields` array; only converted at
+// submission time, see `toVisitRequest`.
+export interface VehicleFormEntry extends Vehicle {
+  customFieldValues: Record<string, DynamicFieldValue>
 }
 
 export interface VisitorFormEntry {
@@ -91,7 +103,7 @@ export interface VisitRequestFormState {
   additionalVisitors: VisitorFormEntry[]
   visitInfo: VisitInfoFormState
   carriedItems: CarriedItemsFormState
-  vehicles: Vehicle[]
+  vehicles: VehicleFormEntry[]
   consent: ConsentFormState
   customFieldValues: CustomFieldValues
   groupValues: GroupValues
@@ -117,6 +129,10 @@ export function createInitialFormState(): VisitRequestFormState {
   }
 }
 
+// Neither `primaryContact` nor a `visitors[]` entry carries its own
+// `customFields` on the wire — every Visitor Info answer, for the primary
+// contact or any additional visitor, flows through the request's single
+// top-level `customFields` array instead, see `toVisitRequest`.
 export function toVisitor(entry: VisitorFormEntry): Visitor {
   return {
     fullName: entry.fullName,
@@ -128,8 +144,17 @@ export function toVisitor(entry: VisitorFormEntry): Visitor {
     // backend validates any *present* value against its known ID proof
     // types and rejects an empty string as unrecognized.
     idProofType: entry.idProofType || undefined,
-    customFieldValues: entry.customFieldValues,
   }
+}
+
+/** Every field list `toVisitRequest` needs to resolve `key`-based wizard
+ * state into the wire contract's `fieldId`-based shape. */
+export interface VisitRequestWireContext {
+  visitorInfoFields: FormField[]
+  vehicleInfoFields: FormField[]
+  invitationFields: FormField[]
+  consentFields: FormField[]
+  steps: EffectiveFormStep[]
 }
 
 // Maps wizard form state onto the `payload` wire contract for
@@ -142,24 +167,52 @@ export function toVisitor(entry: VisitorFormEntry): Visitor {
 // the wizard at all (role-based-invitation-workflow) — omitted entirely
 // rather than sent empty; the API resolves the invitation's owning role by
 // default and reception fills in the department later.
-export function toVisitRequest(formState: VisitRequestFormState): VisitRequest {
+export function toVisitRequest(formState: VisitRequestFormState, context: VisitRequestWireContext): VisitRequest {
+  const visitors = formState.additionalVisitors.map(toVisitor)
+  const vehicles = formState.vehicles.map((vehicle) => ({
+    vehicleType: vehicle.vehicleType,
+    licensePlate: vehicle.licensePlate,
+    makeModel: vehicle.makeModel,
+    color: vehicle.color,
+  }))
+  // Every custom-field answer in the request — invitation-level (Visit
+  // Details/Carried Items/a custom step), the primary contact's and every
+  // additional visitor's Visitor Info answers, and every vehicle's Vehicle
+  // Info answers — shares this single top-level array; neither `visitors[]`
+  // nor `vehicles[]` carries its own `customFields` slot.
+  const customFields = [
+    ...toFieldAnswers(formState.customFieldValues, context.invitationFields),
+    ...toFieldAnswers(formState.primaryContact.customFieldValues, context.visitorInfoFields),
+    ...formState.additionalVisitors.flatMap((visitor) => toFieldAnswers(visitor.customFieldValues, context.visitorInfoFields)),
+    ...formState.vehicles.flatMap((vehicle) => toFieldAnswers(vehicle.customFieldValues, context.vehicleInfoFields)),
+  ]
+  const groups = toGroupAnswers(context.steps, formState.groupValues)
+  const consents = toConsentAnswers(formState.consent, context.consentFields)
+
   return {
     registrationType: formState.registrationType,
     visitorCategoryId: formState.primaryContact.visitorCategory,
     primaryContact: toVisitor(formState.primaryContact),
-    visitors: formState.additionalVisitors.map(toVisitor),
+    // `visitors`/`vehicles`/`carriedItems`/`customFields`/`groups` all
+    // default on the backend (`Field(default_factory=...)`) — omitted
+    // entirely (`JSON.stringify` drops an `undefined` value) rather than
+    // sent as an explicit empty value, when there's nothing to send.
+    visitors: visitors.length > 0 ? visitors : undefined,
     visitDetails: {
       purposeOfVisit: formState.visitInfo.purpose,
       preferredVisitDate: formState.visitInfo.preferredDate,
       preferredVisitTime: formState.visitInfo.preferredTime,
     },
-    carriedItems: {
-      items: formState.carriedItems.categories,
-      itemDescription: formState.carriedItems.description,
-    },
-    vehicles: formState.vehicles,
-    consents: formState.consent,
-    customFieldValues: formState.customFieldValues,
-    groupValues: formState.groupValues,
+    carriedItems:
+      formState.carriedItems.categories.length > 0 || formState.carriedItems.description
+        ? { items: formState.carriedItems.categories, itemDescription: formState.carriedItems.description }
+        : undefined,
+    vehicles: vehicles.length > 0 ? vehicles : undefined,
+    // Backend now defaults `consents` to `[]` when omitted (matches
+    // `visitors`/`vehicles`/`customFields`/`groups` above) — safe to drop
+    // entirely when there's nothing to send, same pattern as those.
+    consents: consents.length > 0 ? consents : undefined,
+    customFields: customFields.length > 0 ? customFields : undefined,
+    groups: groups.length > 0 ? groups : undefined,
   }
 }

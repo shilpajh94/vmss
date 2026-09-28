@@ -6,10 +6,11 @@ import type { DynamicFieldValue } from '../../../components/dynamic-fields/Dynam
 import {
   extractListCustomFieldFiles,
   extractSingleCustomFieldFiles,
-  fileUploadFieldKeysOf,
+  fileUploadFieldsOf,
+  findInvitationFields,
   findInvitationFileUploadFields,
   hasMissingRequiredCustomFieldFile,
-  requiredFileUploadFieldKeysOf,
+  requiredFileUploadFieldsOf,
 } from '../../../components/dynamic-fields/custom-field-files'
 import { findField, findStepFields, findStepGroups, useEffectiveForm } from '../../../hooks/use-effective-form'
 import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visitor-request-wizard'
@@ -213,6 +214,19 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
   } = useEffectiveForm(branchId)
   const activeSteps = useMemo(() => getActiveSteps(effectiveFormSteps), [effectiveFormSteps])
   const carriedItemsFields = useMemo(() => findStepFields(effectiveFormSteps, 'carried_items'), [effectiveFormSteps])
+  // See use-visitor-request-wizard.ts's matching comment.
+  const carriedItemsGroups = useMemo(
+    () => findStepGroups(effectiveFormSteps, 'carried_items').filter((group) => !group.isSystem),
+    [effectiveFormSteps],
+  )
+  const carriedItemsAllFields = useMemo(
+    () => findStepFields(effectiveFormSteps, 'carried_items').filter((field) => !field.isSystem),
+    [effectiveFormSteps],
+  )
+  const carriedItemsCustomFields = useMemo(() => {
+    const nonSystemGroupIds = new Set(carriedItemsGroups.map((group) => group.id))
+    return carriedItemsAllFields.filter((field) => field.groupId === null || !nonSystemGroupIds.has(field.groupId))
+  }, [carriedItemsAllFields, carriedItemsGroups])
   const consentFields = useMemo(() => findStepFields(effectiveFormSteps, 'consent_agreement'), [effectiveFormSteps])
   const requiredConsentKeys = useMemo(
     () => consentFields.filter((field) => field.isRequired).map((field) => field.key),
@@ -257,9 +271,11 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     () => findStepFields(effectiveFormSteps, 'visitor_info').filter((field) => !field.isSystem),
     [effectiveFormSteps],
   )
+  // See use-visitor-request-wizard.ts's matching comment on the `groupId`
+  // (not `key`) based exclusion.
   const visitorInfoCustomFields = useMemo(() => {
-    const groupedFieldKeys = new Set(visitorInfoGroups.flatMap((group) => group.fieldKeys))
-    return visitorInfoAllFields.filter((field) => !groupedFieldKeys.has(field.key))
+    const nonSystemGroupIds = new Set(visitorInfoGroups.map((group) => group.id))
+    return visitorInfoAllFields.filter((field) => field.groupId === null || !nonSystemGroupIds.has(field.groupId))
   }, [visitorInfoAllFields, visitorInfoGroups])
   const visitDetailsCustomFields = useMemo(
     () => findStepFields(effectiveFormSteps, 'visit_details').filter((field) => !field.isSystem),
@@ -274,25 +290,27 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     () => findStepFields(effectiveFormSteps, 'vehicle_info').filter((field) => !field.isSystem),
     [effectiveFormSteps],
   )
+  // See use-visitor-request-wizard.ts's matching comment.
   const vehicleInfoCustomFields = useMemo(() => {
-    const groupedFieldKeys = new Set(vehicleInfoGroups.flatMap((group) => group.fieldKeys))
-    return vehicleInfoAllFields.filter((field) => !groupedFieldKeys.has(field.key))
+    const nonSystemGroupIds = new Set(vehicleInfoGroups.map((group) => group.id))
+    return vehicleInfoAllFields.filter((field) => field.groupId === null || !nonSystemGroupIds.has(field.groupId))
   }, [vehicleInfoAllFields, vehicleInfoGroups])
   // See use-visitor-request-wizard.ts's matching comment.
-  const visitorInfoFileUploadKeys = useMemo(() => fileUploadFieldKeysOf(visitorInfoCustomFields), [visitorInfoCustomFields])
-  const visitorInfoRequiredFileUploadKeys = useMemo(
-    () => requiredFileUploadFieldKeysOf(visitorInfoCustomFields),
+  const invitationCustomFields = useMemo(() => findInvitationFields(effectiveFormSteps), [effectiveFormSteps])
+  // See use-visitor-request-wizard.ts's matching comment.
+  const visitorInfoFileUploadFields = useMemo(() => fileUploadFieldsOf(visitorInfoCustomFields), [visitorInfoCustomFields])
+  const visitorInfoRequiredFileUploadFields = useMemo(
+    () => requiredFileUploadFieldsOf(visitorInfoCustomFields),
     [visitorInfoCustomFields],
   )
-  const vehicleInfoFileUploadKeys = useMemo(() => fileUploadFieldKeysOf(vehicleInfoCustomFields), [vehicleInfoCustomFields])
-  const vehicleInfoRequiredFileUploadKeys = useMemo(
-    () => requiredFileUploadFieldKeysOf(vehicleInfoCustomFields),
+  const vehicleInfoFileUploadFields = useMemo(() => fileUploadFieldsOf(vehicleInfoCustomFields), [vehicleInfoCustomFields])
+  const vehicleInfoRequiredFileUploadFields = useMemo(
+    () => requiredFileUploadFieldsOf(vehicleInfoCustomFields),
     [vehicleInfoCustomFields],
   )
   const invitationFileUploadFields = useMemo(() => findInvitationFileUploadFields(effectiveFormSteps), [effectiveFormSteps])
-  const invitationFileUploadKeys = useMemo(() => invitationFileUploadFields.map((field) => field.key), [invitationFileUploadFields])
-  const invitationRequiredFileUploadKeys = useMemo(
-    () => invitationFileUploadFields.filter((field) => field.isRequired).map((field) => field.key),
+  const invitationRequiredFileUploadFields = useMemo(
+    () => invitationFileUploadFields.filter((field) => field.isRequired),
     [invitationFileUploadFields],
   )
   const lastStepIndex = activeSteps.length > 0 ? activeSteps.length - 1 : 0
@@ -381,16 +399,16 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     const photoMissing = visitorInfoFields.profilePhotoActive && visitorInfoFields.profilePhotoRequired && !primaryContactPhotoFile
     // See use-visitor-request-wizard.ts's matching comment.
     const missingRequiredCustomFieldFile =
-      hasMissingRequiredCustomFieldFile(visitorInfoRequiredFileUploadKeys, [formState.primaryContact.customFieldValues]) ||
+      hasMissingRequiredCustomFieldFile(visitorInfoRequiredFileUploadFields, [formState.primaryContact.customFieldValues]) ||
       hasMissingRequiredCustomFieldFile(
-        visitorInfoRequiredFileUploadKeys,
+        visitorInfoRequiredFileUploadFields,
         formState.additionalVisitors.map((visitor) => visitor.customFieldValues),
       ) ||
       hasMissingRequiredCustomFieldFile(
-        vehicleInfoRequiredFileUploadKeys,
+        vehicleInfoRequiredFileUploadFields,
         formState.vehicles.map((vehicle) => vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined),
       ) ||
-      hasMissingRequiredCustomFieldFile(invitationRequiredFileUploadKeys, [formState.customFieldValues])
+      hasMissingRequiredCustomFieldFile(invitationRequiredFileUploadFields, [formState.customFieldValues])
     if (idProofMissing || photoMissing || missingRequiredCustomFieldFile || !branchId) {
       setSubmissionError('Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
@@ -400,6 +418,10 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
 
     const visitorIdProofFiles = formState.additionalVisitors
       .map((visitor) => (visitor.idProofFileRef ? fileRegistry.current.get(visitor.idProofFileRef) : undefined))
+      .filter((file): file is File => file !== undefined)
+    // See use-visitor-request-wizard.ts's matching comment.
+    const visitorPhotoFiles = formState.additionalVisitors
+      .map((visitor) => (visitor.profileImageFileRef ? fileRegistry.current.get(visitor.profileImageFileRef) : undefined))
       .filter((file): file is File => file !== undefined)
 
     // See use-visitor-request-wizard.ts's matching comment.
@@ -411,21 +433,21 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
 
     // See use-visitor-request-wizard.ts's matching comment.
     const { sanitizedValues: sanitizedPrimaryContactCustomFieldValues, files: primaryContactCustomFieldFiles } =
-      extractSingleCustomFieldFiles(visitorInfoFileUploadKeys, formState.primaryContact.customFieldValues, fileRegistry.current)
+      extractSingleCustomFieldFiles(visitorInfoFileUploadFields, formState.primaryContact.customFieldValues, fileRegistry.current)
     const { sanitizedValuesList: sanitizedVisitorCustomFieldValuesList, filesByKey: visitorCustomFieldFiles } =
       extractListCustomFieldFiles(
-        visitorInfoFileUploadKeys,
+        visitorInfoFileUploadFields,
         formState.additionalVisitors.map((visitor) => visitor.customFieldValues),
         fileRegistry.current,
       )
     const { sanitizedValuesList: sanitizedVehicleCustomFieldValuesList, filesByKey: vehicleCustomFieldFiles } =
       extractListCustomFieldFiles(
-        vehicleInfoFileUploadKeys,
+        vehicleInfoFileUploadFields,
         formState.vehicles.map((vehicle) => vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined),
         fileRegistry.current,
       )
     const { sanitizedValues: sanitizedCustomFieldValues, files: customFieldFiles } = extractSingleCustomFieldFiles(
-      invitationFileUploadKeys,
+      invitationFileUploadFields,
       formState.customFieldValues,
       fileRegistry.current,
     )
@@ -434,24 +456,34 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     setSubmissionError(undefined)
     try {
       const response = await submitStaffVisitRequestUseCase.execute(
-        toStaffVisitRequest({
-          ...formState,
-          groupValues: sanitizedGroupValues,
-          customFieldValues: sanitizedCustomFieldValues,
-          primaryContact: { ...formState.primaryContact, customFieldValues: sanitizedPrimaryContactCustomFieldValues },
-          additionalVisitors: formState.additionalVisitors.map((visitor, index) => ({
-            ...visitor,
-            customFieldValues: sanitizedVisitorCustomFieldValuesList[index],
-          })),
-          vehicles: formState.vehicles.map((vehicle, index) => ({
-            ...vehicle,
-            customFieldValues: sanitizedVehicleCustomFieldValuesList[index],
-          })),
-        }),
+        toStaffVisitRequest(
+          {
+            ...formState,
+            groupValues: sanitizedGroupValues,
+            customFieldValues: sanitizedCustomFieldValues,
+            primaryContact: { ...formState.primaryContact, customFieldValues: sanitizedPrimaryContactCustomFieldValues },
+            additionalVisitors: formState.additionalVisitors.map((visitor, index) => ({
+              ...visitor,
+              customFieldValues: sanitizedVisitorCustomFieldValuesList[index],
+            })),
+            vehicles: formState.vehicles.map((vehicle, index) => ({
+              ...vehicle,
+              customFieldValues: sanitizedVehicleCustomFieldValuesList[index],
+            })),
+          },
+          {
+            visitorInfoFields: visitorInfoCustomFields,
+            vehicleInfoFields: vehicleInfoCustomFields,
+            invitationFields: invitationCustomFields,
+            consentFields,
+            steps: effectiveFormSteps,
+          },
+        ),
         {
           primaryContactIdProofFile,
           primaryContactPhotoFile,
           visitorIdProofFiles,
+          visitorPhotoFiles,
           groupFieldFiles,
           primaryContactCustomFieldFiles,
           visitorCustomFieldFiles,
@@ -501,6 +533,9 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
     isFormConfigLoading,
     formConfigError,
     carriedItemsFields,
+    carriedItemsCustomFields,
+    carriedItemsGroups,
+    carriedItemsAllFields,
     consentFields,
     visitorInfoFields,
     purposeOfVisitOptions,

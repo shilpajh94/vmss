@@ -8,9 +8,9 @@ import type { GroupInstance } from '../../../../components/dynamic-fields/Repeat
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
 import { TextField } from '../../../../components/ui/TextField'
 import type { EffectiveFormFieldGroup, FormField } from '../../../../../domain/entities/form-builder-schema'
-import type { Vehicle } from '../../../../../domain/entities/vehicle-schema'
+import type { VehicleFormEntry } from '../../types'
 
-function createEmptyVehicle(vehicleTypeOptions: string[]): Vehicle {
+function createEmptyVehicle(vehicleTypeOptions: string[]): VehicleFormEntry {
   return { vehicleType: vehicleTypeOptions[0] ?? '', licensePlate: '', makeModel: '', color: '', customFieldValues: {} }
 }
 
@@ -26,8 +26,8 @@ export interface VehicleInfoFieldState {
 }
 
 interface VehicleInfoStepProps {
-  vehicles: Vehicle[]
-  onChange: (vehicles: Vehicle[]) => void
+  vehicles: VehicleFormEntry[]
+  onChange: (vehicles: VehicleFormEntry[]) => void
   errors: Record<string, string>
   /** Branch-configured (form-builder) active/required state for the
    * non-locked `make_model`/`color` fields — `vehicleType`/`licensePlate`
@@ -68,7 +68,7 @@ export function VehicleInfoStep({
   uploadFile,
   getFilePreviewUrl,
 }: VehicleInfoStepProps) {
-  const [draftVehicle, setDraftVehicle] = useState<Vehicle | null>(null)
+  const [draftVehicle, setDraftVehicle] = useState<VehicleFormEntry | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [draftErrors, setDraftErrors] = useState<Record<string, string>>({})
 

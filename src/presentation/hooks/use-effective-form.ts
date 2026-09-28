@@ -72,22 +72,22 @@ export function findField(steps: EffectiveFormStep[], stepKey: string, fieldKey:
   return findStepFields(steps, stepKey).find((field) => field.key === fieldKey)
 }
 
-/** Cross-step field lookup, for a read-only context (an invitation's detail
- * view) where a flat answer map's keys aren't scoped to a known step —
- * unlike `findField`, which requires one. */
-export function findFieldByKey(steps: EffectiveFormStep[], fieldKey: string): FormField | undefined {
+/** Cross-step field lookup by `id` (UUID) rather than `key` — for a
+ * fieldId-addressed answer, like an invitation detail's `customFields`/
+ * `groups` (see invitation-detail-schema.ts), which unlike the wizard's own
+ * flat state addresses fields the same way the wire contract does. */
+export function findFieldById(steps: EffectiveFormStep[], fieldId: string): FormField | undefined {
   for (const step of steps) {
-    const field = step.fields.find((candidate) => candidate.key === fieldKey)
+    const field = step.fields.find((candidate) => candidate.id === fieldId)
     if (field) return field
   }
   return undefined
 }
 
-/** Cross-step group lookup, mirroring `findFieldByKey` — resolves a
- * `groupFieldValues` key to its admin-defined name/fieldKeys ordering. */
-export function findGroupByKey(steps: EffectiveFormStep[], groupKey: string): EffectiveFormFieldGroup | undefined {
+/** Cross-step group lookup by `id`, mirroring `findFieldById`. */
+export function findGroupById(steps: EffectiveFormStep[], groupId: string): EffectiveFormFieldGroup | undefined {
   for (const step of steps) {
-    const group = step.groups.find((candidate) => candidate.key === groupKey)
+    const group = step.groups.find((candidate) => candidate.id === groupId)
     if (group) return group
   }
   return undefined
