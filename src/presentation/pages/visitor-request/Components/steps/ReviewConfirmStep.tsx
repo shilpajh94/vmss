@@ -16,7 +16,7 @@ import { getFilePreviewKind } from '../../../../utils/file-preview-kind'
 import { prettifyKey } from '../../../../utils/prettify-key'
 import { formatDynamicFieldValue } from '../../../../components/dynamic-fields/format-dynamic-field-value'
 import { isGroupVisible, resolveGroupFlatValues } from '../../../../components/dynamic-fields/field-group-visibility'
-import type { DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
+import type { DynamicFieldFileValue, DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
 
 export type SubmissionStatus = 'idle' | 'submitting' | 'success' | 'error'
 
@@ -114,6 +114,27 @@ function FilePreviewCell({ fileName, previewUrl }: { fileName?: string; previewU
   )
 }
 
+/** Renders one admin-configured field's submitted value for a summary row —
+ * `formatDynamicFieldValue` as plain text, except a `file_upload` field gets
+ * the same clickable thumbnail/link treatment (`FilePreviewCell`) the
+ * primary/additional visitor's hardcoded ID Proof/Profile Image rows above
+ * already get, instead of just its raw file name. */
+function DynamicFieldValueCell({
+  field,
+  value,
+  getFilePreviewUrl,
+}: {
+  field: FormField
+  value: DynamicFieldValue
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
+}): ReactNode {
+  if (field.fieldType === 'file_upload') {
+    const fileValue = value as DynamicFieldFileValue | undefined
+    return <FilePreviewCell fileName={fileValue?.fileName} previewUrl={getFilePreviewUrl?.(fileValue?.fileRef)} />
+  }
+  return formatDynamicFieldValue(field, value)
+}
+
 /** One `SummarySection` per visible field group (add-repeatable-field-groups
  * / add-conditional-field-groups) — mirrors `FieldGroupsSection`'s
  * gating/instance logic, but read-only. Each repeatable group gets one row
@@ -124,11 +145,13 @@ function GroupSummarySections({
   fields,
   groupValues,
   flatValues,
+  getFilePreviewUrl,
 }: {
   groups: EffectiveFormFieldGroup[]
   fields: FormField[]
   groupValues: GroupValues
   flatValues: Record<string, DynamicFieldValue>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
 }) {
   const orderedGroups = [...groups].sort((a, b) => a.orderIndex - b.orderIndex)
 
@@ -151,7 +174,7 @@ function GroupSummarySections({
             rows={instances.flatMap((instance, index) =>
               groupFields.map((field): [string, ReactNode] => [
                 group.isRepeatable ? `${group.name} ${index + 1} — ${field.label}` : field.label,
-                formatDynamicFieldValue(field, instance[field.key]),
+                <DynamicFieldValueCell key={field.key} field={field} value={instance[field.key]} getFilePreviewUrl={getFilePreviewUrl} />,
               ]),
             )}
           />
@@ -256,6 +279,7 @@ export function ReviewConfirmStep({
         fields={visitorInfoAllFields}
         groupValues={formState.groupValues}
         flatValues={visitorGroupFlatValues}
+        getFilePreviewUrl={getFilePreviewUrl}
       />
 
       <SummarySection
@@ -277,7 +301,12 @@ export function ReviewConfirmStep({
           ...carriedItemsCustomFields.map(
             (field): [string, ReactNode] => [
               field.label,
-              formatDynamicFieldValue(field, formState.customFieldValues[field.key] as DynamicFieldValue),
+              <DynamicFieldValueCell
+                key={field.key}
+                field={field}
+                value={formState.customFieldValues[field.key] as DynamicFieldValue}
+                getFilePreviewUrl={getFilePreviewUrl}
+              />,
             ],
           ),
         ]}
@@ -288,6 +317,7 @@ export function ReviewConfirmStep({
         fields={carriedItemsAllFields}
         groupValues={formState.groupValues}
         flatValues={carriedItemsGroupFlatValues}
+        getFilePreviewUrl={getFilePreviewUrl}
       />
 
       <SummarySection
@@ -298,7 +328,12 @@ export function ReviewConfirmStep({
                 [`Vehicle ${index + 1}`, `${vehicle.makeModel} · ${vehicle.licensePlate}`],
                 ...vehicleCustomFields.map((field): [string, ReactNode] => [
                   `Vehicle ${index + 1} — ${field.label}`,
-                  formatDynamicFieldValue(field, (vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined)?.[field.key]),
+                  <DynamicFieldValueCell
+                    key={field.key}
+                    field={field}
+                    value={(vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined)?.[field.key]}
+                    getFilePreviewUrl={getFilePreviewUrl}
+                  />,
                 ]),
               ])
             : [['Vehicles', 'None declared']]
@@ -310,6 +345,7 @@ export function ReviewConfirmStep({
         fields={vehicleInfoAllFields}
         groupValues={formState.groupValues}
         flatValues={vehicleGroupFlatValues}
+        getFilePreviewUrl={getFilePreviewUrl}
       />
 
       <SummarySection

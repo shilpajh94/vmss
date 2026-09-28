@@ -197,9 +197,6 @@ export function toVisitRequest(formState: VisitRequestFormState, context: VisitR
     // default on the backend (`Field(default_factory=...)`) — omitted
     // entirely (`JSON.stringify` drops an `undefined` value) rather than
     // sent as an explicit empty value, when there's nothing to send.
-    // `consents` has NO backend default (see visit-request-schema.ts) — an
-    // empty request omits it here too, on explicit instruction, but that's
-    // expected to fail backend validation, not to succeed.
     visitors: visitors.length > 0 ? visitors : undefined,
     visitDetails: {
       purposeOfVisit: formState.visitInfo.purpose,
@@ -211,6 +208,9 @@ export function toVisitRequest(formState: VisitRequestFormState, context: VisitR
         ? { items: formState.carriedItems.categories, itemDescription: formState.carriedItems.description }
         : undefined,
     vehicles: vehicles.length > 0 ? vehicles : undefined,
+    // Backend now defaults `consents` to `[]` when omitted (matches
+    // `visitors`/`vehicles`/`customFields`/`groups` above) — safe to drop
+    // entirely when there's nothing to send, same pattern as those.
     consents: consents.length > 0 ? consents : undefined,
     customFields: customFields.length > 0 ? customFields : undefined,
     groups: groups.length > 0 ? groups : undefined,

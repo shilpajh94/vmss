@@ -33,11 +33,10 @@ export const VisitRequestSchema = z.object({
   vehicles: z.array(VehicleSchema).optional(),
   // One entry per active Consent Agreement field, addressed by fieldId
   // (restructure-walkin-payload-by-field-id) — never a hardcoded key, since
-  // these are branch-configured (form-builder). NOTE: the backend schema
-  // (`Field(max_length=50)`, no `default_factory`) has no default for this
-  // field, unlike `visitors`/`vehicles`/`carriedItems`/`customFields`/
-  // `groups` — omitting it when empty is expected to fail with a "field
-  // required" 422, not to succeed.
+  // these are branch-configured (form-builder). Backend now defaults this
+  // to `[]` when omitted, same as `visitors`/`vehicles`/`carriedItems`/
+  // `customFields`/`groups` above; a branch's *required* consent fields are
+  // still enforced separately and will 422 if not submitted as accepted.
   consents: z.array(ConsentAnswerSchema).optional(),
   // Answers for admin-authored fields on Visit Details, Carried Items
   // (beyond its own `items` field), or a custom step

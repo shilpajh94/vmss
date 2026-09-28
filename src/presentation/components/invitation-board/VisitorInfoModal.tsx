@@ -2,12 +2,13 @@ import { useState } from 'react'
 import type { InvitationDetail, InvitationVehicle } from '../../../domain/entities/invitation-detail-schema'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
+import type { FieldAnswer, GroupAnswer } from '../../../domain/entities/form-field-answer-schema'
 import { Modal } from '../ui/Modal'
 import { CalendarClockIcon, ShieldIcon } from '../icons'
 import { formatDateTime } from '../../utils/format-time'
 import { resolvePointOfContactLabel } from '../../utils/approval-step-label'
 import { prettifyKey } from '../../utils/prettify-key'
-import { useEffectiveForm, findFieldByKey, findGroupByKey } from '../../hooks/use-effective-form'
+import { useEffectiveForm, findFieldById, findGroupById } from '../../hooks/use-effective-form'
 
 interface VisitorInfoModalProps {
   isOpen: boolean
@@ -153,13 +154,13 @@ function SectionLabel({ children }: { children: string }) {
 }
 
 /** Read-only formatting for one admin-configured field's raw wire value —
- * `customFieldValues`/`groupFieldValues` entries come back as plain JSON
- * (`unknown`), not the narrower `DynamicFieldValue` the editable wizards
- * work with, so this can't reuse `formatDynamicFieldValue` as-is. `field` is
- * `undefined` when the key no longer matches any published form-builder
- * field (e.g. removed after this invitation was submitted); the value still
- * renders, just without options-aware prettifying. `file_upload` fields are
- * rendered separately via `FileValueField`, not through this formatter. */
+ * `customFields`/`groups` entries come back as plain JSON (`unknown`), not
+ * the narrower `DynamicFieldValue` the editable wizards work with, so this
+ * can't reuse `formatDynamicFieldValue` as-is. `field` is `undefined` when
+ * the fieldId no longer matches any published form-builder field (e.g.
+ * removed after this invitation was submitted); the value still renders,
+ * just without options-aware prettifying. `file_upload` fields are rendered
+ * separately via `FileValueField`, not through this formatter. */
 function formatRawFieldValue(value: unknown, field?: FormField): string {
   if (value === undefined || value === null || value === '') return '—'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
@@ -175,59 +176,49 @@ function formatRawFieldValue(value: unknown, field?: FormField): string {
   return field?.options && field.options.length > 0 ? prettifyKey(stringValue) : stringValue
 }
 
-/** Renders a flat custom-field answer map (`customFieldValues` /
- * `primaryContactCustomFieldValues`) as `Field` rows, labeling each key via
+/** Renders a fieldId-addressed custom-field answer list (`customFields` /
+ * `primaryContactCustomFields`) as `Field` rows, labeling each answer via
  * the branch's published form-builder config when a match exists and
- * falling back to a prettified key otherwise. Dynamic by construction: it
- * has no fixed list of keys, so it stays correct as admins add/remove
+ * falling back to a prettified fieldId otherwise. Dynamic by construction:
+ * it has no fixed list of fields, so it stays correct as admins add/remove
  * custom fields. */
-function CustomFieldValueFields({ values, steps }: { values: Record<string, unknown>; steps: EffectiveFormStep[] }) {
-  const entries = Object.entries(values).filter(([, value]) => value !== undefined && value !== null && value !== '')
+function CustomFieldValueFields({ values, steps }: { values: FieldAnswer[]; steps: EffectiveFormStep[] }) {
+  const entries = values.filter(({ value }) => value !== undefined && value !== null && value !== '')
   if (entries.length === 0) return null
 
   return (
     <>
-      {entries.map(([key, value]) => {
-        const field = findFieldByKey(steps, key)
-        const label = field?.label ?? prettifyKey(key)
-        if (field?.fieldType === 'file_upload') return <FileValueField key={key} label={label} value={value} />
-        return <Field key={key} label={label} value={formatRawFieldValue(value, field)} />
+      {entries.map(({ fieldId, value }) => {
+        const field = findFieldById(steps, fieldId)
+        const label = field?.label ?? prettifyKey(fieldId)
+        if (field?.fieldType === 'file_upload') return <FileValueField key={fieldId} label={label} value={value} />
+        return <Field key={fieldId} label={label} value={formatRawFieldValue(value, field)} />
       })}
     </>
   )
 }
 
-/** Renders `groupFieldValues` — one section per non-empty group, each
- * instance as its own card of labeled fields, ordered by the group's
- * `fieldKeys` when the group is still known to the form builder (falling
- * back to the instance's own key order otherwise). */
-function GroupFieldValuesSections({
-  groupFieldValues,
-  steps,
-}: {
-  groupFieldValues: Record<string, Record<string, unknown>[]>
-  steps: EffectiveFormStep[]
-}) {
-  const groupEntries = Object.entries(groupFieldValues).filter(([, instances]) => instances.length > 0)
+/** Renders `groups` — one section per non-empty group, each instance as its
+ * own card of labeled fields, in the order the backend returned them. */
+function GroupFieldValuesSections({ groups, steps }: { groups: GroupAnswer[]; steps: EffectiveFormStep[] }) {
+  const groupEntries = groups.filter(({ instances }) => instances.length > 0)
 
   return (
     <>
-      {groupEntries.map(([groupKey, instances]) => {
-        const group = findGroupByKey(steps, groupKey)
-        const orderedKeys = (instance: Record<string, unknown>) =>
-          group ? group.fieldKeys.filter((key) => key in instance) : Object.keys(instance)
+      {groupEntries.map(({ groupId, instances }) => {
+        const group = findGroupById(steps, groupId)
 
         return (
-          <div key={groupKey} className="flex flex-col gap-3">
-            <SectionLabel>{`${group?.name ?? prettifyKey(groupKey)} (${instances.length})`}</SectionLabel>
+          <div key={groupId} className="flex flex-col gap-3">
+            <SectionLabel>{`${group?.name ?? prettifyKey(groupId)} (${instances.length})`}</SectionLabel>
             <div className="flex flex-col gap-2">
               {instances.map((instance, index) => (
                 <div key={index} className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl border border-border-subtle p-3">
-                  {orderedKeys(instance).map((key) => {
-                    const field = findFieldByKey(steps, key)
-                    const label = field?.label ?? prettifyKey(key)
-                    if (field?.fieldType === 'file_upload') return <FileValueField key={key} label={label} value={instance[key]} />
-                    return <Field key={key} label={label} value={formatRawFieldValue(instance[key], field)} />
+                  {instance.map(({ fieldId, value }) => {
+                    const field = findFieldById(steps, fieldId)
+                    const label = field?.label ?? prettifyKey(fieldId)
+                    if (field?.fieldType === 'file_upload') return <FileValueField key={fieldId} label={label} value={value} />
+                    return <Field key={fieldId} label={label} value={formatRawFieldValue(value, field)} />
                   })}
                 </div>
               ))}
@@ -325,7 +316,7 @@ export function VisitorInfoModal({
                 </div>
               ) : null}
               <IdProofField label="ID proof" type={detail.primaryContactIdProofType} url={detail.primaryContactIdProofUrl} />
-              <CustomFieldValueFields values={detail.primaryContactCustomFieldValues} steps={formSteps} />
+              <CustomFieldValueFields values={detail.primaryContactCustomFields} steps={formSteps} />
               {detail.additionalNotes ? (
                 <div className="col-span-2">
                   <Field label="Notes" value={detail.additionalNotes} />
@@ -334,11 +325,11 @@ export function VisitorInfoModal({
             </div>
           </div>
 
-          {Object.keys(detail.customFieldValues).length > 0 ? (
+          {detail.customFields.length > 0 ? (
             <div className="flex flex-col gap-3">
               <SectionLabel>Additional details</SectionLabel>
               <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
-                <CustomFieldValueFields values={detail.customFieldValues} steps={formSteps} />
+                <CustomFieldValueFields values={detail.customFields} steps={formSteps} />
               </div>
             </div>
           ) : null}
@@ -353,14 +344,14 @@ export function VisitorInfoModal({
                     <Field label="License plate" value={vehicle.licensePlate ?? '—'} />
                     <Field label="Make/Model" value={vehicle.makeModel ?? '—'} />
                     <Field label="Color" value={vehicle.color ?? '—'} />
-                    <CustomFieldValueFields values={vehicle.customFieldValues} steps={formSteps} />
+                    <CustomFieldValueFields values={vehicle.customFields} steps={formSteps} />
                   </div>
                 ))}
               </div>
             </div>
           ) : null}
 
-          <GroupFieldValuesSections groupFieldValues={detail.groupFieldValues} steps={formSteps} />
+          <GroupFieldValuesSections groups={detail.groups} steps={formSteps} />
 
           <div className="flex flex-col gap-3">
             <SectionLabel>Timeline</SectionLabel>
