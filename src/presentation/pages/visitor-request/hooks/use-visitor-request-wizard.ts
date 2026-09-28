@@ -30,6 +30,13 @@ export interface VisitorRequestWizardInitialData {
   primaryContact?: Partial<Pick<VisitorFormEntry, 'email' | 'phone'>>
 }
 
+// `host`/`department_to_visit` are seeded `isSystem` fields the backend
+// re-added as active, but the wizard doesn't collect or submit either (see
+// `visit-request-schema.ts`'s "intentionally absent" note) — they're
+// display-only here, allow-listed past the generic `!isSystem` exclusion so
+// they still show up wherever the effective form reports them active.
+const DISPLAY_ONLY_SYSTEM_FIELD_KEYS = new Set(['host', 'department_to_visit'])
+
 function buildInitialFormState(initial?: VisitorRequestWizardInitialData): VisitRequestFormState {
   const formState = createInitialFormState()
   if (initial?.registrationType) formState.registrationType = initial.registrationType
@@ -253,7 +260,10 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     return visitorInfoAllFields.filter((field) => field.groupId === null || !nonSystemGroupIds.has(field.groupId))
   }, [visitorInfoAllFields, visitorInfoGroups])
   const visitDetailsCustomFields = useMemo(
-    () => findStepFields(effectiveFormSteps, 'visit_details').filter((field) => !field.isSystem),
+    () =>
+      findStepFields(effectiveFormSteps, 'visit_details').filter(
+        (field) => !field.isSystem || DISPLAY_ONLY_SYSTEM_FIELD_KEYS.has(field.key),
+      ),
     [effectiveFormSteps],
   )
   // Every field the wire contract's invitation-level `customFields` bucket
