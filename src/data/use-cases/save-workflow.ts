@@ -12,7 +12,15 @@ export class SaveWorkflowUseCase {
   }
 
   async execute(visitorCategoryId: string, levels: WorkflowLevelInput[]): Promise<void> {
-    const existingRules = (await this.approvalWorkflowRuleRepository.list(visitorCategoryId)).sort((a, b) => a.stepOrder - b.stepOrder)
+    // Don't trust the backend to have actually scoped `list()` to this
+    // category or to have excluded soft-deleted rows (`isActive`) — mirrors
+    // the same defensive re-filter `use-invitations-board.ts` and
+    // `use-admin-workflow-form.ts` already apply. Without this, a foreign or
+    // stale rule can be paired by array index below and have its
+    // `visitorCategoryId` silently reassigned to this category via `update()`.
+    const existingRules = (await this.approvalWorkflowRuleRepository.list({ visitorCategoryId }))
+      .filter((rule) => rule.visitorCategoryId === visitorCategoryId && rule.isActive)
+      .sort((a, b) => a.stepOrder - b.stepOrder)
 
     const operations: Promise<unknown>[] = []
     const maxLength = Math.max(existingRules.length, levels.length)

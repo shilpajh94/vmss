@@ -1,13 +1,23 @@
 import z from 'zod'
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
-import type { VisitorCategoryRepository } from '../data/repositories/visitor-category-repository'
+import type {
+  ListVisitorCategoriesPageParams,
+  VisitorCategoriesPage,
+  VisitorCategoryRepository,
+} from '../data/repositories/visitor-category-repository'
 import {
+  VisitorCategoryBulkCreateResponseSchema,
   VisitorCategoryListResponseSchema,
   VisitorCategoryResponseSchema,
+  type VisitorCategoryBulkCreateOut,
   type VisitorCategoryOut,
 } from '../domain/entities/visitor-category-out-schema'
-import type { VisitorCategory, VisitorCategoryInput } from '../domain/entities/visitor-category-schema'
+import type {
+  VisitorCategory,
+  VisitorCategoryBulkCreateInput,
+  VisitorCategoryInput,
+} from '../domain/entities/visitor-category-schema'
 
 function toVisitorCategory(visitorCategoryOut: VisitorCategoryOut): VisitorCategory {
   return {
@@ -43,6 +53,16 @@ export class HttpVisitorCategoryRepository implements VisitorCategoryRepository 
     return response.data.map(toVisitorCategory)
   }
 
+  async listPage({ page, pageSize, badgeColor, ndaRequirement, escortRequirement }: ListVisitorCategoriesPageParams): Promise<VisitorCategoriesPage> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.LIST_VISITOR_CATEGORIES,
+      queryParams: { page, pageSize, badgeColor, ndaRequirement, escortRequirement },
+      parserSchema: VisitorCategoryListResponseSchema,
+    })
+
+    return { items: response.data.map(toVisitorCategory), total: response.pagination.total }
+  }
+
   async create(input: VisitorCategoryInput): Promise<VisitorCategory> {
     const response = await this.apiClient.makeRequest({
       endpointConfig: API_ENDPOINTS.CREATE_VISITOR_CATEGORY,
@@ -59,6 +79,16 @@ export class HttpVisitorCategoryRepository implements VisitorCategoryRepository 
     })
 
     return toVisitorCategory(response.data)
+  }
+
+  async bulkCreate(input: VisitorCategoryBulkCreateInput): Promise<VisitorCategoryBulkCreateOut> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.BULK_CREATE_VISITOR_CATEGORIES,
+      body: { names: input.names },
+      parserSchema: VisitorCategoryBulkCreateResponseSchema,
+    })
+
+    return response.data
   }
 
   async update(id: string, input: VisitorCategoryInput): Promise<VisitorCategory> {

@@ -1,19 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
+import { usePagedList } from '../../../hooks/use-paged-list'
+import { usePageRefresh } from '../../../context/refresh-context'
 import type { Building } from '../../../../domain/entities/building-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
+const PAGE_SIZE = 20
+
 export function useAdminBuildings() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listBuildingsUseCase, deleteBuildingUseCase } = useAppDependencies()
+  const { getCurrentStaffUserUseCase, listBuildingsPageUseCase, listBranchesUseCase, deleteBuildingUseCase } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [buildings, setBuildings] = useState<Building[]>([])
+  const [total, setTotal] = useState(0)
+  const [branchOptions, setBranchOptions] = useState<{ value: string; label: string }[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [pendingDelete, setPendingDelete] = useState<Building | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -22,21 +30,46 @@ export function useAdminBuildings() {
   const [branchFilter, setBranchFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
 
-  const loadBuildings = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
-    try {
-      const [user, list] = await Promise.all([getCurrentStaffUserUseCase.execute(), listBuildingsUseCase.execute()])
-      setCurrentUser(user)
-      setBuildings(list)
-    } catch {
-      setErrorMessage('Something went wrong loading the buildings. Please try again.')
-      toast.error('Something went wrong loading the buildings. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listBuildingsUseCase, toast])
+  const loadBuildings = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
+
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+
+      try {
+        const [user, page_, branches] = await Promise.all([
+          getCurrentStaffUserUseCase.execute(),
+          listBuildingsPageUseCase.execute({
+            page,
+            pageSize: PAGE_SIZE,
+            status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+            branchId: branchFilter || undefined,
+          }),
+          listBranchesUseCase.execute(),
+        ])
+        setCurrentUser(user)
+        setBuildings(page_.items)
+        setTotal(page_.total)
+        setBranchOptions(branches.map((branch) => ({ value: branch.id, label: branch.name })).sort((a, b) => a.label.localeCompare(b.label)))
+        setLastUpdatedAt(new Date())
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the buildings. Please try again.')
+        }
+        toast.error('Something went wrong loading the buildings. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listBuildingsPageUseCase, listBranchesUseCase, page, statusFilter, branchFilter, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -50,6 +83,13 @@ export function useAdminBuildings() {
   const retry = useCallback(() => {
     void loadBuildings()
   }, [loadBuildings])
+
+  // Auto-refreshes the registry every 15s; skipped while a delete dialog is
+  // open so a background tick can't replace data underneath it.
+  const isActionInProgress = pendingDelete !== undefined || isDeleting
+  usePolling(() => void loadBuildings({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+
+  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
 
   const requestDelete = useCallback((building: Building) => {
     setPendingDelete(building)
@@ -65,43 +105,49 @@ export function useAdminBuildings() {
     setIsDeleting(true)
     try {
       await deleteBuildingUseCase.execute(pendingDelete.id)
-      setBuildings((current) => current.filter((building) => building.id !== pendingDelete.id))
       toast.success('Building deleted.')
       setPendingDelete(undefined)
+      await loadBuildings({ silent: true })
     } catch {
       toast.error('Something went wrong deleting the building. Please try again.')
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, deleteBuildingUseCase, toast])
-
-  const branchOptions = useMemo(() => {
-    const seen = new Map<string, string>()
-    for (const building of buildings) {
-      if (!seen.has(building.branchId)) seen.set(building.branchId, building.branchName)
-    }
-    return [...seen.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label))
-  }, [buildings])
-
-  const filteredBuildings = useMemo(() => {
-    return buildings.filter((building) => {
-      if (branchFilter && building.branchId !== branchFilter) return false
-      if (statusFilter && (statusFilter === 'active') !== building.isActive) return false
-      return true
-    })
-  }, [buildings, branchFilter, statusFilter])
+  }, [pendingDelete, deleteBuildingUseCase, toast, loadBuildings])
 
   const isFiltering = branchFilter !== '' || statusFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+
+  const changeBranchFilter = useCallback(
+    (value: string) => {
+      setBranchFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
+
+  const changeStatusFilter = useCallback(
+    (value: string) => {
+      setStatusFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
+
   const clearFilters = useCallback(() => {
     setBranchFilter('')
     setStatusFilter('')
-  }, [])
+    resetToFirstPage()
+  }, [resetToFirstPage])
 
   return {
     currentUser,
-    buildings: filteredBuildings,
-    hasAnyBuildings: buildings.length > 0,
+    buildings,
+    total,
+    page,
+    pageSize: PAGE_SIZE,
+    goToNextPage,
+    goToPrevPage,
     isLoading,
     errorMessage,
     retry,
@@ -109,9 +155,9 @@ export function useAdminBuildings() {
     toggleFilterPanel,
     branchOptions,
     branchFilter,
-    setBranchFilter,
+    setBranchFilter: changeBranchFilter,
     statusFilter,
-    setStatusFilter,
+    setStatusFilter: changeStatusFilter,
     clearFilters,
     isFiltering,
     pendingDelete,

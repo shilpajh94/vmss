@@ -1,24 +1,44 @@
-import { useState } from 'react'
-import { PlusIcon } from '../../../components/icons'
+import { FieldGroupsSection } from '../../../components/dynamic-fields/FieldGroupsSection'
+import { resolveGroupFlatValues } from '../../../components/dynamic-fields/field-group-visibility'
+import type { GroupInstance } from '../../../components/dynamic-fields/RepeatableFieldGroup'
+import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visitor-request-wizard'
 import type { RegistrationType } from '../../visitor-request/types'
+import type { EffectiveFormFieldGroup, FormField } from '../../../../domain/entities/form-builder-schema'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffVisitorFormEntry } from '../types'
-import { AddVisitorForm } from './AddVisitorForm'
 import { PrimaryContactCard } from './PrimaryContactCard'
 import { RegistrationTypeToggle } from './RegistrationTypeToggle'
-import { VisitorDetailsTable } from './VisitorDetailsTable'
 
 interface VisitorInfoStepProps {
   registrationType: RegistrationType
   onRegistrationTypeChange: (type: RegistrationType) => void
   primaryContact: StaffVisitorFormEntry
   onPrimaryContactChange: (entry: StaffVisitorFormEntry) => void
-  additionalVisitors: StaffVisitorFormEntry[]
-  onAdditionalVisitorsChange: (visitors: StaffVisitorFormEntry[]) => void
   uploadFile: (file: File) => Promise<string>
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
   errors: Record<string, string>
   visitorCategories?: VisitorCategory[]
+  /** Branch-configured (form-builder) active/required state for ID proof
+   * and profile photo — see `use-visitor-request-wizard.ts`.
+   */
+  visitorInfoFields: VisitorInfoFieldState
+  /** Admin-authored (non-system) Visitor Info fields
+   * (add-generic-custom-field-support). */
+  customFields: FormField[]
+  /** Visitor Info's own admin-defined field groups
+   * (add-repeatable-field-groups / add-conditional-field-groups), rendered
+   * once for the whole step (not per-visitor) via `FieldGroupsSection` —
+   * e.g. an admin-created "Additional Visitors" group is now the supported
+   * way to collect more than one visitor, replacing the old built-in
+   * "Visitor Details"/"+ Add Visitor" UI (removed — the backend won't allow
+   * the seeded "visitors" system group to be made non-repeatable, so it
+   * couldn't be branch-configured off; see `GroupCard.tsx`). */
+  groups: EffectiveFormFieldGroup[]
+  /** Every non-system Visitor Info field, including grouped ones — used to
+   * resolve `groups`' `fieldKeys` (`customFields` above excludes them). */
+  groupFields: FormField[]
+  groupValues: Record<string, GroupInstance[]>
+  onGroupValuesChange: (groupValues: Record<string, GroupInstance[]>) => void
 }
 
 export function VisitorInfoStep({
@@ -26,44 +46,24 @@ export function VisitorInfoStep({
   onRegistrationTypeChange,
   primaryContact,
   onPrimaryContactChange,
-  additionalVisitors,
-  onAdditionalVisitorsChange,
   uploadFile,
   getFilePreviewUrl,
   errors,
   visitorCategories,
+  visitorInfoFields,
+  customFields,
+  groups,
+  groupFields,
+  groupValues,
+  onGroupValuesChange,
 }: VisitorInfoStepProps) {
-  const [isAdding, setIsAdding] = useState(false)
-  const [editingIndex, setEditingIndex] = useState<number | null>(null)
-
-  const startAdd = () => {
-    setEditingIndex(null)
-    setIsAdding(true)
-  }
-
-  const startEdit = (index: number) => {
-    setEditingIndex(index)
-    setIsAdding(true)
-  }
-
-  const cancelAdd = () => {
-    setIsAdding(false)
-    setEditingIndex(null)
-  }
-
-  const commitVisitor = (visitor: StaffVisitorFormEntry) => {
-    if (editingIndex === null) {
-      onAdditionalVisitorsChange([...additionalVisitors, visitor])
-    } else {
-      onAdditionalVisitorsChange(additionalVisitors.map((existing, index) => (index === editingIndex ? visitor : existing)))
-    }
-    setIsAdding(false)
-    setEditingIndex(null)
-  }
-
-  const removeVisitor = (index: number) => {
-    onAdditionalVisitorsChange(additionalVisitors.filter((_, visitorIndex) => visitorIndex !== index))
-  }
+  // See visitor-request/Components/steps/VisitorInfoStep.tsx's matching
+  // comment — `registration_type` is the built-in Registration Type
+  // toggle's system field key.
+  const groupFlatValues = resolveGroupFlatValues(groups, groupValues, {
+    registration_type: registrationType,
+    ...primaryContact.customFieldValues,
+  })
 
   return (
     <div className="flex flex-col gap-6">
@@ -76,38 +76,19 @@ export function VisitorInfoStep({
         getFilePreviewUrl={getFilePreviewUrl}
         errors={errors}
         visitorCategories={visitorCategories}
+        visitorInfoFields={visitorInfoFields}
+        customFields={customFields}
       />
 
-      {registrationType === 'group' && (
-        <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-6">
-          <div className="flex items-center justify-between">
-            <h3 className="font-display text-base font-semibold text-text">Visitor Details</h3>
-            <button
-              type="button"
-              onClick={startAdd}
-              className="flex h-8 items-center gap-2 rounded-full bg-secondary-accent py-1 pr-4 pl-3 text-[13px] font-semibold text-white"
-            >
-              <PlusIcon className="size-3.5" />
-              Add Visitor
-            </button>
-          </div>
-
-          {errors.additionalVisitors && <p className="text-caption text-danger">{errors.additionalVisitors}</p>}
-
-          <VisitorDetailsTable visitors={additionalVisitors} onEdit={startEdit} onRemove={removeVisitor} />
-
-          {isAdding && (
-            <AddVisitorForm
-              key={editingIndex ?? 'new'}
-              initialValue={editingIndex !== null ? additionalVisitors[editingIndex] : undefined}
-              uploadFile={uploadFile}
-              getFilePreviewUrl={getFilePreviewUrl}
-              onAdd={commitVisitor}
-              onCancel={cancelAdd}
-            />
-          )}
-        </div>
-      )}
+      <FieldGroupsSection
+        groups={groups}
+        fields={groupFields}
+        flatValues={groupFlatValues}
+        groupValues={groupValues}
+        onGroupValuesChange={onGroupValuesChange}
+        uploadFile={uploadFile}
+        getFilePreviewUrl={getFilePreviewUrl}
+      />
     </div>
   )
 }

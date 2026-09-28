@@ -11,6 +11,12 @@ export const PermissionListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z.array(PermissionOutSchema),
+  pagination: z.object({
+    page: z.number(),
+    pageSize: z.number(),
+    total: z.number(),
+    totalPages: z.number(),
+  }),
 })
 
 export type PermissionListResponse = z.infer<typeof PermissionListResponseSchema>

@@ -4,16 +4,31 @@ interface TextFieldProps {
   label: string
   value: string
   onChange: (value: string) => void
+  onBlur?: () => void
   placeholder?: string
   type?: string
   error?: string
   required?: boolean
+  disabled?: boolean
   labelClassName?: string
   min?: string
   max?: string
 }
 
-export function TextField({ label, value, onChange, placeholder, type = 'text', error, required, labelClassName, min, max }: TextFieldProps) {
+export function TextField({
+  label,
+  value,
+  onChange,
+  onBlur,
+  placeholder,
+  type = 'text',
+  error,
+  required,
+  disabled,
+  labelClassName,
+  min,
+  max,
+}: TextFieldProps) {
   const inputId = useId()
 
   return (
@@ -27,6 +42,7 @@ export function TextField({ label, value, onChange, placeholder, type = 'text', 
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
         onClick={(event) => {
           // Firefox (and some Chromium builds) only open the native date/time
           // picker when the click lands exactly on the tiny calendar icon.
@@ -41,9 +57,10 @@ export function TextField({ label, value, onChange, placeholder, type = 'text', 
         }}
         placeholder={placeholder}
         aria-required={required}
+        disabled={disabled}
         min={min}
         max={max}
-        className={`rounded-lg border px-3 py-2 text-body text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent ${
+        className={`rounded-lg border px-3 py-2 text-body text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60 ${
           error ? 'border-danger' : 'border-border'
         }`}
       />

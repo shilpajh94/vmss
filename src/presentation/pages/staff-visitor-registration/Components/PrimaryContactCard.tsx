@@ -1,10 +1,13 @@
+import { CustomFieldsSection } from '../../../components/dynamic-fields/CustomFieldsSection'
 import { FileUploadField } from '../../../components/ui/FileUploadField'
 import { SegmentedToggle } from '../../../components/ui/SegmentedToggle'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
+import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visitor-request-wizard'
+import type { FormField } from '../../../../domain/entities/form-builder-schema'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffVisitorFormEntry } from '../types'
-import { ID_PROOF_ALLOWED_TYPES, ID_PROOF_OPTIONS, PROFILE_IMAGE_ALLOWED_TYPES } from './constants'
+import { ID_PROOF_ALLOWED_TYPES, PROFILE_IMAGE_ALLOWED_TYPES } from './constants'
 import { InlineFileUpload } from './InlineFileUpload'
 
 interface PrimaryContactCardProps {
@@ -14,9 +17,25 @@ interface PrimaryContactCardProps {
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
   errors: Record<string, string>
   visitorCategories?: VisitorCategory[]
+  /** Branch-configured (form-builder) active/required state for ID proof
+   * and profile photo — see `use-visitor-request-wizard.ts`.
+   */
+  visitorInfoFields: VisitorInfoFieldState
+  /** Admin-authored (non-system) Visitor Info fields
+   * (add-generic-custom-field-support). */
+  customFields: FormField[]
 }
 
-export function PrimaryContactCard({ value, onChange, uploadFile, getFilePreviewUrl, errors, visitorCategories }: PrimaryContactCardProps) {
+export function PrimaryContactCard({
+  value,
+  onChange,
+  uploadFile,
+  getFilePreviewUrl,
+  errors,
+  visitorCategories,
+  visitorInfoFields,
+  customFields,
+}: PrimaryContactCardProps) {
   const visitorCategoryOptions = (visitorCategories ?? []).map((category) => ({ value: category.id, label: category.name }))
 
   return (
@@ -78,44 +97,56 @@ export function PrimaryContactCard({ value, onChange, uploadFile, getFilePreview
           />
         </div>
 
-        <div className="flex items-end gap-3">
-          <div className="flex-1">
-            <SelectField
-              label="ID Proof Type"
-              placeholder="Select ID type"
-              options={ID_PROOF_OPTIONS}
-              value={value.idProofType}
-              onChange={(idProofType) => onChange({ ...value, idProofType })}
-              error={errors.idProofType}
-              required
+        {visitorInfoFields.idProofActive && (
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <SelectField
+                label="ID Proof Type"
+                placeholder="Select ID type"
+                options={visitorInfoFields.idProofOptions.map((option) => ({ value: option, label: option }))}
+                value={value.idProofType}
+                onChange={(idProofType) => onChange({ ...value, idProofType })}
+                error={errors.idProofType}
+                required={visitorInfoFields.idProofRequired}
+              />
+            </div>
+            <InlineFileUpload
+              label="Upload"
+              allowedTypes={ID_PROOF_ALLOWED_TYPES}
+              fileName={value.idProofFileName}
+              previewUrl={getFilePreviewUrl?.(value.idProofFileRef)}
+              onUpload={uploadFile}
+              onFileRefChange={(idProofFileRef, idProofFileName) => onChange({ ...value, idProofFileRef, idProofFileName })}
+              error={errors.idProofFileRef}
+              required={visitorInfoFields.idProofRequired}
             />
           </div>
-          <InlineFileUpload
-            label="Upload"
-            allowedTypes={ID_PROOF_ALLOWED_TYPES}
-            fileName={value.idProofFileName}
-            previewUrl={getFilePreviewUrl?.(value.idProofFileRef)}
-            onUpload={uploadFile}
-            onFileRefChange={(idProofFileRef, idProofFileName) => onChange({ ...value, idProofFileRef, idProofFileName })}
-            error={errors.idProofFileRef}
-            required
-          />
-        </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <FileUploadField
-          label="Profile Image"
-          helperText="PNG or JPG (max 5MB)"
-          allowedTypes={PROFILE_IMAGE_ALLOWED_TYPES}
-          fileName={value.profileImageFileName}
-          previewUrl={getFilePreviewUrl?.(value.profileImageFileRef)}
-          onUpload={uploadFile}
-          onFileRefChange={(profileImageFileRef, profileImageFileName) => onChange({ ...value, profileImageFileRef, profileImageFileName })}
-          error={errors.profileImageFileRef}
-          required
-        />
-      </div>
+      {visitorInfoFields.profilePhotoActive && (
+        <div className="grid grid-cols-2 gap-4">
+          <FileUploadField
+            label="Profile Image"
+            helperText="PNG or JPG (max 5MB)"
+            allowedTypes={PROFILE_IMAGE_ALLOWED_TYPES}
+            fileName={value.profileImageFileName}
+            previewUrl={getFilePreviewUrl?.(value.profileImageFileRef)}
+            onUpload={uploadFile}
+            onFileRefChange={(profileImageFileRef, profileImageFileName) => onChange({ ...value, profileImageFileRef, profileImageFileName })}
+            error={errors.profileImageFileRef}
+            required={visitorInfoFields.profilePhotoRequired}
+          />
+        </div>
+      )}
+
+      <CustomFieldsSection
+        fields={customFields}
+        value={value.customFieldValues}
+        onChange={(customFieldValues) => onChange({ ...value, customFieldValues })}
+        uploadFile={uploadFile}
+        getFilePreviewUrl={getFilePreviewUrl}
+      />
     </div>
   )
 }

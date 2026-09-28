@@ -1,17 +1,11 @@
+import { CustomFieldsSection } from '../../../../components/dynamic-fields/CustomFieldsSection'
 import { FileUploadField } from '../../../../components/ui/FileUploadField'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
 import { SelectField } from '../../../../components/ui/SelectField'
 import { TextField } from '../../../../components/ui/TextField'
+import type { FormField } from '../../../../../domain/entities/form-builder-schema'
+import type { VisitorInfoFieldState } from '../../hooks/use-visitor-request-wizard'
 import type { VisitorCategoriesFieldState, VisitorFormEntry } from '../../types'
-
-// Values must match the backend's `idProofType` enum for
-// POST /registrations/walk-in exactly (validated server-side against these 4 strings).
-const ID_PROOF_OPTIONS = [
-  { value: 'Aadhaar Card', label: 'Aadhaar Card' },
-  { value: 'Passport', label: 'Passport' },
-  { value: 'Driving License', label: 'Driving License' },
-  { value: 'Other', label: 'Other' },
-]
 
 const ID_PROOF_ALLOWED_TYPES = ['image/png', 'image/jpeg', 'application/pdf']
 const PROFILE_IMAGE_ALLOWED_TYPES = ['image/png', 'image/jpeg']
@@ -28,6 +22,14 @@ interface VisitorFieldsFormProps {
   errors?: Record<string, string>
   visitorCategoriesState: VisitorCategoriesFieldState
   onRetryVisitorCategories?: () => void
+  /** Branch-configured (form-builder) active/required state for ID proof
+   * and profile photo — see `use-visitor-request-wizard.ts`.
+   */
+  visitorInfoFields: VisitorInfoFieldState
+  /** Admin-authored (non-system) Visitor Info fields
+   * (add-generic-custom-field-support) — this visitor's own answers live
+   * on `value.customFieldValues`, independent of every other visitor's. */
+  customFields: FormField[]
 }
 
 export function VisitorFieldsForm({
@@ -40,6 +42,8 @@ export function VisitorFieldsForm({
   errors,
   visitorCategoriesState,
   onRetryVisitorCategories,
+  visitorInfoFields,
+  customFields,
 }: VisitorFieldsFormProps) {
   // A category can only ever come from the real, API-loaded catalog — never
   // a hardcoded placeholder (fix-visitor-category-invalid-id-fallback), since
@@ -126,27 +130,31 @@ export function VisitorFieldsForm({
           {errors?.preferredContactMethod && <p className="text-caption text-danger">{errors.preferredContactMethod}</p>}
         </div>
       )}
-      <SelectField
-        label="ID Proof Type"
-        placeholder="Select ID type"
-        options={ID_PROOF_OPTIONS}
-        value={value.idProofType}
-        onChange={(idProofType) => onChange({ ...value, idProofType })}
-        error={errors?.idProofType}
-        required
-      />
-      <FileUploadField
-        label="Upload ID"
-        helperText="PNG, JPG or PDF (max 5MB)"
-        allowedTypes={ID_PROOF_ALLOWED_TYPES}
-        fileName={value.idProofFileName}
-        previewUrl={getFilePreviewUrl?.(value.idProofFileRef)}
-        onUpload={uploadFile}
-        onFileRefChange={(idProofFileRef, idProofFileName) => onChange({ ...value, idProofFileRef, idProofFileName })}
-        error={errors?.idProofFileRef}
-        required
-      />
-      {showExtendedFields && (
+      {visitorInfoFields.idProofActive && (
+        <>
+          <SelectField
+            label="ID Proof Type"
+            placeholder="Select ID type"
+            options={visitorInfoFields.idProofOptions.map((option) => ({ value: option, label: option }))}
+            value={value.idProofType}
+            onChange={(idProofType) => onChange({ ...value, idProofType })}
+            error={errors?.idProofType}
+            required={visitorInfoFields.idProofRequired}
+          />
+          <FileUploadField
+            label="Upload ID"
+            helperText="PNG, JPG or PDF (max 5MB)"
+            allowedTypes={ID_PROOF_ALLOWED_TYPES}
+            fileName={value.idProofFileName}
+            previewUrl={getFilePreviewUrl?.(value.idProofFileRef)}
+            onUpload={uploadFile}
+            onFileRefChange={(idProofFileRef, idProofFileName) => onChange({ ...value, idProofFileRef, idProofFileName })}
+            error={errors?.idProofFileRef}
+            required={visitorInfoFields.idProofRequired}
+          />
+        </>
+      )}
+      {showExtendedFields && visitorInfoFields.profilePhotoActive && (
         <FileUploadField
           label="Profile Image"
           helperText="PNG or JPG (max 5MB)"
@@ -158,8 +166,19 @@ export function VisitorFieldsForm({
             onChange({ ...value, profileImageFileRef, profileImageFileName })
           }
           error={errors?.profileImageFileRef}
-          required
+          required={visitorInfoFields.profilePhotoRequired}
         />
+      )}
+      {customFields.length > 0 && (
+        <div className="col-span-2">
+          <CustomFieldsSection
+            fields={customFields}
+            value={value.customFieldValues}
+            onChange={(customFieldValues) => onChange({ ...value, customFieldValues })}
+            uploadFile={uploadFile}
+            getFilePreviewUrl={getFilePreviewUrl}
+          />
+        </div>
       )}
     </div>
   )

@@ -9,7 +9,8 @@ export const StaffVisitorSchema = z
     email: z.string().email().optional(),
     phone: z.string().min(1).optional(),
     preferredContactMethod: z.enum(["email", "sms"]).optional(),
-    idProofType: z.string().min(1),
+    // See visitor-schema.ts's matching comment.
+    idProofType: z.string().min(1).optional(),
   })
   .refine((visitor) => Boolean(visitor.email || visitor.phone), {
     message: "Either email or phone is required.",

@@ -14,6 +14,7 @@ interface FileUploadFieldProps {
   onFileRefChange: (fileRef: string | undefined, fileName: string | undefined) => void
   error?: string
   required?: boolean
+  labelClassName?: string
 }
 
 export function FileUploadField({
@@ -26,6 +27,7 @@ export function FileUploadField({
   onFileRefChange,
   error: externalError,
   required,
+  labelClassName,
 }: FileUploadFieldProps) {
   const inputId = useId()
   const [uploading, setUploading] = useState(false)
@@ -63,7 +65,7 @@ export function FileUploadField({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={inputId} className="text-body font-medium text-text">
+      <label htmlFor={inputId} className={labelClassName ?? 'text-body font-medium text-text'}>
         {label}
         {required && <span className="ml-1 text-danger">*</span>}
       </label>
