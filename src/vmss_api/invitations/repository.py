@@ -198,7 +198,9 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         branch, department, building = row
         return branch, department, building
 
-    async def approve_if_submitted(self, id_: uuid.UUID) -> Invitation | None:
+    async def approve_if_submitted(
+        self, id_: uuid.UUID, *, expires_at: datetime | None = None
+    ) -> Invitation | None:
         """Atomic conditional transition: the `UPDATE` only affects a row
         that is still `submitted`, so two concurrent approval requests for
         the same invitation can't both transition it and both dispatch an
@@ -209,11 +211,19 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         a concurrent call) — the caller treats `None` as "not currently
         submitted", the same 409 the sequential already-approved case
         already raises.
+
+        `expires_at`, when given, overwrites the creation-time TTL with the
+        end of the approved visit day (`service.py::_end_of_visit_day_utc`)
+        — omitted (`None`) when the invitation has no `preferred_visit_date`
+        to align to, leaving the existing value untouched.
         """
+        values: dict[str, Any] = {"status": "approved", "approved_at": datetime.now(UTC)}
+        if expires_at is not None:
+            values["expires_at"] = expires_at
         stmt = (
             update(Invitation)
             .where(Invitation.id == id_, Invitation.status == "submitted")
-            .values(status="approved", approved_at=datetime.now(UTC))
+            .values(**values)
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
@@ -397,7 +407,12 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def reschedule_if_eligible(
-        self, id_: uuid.UUID, *, preferred_visit_date: Any, preferred_visit_time: Any
+        self,
+        id_: uuid.UUID,
+        *,
+        preferred_visit_date: Any,
+        preferred_visit_time: Any,
+        expires_at: datetime | None = None,
     ) -> Invitation | None:
         """`previous_preferred_visit_date`/`_time` are set from
         `Invitation.preferred_visit_date`/`_time` in the same `UPDATE` that
@@ -405,18 +420,25 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         `UPDATE` reads the pre-update row, so this reliably captures the
         immediately-prior schedule rather than the just-written new one
         (`add-reschedule-history/design.md`).
+
+        `expires_at`, when given (an already-`approved` invitation moved to
+        a new visit day), realigns expiry to the end of that new day the
+        same way `approve_if_submitted` does at initial approval.
         """
+        values: dict[str, Any] = {
+            "previous_preferred_visit_date": Invitation.preferred_visit_date,
+            "previous_preferred_visit_time": Invitation.preferred_visit_time,
+            "preferred_visit_date": preferred_visit_date,
+            "preferred_visit_time": preferred_visit_time,
+            "rescheduled_at": datetime.now(UTC),
+            "reschedule_count": Invitation.reschedule_count + 1,
+        }
+        if expires_at is not None:
+            values["expires_at"] = expires_at
         stmt = (
             update(Invitation)
             .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
-            .values(
-                previous_preferred_visit_date=Invitation.preferred_visit_date,
-                previous_preferred_visit_time=Invitation.preferred_visit_time,
-                preferred_visit_date=preferred_visit_date,
-                preferred_visit_time=preferred_visit_time,
-                rescheduled_at=datetime.now(UTC),
-                reschedule_count=Invitation.reschedule_count + 1,
-            )
+            .values(**values)
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
