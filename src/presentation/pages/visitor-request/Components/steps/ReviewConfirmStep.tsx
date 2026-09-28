@@ -293,12 +293,10 @@ export function ReviewConfirmStep({
         ]}
       />
 
-      <SummarySection
-        title="Carried Items"
-        rows={[
-          ['Categories', formState.carriedItems.categories.map(prettifyKey).join(', ') || 'None declared'],
-          ['Description', formState.carriedItems.description],
-          ...carriedItemsCustomFields.map(
+      {carriedItemsCustomFields.length > 0 && (
+        <SummarySection
+          title="Carried Items"
+          rows={carriedItemsCustomFields.map(
             (field): [string, ReactNode] => [
               field.label,
               <DynamicFieldValueCell
@@ -308,9 +306,9 @@ export function ReviewConfirmStep({
                 getFilePreviewUrl={getFilePreviewUrl}
               />,
             ],
-          ),
-        ]}
-      />
+          )}
+        />
+      )}
 
       <GroupSummarySections
         groups={carriedItemsGroups}
@@ -320,25 +318,23 @@ export function ReviewConfirmStep({
         getFilePreviewUrl={getFilePreviewUrl}
       />
 
-      <SummarySection
-        title="Vehicle Info"
-        rows={
-          formState.vehicles.length > 0
-            ? formState.vehicles.flatMap((vehicle, index): [string, ReactNode][] => [
-                [`Vehicle ${index + 1}`, `${vehicle.makeModel} · ${vehicle.licensePlate}`],
-                ...vehicleCustomFields.map((field): [string, ReactNode] => [
-                  `Vehicle ${index + 1} — ${field.label}`,
-                  <DynamicFieldValueCell
-                    key={field.key}
-                    field={field}
-                    value={(vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined)?.[field.key]}
-                    getFilePreviewUrl={getFilePreviewUrl}
-                  />,
-                ]),
-              ])
-            : [['Vehicles', 'None declared']]
-        }
-      />
+      {formState.vehicles.length > 0 &&
+        vehicleCustomFields.length > 0 &&
+        formState.vehicles.map((vehicle, index) => (
+          <SummarySection
+            key={`vehicle-${index}`}
+            title={`Vehicle ${index + 1}`}
+            rows={vehicleCustomFields.map((field): [string, ReactNode] => [
+              field.label,
+              <DynamicFieldValueCell
+                key={field.key}
+                field={field}
+                value={(vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined)?.[field.key]}
+                getFilePreviewUrl={getFilePreviewUrl}
+              />,
+            ])}
+          />
+        ))}
 
       <GroupSummarySections
         groups={vehicleInfoGroups}
@@ -348,14 +344,12 @@ export function ReviewConfirmStep({
         getFilePreviewUrl={getFilePreviewUrl}
       />
 
-      <SummarySection
-        title="Consent"
-        rows={
-          Object.keys(formState.consent).length > 0
-            ? Object.entries(formState.consent).map(([key, agreed]) => [prettifyKey(key), agreed ? 'Agreed' : 'Not agreed'])
-            : [['Consent', 'None recorded']]
-        }
-      />
+      {Object.keys(formState.consent).length > 0 && (
+        <SummarySection
+          title="Consent"
+          rows={Object.entries(formState.consent).map(([key, agreed]) => [prettifyKey(key), agreed ? 'Agreed' : 'Not agreed'])}
+        />
+      )}
 
       <div className="flex gap-3">
         <button
