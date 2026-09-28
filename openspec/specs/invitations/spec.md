@@ -309,9 +309,17 @@ than duplicated by hand, and SHALL reject a request missing any top-level
 mandatory field or containing an invalid enum value with a 422.
 
 #### Scenario: Missing a required top-level field is rejected
-- **WHEN** a creation request omits `registrationType`, `primaryContact`,
-  `visitDetails`, or `consents` entirely
+- **WHEN** a creation request omits `registrationType`, `primaryContact`, or
+  `visitDetails` entirely
 - **THEN** the system rejects the request with a 422 validation error
+
+#### Scenario: Omitted consents defaults to empty and is still checked against the branch's requirements
+- **WHEN** a creation request omits `consents` entirely
+- **THEN** the system treats it as `consents: []` and applies the same
+  branch-configured required-consent check it applies to an explicit `[]` —
+  rejecting with a 422 if the branch's published form has any required
+  Consent Agreement field not accepted, and accepting the request if it does
+  not
 
 #### Scenario: Invalid enum value is rejected
 - **WHEN** a creation request supplies a value for `idProofType`,

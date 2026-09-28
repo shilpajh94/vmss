@@ -77,28 +77,36 @@ def is_field_required(
     return bool(field["isRequired"])
 
 
-def required_consent_keys(effective_form: list[dict[str, Any]]) -> set[str]:
+def required_consent_field_ids(effective_form: list[dict[str, Any]]) -> set[str]:
     """specs/invitations/spec.md (delta) "Consent Is Mandatory and Recorded"
-    — every field key the branch's Consent Agreement step marks required.
+    (restructure-walkin-payload-by-field-id) — every field id the branch's
+    Consent Agreement step marks required. Consent fields are referenced by
+    id, never by key/label, the same as any other admin-authored EAV
+    answer.
     """
     step = _find_step(effective_form, "consent_agreement")
     if step is None:
         return set()
-    return {field["key"] for field in step["fields"] if field["isRequired"]}
+    return {field["id"] for field in step["fields"] if field["isRequired"]}
 
 
-def allowed_consent_keys(effective_form: list[dict[str, Any]]) -> set[str]:
+def allowed_consent_field_ids(effective_form: list[dict[str, Any]]) -> set[str]:
     """specs/invitations/spec.md (delta) "Consent Is Mandatory and Recorded"
-    — every field key defined on the branch's Consent Agreement step
+    — every field id defined on the branch's Consent Agreement step
     (required or not), the full set a creation request's `consents` payload
-    is allowed to use. Mirrors `allowed_carried_item_keys` below: an empty
-    set for a branch with no active Consent Agreement step, since nothing
-    is a valid consent key in that case.
+    is allowed to reference. Mirrors `allowed_carried_item_keys` below: an
+    empty set for a branch with no active Consent Agreement step, since
+    nothing is a valid consent field id in that case. A `fieldId` belonging
+    to a different branch's/tenant's form is never in this set either,
+    since `effective_form` only ever reflects the resolved branch's own
+    published configuration — so it's rejected the same way an unknown id
+    is, with no special-case code needed for "wrong branch" versus
+    "doesn't exist at all".
     """
     step = _find_step(effective_form, "consent_agreement")
     if step is None:
         return set()
-    return {field["key"] for field in step["fields"]}
+    return {field["id"] for field in step["fields"]}
 
 
 def allowed_carried_item_keys(effective_form: list[dict[str, Any]]) -> set[str]:
@@ -223,7 +231,7 @@ def allowed_vehicle_types(effective_form: list[dict[str, Any]]) -> set[str] | No
 # --- Admin-authored custom fields (add-generic-custom-field-support) -------
 #
 # `isSystem` is what distinguishes a step's seeded fields (full name, email,
-# category, purpose, host, the Carried Items `items` field, the Vehicle Info
+# category, purpose, the Carried Items `items` field, the Vehicle Info
 # `license_plate` field, ...) — already handled by their own dedicated typed
 # columns/checks above — from an admin-authored field added on top of them,
 # whose answer is captured generically via `customFieldValues` instead. This
@@ -317,30 +325,30 @@ def custom_groups_for_invitation_scope(
 ) -> list[dict[str, Any]]:
     """Every *admin-defined* (non-system) field group defined on a step
     other than Consent Agreement (`_NO_GENERIC_GROUP_STEP_KEYS`), whose
-    instances are submitted via the invitation payload's `groupValues` map,
-    keyed by group key (specs/invitations/spec.md (delta) "An Admin-Defined
-    Repeatable Group's Answers Are Accepted as an Array of Per-Instance
-    Values"). Excludes the seeded system groups ("vehicles" on Vehicle
-    Info, "visitors" on Visitor Info) even though those live on steps this
+    instances are submitted via the invitation payload's `groups` array,
+    referenced by group id (specs/invitations/spec.md (delta) "An
+    Admin-Defined Repeatable Group's Answers Are Accepted as an Array of
+    Per-Instance Values" — restructure-walkin-payload-by-field-id).
+    Excludes the seeded system groups ("vehicles" on Vehicle Info,
+    "visitors" on Visitor Info) even though those live on steps this
     function otherwise covers — their cardinality is the `vehicles`/
     `visitors` payload lists' own length, validated separately by
-    `vehicle_info_group`/`visitor_info_group`, not by a submitted
-    `groupValues` entry (which they never have one of). Each returned group
-    dict is augmented with a `"fields"` list — that group's own field
-    definitions, resolved by the field keys it references — so a caller can
-    validate one instance's values with `validate_custom_field_values`
-    directly.
+    `vehicle_info_group`/`visitor_info_group`, not by a submitted `groups`
+    entry (which they never have one of). Each returned group dict is
+    augmented with a `"fields"` list — that group's own field definitions,
+    resolved by the field ids it references — so a caller can validate one
+    instance's values with `validate_custom_field_values` directly.
     """
     groups: list[dict[str, Any]] = []
     for step in effective_form:
         if step["key"] in _NO_GENERIC_GROUP_STEP_KEYS:
             continue
-        fields_by_key = {field["key"]: field for field in step["fields"]}
+        fields_by_id = {field["id"]: field for field in step["fields"]}
         for group in step.get("groups", []):
             if group["isSystem"]:
                 continue
             group_fields = [
-                fields_by_key[key] for key in group.get("fieldKeys", []) if key in fields_by_key
+                fields_by_id[fid] for fid in group.get("fieldIds", []) if fid in fields_by_id
             ]
             groups.append({**group, "fields": group_fields})
     return groups
@@ -350,26 +358,26 @@ def custom_groups_for_step(
     effective_form: list[dict[str, Any]], step_key: str
 ) -> dict[str, dict[str, Any]]:
     """Every admin-defined (non-system) field group on one active step,
-    keyed by group key — used by a caller that needs to know which
-    `groupValues` keys "belong" to a specific step (e.g.
-    `invitations/router.py` synthesizing a visitor-shaped entry from a
-    Visitor Info group's submitted instances), where
-    `custom_groups_for_invitation_scope`'s branch-wide, presentation-
-    agnostic list isn't scoped narrowly enough. Each returned group dict is
-    augmented with a `"fields"` list the same way
-    `custom_groups_for_invitation_scope` augments its groups, so a caller
-    can inspect a member field's `fieldType` (e.g. to pick out an `email`/
-    `phone`-typed field for a visitor-shaped presentation), not just its key.
+    keyed by group id — used by a caller that needs to know which `groups`
+    entries "belong" to a specific step (e.g. `invitations/router.py`
+    synthesizing a visitor-shaped entry from a Visitor Info group's
+    submitted instances), where `custom_groups_for_invitation_scope`'s
+    branch-wide, presentation-agnostic list isn't scoped narrowly enough.
+    Each returned group dict is augmented with a `"fields"` list the same
+    way `custom_groups_for_invitation_scope` augments its groups, so a
+    caller can inspect a member field's `fieldType` (e.g. to pick out an
+    `email`/`phone`-typed field for a visitor-shaped presentation) and its
+    `id` for indexing into an id-keyed instance map.
     """
     step = _find_step(effective_form, step_key)
     if step is None:
         return {}
-    fields_by_key = {field["key"]: field for field in step["fields"]}
+    fields_by_id = {field["id"]: field for field in step["fields"]}
     return {
-        group["key"]: {
+        group["id"]: {
             **group,
             "fields": [
-                fields_by_key[key] for key in group.get("fieldKeys", []) if key in fields_by_key
+                fields_by_id[fid] for fid in group.get("fieldIds", []) if fid in fields_by_id
             ],
         }
         for group in step.get("groups", [])
@@ -377,15 +385,24 @@ def custom_groups_for_step(
     }
 
 
+def _field_label(field: dict[str, Any]) -> str:
+    """Human-readable identifier for an error message — a raw `fieldId`
+    (UUID) means nothing to whoever reads the rejection, so messages use
+    the field's current `label` instead, falling back to its `id` only if
+    a label is somehow blank."""
+    return field.get("label") or field["id"]
+
+
 def _validate_value_against_field(field: dict[str, Any], value: Any) -> None:
     field_type = field["fieldType"]
     options = field.get("options")
+    label = _field_label(field)
     if field_type == "checkbox_list" and options:
         candidates = value if isinstance(value, list) else [value]
         if not set(candidates) <= set(options):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Invalid option(s) for custom field '{field['key']}'",
+                detail=f"Invalid option(s) for custom field '{label}'",
             )
     elif (
         field_type in ("dropdown_select", "radio_button") and options and value not in options
@@ -397,7 +414,7 @@ def _validate_value_against_field(field: dict[str, Any], value: Any) -> None:
     ):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Invalid option for custom field '{field['key']}'",
+            detail=f"Invalid option for custom field '{label}'",
         )
 
     rules = field.get("validationRules") or {}
@@ -406,24 +423,24 @@ def _validate_value_against_field(field: dict[str, Any], value: Any) -> None:
         if min_length is not None and len(value) < min_length:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Custom field '{field['key']}' is shorter than its minimum length",
+                detail=f"Custom field '{label}' is shorter than its minimum length",
             )
         if max_length is not None and len(value) > max_length:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Custom field '{field['key']}' exceeds its maximum length",
+                detail=f"Custom field '{label}' exceeds its maximum length",
             )
     elif isinstance(value, (int, float)) and not isinstance(value, bool):
         min_value, max_value = rules.get("minValue"), rules.get("maxValue")
         if min_value is not None and value < min_value:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Custom field '{field['key']}' is below its minimum value",
+                detail=f"Custom field '{label}' is below its minimum value",
             )
         if max_value is not None and value > max_value:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Custom field '{field['key']}' exceeds its maximum value",
+                detail=f"Custom field '{label}' exceeds its maximum value",
             )
 
 
@@ -435,33 +452,42 @@ def validate_custom_field_values(
     skip_required: bool = False,
 ) -> None:
     """specs/invitations/spec.md (delta) "Invitation Creation Captures
-    Admin-Defined Custom Field Answers" — `fields` is the admin-authored
-    field set for one scope (`custom_fields_for_step`/
-    `custom_fields_for_invitation_scope`), `values` the caller-supplied
-    `customFieldValues` map for that same scope. `scope` is only used to
-    make a rejection's error message identify which visitor/vehicle/
-    invitation-level map it came from. `skip_required` is set by a caller
-    that has already determined the fields' owning group is currently
-    hidden (specs/form-builder/spec.md "A Hidden Field Group Skips
-    Required-Field Validation For Its Fields") — a supplied value is still
-    validated even when its requiredness check is skipped.
+    Admin-Defined Custom Field Answers" (restructure-walkin-payload-by-
+    field-id) — `fields` is the admin-authored field set for one scope
+    (`custom_fields_for_step`/`custom_fields_for_invitation_scope`),
+    `values` the caller-supplied `{str(fieldId): value}` map for that same
+    scope (`invitations/schemas.py::_custom_fields_to_dict`'s output) —
+    never re-derived from or matched against a field's `key`. `scope` is
+    only used to make a rejection's error message identify which visitor/
+    vehicle/invitation-level answer set it came from. `skip_required` is set
+    by a caller that has already determined the fields' owning group is
+    currently hidden (specs/form-builder/spec.md "A Hidden Field Group
+    Skips Required-Field Validation For Its Fields") — a supplied value is
+    still validated even when its requiredness check is skipped.
+
+    A `fieldId` that doesn't resolve against `fields` — because it's
+    unknown, inactive, or belongs to a different branch/tenant's form
+    entirely (`fields` only ever reflects the resolved branch's own
+    effective form) — is rejected identically: there is no distinct code
+    path for "wrong branch" versus "doesn't exist", by design (design.md
+    Decision 5).
     """
-    fields_by_key = {field["key"]: field for field in fields}
-    unknown_keys = set(values) - set(fields_by_key)
-    if unknown_keys:
+    fields_by_id = {field["id"]: field for field in fields}
+    unknown_ids = set(values) - set(fields_by_id)
+    if unknown_ids:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Unknown custom field key(s) for {scope}: {', '.join(sorted(unknown_keys))}",
+            detail=f"Unknown custom field id(s) for {scope}: {', '.join(sorted(unknown_ids))}",
         )
     if not skip_required:
-        missing_required = {field["key"] for field in fields if field["isRequired"]} - set(values)
+        missing_required = {field["id"] for field in fields if field["isRequired"]} - set(values)
         if missing_required:
+            missing_labels = sorted(_field_label(fields_by_id[fid]) for fid in missing_required)
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
-                    f"Missing required custom field(s) for {scope}: "
-                    f"{', '.join(sorted(missing_required))}"
+                    f"Missing required custom field(s) for {scope}: {', '.join(missing_labels)}"
                 ),
             )
-    for key, value in values.items():
-        _validate_value_against_field(fields_by_key[key], value)
+    for field_id, value in values.items():
+        _validate_value_against_field(fields_by_id[field_id], value)

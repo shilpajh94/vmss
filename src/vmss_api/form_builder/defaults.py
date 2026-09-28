@@ -179,7 +179,6 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
             DefaultFieldSpec(
                 "purpose_of_visit", "Purpose of Visit", "text", is_locked=True, is_required=True
             ),
-            DefaultFieldSpec("host", "Host", "text", is_locked=True, is_required=False),
             DefaultFieldSpec(
                 "preferred_visit_date",
                 "Preferred Visit Date",
@@ -193,13 +192,6 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
                 "time_picker",
                 is_locked=True,
                 is_required=True,
-            ),
-            DefaultFieldSpec(
-                "department_to_visit",
-                "Department to Visit",
-                "text",
-                is_locked=True,
-                is_required=False,
             ),
             DefaultFieldSpec(
                 "expected_duration",
@@ -357,7 +349,11 @@ def _field_to_effective_dict(
 
 
 def _group_to_effective_dict(
-    step_key: str, order_index: int, spec: DefaultGroupSpec, field_keys: list[str]
+    step_key: str,
+    order_index: int,
+    spec: DefaultGroupSpec,
+    field_keys: list[str],
+    field_ids: list[str],
 ) -> dict[str, Any]:
     return {
         "id": str(_stable_id("group", step_key, spec.key)),
@@ -371,15 +367,22 @@ def _group_to_effective_dict(
         "maxInstances": spec.max_instances,
         "visibilityCondition": spec.visibility_condition,
         "orderIndex": order_index,
+        # `fieldKeys` is kept for any lingering key-based reader; group
+        # membership is resolved by `fieldIds` going forward
+        # (restructure-walkin-payload-by-field-id) — see
+        # `form_builder/validation.py::custom_groups_for_invitation_scope`.
         "fieldKeys": field_keys,
+        "fieldIds": field_ids,
     }
 
 
 def _step_to_effective_dict(order_index: int, spec: DefaultStepSpec) -> dict[str, Any]:
     field_keys_by_group_key: dict[str, list[str]] = {g.key: [] for g in spec.groups}
+    field_ids_by_group_key: dict[str, list[str]] = {g.key: [] for g in spec.groups}
     for f in spec.fields:
         if f.group_key in field_keys_by_group_key:
             field_keys_by_group_key[f.group_key].append(f.key)
+            field_ids_by_group_key[f.group_key].append(str(_stable_id("field", spec.key, f.key)))
     return {
         "id": str(_stable_id("step", spec.key)),
         "branchId": None,
@@ -392,7 +395,13 @@ def _step_to_effective_dict(order_index: int, spec: DefaultStepSpec) -> dict[str
         "isActive": True,
         "orderIndex": order_index,
         "groups": [
-            _group_to_effective_dict(spec.key, i, g, field_keys_by_group_key.get(g.key, []))
+            _group_to_effective_dict(
+                spec.key,
+                i,
+                g,
+                field_keys_by_group_key.get(g.key, []),
+                field_ids_by_group_key.get(g.key, []),
+            )
             for i, g in enumerate(spec.groups)
         ],
         "fields": [_field_to_effective_dict(spec.key, i, f) for i, f in enumerate(spec.fields)],
