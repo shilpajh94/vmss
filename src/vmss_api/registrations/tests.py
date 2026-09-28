@@ -5,20 +5,25 @@ from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
+import starlette.datastructures as starlette_datastructures
+import structlog
 from httpx import AsyncClient, Response
 from PIL import Image
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
-from factories import RoleFactory, VisitorCategoryFactory
+from factories import BranchFactory, RoleFactory, VisitorCategoryFactory
+from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
-from vmss_api.auth.models import AuditLog
+from vmss_api.auth.models import AuditLog, User
 from vmss_api.auth.repository import RoleRepository
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.security import hash_password
+from vmss_api.form_builder.defaults import _stable_id as _form_builder_stable_id
 from vmss_api.invitations import tasks
+from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.org_structure.models import Branch
 from vmss_api.registrations.models import RegistrationDeviceKey
@@ -80,6 +85,43 @@ def _jpeg_bytes() -> bytes:
     return buffer.getvalue()
 
 
+@pytest_asyncio.fixture(autouse=True)
+def _reset_live_consent_field_ids():
+    """See `invitations/tests.py`'s fixture of the same name — resets the
+    module-level cache `_record_live_consent_field_ids` populates before
+    every test."""
+    global _live_consent_field_ids
+    _live_consent_field_ids = None
+    yield
+
+
+_live_consent_field_ids: dict[str, str] | None = None
+
+
+def _record_live_consent_field_ids(steps: list[dict]) -> None:
+    """See `invitations/tests.py::_record_live_consent_field_ids` — called
+    by admin-side setup helpers right after publishing, since that seeds
+    the branch's default Consent Agreement fields as real (random-id)
+    database rows, no longer matching `_default_consent_field_id`'s
+    deterministic fallback (restructure-walkin-payload-by-field-id)."""
+    global _live_consent_field_ids
+    step = next((s for s in steps if s["key"] == "consent_agreement"), None)
+    if step is None:
+        return
+    _live_consent_field_ids = {f["key"]: f["id"] for f in step["fields"]}
+
+
+def _default_consent_field_id(key: str) -> str:
+    """See `invitations/tests.py::_default_consent_field_id` — the
+    branch's own real id if a test has published anything for it
+    (`_live_consent_field_ids`), otherwise the deterministic default-form
+    id, since walk-in registration falls back to the same unpublished
+    `DEFAULT_EFFECTIVE_FORM` (restructure-walkin-payload-by-field-id)."""
+    if _live_consent_field_ids is not None and key in _live_consent_field_ids:
+        return _live_consent_field_ids[key]
+    return str(_form_builder_stable_id("field", "consent_agreement", key))
+
+
 def _individual_payload() -> dict:
     return {
         "registrationType": "individual",
@@ -101,11 +143,13 @@ def _individual_payload() -> dict:
         },
         "carriedItems": {"items": []},
         "vehicles": [],
-        "consents": {
-            "termsAccepted": True,
-            "dataProcessingAccepted": True,
-            "safetyGuidelinesAccepted": True,
-        },
+        # Referenced by fieldId, never key/label — see
+        # invitations/schemas.py's `InvitationCreate.consents` docstring.
+        "consents": [
+            {"fieldId": _default_consent_field_id("terms_accepted"), "accepted": True},
+            {"fieldId": _default_consent_field_id("data_processing_accepted"), "accepted": True},
+            {"fieldId": _default_consent_field_id("safety_guidelines_accepted"), "accepted": True},
+        ],
     }
 
 
@@ -165,6 +209,51 @@ async def _create_walk_in_success(
     )
     assert response.status_code == 201, response.text
     return response.json()["data"]
+
+
+async def _login(client: AsyncClient, email: str, password: str = "correct-password") -> str:
+    response = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    return response.json()["data"]["accessToken"]
+
+
+async def _create_and_publish_custom_field(
+    client: AsyncClient,
+    admin_token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    key: str,
+    field_type: str = "text",
+    is_required: bool = False,
+    help_text: str | None = None,
+) -> str:
+    """Admin-side setup shared by the custom-field tests below — same
+    pattern as `invitations/tests.py::_create_and_publish_custom_field`,
+    duplicated here since walk-in registration has no staff bearer token of
+    its own to reuse an imported helper's auth with. Returns the created
+    field's id (restructure-walkin-payload-by-field-id) — the caller must
+    reference it, never its `key`, in any `customFields`/`consents`/
+    `groups` entry it submits."""
+    headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+
+    body: dict = {"key": key, "label": key.replace("_", " ").title(), "fieldType": field_type}
+    if is_required:
+        body["isRequired"] = True
+    if help_text is not None:
+        body["helpText"] = help_text
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", json=body, headers=headers
+    )
+    assert create_response.status_code == 201, create_response.text
+    field_id = create_response.json()["data"]["id"]
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+    return field_id
 
 
 # --- API-13: happy paths ------------------------------------------------------
@@ -239,6 +328,9 @@ async def test_walk_in_registration_response_has_no_check_in_state(
         "status",
         "visitorCategoryId",
         "hostId",
+        "pocUserId",
+        "pocRoleId",
+        "pocName",
         "expiresAt",
         "submittedAt",
         "approvedAt",
@@ -289,6 +381,33 @@ async def test_walk_in_registration_oversized_file_rejected(
         client, registration_device_raw_key, payload=_individual_payload()
     )
     assert response.status_code == 422
+
+
+async def test_walk_in_registration_oversized_file_read_is_bounded(
+    client: AsyncClient, registration_device_raw_key: str, monkeypatch
+) -> None:
+    """Sibling of `invitations/tests.py::test_create_invitation_oversized_file_read_is_bounded`
+    — `POST /registrations/walk-in` accepts the identical multipart contract
+    and must bound each `UploadFile.read()` call the same way
+    (file-upload-handling.md §1), not just eventually reject an oversized
+    upload after buffering it in full.
+    """
+    monkeypatch.setattr(settings, "invitation_max_upload_size_bytes", 10)
+    read_sizes: list[int] = []
+    original_read = starlette_datastructures.UploadFile.read
+
+    async def _spy_read(self, size: int = -1) -> bytes:
+        read_sizes.append(size)
+        return await original_read(self, size)
+
+    monkeypatch.setattr(starlette_datastructures.UploadFile, "read", _spy_read)
+
+    response = await _create_walk_in(
+        client, registration_device_raw_key, payload=_individual_payload()
+    )
+
+    assert response.status_code == 422
+    assert read_sizes == [11, settings.invitation_max_photo_size_bytes + 1]
 
 
 # --- Optional profile photo (checkin-approval-workflow-improvements) --------
@@ -730,3 +849,395 @@ async def test_walk_in_registration_with_no_department_succeeds_and_leaves_it_un
     assert invitation is not None
     assert invitation.department_to_visit is None
     assert invitation.department_id is None
+
+
+# --- add-generic-custom-field-support: admin-authored custom fields --------
+#
+# specs/registrations/spec.md (delta) "Walk-in registration accepts the
+# same visit-record contract as staff pre-registration" — walk-in shares
+# `InvitationCreate` verbatim, so its custom-field capture is exercised
+# through the same `create_invitation` path invitations/tests.py covers
+# directly; these confirm that sharing actually holds through the walk-in
+# endpoint too.
+
+
+async def test_walk_in_registration_captures_invitation_level_custom_field(
+    client: AsyncClient,
+    user: User,
+    registration_device_raw_key: str,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    admin_token = await _login(client, user.email)
+    field_id = await _create_and_publish_custom_field(
+        client, admin_token, branch, step_key="visit_details", key="cost_center"
+    )
+
+    payload = _individual_payload()
+    payload["customFields"] = [{"fieldId": field_id, "value": "CC-42"}]
+    data = await _create_walk_in_success(client, registration_device_raw_key, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.custom_field_values == {field_id: "CC-42"}
+
+
+async def test_walk_in_registration_captures_primary_contact_custom_field(
+    client: AsyncClient,
+    user: User,
+    registration_device_raw_key: str,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    admin_token = await _login(client, user.email)
+    field_id = await _create_and_publish_custom_field(
+        client, admin_token, branch, step_key="visitor_info", key="employee_id"
+    )
+
+    payload = _individual_payload()
+    # The primary contact's Visitor Info-step answers are sourced from the
+    # invitation-level `customFields` array — see
+    # `InvitationPrimaryContactCreate`'s docstring in `invitations/schemas.py`.
+    payload["customFields"] = [{"fieldId": field_id, "value": "E-1001"}]
+    data = await _create_walk_in_success(client, registration_device_raw_key, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    assert invitation.primary_contact_custom_field_values == {field_id: "E-1001"}
+
+
+async def test_walk_in_registration_custom_field_unresolvable_id_rejected(
+    client: AsyncClient, registration_device_raw_key: str
+) -> None:
+    payload = _individual_payload()
+    payload["customFields"] = [{"fieldId": str(uuid.uuid4()), "value": "x"}]
+    response = await _create_walk_in(client, registration_device_raw_key, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_walk_in_registration_static_text_field_needs_no_submitted_value(
+    client: AsyncClient,
+    user: User,
+    registration_device_raw_key: str,
+    branch: Branch,
+) -> None:
+    """add-static-text-field-and-unlock-toggle: confirms the walk-in path
+    resolves the exact same effective form `create_invitation` does (both
+    call the identical `resolve_effective_form`) — a `static_text` field
+    collects no answer, so a walk-in submission with no value for its key
+    still succeeds, same as `invitations/tests.py::
+    test_create_invitation_static_text_field_needs_no_submitted_value`."""
+    admin_token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client,
+        admin_token,
+        branch,
+        step_key="visit_details",
+        key="visit_notice",
+        field_type="static_text",
+        help_text="Please arrive 10 minutes early.",
+    )
+
+    data = await _create_walk_in_success(
+        client, registration_device_raw_key, payload=_individual_payload()
+    )
+    assert data["trackingId"].startswith("INV-")
+
+
+# --- fix-registration-host-role-crash: default-host-role failure mode ------
+
+
+async def test_walk_in_registration_missing_default_host_role_fails_as_server_misconfiguration(
+    client: AsyncClient,
+    registration_device_raw_key: str,
+    tenant: Tenant,
+    db_session: AsyncSession,
+) -> None:
+    """Confirms the shared `create_invitation` path
+    (org_structure/service.py::get_default_host_role) fails identically for
+    the walk-in entry point as it does for staff pre-registration — see
+    `invitations/tests.py::test_create_invitation_missing_default_host_role_fails_as_server_misconfiguration`.
+    Bypasses `auth/service.py`'s rename/delete protection for the standard
+    "reception" role directly at the repository layer (this state isn't
+    reachable via the walk-in registration API itself — see design.md).
+    """
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
+    await RoleRepository(db_session).soft_delete(reception_role)
+    await db_session.commit()
+
+    # `capture_logs()` disables every configured processor by default
+    # (including `structlog.contextvars.merge_contextvars`), so a field
+    # bound only via contextvars (`tenant_id`, here) has to have that
+    # processor passed back in explicitly to show up in a captured entry.
+    with capture_logs(processors=(structlog.contextvars.merge_contextvars,)) as captured:
+        response = await _create_walk_in(
+            client, registration_device_raw_key, payload=_individual_payload()
+        )
+
+    assert response.status_code == 500
+
+    [entry] = [e for e in captured if e["event"] == "default_host_role_not_seeded"]
+    assert entry["log_level"] == "error"
+    assert entry["tenant_id"] == str(tenant.id)
+
+    # Same rollback-on-exit stand-in as `invitations/tests.py`'s counterpart
+    # test and `org_structure/tests.py`'s
+    # `test_provision_branch_rolls_back_partial_tree_on_mid_transaction_conflict`
+    # — the test client's `get_tenant_db` override hands every request the
+    # same bare `db_session`, with no `async with` around it to roll back
+    # automatically the way production's `tenant_session_scope` would.
+    await db_session.rollback()
+    for model in (Invitation, InvitationVisitor, InvitationVehicle, InvitationApprovalStep):
+        count = await db_session.scalar(select(func.count()).select_from(model))
+        assert count == 0, f"{model.__name__} row(s) leaked from a failed default-host-role lookup"
+
+
+# --- fix-registration-host-role-crash: branch/form-config divergence -------
+
+
+async def test_walk_in_registration_branch_config_mismatch_logs_enforced_branch(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    user: User,
+    registration_device_raw_key: str,
+    db_session: AsyncSession,
+) -> None:
+    """specs/registrations/spec.md (delta) "A Configuration Mismatch Is
+    Logged With the Enforced Branch" — `branch` (the device credential's
+    own branch) publishes a required consent that a second branch
+    (`other_branch`) never gets configured. Submitting the default payload
+    (whose consents only satisfy `other_branch`'s unconfigured form) against
+    the device-credential-resolved branch must be rejected, and the
+    rejection's log must identify `branch`'s id — the server-resolved
+    branch actually enforced — regardless of what any client separately
+    assumed or rendered (there is no branch field on the wire to compare
+    against, per design.md).
+    """
+    other_branch = BranchFactory.build(id=uuid.uuid4(), name="Other Branch", code="OTHER")
+    db_session.add(other_branch)
+    await db_session.commit()
+
+    admin_token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client,
+        admin_token,
+        branch,
+        step_key="consent_agreement",
+        key="confidentiality_agreement",
+        field_type="toggle_switch",
+        is_required=True,
+    )
+
+    with capture_logs() as captured:
+        response = await _create_walk_in(
+            client, registration_device_raw_key, payload=_individual_payload()
+        )
+
+    assert response.status_code == 422
+
+    matching_entries = [
+        e for e in captured if e["event"] == "registration_form_config_validation_failed"
+    ]
+    assert matching_entries, "expected a form-config-validation-failed log entry"
+    entry = matching_entries[-1]
+    assert entry["log_level"] == "warning"
+    assert entry["branch_id"] == str(branch.id)
+    assert entry["branch_id"] != str(other_branch.id)
+    assert entry["check"] == "consent_key"
+
+
+# --- add-repeatable-field-groups: group instance-count enforcement ----------
+
+
+async def _update_and_publish_group_range(
+    client: AsyncClient,
+    admin_token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    group_key: str,
+    min_instances: int | None = None,
+    max_instances: int | None = None,
+) -> None:
+    """Same pattern as `invitations/tests.py`'s helper of the same name,
+    duplicated here for the reason `_create_and_publish_custom_field` above
+    already documents."""
+    headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+    group = next(g for g in step["groups"] if g["key"] == group_key)
+
+    body: dict = {}
+    if min_instances is not None:
+        body["minInstances"] = min_instances
+    if max_instances is not None:
+        body["maxInstances"] = max_instances
+    update_response = await client.patch(
+        f"/api/v1/form-builder/groups/{group['id']}", json=body, headers=headers
+    )
+    assert update_response.status_code == 200, update_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+
+
+async def test_walk_in_vehicle_count_below_configured_minimum_rejected(
+    client: AsyncClient,
+    branch: Branch,
+    user: User,
+    registration_device_raw_key: str,
+) -> None:
+    admin_token = await _login(client, user.email)
+    await _update_and_publish_group_range(
+        client, admin_token, branch, step_key="vehicle_info", group_key="vehicles", min_instances=1
+    )
+    payload = _individual_payload()
+    payload["vehicles"] = []
+    response = await _create_walk_in(client, registration_device_raw_key, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_walk_in_group_instance_count_mismatch_is_logged_with_enforced_branch(
+    client: AsyncClient,
+    branch: Branch,
+    user: User,
+    registration_device_raw_key: str,
+    db_session: AsyncSession,
+) -> None:
+    """specs/registrations/spec.md (delta) "A Configuration Mismatch Is
+    Logged With the Enforced Branch" (add-repeatable-field-groups) — a
+    group instance-count rejection is logged the same way a required-field/
+    custom-field/consent-key mismatch already is, identifying the
+    server-resolved branch.
+    """
+    admin_token = await _login(client, user.email)
+    await _update_and_publish_group_range(
+        client, admin_token, branch, step_key="vehicle_info", group_key="vehicles", max_instances=1
+    )
+    payload = _individual_payload()
+    payload["vehicles"] = [
+        {"vehicleType": "2_wheeler", "licensePlate": "KA-01-AB-1234"},
+        {"vehicleType": "4_wheeler", "licensePlate": "KA-05-CD-5678"},
+    ]
+
+    with capture_logs() as captured:
+        response = await _create_walk_in(client, registration_device_raw_key, payload=payload)
+
+    assert response.status_code == 422
+    matching_entries = [
+        e for e in captured if e["event"] == "registration_form_config_validation_failed"
+    ]
+    assert matching_entries, "expected a form-config-validation-failed log entry"
+    entry = matching_entries[-1]
+    assert entry["log_level"] == "warning"
+    assert entry["branch_id"] == str(branch.id)
+    assert entry["check"] == "group_instance_count"
+
+
+# --- add-group-field-file-upload: a custom group's own file_upload field ----
+
+
+async def _create_and_publish_additional_visitors_group(
+    client: AsyncClient, admin_token: str, branch: Branch
+) -> tuple[str, str, str]:
+    """Same pattern as `invitations/tests.py::_create_and_publish_additional_visitors_group`,
+    duplicated here for the reason `_create_and_publish_custom_field` above
+    already documents: a repeatable "Additional Visitors" group on Visitor
+    Info with a required `name` field and its own `file_upload`-typed field
+    (`id_upload`). Returns `(group_id, name_field_id, id_upload_field_id)`
+    (restructure-walkin-payload-by-field-id) — the caller must reference
+    these, never the group's/fields' `key`, in `payload.groups` and the
+    `groupFieldFiles[...]` multipart part name.
+    """
+    headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == "visitor_info")
+
+    group_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={"key": "additional_visitors", "name": "Additional Visitors", "isRepeatable": True},
+        headers=headers,
+    )
+    assert group_response.status_code == 201, group_response.text
+    group_id = group_response.json()["data"]["id"]
+
+    field_ids: dict[str, str] = {}
+    for field_key, field_type, is_required in (
+        ("name", "text", True),
+        ("id_upload", "file_upload", False),
+    ):
+        field_response = await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/fields",
+            json={
+                "key": field_key,
+                "label": field_key.replace("_", " ").title(),
+                "fieldType": field_type,
+                "isRequired": is_required,
+                "groupId": group_id,
+            },
+            headers=headers,
+        )
+        assert field_response.status_code == 201, field_response.text
+        field_ids[field_key] = field_response.json()["data"]["id"]
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+    return group_id, field_ids["name"], field_ids["id_upload"]
+
+
+async def test_walk_in_registration_group_file_upload_stored_and_surfaced_on_read(
+    client: AsyncClient, user: User, branch: Branch, registration_device_raw_key: str
+) -> None:
+    """A custom Visitor Info group's own `file_upload`-typed field is
+    accepted on `POST /registrations/walk-in` via the same
+    `groupFieldFiles[<groupKey>]` multipart convention `POST /invitations`
+    documents (order-matched to `groupValues[<groupKey>]` instances) —
+    closing the gap where walk-in registration declared the same repeatable
+    -group contract but never parsed or forwarded the multipart part.
+    """
+    admin_token = await _login(client, user.email)
+    (
+        group_id,
+        name_field_id,
+        _id_upload_field_id,
+    ) = await _create_and_publish_additional_visitors_group(client, admin_token, branch)
+
+    payload = _individual_payload()
+    payload["groups"] = [
+        {
+            "groupId": group_id,
+            "instances": [
+                [{"fieldId": name_field_id, "value": "Extra One"}],
+                [{"fieldId": name_field_id, "value": "Extra Two"}],
+            ],
+        }
+    ]
+    response = await client.post(
+        "/api/v1/registrations/walk-in",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"groupFieldFiles[{group_id}]", ("extra1.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"groupFieldFiles[{group_id}]", ("extra2.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers={"X-Device-Key": registration_device_raw_key},
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    admin_headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
+    detail_response = await client.get(
+        f"/api/v1/invitations/{invitation_id}", headers=admin_headers
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    visitors = sorted(detail_response.json()["data"]["visitors"], key=lambda v: v["fullName"])
+    assert [v["fullName"] for v in visitors] == ["Extra One", "Extra Two"]
+    for visitor_out in visitors:
+        assert visitor_out["idProofUrl"] is not None

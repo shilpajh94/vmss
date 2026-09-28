@@ -68,9 +68,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"Database is not configured: set DATABASE_URL, or all of {', '.join(missing)}."
             )
+        assert self.db_username is not None and self.db_password is not None  # validated above
         driver = _DB_DRIVERS[self.db_connection]
         return (
-            f"postgresql+asyncpg://"
+            f"{driver}://"
             f"{quote_plus(self.db_username)}:"
             f"{quote_plus(self.db_password)}@"
             f"{self.db_host}:{self.db_port}/"
@@ -193,6 +194,11 @@ class Settings(BaseSettings):
     # `invitations` feature config (add-pre-registration).
     invitation_token_ttl_hours: int = 168
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
+    # Only consulted at tenant/branch provisioning and by the
+    # `add-repeatable-field-groups` migration that seeded existing
+    # branches — the seed value for Visitor Info's field group
+    # `maxInstances`, which is the actual live enforcement point.
+    # `invitations/service.py` no longer reads this setting directly.
     invitation_max_group_visitors: int = 20
 
     # Optional visitor/primary-contact profile photo
@@ -300,4 +306,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
- 

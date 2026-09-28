@@ -9,7 +9,6 @@ generic `/{audit_log_id}` route below so FastAPI doesn't try to match
 `"reports"` against the `uuid.UUID` path converter first.
 """
 
-import json
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -34,19 +33,14 @@ from vmss_api.audit_trail.service import (
 )
 from vmss_api.auth.models import User
 from vmss_api.core.deps import get_pagination, get_tenant, get_tenant_db, require_permission
+from vmss_api.core.idempotency import cache_response as _core_cache_response
+from vmss_api.core.idempotency import cached_response as _core_cached_response
 from vmss_api.core.logging import logger
-from vmss_api.core.redis import get_redis
 from vmss_api.core.responses import error_response, paginated_response, success_response
 from vmss_api.core.schemas import Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/audit-trail", tags=["audit-trail"])
-
-_IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
-
-
-def _idempotency_cache_key(tenant_id: uuid.UUID, idempotency_key: str) -> str:
-    return f"vmss:{tenant_id}:audit-trail:idempotency:{idempotency_key}"
 
 
 async def _cached_response(
@@ -56,27 +50,13 @@ async def _cached_response(
     `Idempotency-Key` returns the original response instead of enqueueing a
     second Celery job.
     """
-    if idempotency_key is None:
-        return None
-    redis = await get_redis()
-    cached = await redis.get(_idempotency_cache_key(tenant_id, idempotency_key))
-    if cached is None:
-        return None
-    payload = json.loads(cached)
-    return JSONResponse(content=payload["body"], status_code=payload["status"])
+    return await _core_cached_response(tenant_id, "audit-trail", idempotency_key)
 
 
 async def _cache_response(
     tenant_id: uuid.UUID, idempotency_key: str | None, response: JSONResponse
 ) -> None:
-    if idempotency_key is None:
-        return
-    redis = await get_redis()
-    await redis.set(
-        _idempotency_cache_key(tenant_id, idempotency_key),
-        json.dumps({"status": response.status_code, "body": json.loads(bytes(response.body))}),
-        ex=_IDEMPOTENCY_TTL_SECONDS,
-    )
+    await _core_cache_response(tenant_id, "audit-trail", idempotency_key, response)
 
 
 @router.get(

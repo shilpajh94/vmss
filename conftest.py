@@ -223,6 +223,8 @@ ADMIN_PERMISSION_CODES = [
     "employees:manage",
     "visitor-categories:view",
     "visitor-categories:manage",
+    "form-builder:view",
+    "form-builder:manage",
     "approval-workflow-rules:view",
     "approval-workflow-rules:manage",
     "invitations:create",

@@ -27,6 +27,7 @@ from vmss_api.org_structure.deps import (
 )
 from vmss_api.org_structure.models import Branch
 from vmss_api.org_structure.schemas import (
+    ActiveStatus,
     BranchCreate,
     BranchOut,
     BranchProvisionRequest,
@@ -41,15 +42,19 @@ from vmss_api.org_structure.schemas import (
     DepartmentCreate,
     DepartmentOut,
     DepartmentUpdate,
+    DeskStatus,
+    FloorAccessLevel,
     FloorCreate,
     FloorOut,
     FloorUpdate,
+    GateType,
     ReceptionDeskCreate,
     ReceptionDeskOut,
     ReceptionDeskUpdate,
     SecurityGateCreate,
     SecurityGateOut,
     SecurityGateUpdate,
+    SecurityLevel,
     SortableField,
 )
 from vmss_api.tenant.models import Tenant
@@ -221,6 +226,7 @@ async def list_branches(
     branch_scope: Annotated[BranchScope, Depends(public_branch_scope)],
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    branch_status: Annotated[ActiveStatus | None, Query(alias="status")] = None,
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
@@ -234,6 +240,7 @@ async def list_branches(
     branches, total = await service.list_branches_page(
         tenant_db,
         branch_scope=branch_scope,
+        status=branch_status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -404,6 +411,7 @@ async def list_buildings(
     branch_scope: Annotated[BranchScope, Depends(public_branch_scope)],
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    building_status: Annotated[ActiveStatus | None, Query(alias="status")] = None,
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
@@ -411,6 +419,7 @@ async def list_buildings(
     buildings, total = await service.list_buildings_page(
         tenant_db,
         branch_scope=branch_scope,
+        status=building_status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -513,6 +522,8 @@ async def list_floors(
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     building_id: Annotated[uuid.UUID | None, Query(alias="buildingId")] = None,
+    floor_status: Annotated[ActiveStatus | None, Query(alias="status")] = None,
+    access_level: Annotated[FloorAccessLevel | None, Query(alias="accessLevel")] = None,
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
@@ -521,6 +532,8 @@ async def list_floors(
         tenant_db,
         branch_scope=branch_scope,
         building_id=building_id,
+        status=floor_status,
+        access_level=access_level,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -622,6 +635,7 @@ async def list_departments(
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     floor_id: Annotated[uuid.UUID | None, Query(alias="floorId")] = None,
+    department_status: Annotated[ActiveStatus | None, Query(alias="status")] = None,
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
@@ -630,6 +644,7 @@ async def list_departments(
         tenant_db,
         branch_scope=branch_scope,
         floor_id=floor_id,
+        status=department_status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -734,6 +749,7 @@ async def list_reception_desks(
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     floor_id: Annotated[uuid.UUID | None, Query(alias="floorId")] = None,
+    desk_status: Annotated[DeskStatus | None, Query(alias="status")] = None,
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
@@ -742,6 +758,7 @@ async def list_reception_desks(
         tenant_db,
         branch_scope=branch_scope,
         floor_id=floor_id,
+        status=desk_status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -841,6 +858,8 @@ async def list_security_gates(
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     building_id: Annotated[uuid.UUID | None, Query(alias="buildingId")] = None,
+    gate_type: Annotated[GateType | None, Query(alias="gateType")] = None,
+    security_level: Annotated[SecurityLevel | None, Query(alias="securityLevel")] = None,
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
@@ -849,6 +868,8 @@ async def list_security_gates(
         tenant_db,
         branch_scope=branch_scope,
         building_id=building_id,
+        gate_type=gate_type,
+        security_level=security_level,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

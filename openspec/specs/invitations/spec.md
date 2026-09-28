@@ -123,6 +123,41 @@ written to storage.
 - **THEN** the system rejects the entire request and does not write the
   first visitor's file to storage
 
+### Requirement: A Retyped System Field's Submitted Value Is Validated Against Its Currently Configured Type
+When a system field that Form Builder allows to be retyped (`fullName`,
+`purposeOfVisit`, `departmentToVisit`, `licensePlate`, `expectedDuration`,
+`additionalNotes`, `idProofType`, `vehicleType`) is currently configured
+as an option-bearing type (`dropdown_select` or `checkbox_list`), a
+submitted value for that field SHALL be validated against the calling
+branch's currently published options for that field, the same way
+`idProofType`/`vehicleType` submissions are already validated. When the
+field is configured as a non-option-bearing type, the submitted value
+SHALL be validated as ordinary free text (existing length/format rules),
+unchanged from today. `host` is excluded from this requirement: its
+submitted value (`hostNameOrEmail`) is always discarded before
+persistence (an invitation's host is resolved exclusively through
+delegation — see the `approvals` capability), so there is no stored value
+for a retyped-`host`-field constraint to apply to.
+
+#### Scenario: Submission matches a retyped field's configured options
+- **WHEN** a branch's "Purpose of Visit" field has been retyped to
+  `dropdown_select` with options `["Meeting", "Delivery", "Interview"]`
+  and a visitor submits `purposeOfVisit: "Meeting"`
+- **THEN** the submission is accepted
+
+#### Scenario: Submission does not match a retyped field's configured options
+- **WHEN** a branch's "Purpose of Visit" field has been retyped to
+  `dropdown_select` with options `["Meeting", "Delivery", "Interview"]`
+  and a visitor submits `purposeOfVisit: "Sightseeing"`
+- **THEN** the submission is rejected with a validation error, mirroring
+  the existing `idProofType`/`vehicleType` unknown-option rejection
+
+#### Scenario: Submission for a field still configured as free text is unaffected
+- **WHEN** a branch's "Purpose of Visit" field remains its default `text`
+  type
+- **THEN** any non-empty string within the existing length limit is
+  accepted, exactly as before this change
+
 ### Requirement: Visitor and Primary Contact Registration Optionally Captures a Profile Photo
 The system SHALL require a profile photo file for the primary contact on
 every invitation-creation and walk-in-registration request — submitted as
@@ -210,7 +245,11 @@ storage backend.
 ### Requirement: Consent Is Mandatory and Recorded
 An invitation SHALL be created only if the primary contact has accepted
 every required consent (terms and conditions, data processing, and safety
-guidelines). The system SHALL record what was consented to and when.
+guidelines). The system SHALL record what was consented to and when. The
+consent payload SHALL be bounded to the branch's configured set of consent
+keys — a request MAY omit a non-required key but SHALL NOT introduce any key
+outside that configured set, and the number of keys accepted SHALL be capped
+to the size of the branch's configured consent set.
 
 #### Scenario: Missing consent rejected
 - **WHEN** a creation request has any required consent flag set to false or
@@ -221,6 +260,16 @@ guidelines). The system SHALL record what was consented to and when.
 - **WHEN** a creation request has every required consent flag set to true
 - **THEN** the system stores the acceptance along with the timestamp it was
   recorded
+
+#### Scenario: Unknown consent key rejected
+- **WHEN** a creation request's consent payload includes a key that is not
+  in the branch's configured consent set
+- **THEN** the system rejects the request and creates no invitation record
+
+#### Scenario: Oversized consent payload rejected
+- **WHEN** a creation request's consent payload contains more keys than the
+  branch's configured consent set defines
+- **THEN** the system rejects the request and creates no invitation record
 
 ### Requirement: Carried Items and Vehicles Are Optional Structured Declarations
 The system SHALL accept zero or more carried-item declarations (each an item
@@ -260,9 +309,17 @@ than duplicated by hand, and SHALL reject a request missing any top-level
 mandatory field or containing an invalid enum value with a 422.
 
 #### Scenario: Missing a required top-level field is rejected
-- **WHEN** a creation request omits `registrationType`, `primaryContact`,
-  `visitDetails`, or `consents` entirely
+- **WHEN** a creation request omits `registrationType`, `primaryContact`, or
+  `visitDetails` entirely
 - **THEN** the system rejects the request with a 422 validation error
+
+#### Scenario: Omitted consents defaults to empty and is still checked against the branch's requirements
+- **WHEN** a creation request omits `consents` entirely
+- **THEN** the system treats it as `consents: []` and applies the same
+  branch-configured required-consent check it applies to an explicit `[]` —
+  rejecting with a 422 if the branch's published form has any required
+  Consent Agreement field not accepted, and accepting the request if it does
+  not
 
 #### Scenario: Invalid enum value is rejected
 - **WHEN** a creation request supplies a value for `idProofType`,

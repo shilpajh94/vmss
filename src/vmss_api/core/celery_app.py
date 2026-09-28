@@ -5,7 +5,6 @@ from celery.schedules import crontab
 
 from vmss_api.core.config import settings
 
-
 notification_queue = os.getenv(
     "CELERY_NOTIFICATION_QUEUE",
     "notifications",

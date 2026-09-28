@@ -63,8 +63,19 @@ _TAGS_METADATA = [
     {
         "name": "visitor-types",
         "description": (
-            "Configurable visitor categories (with a per-category form schema) "
-            "and the approval workflow rules attached to each one."
+            "Configurable visitor categories and the approval workflow rules "
+            "attached to each one. Category-specific registration fields are "
+            "authored in `form-builder` instead of a per-category form schema."
+        ),
+    },
+    {
+        "name": "form-builder",
+        "description": (
+            "Admin-configurable registration steps and fields (branch-scoped, "
+            "tenant-default-fallback), with a draft/publish lifecycle. The "
+            "published configuration is what invitation/registration "
+            "submission and the public/staff registration form render "
+            "against."
         ),
     },
     {

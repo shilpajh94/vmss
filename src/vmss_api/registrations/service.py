@@ -14,10 +14,15 @@ async def create_walk_in_registration(
     *,
     branch_id: uuid.UUID,
     tenant: Tenant,
-    primary_contact_id_proof_content: bytes,
+    primary_contact_id_proof_content: bytes | None,
     visitor_id_proof_contents: list[bytes],
-    primary_contact_photo_content: bytes,
+    primary_contact_photo_content: bytes | None,
     visitor_photo_contents: list[bytes],
+    group_field_file_contents: dict[str, list[bytes]] | None = None,
+    primary_contact_custom_field_file_contents: dict[str, list[bytes]] | None = None,
+    visitor_custom_field_file_contents: dict[str, list[bytes]] | None = None,
+    vehicle_custom_field_file_contents: dict[str, list[bytes]] | None = None,
+    custom_field_file_contents: dict[str, list[bytes]] | None = None,
 ) -> Invitation:
     """API-13. A visitor registering on arrival, with no staff creator and no
     prior invitation. Everything else about record creation — validation,
@@ -26,9 +31,11 @@ async def create_walk_in_registration(
     `invitations.service.create_invitation` rather than reimplemented (see
     add-walkin-visitor-registration/design.md Decision 2). This feature owns
     no `Invitation` repository of its own. The mandatory primary-contact
-    profile photo (`require-primary-contact-photo`) and optional co-visitor
-    photo capture (checkin-approval-workflow-improvements) are inherited the
-    same way.
+    profile photo (`require-primary-contact-photo`), optional co-visitor
+    photo capture (checkin-approval-workflow-improvements), an admin-defined
+    repeatable group's own file upload (add-group-field-file-upload), and an
+    inline (non-grouped) admin-defined `file_upload` field
+    (add-inline-custom-field-file-upload) are inherited the same way.
     """
     return await invitations_service.create_invitation(
         tenant_db,
@@ -40,5 +47,10 @@ async def create_walk_in_registration(
         visitor_id_proof_contents=visitor_id_proof_contents,
         primary_contact_photo_content=primary_contact_photo_content,
         visitor_photo_contents=visitor_photo_contents,
+        group_field_file_contents=group_field_file_contents,
+        primary_contact_custom_field_file_contents=primary_contact_custom_field_file_contents,
+        visitor_custom_field_file_contents=visitor_custom_field_file_contents,
+        vehicle_custom_field_file_contents=vehicle_custom_field_file_contents,
+        custom_field_file_contents=custom_field_file_contents,
         source=RegistrationSource.visitor_walk_in,
     )

@@ -62,44 +62,98 @@ data from before this change, still handled the same way it always was
 index, same soft-delete-reuse posture as `ApprovalWorkflowRule`'s own
 constraint).
 
-## The ownership step (`stepOrder` 0)
+## The host-nomination step
 
-`stepOrder` 0 is **always** created, unconditionally, for every submitted
-(non-auto-approved) invitation, role-identified for the tenant's default
-host role (`Company.defaultHostRoleId`, falling back to the standard
-`reception` role) — composing with (never replacing) the category's own
-configured role-based chain:
+**Revised** (previously "the ownership step (`stepOrder` 0)" — see below for
+why the name and the numbering changed). Every submitted (non-auto-approved)
+invitation's *first* snapshotted step doubles as its host-nomination step:
+whoever acts on it may, via `delegate`, name any active user holding
+`invitations:approve` as the invitation's host — not just someone who holds
+that step's own `approverRoleId` role — because the real host is normally
+not the front-office staff who processes the step itself.
 
-- Category has no active rules → one step: `stepOrder` 0 (the ownership
-  role), and nothing else. Blanket `POST /invitations/{id}/approve` is
-  unavailable (409) for **every** newly submitted invitation now — there is
-  no longer a "no snapshotted steps" case to fall back to it.
-- Category has N active rules → N+1 steps: `stepOrder` 0 (the ownership
-  role), then the rules' own configured `stepOrder` values (1..N) unchanged.
+Which step that actually is depends on the category's own configured
+workflow, unchanged from what admin configured:
 
-The ownership step never has `escalatesAt`/`autoApprovesAt` — no rule backs
-it, so both stay null (consistent with "an unconfigured duration leaves its
-timestamp null"). It's role-identified, not host-identified, at snapshot
-time — the invitation has no resolved host yet at this point. The actual
-host is established afterward by **delegating** any step — this one or a
-later one in the workflow chain (see "Delegation" below) — doing so also
-sets the invitation's `hostId`/`hostNameOrEmail`
-(`docs/features/invitations.md`) in the same transaction, and notifies the
-newly-named host (push, and a `"You've been named host"` email —
-`invitations/tasks.py::send_host_creation_notification`, repurposed from
-firing at creation to firing on this delegation instead). Delegating a
-later step supersedes whichever host was previously resolved — the
-invitation's host always reflects the most recent delegation, at any
+- Category has no active rules → one synthetic step, `stepOrder` 0,
+  role-identified for the tenant's default host role
+  (`Company.defaultHostRoleId`, falling back to the standard `reception`
+  role) — this is the *only* case a step gets added that isn't one of the
+  category's own configured rules. Blanket `POST /invitations/{id}/approve`
+  is unavailable (409) for **every** newly submitted invitation regardless —
+  there is no "no snapshotted steps" case to fall back to it.
+- Category has N active rules (N ≥ 1) → exactly N steps: the rules' own
+  configured `stepOrder` values, unchanged — **no extra step is added ahead
+  of them**. The first one (lowest `stepOrder`) is the host-nomination step,
+  whatever role it's configured for.
+
+**Revision history**: an earlier version of this feature always inserted an
+extra unconditional `stepOrder` 0 step ahead of the category's own rules,
+role-identified for the tenant's default host role, so N active rules
+produced N+1 steps. That extra step was removed because it produced two
+back-to-back approvals by the same role whenever a category's own first
+level was already configured as the default host role (e.g. `reception`) —
+visibly, the demo VIP Visitor category configured as `[reception, host]`
+produced a 3-step invitation (`reception`, `reception`, `host`) instead of
+the 2 steps actually configured — and more generally meant the live
+approval chain never quite matched what admin configured, for *any*
+category. `InvitationApprovalStepRepository.get_first_step` (lowest
+`stepOrder` for the invitation) is what code now checks instead of a
+hardcoded `stepOrder == 0`, since the host-nomination step's `stepOrder` is
+no longer guaranteed to be `0`.
+
+`currentApprovalStep.totalSteps` (`docs/features/invitations.md`) is simply
+a count of the invitation's own snapshotted `InvitationApprovalStep` rows —
+now equal to the category's active rule count at submission time (or `1`
+when the category had none), matching `GET /approval-workflow-rules
+?visitorCategoryId=...`'s row count exactly (that endpoint's row count, or
+`1` if it returns none) rather than being one higher than it.
+
+The synthetic (no-active-rules) form of this step never has
+`escalatesAt`/`autoApprovesAt` — no rule backs it, so both stay null
+(consistent with "an unconfigured duration leaves its timestamp null"). A
+rule-backed host-nomination step gets its clock computed immediately at
+snapshot time instead of when `_activate_next_step` later activates some
+other step, since it's already the current step the moment it's created —
+see `invitations/service.py::_build_approval_steps`. It's role-identified,
+not host-identified, at snapshot time either way — the invitation has no
+resolved host yet at this point. The actual host is established afterward
+by **delegating** any step — this one or a later one in the workflow chain
+(see "Delegation" below) — doing so also sets the invitation's
+`hostId`/`hostNameOrEmail` (`docs/features/invitations.md`) in the same
+transaction, and notifies the newly-named host (push, and a `"You've been
+named host"` email — `invitations/tasks.py::send_host_creation_notification`,
+repurposed from firing at creation to firing on this delegation instead).
+Delegating a later step supersedes whichever host was previously resolved —
+the invitation's host always reflects the most recent delegation, at any
 `stepOrder`, not just this one.
 
-**Approvable directly, same as any other step**: `stepOrder` 0 has no
-special approval gate — the owning-role holder (e.g. `reception`) may
-`approve` it directly, exactly as they would `delegate` it, the same
-role-match authorization every other step uses. Approving it directly just
-means no host ever gets resolved from that step (`hostId` stays null unless
-some step is delegated); a caller who wants to name a specific host still
-uses `delegate`, not `approve`. Once delegated, the named delegate approves
-the step like any other current pending step.
+**Approvable directly, same as any other step**: the host-nomination step
+has no special approval gate — the role-holder it's configured for (e.g.
+`reception`) may `approve` it directly, exactly as they would `delegate` it,
+the same role-match authorization every other step uses. For a **multi-step**
+workflow, approving the host-nomination step directly means no host gets
+resolved from that step (`hostId` stays null unless some step is delegated);
+a caller who wants to name a specific host still uses `delegate`, not
+`approve`.
+
+**Exception — a single-step (reception-only) workflow**: when the
+host-nomination step is also the invitation's *only* step (`stepOrder`
+0/synthetic, category has no active rules — see above), there is no later
+step through which a real host could ever be delegated. Approving it
+directly therefore resolves the invitation's `hostId`/`hostNameOrEmail` to
+the approving user, exactly as `delegate` would — this is what the
+visitor's approval-confirmation email uses to show a named point of contact
+(the approving Reception user's name and phone/email) instead of falling
+back to the branch's generic front-desk contact
+(`invitations/tasks.py::_send_approval_notification`,
+`docs/features/invitations.md`'s "Approval notification email" section).
+This does **not** apply when the host-nomination step is the first of
+several configured steps — approving it directly in that case still leaves
+`hostId` unresolved, same as before; only `delegate` (of this step or a
+later one) resolves the host in a multi-step workflow. Once delegated
+(single-step or multi-step), the named delegate approves the step like any
+other current pending step.
 
 ## Push notifications on step activation
 
