@@ -692,6 +692,21 @@ async def test_create_invitation_missing_consent_rejected(
     assert response.status_code == 422
 
 
+async def test_create_invitation_omitted_consents_defaults_to_empty_list(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """`consents` is optional on the wire (defaults to `[]` when omitted),
+    but that doesn't bypass the branch's required-consent check — a branch
+    with required Consent Agreement fields still rejects an empty/omitted
+    `consents` the same way it rejects an explicit non-accepted one
+    (test_create_invitation_missing_consent_rejected)."""
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    del payload["consents"]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
 async def test_create_invitation_disguised_file_rejected(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
@@ -1064,9 +1079,7 @@ async def test_create_individual_invitation_with_visitors_rejected(
 # --- General field validation --------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "missing_field", ["registrationType", "primaryContact", "visitDetails", "consents"]
-)
+@pytest.mark.parametrize("missing_field", ["registrationType", "primaryContact", "visitDetails"])
 async def test_create_invitation_missing_required_top_level_field_rejected(
     client: AsyncClient, user: User, branch: Branch, missing_field: str
 ) -> None:

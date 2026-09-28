@@ -323,12 +323,12 @@ class InvitationCreate(CamelModel):
     # declares. Which ids must be `accepted: true`, and that no `fieldId`
     # outside the branch's configured set is present, is checked
     # dynamically in `invitations/service.py::create_invitation`, not by
-    # this schema — `consents` must still be present on every request
-    # (structurally mandatory), even as `[]`; a required-consent or
-    # unknown-field-id violation is a 422 raised by that dynamic check, not
-    # by this field being unset. `max_length` here is only a coarse, static
-    # DoS-shaped-payload guard, not the actual allow-list enforcement.
-    consents: list[ConsentValue] = Field(max_length=50)
+    # this schema — omitting `consents` entirely is treated the same as
+    # submitting `[]`; a required-consent or unknown-field-id violation is
+    # a 422 raised by that dynamic check, not by this field being unset.
+    # `max_length` here is only a coarse, static DoS-shaped-payload guard,
+    # not the actual allow-list enforcement.
+    consents: list[ConsentValue] = Field(default_factory=list, max_length=50)
     # Answers for admin-authored fields on Visit Details, Carried Items,
     # Consent Agreement, or a custom step (add-generic-custom-field-
     # support) — every step with no per-entity structure of its own, so its

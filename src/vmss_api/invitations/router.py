@@ -136,15 +136,11 @@ _INDIVIDUAL_PAYLOAD_EXAMPLE = {
     "vehicles": [],
     # Referenced by fieldId (restructure-walkin-payload-by-field-id), never
     # by key/label — one entry per field the calling branch's published
-    # Consent Agreement step currently declares. The ids below are
-    # illustrative; a real caller resolves them from the branch's
-    # currently-published form (form-builder's effective-form read), not
-    # by hardcoding them.
-    "consents": [
-        {"fieldId": "6f9b1f2a-0000-4000-8000-000000000001", "accepted": True},
-        {"fieldId": "6f9b1f2a-0000-4000-8000-000000000002", "accepted": True},
-        {"fieldId": "6f9b1f2a-0000-4000-8000-000000000003", "accepted": True},
-    ],
+    # Consent Agreement step currently declares. Left empty here rather
+    # than illustrated with fixed ids: a real caller must resolve the
+    # actual field ids from the branch's currently-published form
+    # (form-builder's effective-form read), never hardcode them.
+    "consents": [],
 }
 
 _GROUP_PAYLOAD_EXAMPLE = {
@@ -198,11 +194,7 @@ _GROUP_PAYLOAD_EXAMPLE = {
             "color": "Black",
         },
     ],
-    "consents": [
-        {"fieldId": "6f9b1f2a-0000-4000-8000-000000000001", "accepted": True},
-        {"fieldId": "6f9b1f2a-0000-4000-8000-000000000002", "accepted": True},
-        {"fieldId": "6f9b1f2a-0000-4000-8000-000000000003", "accepted": True},
-    ],
+    "consents": [],
 }
 
 # This route combines three Form/File params into one synthesized multipart
@@ -265,7 +257,10 @@ def _required_fields_summary() -> str:
     for label, model in nested:
         required = model.model_json_schema().get("required", [])
         lines.append(f"- {label}: {', '.join(required) if required else '(none required)'}")
-    lines.append("- consents: present (even as `[]`); see the branch-configurable note below.")
+    lines.append(
+        "- consents: optional, defaults to `[]` if omitted; see the "
+        "branch-configurable note below."
+    )
     lines.append(
         "Note: `email`/`phone` are each individually optional above, but at "
         "least one is required on every contact/visitor entry — enforced by "
