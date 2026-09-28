@@ -189,19 +189,20 @@ def upgrade() -> None:
                     group_field_values = :group_field_values
                 WHERE id = :id
                 """
+            ).bindparams(
+                sa.bindparam("custom_field_values", type_=sa.dialects.postgresql.JSONB),
+                sa.bindparam(
+                    "primary_contact_custom_field_values", type_=sa.dialects.postgresql.JSONB
+                ),
+                sa.bindparam("consents", type_=sa.dialects.postgresql.JSONB),
+                sa.bindparam("group_field_values", type_=sa.dialects.postgresql.JSONB),
             ),
             {
                 "id": row.id,
-                "custom_field_values": sa.type_coerce(
-                    new_custom_field_values, sa.dialects.postgresql.JSONB
-                ),
-                "primary_contact_custom_field_values": sa.type_coerce(
-                    new_primary_contact_values, sa.dialects.postgresql.JSONB
-                ),
-                "consents": sa.type_coerce(new_consents, sa.dialects.postgresql.JSONB),
-                "group_field_values": sa.type_coerce(
-                    new_group_field_values, sa.dialects.postgresql.JSONB
-                ),
+                "custom_field_values": new_custom_field_values,
+                "primary_contact_custom_field_values": new_primary_contact_values,
+                "consents": new_consents,
+                "group_field_values": new_group_field_values,
             },
         )
 
@@ -228,12 +229,12 @@ def upgrade() -> None:
                     SET custom_field_values = :custom_field_values
                     WHERE id = :id
                     """
+                ).bindparams(
+                    sa.bindparam("custom_field_values", type_=sa.dialects.postgresql.JSONB),
                 ),
                 {
                     "id": row.id,
-                    "custom_field_values": sa.type_coerce(
-                        new_values, sa.dialects.postgresql.JSONB
-                    ),
+                    "custom_field_values": new_values,
                 },
             )
 
