@@ -21,6 +21,7 @@ from vmss_api.auth.repository import RoleRepository
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.security import hash_password
+from vmss_api.form_builder.defaults import _stable_id as _form_builder_stable_id
 from vmss_api.invitations import tasks
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
 from vmss_api.invitations.repository import InvitationRepository
@@ -84,6 +85,43 @@ def _jpeg_bytes() -> bytes:
     return buffer.getvalue()
 
 
+@pytest_asyncio.fixture(autouse=True)
+def _reset_live_consent_field_ids():
+    """See `invitations/tests.py`'s fixture of the same name — resets the
+    module-level cache `_record_live_consent_field_ids` populates before
+    every test."""
+    global _live_consent_field_ids
+    _live_consent_field_ids = None
+    yield
+
+
+_live_consent_field_ids: dict[str, str] | None = None
+
+
+def _record_live_consent_field_ids(steps: list[dict]) -> None:
+    """See `invitations/tests.py::_record_live_consent_field_ids` — called
+    by admin-side setup helpers right after publishing, since that seeds
+    the branch's default Consent Agreement fields as real (random-id)
+    database rows, no longer matching `_default_consent_field_id`'s
+    deterministic fallback (restructure-walkin-payload-by-field-id)."""
+    global _live_consent_field_ids
+    step = next((s for s in steps if s["key"] == "consent_agreement"), None)
+    if step is None:
+        return
+    _live_consent_field_ids = {f["key"]: f["id"] for f in step["fields"]}
+
+
+def _default_consent_field_id(key: str) -> str:
+    """See `invitations/tests.py::_default_consent_field_id` — the
+    branch's own real id if a test has published anything for it
+    (`_live_consent_field_ids`), otherwise the deterministic default-form
+    id, since walk-in registration falls back to the same unpublished
+    `DEFAULT_EFFECTIVE_FORM` (restructure-walkin-payload-by-field-id)."""
+    if _live_consent_field_ids is not None and key in _live_consent_field_ids:
+        return _live_consent_field_ids[key]
+    return str(_form_builder_stable_id("field", "consent_agreement", key))
+
+
 def _individual_payload() -> dict:
     return {
         "registrationType": "individual",
@@ -105,13 +143,13 @@ def _individual_payload() -> dict:
         },
         "carriedItems": {"items": []},
         "vehicles": [],
-        # Keys are raw (never camelCased) — see invitations/schemas.py's
-        # `InvitationCreate.consents` docstring.
-        "consents": {
-            "terms_accepted": True,
-            "data_processing_accepted": True,
-            "safety_guidelines_accepted": True,
-        },
+        # Referenced by fieldId, never key/label — see
+        # invitations/schemas.py's `InvitationCreate.consents` docstring.
+        "consents": [
+            {"fieldId": _default_consent_field_id("terms_accepted"), "accepted": True},
+            {"fieldId": _default_consent_field_id("data_processing_accepted"), "accepted": True},
+            {"fieldId": _default_consent_field_id("safety_guidelines_accepted"), "accepted": True},
+        ],
     }
 
 
@@ -188,11 +226,14 @@ async def _create_and_publish_custom_field(
     field_type: str = "text",
     is_required: bool = False,
     help_text: str | None = None,
-) -> None:
+) -> str:
     """Admin-side setup shared by the custom-field tests below — same
     pattern as `invitations/tests.py::_create_and_publish_custom_field`,
     duplicated here since walk-in registration has no staff bearer token of
-    its own to reuse an imported helper's auth with."""
+    its own to reuse an imported helper's auth with. Returns the created
+    field's id (restructure-walkin-payload-by-field-id) — the caller must
+    reference it, never its `key`, in any `customFields`/`consents`/
+    `groups` entry it submits."""
     headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
     steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
     assert steps_response.status_code == 200, steps_response.text
@@ -207,9 +248,12 @@ async def _create_and_publish_custom_field(
         f"/api/v1/form-builder/steps/{step['id']}/fields", json=body, headers=headers
     )
     assert create_response.status_code == 201, create_response.text
+    field_id = create_response.json()["data"]["id"]
 
     publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
     assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+    return field_id
 
 
 # --- API-13: happy paths ------------------------------------------------------
@@ -825,17 +869,17 @@ async def test_walk_in_registration_captures_invitation_level_custom_field(
     db_session: AsyncSession,
 ) -> None:
     admin_token = await _login(client, user.email)
-    await _create_and_publish_custom_field(
+    field_id = await _create_and_publish_custom_field(
         client, admin_token, branch, step_key="visit_details", key="cost_center"
     )
 
     payload = _individual_payload()
-    payload["customFieldValues"] = {"cost_center": "CC-42"}
+    payload["customFields"] = [{"fieldId": field_id, "value": "CC-42"}]
     data = await _create_walk_in_success(client, registration_device_raw_key, payload=payload)
 
     invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
     assert invitation is not None
-    assert invitation.custom_field_values == {"cost_center": "CC-42"}
+    assert invitation.custom_field_values == {field_id: "CC-42"}
 
 
 async def test_walk_in_registration_captures_primary_contact_custom_field(
@@ -846,24 +890,27 @@ async def test_walk_in_registration_captures_primary_contact_custom_field(
     db_session: AsyncSession,
 ) -> None:
     admin_token = await _login(client, user.email)
-    await _create_and_publish_custom_field(
+    field_id = await _create_and_publish_custom_field(
         client, admin_token, branch, step_key="visitor_info", key="employee_id"
     )
 
     payload = _individual_payload()
-    payload["primaryContact"]["customFieldValues"] = {"employee_id": "E-1001"}
+    # The primary contact's Visitor Info-step answers are sourced from the
+    # invitation-level `customFields` array — see
+    # `InvitationPrimaryContactCreate`'s docstring in `invitations/schemas.py`.
+    payload["customFields"] = [{"fieldId": field_id, "value": "E-1001"}]
     data = await _create_walk_in_success(client, registration_device_raw_key, payload=payload)
 
     invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
     assert invitation is not None
-    assert invitation.primary_contact_custom_field_values == {"employee_id": "E-1001"}
+    assert invitation.primary_contact_custom_field_values == {field_id: "E-1001"}
 
 
-async def test_walk_in_registration_custom_field_unknown_key_rejected(
+async def test_walk_in_registration_custom_field_unresolvable_id_rejected(
     client: AsyncClient, registration_device_raw_key: str
 ) -> None:
     payload = _individual_payload()
-    payload["customFieldValues"] = {"not_a_configured_field": "x"}
+    payload["customFields"] = [{"fieldId": str(uuid.uuid4()), "value": "x"}]
     response = await _create_walk_in(client, registration_device_raw_key, payload=payload)
     assert response.status_code == 422
 
@@ -1035,6 +1082,7 @@ async def _update_and_publish_group_range(
 
     publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
     assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
 
 
 async def test_walk_in_vehicle_count_below_configured_minimum_rejected(
@@ -1095,12 +1143,15 @@ async def test_walk_in_group_instance_count_mismatch_is_logged_with_enforced_bra
 
 async def _create_and_publish_additional_visitors_group(
     client: AsyncClient, admin_token: str, branch: Branch
-) -> None:
+) -> tuple[str, str, str]:
     """Same pattern as `invitations/tests.py::_create_and_publish_additional_visitors_group`,
     duplicated here for the reason `_create_and_publish_custom_field` above
     already documents: a repeatable "Additional Visitors" group on Visitor
     Info with a required `name` field and its own `file_upload`-typed field
-    (`id_upload`).
+    (`id_upload`). Returns `(group_id, name_field_id, id_upload_field_id)`
+    (restructure-walkin-payload-by-field-id) — the caller must reference
+    these, never the group's/fields' `key`, in `payload.groups` and the
+    `groupFieldFiles[...]` multipart part name.
     """
     headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
     steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
@@ -1113,7 +1164,9 @@ async def _create_and_publish_additional_visitors_group(
         headers=headers,
     )
     assert group_response.status_code == 201, group_response.text
+    group_id = group_response.json()["data"]["id"]
 
+    field_ids: dict[str, str] = {}
     for field_key, field_type, is_required in (
         ("name", "text", True),
         ("id_upload", "file_upload", False),
@@ -1125,14 +1178,17 @@ async def _create_and_publish_additional_visitors_group(
                 "label": field_key.replace("_", " ").title(),
                 "fieldType": field_type,
                 "isRequired": is_required,
-                "groupId": group_response.json()["data"]["id"],
+                "groupId": group_id,
             },
             headers=headers,
         )
         assert field_response.status_code == 201, field_response.text
+        field_ids[field_key] = field_response.json()["data"]["id"]
 
     publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
     assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+    return group_id, field_ids["name"], field_ids["id_upload"]
 
 
 async def test_walk_in_registration_group_file_upload_stored_and_surfaced_on_read(
@@ -1146,18 +1202,30 @@ async def test_walk_in_registration_group_file_upload_stored_and_surfaced_on_rea
     -group contract but never parsed or forwarded the multipart part.
     """
     admin_token = await _login(client, user.email)
-    await _create_and_publish_additional_visitors_group(client, admin_token, branch)
+    (
+        group_id,
+        name_field_id,
+        _id_upload_field_id,
+    ) = await _create_and_publish_additional_visitors_group(client, admin_token, branch)
 
     payload = _individual_payload()
-    payload["groupValues"] = {"additional_visitors": [{"name": "Extra One"}, {"name": "Extra Two"}]}
+    payload["groups"] = [
+        {
+            "groupId": group_id,
+            "instances": [
+                [{"fieldId": name_field_id, "value": "Extra One"}],
+                [{"fieldId": name_field_id, "value": "Extra Two"}],
+            ],
+        }
+    ]
     response = await client.post(
         "/api/v1/registrations/walk-in",
         data={"payload": json.dumps(payload)},
         files=[
             ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
             ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
-            ("groupFieldFiles[additional_visitors]", ("extra1.jpg", _jpeg_bytes(), "image/jpeg")),
-            ("groupFieldFiles[additional_visitors]", ("extra2.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"groupFieldFiles[{group_id}]", ("extra1.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"groupFieldFiles[{group_id}]", ("extra2.jpg", _jpeg_bytes(), "image/jpeg")),
         ],
         headers={"X-Device-Key": registration_device_raw_key},
     )

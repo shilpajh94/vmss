@@ -905,9 +905,11 @@ def _step_to_snapshot(
 ) -> dict[str, Any]:
     sorted_fields = sorted(fields, key=lambda x: x.order_index)
     field_keys_by_group_id: dict[uuid.UUID, list[str]] = {g.id: [] for g in groups}
+    field_ids_by_group_id: dict[uuid.UUID, list[str]] = {g.id: [] for g in groups}
     for f in sorted_fields:
         if f.group_id in field_keys_by_group_id:
             field_keys_by_group_id[f.group_id].append(f.key)
+            field_ids_by_group_id[f.group_id].append(str(f.id))
     return {
         "id": str(step.id),
         "branchId": str(step.branch_id) if step.branch_id else None,
@@ -932,7 +934,11 @@ def _step_to_snapshot(
                 "maxInstances": g.max_instances,
                 "visibilityCondition": g.visibility_condition,
                 "orderIndex": g.order_index,
+                # Kept for any lingering key-based reader; group membership
+                # is resolved by `fieldIds` going forward
+                # (restructure-walkin-payload-by-field-id).
                 "fieldKeys": field_keys_by_group_id.get(g.id, []),
+                "fieldIds": field_ids_by_group_id.get(g.id, []),
             }
             for g in sorted(groups, key=lambda x: x.order_index)
         ],
@@ -990,9 +996,13 @@ async def publish(
     for step_snapshot in snapshot:
         step_snapshot["fields"] = [f for f in step_snapshot["fields"] if f["isActive"]]
         active_field_keys = {f["key"] for f in step_snapshot["fields"]}
+        active_field_ids = {f["id"] for f in step_snapshot["fields"]}
         for group_snapshot in step_snapshot["groups"]:
             group_snapshot["fieldKeys"] = [
                 k for k in group_snapshot["fieldKeys"] if k in active_field_keys
+            ]
+            group_snapshot["fieldIds"] = [
+                i for i in group_snapshot["fieldIds"] if i in active_field_ids
             ]
 
     version_repo = FormConfigVersionRepository(tenant_db)

@@ -55,6 +55,76 @@ class ContactMethod(StrEnum):
     sms = "sms"
 
 
+# --- Admin-authored answers, joined by field/group id — never by key -------
+# (restructure-walkin-payload-by-field-id): a `FormField`/`FormFieldGroup`'s
+# `key` is authored once and, as implemented, never renamed after creation —
+# but `id` is the identifier this system actually guarantees stable, so the
+# submission/response wire contract is built around it instead. See
+# proposal.md's "Why" and design.md Decisions 1-2.
+
+
+class CustomFieldValue(CamelModel):
+    field_id: uuid.UUID
+    value: Any = None
+
+
+class ConsentValue(CamelModel):
+    field_id: uuid.UUID
+    accepted: bool
+
+
+class FieldGroupSubmit(CamelModel):
+    group_id: uuid.UUID
+    instances: list[list[CustomFieldValue]] = Field(default_factory=list, max_length=50)
+
+
+class FieldGroupValuesOut(CamelModel):
+    """Response-side counterpart of `FieldGroupSubmit` — one repeatable
+    group's submitted instances, each a list of `{fieldId, value}` pairs."""
+
+    group_id: uuid.UUID
+    instances: list[list[CustomFieldValue]] = Field(default_factory=list)
+
+
+def _custom_fields_to_dict(items: list[CustomFieldValue], *, scope: str) -> dict[str, Any]:
+    """Converts the wire's `list[{fieldId, value}]` shape into the
+    `{str(fieldId): value}` map every internal validation/persistence
+    helper (`form_builder/validation.py`, `invitations/service.py`) works
+    with — see design.md Decision 3.2. Rejects a duplicate `fieldId` within
+    the same scope structurally, before any branch-configuration lookup.
+    """
+    result: dict[str, Any] = {}
+    for item in items:
+        key = str(item.field_id)
+        if key in result:
+            raise ValueError(f"Duplicate fieldId '{key}' in {scope}")
+        result[key] = item.value
+    return result
+
+
+def _consents_to_dict(items: list[ConsentValue]) -> dict[str, bool]:
+    result: dict[str, bool] = {}
+    for item in items:
+        key = str(item.field_id)
+        if key in result:
+            raise ValueError(f"Duplicate fieldId '{key}' in consents")
+        result[key] = item.accepted
+    return result
+
+
+def _groups_to_dict(items: list[FieldGroupSubmit]) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        key = str(item.group_id)
+        if key in result:
+            raise ValueError(f"Duplicate groupId '{key}' in groups")
+        result[key] = [
+            _custom_fields_to_dict(instance, scope=f"group '{key}' instance")
+            for instance in item.instances
+        ]
+    return result
+
+
 def _require_reachable_contact(email: str | None, phone: str | None) -> None:
     """Shared rule for every visitor entry (spec.md "Each Visitor Has at
     Least One Reachable Contact and an ID Proof"): at least one of
@@ -98,17 +168,22 @@ class VisitorSubmit(CamelModel):
     # this schema, mirroring `CarriedItemsSubmit.items` below.
     id_proof_type: str | None = Field(default=None, max_length=100)
     # This visitor's own answers for any admin-authored Visitor Info field
-    # (add-generic-custom-field-support), keyed by field key — validated
-    # dynamically against the effective form in
+    # (add-generic-custom-field-support), referenced by field id
+    # (restructure-walkin-payload-by-field-id) — validated dynamically
+    # against the effective form in
     # `invitations/service.py::create_invitation`, not by this schema.
-    custom_field_values: dict[Annotated[str, Field(max_length=100)], Any] = Field(
-        default_factory=dict, max_length=50
-    )
+    custom_fields: list[CustomFieldValue] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="after")
     def _check_contact(self) -> Self:
         _require_reachable_contact(self.email, self.phone)
+        _custom_fields_to_dict(self.custom_fields, scope="a visitor's customFields")
         return self
+
+    @property
+    def custom_field_values(self) -> dict[str, Any]:
+        """`{str(fieldId): value}` — see `_custom_fields_to_dict`."""
+        return _custom_fields_to_dict(self.custom_fields, scope="a visitor's customFields")
 
 
 class VisitDetailsSubmit(CamelModel):
@@ -169,11 +244,19 @@ class VehicleSubmit(CamelModel):
     color: str | None = Field(default=None, max_length=50)
     # This vehicle's own answers for any admin-authored Vehicle Info field
     # beyond the locked license-plate field (add-generic-custom-field-
-    # support), keyed by field key — validated dynamically against the
-    # effective form in `invitations/service.py::create_invitation`.
-    custom_field_values: dict[Annotated[str, Field(max_length=100)], Any] = Field(
-        default_factory=dict, max_length=50
-    )
+    # support), referenced by field id (restructure-walkin-payload-by-
+    # field-id) — validated dynamically against the effective form in
+    # `invitations/service.py::create_invitation`.
+    custom_fields: list[CustomFieldValue] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def _check_custom_fields(self) -> Self:
+        _custom_fields_to_dict(self.custom_fields, scope="a vehicle's customFields")
+        return self
+
+    @property
+    def custom_field_values(self) -> dict[str, Any]:
+        return _custom_fields_to_dict(self.custom_fields, scope="a vehicle's customFields")
 
 
 # --- API-09: employee creates a fully completed invitation in one call -----
@@ -186,15 +269,21 @@ class InvitationPrimaryContactCreate(CamelModel):
     preferred_contact_method: ContactMethod = ContactMethod.email
     # Optional (form-builder) — see `VisitorSubmit.id_proof_type`.
     id_proof_type: str | None = Field(default=None, max_length=100)
-    # See `VisitorSubmit.custom_field_values` — the primary contact's own
-    # answers for any admin-authored Visitor Info field.
-    custom_field_values: dict[Annotated[str, Field(max_length=100)], Any] = Field(
-        default_factory=dict, max_length=50
-    )
+    # Accepted but ignored: the primary contact's Visitor Info-step answers
+    # are sourced from the invitation-level `customFields` array instead —
+    # there's exactly one primary contact per invitation, so a flat
+    # field-id-keyed map unambiguously recovers "the primary contact's
+    # answers" without a separate nested array (see
+    # `InvitationCreate.custom_field_values`/
+    # `service.py::create_invitation`). This field is kept only so an
+    # already-deployed client that still sends it doesn't get a hard
+    # validation error.
+    custom_fields: list[CustomFieldValue] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="after")
     def _check_contact(self) -> Self:
         _require_contact_for_method(self.email, self.phone, self.preferred_contact_method)
+        _custom_fields_to_dict(self.custom_fields, scope="the primary contact's customFields")
         return self
 
 
@@ -228,40 +317,35 @@ class InvitationCreate(CamelModel):
     visit_details: VisitDetailsSubmit
     carried_items: CarriedItemsSubmit = Field(default_factory=CarriedItemsSubmit)
     vehicles: list[VehicleSubmit] = Field(default_factory=list)
-    # Dict-of-consent-key -> accepted, keyed by whatever the calling
-    # branch's published Consent Agreement step currently declares
-    # (form-builder) — keys are raw, never camelCased (they're admin-defined
-    # data, not a schema field name), matching `carriedItems.items`'s same
-    # posture. Which keys must be `true`, and that no key outside the
-    # branch's configured set is present, is checked dynamically in
-    # `invitations/service.py::create_invitation`, not by this schema —
-    # `consents` must still be present on every request (structurally
-    # mandatory), even as `{}`; a required-consent or unknown-key violation
-    # is a 422 raised by that dynamic check, not by this field being unset.
-    # `max_length` here is only a coarse, static DoS-shaped-payload guard
-    # (mirroring `carriedItems.items`'s `max_length=50`/`max_length=100`),
+    # Referenced by the consent field's id, never by key/label
+    # (restructure-walkin-payload-by-field-id) — one entry per Consent
+    # Agreement field the calling branch's published form currently
+    # declares. Which ids must be `accepted: true`, and that no `fieldId`
+    # outside the branch's configured set is present, is checked
+    # dynamically in `invitations/service.py::create_invitation`, not by
+    # this schema — omitting `consents` entirely is treated the same as
+    # submitting `[]`; a required-consent or unknown-field-id violation is
+    # a 422 raised by that dynamic check, not by this field being unset.
+    # `max_length` here is only a coarse, static DoS-shaped-payload guard,
     # not the actual allow-list enforcement.
-    consents: dict[Annotated[str, Field(max_length=100)], bool] = Field(max_length=50)
+    consents: list[ConsentValue] = Field(default_factory=list, max_length=50)
     # Answers for admin-authored fields on Visit Details, Carried Items,
     # Consent Agreement, or a custom step (add-generic-custom-field-
     # support) — every step with no per-entity structure of its own, so its
-    # custom fields are answered once per invitation. Keyed by field key,
-    # same posture as `consents`/`carriedItems.items`: validated dynamically
-    # against the effective form in
+    # custom fields are answered once per invitation. Referenced by field
+    # id (restructure-walkin-payload-by-field-id), same posture as
+    # `consents`: validated dynamically against the effective form in
     # `invitations/service.py::create_invitation`, not by this schema.
-    custom_field_values: dict[Annotated[str, Field(max_length=100)], Any] = Field(
-        default_factory=dict, max_length=50
-    )
+    custom_fields: list[CustomFieldValue] = Field(default_factory=list, max_length=50)
     # Per-instance answers for any admin-defined repeatable field group on a
     # step other than Visitor Info/Vehicle Info (add-repeatable-field-
-    # groups) — keyed by group key, an ordered list of that group's answer
-    # maps, one per submitted instance. Validated dynamically against the
-    # effective form's group definitions (min/max instance count, and each
-    # instance's own field values) in
+    # groups) — referenced by group id, an ordered list of that group's
+    # answer maps, one per submitted instance, each map itself referenced
+    # by field id (restructure-walkin-payload-by-field-id). Validated
+    # dynamically against the effective form's group definitions (min/max
+    # instance count, and each instance's own field values) in
     # `invitations/service.py::create_invitation`, not by this schema.
-    group_values: dict[Annotated[str, Field(max_length=100)], list[dict[str, Any]]] = Field(
-        default_factory=dict, max_length=20
-    )
+    groups: list[FieldGroupSubmit] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def _check_visitor_list_matches_registration_type(self) -> Self:
@@ -269,26 +353,41 @@ class InvitationCreate(CamelModel):
         has moved multi-visitor collection to an admin-defined repeatable
         field group (the built-in "Visitors" system group is no longer
         admin-configurable — see `form_builder/defaults.py`'s "visitors"
-        group) submits those visitors' answers through `groupValues`
+        group) submits those visitors' answers through `groups`
         instead of the legacy `visitors` array, so a non-empty group there
-        satisfies "at least one visitor" just as well. Which group key
-        actually represents visitor data is branch-specific form
-        configuration this schema can't see, so this is deliberately a
-        coarse, branch-agnostic proxy — any non-empty `groupValues` entry
-        counts; the effective form's own group definitions still validate
-        instance counts/required fields dynamically
+        satisfies "at least one visitor" just as well. Which group actually
+        represents visitor data is branch-specific form configuration this
+        schema can't see, so this is deliberately a coarse, branch-agnostic
+        proxy — any group with a non-empty `instances` list counts; the
+        effective form's own group definitions still validate instance
+        counts/required fields dynamically
         (`invitations/service.py::create_invitation`).
         """
         if self.registration_type == RegistrationType.individual and self.visitors:
             raise ValueError("An individual registration must not list additional visitors")
-        has_group_visitors = any(instances for instances in self.group_values.values())
+        has_group_visitors = any(group.instances for group in self.groups)
         if (
             self.registration_type == RegistrationType.group
             and not self.visitors
             and not has_group_visitors
         ):
             raise ValueError("A group registration must list at least one visitor")
+        _consents_to_dict(self.consents)
+        _custom_fields_to_dict(self.custom_fields, scope="the invitation's customFields")
+        _groups_to_dict(self.groups)
         return self
+
+    @property
+    def consents_dict(self) -> dict[str, bool]:
+        return _consents_to_dict(self.consents)
+
+    @property
+    def custom_field_values(self) -> dict[str, Any]:
+        return _custom_fields_to_dict(self.custom_fields, scope="the invitation's customFields")
+
+    @property
+    def group_values(self) -> dict[str, list[dict[str, Any]]]:
+        return _groups_to_dict(self.groups)
 
 
 class InvitationOut(CamelModel):
@@ -358,7 +457,7 @@ class InvitationVisitorOut(CamelModel):
     # at all is now branch-configurable.
     id_proof_type: str | None
     photo_url: str | None = None
-    custom_field_values: dict[str, Any]
+    custom_fields: list[CustomFieldValue]
 
 
 class InvitationVisitorDetailOut(CamelModel):
@@ -376,7 +475,7 @@ class InvitationVisitorDetailOut(CamelModel):
     id_proof_type: str | None
     id_proof_url: str | None = None
     photo_url: str | None = None
-    custom_field_values: dict[str, Any]
+    custom_fields: list[CustomFieldValue]
 
 
 class InvitationBranchOut(CamelModel):
@@ -405,7 +504,7 @@ class InvitationVehicleOut(CamelModel):
     license_plate: str
     make_model: str | None
     color: str | None
-    custom_field_values: dict[str, Any]
+    custom_fields: list[CustomFieldValue]
 
 
 class InvitationCheckInOut(CamelModel):
@@ -435,7 +534,7 @@ class InvitationCheckInOut(CamelModel):
     current_approval_step: CurrentApprovalStepOut | None = None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
-    primary_contact_custom_field_values: dict[str, Any]
+    primary_contact_custom_fields: list[CustomFieldValue]
     purpose_of_visit: str | None
     host_name_or_email: str | None
     preferred_visit_date: date | None
@@ -445,8 +544,8 @@ class InvitationCheckInOut(CamelModel):
     additional_notes: str | None
     carried_items: list[str]
     carried_items_description: str | None
-    custom_field_values: dict[str, Any]
-    group_field_values: dict[str, list[dict[str, Any]]]
+    custom_fields: list[CustomFieldValue]
+    groups: list[FieldGroupValuesOut]
     visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 
@@ -466,7 +565,7 @@ class InvitationTrackingOut(CamelModel):
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
-    primary_contact_custom_field_values: dict[str, Any]
+    primary_contact_custom_fields: list[CustomFieldValue]
     purpose_of_visit: str | None
     host_name_or_email: str | None
     poc_user_id: uuid.UUID | None = None
@@ -479,8 +578,8 @@ class InvitationTrackingOut(CamelModel):
     additional_notes: str | None
     carried_items: list[str]
     carried_items_description: str | None
-    custom_field_values: dict[str, Any]
-    group_field_values: dict[str, list[dict[str, Any]]]
+    custom_fields: list[CustomFieldValue]
+    groups: list[FieldGroupValuesOut]
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -529,7 +628,7 @@ class InvitationDetailOut(CamelModel):
     primary_contact_photo_url: str | None = None
     primary_contact_id_proof_type: str | None = None
     primary_contact_id_proof_url: str | None = None
-    primary_contact_custom_field_values: dict[str, Any]
+    primary_contact_custom_fields: list[CustomFieldValue]
     purpose_of_visit: str | None
     purpose_id: uuid.UUID | None = None
     host_name_or_email: str | None
@@ -550,10 +649,10 @@ class InvitationDetailOut(CamelModel):
     additional_notes: str | None
     carried_items: list[str]
     carried_items_description: str | None
-    consents: dict[str, bool]
+    consents: list[ConsentValue]
     consent_recorded_at: datetime | None = None
-    custom_field_values: dict[str, Any]
-    group_field_values: dict[str, list[dict[str, Any]]]
+    custom_fields: list[CustomFieldValue]
+    groups: list[FieldGroupValuesOut]
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -670,7 +769,7 @@ class InvitationQrCheckInOut(CamelModel):
     primary_contact_id_proof_type: str | None = None
     primary_contact_email: str | None
     primary_contact_phone: str | None
-    primary_contact_custom_field_values: dict[str, Any]
+    primary_contact_custom_fields: list[CustomFieldValue]
     host_id: uuid.UUID | None = None
     host_name_or_email: str | None
     poc_user_id: uuid.UUID | None = None
@@ -684,8 +783,8 @@ class InvitationQrCheckInOut(CamelModel):
     additional_notes: str | None
     carried_items: list[str]
     carried_items_description: str | None
-    custom_field_values: dict[str, Any]
-    group_field_values: dict[str, list[dict[str, Any]]]
+    custom_fields: list[CustomFieldValue]
+    groups: list[FieldGroupValuesOut]
     submitted_at: datetime | None
     approved_at: datetime | None
     checked_in_at: datetime | None

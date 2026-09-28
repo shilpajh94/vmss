@@ -115,6 +115,19 @@ reception, after triage) knows the actual answer. `purposeOfVisit` and
 `expectedDuration` remain required free-text fields; only `departmentToVisit`
 changed.
 
+### Admin-authored answers are referenced by field/group id, never by key (`restructure-walkin-payload-by-field-id`, **BREAKING**)
+
+`consents`, `customFields` (at every scope), and `groups` all reference a
+`FormField`/`FormFieldGroup` by its `id` (a UUID), never by its `key`/label
+— see "Consents", "Admin-defined custom fields", and "Admin-defined
+repeatable groups" below for each shape. A caller resolves the current
+`fieldId`/`groupId` values from the branch's currently published form
+(`GET /form-builder/effective`), the same read it already uses to render
+the form and its labels/options — never hardcoded. This applies uniformly
+whether the caller submitted the old key-keyed shape or not; there is no
+transitional dual-accept — see "Finding the payload shape in Swagger" for
+how to discover the exact current request/response shape.
+
 ### ID proof type and vehicle type are branch-configured, not fixed (`make-id-proof-and-vehicle-type-configurable`, **BREAKING**)
 
 `idProofType` (`primaryContact`/each `visitors[]` entry) and `vehicleType`
@@ -122,8 +135,8 @@ changed.
 a valid value is whatever the calling branch's currently published Form
 Builder "ID Proof Type"/"Vehicle Type" options declare
 (`GET /form-builder/effective`'s Visitor Info/Vehicle Info steps), the same
-"branch's currently configured options" contract `carriedItems.items` and
-`consents` already use. Submitting a value outside the branch's current
+"branch's currently configured options" contract `carriedItems.items` uses.
+Submitting a value outside the branch's current
 options is rejected with `422`. A branch that has never customized either
 field accepts the original four ID proof types
 (`Aadhaar Card`/`Passport`/`Driving License`/`Other`) and three vehicle
@@ -155,18 +168,21 @@ An admin can also define a **repeatable field group** on any other step
 on another field's value, through Form Builder — see
 `docs/features/form_builder.md` "Field groups"/"Conditional groups".
 `POST /invitations` (and `POST /registrations/walk-in`) accepts that
-group's answers as an optional top-level `groupValues: Record<string,
-object[]>` map, keyed by group key: each entry is an ordered array of
-that group's per-instance answer maps, one per instance the visitor
-filled in. A submission naming a group key the branch's active form
-doesn't define, or supplying more instances than that group's currently
-published `maxInstances`, is rejected with `422` before any invitation is
-created — the same "validate everything, then persist" ordering ID-proof
-file validation already uses, so one invalid instance never leaves a
-partially-created invitation behind. Every response that already returns
-`customFieldValues` (`GET /invitations/{id}`, the tracking lookup, the
-canonical check-in response, and the QR check-in/check-out response) now
-also returns `groupFieldValues` in the same shape, alongside it.
+group's answers as an optional top-level `groups: {groupId, instances}[]`
+array, each entry's `groupId` referencing the group's live id (never its
+key/label) and `instances` an ordered array of that group's per-instance
+answer sets — each instance itself a `customFields`-shaped
+`{fieldId, value}[]` array, one instance per visitor-filled repetition. A
+submission naming a `groupId` the branch's active form doesn't define (or
+that belongs to a different branch/tenant), or supplying more instances
+than that group's currently published `maxInstances`, is rejected with
+`422` before any invitation is created — the same "validate everything,
+then persist" ordering ID-proof file validation already uses, so one
+invalid instance never leaves a partially-created invitation behind. Every
+response that already returns `customFields` (`GET /invitations/{id}`, the
+tracking lookup, the canonical check-in response, and the QR check-in/
+check-out response) now also returns `groups` in the same
+`{groupId, instances}[]` shape, alongside it.
 
 **When a group is hidden** by its `visibilityCondition` (evaluated against
 the same request's own submitted values), the request is accepted even if
@@ -181,22 +197,23 @@ that field's own type/options/length rules.
 
 If a repeatable field group has its own `file_upload`-typed field (Form
 Builder field type `file_upload`), that field's answer can only come from a
-multipart file — never a JSON value in `groupValues`. Only a group's
+multipart file — never a JSON value in `groups`. Only a group's
 **first** `file_upload` field is read; a group with more than one is
 supported for definition but only the first is ever populated this way.
 
 The client sends one multipart **list** part named
-`groupFieldFiles[<groupKey>]`, **order-matched** to that same group's
-`payload.groupValues[<groupKey>]` instances — the same "list, order-matched
+`groupFieldFiles[<groupId>]`, **order-matched** to that same group's
+`payload.groups` entry's `instances` — the same "list, order-matched
 to instances" convention `visitorIdProofFiles`/`visitor_id_proof_files`
 already uses for the fixed `visitors` list. There is no `instanceIndex` or
-field key encoded in the part name: file *n* in the list pairs with
-instance *n* in `groupValues[<groupKey>]`.
+field id encoded in the part name: file *n* in the list pairs with
+instance *n* of the `groups` entry whose `groupId` matches `<groupId>`.
 
-- The instance dict must **omit** that field (or send `null`) in
-  `groupValues` — supplying any other value for it is rejected with `422`
-  (`"'<fieldKey>' in '<groupName>' instance <n> must be uploaded as a file,
-  not supplied as a value"`), never silently overwritten.
+- The instance's `customFields` array must **omit** that field id (or
+  send `null` for its value) — supplying any other value for it is
+  rejected with `422` (`"'<fieldId>' in '<groupName>' instance <n> must
+  be uploaded as a file, not supplied as a value"`), never silently
+  overwritten.
 - If the field is required (and the group is visible), every instance must
   have a matching file — a count mismatch is rejected with `422`
   (`"Field group '<groupName>' requires an uploaded file for every
@@ -205,8 +222,9 @@ instance *n* in `groupValues[<groupKey>]`.
 - Accepted files are validated the same way a top-level ID-proof upload is
   (`_validate_id_proof`), stored via the same `core/storage.py::save`
   interface under the `invitations/group-files` category, and the
-  resulting storage key is written back into that instance's field in the
-  persisted `groupFieldValues` — never a client-supplied value.
+  resulting storage key is written back into that instance's field
+  (keyed by `fieldId`) in the persisted `groups` — never a client-supplied
+  value.
 
 `POST /registrations/walk-in` accepts the identical `groupFieldFiles[...]`
 contract — see `docs/features/registrations.md`.
@@ -217,24 +235,39 @@ An admin-authored `file_upload`-typed field that is *not* assigned to a
 repeatable field group (e.g. an "additional document" field added directly
 on Visitor Info, not one of its groups) — the standalone counterpart of the
 repeatable-group case above. Unlike a group (whose multipart part is keyed
-by group key alone, so only the group's *first* `file_upload` field is
-read), each of these fields has its own multipart part keyed by field key,
+by group id alone, so only the group's *first* `file_upload` field is
+read), each of these fields has its own multipart part keyed by field id,
 so every `file_upload` field at a scope is supported, not just one.
 
 Four scopes, one multipart convention each:
 
 | Scope | Multipart part | Shape |
 |---|---|---|
-| Primary contact (Visitor Info) | `primaryContactCustomFieldFiles[<fieldKey>]` | At most one file. |
-| Each co-visitor (Visitor Info) | `visitorCustomFieldFiles[<fieldKey>]` | Order-matched list, same convention as `visitor_id_proof_files`. |
-| Each vehicle (Vehicle Info) | `vehicleCustomFieldFiles[<fieldKey>]` | Order-matched list, same convention as the visitor case. |
-| Invitation-level (Visit Details/Carried Items/a custom step) | `customFieldFiles[<fieldKey>]` | At most one file. |
+| Primary contact (Visitor Info) | `primaryContactCustomFieldFiles[<fieldId>]` | At most one file. |
+| Each co-visitor (Visitor Info) | `visitorCustomFieldFiles[<fieldId>]` | Order-matched list, same convention as `visitor_id_proof_files`. |
+| Each vehicle (Vehicle Info) | `vehicleCustomFieldFiles[<fieldId>]` | Order-matched list, same convention as the visitor case. |
+| Invitation-level (Visit Details/Carried Items/a custom step) | `customFieldFiles[<fieldId>]` | At most one file. |
 
-- The field's key must be **omitted** (or `null`) in the corresponding
-  `customFieldValues` map — supplying any other value for it is rejected
-  with `422` (`"'<fieldKey>' for <scope> must be uploaded as a file, not
-  supplied as a value"`), never silently overwritten, same rule as the
-  repeatable-group case.
+**The primary contact's plain-JSON (non-file) custom-field answers are
+submitted through the top-level `customFields` array**, not a nested
+`primaryContact.customFields` — there is exactly one primary contact per
+invitation, so a Visitor Info-step field id in the invitation-level
+`customFields` array is understood as the primary contact's answer for it.
+`primaryContact.customFields` still exists on the wire but is accepted and
+silently ignored (kept only so an already-deployed client sending it
+doesn't get a hard validation error). Each co-visitor's and each vehicle's
+own answers are unaffected — they still use `visitors[i].customFields`/
+`vehicles[i].customFields` respectively, since a group registration has
+more than one such answer set and a flat map can't tell whose is whose.
+The `primaryContactCustomFieldFiles[<fieldId>]` multipart part name above is
+unchanged — file uploads are a separate channel from the plain-JSON one.
+
+- The field's id must be **omitted** from the corresponding `customFields`
+  array (the invitation-level one, for the primary contact) — supplying
+  any other value for it is rejected with `422`
+  (`"'<fieldId>' for <scope> must be uploaded as a file, not supplied as a
+  value"`), never silently overwritten, same rule as the repeatable-group
+  case.
 - If the field is required, every applicable instance (the primary contact;
   each visitor; each vehicle; the invitation itself) must have a matching
   file — a count mismatch is rejected with `422`. More files than instances
@@ -242,24 +275,23 @@ Four scopes, one multipart convention each:
 - Accepted files are validated and stored the same way a group's own
   `file_upload` field is (`_validate_id_proof`, `core/storage.py::save`,
   category `invitations/custom-fields`), and the resulting storage key is
-  written back into the persisted `customFieldValues`/
-  `primaryContactCustomFieldValues`/a vehicle's own `customFieldValues` map —
-  never a client-supplied value. Every reader
+  written back into the persisted `customFields`/
+  `primaryContactCustomFields`/a vehicle's own `customFields` array (keyed
+  internally by `fieldId`) — never a client-supplied value. Every reader
   (`router.py::_resolve_custom_field_file_values`/`_resolve_group_field_
   values`, applied to the invitation, primary contact, every visitor, every
-  vehicle, and every `groupFieldValues` instance alike) resolves that
+  vehicle, and every `groups` instance alike) resolves that
   storage key to a signed, time-boxed URL (`core/storage.py::url_for`)
   before it reaches a response — gated by the caller's `documents:view`
   grant for the invitation's branch the same way `photoUrl`/`idProofUrl`
   already are: a caller without that permission gets `null` for the field
   instead of either the raw key or a usable URL, never a fallback that
   leaks the key.
-- The file-field keys resolved this way are always the branch's *current*
+- The file-field ids resolved this way are always the branch's *current*
   effective form. If a field's type is changed after invitations already
-  hold data under its key (or the key is reused by a different field), an
-  older instance's value may not be a storage key at all — that's resolved
-  to `null` too, rather than passed to `core/storage.py::url_for`, which
-  can only sign an actual string key.
+  hold data under its id, an older instance's value may not be a storage
+  key at all — that's resolved to `null` too, rather than passed to
+  `core/storage.py::url_for`, which can only sign an actual string key.
 
 `POST /registrations/walk-in` accepts the identical
 `primaryContactCustomFieldFiles[...]`/`visitorCustomFieldFiles[...]`/
