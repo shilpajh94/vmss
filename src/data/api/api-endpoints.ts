@@ -324,6 +324,37 @@ export const API_ENDPOINTS = {
     method: "DELETE",
     hasToken: true,
   },
+  // Kiosks are company-wide: no X-Branch-ID header.
+  LIST_KIOSKS: {
+    endpoint: "/kiosks",
+    method: "GET",
+    hasToken: true,
+  },
+  GET_KIOSK: {
+    endpoint: "/kiosks/:id",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_KIOSK: {
+    endpoint: "/kiosks",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_KIOSK: {
+    endpoint: "/kiosks/:id",
+    method: "PUT",
+    hasToken: true,
+  },
+  SET_KIOSK_VISIBILITY: {
+    endpoint: "/kiosks/:id/visibility",
+    method: "PATCH",
+    hasToken: true,
+  },
+  DELETE_KIOSK: {
+    endpoint: "/kiosks/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
   // Public for the pre-authentication visitor portal, same as LIST_EMPLOYEE_DIRECTORY —
   // the backend already serves this endpoint without auth.
   LIST_VISITOR_CATEGORIES: {

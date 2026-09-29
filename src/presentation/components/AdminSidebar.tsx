@@ -26,6 +26,7 @@ export type AdminSidebarActiveItem =
   | 'floors'
   | 'reception-desks'
   | 'security-gates'
+  | 'kiosks'
   | 'host-employees'
   | 'visitor-categories'
   | 'workflows'
@@ -47,6 +48,7 @@ const ADMIN_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: Ad
   ['/admin/floors', 'floors'],
   ['/admin/reception-desks', 'reception-desks'],
   ['/admin/security-gates', 'security-gates'],
+  ['/admin/kiosks', 'kiosks'],
   ['/admin/host-employees', 'host-employees'],
   ['/admin/visitor-categories', 'visitor-categories'],
   ['/admin/workflows', 'workflows'],
@@ -72,6 +74,7 @@ const NAV_ITEMS = [
   { key: 'floors', label: 'Floors', icon: LayersIcon },
   { key: 'reception-desks', label: 'Reception Desks', icon: MonitorIcon },
   { key: 'security-gates', label: 'Security Gates', icon: ShieldIcon },
+  { key: 'kiosks', label: 'Kiosks', icon: MonitorIcon },
   { key: 'host-employees', label: 'Employees', icon: UserCheckIcon },
   { key: 'visitor-categories', label: 'Visitor Categories', icon: TagIcon },
   { key: 'workflows', label: 'Workflows', icon: ListChecksIcon },
@@ -94,6 +97,7 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
     if (key === 'host-employees') navigate('/admin/host-employees')
     if (key === 'reception-desks') navigate('/admin/reception-desks')
     if (key === 'security-gates') navigate('/admin/security-gates')
+    if (key === 'kiosks') navigate('/admin/kiosks')
     if (key === 'visitor-categories') navigate('/admin/visitor-categories')
     if (key === 'workflows') navigate('/admin/workflows')
     if (key === 'invitations') navigate('/admin/invitations')

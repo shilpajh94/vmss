@@ -19,6 +19,7 @@ import type { HostEmployeeRepository } from './data/repositories/host-employee-r
 import type { EmployeeDirectoryRepository } from './data/repositories/employee-directory-repository'
 import type { ReceptionDeskRepository } from './data/repositories/reception-desk-repository'
 import type { SecurityGateRepository } from './data/repositories/security-gate-repository'
+import type { KioskRepository } from './data/repositories/kiosk-repository'
 import type { VisitorCategoryRepository } from './data/repositories/visitor-category-repository'
 import type { ApprovalWorkflowRuleRepository } from './data/repositories/approval-workflow-rule-repository'
 import type { NotificationRepository } from './data/repositories/notification-repository'
@@ -93,6 +94,12 @@ import { ListSecurityGatesPageUseCase } from './data/use-cases/list-security-gat
 import { CreateSecurityGateUseCase } from './data/use-cases/create-security-gate'
 import { UpdateSecurityGateUseCase } from './data/use-cases/update-security-gate'
 import { DeleteSecurityGateUseCase } from './data/use-cases/delete-security-gate'
+import { ListKiosksPageUseCase } from './data/use-cases/list-kiosks-page'
+import { GetKioskUseCase } from './data/use-cases/get-kiosk'
+import { CreateKioskUseCase } from './data/use-cases/create-kiosk'
+import { UpdateKioskUseCase } from './data/use-cases/update-kiosk'
+import { SetKioskVisibilityUseCase } from './data/use-cases/set-kiosk-visibility'
+import { DeleteKioskUseCase } from './data/use-cases/delete-kiosk'
 import { ListVisitorCategoriesUseCase } from './data/use-cases/list-visitor-categories'
 import { ListVisitorCategoriesPageUseCase } from './data/use-cases/list-visitor-categories-page'
 import { CreateVisitorCategoryUseCase } from './data/use-cases/create-visitor-category'
@@ -141,6 +148,7 @@ import { HttpHostEmployeeRepository } from './infrastructure/host-employee-repos
 import { HttpEmployeeDirectoryRepository } from './infrastructure/employee-directory-repository'
 import { HttpReceptionDeskRepository } from './infrastructure/reception-desk-repository'
 import { HttpSecurityGateRepository } from './infrastructure/security-gate-repository'
+import { HttpKioskRepository } from './infrastructure/kiosk-repository'
 import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category-repository'
 import { HttpFormBuilderRepository } from './infrastructure/form-builder-repository'
 import { HttpApprovalWorkflowRuleRepository } from './infrastructure/approval-workflow-rule-repository'
@@ -218,6 +226,12 @@ export interface AppDependencies {
   createSecurityGateUseCase: CreateSecurityGateUseCase
   updateSecurityGateUseCase: UpdateSecurityGateUseCase
   deleteSecurityGateUseCase: DeleteSecurityGateUseCase
+  listKiosksPageUseCase: ListKiosksPageUseCase
+  getKioskUseCase: GetKioskUseCase
+  createKioskUseCase: CreateKioskUseCase
+  updateKioskUseCase: UpdateKioskUseCase
+  setKioskVisibilityUseCase: SetKioskVisibilityUseCase
+  deleteKioskUseCase: DeleteKioskUseCase
   listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase
   listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase
   createVisitorCategoryUseCase: CreateVisitorCategoryUseCase
@@ -340,6 +354,13 @@ export function createApp(): AppDependencies {
   let createSecurityGateUseCase: CreateSecurityGateUseCase | undefined
   let updateSecurityGateUseCase: UpdateSecurityGateUseCase | undefined
   let deleteSecurityGateUseCase: DeleteSecurityGateUseCase | undefined
+  let kioskRepository: KioskRepository | undefined
+  let listKiosksPageUseCase: ListKiosksPageUseCase | undefined
+  let getKioskUseCase: GetKioskUseCase | undefined
+  let createKioskUseCase: CreateKioskUseCase | undefined
+  let updateKioskUseCase: UpdateKioskUseCase | undefined
+  let setKioskVisibilityUseCase: SetKioskVisibilityUseCase | undefined
+  let deleteKioskUseCase: DeleteKioskUseCase | undefined
   let visitorCategoryRepository: VisitorCategoryRepository | undefined
   let listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase | undefined
   let listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase | undefined
@@ -834,6 +855,41 @@ export function createApp(): AppDependencies {
     return deleteSecurityGateUseCase
   }
 
+  const resolveKioskRepository = (): KioskRepository => {
+    kioskRepository ??= new HttpKioskRepository(resolveApiClient())
+    return kioskRepository
+  }
+
+  const resolveListKiosksPageUseCase = (): ListKiosksPageUseCase => {
+    listKiosksPageUseCase ??= new ListKiosksPageUseCase(resolveKioskRepository())
+    return listKiosksPageUseCase
+  }
+
+  const resolveGetKioskUseCase = (): GetKioskUseCase => {
+    getKioskUseCase ??= new GetKioskUseCase(resolveKioskRepository())
+    return getKioskUseCase
+  }
+
+  const resolveCreateKioskUseCase = (): CreateKioskUseCase => {
+    createKioskUseCase ??= new CreateKioskUseCase(resolveKioskRepository())
+    return createKioskUseCase
+  }
+
+  const resolveUpdateKioskUseCase = (): UpdateKioskUseCase => {
+    updateKioskUseCase ??= new UpdateKioskUseCase(resolveKioskRepository())
+    return updateKioskUseCase
+  }
+
+  const resolveSetKioskVisibilityUseCase = (): SetKioskVisibilityUseCase => {
+    setKioskVisibilityUseCase ??= new SetKioskVisibilityUseCase(resolveKioskRepository())
+    return setKioskVisibilityUseCase
+  }
+
+  const resolveDeleteKioskUseCase = (): DeleteKioskUseCase => {
+    deleteKioskUseCase ??= new DeleteKioskUseCase(resolveKioskRepository())
+    return deleteKioskUseCase
+  }
+
   const resolveVisitorCategoryRepository = (): VisitorCategoryRepository => {
     visitorCategoryRepository ??= new HttpVisitorCategoryRepository(resolveApiClient())
     return visitorCategoryRepository
@@ -1207,6 +1263,24 @@ export function createApp(): AppDependencies {
     },
     get deleteSecurityGateUseCase() {
       return resolveDeleteSecurityGateUseCase()
+    },
+    get listKiosksPageUseCase() {
+      return resolveListKiosksPageUseCase()
+    },
+    get getKioskUseCase() {
+      return resolveGetKioskUseCase()
+    },
+    get createKioskUseCase() {
+      return resolveCreateKioskUseCase()
+    },
+    get updateKioskUseCase() {
+      return resolveUpdateKioskUseCase()
+    },
+    get setKioskVisibilityUseCase() {
+      return resolveSetKioskVisibilityUseCase()
+    },
+    get deleteKioskUseCase() {
+      return resolveDeleteKioskUseCase()
     },
     get listVisitorCategoriesUseCase() {
       return resolveListVisitorCategoriesUseCase()

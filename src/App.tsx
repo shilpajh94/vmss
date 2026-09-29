@@ -30,6 +30,8 @@ import { AdminReceptionDesksPage } from './presentation/pages/admin-reception-de
 import { AdminReceptionDeskFormPage } from './presentation/pages/admin-reception-desks/admin-reception-desk-form'
 import { AdminSecurityGatesPage } from './presentation/pages/admin-security-gates/admin-security-gates'
 import { AdminSecurityGateFormPage } from './presentation/pages/admin-security-gates/admin-security-gate-form'
+import { AdminKiosksPage } from './presentation/pages/admin-kiosks/admin-kiosks'
+import { AdminKioskFormPage } from './presentation/pages/admin-kiosks/admin-kiosk-form'
 import { AdminVisitorCategoriesPage } from './presentation/pages/admin-visitor-categories/admin-visitor-categories'
 import { AdminVisitorCategoryFormPage } from './presentation/pages/admin-visitor-categories/admin-visitor-category-form'
 import { AdminWorkflowsPage } from './presentation/pages/admin-workflows/admin-workflows'
@@ -84,6 +86,9 @@ function RootLayout() {
                 <Route path="/admin/security-gates" element={<AdminSecurityGatesPage />} />
                 <Route path="/admin/security-gates/new" element={<AdminSecurityGateFormPage />} />
                 <Route path="/admin/security-gates/:id/edit" element={<AdminSecurityGateFormPage />} />
+                <Route path="/admin/kiosks" element={<AdminKiosksPage />} />
+                <Route path="/admin/kiosks/new" element={<AdminKioskFormPage />} />
+                <Route path="/admin/kiosks/:id/edit" element={<AdminKioskFormPage />} />
                 <Route path="/admin/visitor-categories" element={<AdminVisitorCategoriesPage />} />
                 <Route path="/admin/visitor-categories/new" element={<AdminVisitorCategoryFormPage />} />
                 <Route path="/admin/visitor-categories/:id/edit" element={<AdminVisitorCategoryFormPage />} />
