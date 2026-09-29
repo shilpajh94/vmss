@@ -64,6 +64,8 @@ PERMISSION_CODES = [
     "roles:view",
     "sso-config:manage",
     "sso-config:view",
+    "kiosks:manage",
+    "kiosks:view",
     "audit-logs:view",
     "audit-logs:export",
 ]
