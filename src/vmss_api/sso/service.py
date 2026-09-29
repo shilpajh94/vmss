@@ -72,6 +72,7 @@ async def save_provider_config(
             client_secret_encrypted=encrypted_secret,
             client_secret_masked=masked_secret,
             is_enabled=payload.is_enabled,
+            allow_admin_login=payload.allow_admin_login,
         )
         tenant_db.add(provider)
     else:
@@ -82,6 +83,7 @@ async def save_provider_config(
         provider.client_secret_encrypted = encrypted_secret
         provider.client_secret_masked = masked_secret
         provider.is_enabled = payload.is_enabled
+        provider.allow_admin_login = payload.allow_admin_login
 
     await tenant_db.commit()
     await tenant_db.refresh(provider)
@@ -303,9 +305,10 @@ async def handle_callback(
             tenant_db, tenant_id=tenant.id, email=email, full_name=full_name, groups=groups
         )
 
-        if not created and auth_service.has_admin_role(user):
-            # Admin signs in via password login only (`auth` capability) —
-            # an existing Admin account can never complete SSO, even though
+        if not created and not provider.allow_admin_login and auth_service.has_admin_role(user):
+            # Unless the tenant opted in via `allow_admin_login`, Admin signs in
+            # via password login only (`auth` capability) —
+            # an existing Admin account can't complete SSO, even though
             # a brand-new JIT-provisioned account already can't default to
             # Admin (see `create_role_mapping`'s guard). Rejected with the
             # same generic error every other callback failure uses, so an
