@@ -27,7 +27,38 @@ import type { SubmissionStatus } from '../Components/steps/ReviewConfirmStep'
 
 export interface VisitorRequestWizardInitialData {
   registrationType?: RegistrationType
-  primaryContact?: Partial<Pick<VisitorFormEntry, 'email' | 'phone'>>
+  // `fullName`/`preferredContactMethod`/`idProofType` are only populated for a
+  // returning visitor (visitor-return-history's prefill) — a fresh OTP
+  // verification only ever supplies `email`/`phone`. `idProofUrl`/`photoUrl`,
+  // when present, point at the visitor's prior ID-proof document/photo and
+  // are fetched and offered as a reusable existing file (see the effect in
+  // useVisitorRequestWizard below) rather than always requiring a fresh upload.
+  primaryContact?: Partial<
+    Pick<VisitorFormEntry, 'fullName' | 'email' | 'phone' | 'preferredContactMethod' | 'idProofType' | 'visitorCategory'>
+  > & {
+    idProofUrl?: string
+    photoUrl?: string
+  }
+}
+
+const EXTENSION_BY_CONTENT_TYPE: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'application/pdf': 'pdf',
+}
+
+// Resolves a returning visitor's presigned ID-proof/photo URL into a real
+// `File`, so it can travel through the same fileRegistry/submit path as a
+// freshly picked file (design.md Decision 1). Throws on any fetch failure
+// (network, non-2xx, or CORS) — the caller falls back to a fresh-upload
+// field rather than surfacing this as a wizard-blocking error.
+async function fetchExistingFile(url: string, baseName: string): Promise<File> {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`Failed to fetch existing file (${response.status})`)
+  const blob = await response.blob()
+  const contentType = blob.type || 'application/octet-stream'
+  const extension = EXTENSION_BY_CONTENT_TYPE[contentType] ?? 'bin'
+  return new File([blob], `${baseName}.${extension}`, { type: contentType })
 }
 
 // `host`/`department_to_visit` are seeded `isSystem` fields the backend
@@ -40,7 +71,12 @@ const DISPLAY_ONLY_SYSTEM_FIELD_KEYS = new Set(['host', 'department_to_visit'])
 function buildInitialFormState(initial?: VisitorRequestWizardInitialData): VisitRequestFormState {
   const formState = createInitialFormState()
   if (initial?.registrationType) formState.registrationType = initial.registrationType
-  if (initial?.primaryContact) formState.primaryContact = { ...formState.primaryContact, ...initial.primaryContact }
+  if (initial?.primaryContact) {
+    // idProofUrl/photoUrl aren't part of VisitorFormEntry — they're resolved
+    // into real fileRefs by the existing-file effect below, not spread here.
+    const { idProofUrl, photoUrl, ...primaryContactFields } = initial.primaryContact
+    formState.primaryContact = { ...formState.primaryContact, ...primaryContactFields }
+  }
   return formState
 }
 
@@ -143,14 +179,22 @@ function validateStep(
 }
 
 export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialData, branches?: Branch[]) {
-  const { submitVisitRequestUseCase } = useAppDependencies()
+  const { submitVisitRequestUseCase, trackVisitRequestUseCase } = useAppDependencies()
 
   const [currentStep, setCurrentStep] = useState(0)
   const [formState, setFormState] = useState<VisitRequestFormState>(() => buildInitialFormState(initial))
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus>('idle')
   const [trackingId, setTrackingId] = useState<string | undefined>(undefined)
+  const [confirmedFullName, setConfirmedFullName] = useState<string | undefined>(undefined)
   const [submissionError, setSubmissionError] = useState<string | undefined>(undefined)
+
+  // Only ever set for a returning visitor's prefill (see
+  // VisitorRequestWizardInitialData's comment above) — the invitation-
+  // creation API silently discards any edited name for a contact it
+  // recognizes, so the field is locked for the rest of this session rather
+  // than letting the visitor type an edit that won't stick.
+  const [primaryContactNameLocked] = useState(() => Boolean(initial?.primaryContact?.fullName))
 
   // Resolved the same way `submit` below resolves it for the real
   // request — matching branch name against the publicly listed branches —
@@ -344,6 +388,58 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     return url
   }
 
+  // Eagerly (not at submit time) resolve a returning visitor's existing
+  // ID-proof/photo URLs into real files, registered the same way a fresh
+  // upload would be — FileUploadField then renders them as an existing-file
+  // preview automatically once idProofFileRef/profileImageFileRef populate.
+  // Eager, not lazy: the presigned URLs expire, and the wizard can sit open
+  // for minutes before submit (design.md Decision 2). A fetch failure
+  // (expired signature, network, or CORS) is swallowed — that field just
+  // falls back to the normal empty fresh-upload control (Decision 3).
+  const initialIdProofUrl = initial?.primaryContact?.idProofUrl
+  const initialPhotoUrl = initial?.primaryContact?.photoUrl
+  useEffect(() => {
+    if (!initialIdProofUrl) return
+    let cancelled = false
+    fetchExistingFile(initialIdProofUrl, 'id-proof')
+      .then(async (file) => {
+        const fileRef = await uploadFile(file)
+        if (cancelled) return
+        setFormState((prev) => ({
+          ...prev,
+          primaryContact: { ...prev.primaryContact, idProofFileRef: fileRef, idProofFileName: file.name },
+        }))
+      })
+      .catch(() => {
+        // Leave idProofFileRef unset — the field renders as a normal,
+        // empty fresh-upload control.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [initialIdProofUrl])
+
+  useEffect(() => {
+    if (!initialPhotoUrl) return
+    let cancelled = false
+    fetchExistingFile(initialPhotoUrl, 'profile-photo')
+      .then(async (file) => {
+        const fileRef = await uploadFile(file)
+        if (cancelled) return
+        setFormState((prev) => ({
+          ...prev,
+          primaryContact: { ...prev.primaryContact, profileImageFileRef: fileRef, profileImageFileName: file.name },
+        }))
+      })
+      .catch(() => {
+        // Leave profileImageFileRef unset — the field renders as a normal,
+        // empty fresh-upload control.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [initialPhotoUrl])
+
   const updateFormState = (next: VisitRequestFormState) => {
     setFormState(next)
     // Clear stale step errors optimistically; goNext re-validates before advancing.
@@ -491,6 +587,16 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
       )
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')
+      // Best-effort: the create response never carries the primary contact's
+      // name (design.md Decision 3), so look it up via the same public
+      // tracking lookup the visitor-track-request capability uses. A
+      // failure here doesn't affect the already-successful submission.
+      trackVisitRequestUseCase
+        .execute(response.trackingId)
+        .then((lookup) => setConfirmedFullName(lookup.primaryContactFullName))
+        .catch(() => {
+          // Leave confirmedFullName unset — the success screen just omits it.
+        })
     } catch (error) {
       setSubmissionError(error instanceof Error ? error.message : 'Something went wrong submitting your request. Please try again.')
       setSubmissionStatus('error')
@@ -509,6 +615,7 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     getFilePreviewUrl,
     submissionStatus,
     trackingId,
+    confirmedFullName,
     submissionError,
     submit,
     activeSteps,
@@ -527,6 +634,7 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     visitorInfoAllFields,
     visitDetailsCustomFields,
     vehicleInfoCustomFields,
+    primaryContactNameLocked,
     vehicleInfoGroups,
     vehicleInfoAllFields,
   }

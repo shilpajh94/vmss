@@ -20,6 +20,11 @@ interface VisitorFieldsFormProps {
   uploadFile: (file: File) => Promise<string>
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
   errors?: Record<string, string>
+  /** Locks the "Full Name" field read-only — set only for a returning
+   * visitor's primary contact, since the invitation-creation API silently
+   * discards any edit to an already-known contact's name. Never set for an
+   * additional group visitor. */
+  fullNameLocked?: boolean
   visitorCategoriesState: VisitorCategoriesFieldState
   onRetryVisitorCategories?: () => void
   /** Branch-configured (form-builder) active/required state for ID proof
@@ -40,6 +45,7 @@ export function VisitorFieldsForm({
   uploadFile,
   getFilePreviewUrl,
   errors,
+  fullNameLocked,
   visitorCategoriesState,
   onRetryVisitorCategories,
   visitorInfoFields,
@@ -66,6 +72,8 @@ export function VisitorFieldsForm({
         onChange={(fullName) => onChange({ ...value, fullName })}
         error={errors?.fullName}
         required
+        readOnly={fullNameLocked}
+        helperText={fullNameLocked ? 'Name on file for this contact' : undefined}
       />
       <TextField
         label="Email Address"

@@ -19,6 +19,14 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: false,
   },
+  // Authenticated with the OTP flow's own short-lived proof token, passed as
+  // an explicit `Authorization` header by the caller — never the staff
+  // session token `hasToken: true` would read from sessionStorage.
+  GET_VISITOR_PORTAL_ME: {
+    endpoint: "/visitor-portal/me",
+    method: "GET",
+    hasToken: false,
+  },
   STAFF_LOGIN: {
     endpoint: "/auth/login",
     method: "POST",
@@ -47,6 +55,15 @@ export const API_ENDPOINTS = {
   STAFF_CREATE_VISIT_REQUEST: {
     endpoint: "/invitations",
     method: "POST",
+    hasToken: true,
+  },
+  // Staff-authenticated lookup used to prefill the Register Visitor wizard's
+  // Primary Contact fields once the staff member types a known email — no
+  // OTP is needed since it runs under the staff session, unlike the visitor
+  // self-service GET_VISITOR_PORTAL_ME flow above.
+  LOOKUP_STAFF_VISITOR_BY_EMAIL: {
+    endpoint: "/invitations/lookup-by-email",
+    method: "GET",
     hasToken: true,
   },
   APPROVE_INVITATION: {
