@@ -1,14 +1,13 @@
-import { WIZARD_STEPS } from '../types'
-
 interface StepSidebarProps {
+  steps: readonly string[]
   currentStep: number
   onStepSelect: (index: number) => void
 }
 
-export function StepSidebar({ currentStep, onStepSelect }: StepSidebarProps) {
+export function StepSidebar({ steps, currentStep, onStepSelect }: StepSidebarProps) {
   return (
     <nav className="flex w-[220px] flex-col gap-4">
-      {WIZARD_STEPS.map((label, index) => {
+      {steps.map((label, index) => {
         const stepNumber = index + 1
         const isActive = index === currentStep
         const isComplete = index < currentStep

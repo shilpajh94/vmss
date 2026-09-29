@@ -1,34 +1,58 @@
 import { useNavigate } from 'react-router'
-import { AdminSidebar } from '../../components/AdminSidebar'
-import { AdminTopBar } from '../../components/AdminTopBar'
 import { PlusIcon, SlidersIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { LoadingState } from '../../components/ui/LoadingState'
-import { WorkflowGroupList } from './Components/WorkflowGroupList'
+import { SelectField } from '../../components/ui/SelectField'
+import { PageContentLayout } from '../../components/PageContentLayout'
+import { usePageHeader } from '../../context/page-header-context'
+import { WorkflowListTable } from './Components/WorkflowListTable'
 import { useAdminWorkflows } from './hooks/use-admin-workflows'
 
 export function AdminWorkflowsPage() {
   const navigate = useNavigate()
-  const { currentUser, workflows, isLoading, errorMessage, retry, pendingDelete, isDeleting, requestDelete, cancelDelete, confirmDelete } =
-    useAdminWorkflows()
+  const {
+    workflows,
+    pagedWorkflows,
+    page,
+    pageSize,
+    totalPages,
+    goToPreviousPage,
+    goToNextPage,
+    isLoading,
+    errorMessage,
+    retry,
+    isFilterPanelOpen,
+    toggleFilterPanel,
+    categoryOptions,
+    categoryFilter,
+    setCategoryFilter,
+    statusFilter,
+    setStatusFilter,
+    clearFilters,
+    isFiltering,
+    pendingDelete,
+    isDeleting,
+    requestDelete,
+    cancelDelete,
+    confirmDelete,
+  } = useAdminWorkflows()
+
+  usePageHeader({ description: 'Configure automated visitor check-in, alert triggers, and compliance workflows' })
 
   const goToAddWorkflow = () => navigate('/admin/workflows/new')
 
   return (
-    <div className="flex min-h-screen w-full items-stretch bg-bg">
-      <AdminSidebar activeItem="workflows" />
-
-      <div className="flex flex-1 flex-col">
-        <AdminTopBar description="Configure automated visitor check-in, alert triggers, and compliance workflows" currentUser={currentUser} />
-
-        <main className="flex flex-1 flex-col gap-6 p-8">
+    <PageContentLayout
+      header={
+        <>
           <div className="flex w-full items-center justify-between">
             <h1 className="font-display text-2xl font-bold text-text">Workflows</h1>
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
+                onClick={toggleFilterPanel}
+                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
               >
                 <SlidersIcon className="size-3.5" />
                 Filters
@@ -36,7 +60,7 @@ export function AdminWorkflowsPage() {
               <button
                 type="button"
                 onClick={goToAddWorkflow}
-                className="flex items-center gap-2 rounded-full bg-admin-accent px-[18px] py-2.5 font-body text-[13px] font-semibold text-white"
+                className="flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white"
               >
                 <PlusIcon className="size-3.5" />
                 Add Workflow
@@ -44,24 +68,68 @@ export function AdminWorkflowsPage() {
             </div>
           </div>
 
-          {errorMessage ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
-              <p className="font-body text-sm text-danger">{errorMessage}</p>
-              <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-                Try again
-              </button>
+          {isFilterPanelOpen && (
+            <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-filter-panel">
+              <div className="w-48">
+                <SelectField
+                  label="Visitor Category"
+                  value={categoryFilter}
+                  onChange={setCategoryFilter}
+                  placeholder="All"
+                  options={categoryOptions}
+                />
+              </div>
+              <div className="w-48">
+                <SelectField
+                  label="Status"
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  placeholder="All"
+                  options={[
+                    { value: 'active', label: 'Active' },
+                    { value: 'inactive', label: 'Inactive' },
+                  ]}
+                />
+              </div>
+              {isFiltering && (
+                <button type="button" onClick={clearFilters} className="font-body text-[13px] font-semibold text-admin-accent">
+                  Clear filters
+                </button>
+              )}
             </div>
-          ) : isLoading ? (
-            <LoadingState label="Loading workflows…" className="flex-1" />
-          ) : workflows.length === 0 ? (
-            <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
-              <EmptyState message="No workflows yet." action={{ label: 'Add Workflow', onClick: goToAddWorkflow }} />
-            </div>
-          ) : (
-            <WorkflowGroupList workflows={workflows} onDelete={requestDelete} />
           )}
-        </main>
-      </div>
+        </>
+      }
+    >
+      {errorMessage ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
+          <p className="font-body text-sm text-danger">{errorMessage}</p>
+          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
+            Try again
+          </button>
+        </div>
+      ) : isLoading ? (
+        <LoadingState label="Loading workflows…" className="flex-1" />
+      ) : workflows.length === 0 ? (
+        <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
+          {isFiltering ? (
+            <EmptyState message="No workflows match these filters." />
+          ) : (
+            <EmptyState message="No workflows yet." action={{ label: 'Add Workflow', onClick: goToAddWorkflow }} />
+          )}
+        </div>
+      ) : (
+        <WorkflowListTable
+          workflows={workflows}
+          pagedWorkflows={pagedWorkflows}
+          page={page}
+          pageSize={pageSize}
+          totalPages={totalPages}
+          onPreviousPage={goToPreviousPage}
+          onNextPage={goToNextPage}
+          onDelete={requestDelete}
+        />
+      )}
 
       <ConfirmDialog
         isOpen={pendingDelete !== undefined}
@@ -71,6 +139,6 @@ export function AdminWorkflowsPage() {
         onConfirm={() => void confirmDelete()}
         onCancel={cancelDelete}
       />
-    </div>
+    </PageContentLayout>
   )
 }

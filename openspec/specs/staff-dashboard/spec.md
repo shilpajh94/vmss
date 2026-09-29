@@ -18,11 +18,15 @@ The system SHALL check for a staff auth token before rendering the dashboard, an
 - **THEN** the system renders the dashboard
 
 ### Requirement: Dashboard renders the sidebar, workspace header, and kanban board
-The system SHALL render, for an authenticated session, a sidebar (brand mark, "All visitors" / "My actions" / "Audit trail" navigation with "All visitors" selected, and a "Help & Support" link) and a main workspace containing the header, search bar, and visit-requests kanban board.
+The system SHALL render, for an authenticated non-Reception session, a sidebar (brand mark, "All visitors" / "My actions" navigation with "All visitors" selected, and a "Help & Support" link) and a main workspace containing the header, search bar, and visit-requests kanban board. For an authenticated Reception session, the system SHALL instead render the Reception sidebar (see `reception-dashboard`) with "Visits" marked active, alongside the same main workspace.
 
 #### Scenario: Authenticated staff views the dashboard
-- **WHEN** an authenticated staff member's dashboard finishes loading
-- **THEN** the sidebar, the "Visits" workspace header, the search bar, and the kanban board are all visible
+- **WHEN** an authenticated, non-Reception staff member's dashboard finishes loading
+- **THEN** the staff sidebar, the "Visits" workspace header, the search bar, and the kanban board are all visible
+
+#### Scenario: Authenticated Reception user views the dashboard
+- **WHEN** an authenticated Reception user's dashboard finishes loading
+- **THEN** the Reception sidebar (with "Visits" marked active), the "Visits" workspace header, the search bar, and the kanban board are all visible
 
 ### Requirement: Other sidebar navigation items are visible but not yet functional
 The system SHALL render the "Help & Support" link per the design, but SHALL NOT navigate anywhere when it is activated.
@@ -30,13 +34,6 @@ The system SHALL render the "Help & Support" link per the design, but SHALL NOT 
 #### Scenario: Inert nav item activated
 - **WHEN** a staff member activates "Help & Support"
 - **THEN** the current view does not change
-
-### Requirement: "Audit trail" opens the Audit Trail page
-The system SHALL, when a staff member activates "Audit trail" in the sidebar, navigate to the Audit Trail page.
-
-#### Scenario: Staff opens Audit trail
-- **WHEN** an authenticated staff member activates "Audit trail" in the sidebar
-- **THEN** the system navigates to the Audit Trail page
 
 ### Requirement: "My actions" opens the Register Visitor wizard
 The system SHALL, when a staff member activates "My actions" in the sidebar, navigate to the Register Visitor wizard's first step.
@@ -91,19 +88,46 @@ The system SHALL, as the staff member types in the search field, show only visit
 - **WHEN** a staff member clears the search field
 - **THEN** all loaded visit requests are shown again
 
-### Requirement: Filters affordance is presented but not yet functional
-The system SHALL display the "Filters" control per the design, but SHALL NOT apply any filtering when it is activated.
+### Requirement: Filters narrow the board by purpose of visit and registration type
+The system SHALL provide a "Filters" control that lets a staff member select a Purpose of Visit and/or a Registration Type (Individual / Group). When one or both are selected, the system SHALL show only visit requests matching all selected criteria, combined with any active search text, across all columns. Clearing a filter SHALL restore requests that only failed to match that criterion.
 
-#### Scenario: Filters activated
-- **WHEN** a staff member activates "Filters"
-- **THEN** the visible visit requests do not change
+#### Scenario: Filtering by purpose of visit
+- **WHEN** a staff member selects a Purpose of Visit filter value
+- **THEN** only visit requests whose purpose of visit matches that value remain visible, in their existing columns
+
+#### Scenario: Filtering by registration type
+- **WHEN** a staff member selects a Registration Type filter value
+- **THEN** only visit requests whose registration type matches that value remain visible, in their existing columns
+
+#### Scenario: Combined with search
+- **WHEN** a staff member has both a search term and a filter active
+- **THEN** only visit requests matching both the search term and the active filter(s) remain visible
+
+#### Scenario: Filters cleared
+- **WHEN** a staff member clears all active filters
+- **THEN** all visit requests matching only the current search text (if any) are shown again
 
 ### Requirement: Refresh reloads the visit-requests list
-The system SHALL, when a refresh action is activated, re-fetch the visit-requests list from the backend and re-render the board with the latest data.
+The system SHALL present exactly one refresh control on the dashboard. When that control is activated, the system SHALL re-fetch the visit-requests list from the backend and re-render the board with the latest data.
+
+#### Scenario: Only one refresh control is shown
+- **WHEN** the dashboard finishes loading
+- **THEN** exactly one refresh control is visible on the page
 
 #### Scenario: Staff refreshes the board
-- **WHEN** a staff member activates a refresh action
+- **WHEN** a staff member activates the refresh control
 - **THEN** the system re-fetches the visit-requests list and updates the board with the result
+
+### Requirement: Board refreshes automatically in the background
+The system SHALL periodically re-fetch the visit-requests list on a fixed interval without requiring staff to activate the refresh control, and SHALL update the board with the result without showing the full-board loading state. The system SHALL NOT trigger an automatic refresh while a deny, reschedule, or delegate action is in progress or its dialog is open.
+
+#### Scenario: Board updates without manual refresh
+- **WHEN** the automatic refresh interval elapses while the dashboard is open
+- **THEN** the system re-fetches the visit-requests list and updates the board with the result, without showing the full-board loading state
+
+#### Scenario: Automatic refresh is suppressed during an in-progress action
+- **WHEN** the automatic refresh interval elapses while a deny, reschedule, or delegate dialog is open
+- **THEN** the system does not re-fetch the visit-requests list until that dialog is closed
 
 ### Requirement: List load failure is reported without crashing
 The system SHALL, when the visit-requests list fails to load, show an error message on the dashboard and allow retrying without reloading the page.
@@ -163,6 +187,28 @@ The system SHALL, when a card is dropped on the Approved column, approve that in
 #### Scenario: Approval rejected by the backend
 - **WHEN** an approve attempt (direct or step-based) fails
 - **THEN** the system triggers an error notification containing the backend's error message and the board is not otherwise changed
+
+### Requirement: Reception's step offers a combined Approve & Delegate action when a further step follows
+The system SHALL, on a card whose current approval step is stepOrder 0 (Reception) and whose workflow has more than one total step, present an "Approve & Delegate" action instead of a plain "Delegate" action. Activating it SHALL show a dropdown of employees eligible for the *next* step's (stepOrder 1) required role. Confirming with a selected employee SHALL approve the Reception step and then assign that employee as the approver of the resulting next step, in a single user-facing action; on success it SHALL refresh the board and trigger a success notification naming the newly-assigned approver.
+
+#### Scenario: Reception approves and assigns the next approver together
+- **WHEN** a Reception user activates "Approve & Delegate" on a card with a further step, selects an eligible employee, and confirms
+- **THEN** the system approves the Reception step, assigns the selected employee as the next step's approver, refreshes the board, and triggers a success notification
+
+#### Scenario: Approve succeeds but assigning the next approver fails
+- **WHEN** the approve call in a confirmed "Approve & Delegate" action succeeds but the subsequent assignment call fails
+- **THEN** the system triggers an error notification stating the request was approved but the next approver could not be assigned, and refreshes the board so the current (now-advanced) state is visible
+
+#### Scenario: No eligible employees for the next step
+- **WHEN** a Reception user activates "Approve & Delegate" and no employees are eligible for the next step's role
+- **THEN** the system shows an empty-state message in the dropdown and the confirm action stays disabled
+
+### Requirement: A single-step Reception-only workflow keeps plain approval
+The system SHALL NOT present any delegate-style action on a card whose current approval step is stepOrder 0 (Reception) when the workflow has only one total step; approving remains the only action available for that step.
+
+#### Scenario: Reception-only workflow shows no delegate action
+- **WHEN** a card's current approval step is stepOrder 0 and the workflow's total step count is 1
+- **THEN** neither "Delegate" nor "Approve & Delegate" is shown on that card
 
 ### Requirement: Dropping a card on Denied requires a reason and then rejects it
 The system SHALL, when a card is dropped on the Denied column, show a dialog requiring a non-empty reason (up to 500 characters) before the deny action can be confirmed. On confirmation it SHALL reject that invitation's current approval step if one exists, or deny the invitation directly otherwise; on success it SHALL close the dialog, refresh the board, and trigger a success notification; on failure it SHALL trigger an error notification showing the backend's message and keep the dialog open.

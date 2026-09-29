@@ -14,3 +14,7 @@ export const VisitorCategorySchema = z.object({
 export type VisitorCategory = z.infer<typeof VisitorCategorySchema>
 
 export type VisitorCategoryInput = Omit<VisitorCategory, "id">
+
+export interface VisitorCategoryBulkCreateInput {
+  names: string[]
+}

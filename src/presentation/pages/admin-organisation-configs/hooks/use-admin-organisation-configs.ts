@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePageRefresh } from '../../../context/refresh-context'
 import type { OrganisationConfig } from '../../../../domain/entities/organisation-config-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
@@ -16,6 +17,7 @@ export function useAdminOrganisationConfigs() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   // The backend has no endpoint to store an uploaded logo file (only a logoUrl
   // string on /company), so a picked file is a local, unsaved preview only.
   const [logoPreview, setLogoPreviewState] = useState<{ url: string; fileName: string } | undefined>(undefined)
@@ -29,6 +31,7 @@ export function useAdminOrganisationConfigs() {
       setCurrentUser(user)
       setSavedConfig(config)
       setForm(config)
+      setLastUpdatedAt(new Date())
     } catch {
       setErrorMessage('Something went wrong loading the organisation configuration. Please try again.')
       toast.error('Something went wrong loading the organisation configuration. Please try again.')
@@ -49,6 +52,8 @@ export function useAdminOrganisationConfigs() {
   const retry = useCallback(() => {
     void loadConfig()
   }, [loadConfig])
+
+  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
 
   const updateField = useCallback(<K extends keyof OrganisationConfig>(key: K, value: OrganisationConfig[K]) => {
     setForm((current) => (current ? { ...current, [key]: value } : current))

@@ -1,11 +1,12 @@
+import { CustomFieldsSection } from '../../../../components/dynamic-fields/CustomFieldsSection'
+import type { DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
 import { SelectField } from '../../../../components/ui/SelectField'
 import { TextField } from '../../../../components/ui/TextField'
-import { TextareaField } from '../../../../components/ui/TextareaField'
 import type { Branch } from '../../../../../domain/entities/branch-schema'
 import type { Building } from '../../../../../domain/entities/building-schema'
+import type { FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { VisitInfoFormState } from '../../types'
 import { todayAsDateInputValue } from '../../../../utils/local-date-input-value'
-import { EXPECTED_DURATION_OPTIONS as DURATION_OPTIONS } from '../../../../utils/expected-duration-options'
 import { PURPOSE_OF_VISIT_OPTIONS as PURPOSE_OPTIONS } from '../../../../utils/purpose-of-visit-options'
 
 interface VisitInfoStepProps {
@@ -14,6 +15,20 @@ interface VisitInfoStepProps {
   errors: Record<string, string>
   branches?: Branch[]
   buildings?: Building[]
+  /** Branch-configured (form-builder) Purpose of Visit choices — the
+   * field's own `options`, not a fixed set
+   * (make-id-proof-and-vehicle-type-configurable). Empty when unset, in
+   * which case this step falls back to its hardcoded default list. */
+  purposeOfVisitOptions: string[]
+  /** Admin-authored (non-system) Visit Details fields
+   * (add-generic-custom-field-support). */
+  customFields: FormField[]
+  customFieldValues: Record<string, DynamicFieldValue>
+  onCustomFieldValuesChange: (value: Record<string, DynamicFieldValue>) => void
+  /** Required for an active `file_upload` custom field to render a working
+   * upload control instead of falling back to "not supported". */
+  uploadFile?: (file: File) => Promise<string>
+  getFilePreviewUrl?: (fileRef?: string) => string | undefined
 }
 
 // Neither host nor department is collected here anymore
@@ -23,7 +38,21 @@ interface VisitInfoStepProps {
 // they know the visitor's actual requirements. Both fields rarely have a
 // correct answer at this point in the flow for a visitor or for staff
 // booking on a visitor's behalf.
-export function VisitInfoStep({ value, onChange, errors, branches, buildings }: VisitInfoStepProps) {
+export function VisitInfoStep({
+  value,
+  onChange,
+  errors,
+  branches,
+  buildings,
+  purposeOfVisitOptions,
+  customFields,
+  customFieldValues,
+  onCustomFieldValuesChange,
+  uploadFile,
+  getFilePreviewUrl,
+}: VisitInfoStepProps) {
+  const purposeOptions =
+    purposeOfVisitOptions.length > 0 ? purposeOfVisitOptions.map((option) => ({ value: option, label: option })) : PURPOSE_OPTIONS
   const selectedBranch = branches?.find((branch) => branch.name === value.location)
   const buildingOptions = (selectedBranch ? buildings?.filter((building) => building.branchId === selectedBranch.id) : buildings)?.map(
     (building) => ({ value: building.name, label: building.name }),
@@ -40,7 +69,7 @@ export function VisitInfoStep({ value, onChange, errors, branches, buildings }: 
         <SelectField
           label="Purpose of Visit"
           placeholder="Select purpose"
-          options={PURPOSE_OPTIONS}
+          options={purposeOptions}
           value={value.purpose}
           onChange={(purpose) => onChange({ ...value, purpose })}
           error={errors.purpose}
@@ -61,15 +90,6 @@ export function VisitInfoStep({ value, onChange, errors, branches, buildings }: 
           value={value.preferredTime}
           onChange={(preferredTime) => onChange({ ...value, preferredTime })}
           error={errors.preferredTime}
-          required
-        />
-        <SelectField
-          label="Expected Duration"
-          placeholder="Select duration"
-          options={DURATION_OPTIONS}
-          value={value.expectedDuration}
-          onChange={(expectedDuration) => onChange({ ...value, expectedDuration })}
-          error={errors.expectedDuration}
           required
         />
         {branches ? (
@@ -113,11 +133,12 @@ export function VisitInfoStep({ value, onChange, errors, branches, buildings }: 
           />
         )}
       </div>
-      <TextareaField
-        label="Additional Notes / Special Requirements"
-        placeholder="Any special requirements, accessibility needs, or notes for the host…"
-        value={value.notes}
-        onChange={(notes) => onChange({ ...value, notes })}
+      <CustomFieldsSection
+        fields={customFields}
+        value={customFieldValues}
+        onChange={onCustomFieldValuesChange}
+        uploadFile={uploadFile}
+        getFilePreviewUrl={getFilePreviewUrl}
       />
     </div>
   )

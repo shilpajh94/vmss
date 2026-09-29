@@ -2,7 +2,7 @@ import z from 'zod'
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
 import type { BranchRepository } from '../data/repositories/branch-repository'
-import type { BuildingRepository } from '../data/repositories/building-repository'
+import type { BuildingRepository, BuildingsPage, ListBuildingsPageParams } from '../data/repositories/building-repository'
 import { BuildingListResponseSchema, BuildingResponseSchema, type BuildingOut } from '../domain/entities/building-out-schema'
 import type { Building, BuildingInput } from '../domain/entities/building-schema'
 
@@ -43,6 +43,23 @@ export class HttpBuildingRepository implements BuildingRepository {
     ])
 
     return response.data.map((buildingOut) => this.toBuilding(buildingOut, branchNameById))
+  }
+
+  async listPage({ page, pageSize, status, branchId }: ListBuildingsPageParams): Promise<BuildingsPage> {
+    const [response, branchNameById] = await Promise.all([
+      this.apiClient.makeRequest({
+        endpointConfig: API_ENDPOINTS.LIST_BUILDINGS,
+        queryParams: { page, pageSize, status },
+        headers: branchId ? { 'X-Branch-ID': branchId } : undefined,
+        parserSchema: BuildingListResponseSchema,
+      }),
+      this.buildBranchNameById(),
+    ])
+
+    return {
+      items: response.data.map((buildingOut) => this.toBuilding(buildingOut, branchNameById)),
+      total: response.pagination.total,
+    }
   }
 
   async create(input: BuildingInput): Promise<Building> {

@@ -1,5 +1,4 @@
-import { AdminSidebar } from '../../components/AdminSidebar'
-import { AdminTopBar } from '../../components/AdminTopBar'
+import { useState } from 'react'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
@@ -7,8 +6,30 @@ import { DelegateInvitationModal } from '../../components/invitation-board/Deleg
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
 import { LoadingState } from '../../components/ui/LoadingState'
-import { RefreshCcwIcon, SearchGlyphIcon } from '../../components/icons'
+import { SelectField } from '../../components/ui/SelectField'
+import { SearchGlyphIcon, SlidersIcon } from '../../components/icons'
+import { PageContentLayout } from '../../components/PageContentLayout'
+import { usePageHeader } from '../../context/page-header-context'
 import { useAdminInvitations } from './hooks/use-admin-invitations'
+
+const STATUS_OPTIONS = [
+  { value: 'submitted', label: 'Requested' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'checked_in', label: 'Checked-in' },
+  { value: 'checked_out', label: 'Checked-out' },
+  { value: 'denied', label: 'Denied' },
+]
+
+const REGISTRATION_TYPE_OPTIONS = [
+  { value: 'all', label: 'All types' },
+  { value: 'individual', label: 'Individual' },
+  { value: 'group', label: 'Group' },
+]
+
+const SOURCE_OPTIONS = [
+  { value: 'staff_pre_registration', label: 'Staff Pre-Registration' },
+  { value: 'visitor_walk_in', label: 'Visitor Walk-in' },
+]
 
 const EMPTY_MESSAGES: Record<string, string> = {
   requested: 'No requested visits',
@@ -18,13 +39,19 @@ const EMPTY_MESSAGES: Record<string, string> = {
 }
 
 export function AdminInvitationsPage() {
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const {
-    currentUser,
     columns,
     isLoading,
     errorMessage,
     search,
     setSearch,
+    statusFilter,
+    setStatusFilter,
+    registrationTypeFilter,
+    setRegistrationTypeFilter,
+    sourceFilter,
+    setSourceFilter,
     refresh,
     approve,
     approvingId,
@@ -57,23 +84,36 @@ export function AdminInvitationsPage() {
     requestDelegate,
     cancelDelegate,
     pendingDelegateDetail,
+    approveAndDelegate,
+    approvingAndDelegatingId,
+    pendingApproveAndDelegateId,
+    requestApproveAndDelegate,
+    cancelApproveAndDelegate,
+    nextStepCandidates,
+    isLoadingNextStepCandidates,
+    workflowRulesByCategory,
     visitorInfoId,
     viewVisitorInfo,
     closeVisitorInfo,
   } = useAdminInvitations()
 
+  usePageHeader({ description: 'Monitor visitor invitations, approval status, and check-in progress' })
+
+  const isFiltering = statusFilter !== '' || registrationTypeFilter !== 'all' || sourceFilter !== ''
+  const clearFilters = () => {
+    setStatusFilter('')
+    setRegistrationTypeFilter('all')
+    setSourceFilter('')
+  }
+
   return (
-    <div className="flex min-h-screen w-full items-stretch bg-bg">
-      <AdminSidebar activeItem="invitations" />
-
-      <div className="flex flex-1 flex-col">
-        <AdminTopBar description="Monitor visitor invitations, approval status, and check-in progress" currentUser={currentUser} />
-
-        <main className="flex flex-1 flex-col gap-6 p-8">
+    <PageContentLayout
+      header={
+        <>
           <div className="flex w-full items-center justify-between">
             <h1 className="font-display text-2xl font-bold text-text">Invitations</h1>
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5">
+              <div className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary">
                 <SearchGlyphIcon className="size-3.5 shrink-0 text-text-faint" />
                 <input
                   type="text"
@@ -85,51 +125,78 @@ export function AdminInvitationsPage() {
               </div>
               <button
                 type="button"
-                onClick={refresh}
-                className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
+                onClick={() => setIsFilterPanelOpen((current) => !current)}
+                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
               >
-                <RefreshCcwIcon className="size-3.5" />
-                Refresh
+                <SlidersIcon className="size-3.5" />
+                Filters
               </button>
             </div>
           </div>
 
-          {errorMessage ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
-              <p className="font-body text-sm text-danger">{errorMessage}</p>
-              <button type="button" onClick={refresh} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-                Try again
-              </button>
-            </div>
-          ) : isLoading ? (
-            <LoadingState label="Loading invitations…" className="flex-1" />
-          ) : (
-            <div className="flex w-full flex-1 items-start gap-4">
-              {columns.map((column) => (
-                <KanbanColumn
-                  key={column.status}
-                  status={column.status}
-                  label={column.label}
-                  requests={column.requests}
-                  emptyMessage={EMPTY_MESSAGES[column.status]}
-                  onDrop={column.status === 'approved' ? approve : column.status === 'denied' ? requestDeny : undefined}
-                  approvingId={approvingId}
-                  expandedId={expandedId}
-                  onToggleExpand={toggleExpand}
-                  invitationDetails={invitationDetails}
-                  loadingDetailId={loadingDetailId}
-                  roleNameById={roleNameById}
-                  employeeNameById={employeeNameById}
-                  onRescheduleClick={requestReschedule}
-                  onDelegateClick={requestDelegate}
-                  onEditClick={requestEdit}
-                  onVisitorInfoClick={viewVisitorInfo}
+          {isFilterPanelOpen && (
+            <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-filter-panel">
+              <div className="w-48">
+                <SelectField label="Status" value={statusFilter} onChange={setStatusFilter} placeholder="All" options={STATUS_OPTIONS} />
+              </div>
+              <div className="w-48">
+                <SelectField
+                  label="Registration Type"
+                  value={registrationTypeFilter}
+                  onChange={setRegistrationTypeFilter}
+                  options={REGISTRATION_TYPE_OPTIONS}
                 />
-              ))}
+              </div>
+              <div className="w-48">
+                <SelectField label="Source" value={sourceFilter} onChange={setSourceFilter} placeholder="All" options={SOURCE_OPTIONS} />
+              </div>
+              {isFiltering && (
+                <button type="button" onClick={clearFilters} className="font-body text-[13px] font-semibold text-admin-accent">
+                  Clear filters
+                </button>
+              )}
             </div>
           )}
-        </main>
-      </div>
+        </>
+      }
+    >
+      {errorMessage ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
+          <p className="font-body text-sm text-danger">{errorMessage}</p>
+          <button type="button" onClick={refresh} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
+            Try again
+          </button>
+        </div>
+      ) : isLoading ? (
+        <LoadingState label="Loading invitations…" className="flex-1" />
+      ) : (
+        <div className="flex w-full flex-1 items-start gap-4 overflow-x-auto">
+          {columns.map((column) => (
+            <KanbanColumn
+              key={column.status}
+              status={column.status}
+              label={column.label}
+              requests={column.requests}
+              emptyMessage={EMPTY_MESSAGES[column.status]}
+              onDrop={column.status === 'approved' ? approve : column.status === 'denied' ? requestDeny : undefined}
+              approvingId={approvingId}
+              expandedId={expandedId}
+              onToggleExpand={toggleExpand}
+              invitationDetails={invitationDetails}
+              loadingDetailId={loadingDetailId}
+              roleNameById={roleNameById}
+              employeeNameById={employeeNameById}
+              workflowRulesByCategory={workflowRulesByCategory}
+              onRescheduleClick={requestReschedule}
+              onDelegateClick={requestDelegate}
+              onApproveAndDelegateClick={requestApproveAndDelegate}
+              onApproveClick={approve}
+              onEditClick={requestEdit}
+              onVisitorInfoClick={viewVisitorInfo}
+            />
+          ))}
+        </div>
+      )}
 
       <DenyInvitationModal isOpen={pendingDenyId !== undefined} isDenying={denyingId !== undefined} onConfirm={confirmDeny} onCancel={cancelDeny} />
 
@@ -149,14 +216,27 @@ export function AdminInvitationsPage() {
         stepOrder={pendingDelegateDetail?.currentApprovalStep?.stepOrder}
         roleNameById={roleNameById}
         hostEmployees={hostEmployees}
+        branchId={pendingDelegateDetail?.branchId}
         onConfirm={(delegateUserId) => pendingDelegateId && delegate(pendingDelegateId, delegateUserId)}
         onCancel={cancelDelegate}
+      />
+
+      <DelegateInvitationModal
+        isOpen={pendingApproveAndDelegateId !== undefined}
+        isDelegating={approvingAndDelegatingId !== undefined}
+        mode="approve-and-delegate"
+        isLoadingCandidates={isLoadingNextStepCandidates}
+        hostEmployees={nextStepCandidates}
+        onConfirm={(delegateUserId) => pendingApproveAndDelegateId && approveAndDelegate(pendingApproveAndDelegateId, delegateUserId)}
+        onCancel={cancelApproveAndDelegate}
       />
 
       <EditInvitationModal
         isOpen={pendingEditId !== undefined}
         isSaving={editingId !== undefined}
         detail={pendingEditDetail}
+        workflowRulesByCategory={workflowRulesByCategory}
+        hostEmployees={hostEmployees}
         onConfirm={(fields) => pendingEditId && edit(pendingEditId, fields)}
         onCancel={cancelEdit}
       />
@@ -165,8 +245,9 @@ export function AdminInvitationsPage() {
         isOpen={visitorInfoId !== undefined}
         isLoading={visitorInfoId !== undefined && !invitationDetails[visitorInfoId]}
         detail={visitorInfoId ? invitationDetails[visitorInfoId] : undefined}
+        workflowRulesByCategory={workflowRulesByCategory}
         onClose={closeVisitorInfo}
       />
-    </div>
+    </PageContentLayout>
   )
 }

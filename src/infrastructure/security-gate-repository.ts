@@ -2,7 +2,11 @@ import z from 'zod'
 import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
 import type { BuildingRepository } from '../data/repositories/building-repository'
-import type { SecurityGateRepository } from '../data/repositories/security-gate-repository'
+import type {
+  ListSecurityGatesPageParams,
+  SecurityGateRepository,
+  SecurityGatesPage,
+} from '../data/repositories/security-gate-repository'
 import {
   SecurityGateListResponseSchema,
   SecurityGateResponseSchema,
@@ -57,6 +61,22 @@ export class HttpSecurityGateRepository implements SecurityGateRepository {
     ])
 
     return response.data.map((securityGateOut) => this.toSecurityGate(securityGateOut, lookups))
+  }
+
+  async listPage({ page, pageSize, buildingId, gateType, securityLevel }: ListSecurityGatesPageParams): Promise<SecurityGatesPage> {
+    const [response, lookups] = await Promise.all([
+      this.apiClient.makeRequest({
+        endpointConfig: API_ENDPOINTS.LIST_SECURITY_GATES,
+        queryParams: { page, pageSize, buildingId, gateType, securityLevel },
+        parserSchema: SecurityGateListResponseSchema,
+      }),
+      this.buildNameLookups(),
+    ])
+
+    return {
+      items: response.data.map((securityGateOut) => this.toSecurityGate(securityGateOut, lookups)),
+      total: response.pagination.total,
+    }
   }
 
   async create(input: SecurityGateInput): Promise<SecurityGate> {

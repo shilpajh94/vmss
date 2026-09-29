@@ -39,7 +39,7 @@ export function useStaffLoginPage() {
       void registerCurrentDevice()
 
       const user = await getCurrentStaffUserUseCase.execute()
-      navigate(user.isAdmin ? '/admin/dashboard' : '/staff/dashboard')
+      navigate(user.isAdmin ? '/admin/dashboard' : user.isReception ? '/reception/dashboard' : '/staff/dashboard')
     } catch {
       setErrorMessage('Invalid email or password. Please try again.')
       setStatus('error')

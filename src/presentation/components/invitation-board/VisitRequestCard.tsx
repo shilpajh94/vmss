@@ -1,6 +1,13 @@
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
-import { resolveApproverLabel } from '../../utils/approval-step-label'
+import {
+  isReceptionCurrentStep,
+  resolveApproverLabel,
+  resolveCurrentLevel,
+  resolveNextStepPreviewLabel,
+  resolveTotalSteps,
+} from '../../utils/approval-step-label'
+import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { CalendarClockIcon } from '../icons'
 
 const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved'])
@@ -27,8 +34,11 @@ interface VisitRequestCardProps {
   isLoadingDetail?: boolean
   roleNameById?: Record<string, string>
   employeeNameById?: Record<string, string>
+  workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
   onRescheduleClick?: (id: string) => void
   onDelegateClick?: (id: string) => void
+  onApproveAndDelegateClick?: (id: string) => void
+  onApproveClick?: (id: string) => void
   onEditClick?: (id: string) => void
   onVisitorInfoClick?: (id: string) => void
 }
@@ -43,25 +53,54 @@ export function VisitRequestCard({
   isLoadingDetail,
   roleNameById,
   employeeNameById,
+  workflowRulesByCategory,
   onRescheduleClick,
   onDelegateClick,
+  onApproveAndDelegateClick,
+  onApproveClick,
   onEditClick,
   onVisitorInfoClick,
 }: VisitRequestCardProps) {
+  const isReceptionStep = isReceptionCurrentStep(detail?.currentApprovalStep, detail?.visitorCategoryId, workflowRulesByCategory ?? {})
+  const pendingApproverLabel = detail?.currentApprovalStep
+    ? (resolveNextStepPreviewLabel(detail, workflowRulesByCategory ?? {}, roleNameById ?? {}) ??
+      resolveApproverLabel(detail.currentApprovalStep, roleNameById, employeeNameById))
+    : undefined
+  const totalSteps = detail?.currentApprovalStep ? resolveTotalSteps(detail, workflowRulesByCategory ?? {}) : undefined
   const canReschedule = Boolean(onRescheduleClick) && RESCHEDULABLE_STATUSES.has(request.status)
-  const canDelegate = Boolean(onDelegateClick) && Boolean(detail?.currentApprovalStep)
+  const canDelegate = Boolean(onDelegateClick) && Boolean(detail?.currentApprovalStep) && !isReceptionStep
+  // Reception never uses drag-and-drop to approve — it always acts through an
+  // explicit button, either "Approve & Delegate" (another level follows) or
+  // plain "Approve" (Reception is the only/last level), so the outcome is
+  // deliberate rather than an accidental card drag.
+  const isReceptionApprovalStep = isReceptionStep && Boolean(detail?.currentApprovalStep)
+  const isLockedToApproveAndDelegate = isReceptionApprovalStep && (totalSteps ?? 0) > 1
+  const canApproveAndDelegate = Boolean(onApproveAndDelegateClick) && isLockedToApproveAndDelegate
+  const canApprove = Boolean(onApproveClick) && isReceptionApprovalStep && (totalSteps ?? 0) <= 1
   const canEdit = Boolean(onEditClick) && RESCHEDULABLE_STATUSES.has(request.status)
+  // Before this card's detail has loaded, we don't yet know whether it's
+  // Reception's own step — default to not draggable rather than briefly
+  // allowing a drag that would then be blocked once the detail arrives.
+  // Same for the category's live workflow rules: until they've loaded,
+  // `isReceptionStep`/`totalSteps` fall back to the step's own possibly-stale
+  // `stepOrder`/`totalSteps` snapshot, which can misidentify Reception's step
+  // as a later, freely-draggable one (`approve()` still hard-blocks this
+  // case regardless — this just avoids the card visibly allowing a drag that
+  // would immediately be rejected).
+  const workflowRulesLoaded =
+    !detail?.currentApprovalStep || !detail.visitorCategoryId || workflowRulesByCategory?.[detail.visitorCategoryId] !== undefined
+  const canDragCard = isDraggable && !isApproving && detail !== undefined && workflowRulesLoaded && !isReceptionApprovalStep
 
   return (
     <div
-      draggable={isDraggable && !isApproving}
+      draggable={canDragCard}
       onDragStart={(event) => {
         event.dataTransfer.setData('text/plain', request.id)
         event.dataTransfer.effectAllowed = 'move'
       }}
       onClick={() => onToggleExpand?.(request.id)}
       className={`flex w-full flex-col gap-3 rounded-xl border border-border bg-surface p-4 drop-shadow-[0px_4px_4px_rgba(15,23,42,0.03)] ${
-        isDraggable && !isApproving ? 'cursor-grab active:cursor-grabbing' : ''
+        canDragCard ? 'cursor-grab active:cursor-grabbing' : ''
       } ${isApproving ? 'opacity-60' : ''}`}
     >
       <div className="flex w-full items-center justify-between">
@@ -91,11 +130,9 @@ export function VisitRequestCard({
       {detail?.currentApprovalStep ? (
         <div className="flex w-full items-center gap-1.5">
           <span className="flex shrink-0 items-center gap-1 rounded-full border border-info/30 bg-info/8 px-2 py-0.5 font-body text-[10px] font-bold whitespace-nowrap text-info">
-            Level {detail.currentApprovalStep.stepOrder}/{detail.currentApprovalStep.totalSteps}
+            Level {resolveCurrentLevel(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory ?? {})}/{totalSteps}
           </span>
-          <span className="truncate font-body text-[10px] text-text-faint">
-            Pending: {resolveApproverLabel(detail.currentApprovalStep, roleNameById, employeeNameById)}
-          </span>
+          <span className="truncate font-body text-[10px] text-text-faint">Pending: {pendingApproverLabel}</span>
         </div>
       ) : null}
 
@@ -105,8 +142,8 @@ export function VisitRequestCard({
             <span>Loading approval progress…</span>
           ) : detail?.currentApprovalStep ? (
             <span>
-              Step {detail.currentApprovalStep.stepOrder} of {detail.currentApprovalStep.totalSteps} — pending:{' '}
-              {resolveApproverLabel(detail.currentApprovalStep, roleNameById, employeeNameById)}
+              Step {resolveCurrentLevel(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory ?? {})} of {totalSteps} —
+              pending: {pendingApproverLabel}
             </span>
           ) : (
             <span>No multi-step approval workflow for this request.</span>
@@ -114,7 +151,7 @@ export function VisitRequestCard({
         </div>
       ) : null}
 
-      {canReschedule || canDelegate || canEdit || onVisitorInfoClick ? (
+      {canReschedule || canDelegate || canApproveAndDelegate || canApprove || canEdit || onVisitorInfoClick ? (
         <div className="flex w-full flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
           {onVisitorInfoClick ? (
             <button
@@ -141,6 +178,24 @@ export function VisitRequestCard({
               className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
             >
               Delegate
+            </button>
+          ) : null}
+          {canApproveAndDelegate ? (
+            <button
+              type="button"
+              onClick={() => onApproveAndDelegateClick?.(request.id)}
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+            >
+              Approve &amp; Delegate
+            </button>
+          ) : null}
+          {canApprove ? (
+            <button
+              type="button"
+              onClick={() => onApproveClick?.(request.id)}
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+            >
+              Approve
             </button>
           ) : null}
           {canEdit ? (

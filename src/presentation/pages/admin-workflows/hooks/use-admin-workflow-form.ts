@@ -46,20 +46,37 @@ export function useAdminWorkflowForm() {
       setCurrentUser(user)
       setRoles(roleList)
 
+      // Level 1 is always Reception's step (stepOrder 0) throughout the rest
+      // of the app — the reception-only guard, "Approve & Delegate", and the
+      // delegate-blocking rule all hardcode that position as meaning
+      // Reception. Without this role, no workflow can be configured
+      // correctly, so fail fast rather than let Level 1 end up unset.
+      const receptionRole = roleList.find((role) => role.name.toLowerCase() === 'reception')
+      if (!receptionRole) {
+        setErrorMessage("A 'Reception' role must exist in Roles & Permissions before a workflow can be configured.")
+        return
+      }
+
       if (isEditMode) {
         setCategoryOptions(categories)
         setSelectedCategoryId(visitorCategoryId)
 
+        // Mirrors `save-workflow.ts`'s defensive filter — a stale/soft-deleted
+        // rule the backend didn't actually drop would otherwise pre-populate
+        // the form with an extra level that was never really configured.
         const existingRules = allRules
-          .filter((rule) => rule.visitorCategoryId === visitorCategoryId)
+          .filter((rule) => rule.visitorCategoryId === visitorCategoryId && rule.isActive)
           .sort((a, b) => a.stepOrder - b.stepOrder)
 
-        setLevels(existingRules.length > 0 ? existingRules.map((rule) => ({ approverRoleId: rule.approverRoleId })) : [EMPTY_LEVEL])
+        const existingLevels =
+          existingRules.length > 0 ? existingRules.map((rule) => ({ approverRoleId: rule.approverRoleId })) : [EMPTY_LEVEL]
+        existingLevels[0] = { approverRoleId: receptionRole.id }
+        setLevels(existingLevels)
       } else {
         const configuredCategoryIds = new Set(allRules.map((rule) => rule.visitorCategoryId))
         setCategoryOptions(categories.filter((category) => !configuredCategoryIds.has(category.id)))
         setSelectedCategoryId('')
-        setLevels([EMPTY_LEVEL])
+        setLevels([{ approverRoleId: receptionRole.id }])
       }
     } catch {
       setErrorMessage('Something went wrong loading this page. Please try again.')
@@ -99,15 +116,30 @@ export function useAdminWorkflowForm() {
   }, [])
 
   const removeLevel = useCallback((index: number) => {
+    if (index === 0) return
     setLevels((current) => (current.length <= 1 ? current : current.filter((_, levelIndex) => levelIndex !== index)))
   }, [])
 
   const updateLevelApprover = useCallback((index: number, approverRoleId: string) => {
+    // Level 1 is locked to the Reception role — its select is disabled in the
+    // UI, but guard here too so the invariant holds regardless of caller.
+    if (index === 0) return
     setLevels((current) => current.map((level, levelIndex) => (levelIndex === index ? { approverRoleId } : level)))
   }, [])
 
   const submit = useCallback(async () => {
-    const levelErrors = levels.map((level) => (level.approverRoleId ? undefined : 'Approver is required.'))
+    // A role assigned to an earlier level can't also approve a later one on
+    // the same request — reproduced live: an "xss" category workflow had
+    // Reception picked for both Level 1 and Level 2, so a request's Level 2
+    // step ended up pending on Reception again instead of a distinct
+    // approver, which is almost certainly a configuration mistake rather
+    // than an intentional design.
+    const levelErrors = levels.map((level, index) => {
+      if (index === 0) return undefined
+      if (!level.approverRoleId) return 'Approver is required.'
+      const usedByEarlierLevel = levels.slice(0, index).some((earlierLevel) => earlierLevel.approverRoleId === level.approverRoleId)
+      return usedByEarlierLevel ? 'This role is already assigned to an earlier level.' : undefined
+    })
     const categoryError = selectedCategoryId ? undefined : 'Visitor category is required.'
 
     if (categoryError || levelErrors.some((error) => error !== undefined)) {

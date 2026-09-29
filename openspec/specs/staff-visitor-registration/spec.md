@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The staff-visitor-registration capability lets an authenticated staff member register a visitor or a group of visitors on the organization's behalf through a guided six-step wizard, then submits the request attributed to that staff member.
+The staff-visitor-registration capability lets an authenticated staff member register a visitor or a group of visitors on the organization's behalf through a guided multi-step wizard, then submits the request attributed to that staff member.
 
 ## Requirements
 
@@ -24,12 +24,36 @@ The system SHALL render the Register Visitor wizard inside the staff shell (side
 - **WHEN** an authenticated staff member activates "My actions" in the dashboard sidebar
 - **THEN** the system renders the Register Visitor wizard's "Visitor Info" step inside the staff shell
 
-### Requirement: A six-step progress stepper shows the current step
-The system SHALL display a stepper listing all six steps in order — Visitor Info, Visit Info, Carried Items, Vehicle Info, Consent Agreement, Review & Confirm — and SHALL visually mark which step is currently active.
+### Requirement: A progress stepper shows the current step, reflecting the branch's published form-builder configuration
+The system SHALL display a stepper listing the steps present in the branch's published effective form configuration, in that configuration's order, and SHALL visually mark which step is currently active. A step the configuration omits (deactivated by an admin, or never enabled for the branch) SHALL NOT appear in the stepper and SHALL NOT be reachable by navigation. A step present in the configuration whose key is not one of the wizard's built-in steps (Visitor Info, Visit Info, Carried Items, Vehicle Info, Consent Agreement, Review & Confirm) SHALL still render, using its configured fields, rather than being silently omitted. The stepper's total count and "Next"/"Back" transitions SHALL be computed from the number of steps actually present, not a fixed count of six.
 
 #### Scenario: Stepper reflects current step
 - **WHEN** the staff member is on any step of the wizard
-- **THEN** the stepper shows all six step names and highlights the current one
+- **THEN** the stepper shows the active step names from the effective configuration and highlights the current one
+
+#### Scenario: Deactivated step is omitted from the stepper
+- **WHEN** an admin deactivates the "Vehicle Info" step and publishes the change, and a staff member subsequently opens the Register Visitor wizard for that branch
+- **THEN** the stepper does not list "Vehicle Info", and the wizard proceeds directly from "Carried Items" to "Consent Agreement"
+
+#### Scenario: Deactivated step cannot be reached by navigation
+- **WHEN** the effective configuration omits a step
+- **THEN** no stepper entry, "Next" action, or direct navigation exposed by the wizard leads to that step's content
+
+#### Scenario: Step order follows the published configuration
+- **WHEN** the effective configuration lists active steps in an order different from the wizard's historical default order
+- **THEN** the stepper and the step-to-step navigation follow the configuration's order
+
+#### Scenario: A custom step in the configuration renders generically
+- **WHEN** the effective configuration includes an active step whose key is not one of the six built-in steps
+- **THEN** the wizard renders that step in the stepper at its configured position and presents its configured fields for input, instead of omitting it
+
+#### Scenario: Progress indication matches an active step count smaller than the historical default
+- **WHEN** the effective configuration has fewer active steps than the wizard's historical six
+- **THEN** any step-count or progress indicator reflects the smaller, actual count
+
+#### Scenario: Sidebar shows a loading state, not an empty or default step list
+- **WHEN** a staff member opens the wizard before the effective configuration has finished loading
+- **THEN** the stepper shows a loading indicator rather than an empty step list or the wizard's historical hardcoded default steps
 
 ### Requirement: Staff chooses between an individual and a group registration
 The system SHALL let the staff member declare whether the registration is for a single visitor or a group, and SHALL show the fields appropriate to that choice on the Visitor Info step.
@@ -83,7 +107,7 @@ The system SHALL show every visitor added to a group registration in a list disp
 - **THEN** that visitor no longer appears in the list or in the submitted registration
 
 ### Requirement: Later steps apply the same rules as the self-service wizard
-The system SHALL require the same fields and validation for the Visit Info, Carried Items, Vehicle Info, and Consent Agreement steps as the visitor-request-wizard capability defines for its equivalent steps.
+The system SHALL require the same fields and validation for the Visit Info, Carried Items, Vehicle Info, and Consent Agreement steps as the visitor-request-wizard capability defines for its equivalent steps. For the Carried Items step, the set of available categories SHALL be taken from the step's configured fields, consistent with the visitor-request-wizard capability, and the system SHALL NOT fall back to a hardcoded default category list once the configuration has finished loading, even if that step's configured field list is genuinely empty.
 
 #### Scenario: Missing a required later-step field blocks progression
 - **WHEN** the staff member attempts to proceed from Visit Info, Vehicle Info, or Consent Agreement without that step's required fields completed
@@ -132,3 +156,27 @@ The system SHALL, when the staff member activates "Cancel" from the wizard, disc
 #### Scenario: Staff cancels registration
 - **WHEN** the staff member activates "Cancel" on any step of the wizard
 - **THEN** the system returns to the staff dashboard and no visit request is submitted
+
+### Requirement: Every step in the progress stepper stays visible and reachable regardless of viewport width or zoom level
+The stepper SHALL keep every active step (however many the branch's
+published form configuration includes) visible and directly reachable at
+any browser zoom level or viewport width, without relying on an
+undiscoverable horizontal scroll as the only way to reach a step past the
+visible edge. If the stepper cannot fit every step on one row at the
+current width, it SHALL either wrap steps onto additional rows, switch to
+a more compact per-step presentation, or provide a visible scroll
+affordance (not a bare, easy-to-miss scrollbar) indicating more steps exist
+off-screen.
+
+#### Scenario: A branch with many steps stays fully visible at reduced zoom
+- **WHEN** a branch's published form configuration has enough active steps
+  that their combined width would exceed a fixed-width row at the current
+  browser zoom level
+- **THEN** every step remains visible (via wrapping, a compact
+  presentation, or a discoverable scroll affordance) rather than being
+  clipped behind an unindicated horizontal scroll
+
+#### Scenario: All steps remain individually reachable
+- **WHEN** the wizard renders at any viewport width or browser zoom level
+- **THEN** the user can navigate to any active step via the stepper without
+  needing to guess that off-screen content exists

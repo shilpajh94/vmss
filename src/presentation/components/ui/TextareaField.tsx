@@ -7,9 +7,18 @@ interface TextareaFieldProps {
   placeholder?: string
   rows?: number
   labelClassName?: string
+  disabled?: boolean
 }
 
-export function TextareaField({ label, value, onChange, placeholder, rows = 4, labelClassName }: TextareaFieldProps) {
+export function TextareaField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  rows = 4,
+  labelClassName,
+  disabled,
+}: TextareaFieldProps) {
   const textareaId = useId()
 
   return (
@@ -23,7 +32,8 @@ export function TextareaField({ label, value, onChange, placeholder, rows = 4, l
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         rows={rows}
-        className="rounded-lg border border-border px-3 py-2 text-body text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent"
+        disabled={disabled}
+        className="rounded-lg border border-border px-3 py-2 text-body text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60"
       />
     </div>
   )
