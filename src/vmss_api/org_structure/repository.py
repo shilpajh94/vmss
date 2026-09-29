@@ -2,10 +2,11 @@ import uuid
 from collections.abc import Collection
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import BranchScope, SortOrder
+from vmss_api.core.tenancy import branch_filter as _branch_filter
 from vmss_api.org_structure.models import (
     Branch,
     Building,
@@ -15,16 +16,13 @@ from vmss_api.org_structure.models import (
     ReceptionDesk,
     SecurityGate,
 )
-
-
-def _branch_filter(column: Any, branch_scope: BranchScope) -> Any | None:
-    """Translates a resolved `BranchScope` into a filter clause: `None` (no
-    filter at all) for a company-wide "all" scope, otherwise `column IN
-    (...)` — a single-branch scope is just a one-element set, so there's no
-    separate equality-filter path to maintain. See
-    `org_structure/deps.py::require_branch_scope`.
-    """
-    return None if branch_scope == "all" else column.in_(branch_scope)
+from vmss_api.org_structure.schemas import (
+    ActiveStatus,
+    DeskStatus,
+    FloorAccessLevel,
+    GateType,
+    SecurityLevel,
+)
 
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
@@ -113,6 +111,7 @@ class BranchRepository(TenantScopedRepository[Branch]):
         self,
         *,
         branch_scope: BranchScope,
+        status: ActiveStatus | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -126,6 +125,8 @@ class BranchRepository(TenantScopedRepository[Branch]):
         column = {"name": Branch.name, "created_at": Branch.created_at}[sort_by]
         branch_filter = _branch_filter(Branch.id, branch_scope)
         filters: list[Any] = [branch_filter] if branch_filter is not None else []
+        if status is not None:
+            filters.append(Branch.is_active.is_(status == ActiveStatus.active))
         return await super().paginate(
             page=page,
             page_size=page_size,
@@ -163,6 +164,7 @@ class BuildingRepository(TenantScopedRepository[Building]):
         self,
         *,
         branch_scope: BranchScope,
+        status: ActiveStatus | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -177,6 +179,8 @@ class BuildingRepository(TenantScopedRepository[Building]):
         column = {"name": Building.name, "created_at": Building.created_at}[sort_by]
         branch_filter = _branch_filter(Building.branch_id, branch_scope)
         filters: list[Any] = [branch_filter] if branch_filter is not None else []
+        if status is not None:
+            filters.append(Building.is_active.is_(status == ActiveStatus.active))
         return await super().paginate(
             page=page,
             page_size=page_size,
@@ -210,6 +214,8 @@ class FloorRepository(TenantScopedRepository[Floor]):
         *,
         branch_scope: BranchScope,
         building_id: uuid.UUID | None,
+        status: ActiveStatus | None,
+        access_level: FloorAccessLevel | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -218,34 +224,27 @@ class FloorRepository(TenantScopedRepository[Floor]):
         """Joins back to `Building` to filter by branch (`Floor` has no
         `branch_id` column of its own) — the caller's authorized scope, not
         a client-chosen filter. `TenantScopedRepository.paginate` can't
-        express a join, so this bypasses it with the same count+page shape.
+        express a join, so this uses `paginate_with_joins` instead.
         """
         column = {"name": Floor.name, "created_at": Floor.created_at}[sort_by]
-        conditions: list[Any] = [Floor.deleted_at.is_(None)]
+        conditions: list[Any] = []
         branch_filter = _branch_filter(Building.branch_id, branch_scope)
         if branch_filter is not None:
             conditions.append(branch_filter)
         if building_id is not None:
             conditions.append(Floor.building_id == building_id)
+        if status is not None:
+            conditions.append(Floor.is_active.is_(status == ActiveStatus.active))
+        if access_level is not None:
+            conditions.append(Floor.access_level == access_level)
 
-        count_stmt = (
-            select(func.count())
-            .select_from(Floor)
-            .join(Building, Floor.building_id == Building.id)
-            .where(*conditions)
+        return await self.paginate_with_joins(
+            page=page,
+            page_size=page_size,
+            order_by=_order_clause(column, sort_order),
+            joins=[(Building, Floor.building_id == Building.id)],
+            filters=conditions,
         )
-        total = (await self.session.execute(count_stmt)).scalar_one()
-
-        stmt = (
-            select(Floor)
-            .join(Building, Floor.building_id == Building.id)
-            .where(*conditions)
-            .order_by(_order_clause(column, sort_order))
-            .limit(page_size)
-            .offset((page - 1) * page_size)
-        )
-        items = list((await self.session.execute(stmt)).scalars().all())
-        return items, total
 
 
 class DepartmentRepository(TenantScopedRepository[Department]):
@@ -280,6 +279,7 @@ class DepartmentRepository(TenantScopedRepository[Department]):
         *,
         branch_scope: BranchScope,
         floor_id: uuid.UUID | None,
+        status: ActiveStatus | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -294,6 +294,8 @@ class DepartmentRepository(TenantScopedRepository[Department]):
         filters: list[Any] = [branch_filter] if branch_filter is not None else []
         if floor_id is not None:
             filters.append(Department.floor_id == floor_id)
+        if status is not None:
+            filters.append(Department.is_active.is_(status == ActiveStatus.active))
         return await super().paginate(
             page=page,
             page_size=page_size,
@@ -360,6 +362,7 @@ class ReceptionDeskRepository(TenantScopedRepository[ReceptionDesk]):
         *,
         branch_scope: BranchScope,
         floor_id: uuid.UUID | None,
+        status: DeskStatus | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -369,33 +372,25 @@ class ReceptionDeskRepository(TenantScopedRepository[ReceptionDesk]):
         authorized scope — see `FloorRepository.list_page`.
         """
         column = {"name": ReceptionDesk.name, "created_at": ReceptionDesk.created_at}[sort_by]
-        conditions: list[Any] = [ReceptionDesk.deleted_at.is_(None)]
+        conditions: list[Any] = []
         branch_filter = _branch_filter(Building.branch_id, branch_scope)
         if branch_filter is not None:
             conditions.append(branch_filter)
         if floor_id is not None:
             conditions.append(ReceptionDesk.floor_id == floor_id)
+        if status is not None:
+            conditions.append(ReceptionDesk.status == status.value)
 
-        count_stmt = (
-            select(func.count())
-            .select_from(ReceptionDesk)
-            .join(Floor, ReceptionDesk.floor_id == Floor.id)
-            .join(Building, Floor.building_id == Building.id)
-            .where(*conditions)
+        return await self.paginate_with_joins(
+            page=page,
+            page_size=page_size,
+            order_by=_order_clause(column, sort_order),
+            joins=[
+                (Floor, ReceptionDesk.floor_id == Floor.id),
+                (Building, Floor.building_id == Building.id),
+            ],
+            filters=conditions,
         )
-        total = (await self.session.execute(count_stmt)).scalar_one()
-
-        stmt = (
-            select(ReceptionDesk)
-            .join(Floor, ReceptionDesk.floor_id == Floor.id)
-            .join(Building, Floor.building_id == Building.id)
-            .where(*conditions)
-            .order_by(_order_clause(column, sort_order))
-            .limit(page_size)
-            .offset((page - 1) * page_size)
-        )
-        items = list((await self.session.execute(stmt)).scalars().all())
-        return items, total
 
 
 class SecurityGateRepository(TenantScopedRepository[SecurityGate]):
@@ -414,6 +409,8 @@ class SecurityGateRepository(TenantScopedRepository[SecurityGate]):
         *,
         branch_scope: BranchScope,
         building_id: uuid.UUID | None,
+        gate_type: GateType | None,
+        security_level: SecurityLevel | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -427,6 +424,10 @@ class SecurityGateRepository(TenantScopedRepository[SecurityGate]):
         filters: list[Any] = [branch_filter] if branch_filter is not None else []
         if building_id is not None:
             filters.append(SecurityGate.building_id == building_id)
+        if gate_type is not None:
+            filters.append(SecurityGate.gate_type == gate_type.value)
+        if security_level is not None:
+            filters.append(SecurityGate.high_security.is_(security_level == SecurityLevel.high))
         return await super().paginate(
             page=page,
             page_size=page_size,

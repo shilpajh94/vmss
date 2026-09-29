@@ -12,6 +12,19 @@ from vmss_api.core.schemas import CamelModel
 SortableField = Literal["name", "created_at"]
 
 
+class ActiveStatus(StrEnum):
+    """`?status=` filter value for the org-structure entities whose "status"
+    is a plain `is_active` boolean column (Branch, Building, Floor,
+    Department), so the query param reads the same across those list
+    endpoints instead of each translating a raw boolean differently.
+    `ReceptionDesk`/`SecurityGate` have their own richer status enums
+    (`DeskStatus`, connectivity) and don't use this one.
+    """
+
+    active = "active"
+    inactive = "inactive"
+
+
 class CompanyCreate(CamelModel):
     legal_name: str = Field(max_length=255)
     registration_number: str | None = Field(default=None, max_length=100)
@@ -252,6 +265,17 @@ class GateType(StrEnum):
     entry = "entry"
     exit = "exit"
     both = "both"
+
+
+class SecurityLevel(StrEnum):
+    """`?securityLevel=` filter value for `GET /security-gates`, mapped onto
+    `SecurityGate.high_security` (standard = False, high = True) so the
+    query param reads the same as the UI's Security Level field rather than
+    exposing the raw boolean column name.
+    """
+
+    standard = "standard"
+    high = "high"
 
 
 class SecurityGateCreate(CamelModel):

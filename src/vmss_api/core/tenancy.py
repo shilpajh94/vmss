@@ -12,6 +12,7 @@ from vmss_api.auth.models import User
 from vmss_api.core.config import settings
 from vmss_api.core.database import get_db, tenant_session_scope
 from vmss_api.core.logging import logger
+from vmss_api.core.schemas import BranchScope
 from vmss_api.core.security import decode_token
 from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
@@ -144,3 +145,13 @@ def require_permission(permission_code: str):
         return user
 
     return _check
+
+
+def branch_filter(column: Any, branch_scope: BranchScope) -> Any | None:
+    """Translates a resolved `BranchScope` into a filter clause: `None` (no
+    filter at all) for a company-wide "all" scope, otherwise `column IN
+    (...)` — a single-branch scope is just a one-element set, so there's no
+    separate equality-filter path to maintain. See
+    `org_structure/deps.py::require_branch_scope`.
+    """
+    return None if branch_scope == "all" else column.in_(branch_scope)

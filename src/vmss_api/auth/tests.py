@@ -1096,6 +1096,74 @@ async def test_list_employees_with_branch_header_excludes_employee_with_no_depar
     assert "Dana Employee" not in names
 
 
+async def _make_role_holder_no_department(
+    db_session: AsyncSession, tenant: Tenant, role_name: str, branch_id: uuid.UUID | None
+) -> User:
+    role = RoleFactory.build(id=uuid.uuid4(), name=role_name, permissions=[])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"{role_name}-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name=f"{role_name.title()} No Department",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+async def test_list_employees_with_branch_header_includes_departmentless_matching_branch_role(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, user: User, branch: Branch
+) -> None:
+    """A user with no `department_id` still appears in a branch-scoped
+    listing when their own `UserBranchRole` is scoped to that exact branch
+    — the RBAC branch grant is itself sufficient to place them there, not
+    only their (optional) department. Complements
+    `test_list_employees_with_branch_header_excludes_employee_with_no_department`,
+    whose departmentless user has no branch-scoped role grant either and so
+    is still correctly excluded.
+    """
+    role_holder = await _make_role_holder_no_department(db_session, tenant, "host", branch.id)
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/auth/employees",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 200
+    emails = {e["email"] for e in response.json()["data"]}
+    assert role_holder.email in emails
+
+
+async def test_list_employees_with_branch_header_includes_departmentless_all_branch_role_holder(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, user: User, branch: Branch
+) -> None:
+    """An "All Branch" (`branch_id=None`, company-wide) role grant makes a
+    departmentless user visible in *every* branch-scoped listing, not just
+    an unscoped one — the same "company-wide means every branch" rule
+    `auth/models.py::User.has_branch_access` already applies to permission
+    checks now also applies to this listing. Closes the gap where an
+    All-Branch host was invisible from a `?role=host&X-Branch-ID=...`
+    delegate-candidate lookup.
+    """
+    role_holder = await _make_role_holder_no_department(db_session, tenant, "host", None)
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/auth/employees",
+        params={"role": "host"},
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert response.status_code == 200
+    emails = {e["email"] for e in response.json()["data"]}
+    assert role_holder.email in emails
+
+
 async def _branch_scoped_employee_viewer(
     db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
 ) -> User:
@@ -1397,6 +1465,25 @@ async def test_list_employees_filter_by_role(
     assert body["data"][0]["email"] == "receptionist@acme-test.example"
 
 
+async def test_list_employees_filter_by_status(
+    db_session: AsyncSession, client: AsyncClient, tenant: Tenant
+) -> None:
+    active_employee = UserFactory.build(
+        id=uuid.uuid4(), email="active-emp@acme-test.example", is_active=True
+    )
+    inactive_employee = UserFactory.build(
+        id=uuid.uuid4(), email="inactive-emp@acme-test.example", is_active=False
+    )
+    db_session.add_all([active_employee, inactive_employee])
+    await db_session.commit()
+
+    response = await client.get("/api/v1/auth/employees?status=inactive")
+    assert response.status_code == 200
+    emails = {e["email"] for e in response.json()["data"]}
+    assert inactive_employee.email in emails
+    assert active_employee.email not in emails
+
+
 async def _make_role_user(
     db_session: AsyncSession,
     tenant: Tenant,
@@ -1588,11 +1675,13 @@ async def test_list_permissions_success(
     viewer = await _company_wide_user(db_session, tenant, codes=["roles:view"])
     token = issue_token(viewer)
     response = await client.get(
-        "/api/v1/auth/permissions", headers={"Authorization": f"Bearer {token}"}
+        "/api/v1/auth/permissions?pageSize=100", headers={"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 200
-    codes = {row["code"] for row in response.json()["data"]}
+    body = response.json()
+    codes = {row["code"] for row in body["data"]}
     assert "roles:view" in codes
+    assert body["pagination"]["total"] == len(codes)
 
 
 async def test_list_permissions_requires_permission(
@@ -1603,6 +1692,85 @@ async def test_list_permissions_requires_permission(
         "/api/v1/auth/permissions", headers={"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 403
+
+
+def _synthetic_permission_codes(count: int) -> list[str]:
+    """Deterministic, lexically-orderable codes for pagination/sort tests —
+    `_company_wide_user` inserts exactly these into the (test-isolated)
+    global `permissions` table, so the catalog's size for these tests is
+    fully controlled rather than relying on however many rows
+    `rbac_catalog.PERMISSION_CODES` happens to seed.
+    """
+    return [f"synthetic-perm:{i:03d}" for i in range(count)]
+
+
+async def test_list_permissions_default_page(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token: Callable[[User], str],
+) -> None:
+    """No `page`/`pageSize` supplied SHALL return page 1 at the house
+    default page size, with a correct `total`/`totalPages` for the full
+    catalog — see openspec/specs/auth/spec.md's "Permission catalog is
+    paginated" scenario.
+    """
+    codes = ["roles:view", *_synthetic_permission_codes(24)]
+    viewer = await _company_wide_user(db_session, tenant, codes=codes)
+    token = issue_token(viewer)
+    response = await client.get(
+        "/api/v1/auth/permissions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pagination"]["page"] == 1
+    assert body["pagination"]["pageSize"] == 20
+    assert len(body["data"]) == 20
+    assert body["pagination"]["total"] == len(codes)
+    assert body["pagination"]["totalPages"] == 2
+
+
+async def test_list_permissions_page_beyond_last_is_empty(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token: Callable[[User], str],
+) -> None:
+    """A `page` past the catalog's last page SHALL return an empty `data`
+    array with a valid pagination block, not a 404/400 — see
+    openspec/specs/auth/spec.md's "page beyond the last page is empty, not
+    an error" scenario.
+    """
+    viewer = await _company_wide_user(
+        db_session, tenant, codes=["roles:view", *_synthetic_permission_codes(3)]
+    )
+    token = issue_token(viewer)
+    response = await client.get(
+        "/api/v1/auth/permissions?page=9999&pageSize=20",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"] == []
+    assert body["pagination"]["page"] == 9999
+
+
+async def test_list_permissions_sort_desc(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token: Callable[[User], str],
+) -> None:
+    codes = ["roles:view", *_synthetic_permission_codes(5)]
+    viewer = await _company_wide_user(db_session, tenant, codes=codes)
+    token = issue_token(viewer)
+    response = await client.get(
+        "/api/v1/auth/permissions?pageSize=100&sortBy=code&sortOrder=desc",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    returned = [row["code"] for row in response.json()["data"] if row["code"] in codes]
+    assert returned == sorted(codes, reverse=True)
 
 
 # --- Role CRUD --------------------------------------------------------------
@@ -1668,6 +1836,47 @@ async def test_list_roles_requires_permission(
     token = issue_token(user_without_permissions)
     response = await client.get("/api/v1/auth/roles", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 403
+
+
+@pytest.mark.parametrize("role_name", ["reception", "host"])
+async def test_list_roles_reception_and_host_can_view(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    issue_token: Callable[[User], str],
+    role_name: str,
+) -> None:
+    """Reception and Host both carry `roles:view` in the standard catalog
+    (`rbac_catalog.py::ROLE_PERMISSIONS`) specifically so their portal/app
+    UI can resolve role data for the approve/delegate actions on an
+    invitation — without it, `GET /auth/roles` 403s for these roles and the
+    UI has no permission data to decide whether to render those buttons.
+    Seeds from the real catalog (not a hand-picked permission list) so this
+    test breaks if `roles:view` is ever dropped from either role.
+    """
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    role = await RoleRepository(db_session).get_by_name(role_name)
+    assert role is not None
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=None)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"{role_name}-roles-view@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name=f"{role_name.title()} User",
+        branch_roles=[branch_role],
+    )
+    db_session.add(test_user)
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+
+    token = issue_token(test_user)
+    response = await client.get("/api/v1/auth/roles", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
 
 
 async def test_list_roles_includes_standard_and_custom(client: AsyncClient, user: User) -> None:

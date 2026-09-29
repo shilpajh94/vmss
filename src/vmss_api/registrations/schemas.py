@@ -7,7 +7,6 @@ without a second copy of any validator to drift out of sync.
 """
 
 from vmss_api.invitations.schemas import CarriedItemsSubmit as CarriedItemsSubmit
-from vmss_api.invitations.schemas import ConsentsSubmit as ConsentsSubmit
 from vmss_api.invitations.schemas import InvitationCreate as WalkInRegistrationCreate
 from vmss_api.invitations.schemas import InvitationOut as WalkInRegistrationOut
 from vmss_api.invitations.schemas import (
@@ -21,7 +20,6 @@ from vmss_api.invitations.schemas import VisitorSubmit as VisitorSubmit
 
 __all__ = [
     "CarriedItemsSubmit",
-    "ConsentsSubmit",
     "RegistrationSource",
     "RegistrationType",
     "VehicleSubmit",

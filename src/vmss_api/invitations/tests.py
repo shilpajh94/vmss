@@ -5,16 +5,18 @@ import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 
 import aiosmtplib
 import pytest
 import pytest_asyncio
 import starlette.datastructures as starlette_datastructures
+import structlog
 from fastapi import HTTPException
 from httpx import AsyncClient, Response
 from PIL import Image
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
@@ -44,9 +46,15 @@ from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.schemas import SortOrder
 from vmss_api.core.security import hash_password
+from vmss_api.form_builder.defaults import _stable_id as _form_builder_stable_id
 from vmss_api.invitations import notifications, qr_token, tasks
 from vmss_api.invitations import service as invitations_service
-from vmss_api.invitations.models import InvitationQRCode
+from vmss_api.invitations.models import (
+    Invitation,
+    InvitationQRCode,
+    InvitationVehicle,
+    InvitationVisitor,
+)
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.models import Branch, Company, Department
@@ -60,6 +68,92 @@ from vmss_api.visit_info.models import VisitDuration, VisitPurpose
 # without having to plumb one through each of the ~40 call sites that build
 # an invitation-creation payload.
 _DEFAULT_VISITOR_CATEGORY_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
+
+
+_DEFAULT_CONSENT_KEYS = (
+    "terms_accepted",
+    "data_processing_accepted",
+    "safety_guidelines_accepted",
+)
+
+# Set by any of the admin-side `_create_and_publish_*`/`_configure_and_
+# publish_branch_field`/`_update_and_publish_group_range` helpers below,
+# reset to `None` before every test by `_reset_live_consent_field_ids`
+# (autouse). Publishing seeds the branch's default steps/fields as *real*
+# database rows (random ids) the first time anything is fetched/published
+# for it — a branch that's never touched form-builder admin endpoints at
+# all still resolves against `DEFAULT_EFFECTIVE_FORM`'s deterministic
+# ids (`_default_consent_field_id` below), but the moment a test publishes
+# anything, the branch's Consent Agreement fields get real ids that no
+# longer match that deterministic fallback (restructure-walkin-payload-
+# by-field-id). This lets `_individual_payload()`/`_group_payload()` keep
+# working unmodified either way, without every publishing test having to
+# separately re-derive and patch its own `consents`.
+_live_consent_field_ids: dict[str, str] | None = None
+
+
+@pytest_asyncio.fixture(autouse=True)
+def _reset_live_consent_field_ids():
+    global _live_consent_field_ids
+    _live_consent_field_ids = None
+    yield
+
+
+def _record_live_consent_field_ids(steps: list[dict]) -> None:
+    """Called by every admin-side setup helper right after it publishes, so
+    subsequent `_individual_payload()`/`_group_payload()` calls in the same
+    test pick up the branch's now-real Consent Agreement field ids."""
+    global _live_consent_field_ids
+    step = next((s for s in steps if s["key"] == "consent_agreement"), None)
+    if step is None:
+        return
+    _live_consent_field_ids = {f["key"]: f["id"] for f in step["fields"]}
+
+
+def _default_consent_field_id(key: str) -> str:
+    """The current Consent Agreement field id for `key` — the branch's own
+    real id if a test has published anything for it
+    (`_live_consent_field_ids`), otherwise the deterministic id
+    `form_builder/defaults.py::DEFAULT_EFFECTIVE_FORM` assigns it, matching
+    what `resolve_effective_form` falls back to for a branch with no
+    published `FormConfigVersion` at all (restructure-walkin-payload-by-
+    field-id). Lets `_individual_payload()`/`_group_payload()` submit
+    `consents` by id without every test needing its own form-builder round
+    trip.
+    """
+    if _live_consent_field_ids is not None and key in _live_consent_field_ids:
+        return _live_consent_field_ids[key]
+    return str(_form_builder_stable_id("field", "consent_agreement", key))
+
+
+def _set_consent_accepted(payload: dict, key: str, accepted: bool) -> None:
+    """Mutates `payload["consents"]` (built by `_individual_payload()`/
+    `_group_payload()`) in place, flipping the default consent field
+    identified by its default *key* to `accepted` — a test-authoring
+    convenience so call sites can keep referring to a consent by its
+    readable default key instead of `_default_consent_field_id(key)`."""
+    field_id = _default_consent_field_id(key)
+    entry = next(c for c in payload["consents"] if c["fieldId"] == field_id)
+    entry["accepted"] = accepted
+
+
+def _add_consent(payload: dict, field_id: str, accepted: bool) -> None:
+    payload["consents"].append({"fieldId": field_id, "accepted": accepted})
+
+
+def _remove_default_consent(payload: dict, key: str) -> None:
+    """Drops the default consent field identified by its default *key*
+    from `payload["consents"]` in place."""
+    field_id = _default_consent_field_id(key)
+    payload["consents"] = [c for c in payload["consents"] if c["fieldId"] != field_id]
+
+
+def _custom_field_value(entries: list[dict], field_id: str) -> Any:
+    """Looks up one `{fieldId, value}` entry's `value` out of a response's
+    `customFields`/`primaryContactCustomFields` array by `fieldId` — the
+    read-side counterpart of building a `customFields` request array by
+    hand (restructure-walkin-payload-by-field-id)."""
+    return next(e["value"] for e in entries if e["fieldId"] == field_id)
 
 
 def _jpeg_bytes() -> bytes:
@@ -89,11 +183,14 @@ def _individual_payload() -> dict:
         },
         "carriedItems": {"items": []},
         "vehicles": [],
-        "consents": {
-            "termsAccepted": True,
-            "dataProcessingAccepted": True,
-            "safetyGuidelinesAccepted": True,
-        },
+        # Referenced by fieldId, never key/label
+        # (restructure-walkin-payload-by-field-id) — one entry per default
+        # Consent Agreement field, for a branch that has never customized it.
+        "consents": [
+            {"fieldId": _default_consent_field_id("terms_accepted"), "accepted": True},
+            {"fieldId": _default_consent_field_id("data_processing_accepted"), "accepted": True},
+            {"fieldId": _default_consent_field_id("safety_guidelines_accepted"), "accepted": True},
+        ],
     }
 
 
@@ -141,11 +238,11 @@ def _group_payload() -> dict:
             },
             {"vehicleType": "2_wheeler", "licensePlate": "KA-05-CD-5678"},
         ],
-        "consents": {
-            "termsAccepted": True,
-            "dataProcessingAccepted": True,
-            "safetyGuidelinesAccepted": True,
-        },
+        "consents": [
+            {"fieldId": _default_consent_field_id("terms_accepted"), "accepted": True},
+            {"fieldId": _default_consent_field_id("data_processing_accepted"), "accepted": True},
+            {"fieldId": _default_consent_field_id("safety_guidelines_accepted"), "accepted": True},
+        ],
     }
 
 
@@ -278,7 +375,7 @@ async def test_create_group_invitation_success_with_visitors_and_vehicles(
     assert len(invitation.visitors) == 2
     assert len(invitation.vehicles) == 2
     assert invitation.carried_items == ["laptop_tablet", "mobile_phone"]
-    assert invitation.terms_accepted is True
+    assert invitation.consents.get(_default_consent_field_id("terms_accepted")) is True
 
 
 # --- invitation-multi-step-approval: visitorCategoryId on creation ----------
@@ -590,7 +687,22 @@ async def test_create_invitation_missing_consent_rejected(
 ) -> None:
     token = await _login(client, user.email)
     payload = _individual_payload()
-    payload["consents"]["safetyGuidelinesAccepted"] = False
+    _set_consent_accepted(payload, "safety_guidelines_accepted", False)
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_omitted_consents_defaults_to_empty_list(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """`consents` is optional on the wire (defaults to `[]` when omitted),
+    but that doesn't bypass the branch's required-consent check — a branch
+    with required Consent Agreement fields still rejects an empty/omitted
+    `consents` the same way it rejects an explicit non-accepted one
+    (test_create_invitation_missing_consent_rejected)."""
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    del payload["consents"]
     response = await _create_invitation(client, token, branch, payload=payload)
     assert response.status_code == 422
 
@@ -895,15 +1007,36 @@ async def test_create_group_invitation_with_empty_visitor_list_rejected(
     assert response.status_code == 422
 
 
-async def test_create_group_invitation_exceeding_max_visitors_rejected(
-    client: AsyncClient, user: User, branch: Branch, monkeypatch
+async def test_create_group_invitation_exceeding_former_max_visitors_accepted(
+    client: AsyncClient, user: User, branch: Branch
 ) -> None:
-    monkeypatch.setattr(settings, "invitation_max_group_visitors", 1)
+    """Visitor Info's seeded group is no longer repeatable (`isRepeatable`
+    now seeded `False` — see `defaults.py`'s "visitors" group), which is a
+    deliberate product decision to retire the group-visitor-count cap
+    entirely: `validate_group_instance_count` skips all enforcement for a
+    non-repeatable group (`form_builder/validation.py`), so
+    `settings.invitation_max_group_visitors` no longer bounds a group
+    registration's visitor count at all. This supersedes the old
+    `test_create_group_invitation_exceeding_max_visitors_rejected`.
+    """
     token = await _login(client, user.email)
-    response = await _create_invitation(
-        client, token, branch, payload=_group_payload(), visitor_file_count=2
+    payload = _group_payload()
+    payload["visitors"] = [
+        {
+            "fullName": f"Extra Visitor {i}",
+            "email": f"extra.visitor.{i}@example.com",
+            "idProofType": "Passport",
+        }
+        for i in range(settings.invitation_max_group_visitors + 1)
+    ]
+    data = await _create_invitation_success(
+        client,
+        token,
+        branch,
+        payload=payload,
+        visitor_file_count=settings.invitation_max_group_visitors + 1,
     )
-    assert response.status_code == 422
+    assert data["id"]
 
 
 async def test_create_group_invitation_visitor_file_count_mismatch_rejected(
@@ -946,9 +1079,7 @@ async def test_create_individual_invitation_with_visitors_rejected(
 # --- General field validation --------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "missing_field", ["registrationType", "primaryContact", "visitDetails", "consents"]
-)
+@pytest.mark.parametrize("missing_field", ["registrationType", "primaryContact", "visitDetails"])
 async def test_create_invitation_missing_required_top_level_field_rejected(
     client: AsyncClient, user: User, branch: Branch, missing_field: str
 ) -> None:
@@ -979,12 +1110,1353 @@ async def test_create_invitation_invalid_vehicle_type_rejected(
     assert response.status_code == 422
 
 
+async def test_create_invitation_admin_added_id_proof_type_option_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """make-id-proof-and-vehicle-type-configurable: an ID proof type is no
+    longer a fixed enum — a value the admin has added to the branch's "ID
+    Proof Type" options is accepted, even though it isn't one of the
+    original four defaults."""
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        field_key="id_proof_type",
+        options=["Aadhaar Card", "Passport", "Driving License", "Other", "Voter ID"],
+    )
+
+    payload = _individual_payload()
+    payload["primaryContact"]["idProofType"] = "Voter ID"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_admin_added_vehicle_type_option_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="vehicle_info",
+        field_key="vehicle_type",
+        options=["2_wheeler", "4_wheeler", "heavy", "tricycle"],
+    )
+
+    payload = _individual_payload()
+    payload["vehicles"] = [{"vehicleType": "tricycle", "licensePlate": "KA-01-AB-1234"}]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_default_id_proof_and_vehicle_types_still_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A branch that has never customized "ID Proof Type"/"Vehicle Type"
+    still accepts every one of the original default options — confirms the
+    dynamic-validation switch is behavior-preserving for the common case."""
+    token = await _login(client, user.email)
+    payload = _group_payload()
+    payload["primaryContact"]["idProofType"] = "Aadhaar Card"
+    payload["visitors"][0]["idProofType"] = "Passport"
+    payload["visitors"][1]["idProofType"] = "Driving License"
+    payload["vehicles"] = [
+        {"vehicleType": "2_wheeler", "licensePlate": "KA-01-AB-1234"},
+        {"vehicleType": "4_wheeler", "licensePlate": "KA-05-CD-5678"},
+        {"vehicleType": "heavy", "licensePlate": "KA-09-EF-9012"},
+    ]
+    data = await _create_invitation_success(
+        client, token, branch, payload=payload, visitor_file_count=2
+    )
+    assert data["id"]
+
+
+# --- add-repeatable-field-groups: group instance-count enforcement ----------
+
+
+async def _update_and_publish_group_range(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    group_key: str,
+    min_instances: int | None = None,
+    max_instances: int | None = None,
+) -> dict:
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+    group = next(g for g in step["groups"] if g["key"] == group_key)
+
+    body: dict[str, Any] = {}
+    if min_instances is not None:
+        body["minInstances"] = min_instances
+    if max_instances is not None:
+        body["maxInstances"] = max_instances
+    update_response = await client.patch(
+        f"/api/v1/form-builder/groups/{group['id']}", json=body, headers=headers
+    )
+    assert update_response.status_code == 200, update_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+    return update_response.json()["data"]
+
+
+async def _create_and_publish_custom_group(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    group_key: str,
+    field_key: str,
+    min_instances: int | None = None,
+    max_instances: int | None = None,
+    field_type: str = "text",
+    is_required: bool = False,
+    options: list[str] | None = None,
+    visibility_condition: dict[str, Any] | None = None,
+) -> dict:
+    """Admin-side setup: creates a repeatable field group with one field on
+    `step_key` and publishes the branch's scope so `create_invitation`
+    reads it. `visibility_condition`, if supplied, is applied to the group
+    itself after creation (add-repeatable-field-groups) — its `fieldKey`
+    must reference an existing field on the same step other than this
+    group's own.
+    """
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+
+    group_body: dict[str, Any] = {"key": group_key, "name": group_key.title(), "isRepeatable": True}
+    if min_instances is not None:
+        group_body["minInstances"] = min_instances
+    if max_instances is not None:
+        group_body["maxInstances"] = max_instances
+    group_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups", json=group_body, headers=headers
+    )
+    assert group_response.status_code == 201, group_response.text
+    group = group_response.json()["data"]
+
+    field_body: dict[str, Any] = {
+        "key": field_key,
+        "label": field_key.replace("_", " ").title(),
+        "fieldType": field_type,
+        "isRequired": is_required,
+        "groupId": group["id"],
+    }
+    if options is not None:
+        field_body["options"] = options
+    field_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", json=field_body, headers=headers
+    )
+    assert field_response.status_code == 201, field_response.text
+    # Test-only, not a real API response field (restructure-walkin-payload-
+    # by-field-id) — every group this helper builds has exactly one field,
+    # so `_group_entry` below can look its id up here rather than every
+    # call site threading it through separately.
+    field_id = field_response.json()["data"]["id"]
+
+    if visibility_condition is not None:
+        condition_response = await client.patch(
+            f"/api/v1/form-builder/groups/{group['id']}",
+            json={"visibilityCondition": visibility_condition},
+            headers=headers,
+        )
+        assert condition_response.status_code == 200, condition_response.text
+        group = condition_response.json()["data"]
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+    group["_field_id"] = field_id
+    return group
+
+
+def _group_entry(group: dict, instances: list[dict[str, Any]]) -> dict:
+    """Builds one `payload["groups"]` entry from a `_create_and_publish_
+    custom_group` group dict and a list of `{fieldKey: value}` instance
+    dicts (test-authoring convenience, since every group this test module
+    builds has exactly one field) — converts each instance to the
+    `{fieldId, value}` array shape (restructure-walkin-payload-by-field-id).
+    """
+    field_id = group["_field_id"]
+    return {
+        "groupId": group["id"],
+        "instances": [
+            [{"fieldId": field_id, "value": v} for v in instance.values()] for instance in instances
+        ],
+    }
+
+
+async def test_create_invitation_vehicle_count_below_configured_minimum_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _update_and_publish_group_range(
+        client, token, branch, step_key="vehicle_info", group_key="vehicles", min_instances=1
+    )
+    payload = _individual_payload()
+    payload["vehicles"] = []
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_vehicle_count_above_configured_maximum_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _update_and_publish_group_range(
+        client, token, branch, step_key="vehicle_info", group_key="vehicles", max_instances=1
+    )
+    payload = _individual_payload()
+    payload["vehicles"] = [
+        {"vehicleType": "2_wheeler", "licensePlate": "KA-01-AB-1234"},
+        {"vehicleType": "4_wheeler", "licensePlate": "KA-05-CD-5678"},
+    ]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_vehicle_count_within_configured_range_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _update_and_publish_group_range(
+        client,
+        token,
+        branch,
+        step_key="vehicle_info",
+        group_key="vehicles",
+        min_instances=1,
+        max_instances=3,
+    )
+    payload = _individual_payload()
+    payload["vehicles"] = [{"vehicleType": "2_wheeler", "licensePlate": "KA-01-AB-1234"}]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_custom_group_instances_within_range_persisted(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    group = await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="parcels",
+        field_key="parcel_weight",
+        min_instances=1,
+        max_instances=3,
+    )
+    payload = _individual_payload()
+    payload["groups"] = [_group_entry(group, [{"parcel_weight": "2kg"}, {"parcel_weight": "5kg"}])]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    invitation = await InvitationRepository(db_session).get_by_tracking_id(data["trackingId"])
+    assert invitation is not None
+    field_id = group["_field_id"]
+    assert invitation.group_field_values == {group["id"]: [{field_id: "2kg"}, {field_id: "5kg"}]}
+
+
+async def test_create_invitation_custom_group_below_minimum_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    group = await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="parcels",
+        field_key="parcel_weight",
+        min_instances=1,
+    )
+    payload = _individual_payload()
+    payload["groups"] = [_group_entry(group, [])]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_custom_group_above_maximum_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    group = await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="parcels",
+        field_key="parcel_weight",
+        max_instances=1,
+    )
+    payload = _individual_payload()
+    payload["groups"] = [_group_entry(group, [{"parcel_weight": "2kg"}, {"parcel_weight": "5kg"}])]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_unknown_group_key_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["groups"] = [
+        {
+            "groupId": str(uuid.uuid4()),
+            "instances": [[{"fieldId": str(uuid.uuid4()), "value": "bar"}]],
+        }
+    ]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_one_invalid_group_instance_rejects_whole_request(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    token = await _login(client, user.email)
+    group = await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="parcels",
+        field_key="parcel_weight",
+        is_required=True,
+    )
+    payload = _individual_payload()
+    # second instance missing required field
+    payload["groups"] = [
+        {
+            "groupId": group["id"],
+            "instances": [[{"fieldId": group["_field_id"], "value": "2kg"}], []],
+        }
+    ]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+    invitations = await InvitationRepository(db_session).list_by_primary_contact_email(
+        payload["primaryContact"]["email"]
+    )
+    assert invitations == []
+
+
+# --- add-repeatable-field-groups (revised): hidden custom group skips ------
+# required-field validation ---------------------------------------------------
+
+
+async def test_create_invitation_hidden_group_required_field_not_required(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "A Hidden Custom Field Group's
+    Fields Are Not Required At Submission" — the group's condition watches
+    Carried Items' own seeded `itemDescription` field; leaving it at its
+    default (not "trigger") hides the group, so its required field can be
+    omitted.
+    """
+    token = await _login(client, user.email)
+    group = await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="conditional_parcels",
+        field_key="parcel_weight",
+        is_required=True,
+        visibility_condition={
+            "fieldKey": "item_description",
+            "operator": "equals",
+            "value": "trigger",
+        },
+    )
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": [], "itemDescription": "not the trigger value"}
+    payload["groups"] = [_group_entry(group, [{}])]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_visible_group_required_field_still_required(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    group = await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="conditional_parcels",
+        field_key="parcel_weight",
+        is_required=True,
+        visibility_condition={
+            "fieldKey": "item_description",
+            "operator": "equals",
+            "value": "trigger",
+        },
+    )
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": [], "itemDescription": "trigger"}
+    payload["groups"] = [_group_entry(group, [{}])]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_hidden_group_supplied_value_still_validated(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A hidden group's field isn't required, but a value supplied anyway
+    is still validated against its own type/options rules."""
+    token = await _login(client, user.email)
+    group = await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="conditional_parcels",
+        field_key="parcel_weight",
+        field_type="dropdown_select",
+        options=["light", "heavy"],
+        visibility_condition={
+            "fieldKey": "item_description",
+            "operator": "equals",
+            "value": "trigger",
+        },
+    )
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": [], "itemDescription": "not the trigger value"}
+    payload["groups"] = [_group_entry(group, [{"parcel_weight": "not_a_real_option"}])]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_hidden_group_instance_minimum_not_enforced(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A hidden group's configured minimum instance count can't be met by
+    a visitor who was never shown it (specs/invitations/spec.md delta)."""
+    token = await _login(client, user.email)
+    group = await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        group_key="conditional_parcels",
+        field_key="parcel_weight",
+        min_instances=1,
+        visibility_condition={
+            "fieldKey": "item_description",
+            "operator": "equals",
+            "value": "trigger",
+        },
+    )
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": [], "itemDescription": "not the trigger value"}
+    payload["groups"] = [_group_entry(group, [])]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_hidden_visitor_info_group_required_field_not_required(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Same rule as above (`test_create_invitation_hidden_group_required_field_not_required`)
+    but for a custom group defined directly on Visitor Info — unlike a
+    field simply assigned to that step, a *grouped* field on Visitor
+    Info/Vehicle Info is now excluded from the flat per-visitor
+    `customFieldValues` check entirely and validated only through
+    `groupValues`, the same as every other admin-defined group
+    (`custom_groups_for_invitation_scope`). Regression test: the group's
+    condition watches `registration_type`, so an individual registration
+    never shows it and mustn't be blocked on its required field, whether or
+    not the client even sends a `groupValues` entry for it.
+    """
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        group_key="additional_visitors",
+        field_key="name",
+        is_required=True,
+        visibility_condition={
+            "fieldKey": "registration_type",
+            "operator": "equals",
+            "value": "group",
+        },
+    )
+    payload = _individual_payload()
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_visible_visitor_info_group_required_field_still_required(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """The same Visitor Info group's required field is still enforced for
+    a registration type that does show it, once an instance is actually
+    submitted via `groupValues`."""
+    token = await _login(client, user.email)
+    group = await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        group_key="additional_visitors",
+        field_key="name",
+        is_required=True,
+        visibility_condition={
+            "fieldKey": "registration_type",
+            "operator": "equals",
+            "value": "group",
+        },
+    )
+    payload = _group_payload()
+    payload["groups"] = [_group_entry(group, [{}])]
+    response = await _create_invitation(
+        client, token, branch, payload=payload, visitor_file_count=2
+    )
+    assert response.status_code == 422
+
+
+async def test_create_invitation_group_registration_via_visitor_info_custom_group_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression test for the "Group registration must list at least one
+    visitor" bug: a branch that collects additional visitors through an
+    admin-defined repeatable group on Visitor Info (rather than the fixed
+    `visitors` list — the built-in "Visitors" system group is no longer
+    admin-configurable, `form_builder/defaults.py`) can submit a group
+    registration with `visitors: []` and its visitor data in `groupValues`
+    instead, and it's accepted end to end: the structural "at least one
+    visitor" check accepts a non-empty `groupValues` entry
+    (`invitations/schemas.py`), and the group's own required field is
+    validated per submitted instance.
+    """
+    token = await _login(client, user.email)
+    group = await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        group_key="additional_visitors",
+        field_key="name",
+        is_required=True,
+    )
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groups"] = [_group_entry(group, [{"name": "Extra One"}, {"name": "Extra Two"}])]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_get_invitation_detail_surfaces_visitor_info_group_visitors(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression test for "GET /invitations/:id doesn't reflect visitors
+    collected via a custom field group": `visitors` in the detail response
+    must include a synthesized entry per instance of a Visitor Info group's
+    submitted `groups` entry, not just the legacy `visitors` relation (which
+    stays empty when a branch collects extras this way instead)."""
+    token = await _login(client, user.email)
+    group = await _create_and_publish_custom_group(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        group_key="additional_visitors",
+        field_key="name",
+        is_required=True,
+    )
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groups"] = [_group_entry(group, [{"name": "Extra One"}, {"name": "Extra Two"}])]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    body = detail_response.json()["data"]
+    field_id = group["_field_id"]
+    assert body["groups"] == [
+        {
+            "groupId": group["id"],
+            "instances": [
+                [{"fieldId": field_id, "value": "Extra One"}],
+                [{"fieldId": field_id, "value": "Extra Two"}],
+            ],
+        }
+    ]
+    names = sorted(v["fullName"] for v in body["visitors"])
+    assert names == ["Extra One", "Extra Two"]
+    for visitor_out in body["visitors"]:
+        assert visitor_out["idProofType"] is None
+        assert visitor_out["email"] is None
+
+
+async def test_get_invitation_detail_group_visitor_email_and_phone_mapped_by_field_type(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Follow-up regression test: once a Visitor Info group has its own
+    `email`/`phone`-typed fields alongside its name field, the synthesized
+    visitor entry picks those values up too, not just `fullName` — matched
+    by Form Builder's `fieldType`, since there's no other reliable signal
+    for which of an admin's arbitrary field keys means what.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == "visitor_info")
+
+    group_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={"key": "additional_visitors", "name": "Additional Visitors", "isRepeatable": True},
+        headers=headers,
+    )
+    assert group_response.status_code == 201, group_response.text
+    group = group_response.json()["data"]
+
+    field_ids: dict[str, str] = {}
+    for field_key, field_type in (
+        ("name", "text"),
+        ("email_address", "email"),
+        ("contact_number", "phone"),
+    ):
+        field_response = await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/fields",
+            json={
+                "key": field_key,
+                "label": field_key.replace("_", " ").title(),
+                "fieldType": field_type,
+                "isRequired": False,
+                "groupId": group["id"],
+            },
+            headers=headers,
+        )
+        assert field_response.status_code == 201, field_response.text
+        field_ids[field_key] = field_response.json()["data"]["id"]
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groups"] = [
+        {
+            "groupId": group["id"],
+            "instances": [
+                [
+                    {"fieldId": field_ids["name"], "value": "Extra One"},
+                    {"fieldId": field_ids["email_address"], "value": "extra.one@example.com"},
+                    {"fieldId": field_ids["contact_number"], "value": "+1 555 000 1111"},
+                ]
+            ],
+        }
+    ]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(f"/api/v1/invitations/{data['id']}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    [visitor_out] = detail_response.json()["data"]["visitors"]
+    assert visitor_out["fullName"] == "Extra One"
+    assert visitor_out["email"] == "extra.one@example.com"
+    assert visitor_out["phone"] == "+1 555 000 1111"
+    assert visitor_out["idProofType"] is None
+    assert visitor_out["idProofUrl"] is None
+
+
+# --- add-group-field-file-upload: a custom group's own file_upload field ----
+
+
+async def _create_and_publish_additional_visitors_group(
+    client: AsyncClient, headers: dict[str, str], *, id_upload_required: bool
+) -> dict:
+    """Admin-side setup shared by the `groupFieldFiles` tests below: a
+    repeatable "Additional Visitors" group on Visitor Info with a required
+    `name` field and its own `file_upload`-typed field (`id_upload`).
+    Returns the group dict augmented with `_field_ids` (a `{key: id}` map
+    — restructure-walkin-payload-by-field-id) so callers can build
+    `payload.groups`/`groupFieldFiles[<groupId>]` without a second lookup.
+    """
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == "visitor_info")
+
+    group_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups",
+        json={"key": "additional_visitors", "name": "Additional Visitors", "isRepeatable": True},
+        headers=headers,
+    )
+    assert group_response.status_code == 201, group_response.text
+    group = group_response.json()["data"]
+
+    field_ids: dict[str, str] = {}
+    for field_key, field_type, is_required in (
+        ("name", "text", True),
+        ("id_upload", "file_upload", id_upload_required),
+    ):
+        field_response = await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/fields",
+            json={
+                "key": field_key,
+                "label": field_key.replace("_", " ").title(),
+                "fieldType": field_type,
+                "isRequired": is_required,
+                "groupId": group["id"],
+            },
+            headers=headers,
+        )
+        assert field_response.status_code == 201, field_response.text
+        field_ids[field_key] = field_response.json()["data"]["id"]
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+    group["_field_ids"] = field_ids
+    return group
+
+
+async def test_create_invitation_group_file_upload_stored_and_surfaced_on_read(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A custom Visitor Info group's own `file_upload`-typed field is
+    accepted via the `groupFieldFiles[<groupKey>]` multipart convention
+    (order-matched to `groupValues[<groupKey>]` instances), stored, and
+    resolved back to `idProofUrl` on `GET /invitations/:id` — matching the
+    fixed `visitors[].idProofUrl` behavior for the same caller permission
+    (`documents:view`, held by the `user` fixture).
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    group = await _create_and_publish_additional_visitors_group(
+        client, headers, id_upload_required=False
+    )
+    name_field_id = group["_field_ids"]["name"]
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groups"] = [
+        {
+            "groupId": group["id"],
+            "instances": [
+                [{"fieldId": name_field_id, "value": "Extra One"}],
+                [{"fieldId": name_field_id, "value": "Extra Two"}],
+            ],
+        }
+    ]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"groupFieldFiles[{group['id']}]", ("extra1.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"groupFieldFiles[{group['id']}]", ("extra2.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    detail_response = await client.get(f"/api/v1/invitations/{invitation_id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    visitors = sorted(detail_response.json()["data"]["visitors"], key=lambda v: v["fullName"])
+    assert [v["fullName"] for v in visitors] == ["Extra One", "Extra Two"]
+    for visitor_out in visitors:
+        assert visitor_out["idProofUrl"] is not None
+
+
+async def test_get_invitation_detail_non_string_group_file_field_value_resolves_to_null(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """Regression: a group's `file_upload`-typed field key (`id_upload`) is
+    resolved against the branch's *current* effective form, not the form as
+    it stood when this instance's data was written. If a field was ever
+    reused/retyped so an older instance holds a non-string value under that
+    key (bool/number/list/dict rather than a storage key), both
+    `_resolve_custom_field_file_values` (feeding `groupFieldValues`) and
+    `_group_collected_visitor_detail_outs` (feeding the synthesized
+    visitor's `idProofUrl`) used to call `storage_url_for` -> `quote()`
+    unconditionally, which raises `TypeError: quote_from_bytes() expected
+    bytes` for anything that isn't `str`/`bytes` and 500s the whole detail
+    endpoint. Both must instead treat a non-string value as "no file".
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    group = await _create_and_publish_additional_visitors_group(
+        client, headers, id_upload_required=False
+    )
+    name_field_id = group["_field_ids"]["name"]
+    id_upload_field_id = group["_field_ids"]["id_upload"]
+
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        group_field_values={group["id"]: [{name_field_id: "Extra One", id_upload_field_id: True}]},
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    detail_response = await client.get(f"/api/v1/invitations/{invitation.id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    body = detail_response.json()["data"]
+    [group_out] = body["groups"]
+    [instance] = group_out["instances"]
+    assert _custom_field_value(instance, id_upload_field_id) is None
+    [visitor_out] = [v for v in body["visitors"] if v["fullName"] == "Extra One"]
+    assert visitor_out["idProofUrl"] is None
+
+
+async def test_create_invitation_group_file_upload_required_missing_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A group's `file_upload` field marked required rejects a submission
+    that doesn't upload a matching file for every instance — the group
+    counterpart of the fixed `visitors` list's own ID-proof-count check.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    group = await _create_and_publish_additional_visitors_group(
+        client, headers, id_upload_required=True
+    )
+    name_field_id = group["_field_ids"]["name"]
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groups"] = [
+        {"groupId": group["id"], "instances": [[{"fieldId": name_field_id, "value": "Extra One"}]]}
+    ]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_create_invitation_group_file_upload_extra_files_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """More `groupFieldFiles[<groupId>]` files than submitted instances is
+    rejected, same as an over-long `visitorIdProofFiles` list."""
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    group = await _create_and_publish_additional_visitors_group(
+        client, headers, id_upload_required=False
+    )
+    name_field_id = group["_field_ids"]["name"]
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groups"] = [
+        {"groupId": group["id"], "instances": [[{"fieldId": name_field_id, "value": "Extra One"}]]}
+    ]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"groupFieldFiles[{group['id']}]", ("extra1.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"groupFieldFiles[{group['id']}]", ("extra2.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_create_invitation_group_file_upload_json_value_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A client-supplied JSON value for a group's `file_upload` field is
+    rejected outright rather than silently ignored — the file is the only
+    valid source of that field's answer (`service.py::_group_field_file_id`).
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    group = await _create_and_publish_additional_visitors_group(
+        client, headers, id_upload_required=False
+    )
+    name_field_id = group["_field_ids"]["name"]
+    id_upload_field_id = group["_field_ids"]["id_upload"]
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groups"] = [
+        {
+            "groupId": group["id"],
+            "instances": [
+                [
+                    {"fieldId": name_field_id, "value": "Extra One"},
+                    {"fieldId": id_upload_field_id, "value": "not-a-file"},
+                ]
+            ],
+        }
+    ]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_create_invitation_inline_custom_field_file_upload_stored_on_read(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """An admin-authored `file_upload` field directly on Visitor Info (not
+    assigned to a group) is accepted via the `primaryContactCustomFieldFiles
+    [<fieldId>]`/`visitorCustomFieldFiles[<fieldId>]` multipart
+    convention and stored — the standalone counterpart of
+    `groupFieldFiles[<groupId>]` above (add-inline-custom-field-file-upload).
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    field = await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="pic", field_type="file_upload"
+    )
+    field_id = field["id"]
+
+    payload = _group_payload()
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v0.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v1.jpg", _jpeg_bytes(), "image/jpeg")),
+            (
+                f"primaryContactCustomFieldFiles[{field_id}]",
+                ("primary-pic.jpg", _jpeg_bytes(), "image/jpeg"),
+            ),
+            (f"visitorCustomFieldFiles[{field_id}]", ("v0-pic.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"visitorCustomFieldFiles[{field_id}]", ("v1-pic.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    detail_response = await client.get(f"/api/v1/invitations/{invitation_id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    body = detail_response.json()["data"]
+
+    def _assert_resolved_file_url(value: str) -> None:
+        # Must be a signed, fetchable URL — not the raw `vmss:...` storage
+        # key a pre-fix reader would have serialized verbatim.
+        assert value
+        assert not value.startswith("vmss:")
+        assert "/api/v1/files/" in value or value.startswith("http")
+
+    _assert_resolved_file_url(_custom_field_value(body["primaryContactCustomFields"], field_id))
+    for visitor_out in body["visitors"]:
+        _assert_resolved_file_url(_custom_field_value(visitor_out["customFields"], field_id))
+
+
+async def test_create_invitation_vehicle_custom_field_file_upload_resolved_on_read(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression: vehicle-level `file_upload` custom-field answers must
+    resolve to a signed URL on `GET /invitations/:id` the same as the
+    identical visitor/primary-contact/invitation/group paths — previously
+    `_to_invitation_detail_out`'s vehicle construction passed
+    `v.custom_field_values` straight through unresolved, leaking the raw
+    `vmss:...` storage key.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    field = await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="vehicle_info",
+        key="registration_doc",
+        field_type="file_upload",
+    )
+    field_id = field["id"]
+
+    payload = _group_payload()
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v0.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v1.jpg", _jpeg_bytes(), "image/jpeg")),
+            (
+                f"vehicleCustomFieldFiles[{field_id}]",
+                ("v0-doc.jpg", _jpeg_bytes(), "image/jpeg"),
+            ),
+            (
+                f"vehicleCustomFieldFiles[{field_id}]",
+                ("v1-doc.jpg", _jpeg_bytes(), "image/jpeg"),
+            ),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    detail_response = await client.get(f"/api/v1/invitations/{invitation_id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    vehicles = detail_response.json()["data"]["vehicles"]
+    for vehicle_out in vehicles:
+        value = _custom_field_value(vehicle_out["customFields"], field_id)
+        assert value
+        assert not value.startswith("vmss:")
+        assert "/api/v1/files/" in value or value.startswith("http")
+
+
+async def test_create_invitation_inline_custom_field_file_upload_required_missing_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A required, ungrouped `file_upload` field on Visitor Info rejects a
+    submission missing a file for any visitor — the standalone counterpart
+    of `test_create_invitation_group_file_upload_required_missing_rejected`.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    field = await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        key="pic",
+        field_type="file_upload",
+        is_required=True,
+    )
+    field_id = field["id"]
+
+    payload = _group_payload()
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v0.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("visitor_id_proof_files", ("v1.jpg", _jpeg_bytes(), "image/jpeg")),
+            (
+                f"primaryContactCustomFieldFiles[{field_id}]",
+                ("primary-pic.jpg", _jpeg_bytes(), "image/jpeg"),
+            ),
+            # Only one of the two visitors' required files supplied.
+            (f"visitorCustomFieldFiles[{field_id}]", ("v0-pic.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_create_invitation_inline_custom_field_file_upload_json_value_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A client-supplied JSON value for an ungrouped `file_upload` field is
+    rejected outright rather than silently ignored — the file is the only
+    valid source of that field's answer, same rule as a group's own
+    `file_upload` field.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    field = await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="pic", field_type="file_upload"
+    )
+
+    payload = _individual_payload()
+    payload["customFields"] = [{"fieldId": field["id"], "value": "not-a-file"}]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_create_invitation_inline_invitation_level_custom_field_file_upload_stored(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """The invitation-level (Visit Details/Carried Items/custom step)
+    counterpart — a single file via `customFieldFiles[<fieldKey>]`, no
+    per-visitor/vehicle order-matching involved.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    field = await _create_and_publish_custom_field(
+        client, token, branch, step_key="visit_details", key="cost_note", field_type="file_upload"
+    )
+    field_id = field["id"]
+
+    payload = _individual_payload()
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"customFieldFiles[{field_id}]", ("note.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    detail_response = await client.get(f"/api/v1/invitations/{invitation_id}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    assert _custom_field_value(detail_response.json()["data"]["customFields"], field_id)
+
+
+async def test_get_invitation_detail_group_visitor_id_proof_url_omitted_without_documents_view(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    tenant: Tenant,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Counterpart of the happy-path test above — a caller holding
+    `invitations:view` but not `documents:view` sees `idProofUrl` `null`
+    for a group-collected visitor too, matching `_to_visitor_detail_outs`'s
+    existing gating for the fixed `visitors` list.
+    """
+    admin_token = await _login(client, user.email)
+    admin_headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
+    group = await _create_and_publish_additional_visitors_group(
+        client, admin_headers, id_upload_required=False
+    )
+    name_field_id = group["_field_ids"]["name"]
+
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groups"] = [
+        {"groupId": group["id"], "instances": [[{"fieldId": name_field_id, "value": "Extra One"}]]}
+    ]
+    create_response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"groupFieldFiles[{group['id']}]", ("extra1.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=admin_headers,
+    )
+    assert create_response.status_code == 201, create_response.text
+    invitation_id = create_response.json()["data"]["id"]
+
+    # Not `_branch_scoped_invitation_viewer(db_session, tenant, branch.id)`:
+    # that helper creates its own `Permission(code="invitations:view")` row,
+    # which collides with the one the `user` fixture above already created
+    # (global `permissions.code` is unique) — reuses that existing row
+    # instead of inserting a duplicate.
+    existing_permission = (
+        await db_session.execute(select(Permission).where(Permission.code == "invitations:view"))
+    ).scalar_one()
+    viewer_role = RoleFactory.build(
+        id=uuid.uuid4(), name="invitations-viewer-no-documents", permissions=[existing_permission]
+    )
+    viewer_branch_role = UserBranchRole(id=uuid.uuid4(), role=viewer_role, branch_id=branch.id)
+    viewer = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"viewer-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Invitation Viewer",
+        branch_roles=[viewer_branch_role],
+    )
+    db_session.add_all([viewer_role, viewer])
+    await db_session.flush()
+    db_session.add(TenantUserIndex(email=viewer.email, tenant_id=tenant.id, user_id=viewer.id))
+    await db_session.commit()
+
+    viewer_token = issue_token(viewer)
+    detail_response = await client.get(
+        f"/api/v1/invitations/{invitation_id}",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    [visitor_out] = detail_response.json()["data"]["visitors"]
+    assert visitor_out["fullName"] == "Extra One"
+    assert visitor_out["idProofUrl"] is None
+
+
+async def test_get_invitation_detail_includes_primary_contact_email_and_phone(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression test: `primaryContactEmail`/`primaryContactPhone` were
+    captured at submission but never returned by `GET /invitations/:id`."""
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["primaryContact"]["phone"] = "+91 90000 00000"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    body = detail_response.json()["data"]
+    assert body["primaryContactEmail"] == payload["primaryContact"]["email"]
+    assert body["primaryContactPhone"] == payload["primaryContact"]["phone"]
+
+
+async def test_create_invitation_retyped_system_field_matching_option_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """make-system-field-types-editable: once an admin retypes "Purpose of
+    Visit" to `dropdown_select` with configured options, a submission
+    matching one of those options is accepted."""
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        field_key="purpose_of_visit",
+        field_type="dropdown_select",
+        options=["Meeting", "Delivery", "Interview"],
+    )
+
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "Meeting"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_retyped_system_field_non_matching_option_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """make-system-field-types-editable: the same retyped field rejects a
+    submission that doesn't match any of its currently configured
+    options, mirroring the existing `idProofType`/`vehicleType`
+    unknown-option rejection."""
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        field_key="purpose_of_visit",
+        field_type="dropdown_select",
+        options=["Meeting", "Delivery", "Interview"],
+    )
+
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "Sightseeing"
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_retyped_radio_button_field_matching_option_accepted(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """update-form-field-type-catalog: `radio_button` is validated at
+    submission the same way `dropdown_select` is — a value matching one
+    of the field's configured options is accepted."""
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        field_key="purpose_of_visit",
+        field_type="radio_button",
+        options=["Meeting", "Delivery", "Interview"],
+    )
+
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "Meeting"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_retyped_radio_button_field_non_matching_option_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """update-form-field-type-catalog: the same retyped `radio_button`
+    field rejects a submission that doesn't match any of its currently
+    configured options, mirroring `dropdown_select`'s unknown-option
+    rejection."""
+    token = await _login(client, user.email)
+    await _update_and_publish_field_options(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        field_key="purpose_of_visit",
+        field_type="radio_button",
+        options=["Meeting", "Delivery", "Interview"],
+    )
+
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "Sightseeing"
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_system_field_still_default_type_accepts_free_text(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """make-system-field-types-editable: a system field left at its
+    default (non-option-bearing) type is validated as ordinary free text,
+    unaffected by this change — any non-empty string within the existing
+    length limit is accepted."""
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitDetails"]["purposeOfVisit"] = "Sightseeing and general curiosity"
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
 async def test_create_invitation_invalid_carried_item_category_rejected(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
     token = await _login(client, user.email)
     payload = _individual_payload()
     payload["carriedItems"] = {"items": ["nuclear_launch_codes"]}
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_unknown_consent_key_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "Consent Is Mandatory and
+    Recorded" — a `consents` fieldId outside the calling branch's configured
+    Consent Agreement set is rejected, mirroring the carried-items allow-list
+    check above.
+    """
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    _add_consent(payload, str(uuid.uuid4()), True)
     response = await _create_invitation(client, token, branch, payload=payload)
     assert response.status_code == 422
 
@@ -1022,7 +2494,6 @@ def test_invitation_payload_description_matches_schema_requirements() -> None:
     from vmss_api.invitations import router
     from vmss_api.invitations.schemas import (
         CarriedItemsSubmit,
-        ConsentsSubmit,
         InvitationCreate,
         InvitationPrimaryContactCreate,
         VehicleSubmit,
@@ -1031,6 +2502,10 @@ def test_invitation_payload_description_matches_schema_requirements() -> None:
     )
 
     description = router._PAYLOAD_DESCRIPTION
+    # `consents` is no longer its own nested schema (`dict[str, bool]`
+    # directly on `InvitationCreate`) — its top-level requiredness is
+    # already covered via `InvitationCreate.model_json_schema()["required"]`
+    # below.
     models: list[type[BaseModel]] = [
         InvitationCreate,
         InvitationPrimaryContactCreate,
@@ -1038,7 +2513,6 @@ def test_invitation_payload_description_matches_schema_requirements() -> None:
         VisitDetailsSubmit,
         CarriedItemsSubmit,
         VehicleSubmit,
-        ConsentsSubmit,
     ]
     for model in models:
         for field_name in model.model_json_schema().get("required", []):
@@ -1068,6 +2542,38 @@ async def test_track_by_tracking_id_individual_success(
     assert body["vehicles"] == []
     assert body["expectedDuration"] == "< 1 hour"
     assert body["departmentToVisit"] == "Human Resources"
+
+
+async def test_track_by_tracking_id_masks_custom_file_upload_field_raw_storage_key(
+    client: AsyncClient, user: User, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-generic-custom-field-file-url-resolution, extended to the public
+    tracking-lookup response — same posture as the QR/check-in-by-tracking-
+    id counterparts: a `file_upload`-typed custom field's raw storage key
+    must never reach this unauthenticated caller.
+    """
+    token = await _login(client, user.email)
+    field = await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="pic", field_type="file_upload"
+    )
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        primary_contact_custom_field_values={
+            field["id"]: "vmss:tenant:invitations/custom-fields:primary-pic.jpg"
+        },
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/v1/invitations/track", params={"trackingId": invitation.tracking_id}
+    )
+    assert response.status_code == 200
+    assert (
+        _custom_field_value(response.json()["data"]["primaryContactCustomFields"], field["id"])
+        is None
+    )
 
 
 async def test_track_by_tracking_id_group_success(
@@ -1119,10 +2625,11 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
 ) -> None:
     """invitation-multi-step-approval spec.md "Workflow-backed invitation
     exposes current step progress" — a category with two active rules
-    snapshots two steps at submission, behind the unconditional `stepOrder`
-    0 ownership step (role-based-invitation-workflow); the tracking lookup
-    surfaces that ownership step as current, since it's always the first to
-    become pending.
+    snapshots exactly those two steps at submission (no separate ownership
+    step ahead of them — see `docs/features/approvals.md` "The
+    host-nomination step"); the tracking lookup surfaces the first
+    configured step (`stepOrder` 1) as current, since it's the first to
+    become pending and doubles as the host-nomination step.
     """
     category = VisitorCategoryFactory.build(
         id=uuid.uuid4(), name="Workflow Category", code="WORKFLOW-CAT"
@@ -1147,8 +2654,6 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
         ]
     )
     await db_session.commit()
-    reception_role = await RoleRepository(db_session).get_by_name("reception")
-    assert reception_role is not None
 
     token = await _login(client, user.email)
     payload = _individual_payload()
@@ -1157,13 +2662,13 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
     steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(
         uuid.UUID(data["id"])
     )
-    step_zero = next(s for s in steps if s.step_order == 0)
+    step_one = next(s for s in steps if s.step_order == 1)
     assert data["currentApprovalStep"] == {
-        "id": str(step_zero.id),
-        "stepOrder": 0,
-        "approverRoleId": str(reception_role.id),
+        "id": str(step_one.id),
+        "stepOrder": 1,
+        "approverRoleId": str(approver_role.id),
         "approverUserId": None,
-        "totalSteps": 3,
+        "totalSteps": 2,
         "delegatedToUserId": None,
     }
 
@@ -1172,11 +2677,11 @@ async def test_track_by_tracking_id_exposes_current_step_for_workflow_backed_inv
     )
     assert response.status_code == 200
     assert response.json()["data"]["currentApprovalStep"] == {
-        "id": str(step_zero.id),
-        "stepOrder": 0,
-        "approverRoleId": str(reception_role.id),
+        "id": str(step_one.id),
+        "stepOrder": 1,
+        "approverRoleId": str(approver_role.id),
         "approverUserId": None,
-        "totalSteps": 3,
+        "totalSteps": 2,
         "delegatedToUserId": None,
     }
 
@@ -1306,6 +2811,37 @@ async def _branch_scoped_invitation_viewer(
     return test_user
 
 
+async def _branch_scoped_invitation_editor(
+    db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
+) -> User:
+    """A caller whose only role grant is `invitations:edit` at `branch_id` —
+    holds enough to reach `PATCH /invitations/{id}/edit` at all, but not
+    `invitations:approve`, for point-of-contact authorization tests
+    (add-invitation-point-of-contact: setting `pocUserId`/`pocRoleId`
+    requires `invitations:approve` in addition to this endpoint's own
+    `invitations:edit` gate).
+    """
+    permission = PermissionFactory.build(
+        id=uuid.uuid4(), code="invitations:edit", description="invitations:edit"
+    )
+    role = RoleFactory.build(id=uuid.uuid4(), name="invitations-editor", permissions=[permission])
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"editor-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Invitation Editor",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([permission, role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
 async def _branch_scoped_invitation_and_documents_viewer(
     db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
 ) -> User:
@@ -1381,6 +2917,8 @@ async def test_list_invitations_success(
         "status",
         "visitorCategoryId",
         "primaryContactFullName",
+        "primaryContactEmail",
+        "primaryContactPhone",
         "primaryContactPhotoUrl",
         "purposeOfVisit",
         "expiresAt",
@@ -1389,6 +2927,8 @@ async def test_list_invitations_success(
     }
     assert row["visitorCategoryId"] is None
     assert row["primaryContactPhotoUrl"] is None
+    assert row["primaryContactEmail"] == invitation.primary_contact_email
+    assert row["primaryContactPhone"] == invitation.primary_contact_phone
 
 
 async def test_list_invitations_surfaces_primary_contact_photo_url(
@@ -1538,6 +3078,34 @@ async def test_list_invitations_filters_by_status_registration_type_and_source(
     tracking_ids = {row["trackingId"] for row in response.json()["data"]}
     assert matching.tracking_id in tracking_ids
     assert non_matching.tracking_id not in tracking_ids
+
+
+async def test_list_invitations_filters_by_search_matching_contact_name_or_tracking_id(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    jane = _build_invitation(db_session, branch.id, primary_contact_full_name="Jane Visitor")
+    john = _build_invitation(db_session, branch.id, primary_contact_full_name="John Guest")
+    db_session.add_all([jane, john])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    name_response = await client.get(
+        "/api/v1/invitations", params={"search": "jane"}, headers=headers
+    )
+    assert name_response.status_code == 200
+    name_tracking_ids = {row["trackingId"] for row in name_response.json()["data"]}
+    assert jane.tracking_id in name_tracking_ids
+    assert john.tracking_id not in name_tracking_ids
+
+    id_response = await client.get(
+        "/api/v1/invitations", params={"search": john.tracking_id}, headers=headers
+    )
+    assert id_response.status_code == 200
+    id_tracking_ids = {row["trackingId"] for row in id_response.json()["data"]}
+    assert john.tracking_id in id_tracking_ids
+    assert jane.tracking_id not in id_tracking_ids
 
 
 @pytest.mark.parametrize(
@@ -2359,6 +3927,7 @@ async def test_list_invitations_relevant_to_me_tenant_schema_isolation(
             status=None,
             registration_type=None,
             source=None,
+            search=None,
             page=1,
             page_size=20,
             sort_by="submitted_at",
@@ -2399,6 +3968,7 @@ async def test_list_invitations_relevant_to_me_role_holder_tenant_schema_isolati
             status=None,
             registration_type=None,
             source=None,
+            search=None,
             page=1,
             page_size=20,
             sort_by="submitted_at",
@@ -2427,6 +3997,7 @@ async def test_invitation_list_page_tenant_schema_isolation(
             status=None,
             registration_type=None,
             source=None,
+            search=None,
             page=1,
             page_size=20,
             sort_by="submitted_at",
@@ -2676,6 +4247,131 @@ async def test_send_host_creation_notification_skips_when_host_missing(monkeypat
     )
     result.get(propagate=True)
     assert sent == []
+
+
+async def test_send_edit_notification_includes_point_of_contact_when_set(monkeypatch) -> None:
+    """`edit.html`'s Point-of-Contact row, and the plain-text fallback body,
+    both reflect whichever POC is currently resolved on the invitation
+    (add-invitation-point-of-contact) — not just whichever visit-detail
+    field actually changed in this particular edit.
+    """
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        tracking_id="INV-TEST0010",
+        purpose_of_visit="Interview",
+        preferred_visit_date=date(2026, 9, 15),
+        preferred_visit_time=time(17, 46),
+        expected_duration="1-hour",
+        poc_name="Priya POC",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email="visitor@example.com",
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_edit_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+
+    assert len(sent) == 1
+    assert "Point of contact: Priya POC" in sent[0]["body"]
+    assert sent[0]["html_body"] is not None
+    assert "Priya POC" in sent[0]["html_body"]
+
+
+async def test_send_edit_notification_omits_point_of_contact_when_unset(monkeypatch) -> None:
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        tracking_id="INV-TEST0011",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email="visitor@example.com",
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_edit_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+
+    assert len(sent) == 1
+    assert "Point of contact" not in sent[0]["body"]
+    assert sent[0]["html_body"] is None or "Point of contact" not in sent[0]["html_body"]
+
+
+async def test_send_poc_creation_notification_includes_visit_details(monkeypatch) -> None:
+    """add-invitation-point-of-contact: the newly-named point of contact
+    gets the same level of visit detail (duration, department) the
+    visitor's own edit-notification email already carries — not just
+    tracking id/visitor/purpose — plus the visitor's own contact details
+    (phone/email), so the POC can actually reach them about the visit.
+    """
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        tracking_id="INV-TEST0012",
+        primary_contact_full_name="Meera Krishnan",
+        primary_contact_phone="+91 90000 44455",
+        primary_contact_email="meera@example.com",
+        purpose_of_visit="Interview",
+        preferred_visit_date=date(2026, 9, 15),
+        preferred_visit_time=time(17, 46),
+        expected_duration="1-hour",
+        department_to_visit="Engineering",
+    )
+    fake_poc = UserFactory.build(id=uuid.uuid4(), email="poc@acme-test.example", is_active=True)
+    monkeypatch.setattr(
+        tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation, user=fake_poc)
+    )
+
+    result = await asyncio.to_thread(
+        tasks.send_poc_creation_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "poc_id": str(fake_poc.id),
+        },
+    )
+    result.get(propagate=True)
+
+    assert len(sent) == 1
+    assert sent[0]["to"] == "poc@acme-test.example"
+    assert "Duration: 1-hour" in sent[0]["body"]
+    assert "Department: Engineering" in sent[0]["body"]
+    assert "Visitor phone: +91 90000 44455" in sent[0]["body"]
+    assert "Visitor email: meera@example.com" in sent[0]["body"]
+    assert sent[0]["html_body"] is not None
+    assert "1-hour" in sent[0]["html_body"]
+    assert "Engineering" in sent[0]["html_body"]
+    assert "+91 90000 44455" in sent[0]["html_body"]
+    assert "meera@example.com" in sent[0]["html_body"]
 
 
 async def test_send_host_creation_notification_exhausted_retries_logs_error(monkeypatch) -> None:
@@ -3173,8 +4869,12 @@ async def test_created_invitation_current_step_id_is_directly_actionable(
     holder of that role — e.g. Reception — is the current approver and may
     approve it directly like any other step (`specs/approvals/spec.md`
     "The Ownership Step Is a Plain Role-Identified Step, Approvable
-    Directly") — no resolved `hostId` results from approving it directly,
-    since only delegating a step resolves the host.
+    Directly"). This invitation's category has no configured workflow rules,
+    so this one synthetic step is also its *only* step — a single-step,
+    reception-only workflow — so approving it directly resolves `hostId` to
+    the approving Reception user (see "Approving the Only Step of a
+    Single-Step Workflow Also Resolves the Invitation's Host"), the same as
+    delegating would.
     """
     # `_default_host_role` (this module's autouse fixture) seeds "reception"
     # with no permissions attached — enough for snapshot logic, not enough
@@ -3213,7 +4913,7 @@ async def test_created_invitation_current_step_id_is_directly_actionable(
     )
     assert response.status_code == 200, response.text
     assert response.json()["data"]["status"] == "approved"
-    assert response.json()["data"]["hostId"] is None
+    assert response.json()["data"]["hostId"] == str(visit_host.id)
 
 
 async def test_create_invitation_unknown_purpose_id_rejected(
@@ -4057,6 +5757,39 @@ async def test_public_check_in_by_tracking_id_success(
     assert invitation.checked_in_by_user_id is None
 
 
+async def test_public_check_in_by_tracking_id_masks_custom_file_upload_field_raw_storage_key(
+    client: AsyncClient, user: User, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-generic-custom-field-file-url-resolution, extended to the public
+    tracking-ID check-in response — same posture as the QR counterpart
+    (`test_qr_check_in_response_masks_custom_file_upload_field_raw_storage_
+    key`): a `file_upload`-typed custom field's raw storage key must never
+    reach this unauthenticated caller.
+    """
+    token = await _login(client, user.email)
+    field = await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="pic", field_type="file_upload"
+    )
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        primary_contact_custom_field_values={
+            field["id"]: "vmss:tenant:invitations/custom-fields:primary-pic.jpg"
+        },
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+    assert (
+        _custom_field_value(response.json()["data"]["primaryContactCustomFields"], field["id"])
+        is None
+    )
+
+
 async def test_public_check_in_non_approved_rejected(
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
@@ -4413,6 +6146,36 @@ async def test_public_check_in_response_includes_full_invitation_detail(
     assert data["status"] == "checked_in"
 
 
+async def test_public_check_in_response_includes_point_of_contact(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-invitation-point-of-contact: the public check-in response
+    carries `pocUserId`/`pocRoleId`/`pocName` the same way it already
+    carries `hostId`/`hostNameOrEmail` — whoever scans the visitor in can
+    see who to actually reach about the visit's logistics.
+    """
+    poc_user = UserFactory.build(id=uuid.uuid4(), email="poc-checkin@acme-test.example")
+    db_session.add(poc_user)
+    await db_session.flush()
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        poc_user_id=poc_user.id,
+        poc_name="Priya POC",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["pocUserId"] == str(poc_user.id)
+    assert data["pocRoleId"] is None
+    assert data["pocName"] == "Priya POC"
+
+
 async def test_public_check_in_response_omits_out_of_scope_new_fields(
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
@@ -4460,6 +6223,37 @@ async def test_track_by_tracking_id_omits_out_of_scope_new_fields(
         assert key not in data
     for visitor_out in data["visitors"]:
         assert "idProofUrl" not in visitor_out
+
+
+async def test_track_by_tracking_id_includes_point_of_contact(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-invitation-point-of-contact: the public tracking-by-ID lookup
+    carries `pocUserId`/`pocRoleId`/`pocName`, matching `hostNameOrEmail`'s
+    existing presence on this schema.
+    """
+    poc_user = UserFactory.build(id=uuid.uuid4(), email="poc-track@acme-test.example")
+    db_session.add(poc_user)
+    await db_session.flush()
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        poc_user_id=poc_user.id,
+        poc_name="Priya POC",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/v1/invitations/track", params={"trackingId": invitation.tracking_id}
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["pocUserId"] == str(poc_user.id)
+    assert data["pocRoleId"] is None
+    assert data["pocName"] == "Priya POC"
 
 
 async def test_public_check_in_response_includes_group_co_visitors(
@@ -4908,6 +6702,42 @@ async def test_qr_check_in_response_includes_id_proof_type_but_never_a_document_
     assert "idProofUrl" not in visitor_out
 
 
+async def test_qr_check_in_response_masks_custom_file_upload_field_raw_storage_key(
+    client: AsyncClient, user: User, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-generic-custom-field-file-url-resolution, extended to the public
+    QR check-in response: a `file_upload`-typed custom field is present as
+    an entry (unlike the removed `idProofUrl` above, there's no dedicated
+    schema field to omit — it lives inside the generic
+    `customFields` array) but its *value* must never be the raw storage
+    key `create_invitation` persisted, since this endpoint has no
+    authenticated caller to check `documents:view` against — same posture
+    as `test_qr_check_in_response_includes_id_proof_type_but_never_a_
+    document_url`.
+    """
+    token = await _login(client, user.email)
+    field = await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="pic", field_type="file_upload"
+    )
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        primary_contact_custom_field_values={
+            field["id"]: "vmss:tenant:invitations/custom-fields:primary-pic.jpg"
+        },
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    qr_check_in_token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{qr_check_in_token}/check-in")
+    assert response.status_code == 200
+    assert (
+        _custom_field_value(response.json()["data"]["primaryContactCustomFields"], field["id"])
+        is None
+    )
+
+
 async def test_qr_check_in_and_check_out_response_include_resolved_branch_building_department(
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
@@ -4956,6 +6786,31 @@ async def test_qr_check_in_and_check_out_response_include_resolved_branch_buildi
     assert data["branch"]["id"] == str(branch.id)
     assert data["building"]["id"] == str(building.id)
     assert data["department"]["id"] == str(department.id)
+
+
+async def test_qr_check_in_response_includes_point_of_contact(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """add-invitation-point-of-contact: the QR check-in/out response
+    carries `pocUserId`/`pocRoleId`/`pocName`, matching `hostId`/
+    `hostNameOrEmail`'s existing presence on this schema.
+    """
+    poc_role = RoleFactory.build(id=uuid.uuid4(), name="qr-poc-role", permissions=[])
+    db_session.add(poc_role)
+    await db_session.flush()
+    invitation = _approved_invitation(
+        db_session, branch.id, poc_role_id=poc_role.id, poc_name="Front Desk"
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["pocRoleId"] == str(poc_role.id)
+    assert data["pocUserId"] is None
+    assert data["pocName"] == "Front Desk"
 
 
 async def test_qr_check_in_entry_after_expiry_rejected(
@@ -5916,6 +7771,332 @@ async def test_edit_invitation_notifies_resolved_host(
     assert push_calls[0]["user_id"] == host.id
 
 
+# --- PATCH /invitations/{id}/edit: point of contact (add-invitation-point-of-contact)
+
+
+async def test_edit_invitation_sets_point_of_contact_to_user(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """`pocUserId` resolves to a specific person, distinct from `hostId` —
+    settable directly, any time, by a caller holding `invitations:approve`
+    (the `user` fixture is a company-wide admin holding every permission).
+    Notifies the newly-named POC by push and email, on top of the always-
+    fired visitor edit-notification email.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    poc_user = UserFactory.build(
+        id=uuid.uuid4(), email="poc-person@acme-test.example", full_name="Priya POC"
+    )
+    db_session.add(poc_user)
+    await db_session.commit()
+
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: None)
+    push_calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        push_calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+    email_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_poc_creation_notification, "delay", lambda **kw: email_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocUserId": str(poc_user.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["pocUserId"] == str(poc_user.id)
+    assert response.json()["data"]["pocRoleId"] is None
+    assert response.json()["data"]["pocName"] == "Priya POC"
+
+    await db_session.refresh(invitation)
+    assert invitation.poc_user_id == poc_user.id
+    assert invitation.poc_role_id is None
+    assert invitation.poc_name == "Priya POC"
+    assert len(push_calls) == 1
+    assert push_calls[0]["user_id"] == poc_user.id
+    assert len(email_calls) == 1
+    assert email_calls[0]["poc_id"] == str(poc_user.id)
+
+
+async def test_edit_invitation_sets_point_of_contact_to_role(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """`pocRoleId` broadcasts to every holder of that role at the
+    invitation's branch (push only — no specific person to email, same as a
+    role-identified approval step has no email counterpart).
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    poc_role = RoleFactory.build(id=uuid.uuid4(), name="front-desk-poc", permissions=[])
+    db_session.add(poc_role)
+    await db_session.commit()
+
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: None)
+    role_push_calls: list[dict] = []
+
+    async def _fake_notify_role_at_branch(*args, **kwargs):
+        role_push_calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify_role_at_branch)
+    email_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_poc_creation_notification, "delay", lambda **kw: email_calls.append(kw)
+    )
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocRoleId": str(poc_role.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["pocRoleId"] == str(poc_role.id)
+    assert response.json()["data"]["pocUserId"] is None
+    assert response.json()["data"]["pocName"] == "front-desk-poc"
+
+    await db_session.refresh(invitation)
+    assert invitation.poc_role_id == poc_role.id
+    assert invitation.poc_user_id is None
+    assert len(role_push_calls) == 1
+    assert role_push_calls[0]["role_id"] == poc_role.id
+    assert len(email_calls) == 0
+
+
+async def test_edit_invitation_poc_both_fields_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocUserId": str(uuid.uuid4()), "pocRoleId": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
+async def test_edit_invitation_poc_unknown_user_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocUserId": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.poc_user_id is None
+
+
+async def test_edit_invitation_poc_unknown_role_rejected(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocRoleId": str(uuid.uuid4())},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.poc_role_id is None
+
+
+async def test_edit_invitation_poc_requires_approve_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Holding `invitations:edit` alone (this endpoint's own gate) is not
+    enough to set the point of contact — `invitations:approve` is required
+    in addition, checked in the service layer.
+    """
+    editor = await _branch_scoped_invitation_editor(db_session, tenant, branch.id)
+    poc_user = UserFactory.build(id=uuid.uuid4(), email="poc-candidate@acme-test.example")
+    db_session.add(poc_user)
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = issue_token(editor)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocUserId": str(poc_user.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.poc_user_id is None
+
+
+async def test_edit_invitation_poc_rejected_mid_workflow(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """`invitations/service.py::_poc_eligible` — a workflow-backed
+    invitation not yet at its final approval level rejects a
+    point-of-contact edit with 409, even from a caller holding
+    `invitations:approve` (this endpoint's own permission gate for POC).
+    The frontend already disables the field in this state, but the API
+    must not trust that.
+    """
+    category = VisitorCategoryFactory.build(
+        id=uuid.uuid4(), name="Two Step POC Category", code="TWO-STEP-POC-CAT"
+    )
+    approver_role = RoleFactory.build(id=uuid.uuid4(), name="two-step-poc-approver", permissions=[])
+    db_session.add_all([category, approver_role])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ApprovalWorkflowRuleFactory.build(
+                id=uuid.uuid4(),
+                visitor_category_id=category.id,
+                step_order=1,
+                approver_role_id=approver_role.id,
+            ),
+            ApprovalWorkflowRuleFactory.build(
+                id=uuid.uuid4(),
+                visitor_category_id=category.id,
+                step_order=2,
+                approver_role_id=approver_role.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(category.id)
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    poc_user = UserFactory.build(id=uuid.uuid4(), email="poc-mid-workflow@acme-test.example")
+    db_session.add(poc_user)
+    await db_session.commit()
+
+    response = await client.patch(
+        f"/api/v1/invitations/{data['id']}/edit",
+        json={"pocUserId": str(poc_user.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+
+    invitation = await InvitationRepository(db_session).get(uuid.UUID(data["id"]))
+    assert invitation is not None
+    assert invitation.poc_user_id is None
+
+
+async def test_edit_invitation_poc_allowed_at_final_approval_level(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """Once the invitation's only remaining pending step is its last
+    snapshotted one, `_poc_eligible` allows the point-of-contact edit —
+    "final approval level" doesn't require the invitation to be fully
+    `approved` yet, just no earlier step still pending ahead of it.
+    """
+    category = VisitorCategoryFactory.build(
+        id=uuid.uuid4(), name="Two Step POC Final Category", code="TWO-STEP-POC-FINAL-CAT"
+    )
+    approver_role = RoleFactory.build(
+        id=uuid.uuid4(), name="two-step-poc-final-approver", permissions=[]
+    )
+    db_session.add_all([category, approver_role])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            ApprovalWorkflowRuleFactory.build(
+                id=uuid.uuid4(),
+                visitor_category_id=category.id,
+                step_order=1,
+                approver_role_id=approver_role.id,
+            ),
+            ApprovalWorkflowRuleFactory.build(
+                id=uuid.uuid4(),
+                visitor_category_id=category.id,
+                step_order=2,
+                approver_role_id=approver_role.id,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["visitorCategoryId"] = str(category.id)
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    invitation_id = uuid.UUID(data["id"])
+    steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation_id)
+    first_step = next(s for s in steps if s.step_order == 1)
+    await db_session.execute(
+        update(InvitationApprovalStep)
+        .where(InvitationApprovalStep.id == first_step.id)
+        .values(status="approved")
+    )
+    await db_session.commit()
+
+    poc_user = UserFactory.build(id=uuid.uuid4(), email="poc-final-level@acme-test.example")
+    db_session.add(poc_user)
+    await db_session.commit()
+
+    response = await client.patch(
+        f"/api/v1/invitations/{data['id']}/edit",
+        json={"pocUserId": str(poc_user.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["pocUserId"] == str(poc_user.id)
+
+
+async def test_edit_invitation_poc_change_included_in_edit_notification_context(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """The visitor's own edit-notification email (unconditional on every
+    successful edit — `_send_edit_notification`) reflects whichever point of
+    contact is currently resolved, the same way it already reflects the
+    other visit-detail fields regardless of which one changed.
+    """
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    poc_user = UserFactory.build(id=uuid.uuid4(), email="poc-person-2@acme-test.example")
+    db_session.add(poc_user)
+    await db_session.commit()
+
+    edit_calls: list[dict] = []
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: edit_calls.append(kw))
+    monkeypatch.setattr(notifications_service, "notify_user", lambda **kw: asyncio.sleep(0))
+    monkeypatch.setattr(tasks.send_poc_creation_notification, "delay", lambda **kw: None)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"pocUserId": str(poc_user.id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert len(edit_calls) == 1
+    assert edit_calls[0]["invitation_id"] == str(invitation.id)
+
+
 # --- POST /invitations/{id}/badge and /badge/reprint ----------------------------
 
 
@@ -6278,13 +8459,15 @@ async def test_create_invitation_submission_notifies_owning_role(
     assert email_calls[0]["invitation_id"] == created["id"]
 
 
-async def test_create_invitation_configured_chain_does_not_preempt_ownership_push(
+async def test_create_invitation_configured_chain_determines_submission_push(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
 ) -> None:
-    """A category's own configured `ApprovalWorkflowRule` chain no longer
-    determines which step gets pushed at submission — the unconditional
-    `stepOrder` 0 ownership step is always current first, regardless of what
-    role a category's own chain configures at `stepOrder` 1+.
+    """A category's own configured `ApprovalWorkflowRule` chain now
+    determines which step (and therefore which role) gets pushed at
+    submission — its first configured step is the invitation's current
+    step, so the submission push goes to that step's role, not
+    unconditionally to the tenant's default host role
+    (`docs/features/approvals.md` "The host-nomination step").
     """
     category = VisitorCategoryFactory.build(
         id=uuid.uuid4(), name="Role Workflow Category", code="ROLE-WORKFLOW-CAT"
@@ -6311,16 +8494,13 @@ async def test_create_invitation_configured_chain_does_not_preempt_ownership_pus
 
     monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify_role_at_branch)
 
-    reception_role = await RoleRepository(db_session).get_by_name("reception")
-    assert reception_role is not None
-
     token = await _login(client, user.email)
     payload = _individual_payload()
     payload["visitorCategoryId"] = str(category.id)
     await _create_invitation_success(client, token, branch, payload=payload)
 
     assert len(role_calls) == 1
-    assert role_calls[0]["role_id"] == reception_role.id
+    assert role_calls[0]["role_id"] == approver_role.id
     assert role_calls[0]["branch_id"] == branch.id
 
 
@@ -7102,6 +9282,115 @@ async def test_approval_email_falls_back_to_front_desk_contact_when_no_host(monk
     assert "+91 80000 22233" in sent[0]["html_body"]
 
 
+async def test_approval_email_prefers_point_of_contact_over_host(monkeypatch) -> None:
+    """add-invitation-point-of-contact: when both a host and a point of
+    contact are resolved, the "Your point of contact" box shows the POC —
+    a deliberate override of who to reach about the visit's logistics —
+    not the workflow-resolved host.
+
+    `_FakeSession.execute` returns the single configured `user=` for *any*
+    `UserRepository.get_active(...)` call regardless of which id it was
+    given (host_id or poc_user_id alike), so this test can't give the host
+    and POC two independently-resolved live identities. It instead relies
+    on `poc_name` being read straight off `invitation.poc_name` rather than
+    re-resolved from the session — distinct from `host_name`, which *is*
+    session-resolved — so asserting the invitation's own `poc_name`
+    ("Priya POC") appears while the session-resolved name ("Rahul Nair",
+    standing in for whichever party a real host lookup would return) does
+    not is still a valid, if narrow, check that the POC branch fired
+    instead of the host branch.
+    """
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        status="approved",
+        tracking_id="INV-TEST0013",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email="visitor@example.com",
+        primary_contact_phone=None,
+        host_id=uuid.uuid4(),
+        poc_user_id=uuid.uuid4(),
+        poc_name="Priya POC",
+    )
+    fake_resolved_user = UserFactory.build(
+        id=uuid.uuid4(), full_name="Rahul Nair", phone_number="+91 90000 33344", is_active=True
+    )
+    monkeypatch.setattr(
+        tasks,
+        "tenant_session_scope",
+        _fake_tenant_session_scope(fake_invitation, user=fake_resolved_user),
+    )
+
+    result = await asyncio.to_thread(
+        tasks.send_approval_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "qr_token": "fake-qr-token",
+        },
+    )
+    result.get(propagate=True)
+
+    assert len(sent) == 1
+    assert sent[0]["html_body"] is not None
+    assert "Priya POC" in sent[0]["html_body"]
+    assert "Rahul Nair" not in sent[0]["html_body"]
+
+
+async def test_approval_email_shows_role_based_point_of_contact_without_live_contact(
+    monkeypatch,
+) -> None:
+    """A role-identified point of contact has no single person's phone/email
+    to resolve — the box shows just the role's snapshotted name, still in
+    preference to the host.
+    """
+    sent = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        status="approved",
+        tracking_id="INV-TEST0014",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email="visitor@example.com",
+        primary_contact_phone=None,
+        host_id=uuid.uuid4(),
+        poc_role_id=uuid.uuid4(),
+        poc_name="Front Desk",
+    )
+    fake_host = UserFactory.build(
+        id=fake_invitation.host_id, full_name="Rahul Nair", is_active=True
+    )
+    monkeypatch.setattr(
+        tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation, user=fake_host)
+    )
+
+    result = await asyncio.to_thread(
+        tasks.send_approval_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "qr_token": "fake-qr-token",
+        },
+    )
+    result.get(propagate=True)
+
+    assert len(sent) == 1
+    assert sent[0]["html_body"] is not None
+    assert "Front Desk" in sent[0]["html_body"]
+    assert "Rahul Nair" not in sent[0]["html_body"]
+
+
 # --- Owning-role email fan-out (role-based-invitation-workflow) -------------
 
 
@@ -7185,3 +9474,739 @@ async def test_send_submission_role_email_notification_emails_every_role_holder_
     recipients = {call["to"] for call in sent}
     assert recipients == {"reception1@acme-test.example", "reception2@acme-test.example"}
     assert all("INV-TEST0009" in call["body"] for call in sent)
+
+
+# --- form-builder integration: branch-configured requiredness ---------------
+#
+# specs/invitations/spec.md (delta) — these exercise the branch actually
+# *changing* what's required, not just the seeded-default path every other
+# test above already covers implicitly.
+
+
+async def _create_invitation_raw(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    payload: dict,
+    include_primary_id_proof: bool = True,
+    include_primary_photo: bool = True,
+) -> Response:
+    """Like `_create_invitation`, but lets a caller omit the primary
+    contact's ID-proof/photo file parts entirely — needed to exercise a
+    branch that has deactivated one of them.
+    """
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    files = []
+    if include_primary_id_proof:
+        files.append(("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")))
+    if include_primary_photo:
+        files.append(("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")))
+    return await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(payload)},
+        files=files,
+        headers=headers,
+    )
+
+
+async def _configure_and_publish_branch_field(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    field_key: str,
+    changes: dict,
+) -> None:
+    """Admin-side setup shared by the tests below: fetches the branch's
+    (form-builder-seeded) draft steps, finds `field_key` within `step_key`,
+    PATCHes it with `changes`, then publishes the branch's scope so
+    `create_invitation` actually reads the new configuration.
+    """
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+    field = next(f for f in step["fields"] if f["key"] == field_key)
+
+    patch_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field['id']}", json=changes, headers=headers
+    )
+    assert patch_response.status_code == 200, patch_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+
+
+async def test_create_invitation_id_proof_not_required_when_branch_deactivates_it(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "ID proof not required when the
+    branch has deactivated it".
+    """
+    token = await _login(client, user.email)
+    await _configure_and_publish_branch_field(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        field_key="id_proof_upload",
+        changes={"isActive": False, "isRequired": False},
+    )
+
+    payload = _individual_payload()
+    del payload["primaryContact"]["idProofType"]
+    response = await _create_invitation_raw(
+        client, token, branch, payload=payload, include_primary_id_proof=False
+    )
+    assert response.status_code == 201, response.text
+
+
+async def test_create_invitation_photo_not_required_when_branch_deactivates_it(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "Missing primary contact photo is
+    accepted when the branch has deactivated it".
+    """
+    token = await _login(client, user.email)
+    await _configure_and_publish_branch_field(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        field_key="profile_photo",
+        changes={"isActive": False, "isRequired": False},
+    )
+
+    response = await _create_invitation_raw(
+        client, token, branch, payload=_individual_payload(), include_primary_photo=False
+    )
+    assert response.status_code == 201, response.text
+
+
+async def test_create_invitation_consent_not_required_when_branch_deactivates_it(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "Consent Is Mandatory and
+    Recorded" — a consent the branch no longer marks required may be
+    omitted.
+    """
+    token = await _login(client, user.email)
+    await _configure_and_publish_branch_field(
+        client,
+        token,
+        branch,
+        step_key="consent_agreement",
+        field_key="safety_guidelines_accepted",
+        changes={"isRequired": False},
+    )
+
+    payload = _individual_payload()
+    _remove_default_consent(payload, "safety_guidelines_accepted")
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 201, response.text
+
+
+async def test_create_invitation_expected_duration_optional(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """ "Expected Duration" is no longer collected by either visitor-facing
+    wizard at all (make-expected-duration-optional), so `create_invitation`
+    must accept a submission that omits it regardless of the branch's own
+    Form Builder configuration for the field — unlike ID proof/photo, there
+    is no requiredness check for it any more.
+    """
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    del payload["visitDetails"]["expectedDuration"]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 201, response.text
+
+    tracking_id = response.json()["data"]["trackingId"]
+    track_response = await client.get(
+        "/api/v1/invitations/track", params={"trackingId": tracking_id}
+    )
+    assert track_response.status_code == 200, track_response.text
+    assert track_response.json()["data"]["expectedDuration"] is None
+
+
+async def test_create_invitation_carried_item_allowed_when_branch_adds_custom_item(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/invitations/spec.md (delta) "Carried Items and Vehicles Are
+    Optional Structured Declarations" — a key the branch adds to its
+    Carried Items options becomes acceptable.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    step = next(s for s in steps_response.json()["data"] if s["key"] == "carried_items")
+    field = next(f for f in step["fields"] if f["key"] == "items")
+
+    patch_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field['id']}",
+        json={"options": [*field["options"], "company_badge"]},
+        headers=headers,
+    )
+    assert patch_response.status_code == 200, patch_response.text
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": ["company_badge"]}
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 201, response.text
+
+
+async def test_create_invitation_carried_item_still_rejected_when_not_in_branch_config(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Sibling of the success case above — a key that was never added to
+    the branch's Carried Items options is still rejected even after that
+    branch has published its own configuration (not just the tenant
+    default fallback).
+    """
+    token = await _login(client, user.email)
+    # Gives this branch its own published configuration (distinct from the
+    # tenant-default fallback) via an innocuous field edit, so this test
+    # exercises the branch's own resolved config, not just the default.
+    await _configure_and_publish_branch_field(
+        client,
+        token,
+        branch,
+        step_key="visitor_info",
+        field_key="profile_photo",
+        changes={"placeholder": "A clear, recent photo"},
+    )
+
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": ["not_a_configured_item"]}
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+# --- add-generic-custom-field-support: admin-authored custom fields --------
+#
+# specs/invitations/spec.md (delta) "Invitation Creation Captures
+# Admin-Defined Custom Field Answers" — every step now accepts new
+# admin-authored fields (form-builder), and their answers are captured at
+# the same per-visitor/per-vehicle/per-invitation scope their step's own
+# fields already use.
+
+
+async def _create_and_publish_custom_field(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    key: str,
+    field_type: str = "text",
+    is_required: bool = False,
+    options: list[str] | None = None,
+    help_text: str | None = None,
+    hide_label: bool = False,
+) -> dict:
+    """Admin-side setup: creates a new admin-authored field on `step_key`
+    and publishes the branch's scope so `create_invitation` reads it.
+    """
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == step_key)
+
+    body: dict = {"key": key, "label": key.replace("_", " ").title(), "fieldType": field_type}
+    if is_required:
+        body["isRequired"] = True
+    if options is not None:
+        body["options"] = options
+    if help_text is not None:
+        body["helpText"] = help_text
+    if hide_label:
+        body["hideLabel"] = True
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields", json=body, headers=headers
+    )
+    assert create_response.status_code == 201, create_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+    return create_response.json()["data"]
+
+
+async def _update_and_publish_field_options(
+    client: AsyncClient,
+    token: str,
+    branch: Branch,
+    *,
+    step_key: str,
+    field_key: str,
+    options: list[str],
+    field_type: str | None = None,
+) -> dict:
+    """Admin-side setup: sets an existing (e.g. system-seeded) field's
+    options (and, optionally, its `field_type`) and publishes the
+    branch's scope so `create_invitation` reads it — used for
+    `id_proof_type`/`vehicle_type` (make-id-proof-and-vehicle-type-
+    configurable), whose options are editable even though the field
+    itself was seeded, not admin-created; `field_type` additionally
+    supports retyping a system field that isn't option-bearing by default
+    (e.g. "Purpose of Visit") to `dropdown_select`/`checkbox_list`
+    (make-system-field-types-editable).
+    """
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    fields_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert fields_response.status_code == 200, fields_response.text
+    step = next(s for s in fields_response.json()["data"] if s["key"] == step_key)
+    field = next(f for f in step["fields"] if f["key"] == field_key)
+
+    body: dict[str, Any] = {"options": options}
+    if field_type is not None:
+        body["fieldType"] = field_type
+    update_response = await client.patch(
+        f"/api/v1/form-builder/fields/{field['id']}", json=body, headers=headers
+    )
+    assert update_response.status_code == 200, update_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(fields_response.json()["data"])
+    return update_response.json()["data"]
+
+
+async def test_create_invitation_captures_primary_contact_custom_field(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    field = await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="employee_id"
+    )
+
+    payload = _individual_payload()
+    # The primary contact's Visitor Info-step answers are sourced from the
+    # invitation-level `customFields` array, not a nested
+    # `primaryContact.customFields` — see `InvitationPrimaryContactCreate`'s
+    # docstring in `schemas.py`.
+    payload["customFields"] = [{"fieldId": field["id"], "value": "E-1001"}]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    assert detail_response.json()["data"]["primaryContactCustomFields"] == [
+        {"fieldId": field["id"], "value": "E-1001"}
+    ]
+
+
+async def test_create_invitation_captures_primary_contact_custom_field_on_system_group(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """An admin-authored custom field can be attached to the seeded
+    (system) "visitors" group on Visitor Info — that group is never
+    surfaced by `custom_groups_for_invitation_scope`/`custom_groups_for_step`
+    (its cardinality is the `visitors` payload list's own length, not a
+    `groups` entry), so such a field's answer must still be accepted
+    through the ordinary per-visitor `customFields` array, the same as
+    an ungrouped field. Regression test: `custom_fields_for_step` used to
+    exclude any field with a `groupId`, including one on this system group,
+    which meant the field's answer was rejected as unknown no matter which
+    payload array it was submitted through.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert steps_response.status_code == 200, steps_response.text
+    step = next(s for s in steps_response.json()["data"] if s["key"] == "visitor_info")
+    [visitors_group] = step["groups"]
+    assert visitors_group["key"] == "visitors"
+    assert visitors_group["isSystem"] is True
+
+    create_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "purpose_note",
+            "label": "Purpose Note",
+            "fieldType": "text",
+            "groupId": visitors_group["id"],
+        },
+        headers=headers,
+    )
+    assert create_response.status_code == 201, create_response.text
+    field_id = create_response.json()["data"]["id"]
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    _record_live_consent_field_ids(steps_response.json()["data"])
+
+    payload = _individual_payload()
+    payload["customFields"] = [{"fieldId": field_id, "value": "some value"}]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers=headers,
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    assert detail_response.json()["data"]["primaryContactCustomFields"] == [
+        {"fieldId": field_id, "value": "some value"}
+    ]
+
+
+async def test_create_invitation_captures_co_visitor_custom_fields_independently(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Two visitors answering the same admin-authored Visitor Info field
+    each keep their own independent answer."""
+    token = await _login(client, user.email)
+    field = await _create_and_publish_custom_field(
+        client, token, branch, step_key="visitor_info", key="employee_id"
+    )
+
+    payload = _group_payload()
+    payload["customFields"] = [{"fieldId": field["id"], "value": "E-1001"}]
+    payload["visitors"][0]["customFields"] = [{"fieldId": field["id"], "value": "E-2002"}]
+    data = await _create_invitation_success(
+        client, token, branch, payload=payload, visitor_file_count=2
+    )
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    body = detail_response.json()["data"]
+    assert body["primaryContactCustomFields"] == [{"fieldId": field["id"], "value": "E-1001"}]
+    visitors_by_name = {v["fullName"]: v for v in body["visitors"]}
+    assert visitors_by_name["Alexander Pierce"]["customFields"] == [
+        {"fieldId": field["id"], "value": "E-2002"}
+    ]
+    assert visitors_by_name["Clara Oswald"]["customFields"] == []
+
+
+async def test_create_invitation_captures_vehicle_custom_field(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    field = await _create_and_publish_custom_field(
+        client, token, branch, step_key="vehicle_info", key="parking_zone"
+    )
+
+    payload = _group_payload()
+    payload["vehicles"][0]["customFields"] = [{"fieldId": field["id"], "value": "B2"}]
+    data = await _create_invitation_success(
+        client, token, branch, payload=payload, visitor_file_count=2
+    )
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    vehicles = detail_response.json()["data"]["vehicles"]
+    vehicles_by_plate = {v["licensePlate"]: v for v in vehicles}
+    assert vehicles_by_plate["KA-01-AB-1234"]["customFields"] == [
+        {"fieldId": field["id"], "value": "B2"}
+    ]
+    assert vehicles_by_plate["KA-05-CD-5678"]["customFields"] == []
+
+
+async def test_create_invitation_captures_invitation_level_custom_field(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A custom field on Visit Details (no per-entity structure of its own)
+    is captured once per invitation."""
+    token = await _login(client, user.email)
+    field = await _create_and_publish_custom_field(
+        client, token, branch, step_key="visit_details", key="cost_center"
+    )
+
+    payload = _individual_payload()
+    payload["customFields"] = [{"fieldId": field["id"], "value": "CC-42"}]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    assert detail_response.json()["data"]["customFields"] == [
+        {"fieldId": field["id"], "value": "CC-42"}
+    ]
+
+
+async def test_create_invitation_custom_field_unresolvable_id_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    payload = _individual_payload()
+    payload["customFields"] = [{"fieldId": str(uuid.uuid4()), "value": "x"}]
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_custom_field_missing_required_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client, token, branch, step_key="visit_details", key="cost_center", is_required=True
+    )
+
+    payload = _individual_payload()
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_hidden_label_custom_field_missing_required_rejected(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """update-form-field-hide-label-option: `hideLabel` is a display-only
+    property — a required field with its label hidden still rejects a
+    missing submitted value the same way an always-visible required field
+    does."""
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        key="cost_center",
+        is_required=True,
+        hide_label=True,
+    )
+
+    payload = _individual_payload()
+    response = await _create_invitation(client, token, branch, payload=payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_static_text_field_needs_no_submitted_value(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """specs/form-builder/spec.md (delta) "A `static_text` Field Renders
+    Admin-Authored Content With No Input Control" — a `static_text` field
+    (e.g. a Terms & Conditions block admin-authored on Visit Details)
+    collects no answer, so an invitation created without any submitted
+    value for its key must still succeed."""
+    token = await _login(client, user.email)
+    await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        key="visit_notice",
+        field_type="static_text",
+        help_text="Please arrive 10 minutes early.",
+    )
+
+    payload = _individual_payload()
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+
+async def test_create_invitation_seeded_carried_items_field_unaffected_by_custom_field(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression: adding an admin-authored field to Carried Items must not
+    disturb the seeded `items` field's existing wire shape (`carriedItems.
+    items`, mapped to the `carried_items` column) — only the new field's
+    answer routes through `customFields`."""
+    token = await _login(client, user.email)
+    field = await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="carried_items",
+        key="company_badge",
+        field_type="toggle_switch",
+    )
+
+    payload = _individual_payload()
+    payload["carriedItems"] = {"items": ["laptop_tablet"]}
+    payload["customFields"] = [{"fieldId": field["id"], "value": True}]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+    detail_response = await client.get(
+        f"/api/v1/invitations/{data['id']}",
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    )
+    body = detail_response.json()["data"]
+    assert body["carriedItems"] == ["laptop_tablet"]
+    assert body["customFields"] == [{"fieldId": field["id"], "value": True}]
+
+
+async def test_create_invitation_custom_consent_field_goes_through_consents(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """Regression for design.md Decision 6: a new admin-authored Consent
+    Agreement field is already captured by the pre-existing `consents`
+    array (every field on that step, system or not) - it must not also be
+    required in `customFields`, and supplying it there instead of in
+    `consents` must not satisfy the requirement.
+    """
+    token = await _login(client, user.email)
+    field = await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="consent_agreement",
+        key="extra_consent",
+        field_type="toggle_switch",
+        is_required=True,
+    )
+
+    payload = _individual_payload()
+    _add_consent(payload, field["id"], True)
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+    assert data["id"]
+
+    wrong_scope_payload = _individual_payload()
+    wrong_scope_payload["customFields"] = [{"fieldId": field["id"], "value": True}]
+    response = await _create_invitation(client, token, branch, payload=wrong_scope_payload)
+    assert response.status_code == 422
+
+
+async def test_create_invitation_custom_field_values_tenant_schema_isolation(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """testing-standards.md §2 tenant-isolation case: an invitation carrying
+    custom field answers, created under this tenant's schema, must not be
+    visible from a session bound to a different tenant's schema.
+    """
+    token = await _login(client, user.email)
+    field = await _create_and_publish_custom_field(
+        client, token, branch, step_key="visit_details", key="cost_center"
+    )
+    payload = _individual_payload()
+    payload["customFields"] = [{"fieldId": field["id"], "value": "CC-42"}]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    other_schema = "tenant_other_custom_field_test"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        result = await other_session.execute(
+            select(Invitation).where(Invitation.tracking_id == data["trackingId"])
+        )
+        assert result.scalar_one_or_none() is None
+
+
+# --- fix-registration-host-role-crash: default-host-role failure mode ------
+#
+# specs/approvals/spec.md (delta) "Unresolvable Default Host Role Fails the
+# Submission as a Server Misconfiguration" — `get_default_host_role`
+# (org_structure/service.py) already raises 500 + logs ERROR when a
+# tenant's `reception` role can't be resolved; this was previously
+# untested and undocumented in specs.
+
+
+async def test_create_invitation_missing_default_host_role_fails_as_server_misconfiguration(
+    client: AsyncClient, user: User, branch: Branch, tenant: Tenant, db_session: AsyncSession
+) -> None:
+    """`auth/service.py`'s `update_role`/`delete_role` protect any
+    `STANDARD_ROLE_NAMES` role (including "reception") from rename/delete
+    via the API, so this provisioning-gap state — a tenant with no
+    resolvable default host role — isn't reachable through the product's
+    own API. It's constructed directly at the repository layer instead,
+    per `design.md`'s "Risks/Trade-offs" note, bypassing that protection on
+    purpose (not a scenario a client can trigger).
+    """
+    token = await _login(client, user.email)
+    reception_role = await RoleRepository(db_session).get_by_name("reception")
+    assert reception_role is not None
+    await RoleRepository(db_session).soft_delete(reception_role)
+    await db_session.commit()
+
+    # `capture_logs()` disables every configured processor by default
+    # (including `structlog.contextvars.merge_contextvars`), so a field
+    # bound only via contextvars (`tenant_id`, here) has to have that
+    # processor passed back in explicitly to show up in a captured entry.
+    with capture_logs(processors=(structlog.contextvars.merge_contextvars,)) as captured:
+        response = await _create_invitation(client, token, branch, payload=_individual_payload())
+
+    assert response.status_code == 500
+
+    [entry] = [e for e in captured if e["event"] == "default_host_role_not_seeded"]
+    assert entry["log_level"] == "error"
+    # tenant_id is bound into structlog's contextvars for every authenticated
+    # request (core/tenancy.py) — no explicit parameter needed for this log
+    # line to carry it (logging-observability.md §1).
+    assert entry["tenant_id"] == str(tenant.id)
+
+    # `create_invitation` calls `get_default_host_role` before
+    # `tenant_db.commit()` (invitations/service.py), so nothing from this
+    # failed attempt should have reached the database. The test client's
+    # `get_tenant_db` override hands every request the same bare
+    # `db_session` with no `async with` around it (unlike production's
+    # `tenant_session_scope`), so this explicit rollback stands in for the
+    # automatic rollback-on-exit production gets for free — see
+    # `org_structure/tests.py`'s
+    # `test_provision_branch_rolls_back_partial_tree_on_mid_transaction_conflict`.
+    await db_session.rollback()
+    for model in (Invitation, InvitationVisitor, InvitationVehicle, InvitationApprovalStep):
+        count = await db_session.scalar(select(func.count()).select_from(model))
+        assert count == 0, f"{model.__name__} row(s) leaked from a failed default-host-role lookup"
+
+
+# --- fix-registration-host-role-crash: submission through a brand-new step -
+
+# testing-standards.md §2 — every prior custom-field test above adds a field
+# to an already-*seeded* step (visitor_info/vehicle_info/visit_details/
+# carried_items/consent_agreement); none exercises a genuinely new custom
+# step, the exact "test"/"test 2" shape reported in the originating bug
+# (including one step left with zero fields configured).
+
+
+async def test_create_invitation_through_new_custom_step_with_and_without_fields(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+
+    step_with_field = (
+        await client.post(
+            "/api/v1/form-builder/steps",
+            json={"key": "custom_step_one", "name": "Custom Step"},
+            headers=headers,
+        )
+    ).json()["data"]
+    field_response = await client.post(
+        f"/api/v1/form-builder/steps/{step_with_field['id']}/fields",
+        json={"key": "custom_answer", "label": "Custom Answer", "fieldType": "text"},
+        headers=headers,
+    )
+    assert field_response.status_code == 201, field_response.text
+
+    # A second new custom step deliberately left with zero fields — must
+    # not break `resolve_effective_form`/validation for a submission that
+    # simply has nothing to answer on it.
+    empty_step_response = await client.post(
+        "/api/v1/form-builder/steps",
+        json={"key": "custom_step_two", "name": "Custom Step 2"},
+        headers=headers,
+    )
+    assert empty_step_response.status_code == 201, empty_step_response.text
+
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+    field_id = field_response.json()["data"]["id"]
+    post_publish_steps = await client.get("/api/v1/form-builder/steps", headers=headers)
+    assert post_publish_steps.status_code == 200, post_publish_steps.text
+    _record_live_consent_field_ids(post_publish_steps.json()["data"])
+
+    payload = _individual_payload()
+    payload["customFields"] = [{"fieldId": field_id, "value": "Some value"}]
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    detail_response = await client.get(f"/api/v1/invitations/{data['id']}", headers=headers)
+    assert detail_response.status_code == 200, detail_response.text
+    assert detail_response.json()["data"]["customFields"] == [
+        {"fieldId": field_id, "value": "Some value"}
+    ]

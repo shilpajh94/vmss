@@ -1,4 +1,5 @@
 import uuid
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import EmailStr, Field
@@ -7,6 +8,19 @@ from vmss_api.core.schemas import CamelModel
 
 EmployeeSortableField = Literal["name", "created_at"]
 RoleSortableField = Literal["name", "created_at"]
+PermissionSortableField = Literal["code"]
+
+
+class EmployeeStatus(StrEnum):
+    """`?status=` filter value for `GET /employees`, mapped onto
+    `User.is_active` — same small-local-enum posture as
+    `org_structure.schemas.ActiveStatus`; kept separate rather than shared
+    across features (`design.md` Decision in
+    `add-listing-pagination-filtering`).
+    """
+
+    active = "active"
+    inactive = "inactive"
 
 
 class LoginRequest(CamelModel):

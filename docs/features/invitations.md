@@ -39,7 +39,7 @@ branch from the request body via the same `authorize_branch_id` helper.
 | PATCH | `/api/v2/invitations/qr/{token}/check-out` | None (public) | 20/minute per IP | Exit counterpart of the QR check-in route above, added by `checkin-approval-workflow-improvements` to replace its old check-in-URL toggle. `checked_in` → `checked_out`; 409 if not currently `checked_in`. Never expiry-blocked — a visit that legitimately continues past `expiresAt` can still be closed out. Audit entries use `action = "invitation_qr_checked_out"`. Accepts `Idempotency-Key`. Same resolved `branch`/`building`/`department`/`idProofType` fields as the check-in endpoint above. |
 | PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. |
 | PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`, and dispatches a reschedule notification to the primary contact. 409 once `checked_in`/`checked_out`/`denied`. |
-| PATCH | `/api/v1/invitations/{id}/edit` | `invitations:edit` at the invitation's branch | — | (`role-based-invitation-workflow`) Edits any subset of `purposeOfVisit`/`purposeId`, `preferredVisitDate`, `preferredVisitTime`, `expectedDuration`/`durationId`, `departmentToVisit`/`departmentId`, `additionalNotes` while `submitted` or `approved` — the same eligible-status window as reschedule/extend, additive alongside them rather than replacing either. Never accepts the visitor's own personal fields, `visitorCategoryId`, or `hostId`/`hostNameOrEmail` — any of those in the request body is rejected with a validation error (`extra="forbid"`); host reassignment stays exclusively the delegation endpoint's job (see "Every invitation starts owned by a role" below). Dispatches an email to the primary contact describing what changed, and a push to the resolved host (if any). 409 once ineligible. |
+| PATCH | `/api/v1/invitations/{id}/edit` | `invitations:edit` at the invitation's branch (**and** `invitations:approve` when `pocUserId`/`pocRoleId` is supplied) | — | (`role-based-invitation-workflow`) Edits any subset of `purposeOfVisit`/`purposeId`, `preferredVisitDate`, `preferredVisitTime`, `expectedDuration`/`durationId`, `departmentToVisit`/`departmentId`, `additionalNotes` while `submitted` or `approved` — the same eligible-status window as reschedule/extend, additive alongside them rather than replacing either. Never accepts the visitor's own personal fields, `visitorCategoryId`, or `hostId`/`hostNameOrEmail` — any of those in the request body is rejected with a validation error (`extra="forbid"`); host reassignment stays exclusively the delegation endpoint's job (see "Every invitation starts owned by a role" below). Also accepts `pocUserId`/`pocRoleId` (`add-invitation-point-of-contact`, see "Point of contact" below) — at most one of the two, never both (422 otherwise). Dispatches an email to the primary contact describing what changed (reflecting the current `pocName`, whether or not it was the field that changed), a push to the resolved host (if any), and — when the point of contact was just (re)set — a push to the new point of contact (a specific user, or every holder of a role at the branch) plus an email when it's a specific user. 409 once ineligible. |
 | PATCH | `/api/v1/invitations/{id}/extend` | `invitations:extend` at the invitation's branch | — | Pushes `expiresAt` forward while `approved` or `checked_in`. 422 if the new expiry isn't strictly later than the current one; 409 if ineligible. |
 | POST | `/api/v1/invitations/{id}/badge` | `invitations:badge` at the invitation's branch | — | Issues a printable badge (PNG) for an `approved`/`checked_in` invitation. 409 if ineligible or already issued (use reprint). Accepts `Idempotency-Key`. |
 | POST | `/api/v1/invitations/{id}/badge/reprint` | `invitations:badge` at the invitation's branch | — | Re-renders an already-issued badge from current data and increments its reprint count. 409 if none issued yet. |
@@ -115,6 +115,210 @@ reception, after triage) knows the actual answer. `purposeOfVisit` and
 `expectedDuration` remain required free-text fields; only `departmentToVisit`
 changed.
 
+### Admin-authored answers are referenced by field/group id, never by key (`restructure-walkin-payload-by-field-id`, **BREAKING**)
+
+`consents`, `customFields` (at every scope), and `groups` all reference a
+`FormField`/`FormFieldGroup` by its `id` (a UUID), never by its `key`/label
+— see "Consents", "Admin-defined custom fields", and "Admin-defined
+repeatable groups" below for each shape. A caller resolves the current
+`fieldId`/`groupId` values from the branch's currently published form
+(`GET /form-builder/effective`), the same read it already uses to render
+the form and its labels/options — never hardcoded. This applies uniformly
+whether the caller submitted the old key-keyed shape or not; there is no
+transitional dual-accept — see "Finding the payload shape in Swagger" for
+how to discover the exact current request/response shape.
+
+### ID proof type and vehicle type are branch-configured, not fixed (`make-id-proof-and-vehicle-type-configurable`, **BREAKING**)
+
+`idProofType` (`primaryContact`/each `visitors[]` entry) and `vehicleType`
+(each `vehicles[]` entry) are plain strings, not a fixed server-side enum —
+a valid value is whatever the calling branch's currently published Form
+Builder "ID Proof Type"/"Vehicle Type" options declare
+(`GET /form-builder/effective`'s Visitor Info/Vehicle Info steps), the same
+"branch's currently configured options" contract `carriedItems.items` uses.
+Submitting a value outside the branch's current
+options is rejected with `422`. A branch that has never customized either
+field accepts the original four ID proof types
+(`Aadhaar Card`/`Passport`/`Driving License`/`Other`) and three vehicle
+types (`2_wheeler`/`4_wheeler`/`heavy`) unchanged — those are the seeded
+defaults, not special-cased in code. See `docs/features/form_builder.md`
+for how an admin edits these two fields' options.
+
+### Vehicle count and admin-defined repeatable groups (`add-repeatable-field-groups`)
+
+The number of `vehicles[]` entries a request may declare is now checked
+against the branch's currently published Vehicle Info field-group instance
+range (`GET /form-builder/effective`'s Vehicle Info step, `groups[].key ==
+"vehicles"`) instead of being unconditionally unlimited — a branch that
+has never configured a minimum/maximum still accepts any number of
+vehicles, including zero, unchanged from before this change.
+
+The number of `visitors[]` entries a `group` registration may declare is
+similarly checked against Visitor Info's field group's `maxInstances`
+(`groups[].key == "visitors"`) — this **replaces** the previous
+`INVITATION_MAX_GROUP_VISITORS` settings-based rejection (still 20 by
+default, seeded into that group at migration time), so a client that was
+relying on the old 422 message text should expect the same status code
+via a different underlying check. Unlike Vehicle Info's group, Visitor
+Info's isn't admin-editable through the Form Builder API — see
+`docs/features/form_builder.md`'s "Field groups" for why.
+
+An admin can also define a **repeatable field group** on any other step
+(e.g. a "Parcels" group on Carried Items), optionally made **conditional**
+on another field's value, through Form Builder — see
+`docs/features/form_builder.md` "Field groups"/"Conditional groups".
+`POST /invitations` (and `POST /registrations/walk-in`) accepts that
+group's answers as an optional top-level `groups: {groupId, instances}[]`
+array, each entry's `groupId` referencing the group's live id (never its
+key/label) and `instances` an ordered array of that group's per-instance
+answer sets — each instance itself a `customFields`-shaped
+`{fieldId, value}[]` array, one instance per visitor-filled repetition. A
+submission naming a `groupId` the branch's active form doesn't define (or
+that belongs to a different branch/tenant), or supplying more instances
+than that group's currently published `maxInstances`, is rejected with
+`422` before any invitation is created — the same "validate everything,
+then persist" ordering ID-proof file validation already uses, so one
+invalid instance never leaves a partially-created invitation behind. Every
+response that already returns `customFields` (`GET /invitations/{id}`, the
+tracking lookup, the canonical check-in response, and the QR check-in/
+check-out response) now also returns `groups` in the same
+`{groupId, instances}[]` shape, alongside it.
+
+**When a group is hidden** by its `visibilityCondition` (evaluated against
+the same request's own submitted values), the request is accepted even if
+that group's fields would otherwise be required, and even if fewer
+instances are submitted than the group's configured minimum — a visitor
+who was never shown the group can't be expected to have filled it in. Its
+maximum still applies if instances are submitted anyway, and any value
+that is supplied for a hidden group's field is still validated against
+that field's own type/options/length rules.
+
+### Repeatable group file uploads (`add-group-field-file-upload`)
+
+If a repeatable field group has its own `file_upload`-typed field (Form
+Builder field type `file_upload`), that field's answer can only come from a
+multipart file — never a JSON value in `groups`. Only a group's
+**first** `file_upload` field is read; a group with more than one is
+supported for definition but only the first is ever populated this way.
+
+The client sends one multipart **list** part named
+`groupFieldFiles[<groupId>]`, **order-matched** to that same group's
+`payload.groups` entry's `instances` — the same "list, order-matched
+to instances" convention `visitorIdProofFiles`/`visitor_id_proof_files`
+already uses for the fixed `visitors` list. There is no `instanceIndex` or
+field id encoded in the part name: file *n* in the list pairs with
+instance *n* of the `groups` entry whose `groupId` matches `<groupId>`.
+
+- The instance's `customFields` array must **omit** that field id (or
+  send `null` for its value) — supplying any other value for it is
+  rejected with `422` (`"'<fieldId>' in '<groupName>' instance <n> must
+  be uploaded as a file, not supplied as a value"`), never silently
+  overwritten.
+- If the field is required (and the group is visible), every instance must
+  have a matching file — a count mismatch is rejected with `422`
+  (`"Field group '<groupName>' requires an uploaded file for every
+  instance"`). More files than instances is also rejected (`422`, `"More
+  files were uploaded than instances of '<groupName>'"`).
+- Accepted files are validated the same way a top-level ID-proof upload is
+  (`_validate_id_proof`), stored via the same `core/storage.py::save`
+  interface under the `invitations/group-files` category, and the
+  resulting storage key is written back into that instance's field
+  (keyed by `fieldId`) in the persisted `groups` — never a client-supplied
+  value.
+
+`POST /registrations/walk-in` accepts the identical `groupFieldFiles[...]`
+contract — see `docs/features/registrations.md`.
+
+### Inline (non-grouped) custom-field file uploads (`add-inline-custom-field-file-upload`)
+
+An admin-authored `file_upload`-typed field that is *not* assigned to a
+repeatable field group (e.g. an "additional document" field added directly
+on Visitor Info, not one of its groups) — the standalone counterpart of the
+repeatable-group case above. Unlike a group (whose multipart part is keyed
+by group id alone, so only the group's *first* `file_upload` field is
+read), each of these fields has its own multipart part keyed by field id,
+so every `file_upload` field at a scope is supported, not just one.
+
+Four scopes, one multipart convention each:
+
+| Scope | Multipart part | Shape |
+|---|---|---|
+| Primary contact (Visitor Info) | `primaryContactCustomFieldFiles[<fieldId>]` | At most one file. |
+| Each co-visitor (Visitor Info) | `visitorCustomFieldFiles[<fieldId>]` | Order-matched list, same convention as `visitor_id_proof_files`. |
+| Each vehicle (Vehicle Info) | `vehicleCustomFieldFiles[<fieldId>]` | Order-matched list, same convention as the visitor case. |
+| Invitation-level (Visit Details/Carried Items/a custom step) | `customFieldFiles[<fieldId>]` | At most one file. |
+
+**The primary contact's plain-JSON (non-file) custom-field answers are
+submitted through the top-level `customFields` array**, not a nested
+`primaryContact.customFields` — there is exactly one primary contact per
+invitation, so a Visitor Info-step field id in the invitation-level
+`customFields` array is understood as the primary contact's answer for it.
+`primaryContact.customFields` still exists on the wire but is accepted and
+silently ignored (kept only so an already-deployed client sending it
+doesn't get a hard validation error). Each co-visitor's and each vehicle's
+own answers are unaffected — they still use `visitors[i].customFields`/
+`vehicles[i].customFields` respectively, since a group registration has
+more than one such answer set and a flat map can't tell whose is whose.
+The `primaryContactCustomFieldFiles[<fieldId>]` multipart part name above is
+unchanged — file uploads are a separate channel from the plain-JSON one.
+
+- The field's id must be **omitted** from the corresponding `customFields`
+  array (the invitation-level one, for the primary contact) — supplying
+  any other value for it is rejected with `422`
+  (`"'<fieldId>' for <scope> must be uploaded as a file, not supplied as a
+  value"`), never silently overwritten, same rule as the repeatable-group
+  case.
+- If the field is required, every applicable instance (the primary contact;
+  each visitor; each vehicle; the invitation itself) must have a matching
+  file — a count mismatch is rejected with `422`. More files than instances
+  (or more than one file for a single-instance scope) is also rejected.
+- Accepted files are validated and stored the same way a group's own
+  `file_upload` field is (`_validate_id_proof`, `core/storage.py::save`,
+  category `invitations/custom-fields`), and the resulting storage key is
+  written back into the persisted `customFields`/
+  `primaryContactCustomFields`/a vehicle's own `customFields` array (keyed
+  internally by `fieldId`) — never a client-supplied value. Every reader
+  (`router.py::_resolve_custom_field_file_values`/`_resolve_group_field_
+  values`, applied to the invitation, primary contact, every visitor, every
+  vehicle, and every `groups` instance alike) resolves that
+  storage key to a signed, time-boxed URL (`core/storage.py::url_for`)
+  before it reaches a response — gated by the caller's `documents:view`
+  grant for the invitation's branch the same way `photoUrl`/`idProofUrl`
+  already are: a caller without that permission gets `null` for the field
+  instead of either the raw key or a usable URL, never a fallback that
+  leaks the key.
+- The file-field ids resolved this way are always the branch's *current*
+  effective form. If a field's type is changed after invitations already
+  hold data under its id, an older instance's value may not be a storage
+  key at all — that's resolved to `null` too, rather than passed to
+  `core/storage.py::url_for`, which can only sign an actual string key.
+
+`POST /registrations/walk-in` accepts the identical
+`primaryContactCustomFieldFiles[...]`/`visitorCustomFieldFiles[...]`/
+`vehicleCustomFieldFiles[...]`/`customFieldFiles[...]` contract — see
+`docs/features/registrations.md`.
+
+### Retyped system fields and submission validation (`make-system-field-types-editable`)
+
+`fullName` (`primaryContact`/each `visitors[]` entry), `purposeOfVisit`,
+`expectedDuration`, `additionalNotes` (`visitDetails`), and
+`licensePlate` (each `vehicles[]` entry) can now also be retyped through
+Form Builder (see `docs/features/form_builder.md` "Changing an existing
+field's type"), extending the same dynamic validation
+`idProofType`/`vehicleType` already use: when a field's *currently
+configured* type is `dropdown_select`/`checkbox_list`, a submitted value
+must match one of the branch's currently published options for that
+field, rejected with `422` otherwise. When it's still its default
+(non-option-bearing) type, the submitted value is validated as ordinary
+free text, unchanged from before this change. `hostNameOrEmail` and
+`departmentToVisit` are not covered by this — neither is a Form Builder
+field any more (`remove-dead-host-department-system-fields`): `host`'s
+submitted value is always discarded (see "`hostId`/`hostNameOrEmail` are
+no longer resolved at creation" above), and `departmentToVisit` is always
+validated as ordinary free text (or resolved from the `departmentId`
+catalog — see "Optional catalog ids on visit details" above), never
+gated by a Form Builder option list.
+
 ### Primary contact profile photo (`checkin-approval-workflow-improvements`, now mandatory per `require-primary-contact-photo`)
 
 Alongside each visitor's required ID-proof upload, `POST /invitations`
@@ -187,21 +391,25 @@ in flight.
 
 **Every invitation starts owned by a role, not a person**
 (`role-based-invitation-workflow`, **BREAKING** — replaces the old
-"host resolves at creation, if a client supplied one" behavior).
-Unconditionally — regardless of whether the category has any configured
-rules, and regardless of anything the client submitted — `stepOrder` 0 is
-role-identified for the tenant's *default host role* (the standard
-`reception` role unless a tenant has reconfigured it via `Company.
-defaultHostRoleId`), ahead of any role-based steps the category's own chain
-configures. The blanket `POST /invitations/{id}/approve` endpoint is
-therefore never reachable for a newly created invitation — every one now
-has at least this one snapshotted step. The invitation's actual host is
-established later, not at snapshot time: whoever holds the default host
-role delegates `stepOrder` 0 to a specific person (see
-`docs/features/approvals.md` "The ownership step (`stepOrder` 0)" for the
-full delegation-eligibility rules), and that delegation is what sets
-`hostId`/`hostNameOrEmail` — see "`hostId` reflects the resolved host, not
-the original creator's input" below.
+"host resolves at creation, if a client supplied one" behavior). The
+invitation's *first* snapshotted step — whichever role the category's own
+workflow configures for its lowest `stepOrder`, or, only when the category
+has no configured rules at all, a synthetic `stepOrder` 0 step role-identified
+for the tenant's *default host role* (the standard `reception` role unless a
+tenant has reconfigured it via `Company.defaultHostRoleId`) — doubles as the
+invitation's host-nomination step (**revised**: an earlier version of this
+feature always added that default-host-role step unconditionally, ahead of
+the category's own rules, producing an extra step whenever the category's
+own first level was already configured as that same role; see
+`docs/features/approvals.md` "The host-nomination step" for the full
+history). The blanket `POST /invitations/{id}/approve` endpoint is never
+reachable for a newly created invitation regardless — every one still has
+at least one snapshotted step. The invitation's actual host is established
+later, not at snapshot time: whoever holds that first step's role delegates
+it to a specific person (see `docs/features/approvals.md` "The
+host-nomination step" for the full delegation-eligibility rules), and that
+delegation is what sets `hostId`/`hostNameOrEmail` — see "`hostId` reflects
+the resolved host, not the original creator's input" below.
 
 - **Approving/rejecting a step**: `POST /invitations/{id}/approval-steps
   /{stepId}/approve` and `.../reject` (see the endpoints table above) act
@@ -234,16 +442,37 @@ the original creator's input" below.
   `null` otherwise (no workflow, no host, or no longer `submitted`) — so a
   client can render "waiting on: Manager, step 2 of 3" without a second
   call, and call the approve/reject endpoints directly using `id` as
-  `stepId`.
+  `stepId`. **`totalSteps` counts this invitation's own snapshotted steps**
+  (a point-in-time copy taken at submission — see
+  `docs/features/approvals.md` "The host-nomination step" — never re-read
+  from the category's live rules afterward), which is the category's active
+  rule count *at submission time*, or `1` when the category had none (the
+  one case a synthetic step still gets added). This now matches the row
+  count from `GET /approval-workflow-rules?visitorCategoryId=...` exactly
+  (or `1` if that returns no rows) — there is no longer a built-in
+  off-by-one between the two. If you need to confirm a specific invitation's
+  snapshot against what was active when it was submitted, compare its
+  steps' `approverRoleId`s and timestamps against the `AuditLog` rows for
+  that category's `ApprovalWorkflowRule` changes, not against the rule
+  count alone.
 - **`hostId` reflects the resolved host, not the original creator's
   input** (the invitation's resolved host user id, or `null` before a
   delegation resolves one) — included on `InvitationOut` and
   `InvitationDetailOut` alongside the existing free-text
   `hostNameOrEmail`. Both stay `null` until any step is delegated to a
   specific person, and update again to that delegate on every subsequent
-  delegation at any `stepOrder` — not just `stepOrder` 0 — so `hostId`
-  always tracks the most recently delegated step. Nothing set at creation
-  ever populates them.
+  delegation at any `stepOrder` — not just the host-nomination step — so
+  `hostId` always tracks the most recently delegated step. Nothing set at
+  creation ever populates them. **Exception**: for a **single-step
+  (reception-only) workflow** — the category has no active
+  `ApprovalWorkflowRule`, so the invitation snapshots only the one
+  synthetic host-nomination step — there is no later step to delegate
+  through, so directly *approving* that one step also resolves `hostId`/
+  `hostNameOrEmail` to the approving user, the same as a delegation would
+  (see `docs/features/approvals.md` "The host-nomination step" for the
+  full rule). This does not apply once a category has any configured
+  rules: approving a multi-step workflow's host-nomination step directly
+  still leaves `hostId` unresolved.
 - **Escalation/auto-approve timestamps exist but aren't enforced yet.**
   Each step carries `escalatesAt`/`autoApprovesAt`, computed from the
   snapshotted rule's `escalationMinutes`/`autoApproveMinutes` relative to
@@ -257,6 +486,45 @@ The engine itself lives in the `approvals` feature, not `invitations` —
 see `docs/features/approvals.md` for its own model/endpoint reference.
 `invitations` only owns the snapshot-at-submission step and the two status
 outcomes (`approved` on the last step, `denied` on any rejection).
+
+## Point of contact (`add-invitation-point-of-contact`)
+
+Distinct from `hostId`/`hostNameOrEmail` above, which is who the visitor is
+meeting and only ever resolves through the approval workflow (delegation, or
+directly approving a single-step workflow's only step — see "`hostId`
+reflects the resolved host" above). `pocUserId`/`pocRoleId` name who to
+actually reach about the visit's logistics, and are set directly, at any
+time, via `PATCH /invitations/{id}/edit` — not gated by the invitation's
+current approval step/level the way host resolution is:
+
+- At most one of `pocUserId`/`pocRoleId` may be supplied on an edit — never
+  both (422 otherwise). An unknown id for either is also 422. Omitting both
+  leaves whatever point of contact is already resolved unchanged (same
+  "omitted, not reset to null" convention every other edit field already
+  follows).
+- Setting either requires the caller to additionally hold
+  `invitations:approve` at the invitation's branch, checked in
+  `invitations/service.py::edit_invitation` on top of this endpoint's own
+  `invitations:edit` gate — naming who visitors are routed to is closer to
+  an approval action than a visit-detail edit, so not every
+  `invitations:edit` holder should be able to set it.
+- `pocName` snapshots the resolved display name (the user's `full_name` or
+  the role's `name`) at the moment it was set — same convention as
+  `hostNameOrEmail` — so rendering it never needs an extra join. All three
+  fields (`pocUserId`, `pocRoleId`, `pocName`) are included on `InvitationOut`
+  and `InvitationDetailOut`.
+- Setting the point of contact notifies the newly-named party: a push to the
+  specific user, or to every holder of the role at the invitation's branch
+  (the same user-XOR-role routing `notify_step_approver` already does for
+  approval steps — `docs/features/approvals.md`), plus an email
+  (`poc_assigned.html`) when a specific person was named — mirroring
+  `delegate_step`'s host-assigned notification, no email counterpart for a
+  role-identified point of contact. Independently, the visitor's own
+  edit-notification email (`edit.html`, fired unconditionally on any
+  successful edit) includes a "Point of contact" row whenever `pocName` is
+  resolved, reflecting its current value regardless of which field the edit
+  actually changed — same posture the email already has for purpose/date/
+  duration/department.
 
 ## Lifecycle actions: deny / check-in / check-out / reschedule / extend / badge / watchlist-override
 
@@ -611,28 +879,34 @@ duration, department, purpose) plus the resolved host's name and a contact
 channel — falling back to the tenant's own `Company.phone`/`Company.email`
 when no host has been resolved by approval time.
 
-Submission (every non-auto-approved invitation now snapshots at least the
-ownership step), approval, denial, reschedule, edit, check-in, and check-out
-each also dispatch a **staff-facing push notification** — additional to, and
-dispatched independently from, the visitor email/SMS above. Submission
-pushes every holder of the invitation's default host role at the branch
+Submission (every non-auto-approved invitation now snapshots at least one
+step) approval, denial, reschedule, edit, check-in, and check-out each also
+dispatch a **staff-facing push notification** — additional to, and
+dispatched independently from, the visitor email/SMS above. Submission reads
+back the invitation's own just-created current step
+(`InvitationApprovalStepRepository.get_current_pending`) and pushes every
+holder of *that step's* `approverRoleId` at the branch
 (role-based-invitation-workflow — previously the host, when one had been
-supplied); the other actions push the invitation's resolved host, if one has
-been delegated. See `docs/features/notifications.md` for the dispatch
-primitive, the `assignedRoleId`/`assignedUserId`/`reason` addressing
-metadata every payload now carries, and recipient-resolution rules.
+supplied) — this is the category's own configured first-level role when the
+category has active rules, or the tenant's default host role only when it
+doesn't (see `docs/features/approvals.md` "The host-nomination step"); the
+other actions push the invitation's resolved host, if one has been
+delegated. See `docs/features/notifications.md` for the dispatch primitive,
+the `assignedRoleId`/`assignedUserId`/`reason` addressing metadata every
+payload now carries, and recipient-resolution rules.
 
-**Owning-role email fan-out** (`role-based-invitation-workflow`, replaces
-the old "host creation email"): submission also enqueues
-`send_submission_role_email_notification`, emailing every active user
-holding the default host role at the branch — the email counterpart of the
-submission push above, additive to it, not a replacement. **Host-assignment
-email**: `approvals`' `delegate_step`, when delegating `stepOrder` 0,
-additionally enqueues `send_host_creation_notification` (same task as
-before, repurposed — see `docs/features/approvals.md`) to the newly
-resolved host, telling them they've been named host. Neither of these
-existed before this change fired anything at creation for an un-resolved
-host; both are asynchronous and never delay their triggering request.
+**Current-step-role email fan-out** (`role-based-invitation-workflow`,
+replaces the old "host creation email"): submission also enqueues
+`send_submission_role_email_notification` with that same current step's
+`approverRoleId`, emailing every active user holding that role at the
+branch — the email counterpart of the submission push above, additive to
+it, not a replacement. **Host-assignment email**: `approvals`'
+`delegate_step`, when delegating the host-nomination step, additionally
+enqueues `send_host_creation_notification` (same task as before, repurposed
+— see `docs/features/approvals.md`) to the newly resolved host, telling
+them they've been named host. Neither of these existed before this change
+fired anything at creation for an un-resolved host; both are asynchronous
+and never delay their triggering request.
 
 **No Celery worker runs by default in this DDEV dev environment** — a
 created invitation's notification task will sit queued in Redis until

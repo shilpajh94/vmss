@@ -5,6 +5,7 @@ from vmss_api.audit_trail.router import router as audit_trail_router
 from vmss_api.auth.router import router as auth_router
 from vmss_api.core.storage_router import router as storage_router
 from vmss_api.dashboard.router import router as dashboard_router
+from vmss_api.form_builder.router import router as form_builder_router
 from vmss_api.identity_verification.router import router as identity_verification_router
 from vmss_api.invitations.router import router as invitations_router
 from vmss_api.invitations.router import router_v2 as invitations_router_v2
@@ -25,6 +26,7 @@ api_router.include_router(tenant_router)
 api_router.include_router(org_structure_router)
 api_router.include_router(platform_router)
 api_router.include_router(visitors_router)
+api_router.include_router(form_builder_router)
 api_router.include_router(invitations_router)
 api_router.include_router(approvals_router)
 api_router.include_router(registrations_router)

@@ -41,6 +41,7 @@ arbitrary:
 """
 
 from secrets import token_hex
+from typing import Any
 
 from polyfactory import Use
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
@@ -210,12 +211,32 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     __model__ = Invitation
     deleted_at = None
     status = "submitted"
+    # The router maps this plain string column back through `ContactMethod`
+    # when serializing detail/tracking responses — same rationale as
+    # `_build_invitation`'s `registration_type`/`source` defaults in
+    # `invitations/tests.py`, applied at the factory level since every
+    # caller of this factory needs a valid value, not just that helper.
+    primary_contact_preferred_contact_method = "email"
     # See module docstring — polyfactory's default String(20) generator can
     # produce an empty string, which broke every test keying off tracking_id
     # in a URL path.
     tracking_id = Use(lambda: f"INV-{token_hex(4).upper()}")
     approved_at = None
     carried_items: list[str] = []
+    consents: dict[str, bool] = {}
+    # Same shape rationale as `carried_items`/`consents` above — polyfactory
+    # infers a JSONB column's random value from the column type alone, not
+    # the model's more specific `dict[str, list[dict[str, Any]]]` Python
+    # hint, and produces a random scalar-valued dict that fails
+    # `InvitationDetailOut`/etc.'s stricter Pydantic type.
+    group_field_values: dict[str, list[dict[str, Any]]] = {}
+    # restructure-walkin-payload-by-field-id: these are now read back keyed
+    # by field id (`router.py::_dict_to_custom_fields`/`_dict_to_consents`
+    # parse every key as a UUID) — a polyfactory-generated random string key
+    # would fail that parse for every test that doesn't actually exercise
+    # custom-field content, same rationale as `group_field_values` above.
+    custom_field_values: dict[str, Any] = {}
+    primary_contact_custom_field_values: dict[str, Any] = {}
     visitors: list[InvitationVisitor] = []
     vehicles: list[InvitationVehicle] = []
     # Same FK-safety rationale as `BranchFactory.contact_person_user_id`:
@@ -226,6 +247,10 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     host_id = None
     duration_id = None
     department_id = None
+    # add-invitation-point-of-contact: same FK-safety rationale.
+    poc_user_id = None
+    poc_role_id = None
+    poc_name = None
     # Same FK-safety rationale — the invitation-multi-step-approval category
     # tag, nullable at the DB level for pre-existing rows.
     visitor_category_id = None
@@ -287,11 +312,17 @@ class InvitationVisitorFactory(SQLAlchemyFactory[InvitationVisitor]):
     # checkin-approval-workflow-improvements: nullable, optional — see
     # InvitationFactory.primary_contact_photo_storage_key above.
     photo_storage_key = None
+    # restructure-walkin-payload-by-field-id: see
+    # InvitationFactory.custom_field_values above.
+    custom_field_values: dict[str, Any] = {}
 
 
 class InvitationVehicleFactory(SQLAlchemyFactory[InvitationVehicle]):
     __model__ = InvitationVehicle
     deleted_at = None
+    # restructure-walkin-payload-by-field-id: see
+    # InvitationFactory.custom_field_values above.
+    custom_field_values: dict[str, Any] = {}
 
 
 class RegistrationDeviceKeyFactory(SQLAlchemyFactory[RegistrationDeviceKey]):
