@@ -54,6 +54,13 @@ _TAGS_METADATA = [
         ),
     },
     {
+        "name": "kiosks",
+        "description": (
+            "Admin management of kiosks: create, edit, hide/unhide, and "
+            "soft-delete."
+        ),
+    },
+    {
         "name": "platform",
         "description": (
             "Superadmin operations: platform login and tenant provisioning. "
