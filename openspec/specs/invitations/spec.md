@@ -1219,6 +1219,79 @@ result, not an error.
 - **THEN** the response includes the caller's relevant invitations across
   every branch, not narrowed to the named branch
 
+### Requirement: Staff Looks Up a Visitor's Prefill Data by Email
+`GET /invitations/lookup-by-email` SHALL accept a caller holding
+`invitations:create` at a branch and an `email` query parameter, and SHALL
+return a prefill payload (`fullName`, `phone`, `preferredContactMethod`,
+`visitorCategoryId`, `idProofType`, `photoUrl`, `idProofUrl`) built from the
+most recent non-deleted invitation, among the branches the caller is
+authorized for, whose primary contact email matches the supplied `email`
+case-insensitively. The response SHALL be `data: null` (`200`, not `404`)
+when no matching invitation exists, consistent with the existing "no prior
+visit is a normal case, not an error" convention. `photoUrl` SHALL be
+resolved whenever a photo was captured, regardless of the caller's other
+permissions — consistent with every other invitation response in this API
+already exposing it ungated. `idProofUrl` SHALL be `null` unless the caller
+additionally holds `documents:view` at the matched invitation's branch
+(`security-architecture.md` §4) — `invitations:create` alone SHALL NOT be
+sufficient to see the identity document image.
+
+#### Scenario: Matching email returns the most recent invitation's prefill data
+- **WHEN** a caller holding `invitations:create` at a branch requests
+  `GET /invitations/lookup-by-email?email=jane@example.com`, and that
+  branch has two invitations under that email, one older and one newer
+- **THEN** the response's `data` reflects the newer invitation's
+  `fullName`, `phone`, `preferredContactMethod`, `visitorCategoryId`, and
+  `idProofType`
+
+#### Scenario: Email match is case-insensitive
+- **WHEN** an invitation on file has primary contact email
+  `Jane@Example.com`, and a caller requests
+  `GET /invitations/lookup-by-email?email=jane@example.com`
+- **THEN** the response's `data` reflects that invitation
+
+#### Scenario: No matching invitation returns null data, not an error
+- **WHEN** a caller requests `GET /invitations/lookup-by-email` with an
+  email that matches no invitation at any branch the caller is authorized
+  for
+- **THEN** the response is `200` with `data: null`
+
+#### Scenario: A match at an unauthorized branch is not returned
+- **WHEN** an invitation under the queried email exists only at a branch
+  the caller does not hold `invitations:create` at
+- **THEN** the response is `200` with `data: null`, not that other
+  branch's data
+
+#### Scenario: An explicit X-Branch-ID header narrows the lookup to that branch
+- **WHEN** a caller authorized at multiple branches supplies an
+  `X-Branch-ID` header naming one of them, and a matching invitation exists
+  only at a different authorized branch
+- **THEN** the response is `200` with `data: null`, since the lookup is
+  narrowed to the named branch only
+
+#### Scenario: Caller without invitations:create is rejected
+- **WHEN** a caller holding only `invitations:view` (not
+  `invitations:create`) at any branch requests this endpoint
+- **THEN** the request is rejected with `403`
+
+#### Scenario: Photo URL is always resolved when captured
+- **WHEN** the most recent matching invitation has a photo on file, and
+  the caller holds `invitations:create` but not `documents:view`
+- **THEN** the response's `photoUrl` is a fetchable URL
+
+#### Scenario: ID-proof URL is null without documents:view
+- **WHEN** the most recent matching invitation has an ID-proof document on
+  file, and the caller holds `invitations:create` but not `documents:view`
+  at that invitation's branch
+- **THEN** the response's `idProofType` is present but `idProofUrl` is
+  `null`
+
+#### Scenario: ID-proof URL is resolved with documents:view
+- **WHEN** the most recent matching invitation has an ID-proof document on
+  file, and the caller holds both `invitations:create` and
+  `documents:view` at that invitation's branch
+- **THEN** the response's `idProofUrl` is a fetchable URL
+
 ### Requirement: A Confirmation or Approval Email Dispatch Failure Is Logged With Enough Detail To Diagnose
 WHEN the configured SMTP gateway rejects or fails to send a visit-
 confirmation, tracking-only, or approval notification email, the system
@@ -1591,3 +1664,135 @@ visitor's existing auto-approval email/SMS fires.
   `auto_approve_pre_registered_visitors` enabled
 - **THEN** no approval-step push notification is dispatched, and the visitor
   still receives their existing approval-confirmation email/SMS
+
+### Requirement: A Returning Primary Contact's Full Name Is Locked to Their Prior Invitation
+Before creating an invitation, the system SHALL determine whether the
+primary contact is "returning" using two keys, checked in this priority
+order:
+1. **Email match**: the new request's primary contact email is non-null and
+   matches a prior invitation's primary contact email.
+2. **Phone fallback**: the new request's primary contact email is null, and
+   its primary contact phone matches a prior invitation's primary contact
+   phone.
+
+A "prior invitation" for either key includes one in any status —
+`approved`, `submitted`, `denied`, `checked_in`, `checked_out`, or
+expired. When more than one prior invitation matches a key, the most
+recently created one is used.
+
+WHEN an email match or a phone-fallback match is found, the system SHALL
+persist that prior invitation's `primaryContactFullName` on the new
+invitation, regardless of what value (if any) the new request submits for
+it. WHEN no match is found — including when the new request's primary
+contact email is non-null but does not match any prior invitation, even if
+its phone would have matched a *different* prior invitation — the system
+SHALL persist the submitted `primaryContactFullName` exactly as today, with
+no change to existing behavior: a non-null, non-matching email always
+means "treat as first-time," regardless of what the phone matches.
+
+This lookup and substitution applies identically to `POST /invitations` and
+`POST /registrations/walk-in`, since the latter is implemented as a direct
+call into the same creation logic. No other field of the new invitation —
+`primaryContactPhone` (in the email-match case), ID proof, photo,
+`customFieldValues`, `visitorCategoryId`, visit details, carried items,
+vehicles, consents, or co-visitors — is affected by this lookup; each is
+taken from the new request exactly as it is today. A new `invitations` row
+is still created for every invitation request, including this case — this
+requirement never causes a request to update or reuse an existing row
+instead of creating a new one.
+
+#### Scenario: First time a contact is seen, submitted name is used
+- **WHEN** an invitation is created with a primary contact email (or, if no
+  email, phone) that has no prior invitation in the tenant's schema
+- **THEN** the new invitation's `primaryContactFullName` is exactly the
+  value submitted in the request
+
+#### Scenario: Returning email overrides a different submitted name
+- **WHEN** an invitation is created with a primary contact email that
+  matches a prior invitation whose `primaryContactFullName` is "Priya
+  Sharma", and the new request submits `primaryContactFullName` as "Priya
+  S."
+- **THEN** the new invitation is created with `primaryContactFullName`
+  "Priya Sharma", not "Priya S.", and the response reflects the stored
+  value
+
+#### Scenario: Returning email's other fields are taken from the new request
+- **WHEN** an invitation is created for a returning primary contact email,
+  supplying a new phone number, a new `visitorCategoryId`, and new visit
+  details
+- **THEN** the new invitation stores the newly submitted phone number,
+  visitor category, and visit details exactly as submitted — none of them
+  are overridden by the prior invitation's values
+
+#### Scenario: A denied or expired prior invitation still counts as a match
+- **WHEN** a primary contact's only prior invitation for their email was
+  `denied` or has since expired
+- **THEN** a new invitation created with that same email still has its
+  `primaryContactFullName` locked to that prior invitation's value
+
+#### Scenario: No email submitted falls back to matching by phone
+- **WHEN** an invitation is created with a primary contact that supplies a
+  phone number but no email, and that phone matches a prior invitation's
+  primary contact phone
+- **THEN** the new invitation's `primaryContactFullName` is locked to that
+  prior invitation's value, the same as an email match
+
+#### Scenario: No email submitted and phone matches nothing is first-time
+- **WHEN** an invitation is created with a primary contact that supplies a
+  phone number but no email, and that phone matches no prior invitation
+- **THEN** the submitted `primaryContactFullName` is used as-is, with no
+  lock applied
+
+#### Scenario: A genuinely new email is never overridden by a phone match
+- **WHEN** an invitation is created with a primary contact email that does
+  not match any prior invitation, even though its phone matches a *different*
+  prior invitation belonging to a different email
+- **THEN** the new invitation is created from the submitted payload as a
+  first-time contact — `primaryContactFullName` and `primaryContactEmail`
+  are exactly what was submitted, not locked to the phone-matched
+  invitation's values
+
+#### Scenario: A new invitations row is still created for a returning contact
+- **WHEN** an invitation is created for a primary contact matched by email
+  or by phone fallback
+- **THEN** a new, distinct `invitations` row is created for this visit —
+  the prior invitation's row is left completely unchanged, and the
+  visitor's per-visit history still shows both invitations
+
+#### Scenario: Walk-in registration applies the same lock
+- **WHEN** a visitor submits `POST /registrations/walk-in` with a primary
+  contact email matching a prior invitation, and a different full name than
+  that prior invitation's stored value
+- **THEN** the created registration's `primaryContactFullName` is the prior
+  invitation's stored value, identical to the behavior for
+  `POST /invitations`
+
+#### Scenario: Co-visitors are never matched or locked
+- **WHEN** a `group` invitation is created whose primary contact email
+  matches a prior invitation, and one of its co-visitors shares an email
+  with a person listed as a co-visitor on some earlier invitation
+- **THEN** the co-visitor's `fullName` and other fields are stored exactly
+  as submitted in this request — no lookup or locking is applied to any
+  `invitation_visitors` entry
+
+### Requirement: A Returning Primary Contact Matched by Phone Has Their Email Carried Forward
+WHEN a new invitation's primary contact is matched to a prior invitation via
+the phone fallback (no email submitted this visit — see "A Returning
+Primary Contact's Full Name Is Locked to Their Prior Invitation"), the
+system SHALL persist that prior invitation's `primaryContactEmail` on the
+new invitation, rather than leaving it null.
+
+#### Scenario: Phone-matched contact's email is populated from history
+- **WHEN** an invitation is created with a primary contact that supplies
+  only a phone number, and that phone matches a prior invitation whose
+  stored `primaryContactEmail` is "priya@example.com"
+- **THEN** the new invitation's `primaryContactEmail` is "priya@example.com",
+  not null
+
+#### Scenario: An email-matched contact's email is unaffected
+- **WHEN** an invitation is created with a primary contact email that
+  itself matches a prior invitation
+- **THEN** the new invitation's `primaryContactEmail` is the submitted
+  email, exactly as today — this requirement changes nothing for the
+  email-match case, since the submitted and stored email are already the
+  same

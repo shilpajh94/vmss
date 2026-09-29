@@ -122,6 +122,17 @@ _TAGS_METADATA = [
         ),
     },
     {
+        "name": "visitor-portal",
+        "description": (
+            "Public, OTP-gated returning-visitor lookup: a visitor who has "
+            "verified an email/phone via `identity-verification` retrieves "
+            "their own prior visit history and a prefill payload for a new "
+            "registration. Read-only — does not create or modify any "
+            "invitation/registration, and issues no user account or "
+            "session."
+        ),
+    },
+    {
         "name": "sso",
         "description": (
             "Staff OIDC single sign-on: per-tenant provider configuration, "

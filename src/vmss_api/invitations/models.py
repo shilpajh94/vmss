@@ -77,8 +77,11 @@ class Invitation(Base, TimestampMixin):
     # Set (partially) at creation; fully overwritten by self-registration —
     # see the class docstring.
     primary_contact_full_name: Mapped[str] = mapped_column(String(255))
-    primary_contact_email: Mapped[str | None] = mapped_column(String(255))
-    primary_contact_phone: Mapped[str | None] = mapped_column(String(50))
+    # Indexed (`a1b2c3d4e5f6`): the `visitor_return_visit` capability looks up
+    # a verified identifier's prior visits by exact match on one of these two
+    # columns.
+    primary_contact_email: Mapped[str | None] = mapped_column(String(255), index=True)
+    primary_contact_phone: Mapped[str | None] = mapped_column(String(50), index=True)
     primary_contact_preferred_contact_method: Mapped[str] = mapped_column(String(10))
     primary_contact_id_proof_type: Mapped[str | None] = mapped_column(String(50))
     # Deliberately never resolved to a URL or exposed on any response schema

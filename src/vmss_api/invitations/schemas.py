@@ -407,6 +407,26 @@ class InvitationOut(CamelModel):
     current_approval_step: CurrentApprovalStepOut | None = None
 
 
+class InvitationLookupPrefillOut(CamelModel):
+    """`GET /invitations/lookup-by-email`'s prefill shape. `photo_url` is
+    always resolved when captured, same as every other invitation response
+    (`InvitationOut`, `InvitationListItemOut`) — a face photo isn't gated
+    like an identity document in this codebase. `id_proof_url` is `null`
+    unless the caller additionally holds `documents:view` at the matched
+    invitation's branch — a staff caller looking up *someone else's*
+    record needs that permission to see their ID-proof document image, not
+    just `invitations:create` (`add-invitation-lookup-by-email/design.md`).
+    """
+
+    full_name: str
+    phone: str | None
+    preferred_contact_method: str
+    visitor_category_id: uuid.UUID | None
+    id_proof_type: str | None
+    photo_url: str | None
+    id_proof_url: str | None
+
+
 # --- Employee listing --------------------------------------------------------
 
 
