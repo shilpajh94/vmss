@@ -11,6 +11,10 @@ import { ConsentAnswerSchema, FieldAnswerSchema, GroupAnswerSchema } from "./for
 export const VisitRequestSchema = z.object({
   registrationType: z.enum(["individual", "group"]),
   visitorCategoryId: z.string().min(1),
+  // Resolved from the Visit Info step's Location (branch) / Building picks —
+  // sent in the payload (not an `X-Branch-ID` header, which prod's CORS rejects).
+  branchId: z.string().min(1).optional(),
+  buildingId: z.string().min(1).optional(),
   primaryContact: VisitorSchema,
   // Backend default (`Field(default_factory=list)`) — safe to omit entirely
   // when empty rather than send `[]`.

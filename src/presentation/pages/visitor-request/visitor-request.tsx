@@ -3,8 +3,11 @@ import { useNavigate } from 'react-router'
 import { PortalFooter } from '../../components/PortalFooter'
 import { PortalHeader } from '../../components/PortalHeader'
 import { useAppDependencies } from '../../context/app-dependencies-context'
+import { Spinner } from '../../components/ui/LoadingState'
 import type { Branch } from '../../../domain/entities/branch-schema'
 import type { Building } from '../../../domain/entities/building-schema'
+import type { VisitorPortalMe } from '../../../domain/entities/visitor-portal-schema'
+import { ReturnVisitHistoryScreen } from './Components/history/ReturnVisitHistoryScreen'
 import { OtpRequestScreen } from './Components/otp/OtpRequestScreen'
 import { OtpScreenLayout } from './Components/otp/OtpScreenLayout'
 import { OtpVerifyScreen } from './Components/otp/OtpVerifyScreen'
@@ -16,10 +19,11 @@ import { ReviewConfirmStep } from './Components/steps/ReviewConfirmStep'
 import { VehicleInfoStep } from './Components/steps/VehicleInfoStep'
 import { VisitInfoStep } from './Components/steps/VisitInfoStep'
 import { VisitorInfoStep } from './Components/steps/VisitorInfoStep'
+import { useReturningVisitorPortal } from './hooks/use-returning-visitor-portal'
 import { useVisitorOtp } from './hooks/use-visitor-otp'
 import { useVisitorRequestWizard, type VisitorRequestWizardInitialData } from './hooks/use-visitor-request-wizard'
 import { getSkeletonStepLabels, isCanonicalStepKey, resolveStepLabel } from './registration-wizard-steps'
-import type { VisitorCategoriesFieldState } from './types'
+import type { RegistrationType, VisitorCategoriesFieldState } from './types'
 
 function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardInitialData }) {
   const navigate = useNavigate()
@@ -43,6 +47,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     getFilePreviewUrl,
     submissionStatus,
     trackingId,
+    confirmedFullName,
     submissionError,
     submit,
     activeSteps,
@@ -61,9 +66,10 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     visitorInfoAllFields,
     visitDetailsCustomFields,
     vehicleInfoCustomFields,
+    primaryContactNameLocked,
     vehicleInfoGroups,
     vehicleInfoAllFields,
-  } = useVisitorRequestWizard(initial, branches)
+  } = useVisitorRequestWizard(initial, branches, buildings)
 
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
   const activeStep = activeSteps[currentStep]
@@ -119,6 +125,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             onRegistrationTypeChange={(registrationType) => setFormState({ ...formState, registrationType })}
             primaryContact={formState.primaryContact}
             onPrimaryContactChange={(primaryContact) => setFormState({ ...formState, primaryContact })}
+            primaryContactNameLocked={primaryContactNameLocked}
             uploadFile={uploadFile}
             getFilePreviewUrl={getFilePreviewUrl}
             errors={errors}
@@ -193,6 +200,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
             formState={formState}
             status={submissionStatus}
             trackingId={trackingId}
+            confirmedFullName={confirmedFullName}
             errorMessage={submissionError}
             visitorCategories={visitorCategoriesState.categories}
             getFilePreviewUrl={getFilePreviewUrl}
@@ -247,16 +255,77 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
   )
 }
 
+// Builds the wizard's primary-contact prefill from the verified contact plus,
+// when available, the returning visitor's known profile (visitor-return-history).
+// idProofUrl/photoUrl, when present, are carried through so the wizard can
+// offer to reuse them (allow-returning-visitor-photo-id-reuse) instead of
+// always requiring a fresh upload.
+function buildPrimaryContactPrefill(
+  contact: string,
+  prefill: VisitorPortalMe['prefill'],
+): VisitorRequestWizardInitialData['primaryContact'] {
+  const base = contact.includes('@') ? { email: contact } : { phone: contact }
+  if (!prefill) return base
+
+  const preferredContactMethod = prefill.preferredContactMethod === 'email' || prefill.preferredContactMethod === 'sms'
+    ? prefill.preferredContactMethod
+    : undefined
+
+  return {
+    ...base,
+    fullName: prefill.fullName,
+    email: prefill.email ?? base.email,
+    phone: prefill.phone ?? base.phone,
+    preferredContactMethod,
+    idProofType: prefill.idProofType ?? undefined,
+    idProofUrl: prefill.idProofUrl ?? undefined,
+    photoUrl: prefill.photoUrl ?? undefined,
+    visitorCategory: prefill.visitorCategoryId ?? undefined,
+  }
+}
+
 export function VisitorRequestPage() {
   const navigate = useNavigate()
   const [wizardInitial, setWizardInitial] = useState<VisitorRequestWizardInitialData | undefined>(undefined)
+  const [pending, setPending] = useState<{ registrationType: RegistrationType; contact: string } | undefined>(undefined)
+
+  const portal = useReturningVisitorPortal()
 
   const otp = useVisitorOtp({
-    onVerified: (registrationType, contact) => {
-      const primaryContact = contact.includes('@') ? { email: contact } : { phone: contact }
-      setWizardInitial({ registrationType, primaryContact })
+    onVerified: (registrationType, contact, proofToken) => {
+      setPending({ registrationType, contact })
+      portal.load(proofToken)
     },
   })
+
+  // 401 from the lookup: the proof token expired/was invalid — return to the
+  // OTP-request screen to get a fresh code (visitor-otp-verification's
+  // "History lookup rejects the proof token" scenario).
+  useEffect(() => {
+    if (portal.status === 'unauthorized') {
+      setPending(undefined)
+      otp.useDifferentContact()
+    }
+  }, [portal.status, otp])
+
+  // First-time visitor (no history, null prefill): skip the history screen
+  // and go straight into the wizard, exactly as before this feature.
+  useEffect(() => {
+    if (portal.status === 'loaded' && portal.data && portal.data.history.length === 0 && pending) {
+      setWizardInitial({
+        registrationType: pending.registrationType,
+        primaryContact: buildPrimaryContactPrefill(pending.contact, portal.data.prefill),
+      })
+    }
+  }, [portal.status, portal.data, pending])
+
+  const startNewRequestFromHistory = () => {
+    if (!pending) return
+    setWizardInitial({
+      registrationType: pending.registrationType,
+      primaryContact: buildPrimaryContactPrefill(pending.contact, portal.data?.prefill ?? null),
+    })
+  }
 
   if (wizardInitial) {
     return (
@@ -268,11 +337,45 @@ export function VisitorRequestPage() {
     )
   }
 
+  // A verified visitor with prior visits (or a retryable lookup error) sees
+  // the history screen instead of jumping straight to the wizard. Loading
+  // the initial page, or a first-time visitor's empty result, falls through
+  // to the plain spinner below rather than ever mounting this screen.
+  const hasHistoryToShow = portal.status === 'loaded' && (portal.data?.history.length ?? 0) > 0
+  const hasRetryableError = portal.status === 'rate-limited' || portal.status === 'misconfigured' || portal.status === 'error'
+
+  if (hasHistoryToShow || hasRetryableError) {
+    return (
+      <div className="flex min-h-screen w-full flex-col bg-[#f8fafc]">
+        <PortalHeader />
+        <OtpScreenLayout onBack={() => navigate('/')}>
+          <ReturnVisitHistoryScreen
+            status={portal.status}
+            history={portal.data?.history ?? []}
+            errorMessage={portal.errorMessage}
+            hasMore={portal.hasMore}
+            onLoadMore={portal.loadMore}
+            onRetry={portal.retry}
+            onStartNewRequest={startNewRequestFromHistory}
+          />
+        </OtpScreenLayout>
+        <PortalFooter />
+      </div>
+    )
+  }
+
+  const isLookingUpHistory = portal.status === 'loading'
+
   return (
     <div className="flex min-h-screen w-full flex-col bg-[#f8fafc]">
       <PortalHeader />
       <OtpScreenLayout onBack={() => navigate('/')}>
-        {otp.phase === 'request' ? (
+        {isLookingUpHistory ? (
+          <div className="flex h-fit w-[480px] items-center justify-center gap-2 rounded-2xl border border-border bg-surface p-8 text-body text-text-muted shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
+            <Spinner className="size-4 border-border border-t-secondary-accent" />
+            Looking up your visits…
+          </div>
+        ) : otp.phase === 'request' ? (
           <OtpRequestScreen
             registrationType={otp.registrationType}
             onRegistrationTypeChange={otp.setRegistrationType}

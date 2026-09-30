@@ -3,9 +3,11 @@ import type { VisitRequestRepository } from './data/repositories/visit-request-r
 import type { VisitRequestSummaryRepository } from './data/repositories/visit-request-summary-repository'
 import type { VisitTrackingRepository } from './data/repositories/visit-tracking-repository'
 import type { VisitorOtpRepository } from './data/repositories/visitor-otp-repository'
+import type { VisitorPortalRepository } from './data/repositories/visitor-portal-repository'
 import type { StaffAuthRepository } from './data/repositories/staff-auth-repository'
 import type { SsoAuthRepository } from './data/repositories/sso-auth-repository'
 import type { StaffVisitRequestRepository } from './data/repositories/staff-visit-request-repository'
+import type { StaffVisitorLookupRepository } from './data/repositories/staff-visitor-lookup-repository'
 import type { AuditTrailRepository } from './data/repositories/audit-trail-repository'
 import type { OrganisationConfigRepository } from './data/repositories/organisation-config-repository'
 import type { BranchRepository } from './data/repositories/branch-repository'
@@ -17,12 +19,14 @@ import type { HostEmployeeRepository } from './data/repositories/host-employee-r
 import type { EmployeeDirectoryRepository } from './data/repositories/employee-directory-repository'
 import type { ReceptionDeskRepository } from './data/repositories/reception-desk-repository'
 import type { SecurityGateRepository } from './data/repositories/security-gate-repository'
+import type { KioskRepository } from './data/repositories/kiosk-repository'
 import type { VisitorCategoryRepository } from './data/repositories/visitor-category-repository'
 import type { ApprovalWorkflowRuleRepository } from './data/repositories/approval-workflow-rule-repository'
 import type { NotificationRepository } from './data/repositories/notification-repository'
 import type { FormBuilderRepository } from './data/repositories/form-builder-repository'
 import { SubmitVisitRequestUseCase } from './data/use-cases/submit-visit-request'
 import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-visit-request'
+import { LookupStaffVisitorByEmailUseCase } from './data/use-cases/lookup-staff-visitor-by-email'
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
 import { RequestAuditReportUseCase } from './data/use-cases/request-audit-report'
 import { GetAuditReportUseCase } from './data/use-cases/get-audit-report'
@@ -30,6 +34,7 @@ import { DownloadAuditReportUseCase } from './data/use-cases/download-audit-repo
 import { TrackVisitRequestUseCase } from './data/use-cases/track-visit-request'
 import { RequestVisitorOtpUseCase } from './data/use-cases/request-visitor-otp'
 import { VerifyVisitorOtpUseCase } from './data/use-cases/verify-visitor-otp'
+import { GetVisitorPortalMeUseCase } from './data/use-cases/get-visitor-portal-me'
 import { LoginStaffUseCase } from './data/use-cases/login-staff'
 import { StartSsoLoginUseCase } from './data/use-cases/start-sso-login'
 import { ExchangeSsoCodeUseCase } from './data/use-cases/exchange-sso-code'
@@ -89,6 +94,12 @@ import { ListSecurityGatesPageUseCase } from './data/use-cases/list-security-gat
 import { CreateSecurityGateUseCase } from './data/use-cases/create-security-gate'
 import { UpdateSecurityGateUseCase } from './data/use-cases/update-security-gate'
 import { DeleteSecurityGateUseCase } from './data/use-cases/delete-security-gate'
+import { ListKiosksPageUseCase } from './data/use-cases/list-kiosks-page'
+import { GetKioskUseCase } from './data/use-cases/get-kiosk'
+import { CreateKioskUseCase } from './data/use-cases/create-kiosk'
+import { UpdateKioskUseCase } from './data/use-cases/update-kiosk'
+import { SetKioskVisibilityUseCase } from './data/use-cases/set-kiosk-visibility'
+import { DeleteKioskUseCase } from './data/use-cases/delete-kiosk'
 import { ListVisitorCategoriesUseCase } from './data/use-cases/list-visitor-categories'
 import { ListVisitorCategoriesPageUseCase } from './data/use-cases/list-visitor-categories-page'
 import { CreateVisitorCategoryUseCase } from './data/use-cases/create-visitor-category'
@@ -121,9 +132,11 @@ import { HttpVisitRequestRepository } from './infrastructure/visit-request-repos
 import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-request-summary-repository'
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
 import { HttpVisitorOtpRepository } from './infrastructure/visitor-otp-repository'
+import { HttpVisitorPortalRepository } from './infrastructure/visitor-portal-repository'
 import { HttpStaffAuthRepository } from './infrastructure/staff-auth-repository'
 import { HttpSsoAuthRepository } from './infrastructure/sso-auth-repository'
 import { HttpStaffVisitRequestRepository } from './infrastructure/staff-visit-request-repository'
+import { HttpStaffVisitorLookupRepository } from './infrastructure/staff-visitor-lookup-repository'
 import { HttpAuditTrailRepository } from './infrastructure/audit-trail-repository'
 import { HttpOrganisationConfigRepository } from './infrastructure/organisation-config-repository'
 import { HttpBranchRepository } from './infrastructure/branch-repository'
@@ -135,6 +148,7 @@ import { HttpHostEmployeeRepository } from './infrastructure/host-employee-repos
 import { HttpEmployeeDirectoryRepository } from './infrastructure/employee-directory-repository'
 import { HttpReceptionDeskRepository } from './infrastructure/reception-desk-repository'
 import { HttpSecurityGateRepository } from './infrastructure/security-gate-repository'
+import { HttpKioskRepository } from './infrastructure/kiosk-repository'
 import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category-repository'
 import { HttpFormBuilderRepository } from './infrastructure/form-builder-repository'
 import { HttpApprovalWorkflowRuleRepository } from './infrastructure/approval-workflow-rule-repository'
@@ -146,6 +160,7 @@ export interface AppDependencies {
   trackVisitRequestUseCase: TrackVisitRequestUseCase
   requestVisitorOtpUseCase: RequestVisitorOtpUseCase
   verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase
+  getVisitorPortalMeUseCase: GetVisitorPortalMeUseCase
   loginStaffUseCase: LoginStaffUseCase
   startSsoLoginUseCase: StartSsoLoginUseCase
   exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase
@@ -160,6 +175,7 @@ export interface AppDependencies {
   delegateInvitationStepUseCase: DelegateInvitationStepUseCase
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
+  lookupStaffVisitorByEmailUseCase: LookupStaffVisitorByEmailUseCase
   getAuditTrailUseCase: GetAuditTrailUseCase
   requestAuditReportUseCase: RequestAuditReportUseCase
   getAuditReportUseCase: GetAuditReportUseCase
@@ -210,6 +226,12 @@ export interface AppDependencies {
   createSecurityGateUseCase: CreateSecurityGateUseCase
   updateSecurityGateUseCase: UpdateSecurityGateUseCase
   deleteSecurityGateUseCase: DeleteSecurityGateUseCase
+  listKiosksPageUseCase: ListKiosksPageUseCase
+  getKioskUseCase: GetKioskUseCase
+  createKioskUseCase: CreateKioskUseCase
+  updateKioskUseCase: UpdateKioskUseCase
+  setKioskVisibilityUseCase: SetKioskVisibilityUseCase
+  deleteKioskUseCase: DeleteKioskUseCase
   listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase
   listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase
   createVisitorCategoryUseCase: CreateVisitorCategoryUseCase
@@ -246,12 +268,14 @@ export function createApp(): AppDependencies {
   let visitRequestSummaryRepository: VisitRequestSummaryRepository | undefined
   let visitTrackingRepository: VisitTrackingRepository | undefined
   let visitorOtpRepository: VisitorOtpRepository | undefined
+  let visitorPortalRepository: VisitorPortalRepository | undefined
   let staffAuthRepository: StaffAuthRepository | undefined
   let ssoAuthRepository: SsoAuthRepository | undefined
   let submitVisitRequestUseCase: SubmitVisitRequestUseCase | undefined
   let trackVisitRequestUseCase: TrackVisitRequestUseCase | undefined
   let requestVisitorOtpUseCase: RequestVisitorOtpUseCase | undefined
   let verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase | undefined
+  let getVisitorPortalMeUseCase: GetVisitorPortalMeUseCase | undefined
   let loginStaffUseCase: LoginStaffUseCase | undefined
   let startSsoLoginUseCase: StartSsoLoginUseCase | undefined
   let exchangeSsoCodeUseCase: ExchangeSsoCodeUseCase | undefined
@@ -267,6 +291,8 @@ export function createApp(): AppDependencies {
   let getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase | undefined
   let staffVisitRequestRepository: StaffVisitRequestRepository | undefined
   let submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase | undefined
+  let staffVisitorLookupRepository: StaffVisitorLookupRepository | undefined
+  let lookupStaffVisitorByEmailUseCase: LookupStaffVisitorByEmailUseCase | undefined
   let auditTrailRepository: AuditTrailRepository | undefined
   let getAuditTrailUseCase: GetAuditTrailUseCase | undefined
   let requestAuditReportUseCase: RequestAuditReportUseCase | undefined
@@ -328,6 +354,13 @@ export function createApp(): AppDependencies {
   let createSecurityGateUseCase: CreateSecurityGateUseCase | undefined
   let updateSecurityGateUseCase: UpdateSecurityGateUseCase | undefined
   let deleteSecurityGateUseCase: DeleteSecurityGateUseCase | undefined
+  let kioskRepository: KioskRepository | undefined
+  let listKiosksPageUseCase: ListKiosksPageUseCase | undefined
+  let getKioskUseCase: GetKioskUseCase | undefined
+  let createKioskUseCase: CreateKioskUseCase | undefined
+  let updateKioskUseCase: UpdateKioskUseCase | undefined
+  let setKioskVisibilityUseCase: SetKioskVisibilityUseCase | undefined
+  let deleteKioskUseCase: DeleteKioskUseCase | undefined
   let visitorCategoryRepository: VisitorCategoryRepository | undefined
   let listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase | undefined
   let listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase | undefined
@@ -399,6 +432,16 @@ export function createApp(): AppDependencies {
   const resolveVerifyVisitorOtpUseCase = (): VerifyVisitorOtpUseCase => {
     verifyVisitorOtpUseCase ??= new VerifyVisitorOtpUseCase(resolveVisitorOtpRepository())
     return verifyVisitorOtpUseCase
+  }
+
+  const resolveVisitorPortalRepository = (): VisitorPortalRepository => {
+    visitorPortalRepository ??= new HttpVisitorPortalRepository(resolveApiClient())
+    return visitorPortalRepository
+  }
+
+  const resolveGetVisitorPortalMeUseCase = (): GetVisitorPortalMeUseCase => {
+    getVisitorPortalMeUseCase ??= new GetVisitorPortalMeUseCase(resolveVisitorPortalRepository())
+    return getVisitorPortalMeUseCase
   }
 
   const resolveStaffAuthRepository = (): StaffAuthRepository => {
@@ -489,6 +532,16 @@ export function createApp(): AppDependencies {
   const resolveSubmitStaffVisitRequestUseCase = (): SubmitStaffVisitRequestUseCase => {
     submitStaffVisitRequestUseCase ??= new SubmitStaffVisitRequestUseCase(resolveStaffVisitRequestRepository())
     return submitStaffVisitRequestUseCase
+  }
+
+  const resolveStaffVisitorLookupRepository = (): StaffVisitorLookupRepository => {
+    staffVisitorLookupRepository ??= new HttpStaffVisitorLookupRepository(resolveApiClient())
+    return staffVisitorLookupRepository
+  }
+
+  const resolveLookupStaffVisitorByEmailUseCase = (): LookupStaffVisitorByEmailUseCase => {
+    lookupStaffVisitorByEmailUseCase ??= new LookupStaffVisitorByEmailUseCase(resolveStaffVisitorLookupRepository())
+    return lookupStaffVisitorByEmailUseCase
   }
 
   const resolveAuditTrailRepository = (): AuditTrailRepository => {
@@ -802,6 +855,41 @@ export function createApp(): AppDependencies {
     return deleteSecurityGateUseCase
   }
 
+  const resolveKioskRepository = (): KioskRepository => {
+    kioskRepository ??= new HttpKioskRepository(resolveApiClient())
+    return kioskRepository
+  }
+
+  const resolveListKiosksPageUseCase = (): ListKiosksPageUseCase => {
+    listKiosksPageUseCase ??= new ListKiosksPageUseCase(resolveKioskRepository())
+    return listKiosksPageUseCase
+  }
+
+  const resolveGetKioskUseCase = (): GetKioskUseCase => {
+    getKioskUseCase ??= new GetKioskUseCase(resolveKioskRepository())
+    return getKioskUseCase
+  }
+
+  const resolveCreateKioskUseCase = (): CreateKioskUseCase => {
+    createKioskUseCase ??= new CreateKioskUseCase(resolveKioskRepository())
+    return createKioskUseCase
+  }
+
+  const resolveUpdateKioskUseCase = (): UpdateKioskUseCase => {
+    updateKioskUseCase ??= new UpdateKioskUseCase(resolveKioskRepository())
+    return updateKioskUseCase
+  }
+
+  const resolveSetKioskVisibilityUseCase = (): SetKioskVisibilityUseCase => {
+    setKioskVisibilityUseCase ??= new SetKioskVisibilityUseCase(resolveKioskRepository())
+    return setKioskVisibilityUseCase
+  }
+
+  const resolveDeleteKioskUseCase = (): DeleteKioskUseCase => {
+    deleteKioskUseCase ??= new DeleteKioskUseCase(resolveKioskRepository())
+    return deleteKioskUseCase
+  }
+
   const resolveVisitorCategoryRepository = (): VisitorCategoryRepository => {
     visitorCategoryRepository ??= new HttpVisitorCategoryRepository(resolveApiClient())
     return visitorCategoryRepository
@@ -978,6 +1066,9 @@ export function createApp(): AppDependencies {
     get verifyVisitorOtpUseCase() {
       return resolveVerifyVisitorOtpUseCase()
     },
+    get getVisitorPortalMeUseCase() {
+      return resolveGetVisitorPortalMeUseCase()
+    },
     get loginStaffUseCase() {
       return resolveLoginStaffUseCase()
     },
@@ -1019,6 +1110,9 @@ export function createApp(): AppDependencies {
     },
     get submitStaffVisitRequestUseCase() {
       return resolveSubmitStaffVisitRequestUseCase()
+    },
+    get lookupStaffVisitorByEmailUseCase() {
+      return resolveLookupStaffVisitorByEmailUseCase()
     },
     get getAuditTrailUseCase() {
       return resolveGetAuditTrailUseCase()
@@ -1169,6 +1263,24 @@ export function createApp(): AppDependencies {
     },
     get deleteSecurityGateUseCase() {
       return resolveDeleteSecurityGateUseCase()
+    },
+    get listKiosksPageUseCase() {
+      return resolveListKiosksPageUseCase()
+    },
+    get getKioskUseCase() {
+      return resolveGetKioskUseCase()
+    },
+    get createKioskUseCase() {
+      return resolveCreateKioskUseCase()
+    },
+    get updateKioskUseCase() {
+      return resolveUpdateKioskUseCase()
+    },
+    get setKioskVisibilityUseCase() {
+      return resolveSetKioskVisibilityUseCase()
+    },
+    get deleteKioskUseCase() {
+      return resolveDeleteKioskUseCase()
     },
     get listVisitorCategoriesUseCase() {
       return resolveListVisitorCategoriesUseCase()

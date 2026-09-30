@@ -163,30 +163,42 @@ The system SHALL, when a visit request card is activated, toggle it between coll
 - **THEN** the system triggers an error notification and the card does not crash
 
 ### Requirement: An in-progress approval step shows its pending approver by name
-The system SHALL, when an expanded card's invitation has a current approval step, show "Step X of Y" together with the name of who it is pending on: the role's name when the step is assigned to a role, or that person's full name when it is assigned to a specific host user.
+The system SHALL, when an expanded card's invitation has a current approval step, show "Step X of Y" together with the name of who it is pending on: the role's name when the step is assigned to a role, or that person's full name when it is assigned to a specific host user. When the current step is stepOrder 0 (Reception) and the workflow has more than one total step, the system SHALL instead show the *next* step's (stepOrder 1) required role as the pending approver, both on the collapsed card badge and the expanded detail line.
 
 #### Scenario: Step pending on a role
-- **WHEN** an expanded card's current approval step is assigned to a role
+- **WHEN** an expanded card's current approval step is assigned to a role, and that step is not Reception's (stepOrder 0) step in a multi-step workflow
 - **THEN** the system shows that role's name as the pending approver
 
 #### Scenario: Step pending on a specific host
 - **WHEN** an expanded card's current approval step is assigned to a specific user (the invitation's host)
 - **THEN** the system shows that user's full name as the pending approver
 
+#### Scenario: Reception's step previews the next level instead of naming itself
+- **WHEN** a card's current approval step is stepOrder 0 (Reception) and the workflow has more than one total step
+- **THEN** the system shows the next step's required role as the pending approver, on both the collapsed badge and the expanded detail line, instead of naming Reception's own step
+
+#### Scenario: Single-step Reception-only workflow is unaffected
+- **WHEN** a card's current approval step is stepOrder 0 (Reception) and the workflow has only one total step
+- **THEN** the system shows Reception's own step as the pending approver, unchanged
+
 ### Requirement: Dropping a requested card on Approved approves it, using the step endpoint when a workflow is active
-The system SHALL, when a card is dropped on the Approved column, approve that invitation: if it has a current approval step, approve that specific step; otherwise approve the invitation directly. On success it SHALL refresh the board and trigger a success notification; on failure it SHALL trigger an error notification showing the backend's message.
+The system SHALL, when a card is dropped on the Approved column, approve that invitation: if it has a current approval step, approve that specific step; otherwise approve the invitation directly. On success it SHALL refresh the board and trigger a success notification; on failure it SHALL trigger an error notification showing the backend's message. A card whose current approval step is stepOrder 0 (Reception) in a workflow with more than one total step SHALL NOT be draggable to the Approved column at all — "Approve & Delegate" is the only way to advance it.
 
 #### Scenario: Approving a non-workflow invitation
 - **WHEN** a card for an invitation with no configured approval workflow is dropped on Approved
 - **THEN** the system approves the invitation directly, refreshes the board, and triggers a success notification
 
 #### Scenario: Approving a workflow-backed invitation's current step
-- **WHEN** a card for an invitation with a current approval step is dropped on Approved
+- **WHEN** a card for an invitation with a current approval step, other than a Reception step with a further step following, is dropped on Approved
 - **THEN** the system approves that specific step, refreshes the board, and triggers a success notification
 
 #### Scenario: Approval rejected by the backend
 - **WHEN** an approve attempt (direct or step-based) fails
 - **THEN** the system triggers an error notification containing the backend's error message and the board is not otherwise changed
+
+#### Scenario: A Reception-step, multi-step card cannot be drag-approved
+- **WHEN** a card's current approval step is stepOrder 0 (Reception) and the workflow has more than one total step
+- **THEN** the card cannot be dragged to the Approved column, and only "Approve & Delegate" is available to advance it
 
 ### Requirement: Reception's step offers a combined Approve & Delegate action when a further step follows
 The system SHALL, on a card whose current approval step is stepOrder 0 (Reception) and whose workflow has more than one total step, present an "Approve & Delegate" action instead of a plain "Delegate" action. Activating it SHALL show a dropdown of employees eligible for the *next* step's (stepOrder 1) required role. Confirming with a selected employee SHALL approve the Reception step and then assign that employee as the approver of the resulting next step, in a single user-facing action; on success it SHALL refresh the board and trigger a success notification naming the newly-assigned approver.

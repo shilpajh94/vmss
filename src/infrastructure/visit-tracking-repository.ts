@@ -59,6 +59,7 @@ function toTrackingLookupResponse(invitationOut: InvitationTrackOut): TrackingLo
     assignedHost: invitationOut.hostNameOrEmail ?? 'Unassigned',
     totalVisitors: 1 + (invitationOut.visitors?.length ?? 0),
     timelineStage: STATUS_TIMELINE_STAGE[normalizedStatus] ?? 'submitted',
+    primaryContactFullName: invitationOut.primaryContactFullName,
   }
 }
 

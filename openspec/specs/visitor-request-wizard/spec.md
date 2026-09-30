@@ -44,7 +44,7 @@ The system SHALL distinguish "the effective form configuration has not finished 
 - **THEN** the sidebar shows a loading indicator rather than an empty step list or the wizard's historical hardcoded default steps
 
 ### Requirement: Wizard is reachable from the landing page's request entry point
-The system SHALL render the visitor request wizard only after a visitor has successfully completed OTP verification, pre-filled with the registration type and contact captured during verification. The wizard SHALL NOT render directly from the landing page's "Request Visit" action.
+The system SHALL render the visitor request wizard only after a visitor has successfully completed OTP verification (directly, or by activating "Start a new request" on the return-visit history screen), pre-filled with the registration type and contact captured during verification. When the verified visitor has a non-null prefill profile, the wizard SHALL also pre-fill that profile's full name, email, phone, preferred contact method, and ID-proof type for the primary contact. The wizard SHALL NOT render directly from the landing page's "Request Visit" action, and SHALL NOT pre-fill the ID-proof document image or profile photo from a prior visit.
 
 #### Scenario: Visitor reaches the wizard from the landing page
 - **WHEN** a visitor activates "Request Visit" on the landing page and successfully completes OTP verification
@@ -53,6 +53,14 @@ The system SHALL render the visitor request wizard only after a visitor has succ
 #### Scenario: Wizard does not render before verification
 - **WHEN** a visitor activates "Request Visit" on the landing page
 - **THEN** the OTP-request screen renders, and the visitor request wizard does not render until verification succeeds
+
+#### Scenario: Returning visitor's wizard is pre-filled from their profile
+- **WHEN** a returning visitor starts a new request from the return-visit history screen and their prefill profile is not null
+- **THEN** the wizard's Visitor Info step renders with full name, email, phone, preferred contact method, and ID-proof type already filled in for the primary contact, while the ID-proof document image and profile photo remain unfilled and must be provided fresh
+
+#### Scenario: First-time visitor's wizard has no profile prefill
+- **WHEN** a visitor is verified and the history lookup's prefill profile is null
+- **THEN** the wizard renders with only registration type and contact pre-filled, matching the wizard's existing first-time-visitor behavior
 
 ### Requirement: Visitor chooses between an individual and a group registration
 The system SHALL let the visitor declare whether the request is for a single visitor or a group, and SHALL show the fields appropriate to that choice.
@@ -154,3 +162,29 @@ The system SHALL, when submission fails, show the visitor an error and SHALL pre
 #### Scenario: Submission fails
 - **WHEN** the visitor confirms submission and the request is rejected or the submission cannot be completed
 - **THEN** the system shows an error message, remains on the Review & Confirm step, and retains all previously entered data for a retry
+
+### Requirement: Returning visitor's primary contact full name is locked after prefill
+The system SHALL render the primary contact's "Full Name" field as read-only for the remainder of the wizard whenever it was pre-filled from a returning visitor's profile (visitor-return-history's prefill), since the invitation-creation API silently discards any edit to that field for a contact it matches by email (or, when no email is submitted, by phone) against a prior invitation. This lock applies only to the primary contact; it SHALL NOT apply to a first-time visitor with no prefill profile, and SHALL NOT apply to any additional visitor added to a group registration.
+
+#### Scenario: Returning primary contact's name field is read-only
+- **WHEN** the wizard's initial data includes a pre-filled full name for the primary contact from a returning visitor's profile
+- **THEN** the "Full Name" field for the primary contact renders read-only and does not accept edits
+
+#### Scenario: First-time visitor's name field stays editable
+- **WHEN** the visitor is verified with no prior visits and the history lookup's prefill profile is null
+- **THEN** the primary contact's "Full Name" field renders as a normal editable field
+
+#### Scenario: Additional group visitor's name field is never locked
+- **WHEN** the primary contact's full name is locked because their profile was pre-filled
+- **THEN** every additional visitor added to the group registration still has a normal editable "Full Name" field
+
+### Requirement: Submission confirmation reflects the server's confirmed primary contact name
+The system SHALL, after a successful submission (`POST /registrations/walk-in`), look up the invitation's public tracking record using the returned tracking reference and display that record's primary contact name on the confirmation screen as the confirmed name of record for the request, rather than assuming the value the wizard submitted was retained unchanged. A failure of that lookup SHALL NOT be treated as a submission failure — the confirmation screen still shows the tracking reference regardless.
+
+#### Scenario: Confirmation shows the tracking record's confirmed name
+- **WHEN** a visit request is submitted successfully and the subsequent tracking lookup succeeds
+- **THEN** the confirmation screen displays the primary contact name from that lookup, alongside the tracking reference
+
+#### Scenario: Confirmed-name lookup failure doesn't affect the confirmation
+- **WHEN** a visit request is submitted successfully but the subsequent tracking lookup fails
+- **THEN** the confirmation screen still shows the tracking reference, without the confirmed-name display and without showing an error

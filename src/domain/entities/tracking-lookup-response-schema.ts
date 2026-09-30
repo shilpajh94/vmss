@@ -8,6 +8,7 @@ export const TrackingLookupResponseSchema = z.object({
   assignedHost: z.string().min(1),
   totalVisitors: z.number(),
   timelineStage: z.enum(["submitted", "under-review", "approved", "visit-day"]),
+  primaryContactFullName: z.string().min(1),
 })
 
 export type TrackingLookupResponse = z.infer<typeof TrackingLookupResponseSchema>

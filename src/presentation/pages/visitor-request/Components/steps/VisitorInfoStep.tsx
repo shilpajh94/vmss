@@ -12,6 +12,10 @@ interface VisitorInfoStepProps {
   onRegistrationTypeChange: (type: RegistrationType) => void
   primaryContact: VisitorFormEntry
   onPrimaryContactChange: (entry: VisitorFormEntry) => void
+  /** Locks the primary contact's "Full Name" field — see
+   * VisitorFieldsForm's matching prop. Never applies to additional
+   * visitors below. */
+  primaryContactNameLocked?: boolean
   uploadFile: (file: File) => Promise<string>
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
   errors: Record<string, string>
@@ -46,6 +50,7 @@ export function VisitorInfoStep({
   onRegistrationTypeChange,
   primaryContact,
   onPrimaryContactChange,
+  primaryContactNameLocked,
   uploadFile,
   getFilePreviewUrl,
   errors,
@@ -94,6 +99,7 @@ export function VisitorInfoStep({
           uploadFile={uploadFile}
           getFilePreviewUrl={getFilePreviewUrl}
           errors={errors}
+          fullNameLocked={primaryContactNameLocked}
           visitorCategoriesState={visitorCategoriesState}
           onRetryVisitorCategories={onRetryVisitorCategories}
           visitorInfoFields={visitorInfoFields}
