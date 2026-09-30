@@ -10,7 +10,7 @@ export function RegistrationTypeToggle({ value, onChange }: RegistrationTypeTogg
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-6">
       <h3 className="font-display text-base font-semibold text-text">Registration type</h3>
-      <div className="w-[320px]">
+      <div className="w-full max-w-[320px]">
         <SegmentedToggle
           options={[
             { value: 'individual', label: 'Individual' },

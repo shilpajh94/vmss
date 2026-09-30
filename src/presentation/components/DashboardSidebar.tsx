@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router'
-import { CheckIcon, HelpCircleIcon, UsersIcon } from './icons'
-import logoMark from '../../assets/logo-mark.svg'
+import { CheckIcon, HelpCircleIcon, UsersIcon, XIcon } from './icons'
+import { BrandLogo } from './BrandLogo'
+import { useNavDrawer } from '../context/nav-drawer-context'
 
 export type DashboardSidebarActiveItem = 'all-visitors' | 'my-actions'
 
@@ -27,22 +28,37 @@ export function resolveStaffActiveItem(pathname: string): DashboardSidebarActive
 
 export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
   const navigate = useNavigate()
+  const { closeNav } = useNavDrawer()
 
   const handleActivate = (key: DashboardSidebarActiveItem) => {
+    closeNav()
     if (key === 'all-visitors') navigate('/staff/dashboard')
     if (key === 'my-actions') navigate('/staff/visitors/new')
   }
 
   return (
-    <aside className="flex w-[260px] shrink-0 flex-col gap-8 self-stretch bg-primary p-6">
-      <button
-        type="button"
-        onClick={() => navigate('/staff/dashboard')}
-        className="flex shrink-0 items-center gap-3 text-left"
-      >
-        <img src={logoMark} alt="" className="size-8 shrink-0" />
-        <span className="font-display text-xl font-extrabold whitespace-nowrap text-white">VisitorPass</span>
-      </button>
+    <aside className="flex h-full w-[min(260px,85vw)] shrink-0 lg:h-auto lg:w-[260px] flex-col gap-8 self-stretch bg-primary p-6">
+      <div className="flex shrink-0 items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            closeNav()
+            navigate('/staff/dashboard')
+          }}
+          aria-label="Visimio home"
+          className="flex shrink-0 items-center gap-3 text-left"
+        >
+          <BrandLogo variant="on-dark" decorative />
+        </button>
+        <button
+          type="button"
+          onClick={closeNav}
+          aria-label="Close navigation menu"
+          className="flex size-10 shrink-0 items-center justify-center rounded-lg text-text-faint hover:bg-white/5 lg:hidden"
+        >
+          <XIcon className="size-5" />
+        </button>
+      </div>
 
       <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
         {NAV_ITEMS.map(({ key, label, icon: ItemIcon }) => (

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { PortalFooter } from '../../components/PortalFooter'
 import { PortalHeader } from '../../components/PortalHeader'
+import { StepProgressHeader } from './Components/StepProgressHeader'
 import { useAppDependencies } from '../../context/app-dependencies-context'
 import { Spinner } from '../../components/ui/LoadingState'
 import type { Branch } from '../../../domain/entities/branch-schema'
@@ -110,9 +111,10 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
   }, [loadVisitorCategories, loadVisitInfoMasterData])
 
   return (
-    <div className="flex w-full flex-1 gap-8 px-12 py-10">
+    <div className="flex w-full flex-1 flex-col gap-4 px-4 py-4 md:flex-row md:gap-8 md:px-12 md:py-10">
       <StepSidebar steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
-      <div className="flex-1 rounded-2xl border border-border bg-surface p-8">
+      <StepProgressHeader steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
+      <div className="min-w-0 flex-1 rounded-2xl border border-border bg-surface p-4 sm:p-6 md:p-8">
         {isFormConfigLoading && <p className="text-body text-text-muted">Loading…</p>}
 
         {!isFormConfigLoading && formConfigError && (
@@ -230,7 +232,9 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
         )}
 
         {!isFormConfigLoading && !formConfigError && activeStep?.key !== 'review_confirm' && (
-          <div className="mt-8 flex justify-between">
+          // Pinned to the bottom of the viewport below `md`, so Back/Next
+          // stay reachable while a long step scrolls.
+          <div className="sticky bottom-0 -mx-4 -mb-4 mt-6 flex justify-between gap-3 rounded-b-2xl border-t border-border-subtle bg-surface px-4 py-3 sm:-mx-6 sm:-mb-6 sm:px-6 md:static md:m-0 md:mt-8 md:border-0 md:p-0">
             <button
               type="button"
               onClick={goBack}
@@ -371,7 +375,7 @@ export function VisitorRequestPage() {
       <PortalHeader />
       <OtpScreenLayout onBack={() => navigate('/')}>
         {isLookingUpHistory ? (
-          <div className="flex h-fit w-[480px] items-center justify-center gap-2 rounded-2xl border border-border bg-surface p-8 text-body text-text-muted shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
+          <div className="flex h-fit w-full max-w-[480px] items-center justify-center gap-2 rounded-2xl border border-border bg-surface p-8 text-body text-text-muted shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
             <Spinner className="size-4 border-border border-t-secondary-accent" />
             Looking up your visits…
           </div>

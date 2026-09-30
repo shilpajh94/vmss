@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
+import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
@@ -110,9 +111,9 @@ export function AdminInvitationsPage() {
     <PageContentLayout
       header={
         <>
-          <div className="flex w-full items-center justify-between">
-            <h1 className="font-display text-2xl font-bold text-text">Invitations</h1>
-            <div className="flex items-center gap-3">
+          <div className="flex w-full flex-wrap items-center justify-between gap-3">
+            <h1 className="font-display text-xl font-bold md:text-2xl text-text">Invitations</h1>
+            <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary">
                 <SearchGlyphIcon className="size-3.5 shrink-0 text-text-faint" />
                 <input
@@ -136,10 +137,10 @@ export function AdminInvitationsPage() {
 
           {isFilterPanelOpen && (
             <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-filter-panel">
-              <div className="w-48">
+              <div className="w-full sm:w-48">
                 <SelectField label="Status" value={statusFilter} onChange={setStatusFilter} placeholder="All" options={STATUS_OPTIONS} />
               </div>
-              <div className="w-48">
+              <div className="w-full sm:w-48">
                 <SelectField
                   label="Registration Type"
                   value={registrationTypeFilter}
@@ -147,7 +148,7 @@ export function AdminInvitationsPage() {
                   options={REGISTRATION_TYPE_OPTIONS}
                 />
               </div>
-              <div className="w-48">
+              <div className="w-full sm:w-48">
                 <SelectField label="Source" value={sourceFilter} onChange={setSourceFilter} placeholder="All" options={SOURCE_OPTIONS} />
               </div>
               {isFiltering && (
@@ -161,7 +162,7 @@ export function AdminInvitationsPage() {
       }
     >
       {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
           <button type="button" onClick={refresh} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
             Try again
@@ -170,8 +171,9 @@ export function AdminInvitationsPage() {
       ) : isLoading ? (
         <LoadingState label="Loading invitations…" className="flex-1" />
       ) : (
-        <div className="flex w-full flex-1 items-start gap-4 overflow-x-auto">
-          {columns.map((column) => (
+        <ResponsiveBoard
+          columns={columns}
+          renderColumn={(column) => (
             <KanbanColumn
               key={column.status}
               status={column.status}
@@ -179,6 +181,8 @@ export function AdminInvitationsPage() {
               requests={column.requests}
               emptyMessage={EMPTY_MESSAGES[column.status]}
               onDrop={column.status === 'approved' ? approve : column.status === 'denied' ? requestDeny : undefined}
+              onMoveToApproved={column.status === 'requested' ? approve : undefined}
+              onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
               approvingId={approvingId}
               expandedId={expandedId}
               onToggleExpand={toggleExpand}
@@ -194,8 +198,8 @@ export function AdminInvitationsPage() {
               onEditClick={requestEdit}
               onVisitorInfoClick={viewVisitorInfo}
             />
-          ))}
-        </div>
+          )}
+        />
       )}
 
       <DenyInvitationModal isOpen={pendingDenyId !== undefined} isDenying={denyingId !== undefined} onConfirm={confirmDeny} onCancel={cancelDeny} />

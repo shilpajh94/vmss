@@ -20,7 +20,7 @@ export function Pagination({ page, pageSize, total, onPrev, onNext }: Pagination
   const hasNext = end < total
 
   return (
-    <div className="flex w-full items-center justify-between border-t border-border pt-3">
+    <div className="flex w-full flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
       <p className="font-body text-[13px] text-text-muted">
         Showing {start}-{end} of {total} results
       </p>
@@ -31,7 +31,7 @@ export function Pagination({ page, pageSize, total, onPrev, onNext }: Pagination
           onClick={onPrev}
           disabled={!hasPrev}
           aria-label="Previous page"
-          className="flex size-8 items-center justify-center rounded-lg border border-border bg-surface disabled:opacity-40"
+          className="flex size-10 items-center justify-center rounded-lg border border-border bg-surface disabled:opacity-40 lg:size-8"
         >
           <ChevronLeftIcon className="size-4 text-text" />
         </button>
@@ -40,7 +40,7 @@ export function Pagination({ page, pageSize, total, onPrev, onNext }: Pagination
           onClick={onNext}
           disabled={!hasNext}
           aria-label="Next page"
-          className="flex size-8 items-center justify-center rounded-lg border border-border bg-surface disabled:opacity-40"
+          className="flex size-10 items-center justify-center rounded-lg border border-border bg-surface disabled:opacity-40 lg:size-8"
         >
           <ChevronRightIcon className="size-4 text-text" />
         </button>

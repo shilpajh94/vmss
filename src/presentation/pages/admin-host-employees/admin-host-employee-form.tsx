@@ -53,7 +53,7 @@ export function AdminHostEmployeeFormPage() {
             <ChevronLeftIcon className="size-4" />
           </button>
           <div className="flex flex-col gap-0.5">
-            <h1 className="font-display text-2xl font-bold text-text">{isEditMode ? 'Manage Employee Access' : 'Add Employee'}</h1>
+            <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Manage Employee Access' : 'Add Employee'}</h1>
             <p className="font-body text-sm text-text-muted">
               {isEditMode
                 ? 'View and manage this employee’s role and branch assignments'
@@ -63,7 +63,7 @@ export function AdminHostEmployeeFormPage() {
         </div>
 
         {errorMessage ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-12 text-center">
+          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
             <p className="font-body text-sm text-danger">{errorMessage}</p>
             <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
               Try again
@@ -78,7 +78,7 @@ export function AdminHostEmployeeFormPage() {
               <p className="font-body text-[13px] text-text-muted">
                 Name, email, and department are managed outside this system and can't be edited here.
               </p>
-              <div className="flex gap-6">
+              <div className="flex flex-col gap-4 md:flex-row md:gap-6">
                 <div className="flex-1">
                   <p className={fieldLabelClassName}>Employee Name</p>
                   <p className="mt-1.5 rounded-lg border border-border bg-border-subtle px-3 py-2 font-body text-sm text-text">
@@ -134,7 +134,7 @@ export function AdminHostEmployeeFormPage() {
 
             <div className="flex flex-col gap-4">
               <h2 className="font-display text-base font-semibold text-text">Assign a New Role</h2>
-              <div className="flex gap-6">
+              <div className="flex flex-col gap-4 md:flex-row md:gap-6">
                 <div className="flex-1">
                   <SelectField
                     label="Role"
@@ -169,7 +169,7 @@ export function AdminHostEmployeeFormPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
               <button type="button" onClick={cancel} className="rounded-full border border-border bg-surface px-6 py-2.5 font-body text-sm font-semibold text-text">
                 Done
               </button>
@@ -195,7 +195,7 @@ export function AdminHostEmployeeFormPage() {
                 error={createErrors.email}
                 labelClassName={fieldLabelClassName}
               />
-              <div className="flex gap-6">
+              <div className="flex flex-col gap-4 md:flex-row md:gap-6">
                 <div className="flex-1">
                   <TextField
                     label="Employee Code"
@@ -217,7 +217,7 @@ export function AdminHostEmployeeFormPage() {
                   />
                 </div>
               </div>
-              <div className="flex gap-6">
+              <div className="flex flex-col gap-4 md:flex-row md:gap-6">
                 <div className="flex-1">
                   <TextField
                     label="Phone Number"
@@ -238,7 +238,7 @@ export function AdminHostEmployeeFormPage() {
                   />
                 </div>
               </div>
-              <div className="flex gap-6">
+              <div className="flex flex-col gap-4 md:flex-row md:gap-6">
                 <div className="flex-1">
                   <SelectField
                     label="Role"
@@ -263,7 +263,7 @@ export function AdminHostEmployeeFormPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
               <button type="button" onClick={cancel} className="rounded-full border border-border bg-surface px-6 py-2.5 font-body text-sm font-semibold text-text">
                 Cancel
               </button>

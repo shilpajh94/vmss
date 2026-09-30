@@ -356,3 +356,11 @@ export const CircleDotIcon = createIcon(
     <circle cx="12" cy="12" r="1" fill="currentColor" />
   </>,
 )
+
+export const MenuIcon = createIcon(
+  <>
+    <path d="M4 6h16" />
+    <path d="M4 12h16" />
+    <path d="M4 18h16" />
+  </>,
+)

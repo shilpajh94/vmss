@@ -47,11 +47,11 @@ export function AdminFloorFormPage() {
         >
           <ChevronLeftIcon className="size-4" />
         </button>
-        <h1 className="font-display text-2xl font-bold text-text">{isEditMode ? 'Edit Floor' : 'Add Floor'}</h1>
+        <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Floor' : 'Add Floor'}</h1>
       </div>
 
       {errorMessage ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-12 text-center">
+          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
             <p className="font-body text-sm text-danger">{errorMessage}</p>
             <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
               Try again
@@ -61,7 +61,7 @@ export function AdminFloorFormPage() {
           <LoadingState label="Loading…" className="py-12" />
         ) : (
           <div className="flex w-full flex-col gap-6 rounded-2xl border border-border bg-surface px-6 py-8">
-            <div className="flex gap-6">
+            <div className="flex flex-col gap-4 md:flex-row md:gap-6">
               <div className="flex-1">
                 <TextField label="Floor Name" required value={values.name} onChange={(name) => updateField('name', name)} error={errors.name} />
               </div>
@@ -77,7 +77,7 @@ export function AdminFloorFormPage() {
                 />
               </div>
             </div>
-            <div className="flex gap-6">
+            <div className="flex flex-col gap-4 md:flex-row md:gap-6">
               <div className="flex-1">
                 <TextField
                   label="Floor Number"
@@ -115,7 +115,7 @@ export function AdminFloorFormPage() {
               onChange={(checked) => updateField('isActive', checked)}
             />
 
-            <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
               <button type="button" onClick={cancel} className="rounded-full border border-border bg-surface px-6 py-2.5 font-body text-sm font-semibold text-text">
                 Cancel
               </button>

@@ -13,8 +13,8 @@ export function AdminOrganisationConfigsPage() {
 
   return (
     <>
-      <div className="flex w-full items-center justify-between">
-        <h1 className="font-display text-2xl font-bold text-text">Organisation Configurations</h1>
+      <div className="flex w-full flex-wrap items-center justify-between gap-3">
+        <h1 className="font-display text-xl font-bold md:text-2xl text-text">Organisation Configurations</h1>
         <button
           type="button"
           className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
@@ -25,7 +25,7 @@ export function AdminOrganisationConfigsPage() {
       </div>
 
       {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
           <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
             Try again

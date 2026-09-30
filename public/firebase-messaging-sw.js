@@ -26,12 +26,14 @@ function buildInvitationUrl(data, isAdminContext) {
 }
 
 messaging.onBackgroundMessage((payload) => {
-  const notificationTitle = (payload.notification && payload.notification.title) || 'VisitorPass'
+  // Keep in sync with BRAND_NAME in src/presentation/brand.ts (a service
+  // worker can't import app modules).
+  const notificationTitle = (payload.notification && payload.notification.title) || 'Visimio'
   const notificationBody = (payload.notification && payload.notification.body) || ''
 
   self.registration.showNotification(notificationTitle, {
     body: notificationBody,
-    icon: '/favicon.svg',
+    icon: '/apple-touch-icon.png',
     data: payload.data,
   })
 })

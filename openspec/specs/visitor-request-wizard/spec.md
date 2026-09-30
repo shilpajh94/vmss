@@ -188,3 +188,62 @@ The system SHALL, after a successful submission (`POST /registrations/walk-in`),
 #### Scenario: Confirmed-name lookup failure doesn't affect the confirmation
 - **WHEN** a visit request is submitted successfully but the subsequent tracking lookup fails
 - **THEN** the confirmation screen still shows the tracking reference, without the confirmed-name display and without showing an error
+
+### Requirement: Step navigation adapts to narrow viewports
+From 768px viewport width upward, the wizard SHALL show its step list as the existing side rail. Below 768px, it SHALL replace the rail with a compact progress header above the step content. The header SHALL show the current step's label, "Step X of N", and a progress bar. It SHALL list the same configured steps, in the same order, as the rail would, and SHALL let the visitor jump back to a completed step. Step content fields SHALL render in a single column below 640px. The Back/Next/Submit actions SHALL stay visible at the bottom of the viewport while the step content scrolls.
+
+#### Scenario: Wizard on a phone
+- **WHEN** a visitor opens the registration wizard at 375px wide on a branch configured with 4 steps
+- **THEN** no side rail is shown, and a progress header reads "Step 1 of 4" with the current step's label, above single-column fields
+
+#### Scenario: Returning to a completed step on a phone
+- **WHEN** the visitor is on step 3 at 375px wide and opens the progress header's step list
+- **THEN** steps 1 and 2 are selectable, and choosing one shows that step with its entered data intact
+
+#### Scenario: Actions remain reachable
+- **WHEN** a step's content is taller than the phone viewport
+- **THEN** the Back/Next (or Submit) buttons stay visible while the fields scroll
+
+### Requirement: The Wizard Renders a Published Configuration That Is Older Than the Client or Contains Unknown Field Types
+The wizard SHALL render the published form configuration even when it
+lacks keys added to the field or group shape after it was published, or
+contains a field whose type the client doesn't support. A missing field
+`hideLabel` SHALL be treated as `false`. A missing group
+`visibilityCondition` SHALL be treated as absent (no condition). A field
+of an unsupported type SHALL be omitted: it SHALL NOT render, SHALL NOT
+affect the step count, and SHALL NOT be submitted. Every other field and
+step SHALL render as configured. The "Something went wrong loading the
+registration form" state SHALL be reserved for a failed request or a
+response that isn't a form configuration at all.
+
+#### Scenario: Old default form with a removed field type
+- **WHEN** the effective configuration's fields lack `hideLabel`, its
+  groups lack `visibilityCondition`, and one field has type
+  `signature_pad`
+- **THEN** the wizard shows its steps with "Step 1 of N" (N being the
+  number of configured steps), every supported field renders with its
+  label visible, and the `signature_pad` field is not shown
+
+### Requirement: Wizard Fields Stack in One Column on Narrow Screens
+Below the `sm` breakpoint (640px), every field of a wizard step SHALL
+occupy the full width of the step's card, one field per row, whether or
+not the step has admin-authored custom fields. No field SHALL be laid out
+beside another at those widths. No label or input SHALL be narrowed below
+the card's content width. From `sm` upward, the step's two-column layout
+SHALL be unchanged, and admin-authored custom fields SHALL span the full
+row.
+
+#### Scenario: Visitor Info on a phone with a custom field
+- **WHEN** the Visitor Info step renders at 375px wide and the published
+  form includes an admin-authored field such as the "Terms & Conditions"
+  consent checkbox
+- **THEN** Full Name, Email Address, Phone Number, Visitor Category,
+  Preferred Contact Method, ID Proof Type, Upload ID, Profile Image, and
+  the custom field each render full-width, one per row, with their labels
+  on a single line where they fit and their inputs showing the full
+  placeholder
+
+#### Scenario: Two columns from the sm breakpoint
+- **WHEN** the same step renders at 768px wide
+- **THEN** the system fields render two per row as before, and the custom
+  fields section spans the whole row beneath them

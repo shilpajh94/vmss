@@ -35,7 +35,7 @@ export function TextareaField({
         placeholder={placeholder}
         rows={rows}
         disabled={disabled}
-        className="rounded-lg border border-border px-3 py-2 text-body text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60"
+        className="rounded-lg border border-border px-3 py-2 text-body text-text max-sm:text-base placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60"
       />
       {error && <p className="text-caption text-danger">{error}</p>}
     </div>

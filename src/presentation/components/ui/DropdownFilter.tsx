@@ -16,13 +16,13 @@ interface DropdownFilterProps {
 
 export function DropdownFilter({ icon: Icon, value, options, onChange, ariaLabel }: DropdownFilterProps) {
   return (
-    <div className="relative flex h-10 w-[220px] shrink-0 items-center gap-2 rounded-lg border border-[#cbd5e1] bg-surface px-3">
+    <div className="relative flex h-10 w-full shrink-0 items-center sm:w-[220px] gap-2 rounded-lg border border-[#cbd5e1] bg-surface px-3">
       <Icon className="size-4 shrink-0 text-text" />
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
         aria-label={ariaLabel}
-        className="flex-1 appearance-none bg-transparent font-body text-[13px] font-semibold text-text focus:outline-none"
+        className="min-w-0 flex-1 appearance-none bg-transparent font-body text-[13px] font-semibold text-text max-sm:text-base focus:outline-none"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>

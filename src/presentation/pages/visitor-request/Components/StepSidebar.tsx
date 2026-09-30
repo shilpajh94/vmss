@@ -6,7 +6,7 @@ interface StepSidebarProps {
 
 export function StepSidebar({ steps, currentStep, onStepSelect }: StepSidebarProps) {
   return (
-    <nav className="flex w-[220px] flex-col gap-4">
+    <nav className="hidden w-[220px] shrink-0 flex-col gap-4 md:flex">
       {steps.map((label, index) => {
         const stepNumber = index + 1
         const isActive = index === currentStep

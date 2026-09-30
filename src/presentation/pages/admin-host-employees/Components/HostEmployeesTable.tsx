@@ -1,6 +1,10 @@
 import { useNavigate } from 'react-router'
 import { PencilIcon } from '../../../components/icons'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
+import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+
+// Below `md`: only the identifying, status, and actions columns stay visible.
+const TABLE_CLASS_NAME = responsiveTableClassName([2, 3, 4])
 
 interface HostEmployeesTableProps {
   hostEmployees: HostEmployee[]
@@ -14,7 +18,7 @@ export function HostEmployeesTable({ hostEmployees, departmentNameById }: HostEm
 
   return (
     <div className="w-full overflow-x-auto rounded-2xl border border-border bg-surface">
-      <table className="w-full text-left">
+      <table className={TABLE_CLASS_NAME}>
         <thead>
           <tr className="bg-border-subtle">
             {COLUMN_HEADERS.map((header) => (
@@ -70,7 +74,7 @@ export function HostEmployeesTable({ hostEmployees, departmentNameById }: HostEm
                     type="button"
                     onClick={() => navigate(`/admin/host-employees/${hostEmployee.id}/edit`)}
                     aria-label={`Manage access for ${hostEmployee.fullName}`}
-                    className="flex items-center justify-center rounded-lg bg-border-subtle p-2 text-text"
+                    className="flex items-center justify-center rounded-lg bg-border-subtle p-2 max-lg:p-3 text-text"
                   >
                     <PencilIcon className="size-3.5" />
                   </button>

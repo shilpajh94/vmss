@@ -1,4 +1,4 @@
-import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { DndContext, MouseSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { LayersIcon, LockIcon, PlusIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
@@ -51,7 +51,12 @@ export function AdminFormBuilderStepEditorPage() {
     hasUnpublishedChanges,
   } = useAdminFormBuilderStepEditor()
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    // Press-and-hold, so a finger swipe still scrolls the page instead of
+    // starting a drag (responsive-layout "Reordering form fields by touch").
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+  )
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
@@ -98,7 +103,7 @@ export function AdminFormBuilderStepEditorPage() {
         <>
           <div className="flex w-full flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="font-display text-2xl font-bold text-text">{step ? `${step.name} Step Editor` : 'Step Editor'}</h1>
+              <h1 className="font-display text-xl font-bold md:text-2xl text-text">{step ? `${step.name} Step Editor` : 'Step Editor'}</h1>
               <button type="button" onClick={goBack} className="font-body text-sm text-admin-accent">
                 ← Back to Form Builder
               </button>
@@ -123,7 +128,7 @@ export function AdminFormBuilderStepEditorPage() {
     >
       <div className="h-full min-h-0 overflow-y-auto scrollbar-thin">
         {errorMessage ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
+          <div className="flex h-full flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
             <p className="font-body text-sm text-danger">{errorMessage}</p>
             <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
               Try again

@@ -14,8 +14,10 @@ import {
   TagIcon,
   UserCheckIcon,
   UsersIcon,
+  XIcon,
 } from './icons'
-import logoMark from '../../assets/logo-mark.svg'
+import { BrandLogo } from './BrandLogo'
+import { useNavDrawer } from '../context/nav-drawer-context'
 
 export type AdminSidebarActiveItem =
   | 'dashboard'
@@ -84,10 +86,19 @@ const NAV_ITEMS = [
   { key: 'audit-trail', label: 'Audit Trail', icon: ClockIcon },
 ] as const satisfies ReadonlyArray<{ key: AdminSidebarActiveItem; label: string; icon: unknown }>
 
+// The nav label for the current admin route, e.g. "Branches" — what the
+// phone top bar shows as the page name when the page has no breadcrumb.
+export function adminNavLabelFor(pathname: string): string {
+  const activeItem = resolveAdminActiveItem(pathname)
+  return NAV_ITEMS.find((item) => item.key === activeItem)?.label ?? 'Dashboard'
+}
+
 export function AdminSidebar({ activeItem }: AdminSidebarProps) {
   const navigate = useNavigate()
+  const { closeNav } = useNavDrawer()
 
   const handleActivate = (key: AdminSidebarActiveItem) => {
+    closeNav()
     if (key === 'dashboard') navigate('/admin/dashboard')
     if (key === 'organisation-configs') navigate('/admin/organisation-configs')
     if (key === 'branches') navigate('/admin/branches')
@@ -107,15 +118,28 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
   }
 
   return (
-    <aside className="flex w-[280px] shrink-0 flex-col gap-4 self-stretch bg-primary p-6">
-      <button
-        type="button"
-        onClick={() => navigate('/admin/dashboard')}
-        className="flex shrink-0 items-center gap-2 pb-4 text-left"
-      >
-        <img src={logoMark} alt="" className="size-8 shrink-0" />
-        <span className="font-display text-[22px] font-extrabold whitespace-nowrap text-white">VisitorPass</span>
-      </button>
+    <aside className="flex h-full w-[min(280px,85vw)] shrink-0 lg:h-auto lg:w-[280px] flex-col gap-4 self-stretch bg-primary p-6">
+      <div className="flex shrink-0 items-center justify-between gap-2 pb-4">
+        <button
+          type="button"
+          onClick={() => {
+            closeNav()
+            navigate('/admin/dashboard')
+          }}
+          aria-label="Visimio home"
+          className="flex shrink-0 items-center gap-2 text-left"
+        >
+          <BrandLogo variant="on-dark" decorative />
+        </button>
+        <button
+          type="button"
+          onClick={closeNav}
+          aria-label="Close navigation menu"
+          className="flex size-10 shrink-0 items-center justify-center rounded-lg text-text-faint hover:bg-white/5 lg:hidden"
+        >
+          <XIcon className="size-5" />
+        </button>
+      </div>
 
       <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
         {NAV_ITEMS.map(({ key, label, icon: ItemIcon }) => (
