@@ -1,0 +1,17 @@
+{% extends "base.txt" %}
+{% import "_macros.txt" as m with context %}
+{% block content %}
+Some details of your upcoming visit have been updated. Here's the latest information:
+
+{{ m.visit_details(before=[("Tracking ID", tracking_id)]) }}
+{% if contact_name %}
+{{ (contact_title or "Your point of contact") | upper }}
+{{ m.detail_rows([("Name", contact_name), ("Contact", contact_detail)]) }}
+{% endif %}
+
+{% if is_approved %}
+{{ m.callout("Your QR code still works", "The check-in QR pass from your confirmation email is still valid - there's nothing new to download.") }}
+{% else %}
+Your visit is still awaiting approval. We'll email your check-in QR pass as soon as it's approved.
+{% endif %}
+{% endblock %}

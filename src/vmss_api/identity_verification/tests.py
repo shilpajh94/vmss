@@ -48,7 +48,9 @@ def _unique_phone() -> str:
 
 
 def _extract_code(body: str) -> str:
-    match = re.search(r"code is (\d+)", body)
+    # Matches both the templated text part ("Verification code: 123456")
+    # and the one-line fallback ("Your verification code is 123456").
+    match = re.search(r"code(?: is|:) (\d+)", body)
     assert match is not None, body
     return match.group(1)
 
@@ -716,3 +718,59 @@ async def test_no_plaintext_code_leaks_and_logs_mask_the_identifier(
     assert verify_response.status_code == 400
     assert "000000" not in verify_response.text
     assert verify_response.json()["message"] == "Invalid or expired code"
+
+
+# --- Branded verification email (refine-email-templates-and-visimio-brand) --
+
+
+async def test_email_otp_is_rendered_from_the_verification_template(
+    client: AsyncClient, tenant: Tenant, monkeypatch
+) -> None:
+    recorder = _RecordingSender()
+    monkeypatch.setattr(senders, "email_sender", recorder)
+
+    response = await client.post(
+        "/api/v1/identity-verification/otp/request",
+        json={"identifier": _unique_email(), "channel": "email"},
+    )
+    assert response.status_code == 200, response.text
+
+    [call] = recorder.calls
+    code = _extract_code(call["body"])
+    minutes = settings.otp_ttl_seconds // 60
+    assert call["subject"] == "Your verification code"
+    assert call["html_body"] is not None
+    assert code in call["html_body"]
+    assert "Keep it private" in call["html_body"]
+    assert f"expires in {minutes} minute" in call["body"]
+    assert "can only be used once" in call["body"]
+    assert code not in response.text
+
+
+async def test_email_otp_falls_back_to_one_line_body_when_template_fails(
+    client: AsyncClient, tenant: Tenant, monkeypatch
+) -> None:
+    from vmss_api.core.email_rendering import TemplateRenderError
+    from vmss_api.identity_verification import service as otp_service
+
+    def _raise(*args, **kwargs):
+        raise TemplateRenderError("forced")
+
+    logged: list[tuple[str, dict]] = []
+    monkeypatch.setattr(otp_service, "render_email", _raise)
+    monkeypatch.setattr(otp_service.logger, "error", lambda event, **kw: logged.append((event, kw)))
+    recorder = _RecordingSender()
+    monkeypatch.setattr(senders, "email_sender", recorder)
+
+    response = await client.post(
+        "/api/v1/identity-verification/otp/request",
+        json={"identifier": _unique_email(), "channel": "email"},
+    )
+    assert response.status_code == 200, response.text
+
+    [call] = recorder.calls
+    code = _extract_code(call["body"])
+    assert call["body"].startswith("Your verification code is ")
+    assert call["html_body"] is None
+    assert logged == [("email_template_render_failed", {"template_name": "verification_code"})]
+    assert all(code not in str(kw) for _, kw in logged)

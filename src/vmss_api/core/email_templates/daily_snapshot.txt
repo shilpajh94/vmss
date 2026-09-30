@@ -1,0 +1,19 @@
+{% extends "base.txt" %}
+{% block content %}
+Here's today's summary of your organisation's sites across {{ total_branches }} branch{{ '' if total_branches == 1 else 'es' }}.
+
+ORGANISATION TOTALS
+  Buildings: {{ totals.buildings }}
+  Floors: {{ totals.floors }}
+  Departments: {{ totals.departments }}
+  Reception desks: {{ totals.reception_desks }}
+  Security gates: {{ totals.security_gates }}
+  Active employees: {{ totals.active_employees }}
+
+BY BRANCH
+{% for b in branches %}
+  - {{ b.branch_name }} ({{ b.branch_code }}): {{ b.building_count }} building(s), {{ b.floor_count }} floor(s), {{ b.department_count }} department(s), {{ b.reception_desk_count }} reception desk(s), {{ b.security_gate_count }} security gate(s), {{ b.active_employee_count }} active employee(s).
+{% else %}
+  There are no branches to report yet.
+{% endfor %}
+{% endblock %}

@@ -17,6 +17,8 @@ one tenant's failure can't block another's (`background-jobs` capability's
 
 import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any
 
 import structlog
 from redis.asyncio import from_url as redis_from_url
@@ -25,8 +27,11 @@ from sqlalchemy import select
 from vmss_api.core.celery_app import celery_app
 from vmss_api.core.config import settings
 from vmss_api.core.database import AsyncSessionLocal, engine, tenant_session_scope
+from vmss_api.core.email_rendering import TemplateRenderError, render_email
 from vmss_api.core.emailing import email_sender
 from vmss_api.core.logging import logger
+from vmss_api.org_structure.models import Company
+from vmss_api.org_structure.repository import CompanyRepository
 from vmss_api.reports import service
 from vmss_api.reports.repository import BranchRollupRepository
 from vmss_api.reports.schemas import CrossBranchRollupOut
@@ -122,12 +127,51 @@ async def _send_tenant_rollup_snapshot(tenant_id: str, tenant_schema: str) -> No
                     tenant_schema=tenant_schema,
                 )
                 return
-            subject = "Daily branch rollup snapshot"
-            body = _render_snapshot_body(rollup)
+            company = await CompanyRepository(session).get_singleton()
+            context = _snapshot_context(rollup, company)
             for admin in admins:
-                await email_sender.send(to=admin.email, subject=subject, body=body)
+                subject, body, html_body = _render_snapshot_email(
+                    rollup,
+                    {**context, "recipient_name": admin.full_name, "recipient_email": admin.email},
+                )
+                await email_sender.send(
+                    to=admin.email, subject=subject, body=body, html_body=html_body
+                )
     finally:
         await engine.dispose()
+
+
+def _snapshot_context(rollup: CrossBranchRollupOut, company: Company | None) -> dict[str, Any]:
+    return {
+        "company_name": company.legal_name if company is not None else None,
+        "logo_url": company.logo_url if company is not None else None,
+        "report_date": datetime.now(UTC).date(),
+        "total_branches": rollup.total_branches,
+        "totals": SimpleNamespace(
+            buildings=rollup.total_buildings,
+            floors=rollup.total_floors,
+            departments=rollup.total_departments,
+            reception_desks=rollup.total_reception_desks,
+            security_gates=rollup.total_security_gates,
+            active_employees=rollup.total_active_employees,
+        ),
+        "branches": rollup.branches,
+    }
+
+
+def _render_snapshot_email(
+    rollup: CrossBranchRollupOut, context: dict[str, Any]
+) -> tuple[str, str, str | None]:
+    """reports spec "The Rollup Snapshot Email Uses the Branded Snapshot
+    Template" — `(subject, text, html)`, degrading to the original
+    plain-text summary if the template fails to render.
+    """
+    try:
+        rendered = render_email("daily_snapshot", context)
+    except TemplateRenderError:
+        logger.error("email_template_render_failed", template_name="daily_snapshot")
+        return "Daily branch rollup snapshot", _render_snapshot_body(rollup), None
+    return rendered.subject, rendered.text, rendered.html
 
 
 def _render_snapshot_body(rollup: CrossBranchRollupOut) -> str:

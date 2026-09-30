@@ -884,25 +884,38 @@ WHEN a caller successfully reschedules an invitation via `PATCH
 /invitations/{id}/reschedule`, the system SHALL dispatch a reschedule
 notification to the primary contact, stating the invitation's tracking ID
 and its new `preferredVisitDate`/`preferredVisitTime`. The notification
-SHALL be sent via the primary contact's `preferredContactMethod` (`email`
-sends an email, `sms` sends a text) — the same channel-routing rule the
-creation, approval, and denial notifications already follow; group
-registrations are notified the same way as individual ones, since only the
-primary contact is ever notified for any invitation lifecycle event today.
-The notification SHALL carry no QR code — a reschedule does not re-approve
-the visit or invalidate a QR already issued. Dispatch SHALL happen
-asynchronously (a background task), never inline in the request path, and
-only after the reschedule is committed — a request rejected because the
-invitation is not in a reschedulable status, or because the caller lacks
-branch access, SHALL NOT dispatch any notification.
+SHALL be sent via the primary contact's `preferredContactMethod`: `email`
+sends an email and `sms` sends a text. This is the same channel-routing
+rule the creation, approval, and denial notifications already follow.
+Group registrations are notified the same way as individual ones, since
+only the primary contact is ever notified for any invitation lifecycle
+event today. WHEN the invitation is `approved`, the reschedule email SHALL
+embed the invitation's existing check-in QR inline, in the same "Your
+check-in pass" block as the confirmation email. A reschedule does not
+re-approve the visit or issue a new token, so this is the same QR image
+and token already issued. WHEN the invitation is still `submitted`, the
+email SHALL carry no QR and SHALL state that a pass will be sent once the
+visit is approved. The reschedule email SHALL carry no file attachment.
+Dispatch SHALL happen asynchronously (a background task), never inline in
+the request path, and only after the reschedule is committed. A request
+rejected because the invitation is not in a reschedulable status, or
+because the caller lacks branch access, SHALL NOT dispatch any
+notification.
 
 #### Scenario: Successful reschedule notifies the primary contact by email
 - **WHEN** a caller with `invitations:reschedule` at the invitation's branch
-  successfully reschedules an invitation whose primary contact's
+  successfully reschedules an `approved` invitation whose primary contact's
   `preferredContactMethod` is `email`
 - **THEN** an email is dispatched to the primary contact's email address,
-  stating the tracking ID and the new `preferredVisitDate`/
-  `preferredVisitTime`, with no QR code attached
+  stating the tracking ID, the previous and new date/time, and embedding the
+  same check-in QR (same token) that was issued at approval, with no
+  attachment
+
+#### Scenario: Rescheduling a pending visit says the pass comes later
+- **WHEN** a `submitted` invitation is rescheduled and its reschedule email
+  is rendered
+- **THEN** the email contains no QR and states that a check-in pass will be
+  sent once the visit is approved
 
 #### Scenario: Successful reschedule notifies the primary contact by SMS when preferred
 - **WHEN** a caller successfully reschedules an invitation whose primary
@@ -921,19 +934,6 @@ branch access, SHALL NOT dispatch any notification.
 - **WHEN** a caller without branch access to the invitation attempts to
   reschedule it, and the request is rejected with 403
 - **THEN** no reschedule notification is dispatched
-
-### Requirement: Visit-Confirmation Dispatch Is Verified Against a Real Mail Catcher
-The system SHALL be provably capable of delivering the visit-confirmation
-notification — including a valid QR-code image attachment — through actual
-SMTP to a reachable mail catcher, not only asserted against a fake/recording
-sender.
-
-#### Scenario: Confirmation email arrives with a valid QR attachment
-- **WHEN** the confirmation dispatch task runs for a created invitation
-  using the real SMTP-backed sender
-- **THEN** a message addressed to the invitation's primary contact, with the
-  expected subject, and carrying a valid PNG attachment is observable
-  through the mail catcher's own API
 
 ### Requirement: Public Lookup by Tracking ID Returns Everything Captured at Creation
 Any caller SHALL be able to retrieve an invitation's full detail by
@@ -1796,3 +1796,125 @@ new invitation, rather than leaving it null.
   email, exactly as today — this requirement changes nothing for the
   email-match case, since the submitted and stored email are already the
   same
+
+### Requirement: Visit-Confirmation Email Embeds the QR Code in a Dedicated Scannable Block
+The approval/visit-confirmation email, and the reschedule email of an
+approved invitation, SHALL display the invitation's check-in QR code in
+the email body, in a visually separate "Your check-in pass" block. The
+image SHALL be referenced by its signed public URL (see "Check-In QR
+Images Are Served From a Signed Public URL"). It SHALL be embedded inline
+only in the unconfigured-base-URL fallback. The block SHALL contain:
+- the QR image, encoding the same encrypted check-in token issued at
+  approval, rendered at no less than 180×180 CSS pixels and not scaled
+  beyond the phone viewport;
+- the tracking ID in text directly under the QR image;
+- one sentence instructing the visitor to show the code at reception or
+  the security gate.
+
+The QR SHALL have a white quiet-zone margin. It SHALL NOT be sent as a file
+attachment. The plain-text part SHALL tell the visitor to open the email
+with images shown to see their QR code, and SHALL give the tracking ID as
+the fallback. Tracking-only, denial, edit, submission, host-assigned, and
+POC-assigned emails SHALL NOT include a QR code.
+
+#### Scenario: Approved visitor can scan the QR straight from the email body
+- **WHEN** an invitation is approved and its primary contact prefers email
+- **THEN** the email body shows a "Your check-in pass" block whose QR image
+  loads from the signed URL, with the tracking ID underneath, and the
+  message has no attachment
+
+#### Scenario: Inline QR encodes the issued check-in token
+- **WHEN** the QR image referenced by a visit-confirmation email is fetched
+  and decoded
+- **THEN** it yields exactly the check-in token persisted for that
+  invitation at approval
+
+#### Scenario: Non-approval emails carry no QR
+- **WHEN** a tracking-only, denial, edit, submission, host-assigned, or
+  POC-assigned email is rendered
+- **THEN** it contains no check-in pass block and no QR image
+
+### Requirement: Reschedule and Edit Emails for an Approved Visit Confirm the Existing Pass Stays Valid
+WHEN an edit notification email is dispatched for an invitation whose
+status is `approved`, the email SHALL state that the check-in QR pass sent
+at approval remains valid. WHEN the invitation is not yet approved, the
+email SHALL instead state that a QR pass will be sent once the visit is
+approved. The edit email SHALL carry no QR code. For the reschedule email,
+see "Reschedule Dispatches a Notification to the Primary Contact", which
+embeds the QR itself for an approved visit.
+
+#### Scenario: Editing an approved visit reminds the visitor their pass still works
+- **WHEN** an approved invitation is edited and its edit email is rendered
+- **THEN** the email states that the previously sent QR pass is still valid,
+  and contains no QR image
+
+#### Scenario: Editing a pending visit says the pass comes later
+- **WHEN** a `submitted` invitation is edited and its edit email is rendered
+- **THEN** the email states that a QR pass will be sent once the visit is
+  approved
+
+#### Scenario: Rescheduling an approved visit reminds the visitor their pass still works
+- **WHEN** an approved invitation is rescheduled and its reschedule email is
+  rendered
+- **THEN** the email shows the same check-in QR pass issued at approval (the
+  persisted token, never a re-issued one) with the new date and time, and
+  carries no attachment
+
+#### Scenario: Rescheduling a pending visit says the pass comes later
+- **WHEN** a `submitted` invitation is rescheduled and its reschedule email
+  is rendered
+- **THEN** the email states that a QR pass will be sent once the visit is
+  approved
+
+### Requirement: Check-In QR Images Are Served From a Signed Public URL
+The system SHALL expose an unauthenticated, rate-limited endpoint (60 per
+minute per IP):
+
+`GET /api/v1/public/email-assets/{tenant_id}/qr/{invitation_id}.png?exp={unix}&sig={hmac}`
+
+It returns the invitation's persisted check-in QR as `image/png`. The
+signature SHALL be an HMAC over the tenant id, the invitation id and
+`exp`, keyed by a server-side secret. `exp` SHALL be 7 days after the
+invitation's `expires_at` at the time the email is rendered. The endpoint
+SHALL respond:
+- 403 when the signature doesn't match;
+- 410 when `exp` has passed;
+- 404 when the tenant, invitation or QR record doesn't exist.
+
+The response SHALL carry `Cache-Control: private, max-age=86400` and SHALL
+never reveal the token as text. The image SHALL encode exactly the token
+persisted at approval. The endpoint SHALL NOT accept a tenant or
+invitation id that isn't covered by the signature.
+
+The Visimio header logo SHALL be served at
+`GET /api/v1/public/email-assets/visimio-logo.png` with long-lived public
+caching.
+
+#### Scenario: Valid signed URL returns the QR
+- **WHEN** a mail client fetches the QR URL from a confirmation email before
+  it expires
+- **THEN** the response is 200 `image/png`, and decoding it yields the
+  invitation's persisted check-in token
+
+#### Scenario: Tampered URL is rejected
+- **WHEN** the `invitation_id` in a signed URL is replaced with another
+  invitation's id
+- **THEN** the response is 403 and no image is returned
+
+#### Scenario: Expired URL is gone
+- **WHEN** the URL is fetched after its `exp`
+- **THEN** the response is 410
+
+### Requirement: Visit-Confirmation Dispatch Is Verified Against a Real Mail Catcher With URL Images
+The system SHALL be provably capable of delivering the visit-confirmation
+notification through actual SMTP to a reachable mail catcher, with the
+email-asset base URL configured, as a message with no attachments and no
+inline parts. Its QR image URL SHALL be fetchable and return the
+invitation's QR.
+
+#### Scenario: Delivered confirmation has no attachment strip and a working QR URL
+- **WHEN** the confirmation dispatch task runs using the real SMTP sender
+  with the base URL configured
+- **THEN** the message observed through the mail catcher's API lists zero
+  attachments and zero inline parts, and fetching the QR `<img src>` from
+  its HTML returns 200 `image/png`

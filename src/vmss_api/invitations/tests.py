@@ -1,10 +1,13 @@
 import asyncio
+import html as html_lib
 import io
 import json
+import re
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import aiosmtplib
@@ -55,6 +58,7 @@ from vmss_api.invitations.models import (
     InvitationVehicle,
     InvitationVisitor,
 )
+from vmss_api.invitations.qr import generate_qr_png
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.models import Branch, Company, Department
@@ -4628,32 +4632,57 @@ class _FakeScalarResult:
     def scalar_one_or_none(self):
         return self._value
 
+    def first(self):
+        # `InvitationRepository.get_location`'s joined select reads a whole
+        # (Branch, Department, Building) row.
+        return self._value
+
 
 class _FakeSession:
-    def __init__(self, invitation, user=None, company=None) -> None:
+    def __init__(
+        self, invitation, user=None, company=None, location=None, qr_code=None, tenant=None
+    ) -> None:
         self._invitation = invitation
         self._user = user
         self._company = company
+        self._location = location
+        self._qr_code = qr_code
+        self._tenant = tenant
 
     async def get(self, model, id_):
         return self._invitation
 
     async def execute(self, stmt):
         # Not a real `Select` evaluation — a canned result keyed off which
-        # entity the statement targets, so `UserRepository.get_active`
-        # (host-creation-email tests) and `CompanyRepository.get_singleton`
-        # (every notification task's new branding-context lookup) each get
-        # back the fake row the test actually configured, not each other's.
+        # entity the statement targets, so each repository lookup a task
+        # makes (`UserRepository.get_active`, `CompanyRepository.
+        # get_singleton`, `InvitationRepository.get_location`/`get_qr_code`)
+        # gets back the fake row the test actually configured.
         entity = stmt.column_descriptions[0]["entity"]
         if entity is Company:
             return _FakeScalarResult(self._company)
+        if entity is Branch:
+            return _FakeScalarResult(self._location)
+        if entity is InvitationQRCode:
+            return _FakeScalarResult(self._qr_code)
+        if entity is Tenant:
+            return _FakeScalarResult(self._tenant)
         return _FakeScalarResult(self._user)
 
 
-def _fake_tenant_session_scope(invitation, user=None, company=None):
+def _fake_tenant_session_scope(
+    invitation, user=None, company=None, location=None, qr_code=None, tenant=None
+):
     @asynccontextmanager
     async def _scope(schema_name: str):
-        yield _FakeSession(invitation, user=user, company=company)
+        yield _FakeSession(
+            invitation,
+            user=user,
+            company=company,
+            location=location,
+            qr_code=qr_code,
+            tenant=tenant,
+        )
 
     return _scope
 
@@ -4842,7 +4871,8 @@ async def test_send_edit_notification_includes_point_of_contact_when_set(monkeyp
     result.get(propagate=True)
 
     assert len(sent) == 1
-    assert "Point of contact: Priya POC" in sent[0]["body"]
+    assert "YOUR POINT OF CONTACT" in sent[0]["body"]
+    assert "Name: Priya POC" in sent[0]["body"]
     assert sent[0]["html_body"] is not None
     assert "Priya POC" in sent[0]["html_body"]
 
@@ -4920,7 +4950,7 @@ async def test_send_poc_creation_notification_includes_visit_details(monkeypatch
 
     assert len(sent) == 1
     assert sent[0]["to"] == "poc@acme-test.example"
-    assert "Duration: 1-hour" in sent[0]["body"]
+    assert "Expected duration: 1-hour" in sent[0]["body"]
     assert "Department: Engineering" in sent[0]["body"]
     assert "Visitor phone: +91 90000 44455" in sent[0]["body"]
     assert "Visitor email: meera@example.com" in sent[0]["body"]
@@ -5007,12 +5037,120 @@ _MAILPIT_BASE_URL = "http://localhost:8025/api/v1"
 _MAILPIT_API_URL = f"{_MAILPIT_BASE_URL}/messages"
 
 
-async def test_send_approval_notification_delivers_email_with_qr_via_mailpit(monkeypatch) -> None:
+_MAILPIT_ASSET_BASE = "https://vmss-new-api.ddev.site:8443"
+
+
+def _realistic_email_fakes() -> dict[str, Any]:
+    """Org-chart and company rows shaped like real tenant data, so Mailpit
+    sends look like production emails rather than bare test stubs
+    (serve-email-images-by-url-and-complete-contact design.md Decision 5).
+    """
+    branch = SimpleNamespace(
+        name="Technopark Campus",
+        address="Phase 1",
+        city="Trivandrum",
+        contact_phone="+91 80000 22233",
+        contact_email=None,
+        contact_person_user_id=None,
+    )
+    return {
+        "company": SimpleNamespace(
+            legal_name="Acme Corp", logo_url=None, phone="+91 80 4000 1000", email=None
+        ),
+        "location": (branch, SimpleNamespace(name="Engineering"), SimpleNamespace(name="Tower A")),
+    }
+
+
+async def _persisted_approved_invitation(
+    db_session: AsyncSession, branch: Branch, creator: User, *, qr_token_value: str
+) -> Invitation:
+    """A real invitation + QR row, so the signed QR URL in the delivered
+    email resolves through the public route."""
+    invitation = InvitationFactory.build(
+        id=uuid.uuid4(),
+        branch_id=branch.id,
+        created_by_user_id=creator.id,
+        status="approved",
+        expires_at=datetime.now(UTC) + timedelta(days=30),
+    )
+    db_session.add(invitation)
+    await db_session.flush()
+    db_session.add(
+        InvitationQRCode(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            qr_token=qr_token_value,
+            image_storage_key="k",
+        )
+    )
+    await db_session.commit()
+    return invitation
+
+
+async def _find_mailpit_message(mailpit: AsyncClient, tracking_id: str, recipient: str) -> dict:
+    list_response = await mailpit.get(_MAILPIT_API_URL, params={"limit": 50})
+    assert list_response.status_code == 200
+    matches = [
+        m
+        for m in list_response.json()["messages"]
+        if tracking_id in m["Snippet"] and any(to["Address"] == recipient for to in m["To"])
+    ]
+    assert len(matches) == 1, (
+        f"expected exactly one Mailpit message for {tracking_id}, found {len(matches)}"
+    )
+    detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{matches[0]['ID']}")
+    assert detail_response.status_code == 200
+    return detail_response.json()
+
+
+def _image_srcs(html: str) -> list[str]:
+    return [html_lib.unescape(src) for src in re.findall(r'<img src="([^"]+)"', html)]
+
+
+async def _assert_url_images_and_fetch_qr(
+    detail: dict, client: AsyncClient, expected_token: str
+) -> None:
+    # invitations spec "Delivered confirmation has no attachment strip and
+    # a working QR URL": no attachments, no inline parts at all.
+    assert detail["Attachments"] == []
+    assert detail["Inline"] == []
+    assert "cid:" not in detail["HTML"]
+    srcs = _image_srcs(detail["HTML"])
+    assert f"{_MAILPIT_ASSET_BASE}/api/v1/public/email-assets/visimio-logo.png" in srcs
+    [qr_src] = [src for src in srcs if "/qr/" in src]
+    assert qr_src.startswith(f"{_MAILPIT_ASSET_BASE}/api/v1/public/email-assets/")
+    qr_response = await client.get(qr_src.removeprefix(_MAILPIT_ASSET_BASE))
+    assert qr_response.status_code == 200
+    assert qr_response.headers["content-type"] == "image/png"
+    assert qr_response.content == await generate_qr_png(expected_token)
+
+
+async def test_send_approval_notification_delivers_email_with_qr_via_mailpit(
+    monkeypatch,
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    user: User,
+) -> None:
+    monkeypatch.setattr(settings, "email_asset_base_url", _MAILPIT_ASSET_BASE)
+    real = await _persisted_approved_invitation(
+        db_session, branch, user, qr_token_value="mailpit-qr-token"
+    )
     tracking_id = f"INV-{uuid.uuid4().hex[:8].upper()}"
     recipient = f"mailpit-check-{uuid.uuid4().hex[:8]}@example.com"
     fake_invitation = _FakeInvitation(
+        id=real.id,
+        expires_at=real.expires_at,
+        branch_id=branch.id,
         status="approved",
         tracking_id=tracking_id,
+        primary_contact_full_name="Meera Krishnan",
+        purpose_of_visit="Interview",
+        preferred_visit_date=date(2026, 10, 14),
+        preferred_visit_time=time(10, 30),
+        expected_duration="1 hour",
+        poc_name="Priya Nair",
         primary_contact_preferred_contact_method="email",
         primary_contact_email=recipient,
         primary_contact_phone=None,
@@ -5020,51 +5158,80 @@ async def test_send_approval_notification_delivers_email_with_qr_via_mailpit(mon
     # `notifications.email_sender` is deliberately left as the real
     # `SmtpEmailSender` here (unlike every other task test above) so a real
     # SMTP send goes out for Mailpit to actually capture.
-    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+    monkeypatch.setattr(
+        tasks,
+        "tenant_session_scope",
+        _fake_tenant_session_scope(fake_invitation, tenant=tenant, **_realistic_email_fakes()),
+    )
+
+    result = await asyncio.to_thread(
+        tasks.send_approval_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": tenant.schema_name,
+            "invitation_id": str(real.id),
+            "qr_token": "mailpit-qr-token",
+        },
+    )
+    result.get(propagate=True)
+
+    async with AsyncClient() as mailpit:
+        detail = await _find_mailpit_message(mailpit, tracking_id, recipient)
+    assert detail["Subject"] == "Your visit is confirmed"
+    assert detail["From"]["Name"] == "Visimio"
+    assert "Your check-in pass" in detail["HTML"]
+    for expected in ("Your point of contact", "Priya Nair", "Tower A", "Engineering"):
+        assert expected in detail["HTML"], expected
+    await _assert_url_images_and_fetch_qr(detail, client, "mailpit-qr-token")
+    # Deliberately not deleted from Mailpit afterward — left for a human to
+    # inspect via the Mailpit web UI, and harmless to accumulate since each
+    # run uses a fresh, unique tracking_id/recipient.
+
+
+async def test_send_approval_notification_without_asset_base_embeds_only_the_qr(
+    monkeypatch,
+) -> None:
+    """The unconfigured fallback: a text wordmark header (no logo part) and
+    the QR as the one inline part, still never an attachment."""
+    tracking_id = f"INV-{uuid.uuid4().hex[:8].upper()}"
+    recipient = f"mailpit-check-{uuid.uuid4().hex[:8]}@example.com"
+    fake_invitation = _FakeInvitation(
+        id=uuid.uuid4(),
+        status="approved",
+        tracking_id=tracking_id,
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email=recipient,
+        primary_contact_phone=None,
+    )
+    monkeypatch.setattr(
+        tasks,
+        "tenant_session_scope",
+        _fake_tenant_session_scope(fake_invitation, **_realistic_email_fakes()),
+    )
 
     result = await asyncio.to_thread(
         tasks.send_approval_notification.apply,
         kwargs={
             "request_id": "test",
             "tenant_schema": "tenant_acme_test",
-            "invitation_id": str(uuid.uuid4()),
+            "invitation_id": str(fake_invitation.id),
             "qr_token": "fake-qr-token",
         },
     )
     result.get(propagate=True)
 
     async with AsyncClient() as mailpit:
-        list_response = await mailpit.get(_MAILPIT_API_URL, params={"limit": 50})
-        assert list_response.status_code == 200
-        matches = [
-            m
-            for m in list_response.json()["messages"]
-            if tracking_id in m["Snippet"] and any(to["Address"] == recipient for to in m["To"])
-        ]
-        assert len(matches) == 1, (
-            f"expected exactly one Mailpit message for {tracking_id}, found {len(matches)}"
+        detail = await _find_mailpit_message(mailpit, tracking_id, recipient)
+        assert detail["Attachments"] == []
+        assert [part["ContentID"] for part in detail["Inline"]] == ["visit-qr@vmss"]
+        assert "visimio-logo@vmss" not in detail["HTML"]
+        assert 'src="cid:visit-qr@vmss"' in detail["HTML"]
+        inline_response = await mailpit.get(
+            f"{_MAILPIT_BASE_URL}/message/{detail['ID']}/part/{detail['Inline'][0]['PartID']}"
         )
-        message_id = matches[0]["ID"]
-
-        detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{message_id}")
-        assert detail_response.status_code == 200
-        detail = detail_response.json()
-        assert detail["Subject"] == "Your visit is confirmed"
-        assert len(detail["Attachments"]) == 1
-        attachment = detail["Attachments"][0]
-        assert attachment["ContentType"] == "image/png"
-        assert attachment["FileName"] == "visit-qr.png"
-
-        part_response = await mailpit.get(
-            f"{_MAILPIT_BASE_URL}/message/{message_id}/part/{attachment['PartID']}"
-        )
-        assert part_response.status_code == 200
-        qr_image = Image.open(io.BytesIO(part_response.content))
+        qr_image = Image.open(io.BytesIO(inline_response.content))
         qr_image.verify()
-        assert qr_image.format == "PNG"
-    # Deliberately not deleted from Mailpit afterward — left for a human to
-    # inspect via the Mailpit web UI (task 5.4), and harmless to accumulate
-    # since each run uses a fresh, unique tracking_id/recipient.
+        assert inline_response.content == await generate_qr_png("fake-qr-token")
 
 
 async def test_send_tracking_notification_delivers_email_via_mailpit(monkeypatch) -> None:
@@ -5112,7 +5279,7 @@ async def test_send_tracking_notification_delivers_email_via_mailpit(monkeypatch
         detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{message_id}")
         assert detail_response.status_code == 200
         detail = detail_response.json()
-        assert detail["Subject"] == "Your registration is received"
+        assert detail["Subject"] == "We've received your visit request"
         assert detail["Attachments"] == []
         assert tracking_id in detail["Text"]
 
@@ -5159,50 +5326,74 @@ async def test_send_denial_notification_delivers_email_via_mailpit(monkeypatch) 
         )
         detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{matches[0]['ID']}")
         assert detail_response.status_code == 200
-        assert detail_response.json()["Subject"] == "Your visit request was not approved"
+        assert detail_response.json()["Subject"] == "Your visit request wasn't approved"
 
 
-async def test_send_reschedule_notification_delivers_email_via_mailpit(monkeypatch) -> None:
+async def test_send_reschedule_notification_delivers_email_via_mailpit(
+    monkeypatch,
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    user: User,
+) -> None:
     """Same real-SMTP-round-trip bar, extended to the reschedule
-    notification per design.md Decision 1.
+    notification: an approved visit's existing QR (the persisted token) is
+    shown again, by signed URL, with nothing attached or inline.
     """
+    monkeypatch.setattr(settings, "email_asset_base_url", _MAILPIT_ASSET_BASE)
+    real = await _persisted_approved_invitation(
+        db_session, branch, user, qr_token_value="persisted-qr-token"
+    )
     tracking_id = f"INV-{uuid.uuid4().hex[:8].upper()}"
     recipient = f"mailpit-check-{uuid.uuid4().hex[:8]}@example.com"
     fake_invitation = _FakeInvitation(
+        id=real.id,
+        expires_at=real.expires_at,
+        branch_id=branch.id,
         status="approved",
         tracking_id=tracking_id,
-        preferred_visit_date="2026-12-01",
-        preferred_visit_time="15:30:00",
+        primary_contact_full_name="Meera Krishnan",
+        preferred_visit_date=date(2026, 12, 1),
+        preferred_visit_time=time(15, 30),
+        previous_preferred_visit_date=date(2026, 11, 28),
+        previous_preferred_visit_time=time(10, 0),
+        poc_name="Priya Nair",
         primary_contact_preferred_contact_method="email",
         primary_contact_email=recipient,
         primary_contact_phone=None,
     )
-    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+    fake_qr = InvitationQRCode(
+        id=uuid.uuid4(),
+        invitation_id=real.id,
+        qr_token="persisted-qr-token",
+        image_storage_key="k",
+    )
+    monkeypatch.setattr(
+        tasks,
+        "tenant_session_scope",
+        _fake_tenant_session_scope(
+            fake_invitation, qr_code=fake_qr, tenant=tenant, **_realistic_email_fakes()
+        ),
+    )
 
     result = await asyncio.to_thread(
         tasks.send_reschedule_notification.apply,
         kwargs={
             "request_id": "test",
-            "tenant_schema": "tenant_acme_test",
-            "invitation_id": str(uuid.uuid4()),
+            "tenant_schema": tenant.schema_name,
+            "invitation_id": str(real.id),
         },
     )
     result.get(propagate=True)
 
     async with AsyncClient() as mailpit:
-        list_response = await mailpit.get(_MAILPIT_API_URL, params={"limit": 50})
-        assert list_response.status_code == 200
-        matches = [
-            m
-            for m in list_response.json()["messages"]
-            if tracking_id in m["Snippet"] and any(to["Address"] == recipient for to in m["To"])
-        ]
-        assert len(matches) == 1, (
-            f"expected exactly one Mailpit message for {tracking_id}, found {len(matches)}"
-        )
-        detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{matches[0]['ID']}")
-        assert detail_response.status_code == 200
-        assert detail_response.json()["Subject"] == "Your visit has been rescheduled"
+        detail = await _find_mailpit_message(mailpit, tracking_id, recipient)
+    assert detail["Subject"] == "Your visit has been rescheduled"
+    assert "Tue, 1 Dec 2026 · 3:30 PM" in detail["Text"]
+    assert "Sat, 28 Nov 2026 · 10:00 AM" in detail["Text"]
+    assert "Priya Nair" in detail["HTML"]
+    await _assert_url_images_and_fetch_qr(detail, client, "persisted-qr-token")
 
 
 async def test_send_host_creation_notification_delivers_email_via_mailpit(monkeypatch) -> None:
@@ -5248,7 +5439,7 @@ async def test_send_host_creation_notification_delivers_email_via_mailpit(monkey
         )
         detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{matches[0]['ID']}")
         assert detail_response.status_code == 200
-        assert detail_response.json()["Subject"] == "You've been named host"
+        assert detail_response.json()["Subject"] == "You've been named host for a visit"
 
 
 # --- visit-info-lookup-api: optional purposeId/hostId/durationId/departmentId -
@@ -9667,42 +9858,50 @@ async def test_get_invitation_detail_requires_permission(
 
 # --- Email templates (email-notifications capability) -----------------------
 
+_EMAIL_TEMPLATE_NAMES = (
+    "tracking_only",
+    "visit_confirmation",
+    "denial",
+    "reschedule",
+    "edit",
+    "submission_role",
+    "host_assigned",
+    "poc_assigned",
+)
+
 
 async def test_every_notification_template_renders_without_error() -> None:
     """spec.md "Every Notification Email Is Rendered From a Branded HTML
     Template" — each template renders given a representative context,
-    without raising.
+    without raising, into both an HTML and a plain-text part.
     """
-    from vmss_api.core.email_rendering import render_email_html
+    from vmss_api.core.email_rendering import render_email
 
     representative_context = {
         "company_name": "Acme Test Co",
         "logo_url": None,
+        "recipient_name": "Meera Krishnan",
+        "recipient_email": "meera@example.com",
         "tracking_id": "INV-TEST0001",
         "visitor_name": "Meera Krishnan",
         "purpose": "Interview",
-        "visit_date": "2026-10-01",
-        "visit_time": "10:00",
+        "visit_date": date(2026, 10, 1),
+        "visit_time": time(10, 0),
         "duration": "1 hour",
         "department": "Engineering",
         "denial_reason": "Not expected",
         "host_name": "Rahul Nair",
         "host_contact": "rahul@example.com",
         "front_desk_contact": None,
+        "qr_cid": "visit-qr@vmss",
+        "is_approved": True,
     }
-    for template_name in (
-        "tracking_only",
-        "visit_confirmation",
-        "denial",
-        "reschedule",
-        "edit",
-        "submission_role",
-        "host_assigned",
-    ):
-        subject, html = render_email_html(template_name, representative_context)
-        assert subject
-        assert "<html" in html
-        assert "INV-TEST0001" in html
+    for template_name in _EMAIL_TEMPLATE_NAMES:
+        rendered = render_email(template_name, representative_context)
+        assert rendered.subject
+        assert "<html" in rendered.html
+        assert "INV-TEST0001" in rendered.html
+        assert "INV-TEST0001" in rendered.text
 
 
 async def test_template_rendering_failure_falls_back_to_plain_text(monkeypatch) -> None:
@@ -9715,7 +9914,7 @@ async def test_template_rendering_failure_falls_back_to_plain_text(monkeypatch) 
     def _raise(*args, **kwargs):
         raise TemplateRenderError("forced failure")
 
-    monkeypatch.setattr(tasks, "render_email_html", _raise)
+    monkeypatch.setattr(tasks, "render_email", _raise)
     logged: list[tuple[str, dict]] = []
     monkeypatch.setattr(tasks.logger, "error", lambda event, **kw: logged.append((event, kw)))
 
@@ -10767,3 +10966,319 @@ async def test_create_invitation_through_new_custom_step_with_and_without_fields
     assert detail_response.json()["data"]["customFields"] == [
         {"fieldId": field_id, "value": "Some value"}
     ]
+
+
+# --- QR inline-only + reschedule QR (refine-email-templates-and-visimio-brand)
+
+
+async def _run_reschedule_task(monkeypatch, fake_invitation, *, qr_code=None) -> list[dict]:
+    sent: list[dict] = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    monkeypatch.setattr(
+        tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation, qr_code=qr_code)
+    )
+    result = await asyncio.to_thread(
+        tasks.send_reschedule_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+    return sent
+
+
+def _reschedulable_invitation(status: str) -> _FakeInvitation:
+    return _FakeInvitation(
+        status=status,
+        tracking_id="INV-RESCHED1",
+        preferred_visit_date=date(2026, 12, 1),
+        preferred_visit_time=time(15, 30),
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email="visitor@example.com",
+    )
+
+
+async def test_reschedule_of_approved_visit_embeds_the_persisted_qr(monkeypatch) -> None:
+    fake_qr = InvitationQRCode(
+        id=uuid.uuid4(),
+        invitation_id=uuid.uuid4(),
+        qr_token="persisted-token",
+        image_storage_key="k",
+    )
+    sent = await _run_reschedule_task(
+        monkeypatch, _reschedulable_invitation("approved"), qr_code=fake_qr
+    )
+
+    assert len(sent) == 1
+    assert "attachment" not in sent[0]
+    [inline] = sent[0]["inline_images"]
+    assert inline.cid == "visit-qr@vmss"
+    assert inline.content == await generate_qr_png("persisted-token")
+    assert 'src="cid:visit-qr@vmss"' in sent[0]["html_body"]
+
+
+async def test_reschedule_of_pending_visit_has_no_qr(monkeypatch) -> None:
+    sent = await _run_reschedule_task(monkeypatch, _reschedulable_invitation("submitted"))
+
+    assert sent[0]["inline_images"] == []
+    assert "cid:visit-qr@vmss" not in sent[0]["html_body"]
+    assert "as soon as it's approved" in sent[0]["body"]
+
+
+async def test_reschedule_of_approved_visit_without_qr_row_warns_and_falls_back(
+    monkeypatch,
+) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(tasks.logger, "warning", lambda event, **kw: warnings.append(event))
+
+    sent = await _run_reschedule_task(
+        monkeypatch, _reschedulable_invitation("approved"), qr_code=None
+    )
+
+    assert warnings == ["reschedule_notification_qr_missing"]
+    assert sent[0]["inline_images"] == []
+    assert "as soon as it's approved" in sent[0]["body"]
+
+
+async def test_approval_email_sends_qr_inline_only(monkeypatch) -> None:
+    sent: list[dict] = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fake_invitation = _FakeInvitation(
+        status="approved",
+        tracking_id="INV-INLINE01",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email="visitor@example.com",
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+    result = await asyncio.to_thread(
+        tasks.send_approval_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+            "qr_token": "tok",
+        },
+    )
+    result.get(propagate=True)
+
+    assert "attachment" not in sent[0]
+    assert [image.cid for image in sent[0]["inline_images"]] == ["visit-qr@vmss"]
+
+
+async def test_email_context_resolves_place_department_and_front_desk_from_org_chart(
+    monkeypatch,
+) -> None:
+    """email-notifications "Confirmation email shows when, where and who"
+    and "Branch contact preferred over company contact"."""
+    branch = Branch(
+        id=uuid.uuid4(),
+        name="Technopark Campus",
+        code="TPK",
+        address="Phase 1",
+        city="Trivandrum",
+        contact_phone="+91 80000 22233",
+    )
+    department = Department(id=uuid.uuid4(), name="Engineering")
+    building = SimpleNamespace(name="Tower A")
+    company = CompanyFactory.build(id=uuid.uuid4(), phone="+91 11111 11111")
+    fake_invitation = _FakeInvitation(
+        status="approved",
+        tracking_id="INV-PLACE001",
+        branch_id=branch.id,
+        department_id=department.id,
+        department_to_visit="free text dept",
+        poc_name="Priya Nair",
+    )
+    session = _FakeSession(
+        fake_invitation, company=company, location=(branch, department, building)
+    )
+
+    context = await tasks._invitation_email_context(
+        session, fake_invitation, recipient_name=None, recipient_email=None
+    )
+
+    assert context["place"] == "Tower A · Technopark Campus · Phase 1, Trivandrum"
+    assert context["department"] == "Engineering"
+    assert context["front_desk_contact"] == "+91 80000 22233"
+    assert context["contact_name"] == "Priya Nair"
+
+
+# --- Point-of-contact chain (serve-email-images-by-url-and-complete-contact
+# design.md Decision 4) --------------------------------------------------------
+
+
+class _UsersById:
+    """Stands in for `UserRepository`: `get_active` by id, so each chain
+    step can resolve a different person."""
+
+    def __init__(self, people: dict[uuid.UUID, Any]) -> None:
+        self._people = people
+
+    def __call__(self, session):
+        return self
+
+    async def get_active(self, user_id: uuid.UUID):
+        return self._people.get(user_id)
+
+
+def _person(full_name: str, *, phone: str | None = None, email: str = "p@example.com"):
+    return SimpleNamespace(full_name=full_name, phone_number=phone, email=email)
+
+
+_HOST_ID, _BRANCH_CONTACT_ID = uuid.uuid4(), uuid.uuid4()
+
+
+def _chain_branch(**overrides: Any) -> SimpleNamespace:
+    return SimpleNamespace(
+        **{"name": "Main Branch", "contact_person_user_id": _BRANCH_CONTACT_ID, **overrides}
+    )
+
+
+async def _contact_for(
+    monkeypatch,
+    *,
+    poc_name: str | None = None,
+    host_id: uuid.UUID | None = None,
+    branch: SimpleNamespace | None,
+    front_desk: str | None = "+91 80000 22233",
+    people: dict[uuid.UUID, Any] | None = None,
+) -> dict[str, str | None]:
+    monkeypatch.setattr(tasks, "UserRepository", _UsersById(people or {}))
+    invitation = _FakeInvitation(poc_name=poc_name, host_id=host_id)
+    return await tasks._resolve_contact(
+        None, invitation, branch=branch, front_desk_contact=front_desk
+    )
+
+
+_PEOPLE = {
+    _HOST_ID: _person("Rahul Verma", phone="+91 90000 33344"),
+    _BRANCH_CONTACT_ID: _person("Anil Menon", phone="+91 90000 55566"),
+}
+
+
+async def test_contact_chain_prefers_the_invitation_poc(monkeypatch) -> None:
+    contact = await _contact_for(
+        monkeypatch, poc_name="Priya Nair", host_id=_HOST_ID, branch=_chain_branch(), people=_PEOPLE
+    )
+    assert contact["contact_name"] == "Priya Nair"
+    assert contact["contact_title"] == "Your point of contact"
+
+
+async def test_contact_chain_falls_back_to_the_host(monkeypatch) -> None:
+    contact = await _contact_for(
+        monkeypatch, host_id=_HOST_ID, branch=_chain_branch(), people=_PEOPLE
+    )
+    assert (contact["contact_name"], contact["contact_detail"]) == (
+        "Rahul Verma",
+        "+91 90000 33344",
+    )
+
+
+async def test_contact_chain_falls_back_to_the_branch_contact_person(monkeypatch) -> None:
+    contact = await _contact_for(monkeypatch, branch=_chain_branch(), people=_PEOPLE)
+    assert (contact["contact_name"], contact["contact_detail"]) == (
+        "Anil Menon",
+        "+91 90000 55566",
+    )
+    assert contact["contact_title"] == "Your point of contact"
+
+
+async def test_contact_chain_falls_back_to_the_front_desk(monkeypatch) -> None:
+    contact = await _contact_for(
+        monkeypatch, branch=_chain_branch(contact_person_user_id=None), people=_PEOPLE
+    )
+    assert (contact["contact_name"], contact["contact_detail"]) == ("Front desk", "+91 80000 22233")
+
+
+async def test_contact_chain_ends_at_reception_when_nothing_is_configured(monkeypatch) -> None:
+    contact = await _contact_for(
+        monkeypatch, branch=_chain_branch(contact_person_user_id=None), front_desk=None
+    )
+    assert contact == {
+        "contact_title": "Your point of contact",
+        "contact_name": "Reception at Main Branch",
+        "contact_detail": None,
+    }
+
+
+async def test_contact_chain_reception_without_a_branch(monkeypatch) -> None:
+    contact = await _contact_for(monkeypatch, branch=None, front_desk=None)
+    assert contact["contact_name"] == "Reception"
+
+
+async def test_contact_chain_skips_untrustworthy_names(monkeypatch) -> None:
+    """An opaque IdP subject as the host's name, and a branch contact whose
+    "name" is just their email, are both skipped — the front desk wins."""
+    people = {
+        _HOST_ID: _person("ccbb9a1e304730e0512d912e18f6ce65", phone="+91 1"),
+        _BRANCH_CONTACT_ID: _person("anil@example.com", email="anil@example.com"),
+    }
+    contact = await _contact_for(
+        monkeypatch,
+        poc_name="  ",
+        host_id=_HOST_ID,
+        branch=_chain_branch(),
+        people=people,
+    )
+    assert contact["contact_name"] == "Front desk"
+
+
+async def test_confirmation_without_poc_or_host_names_the_branch_contact_person(
+    monkeypatch,
+) -> None:
+    """email-notifications "No POC or host falls back to the branch contact
+    person", end to end through the task's rendering."""
+    sent: list[dict] = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    fakes = _realistic_email_fakes()
+    branch, department, building = fakes["location"]
+    branch.contact_person_user_id = _BRANCH_CONTACT_ID
+    monkeypatch.setattr(tasks, "UserRepository", _UsersById(_PEOPLE))
+    fake_invitation = _FakeInvitation(
+        id=uuid.uuid4(),
+        branch_id=uuid.uuid4(),
+        status="approved",
+        tracking_id="INV-CONTACT1",
+        primary_contact_preferred_contact_method="email",
+        primary_contact_email="visitor@example.com",
+    )
+    monkeypatch.setattr(
+        tasks,
+        "tenant_session_scope",
+        _fake_tenant_session_scope(
+            fake_invitation, company=fakes["company"], location=(branch, department, building)
+        ),
+    )
+
+    result = await asyncio.to_thread(
+        tasks.send_approval_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(fake_invitation.id),
+            "qr_token": "fake-qr-token",
+        },
+    )
+    result.get(propagate=True)
+
+    [email] = sent
+    assert "Your point of contact" in email["html_body"]
+    assert "Anil Menon" in email["html_body"]
+    assert "+91 90000 55566" in email["html_body"]

@@ -31,7 +31,7 @@ class SsoProvider(Base, TimestampMixin):
 
 
 class SsoRoleMapping(Base, TimestampMixin):
-    """Maps one IdP group claim value to one VisitorPass role — the only
+    """Maps one IdP group claim value to one Visimio role — the only
     source `sso/service.py`'s JIT provisioning ever consults to decide a new
     SSO user's role (design.md's "Role assignment only ever comes from the
     curated mapping table" decision).

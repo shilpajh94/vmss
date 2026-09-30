@@ -5,7 +5,6 @@ near-identical sender abstractions aren't merged into a shared
 `notifications/` package yet.
 """
 
-from email.message import EmailMessage
 from typing import Protocol
 
 import aiosmtplib
@@ -14,12 +13,15 @@ from twilio.base.exceptions import TwilioRestException
 from twilio.rest import Client as TwilioClient
 
 from vmss_api.core.config import settings
+from vmss_api.core.emailing import build_message
 from vmss_api.core.logging import logger
 from vmss_api.identity_verification.masking import mask_identifier
 
 
 class EmailSender(Protocol):
-    async def send(self, *, to: str, subject: str, body: str) -> None: ...
+    async def send(
+        self, *, to: str, subject: str, body: str, html_body: str | None = None
+    ) -> None: ...
 
 
 class SmsSender(Protocol):
@@ -55,16 +57,17 @@ class EmailDispatchError(RuntimeError):
 
 
 class SmtpEmailSender:
-    """Same `aiosmtplib`/`settings.smtp_*` approach as
-    `invitations/notifications.py::SmtpEmailSender`.
+    """Same `aiosmtplib`/`settings.smtp_*` approach as `core/emailing.py`,
+    and builds its message with that module's `build_message` (so the
+    templated verification email gets the same From name and inline Visimio
+    logo as every other email — refine-email-templates-and-visimio-brand).
+    Kept as its own sender rather than re-exporting the core one because
+    this flow needs `EmailDispatchError` (never cached as an idempotent
+    response) and masked-identifier logging.
     """
 
-    async def send(self, *, to: str, subject: str, body: str) -> None:
-        message = EmailMessage()
-        message["From"] = settings.smtp_from_address
-        message["To"] = to
-        message["Subject"] = subject
-        message.set_content(body)
+    async def send(self, *, to: str, subject: str, body: str, html_body: str | None = None) -> None:
+        message = build_message(to=to, subject=subject, body=body, html_body=html_body)
         # aiosmtplib attempts an AUTH login the moment `username` is a
         # non-None value, including an empty string — which an env var set
         # to `SMTP_USERNAME=` (present-but-blank, not absent) produces. The

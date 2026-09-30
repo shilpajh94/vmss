@@ -16,6 +16,7 @@ from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.auth.models import User
 from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core.config import settings
+from vmss_api.core.database import tenant_session_scope
 from vmss_api.core.logging import logger
 from vmss_api.core.redis import get_redis
 from vmss_api.core.schemas import BranchScope, SortOrder
@@ -2268,3 +2269,21 @@ async def get_prefill_by_email(
             else None
         ),
     )
+
+
+async def email_qr_png(schema_name: str, invitation_id: uuid.UUID) -> bytes | None:
+    """The check-in QR a confirmation/reschedule email references by URL
+    (serve-email-images-by-url-and-complete-contact design.md Decision 1),
+    rendered from the token persisted at approval — the same bytes the
+    email used to embed. `None` when the invitation or its QR row doesn't
+    exist. The caller has already verified the URL signature; the schema
+    comes from the signed tenant id, never the raw request.
+    """
+    async with tenant_session_scope(schema_name) as session:
+        repository = InvitationRepository(session)
+        if await repository.get(invitation_id) is None:
+            return None
+        qr_code = await repository.get_qr_code(invitation_id)
+    if qr_code is None:
+        return None
+    return await generate_qr_png(qr_code.qr_token)

@@ -1,0 +1,12 @@
+{% extends "base.txt" %}
+{% import "_macros.txt" as m with context %}
+{% block greeting %}{% endblock %}
+{% block content %}
+Use this code to confirm your email address.
+
+Verification code: {{ code }}
+
+The code expires in {{ minutes }} minute{{ '' if minutes == 1 else 's' }} and can only be used once.
+
+{{ m.callout("Keep it private", "We'll never ask you for this code by phone or message. If you didn't request it, you can safely ignore this email - nothing changes without the code.") }}
+{% endblock %}

@@ -100,6 +100,15 @@ def _qr_token_encryption_key(monkeypatch) -> None:
     qr_token._fernet.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _email_asset_base_url_unset(monkeypatch) -> None:
+    """DDEV sets `EMAIL_ASSET_BASE_URL` in the container environment; pin it
+    unset so email tests are deterministic, and let the URL-image tests
+    opt in explicitly.
+    """
+    monkeypatch.setattr(settings, "email_asset_base_url", None)
+
+
 @pytest_asyncio.fixture
 async def make_tenant_schema() -> AsyncGenerator[Callable[[str], Awaitable[None]]]:
     """Factory for provisioning an extra tenant schema on demand, for tests

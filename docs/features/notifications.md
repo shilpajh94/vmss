@@ -107,10 +107,140 @@ carry a `Role`/`User` id already implied by which step is current, nothing
   attempting delivery to it — a transient send failure is left for the
   task's own retry instead.
 
+## Notification emails (`redesign-notification-email-templates`)
+
+This section covers every templated email, not push: the invitation
+emails dispatched by `invitations/tasks.py`, the verification-code email
+(`identity_verification/service.py`) and the daily snapshot
+(`reports/tasks.py`). They're rendered by
+`core/email_rendering.py::render_email` from `core/email_templates/` and
+sent through `core/emailing.py::build_message`.
+
+**Layout** (`base.html`, restyled by
+`refine-email-templates-and-visimio-brand`):
+- a navy (`#0f172a`) header showing the tenant logo, else the Visimio
+  logo image, else (no asset base URL configured) a styled "Visimio" text
+  wordmark;
+- a cyan accent rule;
+- a white card with the tone-coloured status pill (when the type has one),
+  the heading, the greeting (the OTP email has none), and the per-type
+  sections;
+- a footer reading "Sent by {company or Visimio}", the no-reply line,
+  "Powered by Visimio", and "© {year} Visimio. All rights reserved.".
+
+The Visimio logo is `core/email_assets/visimio-logo-on-dark.png`, generated
+by `scripts/build_brand_assets.py`, and served publicly (see "Images load
+by URL" below). The From header carries the display name `SMTP_FROM_NAME` (default
+"Visimio").
+
+The layout is table-based with inline styles, 600px wide, and fluid below
+that. One `<style>` block carries only the ≤620px media query and the
+font import, both of which degrade safely.
+
+**Tones** (`email_rendering.TONES`, chosen per template by
+`TEMPLATE_TONES`) colour the pill, callouts, highlight boxes and QR
+panel:
+
+| Tone | Used by |
+|---|---|
+| success (green) | confirmation |
+| pending (amber) | received, triage |
+| danger (red) | not approved |
+| info (blue) | rescheduled, details updated |
+| brand (teal) | host / POC assigned, verification code, snapshot |
+
+Every tone's text colours pass WCAG AA, which is unit-tested.
+
+**Building blocks** (`_macros.html`, imported `with context`):
+`highlight_box` (a dashed box for the tracking ID or code), `timeline`,
+`checklist`, `section`, `visit_details`, `detail_table`, `callout`,
+`qr_pass`, `note`, and `tracking_note`. `visit_details` always renders the
+same rows: date & time, **place of visit** (building · branch · address,
+city, from `InvitationRepository.get_location`), department (catalog name,
+else free text), duration, and purpose.
+
+**Per-type content** (`<type>.html` + `<type>.txt`; subject = heading):
+
+| Template | To | Pill / heading | QR |
+|---|---|---|---|
+| `visit_confirmation` | Visitor | Confirmed / Your visit is confirmed | Signed URL |
+| `tracking_only` | Visitor | Pending approval / We've received your visit request | — |
+| `denial` | Visitor | Not approved / Your visit request wasn't approved | — |
+| `reschedule` | Visitor | Rescheduled / Your visit has been rescheduled | Signed URL if approved |
+| `edit` | Visitor | Details updated / Your visit details have changed | — ("still valid" if approved) |
+| `submission_role` | Role holders | Action needed / New visit request awaiting triage | — |
+| `host_assigned` | Host | You're the host / You've been named host for a visit | — |
+| `poc_assigned` | POC user | Point of contact / You're the point of contact for a visit | — |
+| `verification_code` | OTP requester | — / Your verification code | — |
+| `daily_snapshot` | Tenant admins | Daily snapshot / Daily branch rollup — {date} | — |
+
+**Point of contact** (`serve-email-images-by-url-and-complete-contact`):
+confirmation, reschedule and edit always show a "Your point of contact"
+block. `invitations/tasks.py::_resolve_contact` takes the first available
+of:
+1. the invitation POC (name, plus phone or email when it's a user);
+2. the resolved host;
+3. the branch's contact person (`Branch.contact_person_user_id`);
+4. "Front desk" with the branch's `contact_phone`/`contact_email`, else the
+   Company phone/email;
+5. "Reception at {branch name}" (or "Reception") with no detail.
+
+A candidate whose name fails `display_name` is skipped, not shown.
+
+**Rules every template follows:**
+- `detail_table` / `detail_rows` drop a row whose value is missing, so no
+  row ever shows blank or "None".
+- The `display_name` filter returns no name when the stored one is blank,
+  equals the email, or is a 16+ character whitespace-free id-like token.
+  That's what an IdP sends when it has no `name` claim. The greeting then
+  reads "Hello," and third-party names fall back to "your visitor".
+- The `visit_datetime` filter renders `Wed, 14 Oct 2026 · 10:30 AM` using
+  fixed English day and month names, so the output doesn't depend on the
+  container locale.
+- The hidden preheader (the inbox preview line) is the heading plus the
+  tracking ID. The Mailpit tests match messages on that snippet.
+
+**Images load by URL** (`serve-email-images-by-url-and-complete-contact`):
+with `EMAIL_ASSET_BASE_URL` set, every image is an absolute `<img src>`
+and the delivered message is just `multipart/alternative` (text + HTML) —
+no attachment and no inline part, so no client shows an attachment strip.
+- Logo: `GET /api/v1/public/email-assets/visimio-logo.png`
+  (`core/email_assets_router.py`, `Cache-Control: public, max-age=31536000,
+  immutable`; rename the file to bust caches).
+- Check-in QR: `GET /api/v1/public/email-assets/{tenantId}/qr/{invitationId}.png?exp=&sig=`
+  (`invitations/email_assets_router.py`). `sig` is an HMAC-SHA256 over
+  `qr:{tenant}:{invitation}:{exp}` (`core/email_assets.py`); `exp` is the
+  invitation's `expires_at` + 7 days, computed at send time. 403 bad
+  signature (logged at WARNING), 410 expired, 404 unknown tenant /
+  invitation / QR. Rate-limited 60/minute per IP; `Cache-Control: private,
+  max-age=86400`. The PNG is regenerated from the token persisted at
+  approval, so it's identical to what the check-in scanner expects.
+
+The QR sits on a white, padded cell so dark-mode clients keep it
+scannable, and the tracking ID is always printed under it — a client that
+blocks remote images (Outlook desktop until "show images") can still check
+in by tracking ID.
+
+**Fallback** when `EMAIL_ASSET_BASE_URL` is unset: `render_email` logs
+`email_asset_base_url_unset` at WARNING once per process, the header shows
+the text wordmark, and the QR is embedded as a single `cid:visit-qr@vmss`
+inline part (`EmailSender.send(..., inline_images=[...])`). Never an
+attachment either way.
+
+**Previewing:** `ddev exec uv run python scripts/send_email_previews.py`
+sends all ten templates, with full sample data and `[Preview]` subjects,
+to `preview@visimio.local` in Mailpit (`ddev mailpit`). The QR previews
+use a real signed URL for the tenant's latest invitation with an issued
+QR, or the inline fallback otherwise. `--to` and `--tenant-slug` override
+the defaults. Mailpit's HTML Check tab shows the per-client support
+breakdown.
+
 ## Config knobs
 
 | Setting | Default | Purpose |
 |---|---|---|
+| `EMAIL_ASSET_BASE_URL` | unset (DDEV: `https://vmss-new-api.ddev.site:8443`) | Public origin of this API that email images load from. **Required in production**; unset falls back to a text wordmark and an inline QR. |
+| `EMAIL_ASSET_URL_SECRET` | unset | Signs QR image URLs; falls back to `STORAGE_LOCAL_URL_SECRET`, then `JWT_SECRET_KEY`. Rotating it invalidates QR images in already-sent emails (the tracking ID still works). |
 | `FCM_CREDENTIALS_PATH` | unset | Path to a Firebase service-account key JSON file. Left unset by default; `notifications/fcm.py` fails loudly (`FcmNotConfiguredError`) the first time a push is actually attempted, rather than silently no-op'ing — same posture `TWILIO_*`/`SMS_GATEWAY_*` already have. |
 
 ## Not yet built (flagged, not silently dropped)
