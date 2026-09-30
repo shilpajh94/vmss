@@ -7,7 +7,7 @@ import { usePushNotifications } from '../../../hooks/use-push-notifications'
 export type StaffLoginStatus = 'idle' | 'submitting' | 'error'
 
 export function useStaffLoginPage() {
-  const { loginStaffUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
+  const { loginStaffUseCase, getCurrentStaffUserUseCase, startSsoLoginUseCase } = useAppDependencies()
   const toast = useToast()
   const navigate = useNavigate()
   const { registerCurrentDevice } = usePushNotifications()
@@ -47,6 +47,10 @@ export function useStaffLoginPage() {
     }
   }
 
+  const startSso = () => {
+    window.location.assign(startSsoLoginUseCase.execute())
+  }
+
   return {
     email,
     password,
@@ -57,5 +61,6 @@ export function useStaffLoginPage() {
     emailError,
     passwordError,
     submitLogin,
+    startSso,
   }
 }

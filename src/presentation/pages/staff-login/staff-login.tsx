@@ -15,6 +15,7 @@ export function StaffLoginPage() {
     emailError,
     passwordError,
     submitLogin,
+    startSso,
   } = useStaffLoginPage()
 
   return (
@@ -33,6 +34,7 @@ export function StaffLoginPage() {
           onEmailChange={setEmail}
           onPasswordChange={setPassword}
           onSubmit={submitLogin}
+          onSsoSignIn={startSso}
           loading={status === 'submitting'}
           errorMessage={errorMessage}
           emailError={emailError}
