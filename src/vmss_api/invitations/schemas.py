@@ -304,6 +304,13 @@ class InvitationCreate(CamelModel):
             "required."
         ),
     )
+    building_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "Optional building within the branch being visited; must belong "
+            "to that branch. Shown back as `building` on the invitation detail."
+        ),
+    )
     visitor_category_id: uuid.UUID = Field(
         description=(
             "Which VisitorCategory this invitation is tagged with — must "
