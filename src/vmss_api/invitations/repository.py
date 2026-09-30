@@ -164,7 +164,11 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_location(
-        self, *, branch_id: uuid.UUID, department_id: uuid.UUID | None
+        self,
+        *,
+        branch_id: uuid.UUID,
+        department_id: uuid.UUID | None,
+        building_id: uuid.UUID | None = None,
     ) -> tuple[Branch, Department | None, Building | None]:
         """Resolves an invitation's branch and, when it has a
         `department_id` on file, that department's building via
@@ -190,7 +194,12 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             .select_from(Branch)
             .outerjoin(Department, Department.id == department_id)
             .outerjoin(Floor, Department.floor_id == Floor.id)
-            .outerjoin(Building, Floor.building_id == Building.id)
+            .outerjoin(
+                Building,
+                Building.id == building_id
+                if building_id is not None
+                else Floor.building_id == Building.id,
+            )
             .where(Branch.id == branch_id)
         )
         row = (await self.session.execute(stmt)).first()

@@ -41,6 +41,11 @@ class Invitation(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     branch_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("branches.id"), index=True)
+    # Building the visitor selected at registration; when NULL the detail view
+    # falls back to the department's building (see `InvitationRepository.get_location`).
+    building_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("buildings.id"), index=True
+    )
     # Nullable: a walk-in registration (`source="visitor_walk_in"`, API-13) has
     # no authenticated staff creator — see
     # add-walkin-visitor-registration/design.md Decision 1. Every existing row
