@@ -205,6 +205,8 @@ ADMIN_PERMISSION_CODES = [
     "branches:view",
     "branches:manage",
     "branches:provision",
+    "kiosks:manage",
+    "kiosks:view",
     "reports:view",
     "users:manage",
     "companies:view",

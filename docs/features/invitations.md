@@ -30,6 +30,7 @@ generic required-header `422`. This now matches
 `docs/features/org_structure.md`'s creation endpoints, which resolve their
 branch from the request body via the same `authorize_branch_id` helper.
 | GET | `/api/v1/invitations` | `invitations:view`, branch-scoped | — | Paginated listing of invitations for triage/browsing — see "Listing invitations" below. |
+| GET | `/api/v1/invitations/lookup-by-email?email=` | `invitations:create`, branch-scoped | — | Staff-authenticated prefill lookup for the create-invitation wizard's Primary Contact fields: returns `fullName`, `phone`, `preferredContactMethod`, `visitorCategoryId`, `idProofType`, `photoUrl`, `idProofUrl` from the most recent non-deleted invitation, among the caller's authorized branches, whose primary contact email matches case-insensitively. `data: null` (not 404) when no match — same "no match is not an error" convention `GET /api/v1/visitor-portal/me` uses. Gated by `invitations:create` rather than `invitations:view` since it only exists to prefill that create flow. `photoUrl` is always resolved when captured (same as every other invitation response); `idProofUrl` is `null` unless the caller additionally holds `documents:view` at the matched invitation's branch — `invitations:create` alone does not grant identity-document visibility, matching `GET /invitations/{id}`'s existing gating. See `openspec/changes/add-invitation-lookup-by-email/`. |
 | GET | `/api/v1/invitations/track?trackingId=` | None (public) | 20/minute per IP | Full status/visit-summary lookup by the human-readable tracking ID — returns `InvitationTrackingOut`, including every visit-detail and carried-item field captured at creation. |
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
 | GET | `/api/v1/invitations/{id}` | `invitations:view` at the invitation's branch | — | Authenticated, staff-facing single-invitation detail view (`InvitationDetailOut`) — branch/source/creator plus every lifecycle field below. Also includes resolved `branch`/`building`/`department` detail (alongside the existing raw `branchId`) and the primary contact's/each visitor's `idProofType`; `idProofUrl` (the raw document image) is included only when the caller additionally holds `documents:view` — see "Resolved location and permission-gated ID-proof documents" below. 404 unknown id, 403 (not 404) if the caller lacks branch access. See "Lifecycle actions" below. |
@@ -351,6 +352,55 @@ created after this change shipped; a co-visitor's `photoUrl` is still null
 when that visitor's photo wasn't captured. `POST /registrations/walk-in`
 accepts the identical two file parts, with the same mandatory/optional
 split.
+
+### A returning primary contact's name (and email, if omitted) is locked to their prior visit (`dedupe-repeat-visitor-registrations`)
+
+Before writing a new invitation, `create_invitation` checks whether the
+*primary contact* has visited before — a new row is always created for this
+visit either way (visit history/audit is completely unaffected), but the
+identity fields it's created with may be overridden:
+
+- **Email match**: when the request's `primaryContact.email` is non-null and
+  matches the email on a prior invitation (any status — `approved`,
+  `submitted`, `denied`, `checked_in`, `checked_out`, or expired; if more
+  than one matches, the most recently created one wins), the new
+  invitation's `primaryContactFullName` is silently overridden with that
+  prior invitation's value, **regardless of what the request submits**. A
+  visitor who wants to register under a different name does so by
+  registering under a different email — there is no "edit my name" path
+  through creation.
+- **Phone fallback**: when the request omits `primaryContact.email`
+  entirely (only `phone` supplied — requires `preferredContactMethod:
+  "sms"`, see `InvitationPrimaryContactCreate._check_contact`) and that
+  phone matches a prior invitation's phone, the new invitation's
+  `primaryContactFullName` **and** `primaryContactEmail` are both carried
+  forward from that prior invitation, rather than leaving email null.
+- **A non-matching email always wins over a matching phone.** If the
+  request supplies an email that doesn't match anything on file, it is
+  always treated as a first-time contact — even if its phone happens to
+  match a *different* prior invitation's phone. Email is the sole
+  authoritative identity key; phone is only ever a fallback for when no
+  email is given at all. This is deliberate, not a gap: it's how the
+  system avoids ever silently merging two people who happen to share a
+  phone (e.g. a shared reception/family line) under one identity.
+
+Every other primary-contact field (`phone` in the email-match case,
+`preferredContactMethod`, ID proof, photo, `customFieldValues`) and
+everything inherently per-visit (`visitorCategoryId`, visit details,
+carried items, vehicles, consents, co-visitors) is taken from the new
+request exactly as submitted — untouched by this lookup. **Co-visitors are
+completely out of scope**: `invitation_visitors` rows are never matched,
+locked, or carried forward, even if a co-visitor's email matches someone
+listed as a co-visitor on an earlier invitation.
+
+**BREAKING**: a caller submitting a different `fullName` for an
+already-seen email/phone no longer gets that name recorded — the response
+echoes back the *stored* name (and, for a phone-fallback match, the
+*stored* email), not what was submitted. `POST /registrations/walk-in`
+inherits this behavior automatically, with no code of its own, since it
+calls straight into `create_invitation`. See
+`openspec/changes/dedupe-repeat-visitor-registrations/design.md` for the
+full rationale and alternatives considered.
 
 ## Auto-approve vs. manual approval
 

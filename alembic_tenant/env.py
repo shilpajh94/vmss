@@ -32,6 +32,7 @@ from vmss_api.invitations.models import (  # noqa: F401
     InvitationVehicle,
     InvitationVisitor,
 )
+from vmss_api.kiosks.models import Kiosk  # noqa: F401
 from vmss_api.notifications.models import DeviceToken  # noqa: F401
 from vmss_api.org_structure.models import (  # noqa: F401
     Branch,

@@ -54,6 +54,13 @@ _TAGS_METADATA = [
         ),
     },
     {
+        "name": "kiosks",
+        "description": (
+            "Admin management of kiosks: create, edit, hide/unhide, and "
+            "soft-delete."
+        ),
+    },
+    {
         "name": "platform",
         "description": (
             "Superadmin operations: platform login and tenant provisioning. "
@@ -119,6 +126,17 @@ _TAGS_METADATA = [
             "OTP generation and verification for an email or phone identifier, "
             "over email/SMS/WhatsApp — public, unauthenticated, and not yet "
             "wired into invitation or walk-in registration creation."
+        ),
+    },
+    {
+        "name": "visitor-portal",
+        "description": (
+            "Public, OTP-gated returning-visitor lookup: a visitor who has "
+            "verified an email/phone via `identity-verification` retrieves "
+            "their own prior visit history and a prefill payload for a new "
+            "registration. Read-only — does not create or modify any "
+            "invitation/registration, and issues no user account or "
+            "session."
         ),
     },
     {

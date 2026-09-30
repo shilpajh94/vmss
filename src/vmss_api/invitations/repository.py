@@ -164,7 +164,11 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_location(
-        self, *, branch_id: uuid.UUID, department_id: uuid.UUID | None
+        self,
+        *,
+        branch_id: uuid.UUID,
+        department_id: uuid.UUID | None,
+        building_id: uuid.UUID | None = None,
     ) -> tuple[Branch, Department | None, Building | None]:
         """Resolves an invitation's branch and, when it has a
         `department_id` on file, that department's building via
@@ -190,7 +194,12 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             .select_from(Branch)
             .outerjoin(Department, Department.id == department_id)
             .outerjoin(Floor, Department.floor_id == Floor.id)
-            .outerjoin(Building, Floor.building_id == Building.id)
+            .outerjoin(
+                Building,
+                Building.id == building_id
+                if building_id is not None
+                else Floor.building_id == Building.id,
+            )
             .where(Branch.id == branch_id)
         )
         row = (await self.session.execute(stmt)).first()
@@ -536,6 +545,53 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             Invitation.primary_contact_email == email, Invitation.deleted_at.is_(None)
         )
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_latest_by_primary_contact_email(self, email: str) -> Invitation | None:
+        """Backs the returning-primary-contact name/email lock
+        (`dedupe-repeat-visitor-registrations/design.md` Decision 2) — a
+        single `ORDER BY ... LIMIT 1` rather than fetching every prior
+        invitation via `list_by_primary_contact_email` and filtering in
+        Python, since this runs on every invitation creation.
+        """
+        stmt = (
+            select(Invitation)
+            .where(Invitation.primary_contact_email == email, Invitation.deleted_at.is_(None))
+            .order_by(Invitation.created_at.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_latest_by_primary_contact_phone(self, phone: str) -> Invitation | None:
+        """The phone-fallback counterpart to
+        `get_latest_by_primary_contact_email` — only ever consulted when the
+        new request has no primary contact email at all (design.md
+        Decision 5)."""
+        stmt = (
+            select(Invitation)
+            .where(Invitation.primary_contact_phone == phone, Invitation.deleted_at.is_(None))
+            .order_by(Invitation.created_at.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_latest_for_prefill_by_email(
+        self, email: str, branch_scope: BranchScope
+    ) -> Invitation | None:
+        """Backs the staff `lookup-by-email` prefill endpoint
+        (`add-invitation-lookup-by-email/design.md`) — a separate method
+        from `get_latest_by_primary_contact_email` since that one's
+        case-sensitive, branch-unscoped matching is deliberate for the
+        create-time dedupe lock it backs, and this endpoint needs different
+        semantics: case-insensitive, and scoped to the caller's authorized
+        branches.
+        """
+        filters = [func.lower(Invitation.primary_contact_email) == email.lower()]
+        filters.append(Invitation.deleted_at.is_(None))
+        branch_filter = _branch_filter(branch_scope)
+        if branch_filter is not None:
+            filters.append(branch_filter)
+        stmt = select(Invitation).where(*filters).order_by(Invitation.created_at.desc()).limit(1)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def list_page(
         self,

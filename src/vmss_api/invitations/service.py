@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 from fastapi import HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.approvals.models import InvitationApprovalStep
@@ -26,6 +27,7 @@ from vmss_api.core.storage import (
     validate_upload,
 )
 from vmss_api.core.storage import save as storage_save
+from vmss_api.core.storage import url_for as storage_url_for
 from vmss_api.form_builder import service as form_builder_service
 from vmss_api.form_builder import validation as form_builder_validation
 from vmss_api.invitations import badge, push_notifications, tasks
@@ -41,6 +43,7 @@ from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.invitations.schemas import (
     InvitationCreate,
     InvitationEditRequest,
+    InvitationLookupPrefillOut,
     InvitationSortableField,
     RegistrationSource,
     VisitDetailsSubmit,
@@ -249,6 +252,49 @@ async def _resolve_visit_detail_ids(
         resolved["department_id"] = department.id
         resolved["department_to_visit"] = department.name
     return resolved
+
+
+async def _resolve_active_branch(tenant_db: AsyncSession, branch_id: uuid.UUID) -> uuid.UUID:
+    stmt = select(Branch.id).where(
+        Branch.id == branch_id, Branch.is_active.is_(True), Branch.deleted_at.is_(None)
+    )
+    if (await tenant_db.execute(stmt)).scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown or inactive branch"
+        )
+    return branch_id
+
+
+async def _resolve_building(
+    tenant_db: AsyncSession, building_id: uuid.UUID | None, branch_id: uuid.UUID
+) -> uuid.UUID | None:
+    if building_id is None:
+        return None
+    stmt = select(Building.id).where(
+        Building.id == building_id,
+        Building.branch_id == branch_id,
+        Building.is_active.is_(True),
+        Building.deleted_at.is_(None),
+    )
+    if (await tenant_db.execute(stmt)).scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown building for the selected branch",
+        )
+    return building_id
+
+
+async def _match_department_by_name(
+    tenant_db: AsyncSession, branch_id: uuid.UUID, name: str
+) -> uuid.UUID | None:
+    stmt = select(Department.id).where(
+        Department.branch_id == branch_id,
+        Department.is_active.is_(True),
+        Department.deleted_at.is_(None),
+        func.lower(Department.name) == name.strip().lower(),
+    )
+    matches = (await tenant_db.execute(stmt)).scalars().all()
+    return matches[0] if len(matches) == 1 else None
 
 
 async def _resolve_active_category(
@@ -1039,6 +1085,34 @@ async def create_invitation(
             )
 
     repo = InvitationRepository(tenant_db)
+
+    # specs/invitations/spec.md (delta) "A Returning Primary Contact's Full
+    # Name Is Locked to Their Prior Invitation" / "...Matched by Phone Has
+    # Their Email Carried Forward". Email is the primary identity key; phone
+    # is only ever consulted when no email was submitted this visit, so a
+    # genuinely new (non-matching) email is never rescued by a phone match
+    # against a different prior invitation
+    # (dedupe-repeat-visitor-registrations/design.md Decision 5).
+    returning_contact: Invitation | None = None
+    if payload.primary_contact.email is not None:
+        returning_contact = await repo.get_latest_by_primary_contact_email(
+            payload.primary_contact.email
+        )
+    elif payload.primary_contact.phone is not None:
+        returning_contact = await repo.get_latest_by_primary_contact_phone(
+            payload.primary_contact.phone
+        )
+    primary_contact_full_name = (
+        returning_contact.primary_contact_full_name
+        if returning_contact is not None
+        else payload.primary_contact.full_name
+    )
+    primary_contact_email = (
+        returning_contact.primary_contact_email
+        if returning_contact is not None
+        else payload.primary_contact.email
+    )
+
     tracking_id = await _generate_unique_tracking_id(repo)
     now = datetime.now(UTC)
     expires_at = _end_of_visit_day_utc(payload.visit_details.preferred_visit_date, tenant)
@@ -1147,9 +1221,9 @@ async def create_invitation(
             storage_key = await storage_save(
                 tenant.id, "invitations/group-files", content, content_types[index]
             )
-            group_field_storage.setdefault(group_id, {}).setdefault(index, {})[
-                file_field_id
-            ] = storage_key
+            group_field_storage.setdefault(group_id, {}).setdefault(index, {})[file_field_id] = (
+                storage_key
+            )
 
     # Inline (non-grouped) custom-field file uploads
     # (add-inline-custom-field-file-upload): validated for presence/count
@@ -1204,9 +1278,22 @@ async def create_invitation(
         for key, files in vehicle_custom_field_file_contents.items()
     }
 
+    if source == RegistrationSource.visitor_walk_in and payload.branch_id is not None:
+        # A kiosk's device branch is only the default; the visitor's own
+        # branch selection wins, provided it is an active branch.
+        branch_id = await _resolve_active_branch(tenant_db, payload.branch_id)
+    building_id = await _resolve_building(tenant_db, payload.building_id, branch_id)
+    if visit_details["department_id"] is None and visit_details["department_to_visit"]:
+        # Free-text department with no `departmentId`: link it to the branch's
+        # department of the same name so the detail view returns the record.
+        visit_details["department_id"] = await _match_department_by_name(
+            tenant_db, branch_id, visit_details["department_to_visit"]
+        )
+
     invitation = Invitation(
         id=uuid.uuid4(),
         branch_id=branch_id,
+        building_id=building_id,
         created_by_user_id=created_by_user_id,
         source=source.value,
         registration_type=payload.registration_type.value,
@@ -1216,8 +1303,8 @@ async def create_invitation(
         expires_at=expires_at,
         submitted_at=now,
         approved_at=approved_at,
-        primary_contact_full_name=payload.primary_contact.full_name,
-        primary_contact_email=payload.primary_contact.email,
+        primary_contact_full_name=primary_contact_full_name,
+        primary_contact_email=primary_contact_email,
         primary_contact_phone=payload.primary_contact.phone,
         primary_contact_preferred_contact_method=(
             payload.primary_contact.preferred_contact_method.value
@@ -1500,7 +1587,9 @@ async def get_invitation_location(
     (enrich-invitation-checkin-and-detail-views/design.md Decision 5).
     """
     return await InvitationRepository(tenant_db).get_location(
-        branch_id=invitation.branch_id, department_id=invitation.department_id
+        branch_id=invitation.branch_id,
+        department_id=invitation.department_id,
+        building_id=invitation.building_id,
     )
 
 
@@ -1833,7 +1922,7 @@ async def reschedule_invitation(
 
 
 async def _resolve_edit_changes(
-    tenant_db: AsyncSession, payload: InvitationEditRequest
+    tenant_db: AsyncSession, payload: InvitationEditRequest, branch_id: uuid.UUID
 ) -> dict[str, Any]:
     """Same catalog-id-overwrites-free-text resolution
     `_resolve_visit_detail_ids` applies at creation, scoped to whichever
@@ -1871,6 +1960,11 @@ async def _resolve_edit_changes(
             )
         changes["department_id"] = department.id
         changes["department_to_visit"] = department.name
+    elif changes.get("department_to_visit"):
+        # Free-text edit: re-link (or clear a now-stale link) by branch + name.
+        changes["department_id"] = await _match_department_by_name(
+            tenant_db, branch_id, changes["department_to_visit"]
+        )
     if payload.poc_user_id is not None:
         poc_user = await UserRepository(tenant_db).get_active(payload.poc_user_id)
         if poc_user is None:
@@ -1977,7 +2071,7 @@ async def edit_invitation(
                     "approval level"
                 ),
             )
-    changes = await _resolve_edit_changes(tenant_db, payload)
+    changes = await _resolve_edit_changes(tenant_db, payload, invitation.branch_id)
     if not changes:
         return invitation
     updated = await InvitationRepository(tenant_db).edit_if_eligible(invitation.id, **changes)
@@ -2203,4 +2297,38 @@ async def list_invitations_page(
         page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
+    )
+
+
+async def get_prefill_by_email(
+    tenant_db: AsyncSession, email: str, branch_scope: BranchScope, user: User
+) -> InvitationLookupPrefillOut | None:
+    """Backs `GET /invitations/lookup-by-email`
+    (`add-invitation-lookup-by-email/proposal.md`) — `None` on no match is
+    the normal, expected case, not an error (spec.md "No Matching
+    Invitation Returns Null Data, Not an Error"). `photo_url` is resolved
+    unconditionally; `id_proof_url` only when `user` holds `documents:view`
+    at the matched invitation's branch — same split
+    `router.py::_to_invitation_detail_out` uses for the staff detail view
+    (design.md "photoUrl unconditional, idProofUrl gated...")."""
+    invitation = await InvitationRepository(tenant_db).get_latest_for_prefill_by_email(
+        email, branch_scope
+    )
+    if invitation is None:
+        return None
+    include_documents = user.has_permission("documents:view", invitation.branch_id)
+    photo_key = invitation.primary_contact_photo_storage_key
+    id_proof_key = invitation.primary_contact_id_proof_storage_key
+    return InvitationLookupPrefillOut(
+        full_name=invitation.primary_contact_full_name,
+        phone=invitation.primary_contact_phone,
+        preferred_contact_method=invitation.primary_contact_preferred_contact_method,
+        visitor_category_id=invitation.visitor_category_id,
+        id_proof_type=invitation.primary_contact_id_proof_type,
+        photo_url=await storage_url_for(photo_key) if photo_key is not None else None,
+        id_proof_url=(
+            await storage_url_for(id_proof_key)
+            if include_documents and id_proof_key is not None
+            else None
+        ),
     )

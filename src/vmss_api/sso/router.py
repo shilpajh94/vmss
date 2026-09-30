@@ -39,6 +39,7 @@ def _to_config_out(provider: SsoProvider) -> SsoProviderConfigOut:
         client_id=provider.client_id,
         client_secret_masked=provider.client_secret_masked,
         is_enabled=provider.is_enabled,
+        allow_admin_login=provider.allow_admin_login,
     )
 
 
@@ -83,7 +84,11 @@ async def put_config(
         action="sso_config_saved",
         entity_type="SsoProvider",
         entity_id=provider.id,
-        diff={"displayName": payload.display_name, "isEnabled": payload.is_enabled},
+        diff={
+            "displayName": payload.display_name,
+            "isEnabled": payload.is_enabled,
+            "allowAdminLogin": payload.allow_admin_login,
+        },
     )
     return success_response(data=_to_config_out(provider))
 
