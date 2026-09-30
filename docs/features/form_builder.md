@@ -284,6 +284,44 @@ falling back to `DEFAULT_EFFECTIVE_FORM`. Resolution is cached in Redis
 (`vmss:{tenantId}:form-builder:effective:{branchId|"default"}`, 5-minute
 TTL) and invalidated synchronously by `publish`.
 
+### Old snapshots and removed field types (`heal-stale-form-config-data`)
+
+A published snapshot is frozen JSON, so one published before a key existed
+lacks that key, and one published before a field type was removed still
+carries it. Served verbatim, either made the web app reject the whole form
+("Step 0 of 0"). So `resolve_effective_form` passes every snapshot,
+including cache hits, through `form_builder/snapshot.py::normalize_snapshot`:
+- missing field keys get their defaults (`SNAPSHOT_FIELD_DEFAULTS`: `hideLabel`
+  is `false`), and so do missing group keys (`SNAPSHOT_GROUP_DEFAULTS`:
+  `visibilityCondition` is `null`);
+- a group's missing `fieldIds` is rebuilt from its `fieldKeys`;
+- a field whose type isn't in `FormFieldType` is dropped, pruned from its
+  group, and logged as `form_field_unknown_type_skipped` (WARNING).
+
+**Adding a key to `service._step_to_snapshot`?** Add its default to
+`snapshot.py` too. `test_normalized_snapshot_matches_current_shape` fails
+until you do.
+
+The admin reads (step list, a step's fields, reorder) skip stored rows of
+an unsupported type with the same warning, instead of a 500 from
+`FormFieldOut`'s enum. `PATCH /form-builder/fields/{id}` on such a row
+returns 422 unless the request sets a supported `fieldType`; retyping is
+how an admin repairs it.
+
+Tenant migration `c3d5e7f9a1b2_heal_stale_form_config_data` cleans the
+stored data: in `form_fields` (including soft-deleted rows) and every
+snapshot, it converts the removed types as follows:
+
+| Removed type | Becomes | Options |
+|---|---|---|
+| `signature_pad` | `checkbox_single` (a consent checkbox) | cleared |
+| `rich_text_block` | `static_text` | kept |
+| `dynamic_table` | `textarea` | cleared |
+
+It also backfills the keys above. It's idempotent and logs every
+conversion; the downgrade is a no-op. Apply it with
+`scripts/upgrade_all_tenants.py`.
+
 ## Endpoints
 
 | Method | Path | Auth | Description |
