@@ -70,10 +70,35 @@ export const FormFieldOutSchema = z.object({
   // it stays the field's accessible name (e.g. via a visually-hidden but
   // still-linked <label>) rather than disappearing from the accessibility
   // tree entirely. Purely a rendering flag; doesn't affect `isRequired`
-  // enforcement.
-  hideLabel: z.boolean(),
+  // enforcement. Defaults to `false`: a snapshot published before the flag
+  // existed has no key at all (tolerate-unknown-form-field-types).
+  hideLabel: z.boolean().default(false),
 })
 export type FormField = z.infer<typeof FormFieldOutSchema>
+
+const SUPPORTED_FIELD_TYPES: ReadonlySet<string> = new Set(FormFieldTypeSchema.options)
+
+function isSupportedFieldType(entry: unknown): boolean {
+  const fieldType = (entry as { fieldType?: unknown } | null)?.fieldType
+  return typeof fieldType === 'string' && SUPPORTED_FIELD_TYPES.has(fieldType)
+}
+
+// A step's field list, tolerant of one kind of drift: a field whose type the
+// client doesn't support (e.g. one removed from the catalog after it was
+// saved) is dropped with a warning instead of failing the whole form. A
+// known-type field that's otherwise malformed still fails loudly — that's a
+// real contract break (tolerate-unknown-form-field-types design.md Decision 2).
+export const FormFieldListSchema = z
+  .array(z.unknown())
+  .transform((entries) =>
+    entries.filter((entry) => {
+      if (isSupportedFieldType(entry)) return true
+      const { key, fieldType } = (entry ?? {}) as { key?: unknown; fieldType?: unknown }
+      console.warn(`Skipping form field ${String(key)} with unsupported type ${String(fieldType)}`)
+      return false
+    }),
+  )
+  .pipe(z.array(FormFieldOutSchema))
 
 // Mirrors `form_builder/schemas.py::FormFieldGroupOut` — an admin-defined,
 // optionally repeatable named block of a step's fields (e.g. the seeded
@@ -96,7 +121,7 @@ export const FormFieldGroupOutSchema = z.object({
   maxInstances: z.number().nullable(),
   orderIndex: z.number(),
   fieldIds: z.array(z.string()),
-  visibilityCondition: VisibilityConditionSchema.nullable(),
+  visibilityCondition: VisibilityConditionSchema.nullable().default(null),
 })
 export type FormFieldGroup = z.infer<typeof FormFieldGroupOutSchema>
 
@@ -111,7 +136,7 @@ export const FormStepOutSchema = z.object({
   isLocked: z.boolean(),
   isActive: z.boolean(),
   orderIndex: z.number(),
-  fields: z.array(FormFieldOutSchema),
+  fields: FormFieldListSchema,
   groups: z.array(FormFieldGroupOutSchema),
 })
 export type FormStep = z.infer<typeof FormStepOutSchema>
@@ -131,7 +156,7 @@ export const FormStepResponseSchema = z.object({
 export const FormFieldListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
-  data: z.array(FormFieldOutSchema),
+  data: FormFieldListSchema,
 })
 
 export const FormFieldResponseSchema = z.object({
@@ -173,7 +198,8 @@ export const EffectiveFormFieldGroupSchema = z.object({
   maxInstances: z.number().nullable(),
   orderIndex: z.number(),
   fieldKeys: z.array(z.string()),
-  visibilityCondition: VisibilityConditionSchema.nullable(),
+  // Absent from snapshots published before conditional groups existed.
+  visibilityCondition: VisibilityConditionSchema.nullable().default(null),
 })
 export type EffectiveFormFieldGroup = z.infer<typeof EffectiveFormFieldGroupSchema>
 
