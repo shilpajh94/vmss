@@ -155,11 +155,14 @@ export interface VisitRequestWireContext {
   invitationFields: FormField[]
   consentFields: FormField[]
   steps: EffectiveFormStep[]
+  /** Branch/building ids resolved from the Visit Info location/building picks; undefined when unmatched (free-text fallback). */
+  branchId?: string
+  buildingId?: string
 }
 
 // Maps wizard form state onto the `payload` wire contract for
-// POST /registrations/walk-in. `location`/`building`/profile image
-// aren't part of that contract (yet) and are dropped here; the primary
+// POST /registrations/walk-in. profile image isn't part of that
+// contract and is dropped here (location/building travel as `branchId`/`buildingId`); the primary
 // contact's visitor category becomes the invitation-level `visitorCategoryId`
 // (the wire contract has one category per invitation, not per visitor). ID-proof
 // files travel separately as multipart file fields, see use-visitor-request-wizard.
@@ -192,6 +195,8 @@ export function toVisitRequest(formState: VisitRequestFormState, context: VisitR
   return {
     registrationType: formState.registrationType,
     visitorCategoryId: formState.primaryContact.visitorCategory,
+    branchId: context.branchId,
+    buildingId: context.buildingId,
     primaryContact: toVisitor(formState.primaryContact),
     // `visitors`/`vehicles`/`carriedItems`/`customFields`/`groups` all
     // default on the backend (`Field(default_factory=...)`) — omitted
