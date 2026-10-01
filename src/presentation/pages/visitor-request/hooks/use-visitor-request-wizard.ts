@@ -15,6 +15,7 @@ import { findField, findStepFields, findStepGroups, useEffectiveForm } from '../
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
 import type { Branch } from '../../../../domain/entities/branch-schema'
+import type { Building } from '../../../../domain/entities/building-schema'
 import { getActiveSteps, type StepKey } from '../registration-wizard-steps'
 import {
   createInitialFormState,
@@ -178,7 +179,7 @@ function validateStep(
   return {}
 }
 
-export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialData, branches?: Branch[]) {
+export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialData, branches?: Branch[], buildings?: Building[]) {
   const { submitVisitRequestUseCase, trackVisitRequestUseCase } = useAppDependencies()
 
   const [currentStep, setCurrentStep] = useState(0)
@@ -204,6 +205,13 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
   const branchId = useMemo(
     () => branches?.find((branch) => branch.name === formState.visitInfo.location)?.id,
     [branches, formState.visitInfo.location],
+  )
+  const buildingId = useMemo(
+    () =>
+      buildings?.find(
+        (building) => building.name === formState.visitInfo.building && (!branchId || building.branchId === branchId),
+      )?.id,
+    [buildings, branchId, formState.visitInfo.building],
   )
   const {
     steps: effectiveFormSteps,
@@ -571,6 +579,8 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
             invitationFields: invitationCustomFields,
             consentFields,
             steps: effectiveFormSteps,
+            branchId,
+            buildingId,
           },
         ),
         {

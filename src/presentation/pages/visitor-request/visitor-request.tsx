@@ -70,7 +70,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     primaryContactNameLocked,
     vehicleInfoGroups,
     vehicleInfoAllFields,
-  } = useVisitorRequestWizard(initial, branches)
+  } = useVisitorRequestWizard(initial, branches, buildings)
 
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
   const activeStep = activeSteps[currentStep]

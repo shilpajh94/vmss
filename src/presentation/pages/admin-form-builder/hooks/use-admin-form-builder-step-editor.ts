@@ -110,7 +110,13 @@ export function useAdminFormBuilderStepEditor() {
 
   usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
 
-  const selectField = useCallback((fieldId: string) => setSelectedFieldId(fieldId), [])
+  // Bumped only on an explicit Edit/select click (not the auto-select on
+  // load) so the page can scroll the properties panel into view.
+  const [panelScrollRequest, setPanelScrollRequest] = useState(0)
+  const selectField = useCallback((fieldId: string) => {
+    setSelectedFieldId(fieldId)
+    setPanelScrollRequest((n) => n + 1)
+  }, [])
 
   const toggleFieldRequired = useCallback(
     async (field: FormField) => {
@@ -383,6 +389,7 @@ export function useAdminFormBuilderStepEditor() {
     groups,
     selectedField,
     selectField,
+    panelScrollRequest,
     isLoading,
     errorMessage,
     retry,

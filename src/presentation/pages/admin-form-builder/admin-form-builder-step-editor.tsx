@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { DndContext, MouseSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { LayersIcon, LockIcon, PlusIcon } from '../../components/icons'
@@ -20,6 +21,7 @@ export function AdminFormBuilderStepEditorPage() {
     groups,
     selectedField,
     selectField,
+    panelScrollRequest,
     isLoading,
     errorMessage,
     retry,
@@ -50,6 +52,13 @@ export function AdminFormBuilderStepEditorPage() {
     publish,
     hasUnpublishedChanges,
   } = useAdminFormBuilderStepEditor()
+
+  const panelRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (panelScrollRequest === 0) return
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    panelRef.current?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
+  }, [panelScrollRequest])
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
@@ -262,11 +271,13 @@ export function AdminFormBuilderStepEditorPage() {
             </div>
 
             {selectedField && (
-              <FieldPropertiesPanel
-                field={selectedField}
-                siblingFields={fields}
-                onSave={(input) => saveFieldProperties(selectedField.id, input)}
-              />
+              <div ref={panelRef} className="scroll-mb-4">
+                <FieldPropertiesPanel
+                  field={selectedField}
+                  siblingFields={fields}
+                  onSave={(input) => saveFieldProperties(selectedField.id, input)}
+                />
+              </div>
             )}
           </div>
         )}
