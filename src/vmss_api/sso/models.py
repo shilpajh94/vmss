@@ -1,5 +1,6 @@
 import uuid
 
+import sqlalchemy as sa
 from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,6 +29,12 @@ class SsoProvider(Base, TimestampMixin):
     client_secret_encrypted: Mapped[str] = mapped_column(String(1000))
     client_secret_masked: Mapped[str] = mapped_column(String(20))
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Off by default: an existing Admin account is otherwise rejected at the
+    # SSO callback (password login only). Never lets JIT provisioning assign
+    # Admin — that stays blocked in `create_role_mapping`.
+    allow_admin_login: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.false()
+    )
 
 
 class SsoRoleMapping(Base, TimestampMixin):

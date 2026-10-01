@@ -84,17 +84,21 @@ treats it as an assignable role name. It only ever looks up the token's
 `groups` claim against `sso_role_mappings`, a table only an Admin can
 write to.
 
-## Admin accounts never complete SSO login
+## Admin accounts and SSO login
 
-Admin signs in via password login only (`docs/features/auth.md`) — SSO is
-for every other role. Two guards enforce this together:
+By default Admin signs in via password login only (`docs/features/auth.md`) —
+SSO is for every other role. A tenant can opt existing Admin accounts into
+SSO by setting `allowAdminLogin: true` on `PUT /auth/sso/config` (default
+`false`; returned by `GET /auth/sso/config`). It relaxes only the callback
+guard below; the role-mapping guard stays, so JIT provisioning can never
+create an Admin. Two guards enforce the default:
 
 - `POST /auth/sso/role-mappings` rejects (409) any attempt to create a
   mapping targeting the `admin` role, the same way it already rejects one
   targeting `visitor`. A first-time (just-in-time provisioned) SSO login
   can therefore never be assigned Admin.
-- The callback additionally rejects login for an **existing** account
-  that already holds the Admin role — closing the case a role-mapping
+- The callback additionally rejects login (unless `allowAdminLogin` is on)
+  for an **existing** account that already holds the Admin role — closing the case a role-mapping
   guard alone can't reach, since an existing account's role isn't
   re-evaluated from the token at all. The caller sees the same generic
   callback-failure response as any other rejected callback (so an

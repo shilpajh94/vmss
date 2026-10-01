@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from vmss_api.core.deps import (
     get_tenant_db,
     require_permission,
 )
+from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
 from vmss_api.core.schemas import Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.kiosks import service
@@ -24,6 +25,7 @@ from vmss_api.kiosks.schemas import (
     KioskVisibilityUpdate,
     SortableField,
 )
+from vmss_api.org_structure.deps import public_tenant_db
 from vmss_api.org_structure.schemas import ActiveStatus
 from vmss_api.tenant.models import Tenant
 
@@ -71,10 +73,11 @@ async def create_kiosk(
 @router.get(
     "",
     response_model=PaginatedEnvelope[KioskOut],
-    dependencies=[Depends(require_permission("kiosks:view"))],
 )
+@limiter.limit("60/minute")
 async def list_kiosks(
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    request: Request,
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     kiosk_status: Annotated[ActiveStatus | None, Query(alias="status")] = None,
     include_hidden: Annotated[bool, Query(alias="includeHidden")] = False,
@@ -102,11 +105,12 @@ async def list_kiosks(
 @router.get(
     "/{kiosk_id}",
     response_model=Envelope[KioskOut],
-    dependencies=[Depends(require_permission("kiosks:view"))],
 )
+@limiter.limit("60/minute")
 async def get_kiosk(
+    request: Request,
     kiosk_id: uuid.UUID,
-    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
 ) -> JSONResponse:
     kiosk = await service.get_kiosk(tenant_db, kiosk_id)
     return success_response(data=KioskOut.model_validate(kiosk))

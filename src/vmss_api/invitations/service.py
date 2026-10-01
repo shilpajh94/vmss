@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 from fastapi import HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.approvals.models import InvitationApprovalStep
@@ -252,6 +253,49 @@ async def _resolve_visit_detail_ids(
         resolved["department_id"] = department.id
         resolved["department_to_visit"] = department.name
     return resolved
+
+
+async def _resolve_active_branch(tenant_db: AsyncSession, branch_id: uuid.UUID) -> uuid.UUID:
+    stmt = select(Branch.id).where(
+        Branch.id == branch_id, Branch.is_active.is_(True), Branch.deleted_at.is_(None)
+    )
+    if (await tenant_db.execute(stmt)).scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown or inactive branch"
+        )
+    return branch_id
+
+
+async def _resolve_building(
+    tenant_db: AsyncSession, building_id: uuid.UUID | None, branch_id: uuid.UUID
+) -> uuid.UUID | None:
+    if building_id is None:
+        return None
+    stmt = select(Building.id).where(
+        Building.id == building_id,
+        Building.branch_id == branch_id,
+        Building.is_active.is_(True),
+        Building.deleted_at.is_(None),
+    )
+    if (await tenant_db.execute(stmt)).scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown building for the selected branch",
+        )
+    return building_id
+
+
+async def _match_department_by_name(
+    tenant_db: AsyncSession, branch_id: uuid.UUID, name: str
+) -> uuid.UUID | None:
+    stmt = select(Department.id).where(
+        Department.branch_id == branch_id,
+        Department.is_active.is_(True),
+        Department.deleted_at.is_(None),
+        func.lower(Department.name) == name.strip().lower(),
+    )
+    matches = (await tenant_db.execute(stmt)).scalars().all()
+    return matches[0] if len(matches) == 1 else None
 
 
 async def _resolve_active_category(
@@ -1235,9 +1279,22 @@ async def create_invitation(
         for key, files in vehicle_custom_field_file_contents.items()
     }
 
+    if source == RegistrationSource.visitor_walk_in and payload.branch_id is not None:
+        # A kiosk's device branch is only the default; the visitor's own
+        # branch selection wins, provided it is an active branch.
+        branch_id = await _resolve_active_branch(tenant_db, payload.branch_id)
+    building_id = await _resolve_building(tenant_db, payload.building_id, branch_id)
+    if visit_details["department_id"] is None and visit_details["department_to_visit"]:
+        # Free-text department with no `departmentId`: link it to the branch's
+        # department of the same name so the detail view returns the record.
+        visit_details["department_id"] = await _match_department_by_name(
+            tenant_db, branch_id, visit_details["department_to_visit"]
+        )
+
     invitation = Invitation(
         id=uuid.uuid4(),
         branch_id=branch_id,
+        building_id=building_id,
         created_by_user_id=created_by_user_id,
         source=source.value,
         registration_type=payload.registration_type.value,
@@ -1531,7 +1588,9 @@ async def get_invitation_location(
     (enrich-invitation-checkin-and-detail-views/design.md Decision 5).
     """
     return await InvitationRepository(tenant_db).get_location(
-        branch_id=invitation.branch_id, department_id=invitation.department_id
+        branch_id=invitation.branch_id,
+        department_id=invitation.department_id,
+        building_id=invitation.building_id,
     )
 
 
@@ -1864,7 +1923,7 @@ async def reschedule_invitation(
 
 
 async def _resolve_edit_changes(
-    tenant_db: AsyncSession, payload: InvitationEditRequest
+    tenant_db: AsyncSession, payload: InvitationEditRequest, branch_id: uuid.UUID
 ) -> dict[str, Any]:
     """Same catalog-id-overwrites-free-text resolution
     `_resolve_visit_detail_ids` applies at creation, scoped to whichever
@@ -1902,6 +1961,11 @@ async def _resolve_edit_changes(
             )
         changes["department_id"] = department.id
         changes["department_to_visit"] = department.name
+    elif changes.get("department_to_visit"):
+        # Free-text edit: re-link (or clear a now-stale link) by branch + name.
+        changes["department_id"] = await _match_department_by_name(
+            tenant_db, branch_id, changes["department_to_visit"]
+        )
     if payload.poc_user_id is not None:
         poc_user = await UserRepository(tenant_db).get_active(payload.poc_user_id)
         if poc_user is None:
@@ -2008,7 +2072,7 @@ async def edit_invitation(
                     "approval level"
                 ),
             )
-    changes = await _resolve_edit_changes(tenant_db, payload)
+    changes = await _resolve_edit_changes(tenant_db, payload, invitation.branch_id)
     if not changes:
         return invitation
     updated = await InvitationRepository(tenant_db).edit_if_eligible(invitation.id, **changes)

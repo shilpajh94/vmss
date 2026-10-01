@@ -6,8 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import User
+from vmss_api.core.config import settings
 from vmss_api.kiosks.models import Kiosk
 from vmss_api.kiosks.repository import KioskRepository
+from vmss_api.tenant.models import Tenant
 
 
 def _auth(user: User, issue_token: Callable[[User], str]) -> dict[str, str]:
@@ -139,8 +141,16 @@ async def test_delete_kiosk_soft_deletes(
 
 
 async def test_kiosk_endpoints_require_authentication(client: AsyncClient) -> None:
-    assert (await client.get("/api/v1/kiosks")).status_code == 401
     assert (await client.post("/api/v1/kiosks", json={"name": "x"})).status_code == 401
+
+
+async def test_kiosk_get_endpoints_are_public(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "default_tenant_slug", tenant.slug)
+    kiosk = await _make_kiosk(db_session)
+    assert (await client.get("/api/v1/kiosks")).status_code == 200
+    assert (await client.get(f"/api/v1/kiosks/{kiosk.id}")).status_code == 200
 
 
 async def test_kiosk_endpoints_require_permission(
@@ -154,7 +164,6 @@ async def test_kiosk_endpoints_require_permission(
     assert (
         await client.post("/api/v1/kiosks", json={"name": "x"}, headers=headers)
     ).status_code == 403
-    assert (await client.get("/api/v1/kiosks", headers=headers)).status_code == 403
     assert (
         await client.put(f"/api/v1/kiosks/{kiosk.id}", json={"name": "y"}, headers=headers)
     ).status_code == 403

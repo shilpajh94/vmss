@@ -213,7 +213,12 @@ def _register_idp(
 
 
 async def _save_provider(
-    db_session: AsyncSession, *, discovery_url: str, client_id: str, client_secret: str
+    db_session: AsyncSession,
+    *,
+    discovery_url: str,
+    client_id: str,
+    client_secret: str,
+    allow_admin_login: bool = False,
 ) -> SsoProvider:
     provider = SsoProviderFactory.build(
         id=uuid.uuid4(),
@@ -223,6 +228,7 @@ async def _save_provider(
         client_secret_encrypted=encryption.encrypt(client_secret),
         client_secret_masked=encryption.mask_secret(client_secret),
         is_enabled=True,
+        allow_admin_login=allow_admin_login,
         deleted_at=None,
     )
     db_session.add(provider)
@@ -1027,6 +1033,37 @@ async def test_callback_rejects_existing_admin_account(
     audit_actions = (await db_session.execute(audit_stmt)).scalars().all()
     assert "sso_login_rejected_admin_account" in audit_actions
     assert "sso_login" not in audit_actions
+
+
+@respx.mock
+async def test_callback_allows_existing_admin_when_tenant_opts_in(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, user: User
+) -> None:
+    urls = _idp_urls()
+    private_key = _rsa_keypair()
+    client_id = "fake-client-id"
+    await _save_provider(
+        db_session,
+        discovery_url=urls["discovery"],
+        client_id=client_id,
+        client_secret="s3cr3t",
+        allow_admin_login=True,
+    )
+
+    response = await _do_sso_login(
+        client,
+        tenant_slug=tenant.slug,
+        urls=urls,
+        private_key=private_key,
+        kid="kid-1",
+        client_id=client_id,
+        email=user.email,
+    )
+    assert response.status_code == 307
+
+    audit_stmt = select(AuditLog.action).where(AuditLog.entity_id == user.id)
+    audit_actions = (await db_session.execute(audit_stmt)).scalars().all()
+    assert "sso_login_rejected_admin_account" not in audit_actions
 
 
 # --- Exchange code: single-use, expiry ----------------------------------------

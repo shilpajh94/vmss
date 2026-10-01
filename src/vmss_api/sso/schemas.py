@@ -19,6 +19,7 @@ class SsoProviderConfigIn(CamelModel):
     client_id: str = Field(max_length=255)
     client_secret: str = Field(max_length=1000)
     is_enabled: bool = True
+    allow_admin_login: bool = False
 
 
 class SsoProviderConfigOut(CamelModel):
@@ -28,6 +29,7 @@ class SsoProviderConfigOut(CamelModel):
     client_id: str
     client_secret_masked: str
     is_enabled: bool
+    allow_admin_login: bool
 
 
 class SsoProviderTestRequest(CamelModel):
