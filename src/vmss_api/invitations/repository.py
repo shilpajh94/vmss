@@ -6,7 +6,8 @@ from sqlalchemy import Select, exists, func, or_, select, update
 from sqlalchemy.orm import aliased, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
-from vmss_api.auth.models import UserBranchRole
+from vmss_api.auth.models import Role, UserBranchRole
+from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.tenancy import branch_filter as _core_branch_filter
@@ -38,7 +39,8 @@ def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) 
     currently holds — via branch-scoped `UserBranchRole` at the invitation's
     own branch or company-wide — the role of the invitation's current
     pending, role-identified step, AND that step has no delegate assigned,
-    (d) has personally acted on (approved or rejected) any of the
+    AND that role is not delegation-only (`DELEGATION_ONLY_ROLE_NAMES`,
+    i.e. `host`), (d) has personally acted on (approved or rejected) any of the
     invitation's steps, regardless of that step's or the invitation's
     current status, or (e) currently holds — via branch-scoped
     `UserBranchRole` at the invitation's own branch or company-wide — the
@@ -61,6 +63,14 @@ def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) 
     of delegation or status, since that role owns front-office intake for
     the invitation's entire lifecycle — the same permanence clause (d)
     gives an individual actor, granted here to the whole role instead.
+
+    (c) never matches a delegation-only role's step
+    (restrict-delegated-invitation-visibility): no holder of such a role may
+    act on or be notified about an undelegated step of it
+    (`approvals/service.py::_caller_matches_step`,
+    `notifications/service.py::notify_step_approver`), so it must not be
+    broadcast to all of them here either — an unassigned `host` step is seen
+    only via (a), (d) and (e) until someone delegates it.
     (b), (c), (d), and (e) are expressed as (correlated, where needed)
     subqueries against `invitation_approval_steps`/`user_branch_roles`, not
     a per-invitation loop (query-performance.md §2).
@@ -99,6 +109,7 @@ def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) 
     current_role_holder = exists(
         select(current_step.id)
         .join(UserBranchRole, UserBranchRole.role_id == current_step.approver_role_id)
+        .join(Role, Role.id == current_step.approver_role_id)
         .where(
             current_step.invitation_id == Invitation.id,
             current_step.deleted_at.is_(None),
@@ -106,6 +117,7 @@ def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) 
             current_step.approver_role_id.is_not(None),
             current_step.step_order == min_pending_step_order,
             current_step.delegated_to_user_id.is_(None),
+            func.lower(Role.name).not_in(DELEGATION_ONLY_ROLE_NAMES),
             UserBranchRole.user_id == user_id,
             or_(
                 UserBranchRole.branch_id == Invitation.branch_id,
@@ -647,6 +659,22 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             order_by=_order_clause(column, sort_order),
             filters=filters,
         )
+
+    async def is_relevant_to(
+        self, id_: uuid.UUID, *, user_id: uuid.UUID, default_host_role_id: uuid.UUID
+    ) -> bool:
+        """Single-row form of `list_page`'s `relevantToMe` predicate, so the
+        detail endpoint's participant check can never drift from the worklist
+        (restrict-delegated-invitation-visibility/design.md Decision 3).
+        """
+        stmt = select(
+            exists().where(
+                Invitation.id == id_,
+                Invitation.deleted_at.is_(None),
+                _relevant_to_me_filter(user_id, default_host_role_id),
+            )
+        )
+        return bool((await self.session.execute(stmt)).scalar())
 
     async def get_qr_code(self, invitation_id: uuid.UUID) -> InvitationQRCode | None:
         stmt = select(InvitationQRCode).where(InvitationQRCode.invitation_id == invitation_id)

@@ -240,6 +240,7 @@ ADMIN_PERMISSION_CODES = [
     "approval-workflow-rules:manage",
     "invitations:create",
     "invitations:view",
+    "invitations:view-all",
     "invitations:cancel",
     "invitations:approve",
     "invitations:approve-override",

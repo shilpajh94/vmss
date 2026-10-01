@@ -1178,9 +1178,9 @@ async def create_invitation(
             storage_key = await storage_save(
                 tenant.id, "invitations/group-files", content, content_types[index]
             )
-            group_field_storage.setdefault(group_id, {}).setdefault(index, {})[
-                file_field_id
-            ] = storage_key
+            group_field_storage.setdefault(group_id, {}).setdefault(index, {})[file_field_id] = (
+                storage_key
+            )
 
     # Inline (non-grouped) custom-field file uploads
     # (add-inline-custom-field-file-upload): validated for presence/count
@@ -2234,6 +2234,18 @@ async def list_invitations_page(
         page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
+    )
+
+
+async def is_invitation_relevant_to(
+    tenant_db: AsyncSession,
+    invitation_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID,
+    default_host_role_id: uuid.UUID,
+) -> bool:
+    return await InvitationRepository(tenant_db).is_relevant_to(
+        invitation_id, user_id=user_id, default_host_role_id=default_host_role_id
     )
 
 

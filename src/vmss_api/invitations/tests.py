@@ -2282,11 +2282,17 @@ async def test_get_invitation_detail_group_visitor_id_proof_url_omitted_without_
     # which collides with the one the `user` fixture above already created
     # (global `permissions.code` is unique) — reuses that existing row
     # instead of inserting a duplicate.
-    existing_permission = (
-        await db_session.execute(select(Permission).where(Permission.code == "invitations:view"))
-    ).scalar_one()
+    existing_permissions = list(
+        (
+            await db_session.execute(
+                select(Permission).where(
+                    Permission.code.in_(("invitations:view", "invitations:view-all"))
+                )
+            )
+        ).scalars()
+    )
     viewer_role = RoleFactory.build(
-        id=uuid.uuid4(), name="invitations-viewer-no-documents", permissions=[existing_permission]
+        id=uuid.uuid4(), name="invitations-viewer-no-documents", permissions=existing_permissions
     )
     viewer_branch_role = UserBranchRole(id=uuid.uuid4(), role=viewer_role, branch_id=branch.id)
     viewer = UserFactory.build(
@@ -3021,14 +3027,17 @@ async def test_track_inactive_default_tenant_logged_as_error(
 async def _branch_scoped_invitation_viewer(
     db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID
 ) -> User:
-    """A caller whose only role grant is `invitations:view` at `branch_id` —
-    the branch-scoping counterpart of `org_structure/tests.py`'s
-    `_branch_scoped_user`, applied to this feature's own permission.
+    """A branch-wide invitation viewer (`invitations:view` +
+    `invitations:view-all`) at `branch_id` — the branch-scoping counterpart
+    of `org_structure/tests.py`'s `_branch_scoped_user`, applied to this
+    feature's own permissions. See `_branch_scoped_host` for a caller holding
+    `invitations:view` alone (restrict-delegated-invitation-visibility).
     """
-    permission = PermissionFactory.build(
-        id=uuid.uuid4(), code="invitations:view", description="invitations:view"
-    )
-    role = RoleFactory.build(id=uuid.uuid4(), name="invitations-viewer", permissions=[permission])
+    permissions = [
+        PermissionFactory.build(id=uuid.uuid4(), code=code, description=code)
+        for code in ("invitations:view", "invitations:view-all")
+    ]
+    role = RoleFactory.build(id=uuid.uuid4(), name="invitations-viewer", permissions=permissions)
     branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
     test_user = UserFactory.build(
         id=uuid.uuid4(),
@@ -3037,7 +3046,7 @@ async def _branch_scoped_invitation_viewer(
         full_name="Invitation Viewer",
         branch_roles=[branch_role],
     )
-    db_session.add_all([permission, role, test_user])
+    db_session.add_all([*permissions, role, test_user])
     await db_session.flush()
     db_session.add(
         TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
@@ -3088,7 +3097,7 @@ async def _branch_scoped_invitation_and_documents_viewer(
     """
     permissions = [
         PermissionFactory.build(id=uuid.uuid4(), code=code, description=code)
-        for code in ("invitations:view", "documents:view")
+        for code in ("invitations:view", "invitations:view-all", "documents:view")
     ]
     role = RoleFactory.build(id=uuid.uuid4(), name="documents-viewer", permissions=permissions)
     branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
@@ -11282,3 +11291,372 @@ async def test_confirmation_without_poc_or_host_names_the_branch_contact_person(
     assert "Your point of contact" in email["html_body"]
     assert "Anil Menon" in email["html_body"]
     assert "+91 90000 55566" in email["html_body"]
+
+
+# --- restrict-delegated-invitation-visibility ----------------------------------
+
+
+async def _get_or_create_permission(db_session: AsyncSession, code: str) -> Permission:
+    """Global `permissions.code` is unique, so reuse a row another fixture
+    (e.g. `user`) may already have created instead of colliding with it.
+    """
+    existing = (
+        await db_session.execute(select(Permission).where(Permission.code == code))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    permission = PermissionFactory.build(id=uuid.uuid4(), code=code, description=code)
+    db_session.add(permission)
+    await db_session.flush()
+    return permission
+
+
+async def _host_role(db_session: AsyncSession):
+    """The standard `host` role — delegation-only, holding `invitations:view`
+    but not `invitations:view-all`, same as `auth/rbac_catalog.py` seeds it.
+    """
+    role = RoleFactory.build(
+        id=uuid.uuid4(),
+        name="host",
+        permissions=[await _get_or_create_permission(db_session, "invitations:view")],
+    )
+    db_session.add(role)
+    await db_session.flush()
+    return role
+
+
+async def _reception_to_host_invitation(
+    db_session: AsyncSession,
+    branch_id: uuid.UUID,
+    host_role,
+    *,
+    step0_actor: User,
+    resolved_host: User | None = None,
+):
+    """A `submitted` reception → host invitation whose `stepOrder` 0 step
+    (default host role) is already approved by `step0_actor` and whose
+    `stepOrder` 1 step (`host` role) is current and undelegated — the state
+    the dev tenant's workflow sits in after Reception's own step is done.
+    `resolved_host` models step 0 having been delegated to (and approved by)
+    that host. Every step field the relevance rule reads is pinned, not left
+    to the factory's RNG.
+    """
+    reception = await RoleRepository(db_session).get_by_name("reception")
+    assert reception is not None
+    invitation = _build_invitation(
+        db_session,
+        branch_id,
+        status="submitted",
+        approved_at=None,
+        host_id=resolved_host.id if resolved_host is not None else None,
+    )
+    db_session.add(invitation)
+    await db_session.flush()
+    step1 = InvitationApprovalStepFactory.build(
+        id=uuid.uuid4(),
+        invitation_id=invitation.id,
+        step_order=1,
+        approver_role_id=host_role.id,
+        approver_user_id=None,
+        status="pending",
+        acted_by_user_id=None,
+        acted_at=None,
+        delegated_to_user_id=None,
+        delegated_by_user_id=None,
+        delegated_at=None,
+    )
+    db_session.add_all(
+        [
+            InvitationApprovalStepFactory.build(
+                id=uuid.uuid4(),
+                invitation_id=invitation.id,
+                step_order=0,
+                approver_role_id=reception.id,
+                approver_user_id=None,
+                status="approved",
+                acted_by_user_id=step0_actor.id,
+                acted_at=datetime.now(UTC),
+                delegated_to_user_id=resolved_host.id if resolved_host is not None else None,
+                delegated_by_user_id=None,
+                delegated_at=None,
+            ),
+            step1,
+        ]
+    )
+    await db_session.commit()
+    return invitation, step1
+
+
+async def _reception_holder(db_session: AsyncSession, branch_id: uuid.UUID) -> User:
+    reception = await RoleRepository(db_session).get_by_name("reception")
+    assert reception is not None
+    return _make_role_holder(db_session, reception, branch_id)
+
+
+async def _relevant_tracking_ids(
+    client: AsyncClient, issue_token: Callable[[User], str], caller: User
+) -> set[str]:
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true"},
+        headers={"Authorization": f"Bearer {issue_token(caller)}"},
+    )
+    assert response.status_code == 200, response.text
+    return {row["trackingId"] for row in response.json()["data"]}
+
+
+async def _get_detail(
+    client: AsyncClient, issue_token: Callable[[User], str], caller: User, invitation_id
+) -> Response:
+    return await client.get(
+        f"/api/v1/invitations/{invitation_id}",
+        headers={"Authorization": f"Bearer {issue_token(caller)}"},
+    )
+
+
+async def test_relevant_to_me_unassigned_host_step_not_broadcast_to_other_hosts(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "An unassigned host-role step is not broadcast to every host"
+    and "The delegate and Reception still see an unassigned host-role step".
+    """
+    host_role = await _host_role(db_session)
+    host_x = _make_role_holder(db_session, host_role, branch.id)
+    host_y = _make_role_holder(db_session, host_role, branch.id)
+    receptionist = await _reception_holder(db_session, branch.id)
+    await db_session.flush()
+    invitation, _ = await _reception_to_host_invitation(
+        db_session, branch.id, host_role, step0_actor=host_x, resolved_host=host_x
+    )
+
+    assert invitation.tracking_id not in await _relevant_tracking_ids(client, issue_token, host_y)
+    assert invitation.tracking_id in await _relevant_tracking_ids(client, issue_token, host_x)
+    assert invitation.tracking_id in await _relevant_tracking_ids(client, issue_token, receptionist)
+
+
+async def test_relevant_to_me_approve_then_delegate_never_exposes_host_step_to_other_hosts(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "Approve-and-delegate never exposes the next host step to
+    other hosts" — covers the gap between the web's approve and delegate
+    calls, and the state after the delegate call.
+    """
+    host_role = await _host_role(db_session)
+    host_x = _make_role_holder(db_session, host_role, branch.id)
+    host_y = _make_role_holder(db_session, host_role, branch.id)
+    receptionist = await _reception_holder(db_session, branch.id)
+    await db_session.flush()
+    invitation, step1 = await _reception_to_host_invitation(
+        db_session, branch.id, host_role, step0_actor=receptionist
+    )
+
+    assert invitation.tracking_id not in await _relevant_tracking_ids(client, issue_token, host_y)
+    assert invitation.tracking_id not in await _relevant_tracking_ids(client, issue_token, host_x)
+
+    await InvitationApprovalStepRepository(db_session).delegate_if_eligible(
+        step1.id, delegated_to_user_id=host_x.id, delegated_by_user_id=receptionist.id
+    )
+    await db_session.commit()
+
+    assert invitation.tracking_id in await _relevant_tracking_ids(client, issue_token, host_x)
+    assert invitation.tracking_id not in await _relevant_tracking_ids(client, issue_token, host_y)
+
+
+async def test_list_invitations_branch_listing_rejects_host_without_view_all(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "A host holding only invitations:view cannot use the
+    branch-wide listing" — permission-denied case for the narrowed gate.
+    """
+    host_role = await _host_role(db_session)
+    host = _make_role_holder(db_session, host_role, branch.id)
+    db_session.add(_build_invitation(db_session, branch.id))
+    await db_session.commit()
+    token = issue_token(host)
+
+    for headers in (
+        {"Authorization": f"Bearer {token}"},
+        {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
+    ):
+        response = await client.get("/api/v1/invitations", headers=headers)
+        assert response.status_code == 403, response.text
+
+
+async def test_invitation_detail_visible_to_reception_and_delegate_only(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "Reception opens any invitation at their branch", "The
+    assigned user opens the invitation delegated to them", and "An
+    uninvolved host cannot open a delegated invitation".
+    """
+    host_role = await _host_role(db_session)
+    host_x = _make_role_holder(db_session, host_role, branch.id)
+    host_y = _make_role_holder(db_session, host_role, branch.id)
+    receptionist = await _reception_holder(db_session, branch.id)
+    await db_session.flush()
+    invitation, step1 = await _reception_to_host_invitation(
+        db_session, branch.id, host_role, step0_actor=receptionist
+    )
+    await InvitationApprovalStepRepository(db_session).delegate_if_eligible(
+        step1.id, delegated_to_user_id=host_x.id, delegated_by_user_id=receptionist.id
+    )
+    await db_session.commit()
+
+    for caller in (receptionist, host_x):
+        response = await _get_detail(client, issue_token, caller, invitation.id)
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["trackingId"] == invitation.tracking_id
+
+    response = await _get_detail(client, issue_token, host_y, invitation.id)
+    assert response.status_code == 404, response.text
+    assert "data" not in response.json() or response.json()["data"] is None
+
+
+async def test_invitation_detail_uninvolved_host_gets_404_for_unassigned_host_step(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "An uninvolved host cannot open an unassigned host-role
+    step's invitation".
+    """
+    host_role = await _host_role(db_session)
+    host_y = _make_role_holder(db_session, host_role, branch.id)
+    receptionist = await _reception_holder(db_session, branch.id)
+    await db_session.flush()
+    invitation, _ = await _reception_to_host_invitation(
+        db_session, branch.id, host_role, step0_actor=receptionist
+    )
+
+    response = await _get_detail(client, issue_token, host_y, invitation.id)
+    assert response.status_code == 404, response.text
+
+
+async def test_invitation_detail_delegate_without_any_grant_can_open_it(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "A delegate without invitations:view still opens their
+    invitation" — the participant path skips the branch-permission check,
+    same as `relevantToMe`.
+    """
+    host_role = await _host_role(db_session)
+    receptionist = await _reception_holder(db_session, branch.id)
+    delegate = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"delegate-{uuid.uuid4().hex[:8]}@acme-test.example",
+        full_name="Delegate",
+    )
+    db_session.add(delegate)
+    await db_session.flush()
+    invitation, step1 = await _reception_to_host_invitation(
+        db_session, branch.id, host_role, step0_actor=receptionist
+    )
+    await InvitationApprovalStepRepository(db_session).delegate_if_eligible(
+        step1.id, delegated_to_user_id=delegate.id, delegated_by_user_id=receptionist.id
+    )
+    await db_session.commit()
+
+    response = await _get_detail(client, issue_token, delegate, invitation.id)
+    assert response.status_code == 200, response.text
+
+
+async def test_invitation_detail_branch_wide_viewer_sees_uninvolved_invitation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "Security and Admin keep branch-wide detail access" — any
+    `invitations:view-all` holder at the branch, without participating.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"relevant-role-{uuid.uuid4().hex[:8]}")
+    db_session.add(role)
+    await db_session.flush()
+    invitation = await _invitation_with_role_step(db_session, branch.id, role)
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+
+    response = await _get_detail(client, issue_token, viewer, invitation.id)
+    assert response.status_code == 200, response.text
+
+
+async def test_invitation_detail_caller_without_any_grant_gets_403(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "A caller with no viewing grant is still rejected with 403" —
+    unchanged status code for the pre-existing condition.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"relevant-role-{uuid.uuid4().hex[:8]}")
+    db_session.add(role)
+    await db_session.flush()
+    invitation = await _invitation_with_role_step(db_session, branch.id, role)
+
+    response = await _get_detail(client, issue_token, user_without_permissions, invitation.id)
+    assert response.status_code == 403, response.text
+
+
+async def test_invitation_detail_unknown_id_is_404(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec.md "Detail from another tenant is never reachable" at the API
+    level — an id absent from the caller's own tenant schema is 404; the
+    schema-level isolation is covered directly below.
+    """
+    receptionist = await _reception_holder(db_session, branch.id)
+    await db_session.commit()
+
+    response = await _get_detail(client, issue_token, receptionist, uuid.uuid4())
+    assert response.status_code == 404, response.text
+
+
+async def test_is_relevant_to_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    """testing-standards.md §2 — the detail endpoint's participant check,
+    run against another tenant's schema, never matches this tenant's
+    invitation even for the same user and invitation ids.
+    """
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    invitation = await _invitation_with_host_step(db_session, branch.id, host)
+    default_host_role_id = uuid.uuid4()
+    assert await InvitationRepository(db_session).is_relevant_to(
+        invitation.id, user_id=host.id, default_host_role_id=default_host_role_id
+    )
+
+    other_schema = "tenant_other_test_invitation_is_relevant_to"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        assert not await InvitationRepository(other_session).is_relevant_to(
+            invitation.id, user_id=host.id, default_host_role_id=default_host_role_id
+        )

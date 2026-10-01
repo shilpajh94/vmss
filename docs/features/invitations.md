@@ -29,11 +29,11 @@ handled `400` ("branch could not be determined") rather than FastAPI's
 generic required-header `422`. This now matches
 `docs/features/org_structure.md`'s creation endpoints, which resolve their
 branch from the request body via the same `authorize_branch_id` helper.
-| GET | `/api/v1/invitations` | `invitations:view`, branch-scoped | — | Paginated listing of invitations for triage/browsing — see "Listing invitations" below. |
+| GET | `/api/v1/invitations` | `invitations:view-all`, branch-scoped (or none with `relevantToMe=true`) | — | Paginated listing of invitations for triage/browsing — see "Listing invitations" below. |
 | GET | `/api/v1/invitations/lookup-by-email?email=` | `invitations:create`, branch-scoped | — | Staff-authenticated prefill lookup for the create-invitation wizard's Primary Contact fields: returns `fullName`, `phone`, `preferredContactMethod`, `visitorCategoryId`, `idProofType`, `photoUrl`, `idProofUrl` from the most recent non-deleted invitation, among the caller's authorized branches, whose primary contact email matches case-insensitively. `data: null` (not 404) when no match — same "no match is not an error" convention `GET /api/v1/visitor-portal/me` uses. Gated by `invitations:create` rather than `invitations:view` since it only exists to prefill that create flow. `photoUrl` is always resolved when captured (same as every other invitation response); `idProofUrl` is `null` unless the caller additionally holds `documents:view` at the matched invitation's branch — `invitations:create` alone does not grant identity-document visibility, matching `GET /invitations/{id}`'s existing gating. See `openspec/changes/add-invitation-lookup-by-email/`. |
 | GET | `/api/v1/invitations/track?trackingId=` | None (public) | 20/minute per IP | Full status/visit-summary lookup by the human-readable tracking ID — returns `InvitationTrackingOut`, including every visit-detail and carried-item field captured at creation. |
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
-| GET | `/api/v1/invitations/{id}` | `invitations:view` at the invitation's branch | — | Authenticated, staff-facing single-invitation detail view (`InvitationDetailOut`) — branch/source/creator plus every lifecycle field below. Also includes resolved `branch`/`building`/`department` detail (alongside the existing raw `branchId`) and the primary contact's/each visitor's `idProofType`; `idProofUrl` (the raw document image) is included only when the caller additionally holds `documents:view` — see "Resolved location and permission-gated ID-proof documents" below. 404 unknown id, 403 (not 404) if the caller lacks branch access. See "Lifecycle actions" below. |
+| GET | `/api/v1/invitations/{id}` | `invitations:view-all` at the invitation's branch, **or** being a participant (same rule as `relevantToMe`) | — | Authenticated, staff-facing single-invitation detail view (`InvitationDetailOut`) — branch/source/creator plus every lifecycle field below. Also includes resolved `branch`/`building`/`department` detail (alongside the existing raw `branchId`) and the primary contact's/each visitor's `idProofType`; `idProofUrl` (the raw document image) is included only when the caller additionally holds `documents:view` — see "Resolved location and permission-gated ID-proof documents" below. 404 unknown id; 404 also for a non-participant who holds only `invitations:view` there (e.g. an uninvolved host — existence is not disclosed); 403 if the caller holds no invitation-viewing grant there at all. See "Who can see an invitation" and "Lifecycle actions" below. |
 | PATCH | `/api/v1/invitations/{id}/deny` | `invitations:deny` at the invitation's branch | — | Transitions a `submitted` invitation to `denied`, with a mandatory `reason`, and dispatches a denial notification. 409 if not currently `submitted`. |
 | PATCH | `/api/v2/invitations/{trackingId}/check-in` | None (public) | 20/minute per IP | **The single staff/desk-facing check-in endpoint** — the legacy `PATCH /api/v1/invitations/{id}/check-in` route has been removed outright (`checkin-approval-workflow-improvements`). Public, unauthenticated check-in by the invitation's `tracking_id` (`INV-XXXXXXXX`). Transitions an invitation whose `checkInStatus` is `unused` or `checked_out` to `checked_in` (`allow-multiple-checkins` — `checked_out` is not terminal, mirroring the QR endpoint's cycling rule below); `status` must also show the invitation was validly approved at some point (`approved`, `checked_in`, or `checked_out` — never `submitted`/`denied`). A call while already `checked_in` is a **200 idempotent no-op** (unchanged data, no re-stamped `checkedInAt`) rather than an error — this holds even if the invitation was checked in via the *other* check-in endpoint (QR), since both read/write the same `checkInStatus` column. 409 if never approved ("Invitation is not approved") or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key` (optional — the already-checked-in case is idempotent on its own; the header only dedupes two distinct concurrent requests). No branch-authorization check since there's no authenticated caller. Audit entries for this path use `actor_user_id = null` and `action = "invitation_checked_in_public"`. Success response (`InvitationCheckInOut`) matches the public tracking lookup's field set — primary contact name, host display name, purpose of visit, department, preferred visit date/time, expected duration, additional notes, carried items, co-visitors, and vehicles — alongside the id/trackingId/status fields it already carried. It does not carry `branchId`/`createdByUserId`/badge/watchlist-override internals, resolved branch/building/department, or any ID-proof field; those stay exclusive to `GET /invitations/{id}` (branch/building/department also on the QR endpoints below) — this endpoint has no authenticated caller to gate anything by, so it stays exactly as minimally-revealing as before. See "The tracking ID is a plain, human-readable identifier" below for how tenancy resolves with no bearer token. |
 | PATCH | `/api/v2/invitations/qr/{token}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated QR scan check-in — `token` is the encrypted, tamper-evident check-in token encoded in the invitation's QR image (see "QR check-in: encrypted token and the `checkInStatus` lifecycle" below), not the tracking ID. **No longer toggles** (`checkin-approval-workflow-improvements`): entry only, `unused`/`checked_out` → `checked_in`. Scanning while already `checked_in` is a **200 idempotent no-op** (not a silent toggle to checked-out, and not an error) — same "Verification passed" message, unchanged data; use the check-out endpoint below to actually exit. 400 for an invalid/tampered token or a not-yet-approved invitation, 409 for a watchlist block, 425 if scanned before `preferredVisitDate` (`qr-checkin-scheduling-photo-email`), 410 if scanned after `expiresAt` has passed. Audit entries use `action = "invitation_qr_checked_in"`. Accepts `Idempotency-Key` — a scanning client must mint a fresh key per physical scan, not reuse one across scans. Also includes resolved `branch`/`building`/`department` detail and the primary contact's/each visitor's `idProofType` — but never an ID-proof document URL, since there's no authenticated caller to gate one by; see "Resolved location and permission-gated ID-proof documents" below. |
@@ -700,7 +700,7 @@ touch the tracking-ID check-in (`PATCH /api/v2/invitations/{trackingId}
 
 ## Listing invitations
 
-`GET /invitations` gives an authenticated, `invitations:view`-gated caller a
+`GET /invitations` gives an authenticated, `invitations:view-all`-gated caller a
 paginated, filterable, sortable view of invitations — for browsing/triage
 (e.g. "who's expected today at my branch"), not for looking up one
 invitation's full detail (that's still `GET /invitations/track`'s job).
@@ -708,7 +708,8 @@ Branch scoping matches every other branch-scoped list endpoint
 (`docs/features/org_structure.md`'s `GET /buildings`/`GET /floors`): supply
 `X-Branch-ID` to narrow to one branch (rejected with 404/403 the same way an
 unknown/unauthorized branch id is anywhere else), or omit it to list across
-every branch the caller holds `invitations:view` at.
+every branch the caller holds `invitations:view-all` at. A `host` holds only
+`invitations:view` and gets 403 here — hosts use `relevantToMe=true`.
 
 Query params:
 
@@ -776,6 +777,36 @@ It composes with `status`/`registrationType`/`source` and with
 pagination/sorting exactly like the branch-scoped mode. A caller who is
 neither host nor delegate on any invitation gets an empty, successfully
 paginated result, not an error.
+
+## Who can see an invitation
+
+**BREAKING (restrict-delegated-invitation-visibility)**: once Reception
+delegates a request to one person, only Reception and that person (plus
+anyone who already acted on it) should see it and its details.
+
+- **`invitations:view-all`** — "see every invitation at this branch". Seeded
+  for `admin`, `reception` and `security`; **not** `host`. Gates the
+  branch-scoped `GET /invitations`, the non-participant path of
+  `GET /invitations/{id}`, and `/admin/dashboard/*`.
+- **`invitations:view`** — kept by `host`; on its own it no longer grants any
+  branch-wide read. It only decides 404 vs 403 for a non-participant on the
+  detail endpoint.
+- **Participant** — the `relevantToMe` rule above. `GET /invitations/{id}`
+  serves the detail to a participant even with no permission at all (e.g. a
+  delegate).
+- **Delegation-only roles** (`auth/rbac_catalog.py::DELEGATION_ONLY_ROLE_NAMES`,
+  i.e. `host`): the "holds the current step's role" clause never matches
+  their steps. An unassigned `host` step — e.g. after Reception's delegate
+  approves step 0, or between the two calls behind the portal's "Approve &
+  Delegate" — is no longer shown to every host, matching the existing rule
+  that no host can act on or be notified about it until it's delegated.
+
+**Deploy:** existing tenants need `scripts/upgrade_all_tenants.py` (tenant
+migration `d4e6f8a0b2c3` grants `invitations:view-all` to every role that
+held `invitations:view` except `host`, including custom roles; then
+`seed_default_roles`). Until it runs, Reception/Security/Admin get 403 on the
+branch listing and dashboard; the prestart drift check warns about the
+lagging tenant.
 
 ## The tracking ID is a plain, human-readable identifier
 
