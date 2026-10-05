@@ -15,9 +15,12 @@ interface PageContentLayoutProps {
 // unaffected, since only this component's own data region gets overflow.
 export function PageContentLayout({ header, children }: PageContentLayoutProps) {
   return (
-    <div className="flex h-full min-h-0 flex-col gap-6">
-      <div className="flex flex-none flex-col gap-6">{header}</div>
-      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+    // Below `lg` the stacked header (title, full-width search and filters) can
+    // be taller than the phone's viewport, so the whole page scrolls as one
+    // instead of squeezing the data region to a sliver.
+    <div className="flex flex-col gap-4 md:gap-6 lg:h-full lg:min-h-0">
+      <div className="flex flex-none flex-col gap-4 md:gap-6">{header}</div>
+      <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">{children}</div>
     </div>
   )
 }

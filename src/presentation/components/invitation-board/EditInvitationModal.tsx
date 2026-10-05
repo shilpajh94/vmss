@@ -94,7 +94,7 @@ export function EditInvitationModal({
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-3">
             <h3 className="text-overline text-text-faint">Visitor (read-only)</h3>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
               <ReadOnlyField label="Name" value={detail.primaryContactFullName} />
               <ReadOnlyField label="Host" value={detail.hostNameOrEmail ?? 'Unassigned — Front Office'} />
             </div>
@@ -102,7 +102,7 @@ export function EditInvitationModal({
 
           <div className="flex flex-col gap-3">
             <h3 className="text-overline text-text-faint">Visit details</h3>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <SelectField
                 label="Purpose of Visit"
                 placeholder="Select purpose"

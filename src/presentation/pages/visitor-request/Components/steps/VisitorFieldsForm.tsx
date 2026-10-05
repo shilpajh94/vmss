@@ -64,7 +64,7 @@ export function VisitorFieldsForm({
     (visitorCategoriesState.status === 'loaded' && visitorCategoriesState.categories.length === 0)
 
   return (
-    <div className="grid grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <TextField
         label="Full Name"
         placeholder="Full name"
@@ -178,7 +178,7 @@ export function VisitorFieldsForm({
         />
       )}
       {customFields.length > 0 && (
-        <div className="col-span-2">
+        <div className="col-span-full">
           <CustomFieldsSection
             fields={customFields}
             value={value.customFieldValues}

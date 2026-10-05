@@ -137,7 +137,7 @@ export function BranchFormModal({ formState, employees, isSaving, onSubmit, onCl
           error={errors.contactPhone}
           required
         />
-        <div className="flex gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row">
           <div className="flex-1">
             <SelectField
               label="Operating Hours (From)"

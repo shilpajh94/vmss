@@ -88,9 +88,9 @@ interface ReviewConfirmStepProps {
 
 function SummarySection({ title, rows }: { title: string; rows: [string, ReactNode][] }) {
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-6 shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
+    <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-4 shadow-[0_4px_8px_rgba(15,23,42,0.03)] md:p-6">
       <h4 className="font-display text-base font-semibold text-text">{title}</h4>
-      <dl className="grid grid-cols-2 gap-4 text-body">
+      <dl className="grid grid-cols-1 gap-4 text-body sm:grid-cols-2">
         {rows.map(([label, value], index) => (
           <div key={`${label}-${index}`} className="flex flex-col gap-1">
             <dt className="text-caption text-text-muted">{label}</dt>
@@ -212,7 +212,7 @@ export function ReviewConfirmStep({
 }: ReviewConfirmStepProps) {
   if (status === 'success') {
     return (
-      <div className="flex flex-col items-center gap-3 rounded-lg border border-success bg-surface p-8 text-center">
+      <div className="flex flex-col items-center gap-3 rounded-lg border border-success bg-surface p-5 text-center md:p-8">
         <h3 className="text-h3 text-text">Request Submitted</h3>
         <p className="text-body text-text-muted">Your visit request has been received. You can reference this tracking ID for any follow-up.</p>
         <p className="text-h2 text-primary">{trackingId}</p>
@@ -358,7 +358,7 @@ export function ReviewConfirmStep({
         />
       )}
 
-      <div className="flex gap-3">
+      <div className="sticky bottom-0 -mx-4 -mb-4 flex flex-wrap gap-3 rounded-b-2xl border-t border-border-subtle bg-surface px-4 py-3 sm:-mx-6 sm:-mb-6 sm:px-6 md:static md:m-0 md:border-0 md:p-0">
         <button
           type="button"
           onClick={onBack}

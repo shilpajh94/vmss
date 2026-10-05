@@ -2,7 +2,7 @@ import { BackButton } from '../../components/BackButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { TextareaField } from '../../components/ui/TextareaField'
-import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
+import { SwitchField } from '../../components/ui/ToggleSwitch'
 import { usePageHeader } from '../../context/page-header-context'
 import { COUNTRY_OPTIONS, OPERATING_HOURS_OPTIONS } from './branch-form-options'
 import { useAdminBranchCreate } from './hooks/use-admin-branch-create'
@@ -20,17 +20,17 @@ export function AdminBranchCreatePage() {
       <div className="flex items-center gap-4">
         <BackButton onClick={cancel} />
         <div className="flex flex-col gap-1">
-          <h1 className="font-display text-2xl font-bold text-text">Create New Branch</h1>
+          <h1 className="font-display text-xl font-bold md:text-2xl text-text">Create New Branch</h1>
           <p className="font-body text-[13px] text-text-muted">
             Provision a new logical branch office with physical addresses, operating parameters, and contact references.
           </p>
         </div>
       </div>
 
-      <div className="flex w-full flex-col gap-6 rounded-2xl border border-border bg-surface p-6">
+      <div className="flex w-full flex-col gap-6 rounded-2xl border border-border bg-surface p-4 md:p-6">
         <div className="flex flex-col gap-4">
           <h2 className="font-display text-base font-semibold text-text">Branch Identity &amp; Geography</h2>
-          <div className="flex gap-6">
+          <div className="flex flex-col gap-4 md:flex-row md:gap-6">
             <div className="flex-1">
               <TextField label="Branch Name" required value={values.name} onChange={(name) => updateField('name', name)} error={errors.name} />
             </div>
@@ -44,7 +44,7 @@ export function AdminBranchCreatePage() {
               />
             </div>
           </div>
-          <div className="flex gap-6">
+          <div className="flex flex-col gap-4 md:flex-row md:gap-6">
             <div className="flex-1">
               <TextField
                 label="Location / City"
@@ -81,7 +81,7 @@ export function AdminBranchCreatePage() {
 
         <div className="flex flex-col gap-4">
           <h2 className="font-display text-base font-semibold text-text">Operations &amp; Administration</h2>
-          <div className="flex gap-6">
+          <div className="flex flex-col gap-4 md:flex-row md:gap-6">
             <div className="flex-1">
               <SelectField
                 label="Contact Person (Regional Admin)"
@@ -104,7 +104,7 @@ export function AdminBranchCreatePage() {
               />
             </div>
           </div>
-          <div className="flex gap-6">
+          <div className="flex flex-col gap-4 md:flex-row md:gap-6">
             <div className="flex-1">
               <TextField
                 label="Contact Phone"
@@ -133,14 +133,14 @@ export function AdminBranchCreatePage() {
               </div>
             </div>
           </div>
-          <div className="flex gap-6">
-            <div className="flex w-[240px] flex-col gap-3">
-              <ToggleSwitch
+          <div className="flex flex-col gap-4 md:flex-row md:gap-6">
+            <div className="w-full md:w-[240px] md:shrink-0">
+              <SwitchField
                 label="Operational Status"
                 checked={values.isActive}
                 onChange={(checked) => updateField('isActive', checked)}
+                stateLabel={values.isActive ? 'Active / Open' : 'Inactive / Closed'}
               />
-              <p className="font-body text-sm font-semibold text-text">{values.isActive ? 'Active / Open' : 'Inactive / Closed'}</p>
             </div>
             <div className="flex-1">
               <TextareaField
@@ -154,7 +154,7 @@ export function AdminBranchCreatePage() {
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
           <button type="button" onClick={cancel} className="rounded-lg px-5 py-2.5 font-body text-sm font-semibold text-text-muted">
             Cancel
           </button>

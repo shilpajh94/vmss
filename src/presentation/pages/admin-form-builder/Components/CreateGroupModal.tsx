@@ -56,7 +56,7 @@ export function CreateGroupModal({ isOpen, onClose, onCreate }: CreateGroupModal
       <TextField label="Group Name" value={name} onChange={setName} placeholder="e.g. Parcels" required />
       <ToggleSwitch checked={isRepeatable} onChange={setIsRepeatable} label="Repeatable (visitors can add multiple)" />
       {isRepeatable && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <TextField label="Min Instances" value={minInstances} onChange={setMinInstances} type="number" placeholder="No minimum" />
           <TextField label="Max Instances" value={maxInstances} onChange={setMaxInstances} type="number" placeholder="No maximum" />
         </div>

@@ -1,6 +1,10 @@
 import { useNavigate } from 'react-router'
 import { ChevronLeftIcon, ChevronRightIcon, PencilIcon, TrashIcon } from '../../../components/icons'
 import type { WorkflowGroup } from '../hooks/use-admin-workflows'
+import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+
+// Below `md`: only the identifying, status, and actions columns stay visible.
+const TABLE_CLASS_NAME = responsiveTableClassName([3, 4])
 
 interface WorkflowListTableProps {
   workflows: WorkflowGroup[]
@@ -32,14 +36,14 @@ export function WorkflowListTable({
   const end = Math.min(page * pageSize, total)
 
   return (
-    <div className="flex w-full flex-col gap-6 rounded-2xl border border-border bg-surface p-6">
+    <div className="flex w-full flex-col gap-6 rounded-2xl border border-border bg-surface p-4 md:p-6">
       <div className="flex flex-col gap-1">
         <h2 className="font-body text-sm font-bold text-text">Workflow List</h2>
         <p className="font-body text-[13px] text-text-muted">{total} workflows</p>
       </div>
 
       <div className="w-full overflow-x-auto rounded-xl border border-border-subtle">
-        <table className="w-full text-left">
+        <table className={TABLE_CLASS_NAME}>
           <thead>
             <tr className="bg-border-subtle">
               {COLUMN_HEADERS.map((header) => (
@@ -74,7 +78,7 @@ export function WorkflowListTable({
                       type="button"
                       onClick={() => navigate(`/admin/workflows/${workflow.visitorCategoryId}/edit`)}
                       aria-label={`Edit ${workflow.categoryName} workflow`}
-                      className="flex items-center justify-center rounded-lg bg-border-subtle p-2 text-text"
+                      className="flex items-center justify-center rounded-lg bg-border-subtle p-2 max-lg:p-3 text-text"
                     >
                       <PencilIcon className="size-3.5" />
                     </button>
@@ -82,7 +86,7 @@ export function WorkflowListTable({
                       type="button"
                       onClick={() => onDelete(workflow)}
                       aria-label={`Delete ${workflow.categoryName} workflow`}
-                      className="flex items-center justify-center rounded-lg bg-danger/15 p-2 text-danger"
+                      className="flex items-center justify-center rounded-lg bg-danger/15 p-2 max-lg:p-3 text-danger"
                     >
                       <TrashIcon className="size-3.5" />
                     </button>

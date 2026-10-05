@@ -1,5 +1,6 @@
 import { LoadingState } from '../../components/ui/LoadingState'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
+import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
@@ -89,7 +90,7 @@ export function StaffDashboardPage() {
       />
 
       {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
           <button type="button" onClick={refresh} className="rounded-lg bg-secondary-accent px-4 py-2 font-body text-sm font-semibold text-white">
             Try again
@@ -98,8 +99,9 @@ export function StaffDashboardPage() {
       ) : isLoading ? (
         <LoadingState label="Loading visit requests…" className="flex-1" />
       ) : (
-        <div className="flex w-full flex-1 items-start gap-4 overflow-x-auto">
-          {columns.map((column) => (
+        <ResponsiveBoard
+          columns={columns}
+          renderColumn={(column) => (
             <KanbanColumn
               key={column.status}
               status={column.status}
@@ -107,6 +109,8 @@ export function StaffDashboardPage() {
               requests={column.requests}
               emptyMessage={EMPTY_MESSAGES[column.status]}
               onDrop={column.status === 'approved' ? approve : column.status === 'denied' ? requestDeny : undefined}
+              onMoveToApproved={column.status === 'requested' ? approve : undefined}
+              onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
               approvingId={approvingId}
               expandedId={expandedId}
               onToggleExpand={toggleExpand}
@@ -122,8 +126,8 @@ export function StaffDashboardPage() {
               onEditClick={requestEdit}
               onVisitorInfoClick={viewVisitorInfo}
             />
-          ))}
-        </div>
+          )}
+        />
       )}
 
       <DenyInvitationModal isOpen={pendingDenyId !== undefined} isDenying={denyingId !== undefined} onConfirm={confirmDeny} onCancel={cancelDeny} />

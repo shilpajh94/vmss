@@ -24,7 +24,10 @@
 /* Type scale steps, per Figma "Typography Scale" section */
 @utility text-display {
   font-family: var(--font-display);
-  font-size: 40px;
+  font-size: 28px; /* phone; the approved 40px from `md` up */
+  @media (width >= 48rem) {
+    font-size: 40px;
+  }
   font-weight: 800;
   letter-spacing: -1px;
 }
@@ -79,12 +82,24 @@
    are unchanged from today's de facto convention - see design-theme's
    "Spacing tokens define the application's padding and gap scale"
    requirement. */
+/* Responsive (make-web-pages-responsive design.md Decision 7): 16px on
+   phone, 24px from `md`, and the original 32px from `lg`, so desktop is
+   unchanged and every page using the token adapts with no per-page edit. */
 @utility p-page-content {
-  padding: 2rem; /* 32px, matches the outer p-8 every admin page uses */
+  padding: 1rem;
+  @media (width >= 48rem) {
+    padding: 1.5rem;
+  }
+  @media (width >= 64rem) {
+    padding: 2rem; /* 32px, matches the outer p-8 every admin page uses */
+  }
 }
 
 @utility gap-page-section {
-  gap: 1.5rem; /* 24px, the gap between a page's heading row and its data region */
+  gap: 1rem;
+  @media (width >= 48rem) {
+    gap: 1.5rem; /* 24px, the gap between a page's heading row and its data region */
+  }
 }
 
 @utility p-filter-panel {

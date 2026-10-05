@@ -16,7 +16,7 @@ export function StaffSsoLoginPage() {
 
       <StaffPortalHeader />
 
-      <main className="relative flex flex-1 flex-col items-center justify-center gap-8 px-12 py-[120px]">
+      <main className="relative flex flex-1 flex-col items-center justify-center gap-4 md:gap-8 px-4 md:px-12 py-12 md:py-[120px]">
         <SsoSignInCard status={status} errorMessage={errorMessage} onSignIn={startSso} />
         <div className="flex items-center gap-4 font-body text-[13px]">
           <span className="font-medium text-[#cbd5e1]">Need help?</span>

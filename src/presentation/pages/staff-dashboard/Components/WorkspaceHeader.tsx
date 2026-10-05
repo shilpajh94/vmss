@@ -1,6 +1,7 @@
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { LogOutIcon, RefreshCcwIcon } from '../../../components/icons'
 import { NotificationBell } from '../../../components/notification-bell/NotificationBell'
+import { initialsFor } from '../../../utils/initials'
 
 interface WorkspaceHeaderProps {
   currentUser: StaffUser | undefined
@@ -8,34 +9,25 @@ interface WorkspaceHeaderProps {
   onSignOut: () => void
 }
 
-function initialsFor(name: string): string {
-  return name
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('')
-}
-
 export function WorkspaceHeader({ currentUser, onRefresh, onSignOut }: WorkspaceHeaderProps) {
   return (
-    <div className="flex w-full items-center justify-between">
+    <div className="flex w-full flex-wrap items-center justify-between gap-4">
       <div className="flex flex-col gap-1.5">
-        <h1 className="font-display text-[28px] font-extrabold text-text">Visits</h1>
+        <h1 className="font-display text-2xl font-extrabold text-text md:text-[28px]">Visits</h1>
         <p className="font-body text-sm text-text-muted">All visit requests for your organisation</p>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 md:gap-4">
         <button
           type="button"
           onClick={onRefresh}
-          className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text"
+          className="flex min-h-10 items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 font-body text-[13px] font-semibold text-text md:px-4"
         >
           <RefreshCcwIcon className="size-3.5" />
           Refresh
         </button>
 
-        <div className="h-6 w-px bg-border" />
+        <div className="hidden h-6 w-px bg-border md:block" />
 
         <NotificationBell />
 
@@ -44,16 +36,21 @@ export function WorkspaceHeader({ currentUser, onRefresh, onSignOut }: Workspace
             <span className="flex size-9 shrink-0 items-center justify-center rounded-full border-[1.5px] border-info bg-info/8 font-display text-[13px] font-bold text-info">
               {initialsFor(currentUser.name)}
             </span>
-            <div className="flex flex-col gap-0.5 whitespace-nowrap">
+            <div className="hidden flex-col gap-0.5 whitespace-nowrap md:flex">
               <p className="font-body text-[13px] font-bold text-text">{currentUser.name}</p>
               <p className="font-body text-[11px] font-medium text-text-muted">{currentUser.role}</p>
             </div>
           </div>
         )}
 
-        <button type="button" onClick={onSignOut} className="flex items-center gap-1.5 rounded-lg px-3 py-2 font-body text-[13px] font-semibold text-text-muted">
-          <LogOutIcon className="size-3.5" />
-          Sign out
+        <button
+          type="button"
+          onClick={onSignOut}
+          aria-label="Sign out"
+          className="flex min-h-10 min-w-10 items-center justify-center gap-1.5 rounded-lg px-2 py-2 font-body text-[13px] font-semibold text-text-muted md:px-3"
+        >
+          <LogOutIcon className="size-4 md:size-3.5" />
+          <span className="hidden md:inline">Sign out</span>
         </button>
       </div>
     </div>

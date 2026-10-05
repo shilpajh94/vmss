@@ -10,7 +10,7 @@ interface TrackingLookupCardProps {
 
 export function TrackingLookupCard({ trackingId, onTrackingIdChange, onSubmit, loading, error }: TrackingLookupCardProps) {
   return (
-    <div className="flex w-[420px] flex-col gap-4 rounded-2xl border border-border bg-surface p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
+    <div className="flex w-full max-w-[420px] flex-col gap-4 rounded-2xl border border-border bg-surface p-5 md:p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
       <div className="flex size-14 items-center justify-center rounded-xl bg-[#ecfeff]">
         <img src={SearchIcon} alt="" className="size-7" />
       </div>

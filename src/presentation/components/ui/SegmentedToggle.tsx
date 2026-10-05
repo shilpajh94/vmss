@@ -61,7 +61,7 @@ export function SegmentedToggle({ options, value, onChange, variant = 'inline' }
           key={option.value}
           type="button"
           onClick={() => onChange(option.value)}
-          className={`cursor-pointer px-4 py-2 text-body font-medium transition-colors ${
+          className={`cursor-pointer px-4 py-2 text-body font-medium max-lg:min-h-10 transition-colors ${
             value === option.value ? 'bg-secondary-accent text-white' : 'bg-surface text-text hover:bg-secondary-accent/10'
           }`}
         >

@@ -95,14 +95,14 @@ export function NotificationBell() {
         onClick={toggleOpen}
         aria-label="Notifications"
         aria-expanded={isOpen}
-        className="relative flex size-9 items-center justify-center rounded-full bg-border-subtle"
+        className="relative flex size-10 items-center justify-center rounded-full bg-border-subtle lg:size-9"
       >
         <BellIcon className="size-4 text-text" />
         {unreadCount > 0 && <span className="absolute top-[10px] right-[10px] size-1.5 rounded-full bg-danger" />}
       </button>
 
       {isOpen && (
-        <div className="absolute top-11 right-0 z-50 max-h-[400px] w-[340px] overflow-y-auto rounded-lg border border-border bg-surface shadow-[0_8px_24px_rgba(15,23,42,0.12)]">
+        <div className="fixed inset-x-2 top-16 z-50 max-h-[70dvh] overflow-y-auto md:absolute md:inset-x-auto md:top-11 md:right-0 md:max-h-[400px] md:w-[340px] rounded-lg border border-border bg-surface shadow-[0_8px_24px_rgba(15,23,42,0.12)]">
           <div className="border-b border-border px-4 py-3">
             <p className="font-body text-[13px] font-semibold text-text">Notifications</p>
           </div>

@@ -38,6 +38,8 @@ interface KanbanColumnProps {
   onApproveClick?: (id: string) => void
   onEditClick?: (id: string) => void
   onVisitorInfoClick?: (id: string) => void
+  onMoveToApproved?: (id: string) => void
+  onMoveToDenied?: (id: string) => void
 }
 
 export function KanbanColumn({
@@ -60,6 +62,8 @@ export function KanbanColumn({
   onApproveClick,
   onEditClick,
   onVisitorInfoClick,
+  onMoveToApproved,
+  onMoveToDenied,
 }: KanbanColumnProps) {
   const accent = ACCENT_CLASSES[status]
   const [isDragOver, setIsDragOver] = useState(false)
@@ -123,6 +127,8 @@ export function KanbanColumn({
               onApproveClick={onApproveClick}
               onEditClick={onEditClick}
               onVisitorInfoClick={onVisitorInfoClick}
+              onMoveToApproved={onMoveToApproved}
+              onMoveToDenied={onMoveToDenied}
             />
           ))}
         </div>

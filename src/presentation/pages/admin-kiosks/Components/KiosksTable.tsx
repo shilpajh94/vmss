@@ -1,6 +1,10 @@
 import { useNavigate } from 'react-router'
 import { PencilIcon, TrashIcon } from '../../../components/icons'
 import type { Kiosk } from '../../../../domain/entities/kiosk-schema'
+import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+
+// Below `md`: only the identifying, status, and actions columns stay visible.
+const TABLE_CLASS_NAME = responsiveTableClassName([2])
 
 interface KiosksTableProps {
   kiosks: Kiosk[]
@@ -17,7 +21,7 @@ export function KiosksTable({ kiosks, canManage, busyKioskId, onToggleActive, on
 
   return (
     <div className="w-full overflow-x-auto rounded-2xl border border-border bg-surface">
-      <table className="w-full text-left">
+      <table className={TABLE_CLASS_NAME}>
         <thead>
           <tr className="bg-border-subtle">
             <th className={headerClassName}>NAME</th>
@@ -86,7 +90,7 @@ export function KiosksTable({ kiosks, canManage, busyKioskId, onToggleActive, on
                         type="button"
                         onClick={() => navigate(`/admin/kiosks/${kiosk.id}/edit`)}
                         aria-label={`Edit ${kiosk.name}`}
-                        className="flex items-center justify-center rounded-lg bg-border-subtle p-2 text-text"
+                        className="flex items-center justify-center rounded-lg bg-border-subtle p-2 max-lg:p-3 text-text"
                       >
                         <PencilIcon className="size-3.5" />
                       </button>
@@ -94,7 +98,7 @@ export function KiosksTable({ kiosks, canManage, busyKioskId, onToggleActive, on
                         type="button"
                         onClick={() => onDelete(kiosk)}
                         aria-label={`Delete ${kiosk.name}`}
-                        className="flex items-center justify-center rounded-lg bg-danger/15 p-2 text-danger"
+                        className="flex items-center justify-center rounded-lg bg-danger/15 p-2 max-lg:p-3 text-danger"
                       >
                         <TrashIcon className="size-3.5" />
                       </button>

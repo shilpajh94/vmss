@@ -24,7 +24,7 @@ export function ReturnVisitHistoryScreen({
   const isRetryableError = status === 'rate-limited' || status === 'misconfigured' || status === 'error'
 
   return (
-    <div className="flex h-fit w-[560px] flex-col gap-6 rounded-2xl border border-border bg-surface p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
+    <div className="flex h-fit w-full max-w-[560px] flex-col gap-6 rounded-2xl border border-border bg-surface p-5 md:p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
       <div>
         <h3 className="font-display text-[22px] font-bold text-text">Your recent visits</h3>
         <p className="mt-1 text-body text-text-muted">Review your past visits, or start a new request pre-filled with your details.</p>

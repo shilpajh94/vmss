@@ -46,31 +46,31 @@ export function ActivityTable({ entries, employeeNameById }: ActivityTableProps)
     return (
       <EmptyState
         message="No activity matches the current filters."
-        className="w-full flex-1 rounded-xl border border-border bg-surface p-12"
+        className="w-full flex-1 rounded-xl border border-border bg-surface p-6 md:p-12"
       />
     )
   }
 
   return (
-    <div className="flex w-full flex-1 flex-col overflow-hidden rounded-xl border border-border bg-surface">
-      <div className="flex w-full items-center gap-3 border-b border-border bg-border-subtle px-4 py-3">
-        <p className="w-[160px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[0]}</p>
-        <p className="w-[200px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[1]}</p>
+    <div className="flex w-full flex-1 flex-col overflow-x-auto rounded-xl border border-border bg-surface">
+      <div className="flex w-full min-w-[480px] items-center gap-3 border-b border-border bg-border-subtle px-4 py-3 md:min-w-0">
+        <p className="w-[120px] shrink-0 md:w-[160px] font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[0]}</p>
+        <p className="w-[150px] shrink-0 md:w-[200px] font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[1]}</p>
         <p className="min-w-0 flex-1 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[2]}</p>
-        <p className="w-[140px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[3]}</p>
+        <p className="hidden w-[140px] shrink-0 font-body text-xs font-bold text-text-muted md:block">{COLUMN_LABELS[3]}</p>
       </div>
 
       {entries.map((entry, index) => (
         <div
           key={entry.id}
-          className={`flex w-full items-center gap-3 px-4 py-3 ${index < entries.length - 1 ? 'border-b border-border' : ''}`}
+          className={`flex w-full min-w-[480px] items-center gap-3 px-4 py-3 md:min-w-0 ${index < entries.length - 1 ? 'border-b border-border' : ''}`}
         >
-          <p className="w-[160px] shrink-0 font-body text-[13px] text-text">{formatTimestamp(entry.createdAt)}</p>
-          <p className="w-[200px] shrink-0 font-body text-[13px] font-semibold text-text">{humanizeAction(entry.action)}</p>
+          <p className="w-[120px] shrink-0 md:w-[160px] font-body text-[13px] text-text">{formatTimestamp(entry.createdAt)}</p>
+          <p className="w-[150px] shrink-0 md:w-[200px] font-body text-[13px] font-semibold text-text">{humanizeAction(entry.action)}</p>
           <p className="min-w-0 flex-1 truncate font-body text-[13px] text-text-muted">
             {entry.actorUserId ? (employeeNameById[entry.actorUserId] ?? 'Unknown') : 'System'}
           </p>
-          <p className="w-[140px] shrink-0 font-body text-[13px] text-text">{entry.entityType}</p>
+          <p className="hidden w-[140px] shrink-0 font-body text-[13px] text-text md:block">{entry.entityType}</p>
         </div>
       ))}
     </div>

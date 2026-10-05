@@ -9,6 +9,7 @@ import {
 } from '../../utils/approval-step-label'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { CalendarClockIcon } from '../icons'
+import { useIsDesktop } from '../../hooks/use-media-query'
 
 const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved'])
 
@@ -41,6 +42,11 @@ interface VisitRequestCardProps {
   onApproveClick?: (id: string) => void
   onEditClick?: (id: string) => void
   onVisitorInfoClick?: (id: string) => void
+  // Tap alternatives to dragging the card onto the Approved/Denied column,
+  // which touch screens can't do (HTML drag-and-drop is mouse-only). Shown
+  // only below `lg`, and only when the card is draggable in the first place.
+  onMoveToApproved?: (id: string) => void
+  onMoveToDenied?: (id: string) => void
 }
 
 export function VisitRequestCard({
@@ -60,7 +66,10 @@ export function VisitRequestCard({
   onApproveClick,
   onEditClick,
   onVisitorInfoClick,
+  onMoveToApproved,
+  onMoveToDenied,
 }: VisitRequestCardProps) {
+  const isDesktop = useIsDesktop()
   const isReceptionStep = isReceptionCurrentStep(detail?.currentApprovalStep, detail?.visitorCategoryId, workflowRulesByCategory ?? {})
   const pendingApproverLabel = detail?.currentApprovalStep
     ? (resolveNextStepPreviewLabel(detail, workflowRulesByCategory ?? {}, roleNameById ?? {}) ??
@@ -90,6 +99,8 @@ export function VisitRequestCard({
   const workflowRulesLoaded =
     !detail?.currentApprovalStep || !detail.visitorCategoryId || workflowRulesByCategory?.[detail.visitorCategoryId] !== undefined
   const canDragCard = isDraggable && !isApproving && detail !== undefined && workflowRulesLoaded && !isReceptionApprovalStep
+  const canTapApprove = !isDesktop && canDragCard && Boolean(onMoveToApproved)
+  const canTapDeny = !isDesktop && canDragCard && Boolean(onMoveToDenied)
 
   return (
     <div
@@ -151,13 +162,13 @@ export function VisitRequestCard({
         </div>
       ) : null}
 
-      {canReschedule || canDelegate || canApproveAndDelegate || canApprove || canEdit || onVisitorInfoClick ? (
+      {canReschedule || canDelegate || canApproveAndDelegate || canApprove || canEdit || canTapApprove || canTapDeny || onVisitorInfoClick ? (
         <div className="flex w-full flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
           {onVisitorInfoClick ? (
             <button
               type="button"
               onClick={() => onVisitorInfoClick(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
             >
               Visitor Info
             </button>
@@ -166,7 +177,7 @@ export function VisitRequestCard({
             <button
               type="button"
               onClick={() => onRescheduleClick?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
             >
               Reschedule
             </button>
@@ -175,7 +186,7 @@ export function VisitRequestCard({
             <button
               type="button"
               onClick={() => onDelegateClick?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
             >
               Delegate
             </button>
@@ -184,7 +195,7 @@ export function VisitRequestCard({
             <button
               type="button"
               onClick={() => onApproveAndDelegateClick?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
             >
               Approve &amp; Delegate
             </button>
@@ -193,16 +204,34 @@ export function VisitRequestCard({
             <button
               type="button"
               onClick={() => onApproveClick?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
             >
               Approve
+            </button>
+          ) : null}
+          {canTapApprove ? (
+            <button
+              type="button"
+              onClick={() => onMoveToApproved?.(request.id)}
+              className="min-w-[92px] flex-1 rounded-lg border border-success/40 bg-success/10 px-2 py-2.5 font-body text-xs font-semibold whitespace-nowrap text-success"
+            >
+              Approve
+            </button>
+          ) : null}
+          {canTapDeny ? (
+            <button
+              type="button"
+              onClick={() => onMoveToDenied?.(request.id)}
+              className="min-w-[92px] flex-1 rounded-lg border border-danger/40 bg-danger/10 px-2 py-2.5 font-body text-xs font-semibold whitespace-nowrap text-danger"
+            >
+              Deny
             </button>
           ) : null}
           {canEdit ? (
             <button
               type="button"
               onClick={() => onEditClick?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
             >
               Edit
             </button>

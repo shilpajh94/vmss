@@ -42,7 +42,7 @@ export function PrimaryContactCard({
     <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-6">
       <h3 className="font-display text-base font-semibold text-text">Primary Contact Details</h3>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <TextField
           label="Full Name"
           placeholder="Full name"
@@ -83,7 +83,7 @@ export function PrimaryContactCard({
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">
           <span className="text-body font-medium text-text">Preferred Contact Method</span>
           <SegmentedToggle
@@ -125,7 +125,7 @@ export function PrimaryContactCard({
       </div>
 
       {visitorInfoFields.profilePhotoActive && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FileUploadField
             label="Profile Image"
             helperText="PNG or JPG (max 5MB)"

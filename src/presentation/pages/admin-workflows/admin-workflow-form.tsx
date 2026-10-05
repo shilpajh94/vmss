@@ -41,11 +41,11 @@ export function AdminWorkflowFormPage() {
           >
             <ChevronLeftIcon className="size-4" />
           </button>
-          <h1 className="font-display text-2xl font-bold text-text">{isEditMode ? 'Edit Workflow' : 'Add Workflow'}</h1>
+          <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Workflow' : 'Add Workflow'}</h1>
         </div>
 
         {errorMessage ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-12 text-center">
+          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
             <p className="font-body text-sm text-danger">{errorMessage}</p>
             <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
               Try again
@@ -117,7 +117,7 @@ export function AdminWorkflowFormPage() {
               </button>
             </div>
 
-            <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
               <button
                 type="button"
                 onClick={cancel}

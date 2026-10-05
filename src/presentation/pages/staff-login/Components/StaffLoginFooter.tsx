@@ -1,7 +1,9 @@
+import { copyrightLine } from '../../../brand'
+
 export function StaffLoginFooter() {
   return (
-    <footer className="relative flex w-full items-center justify-between border-t border-border px-12 py-6 font-body text-[12px] text-[#cbd5e1]">
-      <p>© 2026 VisitorPass Inc. All rights reserved.</p>
+    <footer className="relative flex w-full flex-col items-start gap-3 border-t sm:flex-row sm:items-center sm:justify-between border-border px-4 md:px-12 py-6 font-body text-[12px] text-[#cbd5e1]">
+      <p>{copyrightLine()}</p>
       <div className="flex items-start gap-6">
         <a href="#" className="hover:text-white">
           Security Policy

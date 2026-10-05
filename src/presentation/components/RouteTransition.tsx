@@ -21,11 +21,16 @@ interface RouteTransitionProps {
 // scrolling it exactly as before. A page that DOES use PageContentLayout
 // gets a data region that scrolls internally instead, since it never
 // exceeds this wrapper's height in the first place.
+//
+// `gap-page-section` lives here, not only on <main>: this wrapper is
+// <main>'s only child, so a page that returns a fragment of sections would
+// otherwise render them touching (fix-layout-spacing-and-footer-logo
+// design.md Decision 1). A single-root page has one child, so it's a no-op.
 export function RouteTransition({ children }: RouteTransitionProps) {
   const location = useLocation()
 
   return (
-    <div key={location.pathname} className="route-transition flex h-full min-h-0 flex-col">
+    <div key={location.pathname} className="route-transition flex h-full min-h-0 flex-col gap-page-section">
       {children}
     </div>
   )

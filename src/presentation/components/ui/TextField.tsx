@@ -68,7 +68,7 @@ export function TextField({
         readOnly={readOnly}
         min={min}
         max={max}
-        className={`rounded-lg border px-3 py-2 text-body text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60 ${
+        className={`rounded-lg border px-3 py-2 text-body text-text max-sm:text-base max-lg:min-h-10 placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60 ${
           readOnly ? 'cursor-default bg-border-subtle text-text-muted' : ''
         } ${error ? 'border-danger' : 'border-border'}`}
       />
