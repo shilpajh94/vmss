@@ -1,0 +1,17 @@
+{% extends "base.txt" %}
+{% import "_macros.txt" as m with context %}
+{% block content %}
+Thanks for registering. Your request is being reviewed - you don't need to do anything else right now.
+
+Tracking ID: {{ tracking_id }}
+
+WHAT HAPPENS NEXT
+{{ m.timeline([
+  ("Request submitted", "We have your details.", "done"),
+  ("Under review", "Your host or the approving team is reviewing your visit.", "current"),
+  ("Confirmation", "Once approved, you'll get an email with your check-in QR code.", "todo"),
+]) }}
+
+{{ m.visit_details(title="YOUR REQUEST") }}
+Want to check on it? Look up your visit's status at any time using your tracking ID {{ tracking_id }}.
+{% endblock %}

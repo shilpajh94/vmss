@@ -9,6 +9,7 @@ from fastapi import (
     File,
     Form,
     Header,
+    HTTPException,
     Query,
     Request,
     UploadFile,
@@ -26,6 +27,7 @@ from vmss_api.core.config import settings
 from vmss_api.core.deps import get_current_user, get_pagination, get_tenant, get_tenant_db
 from vmss_api.core.idempotency import cache_response as _core_cache_response
 from vmss_api.core.idempotency import cached_response as _core_cached_response
+from vmss_api.core.logging import logger
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import (
     error_response,
@@ -1824,18 +1826,21 @@ async def list_invitations(
     Authorized Branches" (the default, branch-scoped mode) and "Caller
     Lists Invitations Relevant to Themselves via relevantToMe" —
     `relevantToMe=true` is a distinct personal worklist that bypasses the
-    `invitations:view` branch-permission check entirely rather than
+    `invitations:view-all` branch-permission check entirely rather than
     narrowing it, so `X-Branch-ID` is read directly here (not via
     `require_branch_scope`'s `Depends()`) and only consulted when
     `relevantToMe` is not set (invitation-relevant-to-me-and-delegation/
     design.md "relevantToMe is implemented as a distinct query path, not a
-    require_branch_scope variant").
+    require_branch_scope variant"). The branch-scoped mode needs
+    `invitations:view-all`, not `invitations:view`: a `host` holds only the
+    latter and finds their work via `relevantToMe`
+    (restrict-delegated-invitation-visibility).
     """
     page, page_size = pagination
     branch_scope: BranchScope | None = None
     default_host_role_id: uuid.UUID | None = None
     if not relevant_to_me:
-        branch_scope = await require_branch_scope("invitations:view")(
+        branch_scope = await require_branch_scope("invitations:view-all")(
             user=user, tenant_db=tenant_db, x_branch_id=x_branch_id
         )
     else:
@@ -1946,9 +1951,37 @@ async def get_invitation_detail(
     """Authenticated, branch-scoped single-invitation detail view (spec.md
     "Authenticated Detail Lookup by Invitation ID") — the staff-facing
     counterpart of the public `GET /invitations/track` lookup above.
+
+    Only a branch-wide viewer (`invitations:view-all`) or a participant — the
+    same (a)–(e) rule as `relevantToMe` — may see it. A non-participant
+    holding `invitations:view` gets the same 404 as a missing id, so an
+    uninvolved host can't tell the invitation exists; a caller with no grant
+    keeps the 403 `authorize_branch_id_tolerant` raises
+    (restrict-delegated-invitation-visibility/design.md Decision 3).
     """
     invitation = await service.get_invitation_detail(tenant_db, invitation_id)
-    await authorize_branch_id_tolerant(tenant_db, user, "invitations:view", invitation.branch_id)
+    if user.has_permission("invitations:view-all", invitation.branch_id):
+        await authorize_branch_id_tolerant(
+            tenant_db, user, "invitations:view-all", invitation.branch_id
+        )
+    else:
+        default_host_role = await get_default_host_role(tenant_db)
+        is_participant = await service.is_invitation_relevant_to(
+            tenant_db,
+            invitation.id,
+            user_id=user.id,
+            default_host_role_id=default_host_role.id,
+        )
+        if not is_participant:
+            if user.has_permission("invitations:view", invitation.branch_id):
+                logger.warning(
+                    "invitation_detail_denied_non_participant",
+                    invitation_id=str(invitation.id),
+                )
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+            await authorize_branch_id_tolerant(
+                tenant_db, user, "invitations:view-all", invitation.branch_id
+            )
     current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
     branch, department, building = await service.get_invitation_location(tenant_db, invitation)
     form_context = await service.get_invitation_detail_form_context(

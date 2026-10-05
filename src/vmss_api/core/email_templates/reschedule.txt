@@ -1,0 +1,24 @@
+{% extends "base.txt" %}
+{% import "_macros.txt" as m with context %}
+{% block content %}
+{% set when = visit_date | visit_datetime(visit_time) %}
+{% set previously = previous_visit_date | visit_datetime(previous_visit_time) %}
+The date or time of your visit has changed. Please update your calendar.
+
+{{ m.detail_rows([("Previously", previously), ("New date & time", when)]) }}
+
+{{ m.visit_details(before=[("Tracking ID", tracking_id)]) }}
+{% if contact_name %}
+{{ (contact_title or "Your point of contact") | upper }}
+{{ m.detail_rows([("Name", contact_name), ("Contact", contact_detail)]) }}
+{% endif %}
+
+{% if qr_src %}
+YOUR CHECK-IN QR CODE
+Your QR code is shown in this email - open it with images enabled and show it at reception on the new date. If it doesn't display, quote tracking ID {{ tracking_id }} at reception.
+{% else %}
+Your visit is still awaiting approval. We'll email your check-in QR pass as soon as it's approved.
+{% endif %}
+
+{{ m.callout("Can't make the new time?", "Contact the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " and quote your tracking ID " ~ tracking_id ~ ".") }}
+{% endblock %}

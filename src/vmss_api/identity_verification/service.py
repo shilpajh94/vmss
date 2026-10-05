@@ -13,6 +13,7 @@ import uuid
 from dataclasses import dataclass
 
 from vmss_api.core.config import settings
+from vmss_api.core.email_rendering import TemplateRenderError, render_email
 from vmss_api.core.logging import logger
 from vmss_api.core.redis import get_redis
 from vmss_api.core.security import create_identity_verified_token
@@ -102,7 +103,18 @@ async def request_otp(
     minutes = settings.otp_ttl_seconds // 60
     body = f"Your verification code is {code}. It expires in {minutes} minutes."
     if channel == Channel.email:
-        await senders.email_sender.send(to=identifier, subject="Your verification code", body=body)
+        subject, text_body, html_body = "Your verification code", body, None
+        try:
+            rendered = render_email("verification_code", {"code": code, "minutes": minutes})
+            subject, text_body, html_body = rendered.subject, rendered.text, rendered.html
+        except TemplateRenderError:
+            # The one-line body is the fallback; the code itself is never
+            # logged (identity-verification "OTP codes ... are never exposed
+            # in plaintext outside delivery").
+            logger.error("email_template_render_failed", template_name="verification_code")
+        await senders.email_sender.send(
+            to=identifier, subject=subject, body=text_body, html_body=html_body
+        )
     elif channel == Channel.sms:
         await senders.sms_sender.send(to=identifier, body=body)
     else:

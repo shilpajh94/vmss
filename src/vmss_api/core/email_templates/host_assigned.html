@@ -1,12 +1,10 @@
 {% extends "base.html" %}
-{% block subject %}You've been named host{% endblock %}
+{% import "_macros.html" as m with context %}
+{% block eyebrow %}You're the host{% endblock %}
+{% block heading %}You've been named host for a visit{% endblock %}
 {% block content %}
-<h2 style="margin-top:0; color:#1f2933;">You've been named host</h2>
-<p>You've been named host of an invitation.</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px; font-size:14px;">
-  <tr><td style="padding:4px 0; color:#6b7280; width:160px;">Tracking ID</td><td style="padding:4px 0; font-weight:bold;">{{ tracking_id }}</td></tr>
-  <tr><td style="padding:4px 0; color:#6b7280;">Visitor</td><td style="padding:4px 0;">{{ visitor_name }}</td></tr>
-  {% if purpose %}<tr><td style="padding:4px 0; color:#6b7280;">Purpose</td><td style="padding:4px 0;">{{ purpose }}</td></tr>{% endif %}
-  {% if visit_date %}<tr><td style="padding:4px 0; color:#6b7280;">Visit date</td><td style="padding:4px 0;">{{ visit_date }}{% if visit_time %} at {{ visit_time }}{% endif %}</td></tr>{% endif %}
-</table>
+{% set visitor = visitor_name | display_name %}
+{{ m.lead("You're now the host for " ~ (visitor ~ "'s" if visitor else "your visitor's") ~ " visit. You'll be notified when they check in.") }}
+{{ m.visit_details(before=[("Visitor", visitor), ("Visitor phone", visitor_phone), ("Visitor email", visitor_email), ("Tracking ID", tracking_id)]) }}
+{{ m.tracking_note("Please be available to receive your visitor at the scheduled time. Open the visitor management portal and search for tracking ID", tracking_id) }}
 {% endblock %}

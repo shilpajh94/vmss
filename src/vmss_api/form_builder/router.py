@@ -33,9 +33,21 @@ from vmss_api.form_builder.schemas import (
     PublishOut,
     ReorderRequest,
 )
+from vmss_api.form_builder.snapshot import is_supported_field_type, supported_field_rows
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/form-builder", tags=["form-builder"])
+
+
+def _fields_out(fields: list[FormField], *, source: str) -> list[FormFieldOut]:
+    """Serializes a step's fields in order, skipping any stored row whose
+    type has since left the catalog (heal-stale-form-config-data): one such
+    row would otherwise fail `FormFieldOut`'s enum and 500 the whole read.
+    """
+    return [
+        FormFieldOut.model_validate(f)
+        for f in sorted(supported_field_rows(fields, source=source), key=lambda x: x.order_index)
+    ]
 
 
 def _group_out(group: FormFieldGroup, fields: list[FormField]) -> FormFieldGroupOut:
@@ -51,7 +63,9 @@ def _group_out(group: FormFieldGroup, fields: list[FormField]) -> FormFieldGroup
         max_instances=group.max_instances,
         visibility_condition=group.visibility_condition,
         order_index=group.order_index,
-        field_ids=[f.id for f in fields if f.group_id == group.id],
+        field_ids=[
+            f.id for f in fields if f.group_id == group.id and is_supported_field_type(f.field_type)
+        ],
     )
 
 
@@ -69,9 +83,7 @@ def _step_out(
         is_locked=step.is_locked,
         is_active=step.is_active,
         order_index=step.order_index,
-        fields=[
-            FormFieldOut.model_validate(f) for f in sorted(fields, key=lambda x: x.order_index)
-        ],
+        fields=_fields_out(fields, source="admin_steps"),
         groups=[_group_out(g, fields) for g in sorted(groups or [], key=lambda x: x.order_index)],
     )
 
@@ -169,12 +181,7 @@ async def list_fields(
     step = await service.get_step(tenant_db, step_id)
     _ensure_in_scope(step.branch_id, branch_id)
     fields = await service.list_fields_for_steps(tenant_db, [step])
-    return success_response(
-        data=[
-            FormFieldOut.model_validate(f)
-            for f in sorted(fields.get(step.id, []), key=lambda x: x.order_index)
-        ]
-    )
+    return success_response(data=_fields_out(fields.get(step.id, []), source="admin_fields"))
 
 
 @router.post(
@@ -206,6 +213,16 @@ async def update_field(
     field_row = await service.get_field(tenant_db, field_id)
     step = await service.get_step(tenant_db, field_row.step_id)
     _ensure_in_scope(step.branch_id, branch_id)
+    if not is_supported_field_type(field_row.field_type) and payload.field_type is None:
+        # Retyping is how an admin repairs a field of a removed type; any
+        # other edit would have to serialize the unsupported type back out.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Field type '{field_row.field_type}' is no longer supported; "
+                "set a supported fieldType to edit this field"
+            ),
+        )
     field_row = await service.update_field(tenant_db, field_id, payload)
     return success_response(data=FormFieldOut.model_validate(field_row))
 
@@ -232,7 +249,7 @@ async def reorder_fields(
     step = await service.get_step(tenant_db, step_id)
     _ensure_in_scope(step.branch_id, branch_id)
     fields = await service.reorder_fields(tenant_db, step_id, payload.ordered_ids)
-    return success_response(data=[FormFieldOut.model_validate(f) for f in fields])
+    return success_response(data=_fields_out(fields, source="admin_reorder"))
 
 
 # --- Field Groups --------------------------------------------------------------

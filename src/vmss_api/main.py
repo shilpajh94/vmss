@@ -176,6 +176,13 @@ _TAGS_METADATA = [
         ),
     },
     {
+        "name": "email-assets",
+        "description": (
+            "Public images that emails load by URL: the Visimio header logo "
+            "and each approved visit's HMAC-signed, expiring check-in QR."
+        ),
+    },
+    {
         "name": "file-storage",
         "description": (
             "Serves the `local` storage backend's signed, time-boxed URLs — "

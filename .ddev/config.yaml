@@ -12,6 +12,7 @@ use_dns_when_possible: true
 # interpreter (3.13) and the project's venv — see pyproject.toml / uv.lock.
 web_environment:
   - PYTHONUNBUFFERED=1
+  - EMAIL_ASSET_BASE_URL=https://vmss-new-api.ddev.site:8443
 
 # Runs `uvicorn` inside the web container. `uv run` resolves/creates the venv
 # from pyproject.toml + uv.lock on first run.

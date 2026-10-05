@@ -1,0 +1,37 @@
+{# Plain-text counterparts of `_macros.html`. #}
+{% macro detail_rows(rows) %}
+{% for label, value in rows if value %}
+  {{ label }}: {{ value }}
+{% endfor %}
+{% endmacro %}
+
+{% macro visit_details(title="VISIT DETAILS", before=[], after=[]) %}
+{% set rows = before + [
+  ("Date & time", visit_date | visit_datetime(visit_time)),
+  ("Place of visit", place),
+  ("Department", department),
+  ("Expected duration", duration),
+  ("Purpose", purpose),
+] + after %}
+{% if rows | selectattr(1) | list %}
+{{ title | upper }}
+{{ detail_rows(rows) }}
+{% endif %}
+{% endmacro %}
+
+{% macro timeline(steps) %}
+{% for title, detail, state in steps %}
+  {{ loop.index }}. {{ title }}{% if state == "done" %} (done){% elif state == "current" %} (in progress){% endif %} - {{ detail }}
+{% endfor %}
+{% endmacro %}
+
+{% macro checklist(items) %}
+{% for item in items if item %}
+  - {{ item }}
+{% endfor %}
+{% endmacro %}
+
+{% macro callout(title, body) %}
+>> {{ title }}
+   {{ body }}
+{% endmacro %}

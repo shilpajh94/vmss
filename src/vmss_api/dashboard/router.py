@@ -28,12 +28,13 @@ async def get_overview(
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_scope: Annotated[
-        BranchScope, Depends(resolve_dashboard_branch_scope("invitations:view"))
+        BranchScope, Depends(resolve_dashboard_branch_scope("invitations:view-all"))
     ],
 ) -> JSONResponse:
     """spec.md "Dashboard Overview Summary" — scoped to `branchId` when
     supplied, otherwise aggregated across every branch the caller holds
-    `invitations:view` at (design.md Decision 2).
+    `invitations:view-all` at (design.md Decision 2;
+    restrict-delegated-invitation-visibility).
     """
     overview = await service.get_overview(tenant_db, tenant, branch_scope)
     return success_response(data=overview)
@@ -46,7 +47,7 @@ async def get_overview(
 async def list_checkins(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_scope: Annotated[
-        BranchScope, Depends(resolve_dashboard_branch_scope("invitations:view"))
+        BranchScope, Depends(resolve_dashboard_branch_scope("invitations:view-all"))
     ],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     sort_by: Annotated[DashboardCheckInSortableField, Query(alias="sortBy")] = "checked_in_at",
@@ -74,7 +75,7 @@ async def list_checkins(
 async def search(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_scope: Annotated[
-        BranchScope, Depends(resolve_dashboard_branch_scope("invitations:view"))
+        BranchScope, Depends(resolve_dashboard_branch_scope("invitations:view-all"))
     ],
     query: Annotated[str, Query(min_length=2)],
 ) -> JSONResponse:

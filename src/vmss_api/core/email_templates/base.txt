@@ -1,0 +1,17 @@
+{% if eyebrow %}[{{ eyebrow | upper }}]
+
+{% endif %}
+{{ heading }}
+
+{% block greeting %}
+{% set greeting_name = recipient_name | display_name(recipient_email) %}
+{% if greeting_name %}Hi {{ greeting_name }},{% else %}Hello,{% endif %}
+
+
+{% endblock %}
+{% block content %}{% endblock %}
+
+--
+Sent by {{ company_name | default('Visimio', true) }}.
+This is an automated message - please don't reply to this email.
+Powered by Visimio - (c) {{ current_year }} Visimio. All rights reserved.

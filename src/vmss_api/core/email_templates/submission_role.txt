@@ -1,0 +1,11 @@
+{% extends "base.txt" %}
+{% import "_macros.txt" as m with context %}
+{% block content %}
+{% set visitor = visitor_name | display_name %}
+{{ visitor or "A visitor" }} has submitted a visit request that's waiting for your team to review and assign.
+
+Tracking ID: {{ tracking_id }}
+
+{{ m.visit_details(before=[("Visitor", visitor)]) }}
+Open the visitor management portal and search for tracking ID {{ tracking_id }} to approve it, deny it, or assign a host.
+{% endblock %}

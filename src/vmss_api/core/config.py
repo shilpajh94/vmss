@@ -15,7 +15,7 @@ _DB_DRIVERS: dict[str, str] = {"pgsql": "postgresql+asyncpg"}
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "VMSS API"
+    app_name: str = "Visimio API"
     environment: str = Field(default="local", alias="APP_ENV")
     debug: bool = Field(default=True, alias="APP_DEBUG")
 
@@ -182,6 +182,15 @@ class Settings(BaseSettings):
     smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
     smtp_use_tls: bool = Field(default=False, alias="SMTP_USE_TLS")
     smtp_from_address: str = Field(default="no-reply@vmss.local", alias="SMTP_FROM_ADDRESS")
+    # Display name shown in front of `smtp_from_address` ("Visimio <no-reply@…>").
+    smtp_from_name: str = Field(default="Visimio", alias="SMTP_FROM_NAME")
+    # Public origin email `<img src>` URLs are built from — the Visimio logo
+    # and the signed check-in QR (`core/email_assets.py`). Unset means
+    # emails fall back to a text wordmark and an inline `cid:` QR.
+    email_asset_base_url: str | None = Field(default=None, alias="EMAIL_ASSET_BASE_URL")
+    # Signs QR image URLs; falls back to `storage_local_url_secret`, then
+    # `jwt_secret_key`, when unset.
+    email_asset_url_secret: str | None = Field(default=None, alias="EMAIL_ASSET_URL_SECRET")
 
     # SMS gateway — no vendor chosen yet (design.md Open Questions); these are
     # placeholders the `SmsSender` adapter reads once one is picked. Left

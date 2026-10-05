@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block eyebrow %}Daily snapshot{% endblock %}
+{% block heading %}Daily branch rollup — {{ report_date | visit_datetime }}{% endblock %}
+{% block preheader %}{{ total_branches }} branch{{ '' if total_branches == 1 else 'es' }} · {{ totals.active_employees }} active employees{% endblock %}
+{% block content %}
+{{ m.lead("Here's today's summary of your organisation's sites across " ~ total_branches ~ " branch" ~ ('' if total_branches == 1 else 'es') ~ ".") }}
+{{ m.section("Organisation totals") }}
+{{ m.detail_table([
+  ("Buildings", totals.buildings | string),
+  ("Floors", totals.floors | string),
+  ("Departments", totals.departments | string),
+  ("Reception desks", totals.reception_desks | string),
+  ("Security gates", totals.security_gates | string),
+  ("Active employees", totals.active_employees | string),
+]) }}
+{{ m.section("By branch") }}
+{% if branches %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0; border:1px solid #e2e8f0; border-radius:10px; border-collapse:separate; overflow:hidden; font-family:'Geist','Segoe UI',Arial,sans-serif; font-size:13px; line-height:18px;">
+  <tr style="background-color:#f8fafc;">
+    <th align="left" style="padding:10px 12px; color:#64748b; font-weight:600; border-bottom:1px solid #e2e8f0;">Branch</th>
+    <th align="right" style="padding:10px 8px; color:#64748b; font-weight:600; border-bottom:1px solid #e2e8f0;">Bldg</th>
+    <th align="right" style="padding:10px 8px; color:#64748b; font-weight:600; border-bottom:1px solid #e2e8f0;">Floors</th>
+    <th align="right" style="padding:10px 8px; color:#64748b; font-weight:600; border-bottom:1px solid #e2e8f0;">Depts</th>
+    <th align="right" style="padding:10px 8px; color:#64748b; font-weight:600; border-bottom:1px solid #e2e8f0;">Desks</th>
+    <th align="right" style="padding:10px 8px; color:#64748b; font-weight:600; border-bottom:1px solid #e2e8f0;">Gates</th>
+    <th align="right" style="padding:10px 12px; color:#64748b; font-weight:600; border-bottom:1px solid #e2e8f0;">Staff</th>
+  </tr>
+  {% for b in branches %}
+  <tr>
+    <td style="padding:10px 12px; color:#0f172a; font-weight:600;{% if not loop.last %} border-bottom:1px solid #f1f5f9;{% endif %}">{{ b.branch_name }}<br><span style="font-weight:400; color:#94a3b8; font-size:12px;">{{ b.branch_code }}</span></td>
+    {% set row_border = "" if loop.last else " border-bottom:1px solid #f1f5f9;" %}
+    {% for value in [b.building_count, b.floor_count, b.department_count, b.reception_desk_count, b.security_gate_count] %}
+    <td align="right" style="padding:10px 8px; color:#0f172a;{{ row_border }}">{{ value }}</td>
+    {% endfor %}
+    <td align="right" style="padding:10px 12px; color:#0f172a;{{ row_border }}">{{ b.active_employee_count }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+{{ m.note("There are no branches to report yet.") }}
+{% endif %}
+{{ m.note("Figures match the Reports → Branch rollup page at the time this email was generated.") }}
+{% endblock %}
