@@ -21,6 +21,8 @@ interface RepeatableFieldGroupProps {
    * working upload control instead of falling back to "not supported". */
   uploadFile?: (file: File) => Promise<string>
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
+  /** Min-instances error set by the wizard's Next validation. */
+  error?: string
 }
 
 /** Generalizes `VehicleInfoStep`'s add/edit/remove-instance-row UI (a table
@@ -41,6 +43,7 @@ export function RepeatableFieldGroup({
   onChange,
   uploadFile,
   getFilePreviewUrl,
+  error,
 }: RepeatableFieldGroupProps) {
   const [draft, setDraft] = useState<GroupInstance | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
@@ -48,7 +51,6 @@ export function RepeatableFieldGroup({
   const [removeError, setRemoveError] = useState<string | undefined>(undefined)
 
   const atMax = maxInstances !== null && instances.length >= maxInstances
-  const belowMin = minInstances !== null && instances.length < minInstances
 
   const startAdd = () => {
     setEditingIndex(null)
@@ -123,7 +125,7 @@ export function RepeatableFieldGroup({
         </button>
       </div>
 
-      {belowMin && <p className="text-caption text-danger">At least {minInstances} {groupName.toLowerCase()} required.</p>}
+      {error && instances.length < (minInstances ?? 0) && <p className="text-caption text-danger">{error}</p>}
       {removeError && <p className="text-caption text-danger">{removeError}</p>}
 
       {instances.length > 0 && (

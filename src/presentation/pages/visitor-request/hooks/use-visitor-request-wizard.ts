@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { validateGroupMinimums } from '../../../components/dynamic-fields/field-group-visibility'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { extractGroupFieldFiles } from '../../../components/dynamic-fields/field-group-visibility'
 import type { DynamicFieldValue } from '../../../components/dynamic-fields/DynamicField'
@@ -459,7 +460,14 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     // reflect the branch's real step list — hold the visitor on the first
     // step rather than advance against a stale/incomplete list.
     if (isFormConfigLoading) return
-    const stepErrors = validateStep(activeSteps[currentStep]?.key, formState, requiredConsentKeys, visitorInfoFields)
+    const stepErrors = {
+      ...validateStep(activeSteps[currentStep]?.key, formState, requiredConsentKeys, visitorInfoFields),
+      ...validateGroupMinimums(activeSteps[currentStep]?.groups ?? [], formState.groupValues, {
+        registration_type: formState.registrationType,
+        ...formState.primaryContact.customFieldValues,
+        ...formState.customFieldValues,
+      }),
+    }
     if (Object.keys(stepErrors).length > 0) {
       setErrors(stepErrors)
       return
