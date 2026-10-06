@@ -392,7 +392,13 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def edit_if_eligible(self, id_: uuid.UUID, **changes: Any) -> Invitation | None:
+    async def edit_if_eligible(
+        self,
+        id_: uuid.UUID,
+        *,
+        allowed_statuses: tuple[str, ...] = _RESCHEDULABLE_STATUSES,
+        **changes: Any,
+    ) -> Invitation | None:
         """Atomic conditional `UPDATE` backing `PATCH /invitations/{id}/edit`
         (role-based-invitation-workflow), same eligible-status pattern as
         `reschedule_if_eligible`/`extend_if_eligible`. `changes` is whatever
@@ -402,7 +408,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         """
         stmt = (
             update(Invitation)
-            .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
+            .where(Invitation.id == id_, Invitation.status.in_(allowed_statuses))
             .values(**changes)
             .returning(Invitation)
         )

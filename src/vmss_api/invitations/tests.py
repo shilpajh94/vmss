@@ -154,7 +154,7 @@ def _remove_default_consent(payload: dict, key: str) -> None:
 
 def _custom_field_value(entries: list[dict], field_id: str) -> Any:
     """Looks up one `{fieldId, value}` entry's `value` out of a response's
-    `customFields`/`primaryContactCustomFields` array by `fieldId` — the
+    `customFields` array by `fieldId` — the
     read-side counterpart of building a `customFields` request array by
     hand (restructure-walkin-payload-by-field-id)."""
     return next(e["value"] for e in entries if e["fieldId"] == field_id)
@@ -2077,7 +2077,7 @@ async def test_create_invitation_inline_custom_field_file_upload_stored_on_read(
         assert not value.startswith("vmss:")
         assert "/api/v1/files/" in value or value.startswith("http")
 
-    _assert_resolved_file_url(_custom_field_value(body["primaryContactCustomFields"], field_id))
+    _assert_resolved_file_url(_custom_field_value(body["customFields"], field_id))
     for visitor_out in body["visitors"]:
         _assert_resolved_file_url(_custom_field_value(visitor_out["customFields"], field_id))
 
@@ -2811,10 +2811,7 @@ async def test_track_by_tracking_id_masks_custom_file_upload_field_raw_storage_k
         "/api/v1/invitations/track", params={"trackingId": invitation.tracking_id}
     )
     assert response.status_code == 200
-    assert (
-        _custom_field_value(response.json()["data"]["primaryContactCustomFields"], field["id"])
-        is None
-    )
+    assert _custom_field_value(response.json()["data"]["customFields"], field["id"]) is None
 
 
 async def test_track_by_tracking_id_group_success(
@@ -6541,10 +6538,7 @@ async def test_public_check_in_by_tracking_id_masks_custom_file_upload_field_raw
 
     response = await client.patch(f"/api/v2/invitations/{invitation.tracking_id}/check-in")
     assert response.status_code == 200
-    assert (
-        _custom_field_value(response.json()["data"]["primaryContactCustomFields"], field["id"])
-        is None
-    )
+    assert _custom_field_value(response.json()["data"]["customFields"], field["id"]) is None
 
 
 async def test_public_check_in_non_approved_rejected(
@@ -7430,7 +7424,7 @@ async def test_qr_check_out_response_includes_captured_photos(
     assert response.json()["data"]["primaryContactPhotoUrl"] is not None
 
 
-async def test_qr_check_in_response_includes_id_proof_type_but_never_a_document_url(
+async def test_qr_check_in_response_includes_primary_contact_id_proof_url_only(
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
     """enrich-invitation-checkin-and-detail-views spec.md "QR Check-In
@@ -7453,7 +7447,7 @@ async def test_qr_check_in_response_includes_id_proof_type_but_never_a_document_
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["primaryContactIdProofType"] == invitation.primary_contact_id_proof_type
-    assert "primaryContactIdProofUrl" not in data
+    assert "primaryContactIdProofUrl" in data
     [visitor_out] = data["visitors"]
     assert visitor_out["idProofType"] == co_visitor.id_proof_type
     assert "idProofUrl" not in visitor_out
@@ -7489,10 +7483,7 @@ async def test_qr_check_in_response_masks_custom_file_upload_field_raw_storage_k
 
     response = await client.patch(f"/api/v2/invitations/qr/{qr_check_in_token}/check-in")
     assert response.status_code == 200
-    assert (
-        _custom_field_value(response.json()["data"]["primaryContactCustomFields"], field["id"])
-        is None
-    )
+    assert _custom_field_value(response.json()["data"]["customFields"], field["id"]) is None
 
 
 async def test_qr_check_in_and_check_out_response_include_resolved_branch_building_department(
@@ -10564,7 +10555,7 @@ async def test_create_invitation_captures_primary_contact_custom_field(
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
     )
     assert detail_response.status_code == 200, detail_response.text
-    assert detail_response.json()["data"]["primaryContactCustomFields"] == [
+    assert detail_response.json()["data"]["customFields"] == [
         {"fieldId": field["id"], "value": "E-1001"}
     ]
 
@@ -10618,7 +10609,7 @@ async def test_create_invitation_captures_primary_contact_custom_field_on_system
         headers=headers,
     )
     assert detail_response.status_code == 200, detail_response.text
-    assert detail_response.json()["data"]["primaryContactCustomFields"] == [
+    assert detail_response.json()["data"]["customFields"] == [
         {"fieldId": field_id, "value": "some value"}
     ]
 
@@ -10645,7 +10636,7 @@ async def test_create_invitation_captures_co_visitor_custom_fields_independently
         headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)},
     )
     body = detail_response.json()["data"]
-    assert body["primaryContactCustomFields"] == [{"fieldId": field["id"], "value": "E-1001"}]
+    assert body["customFields"] == [{"fieldId": field["id"], "value": "E-1001"}]
     visitors_by_name = {v["fullName"]: v for v in body["visitors"]}
     assert visitors_by_name["Alexander Pierce"]["customFields"] == [
         {"fieldId": field["id"], "value": "E-2002"}
