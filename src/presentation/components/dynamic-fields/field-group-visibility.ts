@@ -136,3 +136,27 @@ export function toGroupAnswers(steps: EffectiveFormStep[], groupValues: Record<s
   }
   return answers
 }
+
+/** Key under which a repeatable group's min-instances error is stored in a
+ * wizard's `errors` map and read back by `FieldGroupsSection`. */
+export const groupErrorKey = (groupKey: string) => `group:${groupKey}`
+
+/** Next-click validation for a step's repeatable groups: every *visible*
+ * repeatable group must hold at least its `minInstances`. Returns errors
+ * keyed by `groupErrorKey`, merged by each wizard's `validateStep`. */
+export function validateGroupMinimums(
+  groups: EffectiveFormFieldGroup[],
+  groupValues: Record<string, GroupInstance[]>,
+  seedValues: Record<string, DynamicFieldValue>,
+): Record<string, string> {
+  const errors: Record<string, string> = {}
+  const flatValues = resolveGroupFlatValues(groups, groupValues, seedValues)
+  for (const group of groups) {
+    if (!group.isRepeatable || group.minInstances === null) continue
+    if (!isGroupVisible(group.visibilityCondition, flatValues)) continue
+    if ((groupValues[group.key]?.length ?? 0) < group.minInstances) {
+      errors[groupErrorKey(group.key)] = `At least ${group.minInstances} ${group.name.toLowerCase()} required.`
+    }
+  }
+  return errors
+}

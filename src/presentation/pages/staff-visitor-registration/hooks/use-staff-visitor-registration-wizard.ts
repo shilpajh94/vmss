@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { validateGroupMinimums } from '../../../components/dynamic-fields/field-group-visibility'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { extractGroupFieldFiles } from '../../../components/dynamic-fields/field-group-visibility'
@@ -355,7 +356,14 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
   const goNext = () => {
     // See use-visitor-request-wizard.ts's matching guard.
     if (isFormConfigLoading) return
-    const stepErrors = validateStep(activeSteps[currentStep]?.key, formState, requiredConsentKeys, visitorInfoFields)
+    const stepErrors = {
+      ...validateStep(activeSteps[currentStep]?.key, formState, requiredConsentKeys, visitorInfoFields),
+      ...validateGroupMinimums(activeSteps[currentStep]?.groups ?? [], formState.groupValues, {
+        registration_type: formState.registrationType,
+        ...formState.primaryContact.customFieldValues,
+        ...formState.customFieldValues,
+      }),
+    }
     if (Object.keys(stepErrors).length > 0) {
       setErrors(stepErrors)
       return

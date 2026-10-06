@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { GroupErrorsContext } from '../../components/dynamic-fields/group-errors-context'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../context/app-dependencies-context'
 import type { Branch } from '../../../domain/entities/branch-schema'
@@ -109,7 +110,7 @@ export function StaffVisitorRegistrationPage() {
   }
 
   return (
-    <>
+    <GroupErrorsContext.Provider value={errors}>
       <RegistrationWorkspaceHeader currentUser={currentUser} onSignOut={signOut} />
 
       <RegistrationStepper steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
@@ -251,6 +252,6 @@ export function StaffVisitorRegistrationPage() {
           </button>
         )}
       </div>
-    </>
+    </GroupErrorsContext.Provider>
   )
 }
