@@ -10,7 +10,7 @@ export class SubmitStaffVisitRequestUseCase {
     this.staffVisitRequestRepository = staffVisitRequestRepository
   }
 
-  async execute(request: StaffVisitRequest, files: InvitationSubmissionFiles, branchId: string): Promise<VisitRequestResponse> {
-    return this.staffVisitRequestRepository.submit(request, files, branchId)
+  async execute(request: StaffVisitRequest, files: InvitationSubmissionFiles): Promise<VisitRequestResponse> {
+    return this.staffVisitRequestRepository.submit(request, files)
   }
 }

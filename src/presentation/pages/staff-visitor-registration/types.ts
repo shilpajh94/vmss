@@ -92,6 +92,8 @@ export interface StaffVisitRequestWireContext {
   invitationFields: FormField[]
   consentFields: FormField[]
   steps: EffectiveFormStep[]
+  branchId: string
+  buildingId?: string
 }
 
 // Maps wizard form state onto the `payload` wire contract for POST /invitations
@@ -126,6 +128,8 @@ export function toStaffVisitRequest(formState: StaffVisitRequestFormState, conte
     // defaultable arrays — `consents` is the one exception, always sent.
     visitors: visitors.length > 0 ? visitors : undefined,
     visitDetails: {
+      branchId: context.branchId,
+      buildingId: context.buildingId,
       purposeOfVisit: formState.visitInfo.purpose,
       preferredVisitDate: formState.visitInfo.preferredDate,
       preferredVisitTime: formState.visitInfo.preferredTime,

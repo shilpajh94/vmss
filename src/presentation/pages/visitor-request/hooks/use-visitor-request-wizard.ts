@@ -147,6 +147,7 @@ function validateStep(
   formState: VisitRequestFormState,
   requiredConsentKeys: string[],
   visitorInfoFields: VisitorInfoFieldState,
+  branchResolved: boolean,
 ): Record<string, string> {
   if (stepKey === 'visitor_info') {
     const errors = validateVisitorContact(formState.primaryContact, true, visitorInfoFields)
@@ -161,6 +162,7 @@ function validateStep(
     else if (visitInfo.preferredDate < todayAsDateInputValue()) errors.preferredDate = 'Preferred visit date cannot be in the past.'
     if (!visitInfo.preferredTime) errors.preferredTime = 'Preferred visit time is required.'
     if (!visitInfo.location) errors.location = 'Location is required.'
+    else if (!branchResolved) errors.location = 'Select a valid location from the list (locations may have failed to load — reload and retry).'
     if (!visitInfo.building) errors.building = 'Building is required.'
     return errors
   }
@@ -461,7 +463,7 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     // step rather than advance against a stale/incomplete list.
     if (isFormConfigLoading) return
     const stepErrors = {
-      ...validateStep(activeSteps[currentStep]?.key, formState, requiredConsentKeys, visitorInfoFields),
+      ...validateStep(activeSteps[currentStep]?.key, formState, requiredConsentKeys, visitorInfoFields, Boolean(branchId)),
       ...validateGroupMinimums(activeSteps[currentStep]?.groups ?? [], formState.groupValues, {
         registration_type: formState.registrationType,
         ...formState.primaryContact.customFieldValues,
@@ -490,6 +492,13 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
   }
 
   const submit = async () => {
+    // The backend requires `visitDetails.branchId`; a location that doesn't
+    // match a listed branch (free-text fallback) leaves it undefined.
+    if (!branchId) {
+      setSubmissionError('Please select a valid location from the list before submitting.')
+      setSubmissionStatus('error')
+      return
+    }
     const primaryContactIdProofFile = formState.primaryContact.idProofFileRef
       ? fileRegistry.current.get(formState.primaryContact.idProofFileRef)
       : undefined
