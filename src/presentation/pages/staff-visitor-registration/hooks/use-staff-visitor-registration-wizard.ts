@@ -18,6 +18,7 @@ import type { VisitorInfoFieldState } from '../../visitor-request/hooks/use-visi
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
 import type { Branch } from '../../../../domain/entities/branch-schema'
+import type { Building } from '../../../../domain/entities/building-schema'
 import { getActiveSteps, type StepKey } from '../../visitor-request/registration-wizard-steps'
 import type { SubmissionStatus } from '../../visitor-request/Components/steps/ReviewConfirmStep'
 import {
@@ -113,7 +114,7 @@ function validateStep(
   return {}
 }
 
-export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
+export function useStaffVisitorRegistrationWizard(branches?: Branch[], buildings?: Building[]) {
   const { submitStaffVisitRequestUseCase, trackVisitRequestUseCase, lookupStaffVisitorByEmailUseCase } = useAppDependencies()
   const toast = useToast()
 
@@ -207,6 +208,13 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
   const branchId = useMemo(
     () => branches?.find((branch) => branch.name === formState.visitInfo.location)?.id,
     [branches, formState.visitInfo.location],
+  )
+  const buildingId = useMemo(
+    () =>
+      buildings?.find(
+        (building) => building.name === formState.visitInfo.building && (!branchId || building.branchId === branchId),
+      )?.id,
+    [buildings, branchId, formState.visitInfo.building],
   )
   const {
     steps: effectiveFormSteps,
@@ -418,9 +426,16 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
       ) ||
       hasMissingRequiredCustomFieldFile(invitationRequiredFileUploadFields, [formState.customFieldValues])
     if (idProofMissing || photoMissing || missingRequiredCustomFieldFile || !branchId) {
-      setSubmissionError('Something went wrong submitting your request. Please try again.')
+      const message = !branchId
+        ? 'Location could not be matched to a branch. Reload the page and select the location again.'
+        : idProofMissing
+          ? 'ID proof is required — please go back and upload it.'
+          : photoMissing
+            ? 'Profile photo is required — please go back and upload it.'
+            : 'A required file upload is missing — please go back and upload it.'
+      setSubmissionError(message)
       setSubmissionStatus('error')
-      toast.error('Something went wrong submitting your request. Please try again.')
+      toast.error(message)
       return
     }
 
@@ -485,6 +500,8 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
             invitationFields: invitationCustomFields,
             consentFields,
             steps: effectiveFormSteps,
+            branchId,
+            buildingId,
           },
         ),
         {
@@ -498,7 +515,6 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[]) {
           vehicleCustomFieldFiles,
           customFieldFiles,
         },
-        branchId,
       )
       setTrackingId(response.trackingId)
       setSubmissionStatus('success')

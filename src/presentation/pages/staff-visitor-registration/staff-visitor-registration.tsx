@@ -60,7 +60,7 @@ export function StaffVisitorRegistrationPage() {
     vehicleInfoCustomFields,
     vehicleInfoGroups,
     vehicleInfoAllFields,
-  } = useStaffVisitorRegistrationWizard(branches)
+  } = useStaffVisitorRegistrationWizard(branches, buildings)
 
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
   const activeStep = activeSteps[currentStep]

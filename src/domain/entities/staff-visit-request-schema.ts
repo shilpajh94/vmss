@@ -5,7 +5,7 @@ import { ConsentAnswerSchema, FieldAnswerSchema, GroupAnswerSchema } from "./for
 
 // Wire shape of the JSON-encoded `payload` field for POST /invitations
 // (identical contract to POST /registrations/walk-in, see visit-request-schema.ts).
-// `branchId` isn't part of this payload — it travels as the `X-Branch-ID` header.
+// `visitDetails.branchId` is sent in the payload (not an `X-Branch-ID` header, which prod's CORS rejects).
 // `hostId`/`hostNameOrEmail`/`departmentToVisit` are intentionally absent
 // (role-based-invitation-workflow) — see visit-request-schema.ts's comment.
 export const StaffVisitRequestSchema = z.object({
@@ -15,6 +15,8 @@ export const StaffVisitRequestSchema = z.object({
   // See visit-request-schema.ts's matching comment — safe to omit when empty.
   visitors: z.array(StaffVisitorSchema).optional(),
   visitDetails: z.object({
+    branchId: z.string().min(1),
+    buildingId: z.string().min(1).optional(),
     purposeOfVisit: z.string().min(1),
     preferredVisitDate: z.string().min(1),
     preferredVisitTime: z.string().min(1),
