@@ -1290,11 +1290,11 @@ async def create_invitation(
         for key, files in vehicle_custom_field_file_contents.items()
     }
 
-    if source == RegistrationSource.visitor_walk_in and payload.branch_id is not None:
+    if source == RegistrationSource.visitor_walk_in and payload.effective_branch_id is not None:
         # A kiosk's device branch is only the default; the visitor's own
         # branch selection wins, provided it is an active branch.
-        branch_id = await _resolve_active_branch(tenant_db, payload.branch_id)
-    building_id = await _resolve_building(tenant_db, payload.building_id, branch_id)
+        branch_id = await _resolve_active_branch(tenant_db, payload.effective_branch_id)
+    building_id = await _resolve_building(tenant_db, payload.effective_building_id, branch_id)
     if visit_details["department_id"] is None and visit_details["department_to_visit"]:
         # Free-text department with no `departmentId`: link it to the branch's
         # department of the same name so the detail view returns the record.
