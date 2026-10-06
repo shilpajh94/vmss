@@ -553,12 +553,12 @@ async def _to_qr_check_in_out(
     building: Building | None,
     form_context: service.InvitationDetailFormContext,
 ) -> InvitationQrCheckInOut:
-    """Public, unauthenticated QR check-in/check-out (`documents:view` is
-    never granted here — see `_to_visitor_outs`). The primary contact's own
-    ID proof URL is the one document resolved anyway (the signed QR token
-    is the capability); every `file_upload` field is resolved with
-    `include_documents=False`: raw storage keys are stripped to `None`
-    rather than leaked to an anonymous caller."""
+    """Public, unauthenticated QR check-in/check-out. There is no
+    `documents:view` caller to gate on, but Reception verifies IDs at this
+    step, so the signed QR token is treated as the capability: the primary
+    contact's ID proof and every `file_upload` field (custom fields, group
+    instances, visitors' `idProofUrl`) resolve to signed URLs, same as the
+    staff detail view. Raw storage keys are never returned."""
     branch_out, building_out, department_out = _to_location_outs(
         branch, department, building, invitation.department_to_visit
     )
@@ -611,19 +611,19 @@ async def _to_qr_check_in_out(
                 **await _resolve_custom_field_file_values(
                     invitation.primary_contact_custom_field_values,
                     form_context.visitor_info_file_ids,
-                    include_documents=False,
+                    include_documents=True,
                 ),
                 **await _resolve_custom_field_file_values(
                     invitation.custom_field_values,
                     form_context.invitation_scope_file_ids,
-                    include_documents=False,
+                    include_documents=True,
                 ),
             },
         ),
         groups=_dict_to_groups(
             form_context.field_meta,
             await _resolve_group_field_values(
-                invitation.group_field_values, form_context.group_file_ids, include_documents=False
+                invitation.group_field_values, form_context.group_file_ids, include_documents=True
             ),
         ),
         submitted_at=invitation.submitted_at,
@@ -632,26 +632,18 @@ async def _to_qr_check_in_out(
         checked_out_at=invitation.checked_out_at,
         expires_at=invitation.expires_at,
         visitors=[
-            *await _to_visitor_outs(
-                invitation.visitors, form_context.visitor_info_file_ids, form_context.field_meta
+            *await _to_visitor_detail_outs(
+                invitation.visitors,
+                include_documents=True,
+                visitor_info_file_ids=form_context.visitor_info_file_ids,
+                field_meta=form_context.field_meta,
             ),
-            *[
-                InvitationVisitorOut(
-                    id=v.id,
-                    full_name=v.full_name,
-                    email=v.email,
-                    phone=v.phone,
-                    id_proof_type=v.id_proof_type,
-                    photo_url=v.photo_url,
-                    custom_fields=v.custom_fields,
-                )
-                for v in await _group_collected_visitor_detail_outs(
-                    invitation,
-                    form_context.visitor_info_groups,
-                    include_documents=False,
-                    field_meta=form_context.field_meta,
-                )
-            ],
+            *await _group_collected_visitor_detail_outs(
+                invitation,
+                form_context.visitor_info_groups,
+                include_documents=True,
+                field_meta=form_context.field_meta,
+            ),
         ],
         vehicles=[
             InvitationVehicleOut(
@@ -665,7 +657,7 @@ async def _to_qr_check_in_out(
                     await _resolve_custom_field_file_values(
                         v.custom_field_values,
                         form_context.vehicle_info_file_ids,
-                        include_documents=False,
+                        include_documents=True,
                     ),
                 ),
             )
