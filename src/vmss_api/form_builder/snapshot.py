@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from typing import Any, Protocol
 
 from vmss_api.core.logging import logger
+from vmss_api.form_builder.defaults import DEFAULT_EFFECTIVE_FORM
 from vmss_api.form_builder.schemas import FormFieldType
 
 SUPPORTED_FIELD_TYPES = frozenset(member.value for member in FormFieldType)
@@ -64,7 +65,34 @@ def supported_field_rows[RowT: _FieldRow](rows: Iterable[RowT], *, source: str) 
     return kept
 
 
+_LOCATION_FIELD_KEYS = ("branch", "building")
+
+
+def _add_missing_location_fields(step: dict[str, Any]) -> None:
+    """Snapshots published before `branch`/`building` became system fields
+    of `visit_details` lack them; prepend them from the in-code defaults
+    so clients render Location/Building without waiting on a republish."""
+    if step.get("key") != "visit_details":
+        return
+    fields = step.get("fields", [])
+    present = {f.get("key") for f in fields}
+    default_step = next(s for s in DEFAULT_EFFECTIVE_FORM if s["key"] == "visit_details")
+    missing = [
+        copy.deepcopy(f)
+        for f in default_step["fields"]
+        if f["key"] in _LOCATION_FIELD_KEYS and f["key"] not in present
+    ]
+    if not missing:
+        return
+    for f in missing:
+        f["stepId"] = step.get("id")
+    for f in fields:
+        f["orderIndex"] = f.get("orderIndex", 0) + len(missing)
+    step["fields"] = missing + fields
+
+
 def _normalize_step(step: dict[str, Any], *, source: str) -> dict[str, Any]:
+    _add_missing_location_fields(step)
     fields = []
     dropped_keys: set[str] = set()
     dropped_ids: set[str] = set()
