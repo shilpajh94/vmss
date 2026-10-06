@@ -200,28 +200,30 @@ export function AdminFormBuilderStepEditorPage() {
                   <span className="font-body text-xs text-text-muted">Drag rows to reorder</span>
                 </div>
 
-                {/* "Location" isn't a real Form Builder field — it's hardcoded
-                 * in the Visit Details step, always required, and populated
-                 * from the Branches list rather than admin-typed options (see
+                {/* "Location" and "Building" aren't real Form Builder fields — they're
+                 * hardcoded in the Visit Details step and populated from the
+                 * Branches / Buildings lists rather than admin-typed options (see
                  * visitor-request/Components/steps/VisitInfoStep.tsx). Shown
-                 * here read-only, purely so it's not invisible to admins
+                 * here read-only, purely so they're not invisible to admins
                  * comparing this list against the live form. */}
-                {step?.key === 'visit_details' && (
-                  <div className="flex items-center gap-3 rounded-xl border border-border bg-bg px-4 py-3 opacity-80">
-                    <LockIcon className="size-3.5 shrink-0 text-text-faint" />
-                    <div className="flex min-w-0 flex-1 flex-col gap-1">
-                      <div className="flex items-center gap-3">
-                        <span className="font-body text-sm font-semibold text-text">Location</span>
-                        <span className="rounded-full bg-surface px-2 py-0.5 font-body text-[11px] font-medium text-text-muted">
-                          Dropdown Select
-                        </span>
+                {step?.key === 'visit_details' &&
+                  [
+                    { label: 'Location', description: 'Always required. Populated from your Branches list — not configurable here.' },
+                    { label: 'Building', description: 'Populated from your Buildings list for the selected location — not configurable here.' },
+                  ].map((item) => (
+                    <div key={item.label} className="flex items-center gap-3 rounded-xl border border-border bg-bg px-4 py-3 opacity-80">
+                      <LockIcon className="size-3.5 shrink-0 text-text-faint" />
+                      <div className="flex min-w-0 flex-1 flex-col gap-1">
+                        <div className="flex items-center gap-3">
+                          <span className="font-body text-sm font-semibold text-text">{item.label}</span>
+                          <span className="rounded-full bg-surface px-2 py-0.5 font-body text-[11px] font-medium text-text-muted">
+                            Dropdown Select
+                          </span>
+                        </div>
+                        <p className="font-body text-xs text-text-muted">{item.description}</p>
                       </div>
-                      <p className="font-body text-xs text-text-muted">
-                        Always required. Populated from your Branches list — not configurable here.
-                      </p>
                     </div>
-                  </div>
-                )}
+                  ))}
 
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                   <SortableContext items={fields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
