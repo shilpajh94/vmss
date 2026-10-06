@@ -261,8 +261,7 @@ def _required_fields_summary() -> str:
         required = model.model_json_schema().get("required", [])
         lines.append(f"- {label}: {', '.join(required) if required else '(none required)'}")
     lines.append(
-        "- consents: optional, defaults to `[]` if omitted; see the "
-        "branch-configurable note below."
+        "- consents: optional, defaults to `[]` if omitted; see the branch-configurable note below."
     )
     lines.append(
         "Note: `email`/`phone` are each individually optional above, but at "
@@ -318,6 +317,9 @@ def to_invitation_out(
         poc_user_id=invitation.poc_user_id,
         poc_role_id=invitation.poc_role_id,
         poc_name=invitation.poc_name,
+        building_id=invitation.building_id,
+        department_id=invitation.department_id,
+        department_to_visit=invitation.department_to_visit,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
@@ -404,32 +406,53 @@ async def _resolve_group_field_values(
     }
 
 
-def _dict_to_custom_fields(values: dict[str, Any]) -> list[CustomFieldValue]:
+def _dict_to_custom_fields(
+    field_meta: dict[str, dict[str, str]], values: dict[str, Any]
+) -> list[CustomFieldValue]:
     """`{str(fieldId): value}` -> the wire's `list[{fieldId, value}]` shape
     (restructure-walkin-payload-by-field-id) — the response-side
     counterpart of `invitations/schemas.py::_custom_fields_to_dict`."""
-    return [CustomFieldValue(field_id=uuid.UUID(fid), value=value) for fid, value in values.items()]
-
-
-def _dict_to_consents(values: dict[str, bool]) -> list[ConsentValue]:
     return [
-        ConsentValue(field_id=uuid.UUID(fid), accepted=accepted) for fid, accepted in values.items()
+        CustomFieldValue(
+            field_id=uuid.UUID(fid),
+            field_name=field_meta.get(fid, {}).get("label"),
+            field_key=field_meta.get(fid, {}).get("key"),
+            value=value,
+        )
+        for fid, value in values.items()
+    ]
+
+
+def _dict_to_consents(
+    field_meta: dict[str, dict[str, str]], values: dict[str, bool]
+) -> list[ConsentValue]:
+    return [
+        ConsentValue(
+            field_id=uuid.UUID(fid),
+            field_name=field_meta.get(fid, {}).get("label"),
+            field_key=field_meta.get(fid, {}).get("key"),
+            accepted=accepted,
+        )
+        for fid, accepted in values.items()
     ]
 
 
 def _dict_to_groups(
+    field_meta: dict[str, dict[str, str]],
     values: dict[str, list[dict[str, Any]]],
 ) -> list[FieldGroupValuesOut]:
     return [
         FieldGroupValuesOut(
             group_id=uuid.UUID(group_id),
-            instances=[_dict_to_custom_fields(instance) for instance in instances],
+            instances=[_dict_to_custom_fields(field_meta, instance) for instance in instances],
         )
         for group_id, instances in values.items()
     ]
 
 
-async def _to_visitor_outs(visitors, visitor_info_file_ids: set[str]) -> list[InvitationVisitorOut]:
+async def _to_visitor_outs(
+    visitors, visitor_info_file_ids: set[str], field_meta: dict[str, dict[str, str]]
+) -> list[InvitationVisitorOut]:
     """Used by every response except the staff detail view — deliberately
     produces `InvitationVisitorOut`, which has no ID-proof document field
     at all (see that schema's docstring). None of these callers are ever
@@ -448,9 +471,10 @@ async def _to_visitor_outs(visitors, visitor_info_file_ids: set[str]) -> list[In
             id_proof_type=v.id_proof_type,
             photo_url=await _resolve_photo_url(v.photo_storage_key),
             custom_fields=_dict_to_custom_fields(
+                field_meta,
                 await _resolve_custom_field_file_values(
                     v.custom_field_values, visitor_info_file_ids, include_documents=False
-                )
+                ),
             ),
         )
         for v in visitors
@@ -458,7 +482,11 @@ async def _to_visitor_outs(visitors, visitor_info_file_ids: set[str]) -> list[In
 
 
 async def _to_visitor_detail_outs(
-    visitors, *, include_documents: bool, visitor_info_file_ids: set[str]
+    visitors,
+    *,
+    include_documents: bool,
+    visitor_info_file_ids: set[str],
+    field_meta: dict[str, dict[str, str]],
 ) -> list[InvitationVisitorDetailOut]:
     """Staff detail view (`GET /invitations/{id}`) only. `include_documents`
     is the caller's already-resolved `documents:view` grant — when `False`,
@@ -477,11 +505,12 @@ async def _to_visitor_detail_outs(
             ),
             photo_url=await _resolve_photo_url(v.photo_storage_key),
             custom_fields=_dict_to_custom_fields(
+                field_meta,
                 await _resolve_custom_field_file_values(
                     v.custom_field_values,
                     visitor_info_file_ids,
                     include_documents=include_documents,
-                )
+                ),
             ),
         )
         for v in visitors
@@ -489,7 +518,10 @@ async def _to_visitor_detail_outs(
 
 
 def _to_location_outs(
-    branch: Branch, department: Department | None, building: Building | None
+    branch: Branch,
+    department: Department | None,
+    building: Building | None,
+    department_to_visit: str | None = None,
 ) -> tuple[InvitationBranchOut, InvitationBuildingOut | None, InvitationDepartmentOut | None]:
     branch_out = InvitationBranchOut(
         id=branch.id,
@@ -506,6 +538,8 @@ def _to_location_outs(
     department_out = (
         InvitationDepartmentOut(id=department.id, name=department.name, code=department.code)
         if department is not None
+        else InvitationDepartmentOut(name=department_to_visit)
+        if department_to_visit
         else None
     )
     return branch_out, building_out, department_out
@@ -520,12 +554,17 @@ async def _to_qr_check_in_out(
     form_context: service.InvitationDetailFormContext,
 ) -> InvitationQrCheckInOut:
     """Public, unauthenticated QR check-in/check-out (`documents:view` is
-    never granted here — see `_to_visitor_outs`), so every `file_upload`
-    field is resolved with `include_documents=False`: raw storage keys are
-    stripped to `None` rather than leaked to an anonymous caller."""
-    branch_out, building_out, department_out = _to_location_outs(branch, department, building)
+    never granted here — see `_to_visitor_outs`). The primary contact's own
+    ID proof URL is the one document resolved anyway (the signed QR token
+    is the capability); every `file_upload` field is resolved with
+    `include_documents=False`: raw storage keys are stripped to `None`
+    rather than leaked to an anonymous caller."""
+    branch_out, building_out, department_out = _to_location_outs(
+        branch, department, building, invitation.department_to_visit
+    )
     return InvitationQrCheckInOut(
         id=invitation.id,
+        branch_id=invitation.branch_id,
         tracking_id=invitation.tracking_id,
         status=invitation.status,
         check_in_status=invitation.check_in_status,
@@ -539,22 +578,24 @@ async def _to_qr_check_in_out(
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
         ),
+        primary_contact_preferred_contact_method=ContactMethod(
+            invitation.primary_contact_preferred_contact_method
+        ),
         primary_contact_id_proof_type=invitation.primary_contact_id_proof_type,
+        primary_contact_id_proof_url=await _resolve_document_url(
+            invitation.primary_contact_id_proof_storage_key
+        ),
         primary_contact_email=invitation.primary_contact_email,
         primary_contact_phone=invitation.primary_contact_phone,
-        primary_contact_custom_fields=_dict_to_custom_fields(
-            await _resolve_custom_field_file_values(
-                invitation.primary_contact_custom_field_values,
-                form_context.visitor_info_file_ids,
-                include_documents=False,
-            )
-        ),
         host_id=invitation.host_id,
         host_name_or_email=invitation.host_name_or_email,
         poc_user_id=invitation.poc_user_id,
         poc_role_id=invitation.poc_role_id,
         poc_name=invitation.poc_name,
         purpose_of_visit=invitation.purpose_of_visit,
+        purpose_id=invitation.purpose_id,
+        duration_id=invitation.duration_id,
+        department_id=invitation.department_id,
         department_to_visit=invitation.department_to_visit,
         preferred_visit_date=invitation.preferred_visit_date,
         preferred_visit_time=invitation.preferred_visit_time,
@@ -562,24 +603,56 @@ async def _to_qr_check_in_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
+        consents=_dict_to_consents(form_context.field_meta, invitation.consents),
+        consent_recorded_at=invitation.consent_recorded_at,
         custom_fields=_dict_to_custom_fields(
-            await _resolve_custom_field_file_values(
-                invitation.custom_field_values,
-                form_context.invitation_scope_file_ids,
-                include_documents=False,
-            )
+            form_context.field_meta,
+            {
+                **await _resolve_custom_field_file_values(
+                    invitation.primary_contact_custom_field_values,
+                    form_context.visitor_info_file_ids,
+                    include_documents=False,
+                ),
+                **await _resolve_custom_field_file_values(
+                    invitation.custom_field_values,
+                    form_context.invitation_scope_file_ids,
+                    include_documents=False,
+                ),
+            },
         ),
         groups=_dict_to_groups(
+            form_context.field_meta,
             await _resolve_group_field_values(
                 invitation.group_field_values, form_context.group_file_ids, include_documents=False
-            )
+            ),
         ),
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
         checked_in_at=invitation.checked_in_at,
         checked_out_at=invitation.checked_out_at,
         expires_at=invitation.expires_at,
-        visitors=await _to_visitor_outs(invitation.visitors, form_context.visitor_info_file_ids),
+        visitors=[
+            *await _to_visitor_outs(
+                invitation.visitors, form_context.visitor_info_file_ids, form_context.field_meta
+            ),
+            *[
+                InvitationVisitorOut(
+                    id=v.id,
+                    full_name=v.full_name,
+                    email=v.email,
+                    phone=v.phone,
+                    id_proof_type=v.id_proof_type,
+                    photo_url=v.photo_url,
+                    custom_fields=v.custom_fields,
+                )
+                for v in await _group_collected_visitor_detail_outs(
+                    invitation,
+                    form_context.visitor_info_groups,
+                    include_documents=False,
+                    field_meta=form_context.field_meta,
+                )
+            ],
+        ],
         vehicles=[
             InvitationVehicleOut(
                 id=v.id,
@@ -588,11 +661,12 @@ async def _to_qr_check_in_out(
                 make_model=v.make_model,
                 color=v.color,
                 custom_fields=_dict_to_custom_fields(
+                    form_context.field_meta,
                     await _resolve_custom_field_file_values(
                         v.custom_field_values,
                         form_context.vehicle_info_file_ids,
                         include_documents=False,
-                    )
+                    ),
                 ),
             )
             for v in invitation.vehicles
@@ -615,6 +689,9 @@ async def _to_list_item_out(invitation) -> InvitationListItemOut:
             invitation.primary_contact_photo_storage_key
         ),
         purpose_of_visit=invitation.purpose_of_visit,
+        department_to_visit=invitation.department_to_visit,
+        department_id=invitation.department_id,
+        building_id=invitation.building_id,
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
@@ -640,13 +717,6 @@ async def _to_tracking_out(
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
         ),
-        primary_contact_custom_fields=_dict_to_custom_fields(
-            await _resolve_custom_field_file_values(
-                invitation.primary_contact_custom_field_values,
-                form_context.visitor_info_file_ids,
-                include_documents=False,
-            )
-        ),
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         poc_user_id=invitation.poc_user_id,
@@ -660,21 +730,32 @@ async def _to_tracking_out(
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
         custom_fields=_dict_to_custom_fields(
-            await _resolve_custom_field_file_values(
-                invitation.custom_field_values,
-                form_context.invitation_scope_file_ids,
-                include_documents=False,
-            )
+            form_context.field_meta,
+            {
+                **await _resolve_custom_field_file_values(
+                    invitation.primary_contact_custom_field_values,
+                    form_context.visitor_info_file_ids,
+                    include_documents=False,
+                ),
+                **await _resolve_custom_field_file_values(
+                    invitation.custom_field_values,
+                    form_context.invitation_scope_file_ids,
+                    include_documents=False,
+                ),
+            },
         ),
         groups=_dict_to_groups(
+            form_context.field_meta,
             await _resolve_group_field_values(
                 invitation.group_field_values, form_context.group_file_ids, include_documents=False
-            )
+            ),
         ),
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
-        visitors=await _to_visitor_outs(invitation.visitors, form_context.visitor_info_file_ids),
+        visitors=await _to_visitor_outs(
+            invitation.visitors, form_context.visitor_info_file_ids, form_context.field_meta
+        ),
         vehicles=[
             InvitationVehicleOut(
                 id=v.id,
@@ -683,11 +764,12 @@ async def _to_tracking_out(
                 make_model=v.make_model,
                 color=v.color,
                 custom_fields=_dict_to_custom_fields(
+                    form_context.field_meta,
                     await _resolve_custom_field_file_values(
                         v.custom_field_values,
                         form_context.vehicle_info_file_ids,
                         include_documents=False,
-                    )
+                    ),
                 ),
             )
             for v in invitation.vehicles
@@ -722,13 +804,6 @@ async def _to_check_in_out(
         primary_contact_photo_url=await _resolve_photo_url(
             invitation.primary_contact_photo_storage_key
         ),
-        primary_contact_custom_fields=_dict_to_custom_fields(
-            await _resolve_custom_field_file_values(
-                invitation.primary_contact_custom_field_values,
-                form_context.visitor_info_file_ids,
-                include_documents=False,
-            )
-        ),
         purpose_of_visit=invitation.purpose_of_visit,
         host_name_or_email=invitation.host_name_or_email,
         preferred_visit_date=invitation.preferred_visit_date,
@@ -739,18 +814,29 @@ async def _to_check_in_out(
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
         custom_fields=_dict_to_custom_fields(
-            await _resolve_custom_field_file_values(
-                invitation.custom_field_values,
-                form_context.invitation_scope_file_ids,
-                include_documents=False,
-            )
+            form_context.field_meta,
+            {
+                **await _resolve_custom_field_file_values(
+                    invitation.primary_contact_custom_field_values,
+                    form_context.visitor_info_file_ids,
+                    include_documents=False,
+                ),
+                **await _resolve_custom_field_file_values(
+                    invitation.custom_field_values,
+                    form_context.invitation_scope_file_ids,
+                    include_documents=False,
+                ),
+            },
         ),
         groups=_dict_to_groups(
+            form_context.field_meta,
             await _resolve_group_field_values(
                 invitation.group_field_values, form_context.group_file_ids, include_documents=False
-            )
+            ),
         ),
-        visitors=await _to_visitor_outs(invitation.visitors, form_context.visitor_info_file_ids),
+        visitors=await _to_visitor_outs(
+            invitation.visitors, form_context.visitor_info_file_ids, form_context.field_meta
+        ),
         vehicles=[
             InvitationVehicleOut(
                 id=v.id,
@@ -759,11 +845,12 @@ async def _to_check_in_out(
                 make_model=v.make_model,
                 color=v.color,
                 custom_fields=_dict_to_custom_fields(
+                    form_context.field_meta,
                     await _resolve_custom_field_file_values(
                         v.custom_field_values,
                         form_context.vehicle_info_file_ids,
                         include_documents=False,
-                    )
+                    ),
                 ),
             )
             for v in invitation.vehicles
@@ -772,7 +859,11 @@ async def _to_check_in_out(
 
 
 async def _group_collected_visitor_detail_outs(
-    invitation, visitor_info_groups: dict[str, dict[str, Any]], *, include_documents: bool
+    invitation,
+    visitor_info_groups: dict[str, dict[str, Any]],
+    *,
+    include_documents: bool,
+    field_meta: dict[str, dict[str, str]],
 ) -> list[InvitationVisitorDetailOut]:
     """A branch that collects additional visitors through an admin-defined
     repeatable group on Visitor Info instead of the fixed `visitors` list
@@ -843,9 +934,10 @@ async def _group_collected_visitor_detail_outs(
                     ),
                     photo_url=None,
                     custom_fields=_dict_to_custom_fields(
+                        field_meta,
                         await _resolve_custom_field_file_values(
                             instance, group_file_ids, include_documents=include_documents
-                        )
+                        ),
                     ),
                 )
             )
@@ -862,7 +954,9 @@ async def _to_invitation_detail_out(
     include_documents: bool,
     form_context: service.InvitationDetailFormContext,
 ) -> InvitationDetailOut:
-    branch_out, building_out, department_out = _to_location_outs(branch, department, building)
+    branch_out, building_out, department_out = _to_location_outs(
+        branch, department, building, invitation.department_to_visit
+    )
     resolved_group_field_values = await _resolve_group_field_values(
         invitation.group_field_values,
         form_context.group_file_ids,
@@ -896,13 +990,6 @@ async def _to_invitation_detail_out(
             if include_documents
             else None
         ),
-        primary_contact_custom_fields=_dict_to_custom_fields(
-            await _resolve_custom_field_file_values(
-                invitation.primary_contact_custom_field_values,
-                form_context.visitor_info_file_ids,
-                include_documents=include_documents,
-            )
-        ),
         purpose_of_visit=invitation.purpose_of_visit,
         purpose_id=invitation.purpose_id,
         host_name_or_email=invitation.host_name_or_email,
@@ -923,16 +1010,24 @@ async def _to_invitation_detail_out(
         additional_notes=invitation.additional_notes,
         carried_items=invitation.carried_items,
         carried_items_description=invitation.carried_items_description,
-        consents=_dict_to_consents(invitation.consents),
+        consents=_dict_to_consents(form_context.field_meta, invitation.consents),
         consent_recorded_at=invitation.consent_recorded_at,
         custom_fields=_dict_to_custom_fields(
-            await _resolve_custom_field_file_values(
-                invitation.custom_field_values,
-                form_context.invitation_scope_file_ids,
-                include_documents=include_documents,
-            )
+            form_context.field_meta,
+            {
+                **await _resolve_custom_field_file_values(
+                    invitation.primary_contact_custom_field_values,
+                    form_context.visitor_info_file_ids,
+                    include_documents=include_documents,
+                ),
+                **await _resolve_custom_field_file_values(
+                    invitation.custom_field_values,
+                    form_context.invitation_scope_file_ids,
+                    include_documents=include_documents,
+                ),
+            },
         ),
-        groups=_dict_to_groups(resolved_group_field_values),
+        groups=_dict_to_groups(form_context.field_meta, resolved_group_field_values),
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
@@ -954,9 +1049,13 @@ async def _to_invitation_detail_out(
                 invitation.visitors,
                 include_documents=include_documents,
                 visitor_info_file_ids=form_context.visitor_info_file_ids,
+                field_meta=form_context.field_meta,
             ),
             *await _group_collected_visitor_detail_outs(
-                invitation, form_context.visitor_info_groups, include_documents=include_documents
+                invitation,
+                form_context.visitor_info_groups,
+                include_documents=include_documents,
+                field_meta=form_context.field_meta,
             ),
         ],
         vehicles=[
@@ -967,11 +1066,12 @@ async def _to_invitation_detail_out(
                 make_model=v.make_model,
                 color=v.color,
                 custom_fields=_dict_to_custom_fields(
+                    form_context.field_meta,
                     await _resolve_custom_field_file_values(
                         v.custom_field_values,
                         form_context.vehicle_info_file_ids,
                         include_documents=include_documents,
-                    )
+                    ),
                 ),
             )
             for v in invitation.vehicles

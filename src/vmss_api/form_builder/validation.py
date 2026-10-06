@@ -397,7 +397,13 @@ def _validate_value_against_field(field: dict[str, Any], value: Any) -> None:
     field_type = field["fieldType"]
     options = field.get("options")
     label = _field_label(field)
-    if field_type == "checkbox_list" and options:
+    if field_type == "toggle_switch" and options and isinstance(value, list):
+        # The portal renders an optioned toggle as a multi-select checkbox
+        # group, so it submits the selected options as a list.
+        multi_select = True
+    else:
+        multi_select = field_type == "checkbox_list" and bool(options)
+    if multi_select and options:
         candidates = value if isinstance(value, list) else [value]
         if not set(candidates) <= set(options):
             raise HTTPException(
