@@ -48,6 +48,7 @@ from vmss_api.invitations.schemas import (
     InvitationLookupPrefillOut,
     InvitationSortableField,
     RegistrationSource,
+    RegistrationType,
     VisitDetailsSubmit,
 )
 from vmss_api.notifications import service as notifications_service
@@ -664,9 +665,18 @@ async def create_invitation(
     # group's own `maxInstances`, the same enforcement path every other
     # group already uses.
     visitor_group = form_builder_validation.visitor_info_group(effective_form)
+    visitor_group_instances = (
+        payload.group_values.get(str(visitor_group["id"]), []) if visitor_group else []
+    )
     try:
+        # Individual registrations have no additional-visitor list, so the
+        # group's minimum must not be applied to their zero count.
         form_builder_validation.validate_group_instance_count(
-            visitor_group, len(payload.visitors), scope="A group registration"
+            visitor_group,
+            len(payload.visitors),
+            scope="A group registration",
+            skip_minimum=payload.registration_type != RegistrationType.group
+            or bool(visitor_group_instances),
         )
     except HTTPException:
         logger.warning(

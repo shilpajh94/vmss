@@ -368,29 +368,13 @@ class InvitationCreate(CamelModel):
 
     @model_validator(mode="after")
     def _check_visitor_list_matches_registration_type(self) -> Self:
-        """spec.md "Visitor List Matches Registration Type". A branch that
-        has moved multi-visitor collection to an admin-defined repeatable
-        field group (the built-in "Visitors" system group is no longer
-        admin-configurable — see `form_builder/defaults.py`'s "visitors"
-        group) submits those visitors' answers through `groups`
-        instead of the legacy `visitors` array, so a non-empty group there
-        satisfies "at least one visitor" just as well. Which group actually
-        represents visitor data is branch-specific form configuration this
-        schema can't see, so this is deliberately a coarse, branch-agnostic
-        proxy — any group with a non-empty `instances` list counts; the
-        effective form's own group definitions still validate instance
-        counts/required fields dynamically
-        (`invitations/service.py::create_invitation`).
+        """An Individual registration must not list additional visitors. How
+        many visitors a Group registration needs is the Visitor Info group's
+        own configured min/max instances (Form Builder), enforced in
+        `invitations/service.py::create_invitation`, not hardcoded here.
         """
         if self.registration_type == RegistrationType.individual and self.visitors:
             raise ValueError("An individual registration must not list additional visitors")
-        has_group_visitors = any(group.instances for group in self.groups)
-        if (
-            self.registration_type == RegistrationType.group
-            and not self.visitors
-            and not has_group_visitors
-        ):
-            raise ValueError("A group registration must list at least one visitor")
         _consents_to_dict(self.consents)
         _custom_fields_to_dict(self.custom_fields, scope="the invitation's customFields")
         _groups_to_dict(self.groups)
@@ -843,7 +827,7 @@ class InvitationQrCheckInOut(CamelModel):
     checked_in_at: datetime | None
     checked_out_at: datetime | None
     expires_at: datetime
-    visitors: list[InvitationVisitorOut]
+    visitors: list[InvitationVisitorDetailOut]
     vehicles: list[InvitationVehicleOut]
 
 
