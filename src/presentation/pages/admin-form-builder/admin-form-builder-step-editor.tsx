@@ -67,16 +67,30 @@ export function AdminFormBuilderStepEditorPage() {
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
   )
 
+  // Location / Building are always shown as locked, read-only rows on the
+  // Visit Details step (populated from Branches / Buildings), even when the
+  // backend also returns them as real fields — those are kept out of the
+  // editable list so they can't be edited, reordered or deleted here.
+  const LOCKED_VISIT_FIELDS = [
+    { key: 'location', label: 'Location', description: 'Always required. Populated from your Branches list — not configurable here.' },
+    { key: 'building', label: 'Building', description: 'Populated from your Buildings list for the selected location — not configurable here.' },
+  ]
+  const isLockedVisitField = (f: { key: string; label?: string }) =>
+    step?.key === 'visit_details' &&
+    LOCKED_VISIT_FIELDS.some((i) => i.key === f.key || f.label?.trim().toLowerCase() === i.label.toLowerCase())
+  const editableFields = fields.filter((f) => !isLockedVisitField(f))
+  const hiddenFieldIds = fields.filter(isLockedVisitField).map((f) => f.id)
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    const oldIndex = fields.findIndex((f) => f.id === active.id)
-    const newIndex = fields.findIndex((f) => f.id === over.id)
+    const oldIndex = editableFields.findIndex((f) => f.id === active.id)
+    const newIndex = editableFields.findIndex((f) => f.id === over.id)
     if (oldIndex === -1 || newIndex === -1) return
-    const reordered = [...fields]
+    const reordered = [...editableFields]
     const [moved] = reordered.splice(oldIndex, 1)
     reordered.splice(newIndex, 0, moved)
-    void reorderFields(reordered.map((f) => f.id))
+    void reorderFields([...hiddenFieldIds, ...reordered.map((f) => f.id)])
   }
 
   // Locked groups (the seeded "vehicles"/"visitors" groups) never get a drag
@@ -209,11 +223,7 @@ export function AdminFormBuilderStepEditorPage() {
                  * key the backend already returns as a real field, otherwise
                  * the same row shows up twice. */}
                 {step?.key === 'visit_details' &&
-                  [
-                    { key: 'location', label: 'Location', description: 'Always required. Populated from your Branches list — not configurable here.' },
-                    { key: 'building', label: 'Building', description: 'Populated from your Buildings list for the selected location — not configurable here.' },
-                  ]
-                    .filter((item) => !fields.some((f) => f.key === item.key))
+                  LOCKED_VISIT_FIELDS
                     .map((item) => (
                     <div key={item.label} className="flex items-center gap-3 rounded-xl border border-border bg-bg px-4 py-3 opacity-80">
                       <LockIcon className="size-3.5 shrink-0 text-text-faint" />
@@ -230,10 +240,10 @@ export function AdminFormBuilderStepEditorPage() {
                   ))}
 
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                  <SortableContext items={fields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
+                  <SortableContext items={editableFields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
                     <div className="flex flex-col gap-2">
-                      {fields.map((field, index) => {
-                        const previousGroupId = index > 0 ? fields[index - 1].groupId : undefined
+                      {editableFields.map((field, index) => {
+                        const previousGroupId = index > 0 ? editableFields[index - 1].groupId : undefined
                         const group = field.groupId ? groups.find((g) => g.id === field.groupId) : undefined
                         return (
                           <div key={field.id} className="flex flex-col gap-2">
