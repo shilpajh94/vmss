@@ -199,6 +199,11 @@ class VisitorSubmit(CamelModel):
 
 
 class VisitDetailsSubmit(CamelModel):
+    # Location of the visit. Preferred home for these ids; the top-level
+    # `branchId`/`buildingId` on `InvitationCreate` remain accepted as a
+    # fallback for older clients (see `InvitationCreate.effective_*`).
+    branch_id: uuid.UUID | None = None
+    building_id: uuid.UUID | None = None
     purpose_of_visit: str = Field(max_length=255)
     # Never client-supplied for routing purposes anymore
     # (role-based-invitation-workflow) — the invitation's host is resolved
@@ -375,10 +380,22 @@ class InvitationCreate(CamelModel):
         """
         if self.registration_type == RegistrationType.individual and self.visitors:
             raise ValueError("An individual registration must not list additional visitors")
+        if self.effective_branch_id is None:
+            raise ValueError("visitDetails.branchId is required")
+        if self.effective_building_id is None:
+            raise ValueError("visitDetails.buildingId is required")
         _consents_to_dict(self.consents)
         _custom_fields_to_dict(self.custom_fields, scope="the invitation's customFields")
         _groups_to_dict(self.groups)
         return self
+
+    @property
+    def effective_branch_id(self) -> uuid.UUID | None:
+        return self.visit_details.branch_id or self.branch_id
+
+    @property
+    def effective_building_id(self) -> uuid.UUID | None:
+        return self.visit_details.building_id or self.building_id
 
     @property
     def consents_dict(self) -> dict[str, bool]:

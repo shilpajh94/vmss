@@ -127,6 +127,8 @@ _INDIVIDUAL_PAYLOAD_EXAMPLE = {
     },
     "visitors": [],
     "visitDetails": {
+        "branchId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "buildingId": "3fa85f64-5717-4562-b3fc-2c963f66afa7",
         "purposeOfVisit": "Interview",
         "hostNameOrEmail": "hr@enterprise-ugo.co",
         "preferredVisitDate": "2026-08-12",
@@ -171,6 +173,8 @@ _GROUP_PAYLOAD_EXAMPLE = {
         },
     ],
     "visitDetails": {
+        "branchId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "buildingId": "3fa85f64-5717-4562-b3fc-2c963f66afa7",
         "purposeOfVisit": "Business Meeting",
         "hostNameOrEmail": "Rahul Nair",
         "preferredVisitDate": "2026-08-15",
@@ -1191,8 +1195,8 @@ async def create_invitation(
             alias="X-Branch-ID",
             description=(
                 "Which branch this invitation belongs to. Optional — falls "
-                "back to `branchId` in the payload when omitted; one of the "
-                "two is required."
+                "back to `visitDetails.branchId` (or top-level `branchId`) when "
+                "omitted; one of the two is required."
             ),
         ),
     ] = None,
@@ -1250,11 +1254,11 @@ async def create_invitation(
     except ValidationError as exc:
         return error_response(message=str(exc), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
 
-    branch_id = x_branch_id if x_branch_id is not None else create_payload.branch_id
+    branch_id = x_branch_id if x_branch_id is not None else create_payload.effective_branch_id
     if branch_id is None:
         return error_response(
             message=(
-                "branchId in the payload (or the X-Branch-ID header) is "
+                "visitDetails.branchId in the payload (or the X-Branch-ID header) is "
                 "required to determine which branch this invitation belongs to"
             ),
             status_code=status.HTTP_400_BAD_REQUEST,
