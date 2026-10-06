@@ -868,7 +868,7 @@ async def reorder_groups(
 # `options` *is* the source of truth for what a submission may declare
 # (make-id-proof-and-vehicle-type-configurable), so it needs the same
 # non-empty-options guarantee any admin-authored field does.
-_EXTERNALLY_CATALOGED_FIELD_KEYS = frozenset({"visitor_category"})
+_EXTERNALLY_CATALOGED_FIELD_KEYS = frozenset({"visitor_category", "branch", "building"})
 
 
 def _requires_static_options(field_row: FormField) -> bool:

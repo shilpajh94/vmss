@@ -1251,6 +1251,20 @@ async def test_effective_form_falls_back_to_defaults_before_any_publish(
     ]
 
 
+async def test_effective_form_includes_branch_and_building_fields(
+    client: AsyncClient, tenant: Tenant
+) -> None:
+    steps = (await client.get("/api/v1/form-builder/effective")).json()["data"]
+    visit_details = next(s for s in steps if s["key"] == "visit_details")
+    by_key = {f["key"]: f for f in visit_details["fields"]}
+    assert by_key["branch"]["label"] == "Location"
+    assert by_key["branch"]["isRequired"] is True
+    assert by_key["branch"]["isLocked"] is True
+    assert by_key["building"]["label"] == "Building"
+    assert by_key["building"]["isRequired"] is False
+    assert by_key["building"]["fieldType"] == "dropdown_select"
+
+
 async def test_publish_requires_manage_permission(
     client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
