@@ -16,6 +16,8 @@ import type { FormFieldType } from '../../../domain/entities/form-builder-schema
 
 export const OPTION_REQUIRED_FIELD_TYPES: readonly FormFieldType[] = ['dropdown_select', 'checkbox_list', 'radio_button']
 
+export const OPTION_OPTIONAL_FIELD_TYPES: readonly FormFieldType[] = ['toggle_switch']
+
 export interface FieldTypeMeta {
   type: FormFieldType
   label: string

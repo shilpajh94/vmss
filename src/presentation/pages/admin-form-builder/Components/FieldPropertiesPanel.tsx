@@ -10,6 +10,7 @@ import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
 import {
   CONTENT_ONLY_FIELD_TYPES,
   FIELD_TYPE_CATALOG,
+  OPTION_OPTIONAL_FIELD_TYPES,
   OPTION_REQUIRED_FIELD_TYPES,
   TYPE_LOCKED_SYSTEM_FIELD_KEYS,
   fieldTypeLabel,
@@ -39,9 +40,8 @@ function toOptionDraftRows(options: string[] | null): OptionDraftRow[] {
   return (options ?? []).map((value) => ({ id: crypto.randomUUID(), value }))
 }
 
-function optionsEditorIsShown(fieldType: FormFieldType, originalOptions: string[] | null): boolean {
-  if (OPTION_REQUIRED_FIELD_TYPES.includes(fieldType)) return true
-  return fieldType === 'toggle_switch' && originalOptions !== null
+function optionsEditorIsShown(fieldType: FormFieldType): boolean {
+  return OPTION_REQUIRED_FIELD_TYPES.includes(fieldType) || OPTION_OPTIONAL_FIELD_TYPES.includes(fieldType)
 }
 
 interface OptionRowProps {
@@ -118,7 +118,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
     // starting a drag (responsive-layout "Reordering form fields by touch").
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
   )
-  const showOptionsEditor = optionsEditorIsShown(fieldType, field.options)
+  const showOptionsEditor = optionsEditorIsShown(fieldType)
   const isContentOnly = CONTENT_ONLY_FIELD_TYPES.includes(fieldType)
   const editableFieldsDisabled = field.isLocked && !isUnlockedForEditing
   // A locked, retypeable field's Field Type control joins the same
