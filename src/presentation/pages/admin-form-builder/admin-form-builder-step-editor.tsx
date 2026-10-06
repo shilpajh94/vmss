@@ -205,12 +205,16 @@ export function AdminFormBuilderStepEditorPage() {
                  * Branches / Buildings lists rather than admin-typed options (see
                  * visitor-request/Components/steps/VisitInfoStep.tsx). Shown
                  * here read-only, purely so they're not invisible to admins
-                 * comparing this list against the live form. */}
+                 * comparing this list against the live form. Skipped for any
+                 * key the backend already returns as a real field, otherwise
+                 * the same row shows up twice. */}
                 {step?.key === 'visit_details' &&
                   [
-                    { label: 'Location', description: 'Always required. Populated from your Branches list — not configurable here.' },
-                    { label: 'Building', description: 'Populated from your Buildings list for the selected location — not configurable here.' },
-                  ].map((item) => (
+                    { key: 'location', label: 'Location', description: 'Always required. Populated from your Branches list — not configurable here.' },
+                    { key: 'building', label: 'Building', description: 'Populated from your Buildings list for the selected location — not configurable here.' },
+                  ]
+                    .filter((item) => !fields.some((f) => f.key === item.key))
+                    .map((item) => (
                     <div key={item.label} className="flex items-center gap-3 rounded-xl border border-border bg-bg px-4 py-3 opacity-80">
                       <LockIcon className="size-3.5 shrink-0 text-text-faint" />
                       <div className="flex min-w-0 flex-1 flex-col gap-1">
