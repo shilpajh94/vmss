@@ -1,3 +1,5 @@
+import copy
+import json
 import uuid
 from collections.abc import Callable
 
@@ -5,9 +7,17 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
+from structlog.testing import capture_logs
 
 from vmss_api.auth.models import User
 from vmss_api.core.config import settings
+from vmss_api.core.redis import get_redis
+from vmss_api.form_builder.models import FormConfigVersion, FormField, FormFieldGroup, FormStep
+from vmss_api.form_builder.repository import FormConfigVersionRepository
+from vmss_api.form_builder.service import _step_to_snapshot, resolve_effective_form
+from vmss_api.form_builder.snapshot import SUPPORTED_FIELD_TYPES, normalize_snapshot
+from vmss_api.form_builder.validation import allowed_consent_field_ids, required_consent_field_ids
 from vmss_api.org_structure.models import Branch
 from vmss_api.tenant.models import Tenant
 
@@ -1241,6 +1251,20 @@ async def test_effective_form_falls_back_to_defaults_before_any_publish(
     ]
 
 
+async def test_effective_form_includes_branch_and_building_fields(
+    client: AsyncClient, tenant: Tenant
+) -> None:
+    steps = (await client.get("/api/v1/form-builder/effective")).json()["data"]
+    visit_details = next(s for s in steps if s["key"] == "visit_details")
+    by_key = {f["key"]: f for f in visit_details["fields"]}
+    assert by_key["branch"]["label"] == "Location"
+    assert by_key["branch"]["isRequired"] is True
+    assert by_key["branch"]["isLocked"] is True
+    assert by_key["building"]["label"] == "Building"
+    assert by_key["building"]["isRequired"] is False
+    assert by_key["building"]["fieldType"] == "dropdown_select"
+
+
 async def test_publish_requires_manage_permission(
     client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
 ) -> None:
@@ -2197,3 +2221,246 @@ async def test_publish_then_effective_form_includes_group_visibility_condition(
         "operator": "equals",
         "value": "yes",
     }
+
+
+# --- Stale stored configuration (heal-stale-form-config-data) ----------------
+
+
+async def _publish_and_load_default_version(
+    client: AsyncClient, db_session: AsyncSession, token: str
+) -> FormConfigVersion:
+    response = await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    assert response.status_code == 200, response.text
+    version = await FormConfigVersionRepository(db_session).get_for_scope(None)
+    assert version is not None
+    return version
+
+
+def _age_snapshot(snapshot: list[dict], *, removed_type_step: str) -> list[dict]:
+    """Rewrites a freshly published snapshot into what one published on
+    2026-09-22 looks like: no `hideLabel` on fields, no `visibilityCondition`
+    or `fieldIds` on groups, plus a required field of the removed
+    `signature_pad` type."""
+    aged = copy.deepcopy(snapshot)
+    for step in aged:
+        for field in step["fields"]:
+            field.pop("hideLabel", None)
+        for group in step["groups"]:
+            group.pop("visibilityCondition", None)
+            group.pop("fieldIds", None)
+        if step["key"] == removed_type_step:
+            step["fields"].append(
+                {
+                    **step["fields"][0],
+                    "id": str(uuid.uuid4()),
+                    "key": "terms_conditions",
+                    "label": "Terms & Conditions",
+                    "fieldType": "signature_pad",
+                    "isRequired": True,
+                    "options": None,
+                    "groupId": None,
+                    "orderIndex": 99,
+                }
+            )
+    return aged
+
+
+async def _store_snapshot(
+    db_session: AsyncSession, version: FormConfigVersion, snapshot: list[dict]
+) -> None:
+    version.snapshot = snapshot
+    flag_modified(version, "snapshot")
+    await db_session.commit()
+
+
+async def test_effective_form_published_before_later_keys_is_served_in_current_shape(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    token = issue_token(user)
+    version = await _publish_and_load_default_version(client, db_session, token)
+    current = copy.deepcopy(version.snapshot)
+    await _store_snapshot(
+        db_session, version, _age_snapshot(current, removed_type_step="consent_agreement")
+    )
+
+    with capture_logs() as captured:
+        response = await client.get("/api/v1/form-builder/effective")
+
+    assert response.status_code == 200, response.text
+    served = response.json()["data"]
+    # The aged snapshot minus the removed-type field, normalised, is exactly
+    # what the current code publishes: missing keys defaulted (and `fieldIds`
+    # rebuilt from `fieldKeys`), every carried value unchanged.
+    assert served == current
+    fields = [f for s in served for f in s["fields"]]
+    assert all(f["fieldType"] in SUPPORTED_FIELD_TYPES for f in fields)
+    assert "terms_conditions" not in {f["key"] for f in fields}
+    [warning] = [e for e in captured if e["event"] == "form_field_unknown_type_skipped"]
+    assert warning["log_level"] == "warning"
+    assert (warning["field_key"], warning["field_type"]) == ("terms_conditions", "signature_pad")
+
+
+async def test_normalized_snapshot_matches_current_shape() -> None:
+    """Guards `SNAPSHOT_FIELD_DEFAULTS`/`SNAPSHOT_GROUP_DEFAULTS`: a snapshot
+    carrying only the keys that existed when snapshots were first published
+    must normalise to every key `_step_to_snapshot` emits today. Adding a key
+    there without a default here fails this test."""
+    field = FormField(
+        id=uuid.uuid4(),
+        step_id=uuid.uuid4(),
+        group_id=None,
+        key="full_name",
+        label="Full name",
+        field_type="text",
+        is_system=False,
+        is_locked=False,
+        is_active=True,
+        is_required=True,
+        order_index=0,
+        width="full",
+        hide_label=False,
+    )
+    group = FormFieldGroup(
+        id=uuid.uuid4(),
+        step_id=field.step_id,
+        key="people",
+        name="People",
+        is_system=False,
+        is_locked=False,
+        is_repeatable=False,
+        order_index=0,
+    )
+    field.group_id = group.id
+    step = FormStep(
+        id=field.step_id,
+        key="visitor_info",
+        name="Visitor Info",
+        is_system=True,
+        is_locked=True,
+        is_active=True,
+        order_index=0,
+    )
+    current = _step_to_snapshot(step, [field], [group])
+    aged = _age_snapshot([current], removed_type_step="none")
+
+    [normalized] = normalize_snapshot(aged, source="test")
+
+    assert set(normalized["fields"][0]) == set(current["fields"][0])
+    assert set(normalized["groups"][0]) == set(current["groups"][0])
+    assert normalized["groups"][0]["fieldIds"] == [str(field.id)]
+
+
+async def test_effective_form_heals_a_stale_cached_snapshot(
+    client: AsyncClient, tenant: Tenant, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    await client.post("/api/v1/form-builder/publish", headers=_auth(token))
+    fresh = (await client.get("/api/v1/form-builder/effective")).json()["data"]
+    redis = await get_redis()
+    await redis.set(
+        f"vmss:{tenant.id}:form-builder:effective:default",
+        json.dumps(_age_snapshot(fresh, removed_type_step="visitor_info")),
+        ex=60,
+    )
+
+    response = await client.get("/api/v1/form-builder/effective")
+
+    assert response.status_code == 200
+    assert response.json()["data"] == fresh
+
+
+async def test_list_steps_skips_a_stored_field_of_a_removed_type(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visit_details")
+    created = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "legacy_signature", "label": "Signature", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert created.status_code == 201, created.text
+    field_id = uuid.UUID(created.json()["data"]["id"])
+    row = await db_session.get(FormField, field_id)
+    assert row is not None
+    row.field_type = "signature_pad"
+    await db_session.commit()
+
+    with capture_logs() as captured:
+        response = await client.get("/api/v1/form-builder/steps", headers=_auth(token))
+        fields_response = await client.get(
+            f"/api/v1/form-builder/steps/{step['id']}/fields", headers=_auth(token)
+        )
+
+    assert response.status_code == 200, response.text
+    assert fields_response.status_code == 200, fields_response.text
+    listed = next(s for s in response.json()["data"] if s["key"] == "visit_details")
+    assert "legacy_signature" not in {f["key"] for f in listed["fields"]}
+    assert listed["fields"], "the step's supported fields are still served"
+    assert "legacy_signature" not in {f["key"] for f in fields_response.json()["data"]}
+    assert any(e["event"] == "form_field_unknown_type_skipped" for e in captured)
+
+
+async def test_editing_a_removed_type_field_requires_a_supported_type(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Retyping is the admin's repair path; any other edit is refused with a
+    clear message rather than 500ing on serialization."""
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "visit_details")
+    created = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={"key": "legacy_signature", "label": "Signature", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    field_id = created.json()["data"]["id"]
+    row = await db_session.get(FormField, uuid.UUID(field_id))
+    assert row is not None
+    row.field_type = "signature_pad"
+    await db_session.commit()
+
+    relabel = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}", json={"label": "Sign"}, headers=_auth(token)
+    )
+    retype = await client.patch(
+        f"/api/v1/form-builder/fields/{field_id}",
+        json={"fieldType": "checkbox_single"},
+        headers=_auth(token),
+    )
+
+    assert relabel.status_code == 422
+    assert "no longer supported" in relabel.json()["message"]
+    assert retype.status_code == 200, retype.text
+    assert retype.json()["data"]["fieldType"] == "checkbox_single"
+
+
+async def test_required_field_of_a_removed_type_is_never_required_on_submission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    user: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    token = issue_token(user)
+    version = await _publish_and_load_default_version(client, db_session, token)
+    aged = _age_snapshot(version.snapshot, removed_type_step="consent_agreement")
+    signature_id = next(
+        f["id"] for s in aged for f in s["fields"] if f["fieldType"] == "signature_pad"
+    )
+    await _store_snapshot(db_session, version, aged)
+
+    effective = await resolve_effective_form(
+        db_session, await get_redis(), tenant_id=tenant.id, branch_id=None
+    )
+
+    assert signature_id not in required_consent_field_ids(effective)
+    assert signature_id not in allowed_consent_field_ids(effective)

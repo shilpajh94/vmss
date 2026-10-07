@@ -25,6 +25,7 @@ from vmss_api.form_builder.schemas import (
     FormStepCreate,
     FormStepUpdate,
 )
+from vmss_api.form_builder.snapshot import normalize_snapshot
 
 _CACHE_TTL_SECONDS = 300
 
@@ -867,7 +868,7 @@ async def reorder_groups(
 # `options` *is* the source of truth for what a submission may declare
 # (make-id-proof-and-vehicle-type-configurable), so it needs the same
 # non-empty-options guarantee any admin-authored field does.
-_EXTERNALLY_CATALOGED_FIELD_KEYS = frozenset({"visitor_category"})
+_EXTERNALLY_CATALOGED_FIELD_KEYS = frozenset({"visitor_category", "branch", "building"})
 
 
 def _requires_static_options(field_row: FormField) -> bool:
@@ -1035,10 +1036,13 @@ async def resolve_effective_form(
     branch_cache_key = _cache_key(tenant_id, branch_id)
     default_cache_key = _cache_key(tenant_id, None)
 
+    # Every return path is normalised (heal-stale-form-config-data design.md
+    # Decision 0): a snapshot published before a field/group key existed, or
+    # holding a since-removed field type, is served in today's shape — on a
+    # cache hit too, so an entry cached before this code shipped is healed.
     cached = await redis.get(branch_cache_key)
     if cached is not None:
-        result: list[dict[str, Any]] = json.loads(cached)
-        return result
+        return normalize_snapshot(json.loads(cached), source="effective_cache")
     if branch_id is not None:
         # A prior request for this branch may have fallen back to the
         # tenant-default snapshot and cached it under `default_cache_key`
@@ -1046,19 +1050,20 @@ async def resolve_effective_form(
         # hitting the DB so the fallback path stays cache-hot too.
         cached_default = await redis.get(default_cache_key)
         if cached_default is not None:
-            result = json.loads(cached_default)
-            return result
+            return normalize_snapshot(json.loads(cached_default), source="effective_cache")
 
     version_repo = FormConfigVersionRepository(tenant_db)
     version = await version_repo.get_for_scope(branch_id)
     if version is not None:
-        snapshot = version.snapshot
+        snapshot = normalize_snapshot(version.snapshot, source="effective")
         await redis.set(branch_cache_key, json.dumps(snapshot), ex=_CACHE_TTL_SECONDS)
         return snapshot
 
     if branch_id is not None:
         version = await version_repo.get_for_scope(None)
-    snapshot = version.snapshot if version is not None else DEFAULT_EFFECTIVE_FORM
+    snapshot = normalize_snapshot(
+        version.snapshot if version is not None else DEFAULT_EFFECTIVE_FORM, source="effective"
+    )
     # Cache the tenant-default fallback under the default's own cache key
     # (not the requesting branch's) so that publish(branch_id=None)'s single
     # `redis.delete(_cache_key(tenant_id, None))` invalidates it for every

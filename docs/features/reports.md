@@ -46,6 +46,11 @@ In addition to the on-demand endpoint above, `tasks.py` runs the same
 rollup automatically once a day and emails a summary to every Admin-role
 user in each active tenant — see `docs/features/background-jobs.md` for
 the job-runner mechanics (beat schedule, per-tenant fan-out, idempotency).
+The email is rendered from the branded `daily_snapshot` template, with
+the subject "Daily branch rollup — {date}". It carries a totals table plus
+one row per branch, with a plain-text part listing the same figures, and
+greets each admin by name. If the template fails, it falls back to the
+original plain-text summary (`refine-email-templates-and-visimio-brand`).
 `repository.py::BranchRollupRepository.admin_users()` resolves the
 recipient list — a role-membership query, not a permission check, since
 the job runs unattended with no caller to authorize.

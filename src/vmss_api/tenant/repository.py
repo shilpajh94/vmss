@@ -24,6 +24,10 @@ class TenantRepository:
         stmt = select(Tenant).where(Tenant.slug == slug, Tenant.deleted_at.is_(None))
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_schema_name(self, schema_name: str) -> Tenant | None:
+        stmt = select(Tenant).where(Tenant.schema_name == schema_name, Tenant.deleted_at.is_(None))
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def list(self, *, limit: int = 50, offset: int = 0) -> list[Tenant]:
         stmt = select(Tenant).where(Tenant.deleted_at.is_(None)).limit(limit).offset(offset)
         return list((await self.session.execute(stmt)).scalars().all())

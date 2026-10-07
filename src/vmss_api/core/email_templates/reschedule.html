@@ -1,10 +1,18 @@
 {% extends "base.html" %}
-{% block subject %}Your visit has been rescheduled{% endblock %}
+{% import "_macros.html" as m with context %}
+{% block eyebrow %}Rescheduled{% endblock %}
+{% block heading %}Your visit has been rescheduled{% endblock %}
 {% block content %}
-<h2 style="margin-top:0; color:#1f2933;">Your visit has been rescheduled</h2>
-<p>Your visit has been rescheduled to a new date/time.</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px; font-size:14px;">
-  <tr><td style="padding:4px 0; color:#6b7280; width:160px;">Tracking ID</td><td style="padding:4px 0; font-weight:bold;">{{ tracking_id }}</td></tr>
-  <tr><td style="padding:4px 0; color:#6b7280;">New date</td><td style="padding:4px 0;">{{ visit_date }}{% if visit_time %} at {{ visit_time }}{% endif %}</td></tr>
-</table>
+{% set when = visit_date | visit_datetime(visit_time) %}
+{% set previously = previous_visit_date | visit_datetime(previous_visit_time) %}
+{{ m.lead("The date or time of your visit has changed. Please update your calendar.") }}
+{{ m.detail_table([("Previously", previously), ("New date & time", when)]) }}
+{{ m.visit_details(before=[("Tracking ID", tracking_id)]) }}
+{% include "_contact.html" %}
+{% if qr_src %}
+{{ m.qr_pass(qr_src, tracking_id) }}
+{% else %}
+{{ m.note("Your visit is still awaiting approval. We'll email your check-in QR pass as soon as it's approved.") }}
+{% endif %}
+{{ m.callout("Can't make the new time?", "Contact the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " and quote your tracking ID " ~ tracking_id ~ ".") }}
 {% endblock %}

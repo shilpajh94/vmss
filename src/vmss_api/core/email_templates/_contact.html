@@ -1,0 +1,7 @@
+{# "Your point of contact" block — always present on visit emails: POC, host,
+   branch contact person, front desk, then reception (invitations/tasks.py). #}
+{% import "_macros.html" as m with context %}
+{% if contact_name %}
+{{ m.section(contact_title or "Your point of contact") }}
+{{ m.detail_table([("Name", contact_name), ("Contact", contact_detail)]) }}
+{% endif %}

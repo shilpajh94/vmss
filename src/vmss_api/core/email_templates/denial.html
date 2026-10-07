@@ -1,10 +1,15 @@
 {% extends "base.html" %}
-{% block subject %}Your visit request was not approved{% endblock %}
+{% import "_macros.html" as m with context %}
+{% block eyebrow %}Not approved{% endblock %}
+{% block heading %}Your visit request wasn't approved{% endblock %}
 {% block content %}
-<h2 style="margin-top:0; color:#1f2933;">Your visit request was not approved</h2>
-<p>Your registration was not approved.</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px; font-size:14px;">
-  <tr><td style="padding:4px 0; color:#6b7280; width:160px;">Tracking ID</td><td style="padding:4px 0; font-weight:bold;">{{ tracking_id }}</td></tr>
-  <tr><td style="padding:4px 0; color:#6b7280;">Reason</td><td style="padding:4px 0;">{{ denial_reason }}</td></tr>
-</table>
+{% set when = visit_date | visit_datetime(visit_time) %}
+{{ m.lead("We're sorry — your request to visit" ~ (" on " ~ when if when else "") ~ " wasn't approved this time, so no check-in pass has been issued.") }}
+{% if denial_reason %}{{ m.callout("Reason given", denial_reason) }}{% endif %}
+{{ m.section("What you can do") }}
+{{ m.checklist([
+  "Get in touch with the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " if you think this is a mistake.",
+  "Submit a new visit request with updated details if your plans have changed.",
+]) }}
+{{ m.tracking_note("Please quote your tracking ID", tracking_id, " in any follow-up.") }}
 {% endblock %}

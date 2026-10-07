@@ -1,0 +1,16 @@
+{% extends "base.txt" %}
+{% import "_macros.txt" as m with context %}
+{% block content %}
+{% set when = visit_date | visit_datetime(visit_time) %}
+We're sorry - your request to visit{% if when %} on {{ when }}{% endif %} wasn't approved this time, so no check-in pass has been issued.
+
+{% if denial_reason %}{{ m.callout("Reason given", denial_reason) }}{% endif %}
+
+WHAT YOU CAN DO
+{{ m.checklist([
+  "Get in touch with the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " if you think this is a mistake.",
+  "Submit a new visit request with updated details if your plans have changed.",
+]) }}
+
+Please quote your tracking ID {{ tracking_id }} in any follow-up.
+{% endblock %}

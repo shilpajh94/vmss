@@ -2592,3 +2592,64 @@ async def test_list_user_ids_holding_role_at_branch_tenant_isolation(
             role.id, branch.id
         )
         assert holders == []
+
+
+# --- restrict-delegated-invitation-visibility ----------------------------------
+
+
+async def test_seeded_roles_grant_invitations_view_all_to_branch_wide_roles_only(
+    db_session: AsyncSession,
+) -> None:
+    """spec.md "A newly provisioned tenant's standard roles"."""
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    repo = RoleRepository(db_session)
+    for name in ("admin", "reception", "security"):
+        role = await repo.get_by_name(name)
+        assert role is not None
+        assert "invitations:view-all" in {p.code for p in role.permissions}, name
+    host = await repo.get_by_name("host")
+    assert host is not None
+    host_codes = {p.code for p in host.permissions}
+    assert "invitations:view" in host_codes
+    assert "invitations:view-all" not in host_codes
+
+
+async def test_permission_catalog_lists_invitations_view_all(
+    client: AsyncClient, user: User
+) -> None:
+    """spec.md "The new permission is listed in the catalog"."""
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/auth/permissions?pageSize=100", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    assert "invitations:view-all" in {p["code"] for p in response.json()["data"]}
+
+
+async def test_resync_role_permissions_backfills_invitations_view_all(
+    client: AsyncClient, user: User, db_session: AsyncSession
+) -> None:
+    """The resync endpoint is one rollout path for existing tenants
+    (restrict-delegated-invitation-visibility/design.md Migration Plan) —
+    it backfills `invitations:view-all` onto a stale Reception role.
+    """
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    reception = await RoleRepository(db_session).get_by_name("reception")
+    assert reception is not None
+    reception.permissions = [p for p in reception.permissions if p.code != "invitations:view-all"]
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/roles/resync-permissions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200
+    granted = {
+        entry["roleName"]: entry["grantedPermissionCodes"] for entry in response.json()["data"]
+    }
+    assert "invitations:view-all" in granted["reception"]
+    assert "invitations:view-all" not in granted.get("host", [])

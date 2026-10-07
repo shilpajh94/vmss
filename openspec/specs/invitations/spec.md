@@ -884,25 +884,38 @@ WHEN a caller successfully reschedules an invitation via `PATCH
 /invitations/{id}/reschedule`, the system SHALL dispatch a reschedule
 notification to the primary contact, stating the invitation's tracking ID
 and its new `preferredVisitDate`/`preferredVisitTime`. The notification
-SHALL be sent via the primary contact's `preferredContactMethod` (`email`
-sends an email, `sms` sends a text) — the same channel-routing rule the
-creation, approval, and denial notifications already follow; group
-registrations are notified the same way as individual ones, since only the
-primary contact is ever notified for any invitation lifecycle event today.
-The notification SHALL carry no QR code — a reschedule does not re-approve
-the visit or invalidate a QR already issued. Dispatch SHALL happen
-asynchronously (a background task), never inline in the request path, and
-only after the reschedule is committed — a request rejected because the
-invitation is not in a reschedulable status, or because the caller lacks
-branch access, SHALL NOT dispatch any notification.
+SHALL be sent via the primary contact's `preferredContactMethod`: `email`
+sends an email and `sms` sends a text. This is the same channel-routing
+rule the creation, approval, and denial notifications already follow.
+Group registrations are notified the same way as individual ones, since
+only the primary contact is ever notified for any invitation lifecycle
+event today. WHEN the invitation is `approved`, the reschedule email SHALL
+embed the invitation's existing check-in QR inline, in the same "Your
+check-in pass" block as the confirmation email. A reschedule does not
+re-approve the visit or issue a new token, so this is the same QR image
+and token already issued. WHEN the invitation is still `submitted`, the
+email SHALL carry no QR and SHALL state that a pass will be sent once the
+visit is approved. The reschedule email SHALL carry no file attachment.
+Dispatch SHALL happen asynchronously (a background task), never inline in
+the request path, and only after the reschedule is committed. A request
+rejected because the invitation is not in a reschedulable status, or
+because the caller lacks branch access, SHALL NOT dispatch any
+notification.
 
 #### Scenario: Successful reschedule notifies the primary contact by email
 - **WHEN** a caller with `invitations:reschedule` at the invitation's branch
-  successfully reschedules an invitation whose primary contact's
+  successfully reschedules an `approved` invitation whose primary contact's
   `preferredContactMethod` is `email`
 - **THEN** an email is dispatched to the primary contact's email address,
-  stating the tracking ID and the new `preferredVisitDate`/
-  `preferredVisitTime`, with no QR code attached
+  stating the tracking ID, the previous and new date/time, and embedding the
+  same check-in QR (same token) that was issued at approval, with no
+  attachment
+
+#### Scenario: Rescheduling a pending visit says the pass comes later
+- **WHEN** a `submitted` invitation is rescheduled and its reschedule email
+  is rendered
+- **THEN** the email contains no QR and states that a check-in pass will be
+  sent once the visit is approved
 
 #### Scenario: Successful reschedule notifies the primary contact by SMS when preferred
 - **WHEN** a caller successfully reschedules an invitation whose primary
@@ -921,19 +934,6 @@ branch access, SHALL NOT dispatch any notification.
 - **WHEN** a caller without branch access to the invitation attempts to
   reschedule it, and the request is rejected with 403
 - **THEN** no reschedule notification is dispatched
-
-### Requirement: Visit-Confirmation Dispatch Is Verified Against a Real Mail Catcher
-The system SHALL be provably capable of delivering the visit-confirmation
-notification — including a valid QR-code image attachment — through actual
-SMTP to a reachable mail catcher, not only asserted against a fake/recording
-sender.
-
-#### Scenario: Confirmation email arrives with a valid QR attachment
-- **WHEN** the confirmation dispatch task runs for a created invitation
-  using the real SMTP-backed sender
-- **THEN** a message addressed to the invitation's primary contact, with the
-  expected subject, and carrying a valid PNG attachment is observable
-  through the mail catcher's own API
 
 ### Requirement: Public Lookup by Tracking ID Returns Everything Captured at Creation
 Any caller SHALL be able to retrieve an invitation's full detail by
@@ -995,39 +995,56 @@ carried-item, visitor, or vehicle information.
   information
 
 ### Requirement: Employee Lists Invitations at Their Authorized Branches
-The system SHALL let an authenticated caller holding `invitations:view` list
-invitations, paginated, sorted, and filterable by `status`,
+The system SHALL let an authenticated caller holding `invitations:view-all`
+list invitations, paginated, sorted, and filterable by `status`,
 `registrationType`, and `source`. A request supplying `X-Branch-ID` SHALL be
 narrowed to that one branch, rejected with 404/403 the same way other
 branch-scoped endpoints reject an unknown or unauthorized branch id. A
 request omitting `X-Branch-ID` SHALL return invitations across every branch
-the caller holds `invitations:view` at, rejected with 403 only if that set
-is empty. Each row in the response SHALL include enough detail to identify
-and triage the invitation (tracking ID, registration type, source, status,
-`visitorCategoryId`, primary contact name, primary contact photo URL,
-purpose of visit, expiry/submission timestamps) without the per-row
+the caller holds `invitations:view-all` at, rejected with 403 only if that
+set is empty. Holding `invitations:view` alone (without
+`invitations:view-all`) SHALL NOT grant access to this branch-wide listing:
+such a caller (e.g. a `host`) finds their own work only through
+`relevantToMe=true` ("Caller Lists Invitations Relevant to Themselves via
+relevantToMe"). Each row in the response SHALL include enough detail to
+identify and triage the invitation (tracking ID, registration type, source,
+status, `visitorCategoryId`, primary contact name, primary contact photo
+URL, purpose of visit, expiry/submission timestamps) without the per-row
 visitor/vehicle detail the single-invitation tracking lookup returns.
 
 #### Scenario: Caller with company-wide access lists across all their branches
-- **WHEN** a caller with `invitations:view` granted company-wide requests
+- **WHEN** a caller with `invitations:view-all` granted company-wide requests
   `GET /invitations` without an `X-Branch-ID` header
 - **THEN** the response includes invitations from every branch, paginated
   per the requested page/pageSize
 
 #### Scenario: X-Branch-ID narrows the result to one branch
-- **WHEN** a caller with `invitations:view` at a specific branch requests
+- **WHEN** a caller with `invitations:view-all` at a specific branch requests
   `GET /invitations` with that branch's `X-Branch-ID`
 - **THEN** the response includes only that branch's invitations
 
 #### Scenario: Unauthorized branch id rejected
 - **WHEN** a caller requests `GET /invitations` with an `X-Branch-ID` for a
-  branch they are not authorized to view invitations at
+  branch they do not hold `invitations:view-all` at
 - **THEN** the system returns 403 and no invitation data
 
 #### Scenario: Caller lacks permission everywhere
-- **WHEN** a caller with no `invitations:view` grant at any branch requests
-  `GET /invitations` without an `X-Branch-ID` header
+- **WHEN** a caller with no `invitations:view-all` grant at any branch
+  requests `GET /invitations` without an `X-Branch-ID` header
 - **THEN** the system returns 403
+
+#### Scenario: A host holding only invitations:view cannot use the branch-wide listing
+- **WHEN** a caller holding the `host` role (which grants `invitations:view`
+  but not `invitations:view-all`) at a branch requests `GET /invitations`
+  without `relevantToMe`, with or without that branch's `X-Branch-ID`
+- **THEN** the system returns 403 and no invitation data, even though
+  invitations exist at that branch
+
+#### Scenario: Reception, Security, and Admin keep the branch-wide listing
+- **WHEN** a caller holding the `reception`, `security`, or `admin` role at
+  a branch requests `GET /invitations` without `relevantToMe`
+- **THEN** the response includes every invitation at that branch, since
+  each of those roles grants `invitations:view-all`
 
 #### Scenario: Filtering by status, registration type, and source
 - **WHEN** a caller requests `GET /invitations` with `status`,
@@ -1072,53 +1089,61 @@ current status;
 (b) the delegate assigned to any of that invitation's approval steps (see
 the `approvals` capability's "Current Step's Authorized Approver Delegates
 It to a Specific Person") — regardless of that step's or the invitation's
-current status; or
+current status;
 (c) currently holds, via branch-scoped role assignment at the invitation's
 branch or company-wide, the role that the invitation's current pending
-`InvitationApprovalStep` names (that step being role-identified) — i.e.,
-the caller is one of the role-holders who could act on the
-currently-pending step right now if no delegate had been assigned to it,
-per the `approvals` capability's role-match authorization rule. Unlike that
-authorization rule, clause (c) SHALL NOT require the step to be
-undelegated: a role-holder keeps seeing the invitation via `relevantToMe`
-even after the step has been delegated to a specific person, so that (e.g.)
-every holder of the tenant's default host role keeps visibility into an
-invitation after one of them delegates its `stepOrder` 0 step to the
-resolved host, not just whichever one of them actually performed the
-delegation.
-Clause (c) only ever matches while the invitation is `submitted` with a
-role-identified step currently pending; once that step is actually approved
-or rejected (by its delegate or an override-permission holder), or the
-invitation otherwise leaves `submitted`, a caller who only ever qualified
-under (c) (never under (a) or (b)) no longer sees that invitation via
-`relevantToMe`. Since every newly submitted invitation's `stepOrder` 0 step
-is role-identified for the tenant's default host role (rather than
-sometimes host-identified as before), clause (c) is what makes that
-invitation visible to every front-office holder both before anyone
-delegates it and after — clause (a) does not apply until a delegation
-actually happens, but clause (c) keeps working across that transition, only
-dropping off once the step itself is acted on; or
-(d) has personally acted on (approved or rejected, i.e. is the `actedByUserId`
-of) any of the invitation's approval steps, regardless of that step's or
-the invitation's current status. Unlike (c), clause (d) never drops off:
-once a caller has approved or rejected a step, that invitation stays in
-their `relevantToMe` list for its entire lifecycle — e.g. Reception, having
-approved the invitation's `stepOrder` 0 ownership step, keeps seeing it
-through every later, differently-role-identified step and after final
-approval/denial, not just while their own step was current
-(reception-retains-visibility-and-delegation-after-own-step). Clause (d) is
-keyed to the specific person who acted, not to a role: another holder of
-Reception's role who never personally acted on that invitation does not
-gain visibility from (d) — only (c), while their role's step is current,
-covers them. This filter SHALL NOT require the caller to hold `invitations:view`,
-and SHALL NOT be scoped by `X-Branch-ID` or the caller's authorized branches:
-it is a personal worklist keyed to the caller's own identity and current
-approval authority, not the branch-scoped admin listing the "Employee Lists
-Invitations at Their Authorized Branches" requirement above describes.
+`InvitationApprovalStep` names (that step being role-identified), AND that
+step has no delegate assigned, AND that role is not a delegation-only role
+— i.e., the caller is one of the role-holders who could act on the
+currently-pending step right now purely by holding its role, per the
+`approvals` capability's role-match authorization rule. A delegation-only
+role (today: `host`) is one whose steps no role-holder may act on or be
+notified about until the step is delegated to one specific person; clause
+(c) SHALL NOT match a step identified by such a role, whether or not it is
+delegated, so an unassigned `host` step is never broadcast to every
+holder of the `host` role. Visibility under (c) SHALL also stop the moment
+a (non-delegation-only) step is delegated to a specific person: once a
+role-identified step (at any `stepOrder`) has a delegate assigned, a
+caller who only ever qualified under (c) for that step — and who is not
+the delegate, the resolved host, or someone who personally acted on a step
+— no longer sees the invitation via `relevantToMe`. The one carve-out is
+clause (e) below, which keeps every holder of the tenant's default host
+role visible regardless of delegation;
+(d) has personally acted on (approved or rejected, i.e. is the
+`actedByUserId` of) any of the invitation's approval steps, regardless of
+that step's or the invitation's current status. Unlike (c), clause (d)
+never drops off: once a caller has approved or rejected a step, that
+invitation stays in their `relevantToMe` list for its entire lifecycle —
+e.g. an individual Reception user, having approved the invitation's
+`stepOrder` 0 ownership step personally, keeps seeing it through every
+later, differently-role-identified step and after final approval/denial,
+not just while their own step was current. Clause (d) is keyed to the
+specific person who acted, not to a role: another holder of that role who
+never personally acted on that invitation does not gain visibility from
+(d) — only (c) (while undelegated, for a non-delegation-only role) or (e)
+(for the default host role) covers them; or
+(e) currently holds, via branch-scoped role assignment at the invitation's
+branch or company-wide, the tenant's default host role (e.g. `reception`)
+— regardless of the invitation's current step, that step's delegation
+state, or the invitation's overall status. Unlike (c), clause (e) never
+drops off and is never narrowed by delegation: the default host role owns
+front-office intake for every invitation for its entire lifecycle, so every
+one of its holders keeps permanent visibility, the same permanence clause
+(d) gives an individual actor, but granted to the whole role rather than
+to whoever happened to act.
+This filter SHALL NOT require the caller to hold `invitations:view` or
+`invitations:view-all`, and SHALL NOT be scoped by `X-Branch-ID` or the
+caller's authorized branches: it is a personal worklist keyed to the
+caller's own identity and current approval authority, not the
+branch-scoped listing the "Employee Lists Invitations at Their Authorized
+Branches" requirement above describes. The same (a)–(e) rule SHALL also
+decide which invitations a caller without `invitations:view-all` may open
+via `GET /invitations/{id}` ("Invitation Detail Is Visible Only to
+Branch-Wide Viewers and Participants").
 `relevantToMe` SHALL compose with the existing `status`, `registrationType`,
 and `source` filters and with pagination/sorting. A caller matching none of
-(a)/(b)/(c)/(d) for any invitation SHALL receive an empty, successfully-paginated
-result, not an error.
+(a)/(b)/(c)/(d)/(e) for any invitation SHALL receive an empty,
+successfully-paginated result, not an error.
 
 #### Scenario: Host sees their own invitation without invitations:view
 - **WHEN** the user an invitation's ownership step was delegated to (its
@@ -1130,7 +1155,20 @@ result, not an error.
 - **WHEN** a user who holds the tenant's default host role at an invitation's
   branch, and to whom that invitation's `stepOrder` 0 step has not yet been
   delegated, requests `GET /invitations` with `relevantToMe=true`
-- **THEN** the response includes that invitation, via clause (c)
+- **THEN** the response includes that invitation, via clauses (c) and (e)
+
+#### Scenario: A role-holder keeps seeing the invitation once someone else's delegation is assigned
+- **WHEN** an invitation's `stepOrder` 0 step is delegated to a specific
+  host, the invitation is later fully approved, and a user who holds the
+  tenant's default host role at that invitation's branch — but who never
+  personally acted on any step, was never delegated any step, and is not
+  the resolved host — requests `GET /invitations` with `relevantToMe=true`
+- **THEN** the response includes that invitation, via clause (e), which
+  neither depends on delegation state nor drops off once the invitation
+  leaves `submitted` — unlike a holder of a non-default role, who loses
+  visibility the moment their role's step is delegated (see "A
+  non-default-role holder loses visibility once the step is delegated to
+  someone else")
 
 #### Scenario: Delegate sees the invitation they were delegated
 - **WHEN** a user who has been delegated one of an invitation's approval
@@ -1142,27 +1180,60 @@ result, not an error.
 #### Scenario: A role-holder sees an invitation whose current step needs their role
 - **WHEN** a user who holds, via `UserBranchRole` at an invitation's branch,
   the `approverRoleId` role of that invitation's current pending
-  role-identified step (and that step has no delegate assigned) requests
+  role-identified step — that role not being delegation-only (e.g. a
+  `security` step), and that step having no delegate assigned — requests
   `GET /invitations` with `relevantToMe=true`
 - **THEN** the response includes that invitation, even though the user is
   neither the invitation's host nor a delegate — this closes the gap where
   such a user could only find the invitation via the branch-wide list
 
-#### Scenario: A role-holder keeps seeing the invitation once someone else's delegation is assigned
-- **WHEN** an invitation's current pending step (role-identified, matching a
-  role the caller holds) is delegated to a different, specific user
-- **THEN** the caller — though not that delegate, and no longer authorized
-  to act on the step directly — still sees the invitation via
-  `relevantToMe=true`, the same as every other holder of that role
+#### Scenario: An unassigned host-role step is not broadcast to every host
+- **WHEN** an invitation's `stepOrder` 0 step (default host role) is
+  delegated to host X, X approves it, and the invitation's `stepOrder` 1
+  step — role-identified for the `host` role, with no delegate assigned —
+  becomes the current pending step, and a different user Y who holds the
+  `host` role at that invitation's branch (but is not the resolved host,
+  was never delegated a step, never acted on a step, and does not hold the
+  default host role) requests `GET /invitations` with `relevantToMe=true`
+- **THEN** the response does NOT include that invitation: clause (c) never
+  matches a delegation-only role's step, and no other clause matches Y
+
+#### Scenario: The delegate and Reception still see an unassigned host-role step
+- **WHEN** the invitation from the previous scenario is in the same state
+  (its `host`-role `stepOrder` 1 step current and undelegated), and either
+  X (the resolved host who approved `stepOrder` 0) or a holder of the
+  default host role requests `GET /invitations` with `relevantToMe=true`
+- **THEN** the response includes that invitation — for X via clauses (a)
+  and (d), for the default host role holder via clause (e)
+
+#### Scenario: Approve-and-delegate never exposes the next host step to other hosts
+- **WHEN** a Reception user approves an invitation's `stepOrder` 0 step
+  without delegating it, the `host`-role `stepOrder` 1 step becomes current
+  and undelegated, and — before or after that Reception user delegates
+  `stepOrder` 1 to host X — a different `host`-role holder Y requests
+  `GET /invitations` with `relevantToMe=true`
+- **THEN** the response does NOT include that invitation for Y at either
+  point, while it does include it for X once X is delegated (clause (b))
+
+#### Scenario: A non-default-role holder loses visibility once the step is delegated to someone else
+- **WHEN** an invitation's current pending step, role-identified for a role
+  that is not the tenant's default host role, is delegated to a different,
+  specific user, and the caller — who holds that same role, but is not the
+  delegate, the resolved host, or someone who has personally acted on any
+  step — requests `GET /invitations` with `relevantToMe=true`
+- **THEN** the response does NOT include that invitation: clause (c) no
+  longer applies once the step has a delegate, and no other clause matches
+  this caller
 
 #### Scenario: A role-holder loses visibility once the step is actually approved or rejected, unless they were the one who acted
 - **WHEN** an invitation's current pending step, role-identified for a role
   the caller holds, is approved or rejected by a different holder of that
   role (or its delegate, or an override-permission holder)
 - **THEN** the caller — who only ever qualified under clause (c) for that
-  step, never as its host, its delegate, or the one who acted — no longer
-  sees the invitation via `relevantToMe=true`, since that step is no longer
-  the current pending step and clause (d) does not apply to them
+  step, never as its host, its delegate, the one who acted, or a default
+  host role holder — no longer sees the invitation via `relevantToMe=true`,
+  since that step is no longer the current pending step and clauses (d) and
+  (e) do not apply to them
 
 #### Scenario: The caller who personally approved a step keeps seeing the invitation forever, via clause (d)
 - **WHEN** a caller personally approves an invitation's current pending,
@@ -1172,8 +1243,8 @@ result, not an error.
 - **THEN** the caller continues to see the invitation via
   `relevantToMe=true` throughout — while the later step is current, after
   it is approved, and once the invitation itself is `approved` — because
-  clause (d) does not depend on any step being current or on the
-  invitation's own status
+  clause (d) does not depend on any step being current, delegated, or on
+  the invitation's own status
 
 #### Scenario: Approving your own step also grants delegation authority over the very next step
 - **WHEN** the caller from the previous scenario, instead of waiting, calls
@@ -1190,14 +1261,16 @@ result, not an error.
 #### Scenario: A role-holder who is not currently authorized on the pending step sees nothing for it
 - **WHEN** a user holds a role that does not match the invitation's current
   pending step's `approverRoleId` (e.g. the pending step is for a different
-  role, or the invitation is not currently `submitted`)
+  role, or the invitation is not currently `submitted`), and does not hold
+  the tenant's default host role
 - **THEN** that invitation is absent from the user's `relevantToMe=true`
   response, unless they separately qualify as its host or a delegate
 
 #### Scenario: Caller who is neither host, delegate, nor actor sees nothing for that invitation
 - **WHEN** a caller who is not the resolved host, has not been delegated
-  any step, has not personally acted on any step, and does not hold the
-  role of any invitation's current pending step requests
+  any step, has not personally acted on any step, does not hold the
+  tenant's default host role, and does not hold the (non-delegation-only)
+  role of any invitation's current pending undelegated step requests
   `GET /invitations` with `relevantToMe=true`
 - **THEN** that invitation is absent from the response, even if the caller
   holds `invitations:view` at its branch
@@ -1209,8 +1282,8 @@ result, not an error.
   currently `submitted`
 
 #### Scenario: No relevant invitations returns an empty page, not an error
-- **WHEN** a caller who does not match (a), (b), (c), or (d) for any invitation
-  requests `GET /invitations` with `relevantToMe=true`
+- **WHEN** a caller who does not match (a), (b), (c), (d), or (e) for any
+  invitation requests `GET /invitations` with `relevantToMe=true`
 - **THEN** the response is a successful, empty, correctly-paginated result
 
 #### Scenario: X-Branch-ID is ignored when relevantToMe is set
@@ -1796,3 +1869,189 @@ new invitation, rather than leaving it null.
   email, exactly as today — this requirement changes nothing for the
   email-match case, since the submitted and stored email are already the
   same
+
+### Requirement: Visit-Confirmation Email Embeds the QR Code in a Dedicated Scannable Block
+The approval/visit-confirmation email, and the reschedule email of an
+approved invitation, SHALL display the invitation's check-in QR code in
+the email body, in a visually separate "Your check-in pass" block. The
+image SHALL be referenced by its signed public URL (see "Check-In QR
+Images Are Served From a Signed Public URL"). It SHALL be embedded inline
+only in the unconfigured-base-URL fallback. The block SHALL contain:
+- the QR image, encoding the same encrypted check-in token issued at
+  approval, rendered at no less than 180×180 CSS pixels and not scaled
+  beyond the phone viewport;
+- the tracking ID in text directly under the QR image;
+- one sentence instructing the visitor to show the code at reception or
+  the security gate.
+
+The QR SHALL have a white quiet-zone margin. It SHALL NOT be sent as a file
+attachment. The plain-text part SHALL tell the visitor to open the email
+with images shown to see their QR code, and SHALL give the tracking ID as
+the fallback. Tracking-only, denial, edit, submission, host-assigned, and
+POC-assigned emails SHALL NOT include a QR code.
+
+#### Scenario: Approved visitor can scan the QR straight from the email body
+- **WHEN** an invitation is approved and its primary contact prefers email
+- **THEN** the email body shows a "Your check-in pass" block whose QR image
+  loads from the signed URL, with the tracking ID underneath, and the
+  message has no attachment
+
+#### Scenario: Inline QR encodes the issued check-in token
+- **WHEN** the QR image referenced by a visit-confirmation email is fetched
+  and decoded
+- **THEN** it yields exactly the check-in token persisted for that
+  invitation at approval
+
+#### Scenario: Non-approval emails carry no QR
+- **WHEN** a tracking-only, denial, edit, submission, host-assigned, or
+  POC-assigned email is rendered
+- **THEN** it contains no check-in pass block and no QR image
+
+### Requirement: Reschedule and Edit Emails for an Approved Visit Confirm the Existing Pass Stays Valid
+WHEN an edit notification email is dispatched for an invitation whose
+status is `approved`, the email SHALL state that the check-in QR pass sent
+at approval remains valid. WHEN the invitation is not yet approved, the
+email SHALL instead state that a QR pass will be sent once the visit is
+approved. The edit email SHALL carry no QR code. For the reschedule email,
+see "Reschedule Dispatches a Notification to the Primary Contact", which
+embeds the QR itself for an approved visit.
+
+#### Scenario: Editing an approved visit reminds the visitor their pass still works
+- **WHEN** an approved invitation is edited and its edit email is rendered
+- **THEN** the email states that the previously sent QR pass is still valid,
+  and contains no QR image
+
+#### Scenario: Editing a pending visit says the pass comes later
+- **WHEN** a `submitted` invitation is edited and its edit email is rendered
+- **THEN** the email states that a QR pass will be sent once the visit is
+  approved
+
+#### Scenario: Rescheduling an approved visit reminds the visitor their pass still works
+- **WHEN** an approved invitation is rescheduled and its reschedule email is
+  rendered
+- **THEN** the email shows the same check-in QR pass issued at approval (the
+  persisted token, never a re-issued one) with the new date and time, and
+  carries no attachment
+
+#### Scenario: Rescheduling a pending visit says the pass comes later
+- **WHEN** a `submitted` invitation is rescheduled and its reschedule email
+  is rendered
+- **THEN** the email states that a QR pass will be sent once the visit is
+  approved
+
+### Requirement: Check-In QR Images Are Served From a Signed Public URL
+The system SHALL expose an unauthenticated, rate-limited endpoint (60 per
+minute per IP):
+
+`GET /api/v1/public/email-assets/{tenant_id}/qr/{invitation_id}.png?exp={unix}&sig={hmac}`
+
+It returns the invitation's persisted check-in QR as `image/png`. The
+signature SHALL be an HMAC over the tenant id, the invitation id and
+`exp`, keyed by a server-side secret. `exp` SHALL be 7 days after the
+invitation's `expires_at` at the time the email is rendered. The endpoint
+SHALL respond:
+- 403 when the signature doesn't match;
+- 410 when `exp` has passed;
+- 404 when the tenant, invitation or QR record doesn't exist.
+
+The response SHALL carry `Cache-Control: private, max-age=86400` and SHALL
+never reveal the token as text. The image SHALL encode exactly the token
+persisted at approval. The endpoint SHALL NOT accept a tenant or
+invitation id that isn't covered by the signature.
+
+The Visimio header logo SHALL be served at
+`GET /api/v1/public/email-assets/visimio-logo.png` with long-lived public
+caching.
+
+#### Scenario: Valid signed URL returns the QR
+- **WHEN** a mail client fetches the QR URL from a confirmation email before
+  it expires
+- **THEN** the response is 200 `image/png`, and decoding it yields the
+  invitation's persisted check-in token
+
+#### Scenario: Tampered URL is rejected
+- **WHEN** the `invitation_id` in a signed URL is replaced with another
+  invitation's id
+- **THEN** the response is 403 and no image is returned
+
+#### Scenario: Expired URL is gone
+- **WHEN** the URL is fetched after its `exp`
+- **THEN** the response is 410
+
+### Requirement: Visit-Confirmation Dispatch Is Verified Against a Real Mail Catcher With URL Images
+The system SHALL be provably capable of delivering the visit-confirmation
+notification through actual SMTP to a reachable mail catcher, with the
+email-asset base URL configured, as a message with no attachments and no
+inline parts. Its QR image URL SHALL be fetchable and return the
+invitation's QR.
+
+#### Scenario: Delivered confirmation has no attachment strip and a working QR URL
+- **WHEN** the confirmation dispatch task runs using the real SMTP sender
+  with the base URL configured
+- **THEN** the message observed through the mail catcher's API lists zero
+  attachments and zero inline parts, and fetching the QR `<img src>` from
+  its HTML returns 200 `image/png`
+
+### Requirement: Invitation Detail Is Visible Only to Branch-Wide Viewers and Participants
+`GET /invitations/{id}` SHALL return the invitation's full detail only when
+the authenticated caller either (1) holds `invitations:view-all` at the
+invitation's branch (or company-wide), or (2) is a participant in that
+invitation — i.e. matches any of clauses (a)–(e) of "Caller Lists
+Invitations Relevant to Themselves via relevantToMe" for it, evaluated
+against the invitation's current state. A participant SHALL be served the
+detail whether or not they hold `invitations:view` at its branch. A caller
+who is neither SHALL receive 404 (the same response as for a nonexistent
+invitation id, so the invitation's existence is not disclosed) if they hold
+`invitations:view` at the invitation's branch, and 403 if they hold no
+invitation-viewing grant there at all. Which detail fields are included
+(e.g. documents gated on `documents:view`) SHALL be unchanged by this
+requirement.
+
+#### Scenario: Reception opens any invitation at their branch
+- **WHEN** a caller holding the `reception` role at an invitation's branch
+  requests `GET /invitations/{id}` for it, at any stage and whether or not
+  any step is delegated
+- **THEN** the system returns 200 with the invitation's detail
+
+#### Scenario: The assigned user opens the invitation delegated to them
+- **WHEN** a host to whom one of an invitation's approval steps has been
+  delegated requests `GET /invitations/{id}` for it
+- **THEN** the system returns 200 with the invitation's detail
+
+#### Scenario: A delegate without invitations:view still opens their invitation
+- **WHEN** a user holding no `invitations:view` or `invitations:view-all`
+  grant at an invitation's branch, but to whom one of its steps has been
+  delegated, requests `GET /invitations/{id}` for it
+- **THEN** the system returns 200 with the invitation's detail
+
+#### Scenario: An uninvolved host cannot open a delegated invitation
+- **WHEN** an invitation's step is delegated to host X, and a different
+  user Y holding the `host` role at the same branch — not the resolved
+  host, never delegated a step, never acted on a step, not a default host
+  role holder — requests `GET /invitations/{id}` for it
+- **THEN** the system returns 404 and no invitation data
+
+#### Scenario: An uninvolved host cannot open an unassigned host-role step's invitation
+- **WHEN** an invitation's current pending step is role-identified for the
+  `host` role with no delegate assigned, and a `host`-role holder at that
+  branch who does not otherwise participate requests
+  `GET /invitations/{id}` for it
+- **THEN** the system returns 404 and no invitation data
+
+#### Scenario: Security and Admin keep branch-wide detail access
+- **WHEN** a caller holding the `security` or `admin` role at an
+  invitation's branch requests `GET /invitations/{id}` for an invitation
+  they do not otherwise participate in
+- **THEN** the system returns 200 with the invitation's detail
+
+#### Scenario: A caller with no viewing grant is still rejected with 403
+- **WHEN** a caller who holds neither `invitations:view` nor
+  `invitations:view-all` at an invitation's branch, and does not
+  participate in it, requests `GET /invitations/{id}` for it
+- **THEN** the system returns 403
+
+#### Scenario: Detail from another tenant is never reachable
+- **WHEN** a caller authenticated for tenant A requests
+  `GET /invitations/{id}` with the id of an invitation that exists only in
+  tenant B's schema
+- **THEN** the system returns 404

@@ -65,11 +65,23 @@ class ContactMethod(StrEnum):
 
 class CustomFieldValue(CamelModel):
     field_id: uuid.UUID
+    field_name: str | None = Field(
+        default=None, description="Admin-facing label of the field (response only)."
+    )
+    field_key: str | None = Field(
+        default=None, description="Stable key of the field (response only)."
+    )
     value: Any = None
 
 
 class ConsentValue(CamelModel):
     field_id: uuid.UUID
+    field_name: str | None = Field(
+        default=None, description="Admin-facing label of the field (response only)."
+    )
+    field_key: str | None = Field(
+        default=None, description="Stable key of the field (response only)."
+    )
     accepted: bool
 
 
@@ -83,6 +95,9 @@ class FieldGroupValuesOut(CamelModel):
     group's submitted instances, each a list of `{fieldId, value}` pairs."""
 
     group_id: uuid.UUID
+    group_name: str | None = Field(
+        default=None, description="Admin-facing name of the group (response only)."
+    )
     instances: list[list[CustomFieldValue]] = Field(default_factory=list)
 
 
@@ -187,6 +202,11 @@ class VisitorSubmit(CamelModel):
 
 
 class VisitDetailsSubmit(CamelModel):
+    # Location of the visit. Preferred home for these ids; the top-level
+    # `branchId`/`buildingId` on `InvitationCreate` remain accepted as a
+    # fallback for older clients (see `InvitationCreate.effective_*`).
+    branch_id: uuid.UUID | None = None
+    building_id: uuid.UUID | None = None
     purpose_of_visit: str = Field(max_length=255)
     # Never client-supplied for routing purposes anymore
     # (role-based-invitation-workflow) — the invitation's host is resolved
@@ -356,33 +376,29 @@ class InvitationCreate(CamelModel):
 
     @model_validator(mode="after")
     def _check_visitor_list_matches_registration_type(self) -> Self:
-        """spec.md "Visitor List Matches Registration Type". A branch that
-        has moved multi-visitor collection to an admin-defined repeatable
-        field group (the built-in "Visitors" system group is no longer
-        admin-configurable — see `form_builder/defaults.py`'s "visitors"
-        group) submits those visitors' answers through `groups`
-        instead of the legacy `visitors` array, so a non-empty group there
-        satisfies "at least one visitor" just as well. Which group actually
-        represents visitor data is branch-specific form configuration this
-        schema can't see, so this is deliberately a coarse, branch-agnostic
-        proxy — any group with a non-empty `instances` list counts; the
-        effective form's own group definitions still validate instance
-        counts/required fields dynamically
-        (`invitations/service.py::create_invitation`).
+        """An Individual registration must not list additional visitors. How
+        many visitors a Group registration needs is the Visitor Info group's
+        own configured min/max instances (Form Builder), enforced in
+        `invitations/service.py::create_invitation`, not hardcoded here.
         """
         if self.registration_type == RegistrationType.individual and self.visitors:
             raise ValueError("An individual registration must not list additional visitors")
-        has_group_visitors = any(group.instances for group in self.groups)
-        if (
-            self.registration_type == RegistrationType.group
-            and not self.visitors
-            and not has_group_visitors
-        ):
-            raise ValueError("A group registration must list at least one visitor")
+        if self.effective_branch_id is None:
+            raise ValueError("visitDetails.branchId is required")
+        if self.effective_building_id is None:
+            raise ValueError("visitDetails.buildingId is required")
         _consents_to_dict(self.consents)
         _custom_fields_to_dict(self.custom_fields, scope="the invitation's customFields")
         _groups_to_dict(self.groups)
         return self
+
+    @property
+    def effective_branch_id(self) -> uuid.UUID | None:
+        return self.visit_details.branch_id or self.branch_id
+
+    @property
+    def effective_building_id(self) -> uuid.UUID | None:
+        return self.visit_details.building_id or self.building_id
 
     @property
     def consents_dict(self) -> dict[str, bool]:
@@ -408,6 +424,9 @@ class InvitationOut(CamelModel):
     poc_user_id: uuid.UUID | None = None
     poc_role_id: uuid.UUID | None = None
     poc_name: str | None = None
+    building_id: uuid.UUID | None = None
+    department_id: uuid.UUID | None = None
+    department_to_visit: str | None = None
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -455,6 +474,9 @@ class InvitationListItemOut(CamelModel):
     primary_contact_phone: str | None = None
     primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
+    department_to_visit: str | None = None
+    department_id: uuid.UUID | None = None
+    building_id: uuid.UUID | None = None
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
@@ -520,9 +542,12 @@ class InvitationBuildingOut(CamelModel):
 
 
 class InvitationDepartmentOut(CamelModel):
-    id: uuid.UUID
+    """`id`/`code` are `None` when only free-text `departmentToVisit` was
+    given and it matched no department record."""
+
+    id: uuid.UUID | None = None
     name: str
-    code: str
+    code: str | None = None
 
 
 class InvitationVehicleOut(CamelModel):
@@ -561,7 +586,6 @@ class InvitationCheckInOut(CamelModel):
     current_approval_step: CurrentApprovalStepOut | None = None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
-    primary_contact_custom_fields: list[CustomFieldValue]
     purpose_of_visit: str | None
     host_name_or_email: str | None
     preferred_visit_date: date | None
@@ -592,7 +616,6 @@ class InvitationTrackingOut(CamelModel):
     visitor_category_id: uuid.UUID | None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
-    primary_contact_custom_fields: list[CustomFieldValue]
     purpose_of_visit: str | None
     host_name_or_email: str | None
     poc_user_id: uuid.UUID | None = None
@@ -655,7 +678,6 @@ class InvitationDetailOut(CamelModel):
     primary_contact_photo_url: str | None = None
     primary_contact_id_proof_type: str | None = None
     primary_contact_id_proof_url: str | None = None
-    primary_contact_custom_fields: list[CustomFieldValue]
     purpose_of_visit: str | None
     purpose_id: uuid.UUID | None = None
     host_name_or_email: str | None
@@ -754,6 +776,7 @@ class InvitationEditRequest(CamelModel):
     duration_id: uuid.UUID | None = None
     department_to_visit: str | None = Field(default=None, max_length=255)
     department_id: uuid.UUID | None = None
+    building_id: uuid.UUID | None = None
     additional_notes: str | None = Field(default=None, max_length=2000)
     poc_user_id: uuid.UUID | None = None
     poc_role_id: uuid.UUID | None = None
@@ -782,6 +805,7 @@ class InvitationQrCheckInOut(CamelModel):
     """
 
     id: uuid.UUID
+    branch_id: uuid.UUID
     tracking_id: str
     status: str
     check_in_status: str
@@ -793,16 +817,20 @@ class InvitationQrCheckInOut(CamelModel):
     department: InvitationDepartmentOut | None = None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
+    primary_contact_preferred_contact_method: ContactMethod
     primary_contact_id_proof_type: str | None = None
+    primary_contact_id_proof_url: str | None = None
     primary_contact_email: str | None
     primary_contact_phone: str | None
-    primary_contact_custom_fields: list[CustomFieldValue]
     host_id: uuid.UUID | None = None
     host_name_or_email: str | None
     poc_user_id: uuid.UUID | None = None
     poc_role_id: uuid.UUID | None = None
     poc_name: str | None = None
     purpose_of_visit: str | None
+    purpose_id: uuid.UUID | None = None
+    duration_id: uuid.UUID | None = None
+    department_id: uuid.UUID | None = None
     department_to_visit: str | None
     preferred_visit_date: date | None
     preferred_visit_time: time | None
@@ -810,6 +838,8 @@ class InvitationQrCheckInOut(CamelModel):
     additional_notes: str | None
     carried_items: list[str]
     carried_items_description: str | None
+    consents: list[ConsentValue]
+    consent_recorded_at: datetime | None = None
     custom_fields: list[CustomFieldValue]
     groups: list[FieldGroupValuesOut]
     submitted_at: datetime | None
@@ -817,7 +847,7 @@ class InvitationQrCheckInOut(CamelModel):
     checked_in_at: datetime | None
     checked_out_at: datetime | None
     expires_at: datetime
-    visitors: list[InvitationVisitorOut]
+    visitors: list[InvitationVisitorDetailOut]
     vehicles: list[InvitationVehicleOut]
 
 

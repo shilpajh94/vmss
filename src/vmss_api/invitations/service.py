@@ -2,6 +2,7 @@ import secrets
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import field as dc_field
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -17,6 +18,7 @@ from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.auth.models import User
 from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core.config import settings
+from vmss_api.core.database import tenant_session_scope
 from vmss_api.core.logging import logger
 from vmss_api.core.redis import get_redis
 from vmss_api.core.schemas import BranchScope, SortOrder
@@ -46,6 +48,7 @@ from vmss_api.invitations.schemas import (
     InvitationLookupPrefillOut,
     InvitationSortableField,
     RegistrationSource,
+    RegistrationType,
     VisitDetailsSubmit,
 )
 from vmss_api.notifications import service as notifications_service
@@ -662,9 +665,18 @@ async def create_invitation(
     # group's own `maxInstances`, the same enforcement path every other
     # group already uses.
     visitor_group = form_builder_validation.visitor_info_group(effective_form)
+    visitor_group_instances = (
+        payload.group_values.get(str(visitor_group["id"]), []) if visitor_group else []
+    )
     try:
+        # Individual registrations have no additional-visitor list, so the
+        # group's minimum must not be applied to their zero count.
         form_builder_validation.validate_group_instance_count(
-            visitor_group, len(payload.visitors), scope="A group registration"
+            visitor_group,
+            len(payload.visitors),
+            scope="A group registration",
+            skip_minimum=payload.registration_type != RegistrationType.group
+            or bool(visitor_group_instances),
         )
     except HTTPException:
         logger.warning(
@@ -1278,11 +1290,11 @@ async def create_invitation(
         for key, files in vehicle_custom_field_file_contents.items()
     }
 
-    if source == RegistrationSource.visitor_walk_in and payload.branch_id is not None:
+    if source == RegistrationSource.visitor_walk_in and payload.effective_branch_id is not None:
         # A kiosk's device branch is only the default; the visitor's own
         # branch selection wins, provided it is an active branch.
-        branch_id = await _resolve_active_branch(tenant_db, payload.branch_id)
-    building_id = await _resolve_building(tenant_db, payload.building_id, branch_id)
+        branch_id = await _resolve_active_branch(tenant_db, payload.effective_branch_id)
+    building_id = await _resolve_building(tenant_db, payload.effective_building_id, branch_id)
     if visit_details["department_id"] is None and visit_details["department_to_visit"]:
         # Free-text department with no `departmentId`: link it to the branch's
         # department of the same name so the detail view returns the record.
@@ -1614,6 +1626,8 @@ class InvitationDetailFormContext:
     visitor_info_file_ids: set[str]
     vehicle_info_file_ids: set[str]
     group_file_ids: dict[str, set[str]]
+    field_meta: dict[str, dict[str, str]] = dc_field(default_factory=dict)
+    group_names: dict[str, str] = dc_field(default_factory=dict)
 
 
 async def get_invitation_detail_form_context(
@@ -1656,6 +1670,12 @@ async def get_invitation_detail_form_context(
         visitor_info_file_ids=visitor_info_file_ids,
         vehicle_info_file_ids=vehicle_info_file_ids,
         group_file_ids=group_file_ids,
+        field_meta={
+            f["id"]: {"key": f["key"], "label": f["label"]}
+            for step in effective_form
+            for f in step["fields"]
+        },
+        group_names={g["id"]: g["name"] for step in effective_form for g in step.get("groups", [])},
     )
 
 
@@ -1877,6 +1897,7 @@ async def check_out_invitation(
 
 _RESCHEDULABLE_STATUSES = ("submitted", "approved")
 _ACTIVE_STATUSES = ("approved", "checked_in")
+_LOCATION_EDIT_FIELDS = frozenset({"department_to_visit", "department_id", "building_id"})
 
 
 async def reschedule_invitation(
@@ -1965,6 +1986,8 @@ async def _resolve_edit_changes(
         changes["department_id"] = await _match_department_by_name(
             tenant_db, branch_id, changes["department_to_visit"]
         )
+    if payload.building_id is not None:
+        changes["building_id"] = await _resolve_building(tenant_db, payload.building_id, branch_id)
     if payload.poc_user_id is not None:
         poc_user = await UserRepository(tenant_db).get_active(payload.poc_user_id)
         if poc_user is None:
@@ -2054,9 +2077,16 @@ async def edit_invitation(
     than trusted from the client, even though the frontend already disables
     the field outside that window.
     """
-    if invitation.status not in _RESCHEDULABLE_STATUSES:
+    # A checked-in visit's location details (department/building) can still be
+    # corrected; every other field the client sends is ignored once the visit
+    # is underway (the edit modal always submits the whole form).
+    checked_in = invitation.status == "checked_in"
+    allowed_statuses = (
+        (*_RESCHEDULABLE_STATUSES, "checked_in") if checked_in else _RESCHEDULABLE_STATUSES
+    )
+    if invitation.status not in allowed_statuses:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
-    if payload.poc_user_id is not None or payload.poc_role_id is not None:
+    if not checked_in and (payload.poc_user_id is not None or payload.poc_role_id is not None):
         if not user.has_permission("invitations:approve", branch_id=invitation.branch_id):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
@@ -2072,9 +2102,13 @@ async def edit_invitation(
                 ),
             )
     changes = await _resolve_edit_changes(tenant_db, payload, invitation.branch_id)
+    if checked_in:
+        changes = {k: v for k, v in changes.items() if k in _LOCATION_EDIT_FIELDS}
     if not changes:
         return invitation
-    updated = await InvitationRepository(tenant_db).edit_if_eligible(invitation.id, **changes)
+    updated = await InvitationRepository(tenant_db).edit_if_eligible(
+        invitation.id, allowed_statuses=allowed_statuses, **changes
+    )
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
     await tenant_db.commit()
@@ -2300,6 +2334,18 @@ async def list_invitations_page(
     )
 
 
+async def is_invitation_relevant_to(
+    tenant_db: AsyncSession,
+    invitation_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID,
+    default_host_role_id: uuid.UUID,
+) -> bool:
+    return await InvitationRepository(tenant_db).is_relevant_to(
+        invitation_id, user_id=user_id, default_host_role_id=default_host_role_id
+    )
+
+
 async def get_prefill_by_email(
     tenant_db: AsyncSession, email: str, branch_scope: BranchScope, user: User
 ) -> InvitationLookupPrefillOut | None:
@@ -2332,3 +2378,21 @@ async def get_prefill_by_email(
             else None
         ),
     )
+
+
+async def email_qr_png(schema_name: str, invitation_id: uuid.UUID) -> bytes | None:
+    """The check-in QR a confirmation/reschedule email references by URL
+    (serve-email-images-by-url-and-complete-contact design.md Decision 1),
+    rendered from the token persisted at approval — the same bytes the
+    email used to embed. `None` when the invitation or its QR row doesn't
+    exist. The caller has already verified the URL signature; the schema
+    comes from the signed tenant id, never the raw request.
+    """
+    async with tenant_session_scope(schema_name) as session:
+        repository = InvitationRepository(session)
+        if await repository.get(invitation_id) is None:
+            return None
+        qr_code = await repository.get_qr_code(invitation_id)
+    if qr_code is None:
+        return None
+    return await generate_qr_png(qr_code.qr_token)

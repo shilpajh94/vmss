@@ -176,6 +176,24 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
         icon="calendar",
         is_locked=True,
         fields=[
+            # Options come from the Branch/Building tables at render time,
+            # not from `options` (see `_EXTERNALLY_CATALOGED_FIELD_KEYS`).
+            DefaultFieldSpec(
+                "branch",
+                "Location",
+                "dropdown_select",
+                is_locked=True,
+                is_required=True,
+                help_text="Populated from your Branches list.",
+            ),
+            DefaultFieldSpec(
+                "building",
+                "Building",
+                "dropdown_select",
+                is_locked=True,
+                is_required=False,
+                help_text="Populated from the selected branch's Buildings list.",
+            ),
             DefaultFieldSpec(
                 "purpose_of_visit", "Purpose of Visit", "text", is_locked=True, is_required=True
             ),
