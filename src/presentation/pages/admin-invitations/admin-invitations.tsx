@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
+import { ApproveInvitationModal } from '../../components/invitation-board/ApproveInvitationModal'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
@@ -41,6 +42,7 @@ const EMPTY_MESSAGES: Record<string, string> = {
 
 export function AdminInvitationsPage() {
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [pendingApproveId, setPendingApproveId] = useState<string | undefined>(undefined)
   const {
     columns,
     isLoading,
@@ -180,8 +182,7 @@ export function AdminInvitationsPage() {
               label={column.label}
               requests={column.requests}
               emptyMessage={EMPTY_MESSAGES[column.status]}
-              onDrop={column.status === 'approved' ? approve : column.status === 'denied' ? requestDeny : undefined}
-              onMoveToApproved={column.status === 'requested' ? approve : undefined}
+              onMoveToApproved={column.status === 'requested' ? setPendingApproveId : undefined}
               onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
               approvingId={approvingId}
               expandedId={expandedId}
@@ -194,13 +195,24 @@ export function AdminInvitationsPage() {
               onRescheduleClick={requestReschedule}
               onDelegateClick={requestDelegate}
               onApproveAndDelegateClick={requestApproveAndDelegate}
-              onApproveClick={approve}
+              onApproveClick={setPendingApproveId}
               onEditClick={requestEdit}
               onVisitorInfoClick={viewVisitorInfo}
             />
           )}
         />
       )}
+
+      <ApproveInvitationModal
+        isOpen={pendingApproveId !== undefined}
+        isApproving={approvingId !== undefined}
+        onCancel={() => setPendingApproveId(undefined)}
+        onConfirm={() => {
+          const id = pendingApproveId
+          setPendingApproveId(undefined)
+          if (id) void approve(id)
+        }}
+      />
 
       <DenyInvitationModal isOpen={pendingDenyId !== undefined} isDenying={denyingId !== undefined} onConfirm={confirmDeny} onCancel={cancelDeny} />
 
