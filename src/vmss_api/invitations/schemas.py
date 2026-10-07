@@ -95,6 +95,9 @@ class FieldGroupValuesOut(CamelModel):
     group's submitted instances, each a list of `{fieldId, value}` pairs."""
 
     group_id: uuid.UUID
+    group_name: str | None = Field(
+        default=None, description="Admin-facing name of the group (response only)."
+    )
     instances: list[list[CustomFieldValue]] = Field(default_factory=list)
 
 

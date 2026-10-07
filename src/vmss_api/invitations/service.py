@@ -1627,6 +1627,7 @@ class InvitationDetailFormContext:
     vehicle_info_file_ids: set[str]
     group_file_ids: dict[str, set[str]]
     field_meta: dict[str, dict[str, str]] = dc_field(default_factory=dict)
+    group_names: dict[str, str] = dc_field(default_factory=dict)
 
 
 async def get_invitation_detail_form_context(
@@ -1674,6 +1675,7 @@ async def get_invitation_detail_form_context(
             for step in effective_form
             for f in step["fields"]
         },
+        group_names={g["id"]: g["name"] for step in effective_form for g in step.get("groups", [])},
     )
 
 

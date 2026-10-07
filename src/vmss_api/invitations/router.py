@@ -444,10 +444,12 @@ def _dict_to_consents(
 def _dict_to_groups(
     field_meta: dict[str, dict[str, str]],
     values: dict[str, list[dict[str, Any]]],
+    group_names: dict[str, str],
 ) -> list[FieldGroupValuesOut]:
     return [
         FieldGroupValuesOut(
             group_id=uuid.UUID(group_id),
+            group_name=group_names.get(group_id),
             instances=[_dict_to_custom_fields(field_meta, instance) for instance in instances],
         )
         for group_id, instances in values.items()
@@ -629,6 +631,7 @@ async def _to_qr_check_in_out(
             await _resolve_group_field_values(
                 invitation.group_field_values, form_context.group_file_ids, include_documents=True
             ),
+            form_context.group_names,
         ),
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
@@ -745,6 +748,7 @@ async def _to_tracking_out(
             await _resolve_group_field_values(
                 invitation.group_field_values, form_context.group_file_ids, include_documents=False
             ),
+            form_context.group_names,
         ),
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
@@ -829,6 +833,7 @@ async def _to_check_in_out(
             await _resolve_group_field_values(
                 invitation.group_field_values, form_context.group_file_ids, include_documents=False
             ),
+            form_context.group_names,
         ),
         visitors=await _to_visitor_outs(
             invitation.visitors, form_context.visitor_info_file_ids, form_context.field_meta
@@ -1023,7 +1028,9 @@ async def _to_invitation_detail_out(
                 ),
             },
         ),
-        groups=_dict_to_groups(form_context.field_meta, resolved_group_field_values),
+        groups=_dict_to_groups(
+            form_context.field_meta, resolved_group_field_values, form_context.group_names
+        ),
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
