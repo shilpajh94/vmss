@@ -9,7 +9,6 @@ import {
 } from '../../utils/approval-step-label'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { CalendarClockIcon } from '../icons'
-import { useIsDesktop } from '../../hooks/use-media-query'
 
 const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved'])
 
@@ -42,9 +41,8 @@ interface VisitRequestCardProps {
   onApproveClick?: (id: string) => void
   onEditClick?: (id: string) => void
   onVisitorInfoClick?: (id: string) => void
-  // Tap alternatives to dragging the card onto the Approved/Denied column,
-  // which touch screens can't do (HTML drag-and-drop is mouse-only). Shown
-  // only below `lg`, and only when the card is draggable in the first place.
+  // Approve/Deny buttons (cards are no longer draggable). Shown at every size,
+  // and only when the card is actionable (`isDraggable`).
   onMoveToApproved?: (id: string) => void
   onMoveToDenied?: (id: string) => void
 }
@@ -69,7 +67,6 @@ export function VisitRequestCard({
   onMoveToApproved,
   onMoveToDenied,
 }: VisitRequestCardProps) {
-  const isDesktop = useIsDesktop()
   const isReceptionStep = isReceptionCurrentStep(detail?.currentApprovalStep, detail?.visitorCategoryId, workflowRulesByCategory ?? {})
   const pendingApproverLabel = detail?.currentApprovalStep
     ? (resolveNextStepPreviewLabel(detail, workflowRulesByCategory ?? {}, roleNameById ?? {}) ??
@@ -98,21 +95,16 @@ export function VisitRequestCard({
   // would immediately be rejected).
   const workflowRulesLoaded =
     !detail?.currentApprovalStep || !detail.visitorCategoryId || workflowRulesByCategory?.[detail.visitorCategoryId] !== undefined
-  const canDragCard = isDraggable && !isApproving && detail !== undefined && workflowRulesLoaded && !isReceptionApprovalStep
-  const canTapApprove = !isDesktop && canDragCard && Boolean(onMoveToApproved)
-  const canTapDeny = !isDesktop && canDragCard && Boolean(onMoveToDenied)
+  const isActionable = isDraggable && !isApproving && detail !== undefined && workflowRulesLoaded
+  // Reception's own step approves through its dedicated buttons, but it can
+  // still deny.
+  const canTapApprove = isActionable && !isReceptionApprovalStep && Boolean(onMoveToApproved)
+  const canTapDeny = isActionable && Boolean(onMoveToDenied)
 
   return (
     <div
-      draggable={canDragCard}
-      onDragStart={(event) => {
-        event.dataTransfer.setData('text/plain', request.id)
-        event.dataTransfer.effectAllowed = 'move'
-      }}
       onClick={() => onToggleExpand?.(request.id)}
-      className={`flex w-full flex-col gap-3 rounded-xl border border-border bg-surface p-4 drop-shadow-[0px_4px_4px_rgba(15,23,42,0.03)] ${
-        canDragCard ? 'cursor-grab active:cursor-grabbing' : ''
-      } ${isApproving ? 'opacity-60' : ''}`}
+      className={`flex w-full flex-col gap-3 rounded-xl border border-border bg-surface p-4 drop-shadow-[0px_4px_4px_rgba(15,23,42,0.03)] ${isApproving ? 'opacity-60' : ''}`}
     >
       <div className="flex w-full items-center justify-between">
         <span
@@ -213,7 +205,7 @@ export function VisitRequestCard({
             <button
               type="button"
               onClick={() => onMoveToApproved?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-success/40 bg-success/10 px-2 py-2.5 font-body text-xs font-semibold whitespace-nowrap text-success"
+              className="min-w-[92px] flex-1 rounded-lg border border-success/40 bg-success/10 px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-success max-lg:py-2.5 max-lg:text-xs"
             >
               Approve
             </button>
@@ -222,7 +214,7 @@ export function VisitRequestCard({
             <button
               type="button"
               onClick={() => onMoveToDenied?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-danger/40 bg-danger/10 px-2 py-2.5 font-body text-xs font-semibold whitespace-nowrap text-danger"
+              className="min-w-[92px] flex-1 rounded-lg border border-danger/40 bg-danger/10 px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-danger max-lg:py-2.5 max-lg:text-xs"
             >
               Deny
             </button>
