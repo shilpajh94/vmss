@@ -25,7 +25,7 @@ export function AdminDashboardPage() {
   return (
     <>
       {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
           <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
             Try again
@@ -35,7 +35,7 @@ export function AdminDashboardPage() {
         <LoadingState label="Loading dashboard…" className="flex-1" />
       ) : (
         <>
-          <div className="flex w-full items-center justify-between rounded-2xl border border-border bg-surface p-6">
+          <div className="flex w-full flex-col gap-3 rounded-2xl border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between md:p-6">
             <div className="flex flex-col gap-1">
               <h1 className="font-display text-xl font-bold text-text">
                 {greeting}, {firstName}

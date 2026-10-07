@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { DndContext, MouseSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { LayersIcon, LockIcon, PlusIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
@@ -60,18 +60,37 @@ export function AdminFormBuilderStepEditorPage() {
     panelRef.current?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
   }, [panelScrollRequest])
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    // Press-and-hold, so a finger swipe still scrolls the page instead of
+    // starting a drag (responsive-layout "Reordering form fields by touch").
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+  )
+
+  // Location / Building are always shown as locked, read-only rows on the
+  // Visit Details step (populated from Branches / Buildings), even when the
+  // backend also returns them as real fields — those are kept out of the
+  // editable list so they can't be edited, reordered or deleted here.
+  const LOCKED_VISIT_FIELDS = [
+    { key: 'location', label: 'Location', description: 'Always required. Populated from your Branches list — not configurable here.' },
+    { key: 'building', label: 'Building', description: 'Populated from your Buildings list for the selected location — not configurable here.' },
+  ]
+  const isLockedVisitField = (f: { key: string; label?: string }) =>
+    step?.key === 'visit_details' &&
+    LOCKED_VISIT_FIELDS.some((i) => i.key === f.key || f.label?.trim().toLowerCase() === i.label.toLowerCase())
+  const editableFields = fields.filter((f) => !isLockedVisitField(f))
+  const hiddenFieldIds = fields.filter(isLockedVisitField).map((f) => f.id)
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    const oldIndex = fields.findIndex((f) => f.id === active.id)
-    const newIndex = fields.findIndex((f) => f.id === over.id)
+    const oldIndex = editableFields.findIndex((f) => f.id === active.id)
+    const newIndex = editableFields.findIndex((f) => f.id === over.id)
     if (oldIndex === -1 || newIndex === -1) return
-    const reordered = [...fields]
+    const reordered = [...editableFields]
     const [moved] = reordered.splice(oldIndex, 1)
     reordered.splice(newIndex, 0, moved)
-    void reorderFields(reordered.map((f) => f.id))
+    void reorderFields([...hiddenFieldIds, ...reordered.map((f) => f.id)])
   }
 
   // Locked groups (the seeded "vehicles"/"visitors" groups) never get a drag
@@ -107,7 +126,7 @@ export function AdminFormBuilderStepEditorPage() {
         <>
           <div className="flex w-full flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="font-display text-2xl font-bold text-text">{step ? `${step.name} Step Editor` : 'Step Editor'}</h1>
+              <h1 className="font-display text-xl font-bold md:text-2xl text-text">{step ? `${step.name} Step Editor` : 'Step Editor'}</h1>
               <button type="button" onClick={goBack} className="font-body text-sm text-admin-accent">
                 ← Back to Form Builder
               </button>
@@ -132,7 +151,7 @@ export function AdminFormBuilderStepEditorPage() {
     >
       <div className="h-full min-h-0 overflow-y-auto scrollbar-thin">
         {errorMessage ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
+          <div className="flex h-full flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
             <p className="font-body text-sm text-danger">{errorMessage}</p>
             <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
               Try again
@@ -195,34 +214,36 @@ export function AdminFormBuilderStepEditorPage() {
                   <span className="font-body text-xs text-text-muted">Drag rows to reorder</span>
                 </div>
 
-                {/* "Location" isn't a real Form Builder field — it's hardcoded
-                 * in the Visit Details step, always required, and populated
-                 * from the Branches list rather than admin-typed options (see
+                {/* "Location" and "Building" aren't real Form Builder fields — they're
+                 * hardcoded in the Visit Details step and populated from the
+                 * Branches / Buildings lists rather than admin-typed options (see
                  * visitor-request/Components/steps/VisitInfoStep.tsx). Shown
-                 * here read-only, purely so it's not invisible to admins
-                 * comparing this list against the live form. */}
-                {step?.key === 'visit_details' && (
-                  <div className="flex items-center gap-3 rounded-xl border border-border bg-bg px-4 py-3 opacity-80">
-                    <LockIcon className="size-3.5 shrink-0 text-text-faint" />
-                    <div className="flex min-w-0 flex-1 flex-col gap-1">
-                      <div className="flex items-center gap-3">
-                        <span className="font-body text-sm font-semibold text-text">Location</span>
-                        <span className="rounded-full bg-surface px-2 py-0.5 font-body text-[11px] font-medium text-text-muted">
-                          Dropdown Select
-                        </span>
+                 * here read-only, purely so they're not invisible to admins
+                 * comparing this list against the live form. Skipped for any
+                 * key the backend already returns as a real field, otherwise
+                 * the same row shows up twice. */}
+                {step?.key === 'visit_details' &&
+                  LOCKED_VISIT_FIELDS
+                    .map((item) => (
+                    <div key={item.label} className="flex items-center gap-3 rounded-xl border border-border bg-bg px-4 py-3 opacity-80">
+                      <LockIcon className="size-3.5 shrink-0 text-text-faint" />
+                      <div className="flex min-w-0 flex-1 flex-col gap-1">
+                        <div className="flex items-center gap-3">
+                          <span className="font-body text-sm font-semibold text-text">{item.label}</span>
+                          <span className="rounded-full bg-surface px-2 py-0.5 font-body text-[11px] font-medium text-text-muted">
+                            Dropdown Select
+                          </span>
+                        </div>
+                        <p className="font-body text-xs text-text-muted">{item.description}</p>
                       </div>
-                      <p className="font-body text-xs text-text-muted">
-                        Always required. Populated from your Branches list — not configurable here.
-                      </p>
                     </div>
-                  </div>
-                )}
+                  ))}
 
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                  <SortableContext items={fields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
+                  <SortableContext items={editableFields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
                     <div className="flex flex-col gap-2">
-                      {fields.map((field, index) => {
-                        const previousGroupId = index > 0 ? fields[index - 1].groupId : undefined
+                      {editableFields.map((field, index) => {
+                        const previousGroupId = index > 0 ? editableFields[index - 1].groupId : undefined
                         const group = field.groupId ? groups.find((g) => g.id === field.groupId) : undefined
                         return (
                           <div key={field.id} className="flex flex-col gap-2">

@@ -196,7 +196,7 @@ export function VehicleInfoStep({
               variant="pill"
             />
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <TextField
               label="License Plate"
               placeholder="Enter plate number"
@@ -233,7 +233,7 @@ export function VehicleInfoStep({
             uploadFile={uploadFile}
             getFilePreviewUrl={getFilePreviewUrl}
           />
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <button type="button" onClick={commitDraft} className="rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white">
               Add to List
             </button>

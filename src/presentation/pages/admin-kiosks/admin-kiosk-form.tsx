@@ -31,13 +31,13 @@ export function AdminKioskFormPage() {
           <ChevronLeftIcon className="size-4" />
         </button>
         <div className="flex flex-col gap-0.5">
-          <h1 className="font-display text-2xl font-bold text-text">{isEditMode ? 'Edit Kiosk' : 'Add Kiosk'}</h1>
+          <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Kiosk' : 'Add Kiosk'}</h1>
           <p className="font-body text-sm text-text-muted">{isEditMode ? "Update this kiosk's details" : 'Register a new check-in kiosk'}</p>
         </div>
       </div>
 
       {errorMessage ? (
-        <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-12 text-center">
+        <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
           <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
             Try again
@@ -66,7 +66,7 @@ export function AdminKioskFormPage() {
             <ToggleSwitch label="Active" checked={values.isActive} onChange={(isActive) => updateField('isActive', isActive)} />
           </div>
 
-          <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
+          <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
             <button type="button" onClick={cancel} className="rounded-full border border-border bg-surface px-6 py-2.5 font-body text-sm font-semibold text-text">
               Cancel
             </button>

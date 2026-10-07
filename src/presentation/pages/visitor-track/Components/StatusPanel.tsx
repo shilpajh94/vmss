@@ -22,8 +22,8 @@ export function StatusPanel({ response }: StatusPanelProps) {
   const currentIndex = TIMELINE_STAGES.findIndex((stage) => stage.value === response.timelineStage)
 
   return (
-    <div className="flex w-[480px] flex-col gap-4 rounded-2xl border border-border bg-surface p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
-      <div className="flex items-start justify-between">
+    <div className="flex w-full max-w-[480px] flex-col gap-4 rounded-2xl border border-border bg-surface p-5 shadow-[0_4px_8px_rgba(15,23,42,0.03)] md:p-8">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="text-overline text-text-muted">Visitor Pass Specification</p>
           <p className="font-display text-[22px] font-bold text-text">ID: {response.trackingId}</p>
@@ -33,7 +33,7 @@ export function StatusPanel({ response }: StatusPanelProps) {
         </span>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 border-t border-border-subtle pt-4">
+      <div className="grid grid-cols-1 gap-4 border-t sm:grid-cols-3 border-border-subtle pt-4">
         <div className="min-w-0">
           <p className="text-overline text-text-muted">Requested Date</p>
           <p className="truncate text-body text-text">{response.requestedDate}</p>

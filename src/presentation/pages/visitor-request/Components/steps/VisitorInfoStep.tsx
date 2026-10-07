@@ -77,7 +77,7 @@ export function VisitorInfoStep({
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1.5">
         <span className="text-body font-medium text-text">Registration Type</span>
-        <div className="w-[320px]">
+        <div className="w-full max-w-[320px]">
           <SegmentedToggle
             options={[
               { value: 'individual', label: 'Individual' },

@@ -67,7 +67,7 @@ export function FloorModal({ isOpen, initialFloor, isSaving, onSave, onClose }: 
           value={String(details.floorNumber)}
           onChange={(value) => updateField('floorNumber', Number(value) || 0)}
         />
-        <div className="flex gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row">
           <div className="flex-1">
             <TextField
               label="Capacity"

@@ -137,7 +137,7 @@ export function GroupCard({ group, fieldCount, siblingFields, onSaveProperties, 
       )}
 
       {isRepeatable && showInstanceRange && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <TextField
             label="Min Instances"
             value={minInstances}

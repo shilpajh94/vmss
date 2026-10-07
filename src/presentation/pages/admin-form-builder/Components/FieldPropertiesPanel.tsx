@@ -1,4 +1,4 @@
-import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { DndContext, MouseSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useEffect, useState } from 'react'
@@ -10,6 +10,7 @@ import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
 import {
   CONTENT_ONLY_FIELD_TYPES,
   FIELD_TYPE_CATALOG,
+  OPTION_OPTIONAL_FIELD_TYPES,
   OPTION_REQUIRED_FIELD_TYPES,
   TYPE_LOCKED_SYSTEM_FIELD_KEYS,
   fieldTypeLabel,
@@ -39,9 +40,8 @@ function toOptionDraftRows(options: string[] | null): OptionDraftRow[] {
   return (options ?? []).map((value) => ({ id: crypto.randomUUID(), value }))
 }
 
-function optionsEditorIsShown(fieldType: FormFieldType, originalOptions: string[] | null): boolean {
-  if (OPTION_REQUIRED_FIELD_TYPES.includes(fieldType)) return true
-  return fieldType === 'toggle_switch' && originalOptions !== null
+function optionsEditorIsShown(fieldType: FormFieldType): boolean {
+  return OPTION_REQUIRED_FIELD_TYPES.includes(fieldType) || OPTION_OPTIONAL_FIELD_TYPES.includes(fieldType)
 }
 
 interface OptionRowProps {
@@ -69,7 +69,7 @@ function OptionRow({ row, disabled, onChange, onRemove }: OptionRowProps) {
         {...listeners}
         disabled={disabled}
         aria-label="Drag to reorder option"
-        className="cursor-grab text-text-faint disabled:cursor-not-allowed disabled:opacity-40 active:cursor-grabbing"
+        className="flex cursor-grab items-center justify-center text-text-faint max-lg:-m-3 max-lg:size-10 disabled:cursor-not-allowed disabled:opacity-40 active:cursor-grabbing"
       >
         <GridIcon className="size-4" />
       </button>
@@ -112,8 +112,13 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
   // while the admin is actively editing this field.
   const [isUnlockedForEditing, setIsUnlockedForEditing] = useState(false)
 
-  const optionSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
-  const showOptionsEditor = optionsEditorIsShown(fieldType, field.options)
+  const optionSensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    // Press-and-hold, so a finger swipe still scrolls the page instead of
+    // starting a drag (responsive-layout "Reordering form fields by touch").
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+  )
+  const showOptionsEditor = optionsEditorIsShown(fieldType)
   const isContentOnly = CONTENT_ONLY_FIELD_TYPES.includes(fieldType)
   const editableFieldsDisabled = field.isLocked && !isUnlockedForEditing
   // A locked, retypeable field's Field Type control joins the same
@@ -249,7 +254,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
   }
 
   return (
-    <div className="flex w-full flex-col gap-5 rounded-2xl border border-border bg-surface p-6">
+    <div className="flex w-full flex-col gap-5 rounded-2xl border border-border bg-surface p-4 md:p-6">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="font-display text-lg font-bold text-text">Field Properties</h2>
@@ -350,7 +355,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
               This field's required/active state is locked and cannot be changed, even when unlocked for editing.
             </p>
           )}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <TextField label="Min Length" value={minLength} onChange={setMinLength} type="number" />
             <TextField label="Max Length" value={maxLength} onChange={setMaxLength} type="number" />
           </div>

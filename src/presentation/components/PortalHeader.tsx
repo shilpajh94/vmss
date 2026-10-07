@@ -1,4 +1,5 @@
 import { Link } from 'react-router'
+import { BrandLogo } from './BrandLogo'
 
 interface PortalHeaderProps {
   backTo?: string
@@ -6,12 +7,12 @@ interface PortalHeaderProps {
 
 export function PortalHeader({ backTo }: PortalHeaderProps) {
   return (
-    <header className="flex h-[72px] w-full items-center gap-3 border-b border-border bg-surface px-12">
+    <header className="flex h-16 w-full items-center gap-3 border-b border-border bg-surface px-4 md:h-[72px] md:px-12">
       {backTo && (
         <Link
           to={backTo}
           aria-label="Back"
-          className="flex size-9 items-center justify-center rounded-full border border-border text-text"
+          className="flex size-10 items-center justify-center rounded-full border border-border text-text lg:size-9"
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path
@@ -24,11 +25,8 @@ export function PortalHeader({ backTo }: PortalHeaderProps) {
           </svg>
         </Link>
       )}
-      <Link to="/" className="flex items-center gap-2">
-        <div className="flex size-8 items-center justify-center rounded-lg bg-primary">
-          <span className="font-display text-[18px] font-extrabold text-white">V</span>
-        </div>
-        <span className="font-display text-[18px] font-extrabold text-text">VisitorPass</span>
+      <Link to="/" aria-label="Visimio home" className="flex items-center">
+        <BrandLogo variant="light" className="h-7 md:h-8" decorative />
       </Link>
     </header>
   )

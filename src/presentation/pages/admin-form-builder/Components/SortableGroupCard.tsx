@@ -38,7 +38,7 @@ export function SortableGroupCard({ group, fieldCount, siblingFields, onSaveProp
             {...attributes}
             {...listeners}
             aria-label="Drag to reorder group"
-            className="cursor-grab text-text-faint active:cursor-grabbing"
+            className="flex cursor-grab items-center justify-center text-text-faint active:cursor-grabbing max-lg:-m-3 max-lg:size-10"
           >
             <GridIcon className="size-4" />
           </button>

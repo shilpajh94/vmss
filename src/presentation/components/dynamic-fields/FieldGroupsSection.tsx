@@ -1,6 +1,7 @@
 import { CustomFieldsSection } from './CustomFieldsSection'
 import type { DynamicFieldValue } from './DynamicField'
-import { isGroupVisible } from './field-group-visibility'
+import { groupErrorKey, isGroupVisible } from './field-group-visibility'
+import { useGroupErrors } from './group-errors-context'
 import { RepeatableFieldGroup, type GroupInstance } from './RepeatableFieldGroup'
 import type { EffectiveFormFieldGroup, FormField } from '../../../domain/entities/form-builder-schema'
 
@@ -41,6 +42,7 @@ export function FieldGroupsSection({
   uploadFile,
   getFilePreviewUrl,
 }: FieldGroupsSectionProps) {
+  const groupErrors = useGroupErrors()
   const orderedGroups = [...groups].sort((a, b) => a.orderIndex - b.orderIndex)
 
   const setGroupInstances = (groupKey: string, instances: GroupInstance[]) => {
@@ -80,6 +82,7 @@ export function FieldGroupsSection({
             minInstances={group.minInstances}
             maxInstances={group.maxInstances}
             instances={groupValues[group.key] ?? []}
+            error={groupErrors[groupErrorKey(group.key)]}
             onChange={(instances) => setGroupInstances(group.key, instances)}
             uploadFile={uploadFile}
             getFilePreviewUrl={getFilePreviewUrl}

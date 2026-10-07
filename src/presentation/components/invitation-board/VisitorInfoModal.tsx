@@ -213,7 +213,7 @@ function GroupFieldValuesSections({ groups, steps }: { groups: GroupAnswer[]; st
             <SectionLabel>{`${group?.name ?? prettifyKey(groupId)} (${instances.length})`}</SectionLabel>
             <div className="flex flex-col gap-2">
               {instances.map((instance, index) => (
-                <div key={index} className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl border border-border-subtle p-3">
+                <div key={index} className="grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-2 rounded-xl border border-border-subtle p-3">
                   {instance.map(({ fieldId, value }) => {
                     const field = findFieldById(steps, fieldId)
                     const label = field?.label ?? prettifyKey(fieldId)
@@ -280,7 +280,7 @@ export function VisitorInfoModal({
 
           <div className="flex flex-col gap-3">
             <SectionLabel>Visit details</SectionLabel>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
               <Field label="Email" value={detail.primaryContactEmail ?? '—'} />
               <Field label="Phone" value={detail.primaryContactPhone ?? '—'} />
               <Field label="Purpose" value={detail.purposeOfVisit} />
@@ -311,14 +311,14 @@ export function VisitorInfoModal({
               ) : null}
               {detail.carriedItems.length > 0 ? <Field label="Carried items" value={detail.carriedItems.join(', ')} /> : null}
               {detail.carriedItemsDescription ? (
-                <div className="col-span-2">
+                <div className="col-span-full">
                   <Field label="Carried items description" value={detail.carriedItemsDescription} />
                 </div>
               ) : null}
               <IdProofField label="ID proof" type={detail.primaryContactIdProofType} url={detail.primaryContactIdProofUrl} />
               <CustomFieldValueFields values={detail.primaryContactCustomFields} steps={formSteps} />
               {detail.additionalNotes ? (
-                <div className="col-span-2">
+                <div className="col-span-full">
                   <Field label="Notes" value={detail.additionalNotes} />
                 </div>
               ) : null}
@@ -328,7 +328,7 @@ export function VisitorInfoModal({
           {detail.customFields.length > 0 ? (
             <div className="flex flex-col gap-3">
               <SectionLabel>Additional details</SectionLabel>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
                 <CustomFieldValueFields values={detail.customFields} steps={formSteps} />
               </div>
             </div>
@@ -339,7 +339,7 @@ export function VisitorInfoModal({
               <SectionLabel>{`Vehicles (${detail.vehicles.length})`}</SectionLabel>
               <div className="flex flex-col gap-2">
                 {detail.vehicles.map((vehicle: InvitationVehicle, index) => (
-                  <div key={vehicle.id ?? index} className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl border border-border-subtle p-3">
+                  <div key={vehicle.id ?? index} className="grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-2 rounded-xl border border-border-subtle p-3">
                     <Field label="Type" value={vehicle.vehicleType ?? '—'} />
                     <Field label="License plate" value={vehicle.licensePlate ?? '—'} />
                     <Field label="Make/Model" value={vehicle.makeModel ?? '—'} />
@@ -355,7 +355,7 @@ export function VisitorInfoModal({
 
           <div className="flex flex-col gap-3">
             <SectionLabel>Timeline</SectionLabel>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
               <Field label="Submitted" value={formatDateTime(detail.submittedAt)} />
               <Field label="Expires" value={formatDateTime(detail.expiresAt)} />
               {detail.approvedAt ? <Field label="Approved" value={formatDateTime(detail.approvedAt)} /> : null}
@@ -363,7 +363,7 @@ export function VisitorInfoModal({
               {detail.checkedOutAt ? <Field label="Checked out" value={formatDateTime(detail.checkedOutAt)} /> : null}
               {detail.deniedAt ? <Field label="Denied" value={formatDateTime(detail.deniedAt)} /> : null}
               {detail.denialReason ? (
-                <div className="col-span-2">
+                <div className="col-span-full">
                   <Field label="Denial reason" value={detail.denialReason} />
                 </div>
               ) : null}

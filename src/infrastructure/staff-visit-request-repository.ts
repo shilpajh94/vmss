@@ -12,7 +12,7 @@ export class HttpStaffVisitRequestRepository implements StaffVisitRequestReposit
     this.apiClient = apiClient
   }
 
-  async submit(request: StaffVisitRequest, files: InvitationSubmissionFiles, branchId: string): Promise<VisitRequestResponse> {
+  async submit(request: StaffVisitRequest, files: InvitationSubmissionFiles): Promise<VisitRequestResponse> {
     const formData = new FormData()
     formData.append('payload', JSON.stringify(request))
     // See visit-request-repository.ts's matching comment on why these four
@@ -50,7 +50,6 @@ export class HttpStaffVisitRequestRepository implements StaffVisitRequestReposit
     const envelope = await this.apiClient.makeMultipartRequest({
       endpointConfig: API_ENDPOINTS.STAFF_CREATE_VISIT_REQUEST,
       formData,
-      headers: { 'X-Branch-ID': branchId },
       parserSchema: InvitationEnvelopeSchema,
     })
 

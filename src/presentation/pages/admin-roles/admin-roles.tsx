@@ -19,9 +19,9 @@ export function AdminRolesPage() {
     <PageContentLayout
       header={
         <>
-          <div className="flex w-full items-center justify-between">
-            <h1 className="font-display text-2xl font-bold text-text">Roles &amp; Permissions</h1>
-            <div className="flex items-center gap-3">
+          <div className="flex w-full flex-wrap items-center justify-between gap-3">
+            <h1 className="font-display text-xl font-bold md:text-2xl text-text">Roles &amp; Permissions</h1>
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 disabled={isResyncing}
@@ -66,7 +66,7 @@ export function AdminRolesPage() {
       }
     >
       {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
           <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
             Try again

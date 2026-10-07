@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { GroupErrorsContext } from '../../components/dynamic-fields/group-errors-context'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../context/app-dependencies-context'
 import type { Branch } from '../../../domain/entities/branch-schema'
@@ -59,7 +60,7 @@ export function StaffVisitorRegistrationPage() {
     vehicleInfoCustomFields,
     vehicleInfoGroups,
     vehicleInfoAllFields,
-  } = useStaffVisitorRegistrationWizard(branches)
+  } = useStaffVisitorRegistrationWizard(branches, buildings)
 
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
   const activeStep = activeSteps[currentStep]
@@ -109,12 +110,12 @@ export function StaffVisitorRegistrationPage() {
   }
 
   return (
-    <>
+    <GroupErrorsContext.Provider value={errors}>
       <RegistrationWorkspaceHeader currentUser={currentUser} onSignOut={signOut} />
 
       <RegistrationStepper steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
 
-      <div className="flex flex-1 flex-col gap-6 rounded-2xl border border-border bg-surface p-6">
+      <div className="flex flex-1 flex-col gap-6 rounded-2xl border border-border bg-surface p-4 md:p-6">
         {isFormConfigLoading && <p className="text-body text-text-muted">Loading…</p>}
 
         {!isFormConfigLoading && formConfigError && (
@@ -231,7 +232,7 @@ export function StaffVisitorRegistrationPage() {
         )}
       </div>
 
-      <div className="flex items-center justify-between border-t border-border pt-4">
+      <div className="sticky bottom-0 -mx-4 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-surface px-4 pt-4 pb-1 md:static md:mx-0 md:px-0 md:pb-0">
         <button
           type="button"
           onClick={cancelRegistration}
@@ -251,6 +252,6 @@ export function StaffVisitorRegistrationPage() {
           </button>
         )}
       </div>
-    </>
+    </GroupErrorsContext.Provider>
   )
 }

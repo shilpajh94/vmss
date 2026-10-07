@@ -18,11 +18,11 @@ The system SHALL render the staff Enterprise Sign In screen at the `/admin/login
 - **THEN** the system does not render the Enterprise Sign In screen at that path
 
 ### Requirement: Staff login screen is visually distinct from the visitor portal
-The system SHALL render the staff login screen with its own dark-themed header ("VisitorPass" brand mark plus an "Admin Gateway" badge and system-status indicator) instead of the visitor portal's header, and SHALL NOT reuse the visitor portal's light header component.
+The system SHALL render the staff login screen with its own dark-themed header, carrying the Visimio on-dark logo (mark plus white wordmark), an "Admin Gateway" badge, and a system-status indicator. It SHALL NOT reuse the visitor portal's light header component.
 
 #### Scenario: Staff screen does not show the visitor header
 - **WHEN** the staff login screen renders
-- **THEN** the visitor portal's light header is not present, and the dark Admin Gateway header is shown instead
+- **THEN** the visitor portal's light header is not present, and the dark Admin Gateway header is shown instead, with the Visimio on-dark logo
 
 ### Requirement: Staff signs in with an email and password form
 The system SHALL present an email field, a password field, and a single primary submit action ("Sign In") on the login screen, and SHALL NOT present an SSO-redirect action.

@@ -9,7 +9,7 @@ interface UpcomingVisitorsCardProps {
 
 export function UpcomingVisitorsCard({ visitors, employeeNameById }: UpcomingVisitorsCardProps) {
   return (
-    <div className="flex w-full flex-col gap-5 rounded-2xl border border-border bg-surface p-6">
+    <div className="flex w-full flex-col gap-5 rounded-2xl border border-border bg-surface p-4 md:p-6">
       <div className="flex flex-col gap-0.5">
         <h2 className="font-display text-lg font-bold text-text">Upcoming Pre-Registered Visitors</h2>
         <p className="font-body text-sm text-text-faint">Pre-registered visitors awaiting check-in</p>

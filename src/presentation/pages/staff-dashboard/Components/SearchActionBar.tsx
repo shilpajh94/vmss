@@ -27,15 +27,15 @@ export function SearchActionBar({
   onRegistrationTypeFilterChange,
 }: SearchActionBarProps) {
   return (
-    <div className="flex w-full items-center gap-3">
-      <div className="flex flex-1 items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3">
+    <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+      <div className="flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 sm:min-w-[240px]">
         <SearchGlyphIcon className="size-4 shrink-0 text-text-faint" />
         <input
           type="text"
           value={search}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder="Search visitor, host, REQ ID..."
-          className="flex-1 bg-transparent font-body text-sm text-text placeholder:text-text-faint focus:outline-none"
+          className="min-w-0 flex-1 bg-transparent font-body text-sm text-text placeholder:text-text-faint focus:outline-none max-sm:text-base"
         />
       </div>
 

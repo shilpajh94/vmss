@@ -21,6 +21,8 @@ interface RepeatableFieldGroupProps {
    * working upload control instead of falling back to "not supported". */
   uploadFile?: (file: File) => Promise<string>
   getFilePreviewUrl?: (fileRef?: string) => string | undefined
+  /** Min-instances error set by the wizard's Next validation. */
+  error?: string
 }
 
 /** Generalizes `VehicleInfoStep`'s add/edit/remove-instance-row UI (a table
@@ -41,6 +43,7 @@ export function RepeatableFieldGroup({
   onChange,
   uploadFile,
   getFilePreviewUrl,
+  error,
 }: RepeatableFieldGroupProps) {
   const [draft, setDraft] = useState<GroupInstance | null>(null)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
@@ -48,7 +51,6 @@ export function RepeatableFieldGroup({
   const [removeError, setRemoveError] = useState<string | undefined>(undefined)
 
   const atMax = maxInstances !== null && instances.length >= maxInstances
-  const belowMin = minInstances !== null && instances.length < minInstances
 
   const startAdd = () => {
     setEditingIndex(null)
@@ -100,7 +102,7 @@ export function RepeatableFieldGroup({
 
   return (
     <div className="flex flex-col gap-4 rounded-lg border border-border-subtle bg-surface p-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="text-h3 text-text">{groupName}</h3>
           {(minInstances !== null || maxInstances !== null) && (
@@ -123,7 +125,7 @@ export function RepeatableFieldGroup({
         </button>
       </div>
 
-      {belowMin && <p className="text-caption text-danger">At least {minInstances} {groupName.toLowerCase()} required.</p>}
+      {error && instances.length < (minInstances ?? 0) && <p className="text-caption text-danger">{error}</p>}
       {removeError && <p className="text-caption text-danger">{removeError}</p>}
 
       {instances.length > 0 && (
@@ -137,7 +139,7 @@ export function RepeatableFieldGroup({
                     {field.label}
                   </th>
                 ))}
-                <th className="px-4 py-2">Actions</th>
+                <th className="sticky right-0 bg-bg px-4 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -149,11 +151,11 @@ export function RepeatableFieldGroup({
                       {formatDynamicFieldValue(field, instance[field.key])}
                     </td>
                   ))}
-                  <td className="px-4 py-2">
-                    <button type="button" onClick={() => startEdit(index)} className="mr-2 text-secondary-accent">
+                  <td className="sticky right-0 bg-surface px-4 py-2 whitespace-nowrap">
+                    <button type="button" onClick={() => startEdit(index)} className="mr-2 text-secondary-accent max-lg:min-h-10 max-lg:px-2">
                       Edit
                     </button>
-                    <button type="button" onClick={() => removeInstance(index)} className="text-danger">
+                    <button type="button" onClick={() => removeInstance(index)} className="text-danger max-lg:min-h-10 max-lg:px-2">
                       Remove
                     </button>
                   </td>

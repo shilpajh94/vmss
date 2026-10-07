@@ -32,7 +32,7 @@ export function AdminAuditTrailPage() {
     <PageContentLayout
       header={
         <>
-          <h1 className="font-display text-2xl font-bold text-text">Audit Trail</h1>
+          <h1 className="font-display text-xl font-bold md:text-2xl text-text">Audit Trail</h1>
           <AuditFilterBar
             dateRange={dateRange}
             onDateRangeChange={changeDateRange}
@@ -45,7 +45,7 @@ export function AdminAuditTrailPage() {
       }
     >
       {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
           <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
             Try again

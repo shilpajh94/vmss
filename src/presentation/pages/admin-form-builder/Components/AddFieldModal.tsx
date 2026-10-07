@@ -3,7 +3,7 @@ import { Modal } from '../../../components/ui/Modal'
 import { TextareaField } from '../../../components/ui/TextareaField'
 import { TextField } from '../../../components/ui/TextField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
-import { FIELD_TYPE_CATALOG, OPTION_REQUIRED_FIELD_TYPES } from '../field-type-catalog'
+import { FIELD_TYPE_CATALOG, OPTION_OPTIONAL_FIELD_TYPES, OPTION_REQUIRED_FIELD_TYPES } from '../field-type-catalog'
 import type { FormFieldCreateInput, FormFieldType } from '../../../../domain/entities/form-builder-schema'
 
 interface AddFieldModalProps {
@@ -35,6 +35,7 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
   const [createError, setCreateError] = useState<string | undefined>(undefined)
 
   const requiresOptions = OPTION_REQUIRED_FIELD_TYPES.includes(fieldType)
+  const acceptsOptions = requiresOptions || OPTION_OPTIONAL_FIELD_TYPES.includes(fieldType)
   const isContentOnly = fieldType === 'static_text'
   const options = optionsText
     .split(',')
@@ -66,7 +67,7 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
       helpText: description.trim() || undefined,
       fieldType,
       isRequired: isContentOnly ? false : isRequired,
-      options: requiresOptions ? options : undefined,
+      options: acceptsOptions && options.length > 0 ? options : undefined,
     })
     setIsSubmitting(false)
     // On failure, the user's input stays exactly as typed so they can fix
@@ -137,14 +138,14 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
             rows={3}
           />
         </div>
-        {requiresOptions && (
+        {acceptsOptions && (
           <div className="mt-4">
             <TextField
-              label="Options (comma-separated)"
+              label={requiresOptions ? 'Options (comma-separated)' : 'Options (comma-separated, optional)'}
               value={optionsText}
               onChange={setOptionsText}
               placeholder="e.g. Yes, No, Maybe"
-              required
+              required={requiresOptions}
             />
           </div>
         )}

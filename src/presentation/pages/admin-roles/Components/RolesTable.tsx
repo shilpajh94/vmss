@@ -1,6 +1,10 @@
 import { useNavigate } from 'react-router'
 import { PencilIcon } from '../../../components/icons'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
+import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+
+// Below `md`: only the identifying, status, and actions columns stay visible.
+const TABLE_CLASS_NAME = responsiveTableClassName([2, 3])
 
 interface RolesTableProps {
   roles: RoleOut[]
@@ -13,7 +17,7 @@ export function RolesTable({ roles }: RolesTableProps) {
 
   return (
     <div className="w-full overflow-x-auto rounded-2xl border border-border bg-surface">
-      <table className="w-full text-left">
+      <table className={TABLE_CLASS_NAME}>
         <thead>
           <tr className="bg-border-subtle">
             {COLUMN_HEADERS.map((header) => (
@@ -47,7 +51,7 @@ export function RolesTable({ roles }: RolesTableProps) {
                     type="button"
                     onClick={() => navigate(`/admin/roles/${role.id}/edit`)}
                     aria-label={`Edit permissions for ${role.name}`}
-                    className="flex items-center justify-center rounded-lg bg-border-subtle p-2 text-text"
+                    className="flex items-center justify-center rounded-lg bg-border-subtle p-2 max-lg:p-3 text-text"
                   >
                     <PencilIcon className="size-3.5" />
                   </button>

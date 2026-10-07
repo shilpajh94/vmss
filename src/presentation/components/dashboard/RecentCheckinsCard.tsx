@@ -11,7 +11,7 @@ const COLUMN_HEADERS = ['NAME', 'HOST', 'TIME', 'STATUS']
 
 export function RecentCheckinsCard({ checkins, employeeNameById }: RecentCheckinsCardProps) {
   return (
-    <div className="flex flex-1 flex-col gap-5 rounded-2xl border border-border bg-surface p-6">
+    <div className="flex flex-1 flex-col gap-5 rounded-2xl border border-border bg-surface p-4 md:p-6">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-lg font-bold text-text">Recent Check-ins</h2>
         <button type="button" className="font-body text-sm font-semibold text-admin-accent">
