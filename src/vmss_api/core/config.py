@@ -191,6 +191,9 @@ class Settings(BaseSettings):
     # Signs QR image URLs; falls back to `storage_local_url_secret`, then
     # `jwt_secret_key`, when unset.
     email_asset_url_secret: str | None = Field(default=None, alias="EMAIL_ASSET_URL_SECRET")
+    # Staff portal URL linked from staff-facing emails (e.g. the "awaiting
+    # triage" notification). Unset means those emails omit the link.
+    staff_portal_url: str | None = Field(default=None, alias="STAFF_PORTAL_URL")
 
     # SMS gateway — no vendor chosen yet (design.md Open Questions); these are
     # placeholders the `SmsSender` adapter reads once one is picked. Left
