@@ -8,13 +8,14 @@ import type {
   VehicleFormEntry,
   VisitInfoFormState,
 } from '../../types'
-import type { EffectiveFormFieldGroup, FormField } from '../../../../../domain/entities/form-builder-schema'
+import type { EffectiveFormFieldGroup, EffectiveFormStep, FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
 import { Spinner } from '../../../../components/ui/LoadingState'
 import { FileTextIcon } from '../../../../components/icons'
 import { getFilePreviewKind } from '../../../../utils/file-preview-kind'
 import { prettifyKey } from '../../../../utils/prettify-key'
 import { formatDynamicFieldValue } from '../../../../components/dynamic-fields/format-dynamic-field-value'
+import { isCanonicalStepKey } from '../../registration-wizard-steps'
 import { isGroupVisible, resolveGroupFlatValues } from '../../../../components/dynamic-fields/field-group-visibility'
 import type { DynamicFieldFileValue, DynamicFieldValue } from '../../../../components/dynamic-fields/DynamicField'
 
@@ -80,6 +81,14 @@ interface ReviewConfirmStepProps {
    * "Items Carried" group). */
   carriedItemsGroups?: EffectiveFormFieldGroup[]
   carriedItemsAllFields?: FormField[]
+  /** Active Visitor Info custom fields (ungrouped), answered per visitor —
+   * shown under each visitor in the Visitor Info summary. */
+  visitorInfoCustomFields?: FormField[]
+  /** Active Visit Info custom fields, read from `formState.customFieldValues`. */
+  visitDetailsCustomFields?: FormField[]
+  /** Every active step — used to summarize Visit Info's own field groups and
+   * every admin-created (non-canonical) step's fields and groups. */
+  steps?: EffectiveFormStep[]
   onBack: () => void
   onSubmit: () => void
   onGoHome?: () => void
@@ -205,6 +214,9 @@ export function ReviewConfirmStep({
   vehicleInfoAllFields = [],
   carriedItemsGroups = [],
   carriedItemsAllFields = [],
+  visitorInfoCustomFields = [],
+  visitDetailsCustomFields = [],
+  steps = [],
   onBack,
   onSubmit,
   onGoHome,
@@ -232,6 +244,8 @@ export function ReviewConfirmStep({
   }
 
   const visitors = [formState.primaryContact, ...formState.additionalVisitors]
+  const visitDetailsStep = steps.find((step) => step.key === 'visit_details')
+  const customSteps = steps.filter((step) => !isCanonicalStepKey(step.key))
 
   const visitorCategoryName = (id: string) => visitorCategories?.find((category) => category.id === id)?.name ?? id
   const preferredContactMethodLabel = (method?: 'email' | 'sms') => (method === 'sms' ? 'SMS' : method === 'email' ? 'Email' : '')
@@ -277,6 +291,17 @@ export function ReviewConfirmStep({
             'Profile Image',
             <FilePreviewCell key="profileImage" fileName={visitor.profileImageFileName} previewUrl={getFilePreviewUrl?.(visitor.profileImageFileRef)} />,
           ])
+          for (const field of visitorInfoCustomFields) {
+            rows.push([
+              visitors.length > 1 ? `Visitor ${index + 1} — ${field.label}` : field.label,
+              <DynamicFieldValueCell
+                key={`${field.key}-${index}`}
+                field={field}
+                value={visitor.customFieldValues?.[field.key]}
+                getFilePreviewUrl={getFilePreviewUrl}
+              />,
+            ])
+          }
           return rows
         })}
       />
@@ -297,8 +322,29 @@ export function ReviewConfirmStep({
           ['Time', formState.visitInfo.preferredTime],
           ['Location', formState.visitInfo.location],
           ['Building', formState.visitInfo.building],
+          ...visitDetailsCustomFields.map(
+            (field): [string, ReactNode] => [
+              field.label,
+              <DynamicFieldValueCell
+                key={field.key}
+                field={field}
+                value={formState.customFieldValues[field.key] as DynamicFieldValue}
+                getFilePreviewUrl={getFilePreviewUrl}
+              />,
+            ],
+          ),
         ]}
       />
+
+      {visitDetailsStep && (
+        <GroupSummarySections
+          groups={visitDetailsStep.groups}
+          fields={visitDetailsStep.fields}
+          groupValues={formState.groupValues}
+          flatValues={resolveGroupFlatValues(visitDetailsStep.groups, formState.groupValues, formState.customFieldValues)}
+          getFilePreviewUrl={getFilePreviewUrl}
+        />
+      )}
 
       {carriedItemsCustomFields.length > 0 && (
         <SummarySection
@@ -350,6 +396,38 @@ export function ReviewConfirmStep({
         flatValues={vehicleGroupFlatValues}
         getFilePreviewUrl={getFilePreviewUrl}
       />
+
+      {customSteps.map((step) => {
+        const groupedFieldKeys = new Set(step.groups.flatMap((group) => group.fieldKeys))
+        const ungroupedFields = step.fields.filter((field) => !groupedFieldKeys.has(field.key))
+        return (
+          <div key={step.key} className="flex flex-col gap-6">
+            {ungroupedFields.length > 0 && (
+              <SummarySection
+                title={step.name || prettifyKey(step.key)}
+                rows={ungroupedFields.map(
+                  (field): [string, ReactNode] => [
+                    field.label,
+                    <DynamicFieldValueCell
+                      key={field.key}
+                      field={field}
+                      value={formState.customFieldValues[field.key] as DynamicFieldValue}
+                      getFilePreviewUrl={getFilePreviewUrl}
+                    />,
+                  ],
+                )}
+              />
+            )}
+            <GroupSummarySections
+              groups={step.groups}
+              fields={step.fields}
+              groupValues={formState.groupValues}
+              flatValues={resolveGroupFlatValues(step.groups, formState.groupValues, formState.customFieldValues)}
+              getFilePreviewUrl={getFilePreviewUrl}
+            />
+          </div>
+        )
+      })}
 
       {Object.keys(formState.consent).length > 0 && (
         <SummarySection
