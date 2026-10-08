@@ -213,6 +213,9 @@ export function StaffVisitorRegistrationPage() {
             vehicleInfoAllFields={vehicleInfoAllFields}
             carriedItemsGroups={carriedItemsGroups}
             carriedItemsAllFields={carriedItemsAllFields}
+            visitorInfoCustomFields={visitorInfoCustomFields}
+            visitDetailsCustomFields={visitDetailsCustomFields}
+            steps={activeSteps}
             onBack={goBack}
             onSubmit={submit}
             onGoHome={cancelRegistration}
