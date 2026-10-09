@@ -1,20 +1,24 @@
 import { useNavigate } from 'react-router'
-import { AdminSidebar } from '../../components/AdminSidebar'
-import { AdminTopBar } from '../../components/AdminTopBar'
 import { PlusIcon, SlidersIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { SelectField } from '../../components/ui/SelectField'
+import { Pagination } from '../../components/Pagination'
+import { PageContentLayout } from '../../components/PageContentLayout'
+import { usePageHeader } from '../../context/page-header-context'
 import { ReceptionDesksTable } from './Components/ReceptionDesksTable'
 import { useAdminReceptionDesks } from './hooks/use-admin-reception-desks'
 
 export function AdminReceptionDesksPage() {
   const navigate = useNavigate()
   const {
-    currentUser,
     receptionDesks,
-    hasAnyReceptionDesks,
+    total,
+    page,
+    pageSize,
+    goToNextPage,
+    goToPrevPage,
     isLoading,
     errorMessage,
     retry,
@@ -37,26 +41,21 @@ export function AdminReceptionDesksPage() {
     confirmDelete,
   } = useAdminReceptionDesks()
 
+  usePageHeader({ description: 'Manage on-site registration desks, kiosks, and building entrance welcoming nodes' })
+
   const goToAddReceptionDesk = () => navigate('/admin/reception-desks/new')
 
   return (
-    <div className="flex min-h-screen w-full items-stretch bg-bg">
-      <AdminSidebar activeItem="reception-desks" />
-
-      <div className="flex flex-1 flex-col">
-        <AdminTopBar
-          description="Manage on-site registration desks, kiosks, and building entrance welcoming nodes"
-          currentUser={currentUser}
-        />
-
-        <main className="flex flex-1 flex-col gap-6 p-8">
-          <div className="flex w-full items-center justify-between">
-            <h1 className="font-display text-2xl font-bold text-text">Reception Desks Register</h1>
-            <div className="flex items-center gap-3">
+    <PageContentLayout
+      header={
+        <>
+          <div className="flex w-full flex-wrap items-center justify-between gap-3">
+            <h1 className="font-display text-xl font-bold md:text-2xl text-text">Reception Desks Register</h1>
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={toggleFilterPanel}
-                className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
+                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
               >
                 <SlidersIcon className="size-3.5" />
                 Filters
@@ -64,7 +63,7 @@ export function AdminReceptionDesksPage() {
               <button
                 type="button"
                 onClick={goToAddReceptionDesk}
-                className="flex items-center gap-2 rounded-full bg-admin-accent px-[18px] py-2.5 font-body text-[13px] font-semibold text-white"
+                className="flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white"
               >
                 <PlusIcon className="size-3.5" />
                 Add Desk
@@ -73,14 +72,14 @@ export function AdminReceptionDesksPage() {
           </div>
 
           {isFilterPanelOpen && (
-            <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-4">
-              <div className="w-48">
+            <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-filter-panel">
+              <div className="w-full sm:w-48">
                 <SelectField label="Building" value={buildingFilter} onChange={setBuildingFilter} placeholder="All" options={buildingOptions} />
               </div>
-              <div className="w-48">
+              <div className="w-full sm:w-48">
                 <SelectField label="Floor" value={floorFilter} onChange={setFloorFilter} placeholder="All" options={floorOptions} />
               </div>
-              <div className="w-48">
+              <div className="w-full sm:w-48">
                 <SelectField
                   label="Status"
                   value={statusFilter}
@@ -100,29 +99,32 @@ export function AdminReceptionDesksPage() {
               )}
             </div>
           )}
-
-          {errorMessage ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
-              <p className="font-body text-sm text-danger">{errorMessage}</p>
-              <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-                Try again
-              </button>
-            </div>
-          ) : isLoading ? (
-            <LoadingState label="Loading reception desks…" className="flex-1" />
-          ) : receptionDesks.length === 0 ? (
-            <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
-              {hasAnyReceptionDesks ? (
-                <EmptyState message="No reception desks match these filters." />
-              ) : (
-                <EmptyState message="No reception desks yet." action={{ label: 'Add Desk', onClick: goToAddReceptionDesk }} />
-              )}
-            </div>
+        </>
+      }
+    >
+      {errorMessage ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
+          <p className="font-body text-sm text-danger">{errorMessage}</p>
+          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
+            Try again
+          </button>
+        </div>
+      ) : isLoading ? (
+        <LoadingState label="Loading reception desks…" className="flex-1" />
+      ) : receptionDesks.length === 0 ? (
+        <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
+          {isFiltering ? (
+            <EmptyState message="No reception desks match these filters." />
           ) : (
-            <ReceptionDesksTable receptionDesks={receptionDesks} onDelete={requestDelete} />
+            <EmptyState message="No reception desks yet." action={{ label: 'Add Desk', onClick: goToAddReceptionDesk }} />
           )}
-        </main>
-      </div>
+        </div>
+      ) : (
+        <div className="flex h-full flex-col gap-3">
+          <ReceptionDesksTable receptionDesks={receptionDesks} onDelete={requestDelete} />
+          <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
+        </div>
+      )}
 
       <ConfirmDialog
         isOpen={pendingDelete !== undefined}
@@ -132,6 +134,6 @@ export function AdminReceptionDesksPage() {
         onConfirm={() => void confirmDelete()}
         onCancel={cancelDelete}
       />
-    </div>
+    </PageContentLayout>
   )
 }

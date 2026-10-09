@@ -1,13 +1,21 @@
 import { useState } from 'react'
-import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
+import type { InvitationDetail, InvitationVehicle } from '../../../domain/entities/invitation-detail-schema'
+import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
+import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
+import type { FieldAnswer, GroupAnswer } from '../../../domain/entities/form-field-answer-schema'
 import { Modal } from '../ui/Modal'
-import { CalendarClockIcon, ShieldIcon, TagIcon } from '../icons'
+import { CalendarClockIcon, ShieldIcon } from '../icons'
 import { formatDateTime } from '../../utils/format-time'
+import { resolvePointOfContactLabel } from '../../utils/approval-step-label'
+import { prettifyKey } from '../../utils/prettify-key'
+import { useEffectiveForm, findFieldById, findGroupById } from '../../hooks/use-effective-form'
 
 interface VisitorInfoModalProps {
   isOpen: boolean
   isLoading?: boolean
   detail?: InvitationDetail
+  workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
+  // Read-only here — editing Point of Contact happens in EditInvitationModal.
   onClose: () => void
 }
 
@@ -102,11 +110,140 @@ function Field({ label, value }: { label: string; value: string }) {
   )
 }
 
+function isFileUrl(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && (value.startsWith('/') || value.startsWith('http'))
+}
+
+/** Renders a `file_upload` custom-field answer as "View" link(s). The
+ * backend resolves these to signed URLs before returning
+ * `GET /invitations/:id` (same as the hardcoded photo/ID-proof fields) —
+ * but a submission from before that fix may still carry the raw opaque
+ * storage key (e.g. `vmss:<tenant>:...`), so fall back to a plain
+ * indicator when a value doesn't look like a URL. */
+function FileValueField({ label, value }: { label: string; value: unknown }) {
+  const values = Array.isArray(value) ? value : [value]
+  const urls = values.filter(isFileUrl)
+
+  if (urls.length === 0) {
+    const hasValue = values.some((item) => item !== undefined && item !== null && item !== '')
+    return <Field label={label} value={hasValue ? 'File uploaded' : '—'} />
+  }
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-overline text-text-faint">{label}</span>
+      <span className="flex flex-wrap items-center gap-2 font-body text-[13px] font-medium text-text">
+        {urls.map((url, index) => (
+          <a
+            key={url}
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="font-body text-[12px] font-semibold text-secondary-accent hover:underline"
+          >
+            {urls.length > 1 ? `View ${index + 1}` : 'View'}
+          </a>
+        ))}
+      </span>
+    </div>
+  )
+}
+
 function SectionLabel({ children }: { children: string }) {
   return <h3 className="text-overline text-text-faint">{children}</h3>
 }
 
-export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: VisitorInfoModalProps) {
+/** Read-only formatting for one admin-configured field's raw wire value —
+ * `customFields`/`groups` entries come back as plain JSON (`unknown`), not
+ * the narrower `DynamicFieldValue` the editable wizards work with, so this
+ * can't reuse `formatDynamicFieldValue` as-is. `field` is `undefined` when
+ * the fieldId no longer matches any published form-builder field (e.g.
+ * removed after this invitation was submitted); the value still renders,
+ * just without options-aware prettifying. `file_upload` fields are rendered
+ * separately via `FileValueField`, not through this formatter. */
+function formatRawFieldValue(value: unknown, field?: FormField): string {
+  if (value === undefined || value === null || value === '') return '—'
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '—'
+    return value.map((item) => (typeof item === 'string' ? prettifyKey(item) : String(item))).join(', ')
+  }
+  if (typeof value === 'object') {
+    const fileName = (value as { fileName?: unknown }).fileName
+    return typeof fileName === 'string' ? fileName : JSON.stringify(value)
+  }
+  const stringValue = String(value)
+  return field?.options && field.options.length > 0 ? prettifyKey(stringValue) : stringValue
+}
+
+/** Renders a fieldId-addressed custom-field answer list (`customFields` /
+ * `primaryContactCustomFields`) as `Field` rows, labeling each answer via
+ * the branch's published form-builder config when a match exists and
+ * falling back to a prettified fieldId otherwise. Dynamic by construction:
+ * it has no fixed list of fields, so it stays correct as admins add/remove
+ * custom fields. */
+function CustomFieldValueFields({ values, steps }: { values: FieldAnswer[]; steps: EffectiveFormStep[] }) {
+  const entries = values.filter(({ value }) => value !== undefined && value !== null && value !== '')
+  if (entries.length === 0) return null
+
+  return (
+    <>
+      {entries.map(({ fieldId, value }) => {
+        const field = findFieldById(steps, fieldId)
+        const label = field?.label ?? prettifyKey(fieldId)
+        if (field?.fieldType === 'file_upload') return <FileValueField key={fieldId} label={label} value={value} />
+        return <Field key={fieldId} label={label} value={formatRawFieldValue(value, field)} />
+      })}
+    </>
+  )
+}
+
+/** Renders `groups` — one section per non-empty group, each instance as its
+ * own card of labeled fields, in the order the backend returned them. */
+function GroupFieldValuesSections({ groups, steps }: { groups: GroupAnswer[]; steps: EffectiveFormStep[] }) {
+  const groupEntries = groups.filter(({ instances }) => instances.length > 0)
+
+  return (
+    <>
+      {groupEntries.map(({ groupId, instances }) => {
+        const group = findGroupById(steps, groupId)
+
+        return (
+          <div key={groupId} className="flex flex-col gap-3">
+            <SectionLabel>{`${group?.name ?? prettifyKey(groupId)} (${instances.length})`}</SectionLabel>
+            <div className="flex flex-col gap-2">
+              {instances.map((instance, index) => (
+                <div key={index} className="grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-2 rounded-xl border border-border-subtle p-3">
+                  {instance.map(({ fieldId, value }) => {
+                    const field = findFieldById(steps, fieldId)
+                    const label = field?.label ?? prettifyKey(fieldId)
+                    if (field?.fieldType === 'file_upload') return <FileValueField key={fieldId} label={label} value={value} />
+                    return <Field key={fieldId} label={label} value={formatRawFieldValue(value, field)} />
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
+export function VisitorInfoModal({
+  isOpen,
+  isLoading,
+  detail,
+  workflowRulesByCategory,
+  onClose,
+}: VisitorInfoModalProps) {
+  const pointOfContact = detail?.pocName ?? (detail ? resolvePointOfContactLabel(detail, workflowRulesByCategory ?? {}) : undefined)
+  // Labels admin-configured custom/group field keys against the branch's
+  // published form; an empty/error result just falls back to prettified
+  // keys (see `formatRawFieldValue`/`CustomFieldValueFields`) rather than
+  // blocking the rest of the modal.
+  const { steps: formSteps } = useEffectiveForm(detail?.branchId ?? undefined)
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Visitor Info" maxWidthClassName="max-w-lg">
       {isLoading || !detail ? (
@@ -143,11 +280,13 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
 
           <div className="flex flex-col gap-3">
             <SectionLabel>Visit details</SectionLabel>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
+              <Field label="Email" value={detail.primaryContactEmail ?? '—'} />
+              <Field label="Phone" value={detail.primaryContactPhone ?? '—'} />
               <Field label="Purpose" value={detail.purposeOfVisit} />
               <Field label="Host" value={detail.hostNameOrEmail ?? '—'} />
+              <Field label="Point of Contact" value={pointOfContact ?? '—'} />
               <Field label="Department" value={detail.departmentToVisit ?? '—'} />
-              <Field label="Expected duration" value={detail.expectedDuration ?? '—'} />
               {detail.rescheduleCount > 0 ? (
                 <>
                   {detail.previousPreferredVisitDate && detail.previousPreferredVisitTime ? (
@@ -171,57 +310,52 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
                 <Field label="Scheduled" value={`${detail.preferredVisitDate} ${detail.preferredVisitTime}`} />
               ) : null}
               {detail.carriedItems.length > 0 ? <Field label="Carried items" value={detail.carriedItems.join(', ')} /> : null}
+              {detail.carriedItemsDescription ? (
+                <div className="col-span-full">
+                  <Field label="Carried items description" value={detail.carriedItemsDescription} />
+                </div>
+              ) : null}
               <IdProofField label="ID proof" type={detail.primaryContactIdProofType} url={detail.primaryContactIdProofUrl} />
+              <CustomFieldValueFields values={detail.primaryContactCustomFields} steps={formSteps} />
               {detail.additionalNotes ? (
-                <div className="col-span-2">
+                <div className="col-span-full">
                   <Field label="Notes" value={detail.additionalNotes} />
                 </div>
               ) : null}
             </div>
           </div>
 
-          {detail.visitors.length > 0 ? (
+          {detail.customFields.length > 0 ? (
             <div className="flex flex-col gap-3">
-              <SectionLabel>{`Group visitors (${detail.visitors.length})`}</SectionLabel>
+              <SectionLabel>Additional details</SectionLabel>
+              <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
+                <CustomFieldValueFields values={detail.customFields} steps={formSteps} />
+              </div>
+            </div>
+          ) : null}
+
+          {detail.vehicles.length > 0 ? (
+            <div className="flex flex-col gap-3">
+              <SectionLabel>{`Vehicles (${detail.vehicles.length})`}</SectionLabel>
               <div className="flex flex-col gap-2">
-                {detail.visitors.map((visitor) => (
-                  <div key={visitor.id} className="flex items-center gap-3 rounded-xl border border-border-subtle p-3">
-                    <Avatar
-                      fullName={visitor.fullName}
-                      photoUrl={visitor.photoUrl}
-                      sizeClassName="size-8 text-xs"
-                      toneClassName="bg-neutral-subtle text-text"
-                    />
-                    <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-3 gap-y-0.5">
-                      <p className="col-span-2 truncate font-body text-[13px] font-semibold text-text">{visitor.fullName}</p>
-                      <p className="truncate font-body text-[11px] text-text-muted">{visitor.email ?? '—'}</p>
-                      <p className="truncate font-body text-[11px] text-text-muted">{visitor.phone ?? '—'}</p>
-                    </div>
-                    {visitor.idProofType ? (
-                      <span className="flex shrink-0 items-center gap-1 rounded-full bg-neutral-subtle px-2 py-0.5 font-body text-[10px] font-semibold whitespace-nowrap text-text-muted">
-                        <TagIcon className="size-2.5" />
-                        {visitor.idProofType}
-                      </span>
-                    ) : null}
-                    {visitor.idProofUrl ? (
-                      <a
-                        href={visitor.idProofUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="shrink-0 font-body text-[11px] font-semibold whitespace-nowrap text-secondary-accent hover:underline"
-                      >
-                        View ID
-                      </a>
-                    ) : null}
+                {detail.vehicles.map((vehicle: InvitationVehicle, index) => (
+                  <div key={vehicle.id ?? index} className="grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-2 rounded-xl border border-border-subtle p-3">
+                    <Field label="Type" value={vehicle.vehicleType ?? '—'} />
+                    <Field label="License plate" value={vehicle.licensePlate ?? '—'} />
+                    <Field label="Make/Model" value={vehicle.makeModel ?? '—'} />
+                    <Field label="Color" value={vehicle.color ?? '—'} />
+                    <CustomFieldValueFields values={vehicle.customFields} steps={formSteps} />
                   </div>
                 ))}
               </div>
             </div>
           ) : null}
 
+          <GroupFieldValuesSections groups={detail.groups} steps={formSteps} />
+
           <div className="flex flex-col gap-3">
             <SectionLabel>Timeline</SectionLabel>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
               <Field label="Submitted" value={formatDateTime(detail.submittedAt)} />
               <Field label="Expires" value={formatDateTime(detail.expiresAt)} />
               {detail.approvedAt ? <Field label="Approved" value={formatDateTime(detail.approvedAt)} /> : null}
@@ -229,7 +363,7 @@ export function VisitorInfoModal({ isOpen, isLoading, detail, onClose }: Visitor
               {detail.checkedOutAt ? <Field label="Checked out" value={formatDateTime(detail.checkedOutAt)} /> : null}
               {detail.deniedAt ? <Field label="Denied" value={formatDateTime(detail.deniedAt)} /> : null}
               {detail.denialReason ? (
-                <div className="col-span-2">
+                <div className="col-span-full">
                   <Field label="Denial reason" value={detail.denialReason} />
                 </div>
               ) : null}

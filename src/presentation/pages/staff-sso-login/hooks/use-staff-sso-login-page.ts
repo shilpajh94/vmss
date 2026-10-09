@@ -7,7 +7,7 @@ import { usePushNotifications } from '../../../hooks/use-push-notifications'
 export type StaffSsoLoginStatus = 'idle' | 'redirecting' | 'completing' | 'error'
 
 export function useStaffSsoLoginPage() {
-  const { startSsoLoginUseCase, exchangeSsoCodeUseCase } = useAppDependencies()
+  const { startSsoLoginUseCase, exchangeSsoCodeUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
   const toast = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -25,14 +25,15 @@ export function useStaffSsoLoginPage() {
         const { token } = await exchangeSsoCodeUseCase.execute(code)
         sessionStorage.setItem('token', token)
         void registerCurrentDevice()
-        navigate('/staff/dashboard')
+        const user = await getCurrentStaffUserUseCase.execute()
+        navigate(user.isAdmin ? '/admin/dashboard' : '/staff/dashboard')
       } catch {
         setErrorMessage('Sign-in could not be completed. Please try again.')
         setStatus('error')
         toast.error('Sign-in could not be completed. Please try again.')
       }
     },
-    [exchangeSsoCodeUseCase, navigate, toast, registerCurrentDevice],
+    [exchangeSsoCodeUseCase, getCurrentStaffUserUseCase, navigate, toast, registerCurrentDevice],
   )
 
   useEffect(() => {

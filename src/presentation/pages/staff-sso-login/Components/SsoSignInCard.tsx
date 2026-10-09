@@ -11,7 +11,7 @@ export function SsoSignInCard({ status, errorMessage, onSignIn }: SsoSignInCardP
   const isBusy = status === 'redirecting' || status === 'completing'
 
   return (
-    <div className="flex w-[460px] flex-col gap-8 rounded-2xl border border-border bg-surface p-12 drop-shadow-[0_16px_16px_rgba(15,23,42,0.05)]">
+    <div className="flex w-full max-w-[460px] flex-col gap-6 md:gap-8 rounded-2xl border border-border bg-surface p-6 md:p-12 drop-shadow-[0_16px_16px_rgba(15,23,42,0.05)]">
       <div className="flex flex-col items-center gap-4">
         <span className="rounded-full bg-[#ecfeff] px-3 py-1 font-body text-[12px] font-bold tracking-[1px] text-secondary-accent uppercase">
           Staff Portal

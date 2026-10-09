@@ -24,7 +24,7 @@ export function Toast({ toast, onDismiss }: ToastProps) {
     <div
       role={role}
       aria-live={role === 'alert' ? 'assertive' : 'polite'}
-      className={`flex w-[360px] items-start gap-3 rounded-lg border border-border border-l-4 bg-surface p-4 shadow-[0_4px_8px_rgba(15,23,42,0.08)] ${border}`}
+      className={`flex w-[calc(100vw-2rem)] items-start sm:w-[360px] gap-3 rounded-lg border border-border border-l-4 bg-surface p-4 shadow-[0_4px_8px_rgba(15,23,42,0.08)] ${border}`}
     >
       <Icon className={`size-5 shrink-0 ${icon}`} />
       {toast.onClick ? (

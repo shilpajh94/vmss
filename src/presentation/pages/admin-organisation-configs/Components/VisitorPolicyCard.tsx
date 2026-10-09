@@ -8,7 +8,7 @@ interface VisitorPolicyCardProps {
 
 export function VisitorPolicyCard({ form, onAutoApproveChange }: VisitorPolicyCardProps) {
   return (
-    <section className="flex flex-1 flex-col gap-5 rounded-2xl border border-border bg-surface p-6">
+    <section className="flex flex-1 flex-col gap-5 rounded-2xl border border-border bg-surface p-4 md:p-6">
       <h2 className="font-display text-lg font-bold text-text">Visitor Policy &amp; Security</h2>
 
       <ToggleSwitch

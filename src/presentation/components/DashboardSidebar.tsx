@@ -1,8 +1,9 @@
 import { useNavigate } from 'react-router'
-import { CheckIcon, ClockIcon, HelpCircleIcon, UsersIcon } from './icons'
-import logoMark from '../../assets/logo-mark.svg'
+import { CheckIcon, HelpCircleIcon, UsersIcon, XIcon } from './icons'
+import { BrandLogo } from './BrandLogo'
+import { useNavDrawer } from '../context/nav-drawer-context'
 
-export type DashboardSidebarActiveItem = 'all-visitors' | 'my-actions' | 'audit-trail'
+export type DashboardSidebarActiveItem = 'all-visitors' | 'my-actions'
 
 interface DashboardSidebarProps {
   activeItem: DashboardSidebarActiveItem
@@ -11,30 +12,55 @@ interface DashboardSidebarProps {
 const NAV_ITEMS = [
   { key: 'all-visitors', label: 'All visitors', icon: UsersIcon },
   { key: 'my-actions', label: 'My actions', icon: CheckIcon },
-  { key: 'audit-trail', label: 'Audit trail', icon: ClockIcon },
 ] as const
+
+const STAFF_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: DashboardSidebarActiveItem]> = [
+  ['/staff/dashboard', 'all-visitors'],
+  ['/staff/visitors/new', 'my-actions'],
+]
+
+// Derives which sidebar entry highlights from the current URL, so the active
+// item can never drift out of sync with the route table the way a hardcoded
+// per-page prop could.
+export function resolveStaffActiveItem(pathname: string): DashboardSidebarActiveItem {
+  return STAFF_ROUTE_ACTIVE_ITEMS.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? 'all-visitors'
+}
 
 export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
   const navigate = useNavigate()
+  const { closeNav } = useNavDrawer()
 
   const handleActivate = (key: DashboardSidebarActiveItem) => {
+    closeNav()
     if (key === 'all-visitors') navigate('/staff/dashboard')
     if (key === 'my-actions') navigate('/staff/visitors/new')
-    if (key === 'audit-trail') navigate('/staff/audit-trail')
   }
 
   return (
-    <aside className="flex w-[260px] shrink-0 flex-col gap-8 self-stretch bg-primary p-6">
-      <button
-        type="button"
-        onClick={() => navigate('/staff/dashboard')}
-        className="flex items-center gap-3 text-left"
-      >
-        <img src={logoMark} alt="" className="size-8 shrink-0" />
-        <span className="font-display text-xl font-extrabold whitespace-nowrap text-white">VisitorPass</span>
-      </button>
+    <aside className="flex h-full w-[min(260px,85vw)] shrink-0 lg:h-auto lg:w-[260px] flex-col gap-8 self-stretch bg-primary p-6">
+      <div className="flex shrink-0 items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            closeNav()
+            navigate('/staff/dashboard')
+          }}
+          aria-label="Visimio home"
+          className="flex shrink-0 items-center gap-3 text-left"
+        >
+          <BrandLogo variant="on-dark" decorative />
+        </button>
+        <button
+          type="button"
+          onClick={closeNav}
+          aria-label="Close navigation menu"
+          className="flex size-10 shrink-0 items-center justify-center rounded-lg text-text-faint hover:bg-white/5 lg:hidden"
+        >
+          <XIcon className="size-5" />
+        </button>
+      </div>
 
-      <nav className="flex flex-col gap-2">
+      <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
         {NAV_ITEMS.map(({ key, label, icon: ItemIcon }) => (
           <button
             key={key}
@@ -50,7 +76,7 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
         ))}
       </nav>
 
-      <div className="flex flex-1 flex-col justify-end gap-4">
+      <div className="flex shrink-0 flex-col gap-4">
         <div className="h-px w-full bg-[#1e293b]" />
         <button type="button" className="flex w-full items-center gap-2 rounded-lg bg-[#1e293b] px-3 py-2 text-left">
           <HelpCircleIcon className="size-4 text-secondary-accent" />

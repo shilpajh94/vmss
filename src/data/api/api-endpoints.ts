@@ -19,6 +19,14 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: false,
   },
+  // Authenticated with the OTP flow's own short-lived proof token, passed as
+  // an explicit `Authorization` header by the caller — never the staff
+  // session token `hasToken: true` would read from sessionStorage.
+  GET_VISITOR_PORTAL_ME: {
+    endpoint: "/visitor-portal/me",
+    method: "GET",
+    hasToken: false,
+  },
   STAFF_LOGIN: {
     endpoint: "/auth/login",
     method: "POST",
@@ -47,6 +55,15 @@ export const API_ENDPOINTS = {
   STAFF_CREATE_VISIT_REQUEST: {
     endpoint: "/invitations",
     method: "POST",
+    hasToken: true,
+  },
+  // Staff-authenticated lookup used to prefill the Register Visitor wizard's
+  // Primary Contact fields once the staff member types a known email — no
+  // OTP is needed since it runs under the staff session, unlike the visitor
+  // self-service GET_VISITOR_PORTAL_ME flow above.
+  LOOKUP_STAFF_VISITOR_BY_EMAIL: {
+    endpoint: "/invitations/lookup-by-email",
+    method: "GET",
     hasToken: true,
   },
   APPROVE_INVITATION: {
@@ -307,6 +324,37 @@ export const API_ENDPOINTS = {
     method: "DELETE",
     hasToken: true,
   },
+  // Kiosks are company-wide: no X-Branch-ID header.
+  LIST_KIOSKS: {
+    endpoint: "/kiosks",
+    method: "GET",
+    hasToken: true,
+  },
+  GET_KIOSK: {
+    endpoint: "/kiosks/:id",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_KIOSK: {
+    endpoint: "/kiosks",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_KIOSK: {
+    endpoint: "/kiosks/:id",
+    method: "PUT",
+    hasToken: true,
+  },
+  SET_KIOSK_VISIBILITY: {
+    endpoint: "/kiosks/:id/visibility",
+    method: "PATCH",
+    hasToken: true,
+  },
+  DELETE_KIOSK: {
+    endpoint: "/kiosks/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
   // Public for the pre-authentication visitor portal, same as LIST_EMPLOYEE_DIRECTORY —
   // the backend already serves this endpoint without auth.
   LIST_VISITOR_CATEGORIES: {
@@ -316,6 +364,11 @@ export const API_ENDPOINTS = {
   },
   CREATE_VISITOR_CATEGORY: {
     endpoint: "/visitor-categories",
+    method: "POST",
+    hasToken: true,
+  },
+  BULK_CREATE_VISITOR_CATEGORIES: {
+    endpoint: "/visitor-categories/bulk",
     method: "POST",
     hasToken: true,
   },
@@ -358,6 +411,91 @@ export const API_ENDPOINTS = {
     endpoint: "/notifications/devices/:fcmToken",
     method: "DELETE",
     hasToken: true,
+  },
+  LIST_FORM_STEPS: {
+    endpoint: "/form-builder/steps",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_FORM_STEP: {
+    endpoint: "/form-builder/steps",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_FORM_STEP: {
+    endpoint: "/form-builder/steps/:id",
+    method: "PATCH",
+    hasToken: true,
+  },
+  DELETE_FORM_STEP: {
+    endpoint: "/form-builder/steps/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  REORDER_FORM_STEPS: {
+    endpoint: "/form-builder/steps/reorder",
+    method: "POST",
+    hasToken: true,
+  },
+  LIST_FORM_FIELDS: {
+    endpoint: "/form-builder/steps/:stepId/fields",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_FORM_FIELD: {
+    endpoint: "/form-builder/steps/:stepId/fields",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_FORM_FIELD: {
+    endpoint: "/form-builder/fields/:id",
+    method: "PATCH",
+    hasToken: true,
+  },
+  DELETE_FORM_FIELD: {
+    endpoint: "/form-builder/fields/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  REORDER_FORM_FIELDS: {
+    endpoint: "/form-builder/steps/:stepId/fields/reorder",
+    method: "POST",
+    hasToken: true,
+  },
+  LIST_FORM_FIELD_GROUPS: {
+    endpoint: "/form-builder/steps/:stepId/groups",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_FORM_FIELD_GROUP: {
+    endpoint: "/form-builder/steps/:stepId/groups",
+    method: "POST",
+    hasToken: true,
+  },
+  UPDATE_FORM_FIELD_GROUP: {
+    endpoint: "/form-builder/groups/:id",
+    method: "PATCH",
+    hasToken: true,
+  },
+  DELETE_FORM_FIELD_GROUP: {
+    endpoint: "/form-builder/groups/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  REORDER_FORM_FIELD_GROUPS: {
+    endpoint: "/form-builder/steps/:stepId/groups/reorder",
+    method: "POST",
+    hasToken: true,
+  },
+  PUBLISH_FORM_CONFIG: {
+    endpoint: "/form-builder/publish",
+    method: "POST",
+    hasToken: true,
+  },
+  GET_EFFECTIVE_FORM: {
+    endpoint: "/form-builder/effective",
+    method: "GET",
+    hasToken: false,
   },
 } as const
 

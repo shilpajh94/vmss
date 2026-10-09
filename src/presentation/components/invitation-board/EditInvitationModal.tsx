@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
+import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
+import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
 import type { EditInvitationFields } from '../../../data/repositories/visit-request-summary-repository'
 import { Modal } from '../ui/Modal'
 import { SelectField } from '../ui/SelectField'
@@ -7,11 +9,17 @@ import { TextField } from '../ui/TextField'
 import { TextareaField } from '../ui/TextareaField'
 import { EXPECTED_DURATION_OPTIONS } from '../../utils/expected-duration-options'
 import { PURPOSE_OF_VISIT_OPTIONS } from '../../utils/purpose-of-visit-options'
+import { canEditPointOfContact, resolvePointOfContactLabel } from '../../utils/approval-step-label'
 
 interface EditInvitationModalProps {
   isOpen: boolean
   isSaving?: boolean
   detail?: InvitationDetail
+  workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
+  // Candidates for the Point of Contact dropdown — the selection itself is
+  // just another field on `fields`/`EditInvitationFields`, saved together
+  // with the rest of the form via the normal "Save changes" flow.
+  hostEmployees?: HostEmployee[]
   onConfirm: (fields: EditInvitationFields) => void
   onCancel: () => void
 }
@@ -33,18 +41,31 @@ function toFormState(detail?: InvitationDetail): EditInvitationFields {
     expectedDuration: detail?.expectedDuration ?? '',
     departmentToVisit: detail?.departmentToVisit ?? '',
     additionalNotes: detail?.additionalNotes ?? '',
+    pocUserId: detail?.pocUserId ?? '',
   }
 }
 
 // Editable fields mirror exactly what `PATCH /invitations/{id}/edit` accepts
-// — purpose, date/time, duration, department, notes. Deliberately no
-// location/building fields (the API's edit endpoint doesn't accept them —
-// there's no backing column to edit) despite earlier planning language
-// mentioning them; and no visitor-personal/category/host fields, which are
-// rendered read-only below instead (host reassignment stays the Delegate
-// action's job).
-export function EditInvitationModal({ isOpen, isSaving, detail, onConfirm, onCancel }: EditInvitationModalProps) {
+// — purpose, date/time, duration, department, notes, and Point of Contact
+// (`pocUserId`, gated by `canEditPointOfContact` — see that helper's doc).
+// Deliberately no location/building fields (the API's edit endpoint doesn't
+// accept them — there's no backing column to edit) despite earlier planning
+// language mentioning them; and no visitor-personal/category/host fields,
+// which are rendered read-only below instead (host reassignment stays the
+// Delegate action's job).
+export function EditInvitationModal({
+  isOpen,
+  isSaving,
+  detail,
+  workflowRulesByCategory,
+  hostEmployees,
+  onConfirm,
+  onCancel,
+}: EditInvitationModalProps) {
   const [fields, setFields] = useState<EditInvitationFields>(() => toFormState(detail))
+
+  const pointOfContactLabel = detail?.pocName ?? (detail ? resolvePointOfContactLabel(detail, workflowRulesByCategory ?? {}) : undefined)
+  const canEditPoc = detail ? canEditPointOfContact(detail, workflowRulesByCategory ?? {}) : false
 
   // Re-seed local form state whenever a different invitation's modal opens
   // (or its detail arrives after opening) — `RescheduleInvitationModal`/
@@ -73,7 +94,7 @@ export function EditInvitationModal({ isOpen, isSaving, detail, onConfirm, onCan
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-3">
             <h3 className="text-overline text-text-faint">Visitor (read-only)</h3>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border-subtle p-4">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
               <ReadOnlyField label="Name" value={detail.primaryContactFullName} />
               <ReadOnlyField label="Host" value={detail.hostNameOrEmail ?? 'Unassigned — Front Office'} />
             </div>
@@ -81,7 +102,7 @@ export function EditInvitationModal({ isOpen, isSaving, detail, onConfirm, onCan
 
           <div className="flex flex-col gap-3">
             <h3 className="text-overline text-text-faint">Visit details</h3>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <SelectField
                 label="Purpose of Visit"
                 placeholder="Select purpose"
@@ -89,6 +110,17 @@ export function EditInvitationModal({ isOpen, isSaving, detail, onConfirm, onCan
                 value={fields.purposeOfVisit ?? ''}
                 onChange={(purposeOfVisit) => setFields({ ...fields, purposeOfVisit })}
               />
+              {canEditPoc ? (
+                <SelectField
+                  label="Point of Contact"
+                  placeholder="Select point of contact"
+                  options={(hostEmployees ?? []).map((employee) => ({ value: employee.id, label: employee.fullName }))}
+                  value={fields.pocUserId ?? ''}
+                  onChange={(pocUserId) => setFields({ ...fields, pocUserId })}
+                />
+              ) : (
+                <ReadOnlyField label="Point of Contact" value={pointOfContactLabel ?? '—'} />
+              )}
               <SelectField
                 label="Expected Duration"
                 placeholder="Select duration"

@@ -1,20 +1,25 @@
 import { useNavigate } from 'react-router'
-import { AdminSidebar } from '../../components/AdminSidebar'
-import { AdminTopBar } from '../../components/AdminTopBar'
-import { PlusIcon, SlidersIcon } from '../../components/icons'
+import { PlusIcon, SlidersIcon, UploadIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { SelectField } from '../../components/ui/SelectField'
+import { Pagination } from '../../components/Pagination'
+import { PageContentLayout } from '../../components/PageContentLayout'
+import { usePageHeader } from '../../context/page-header-context'
+import { BulkAddCategoriesModal } from './Components/BulkAddCategoriesModal'
 import { VisitorCategoriesTable } from './Components/VisitorCategoriesTable'
 import { useAdminVisitorCategories } from './hooks/use-admin-visitor-categories'
 
 export function AdminVisitorCategoriesPage() {
   const navigate = useNavigate()
   const {
-    currentUser,
     visitorCategories,
-    hasAnyVisitorCategories,
+    total,
+    page,
+    pageSize,
+    goToNextPage,
+    goToPrevPage,
     isLoading,
     errorMessage,
     retry,
@@ -33,36 +38,45 @@ export function AdminVisitorCategoriesPage() {
     requestDelete,
     cancelDelete,
     confirmDelete,
+    isBulkAddOpen,
+    openBulkAdd,
+    closeBulkAdd,
+    isBulkCreating,
+    bulkCreateResult,
+    submitBulkAdd,
   } = useAdminVisitorCategories()
+
+  usePageHeader({ description: 'Define visitor classifications, compliance procedures, security rules and physical pass designs' })
 
   const goToAddCategory = () => navigate('/admin/visitor-categories/new')
 
   return (
-    <div className="flex min-h-screen w-full items-stretch bg-bg">
-      <AdminSidebar activeItem="visitor-categories" />
-
-      <div className="flex flex-1 flex-col">
-        <AdminTopBar
-          description="Define visitor classifications, compliance procedures, security rules and physical pass designs"
-          currentUser={currentUser}
-        />
-
-        <main className="flex flex-1 flex-col gap-6 p-8">
-          <div className="flex w-full items-center justify-between">
-            <h1 className="font-display text-2xl font-bold text-text">Visitor Categories Registry</h1>
-            <div className="flex items-center gap-3">
+    <PageContentLayout
+      header={
+        <>
+          <div className="flex w-full flex-wrap items-center justify-between gap-3">
+            <h1 className="font-display text-xl font-bold md:text-2xl text-text">Visitor Categories Registry</h1>
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={toggleFilterPanel}
-                className="flex items-center gap-2 rounded-full border border-border bg-surface px-3.5 py-2.5 font-body text-[13px] font-semibold text-text"
+                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
               >
                 <SlidersIcon className="size-3.5" />
                 Filters
               </button>
               <button
                 type="button"
+                onClick={openBulkAdd}
+                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
+              >
+                <UploadIcon className="size-3.5" />
+                Bulk Add
+              </button>
+              <button
+                type="button"
                 onClick={goToAddCategory}
-                className="flex items-center gap-2 rounded-full bg-admin-accent px-[18px] py-2.5 font-body text-[13px] font-semibold text-white"
+                className="flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white"
               >
                 <PlusIcon className="size-3.5" />
                 Add Category
@@ -71,8 +85,8 @@ export function AdminVisitorCategoriesPage() {
           </div>
 
           {isFilterPanelOpen && (
-            <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-4">
-              <div className="w-48">
+            <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-filter-panel">
+              <div className="w-full sm:w-48">
                 <SelectField
                   label="Badge Color"
                   value={badgeColorFilter}
@@ -86,7 +100,7 @@ export function AdminVisitorCategoriesPage() {
                   ]}
                 />
               </div>
-              <div className="w-48">
+              <div className="w-full sm:w-48">
                 <SelectField
                   label="NDA Requirement"
                   value={ndaRequirementFilter}
@@ -100,7 +114,7 @@ export function AdminVisitorCategoriesPage() {
                   ]}
                 />
               </div>
-              <div className="w-48">
+              <div className="w-full sm:w-48">
                 <SelectField
                   label="Escort Requirement"
                   value={escortRequirementFilter}
@@ -121,29 +135,32 @@ export function AdminVisitorCategoriesPage() {
               )}
             </div>
           )}
-
-          {errorMessage ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
-              <p className="font-body text-sm text-danger">{errorMessage}</p>
-              <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-                Try again
-              </button>
-            </div>
-          ) : isLoading ? (
-            <LoadingState label="Loading visitor categories…" className="flex-1" />
-          ) : visitorCategories.length === 0 ? (
-            <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
-              {hasAnyVisitorCategories ? (
-                <EmptyState message="No visitor categories match these filters." />
-              ) : (
-                <EmptyState message="No visitor categories yet." action={{ label: 'Add Category', onClick: goToAddCategory }} />
-              )}
-            </div>
+        </>
+      }
+    >
+      {errorMessage ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
+          <p className="font-body text-sm text-danger">{errorMessage}</p>
+          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
+            Try again
+          </button>
+        </div>
+      ) : isLoading ? (
+        <LoadingState label="Loading visitor categories…" className="flex-1" />
+      ) : visitorCategories.length === 0 ? (
+        <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
+          {isFiltering ? (
+            <EmptyState message="No visitor categories match these filters." />
           ) : (
-            <VisitorCategoriesTable visitorCategories={visitorCategories} onDelete={requestDelete} />
+            <EmptyState message="No visitor categories yet." action={{ label: 'Add Category', onClick: goToAddCategory }} />
           )}
-        </main>
-      </div>
+        </div>
+      ) : (
+        <div className="flex h-full flex-col gap-3">
+          <VisitorCategoriesTable visitorCategories={visitorCategories} onDelete={requestDelete} />
+          <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
+        </div>
+      )}
 
       <ConfirmDialog
         isOpen={pendingDelete !== undefined}
@@ -153,6 +170,14 @@ export function AdminVisitorCategoriesPage() {
         onConfirm={() => void confirmDelete()}
         onCancel={cancelDelete}
       />
-    </div>
+
+      <BulkAddCategoriesModal
+        isOpen={isBulkAddOpen}
+        onClose={closeBulkAdd}
+        onSubmit={(names) => void submitBulkAdd(names)}
+        isSubmitting={isBulkCreating}
+        result={bulkCreateResult}
+      />
+    </PageContentLayout>
   )
 }

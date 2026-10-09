@@ -281,3 +281,86 @@ export const FileTextIcon = createIcon(
     <path d="M16 17H8" />
   </>,
 )
+
+export const MailIcon = createIcon(
+  <>
+    <rect width="20" height="16" x="2" y="4" rx="2" />
+    <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+  </>,
+)
+
+export const PhoneIcon = createIcon(
+  <path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384" />,
+)
+
+export const HashIcon = createIcon(
+  <>
+    <line x1="4" x2="20" y1="9" y2="9" />
+    <line x1="4" x2="20" y1="15" y2="15" />
+    <line x1="10" x2="8" y1="3" y2="21" />
+    <line x1="16" x2="14" y1="3" y2="21" />
+  </>,
+)
+
+export const ToggleLeftIcon = createIcon(
+  <>
+    <rect width="20" height="12" x="2" y="6" rx="6" />
+    <circle cx="8" cy="12" r="2" />
+  </>,
+)
+
+export const GridIcon = createIcon(
+  <>
+    <rect width="18" height="18" x="3" y="3" rx="2" />
+    <path d="M3 9h18" />
+    <path d="M3 15h18" />
+    <path d="M9 3v18" />
+    <path d="M15 3v18" />
+  </>,
+)
+
+export const AlignLeftIcon = createIcon(
+  <>
+    <line x1="21" x2="3" y1="6" y2="6" />
+    <line x1="15" x2="3" y1="12" y2="12" />
+    <line x1="17" x2="3" y1="18" y2="18" />
+  </>,
+)
+
+export const PenToolIcon = createIcon(
+  <>
+    <path d="m12 19 7-7 3 3-7 7-3-3z" />
+    <path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+    <path d="m2 2 7.586 7.586" />
+    <circle cx="11" cy="11" r="2" />
+  </>,
+)
+
+export const LockIcon = createIcon(
+  <>
+    <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </>,
+)
+
+export const UnlockIcon = createIcon(
+  <>
+    <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+  </>,
+)
+
+export const CircleDotIcon = createIcon(
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="12" r="1" fill="currentColor" />
+  </>,
+)
+
+export const MenuIcon = createIcon(
+  <>
+    <path d="M4 6h16" />
+    <path d="M4 12h16" />
+    <path d="M4 18h16" />
+  </>,
+)

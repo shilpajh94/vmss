@@ -1,72 +1,66 @@
-import { AdminSidebar } from '../../components/AdminSidebar'
-import { AdminTopBar } from '../../components/AdminTopBar'
+import { BackButton } from '../../components/BackButton'
 import { Checkbox } from '../../components/ui/Checkbox'
 import { LoadingState } from '../../components/ui/LoadingState'
+import { usePageHeader } from '../../context/page-header-context'
 import { useAdminRolePermissionsForm } from './hooks/use-admin-role-permissions-form'
 
 export function AdminRolePermissionsFormPage() {
-  const { currentUser, role, permissions, selectedCodes, isLoading, errorMessage, retry, isSaving, togglePermission, submit, cancel } =
+  const { role, permissions, selectedCodes, isLoading, errorMessage, retry, isSaving, togglePermission, submit, cancel } =
     useAdminRolePermissionsForm()
 
+  usePageHeader({ breadcrumb: [{ label: 'Roles & Permissions' }, { label: role?.name ?? '...', isActive: true }] })
+
   return (
-    <div className="flex min-h-screen w-full items-stretch bg-bg">
-      <AdminSidebar activeItem="roles" />
-
-      <div className="flex flex-1 flex-col">
-        <AdminTopBar
-          breadcrumb={[{ label: 'Roles & Permissions' }, { label: role?.name ?? '...', isActive: true }]}
-          currentUser={currentUser}
-        />
-
-        <main className="flex flex-1 flex-col gap-6 p-8">
-          {errorMessage ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-12 text-center">
-              <p className="font-body text-sm text-danger">{errorMessage}</p>
-              <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-                Try again
-              </button>
+    <>
+      {errorMessage ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
+          <p className="font-body text-sm text-danger">{errorMessage}</p>
+          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
+            Try again
+          </button>
+        </div>
+      ) : isLoading ? (
+        <LoadingState label="Loading role…" className="flex-1" />
+      ) : (
+        <>
+          <div className="flex items-center gap-4">
+            <BackButton onClick={cancel} />
+            <div className="flex flex-col gap-1">
+              <h1 className="font-display text-xl font-bold md:text-2xl text-text">{role?.name}</h1>
+              <p className="font-body text-sm text-text-muted">{role?.description ?? 'Choose what this role is permitted to do.'}</p>
             </div>
-          ) : isLoading ? (
-            <LoadingState label="Loading role…" className="flex-1" />
-          ) : (
-            <>
-              <div className="flex flex-col gap-1">
-                <h1 className="font-display text-2xl font-bold text-text">{role?.name}</h1>
-                <p className="font-body text-sm text-text-muted">{role?.description ?? 'Choose what this role is permitted to do.'}</p>
-              </div>
+          </div>
 
-              <div className="flex w-full flex-1 flex-col gap-3 rounded-2xl border border-border bg-surface p-6">
-                {permissions.map((permission) => (
-                  <div key={permission.code} className="flex flex-col gap-0.5 border-b border-border-subtle pb-3 last:border-0 last:pb-0">
-                    <Checkbox checked={selectedCodes.has(permission.code)} onChange={(checked) => togglePermission(permission.code, checked)}>
-                      <span className="font-body text-sm font-semibold text-text">{permission.code}</span>
-                    </Checkbox>
-                    <p className="pl-6 font-body text-xs text-text-muted">{permission.description}</p>
-                  </div>
-                ))}
+          <div className="flex w-full flex-1 flex-col gap-3 rounded-2xl border border-border bg-surface p-4 md:p-6">
+            {permissions.map((permission) => (
+              <div key={permission.code} className="flex flex-col gap-0.5 border-b border-border-subtle pb-3 last:border-0 last:pb-0">
+                <Checkbox checked={selectedCodes.has(permission.code)} onChange={(checked) => togglePermission(permission.code, checked)}>
+                  <span className="font-body text-sm font-semibold text-text">{permission.code}</span>
+                </Checkbox>
+                <p className="pl-6 font-body text-xs text-text-muted">{permission.description}</p>
               </div>
+            ))}
+          </div>
 
-              <div className="flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={cancel}
-                  className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={isSaving}
-                  onClick={() => void submit()}
-                  className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
-                >
-                  {isSaving ? 'Saving…' : 'Save Permissions'}
-                </button>
-              </div>
-            </>
-          )}
-        </main>
-      </div>
-    </div>
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={cancel}
+              className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isSaving}
+              onClick={() => void submit()}
+              className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
+            >
+              {isSaving ? 'Saving…' : 'Save Permissions'}
+            </button>
+          </div>
+        </>
+      )}
+    </>
   )
 }

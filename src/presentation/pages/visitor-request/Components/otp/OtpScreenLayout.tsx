@@ -13,7 +13,7 @@ export function OtpScreenLayout({ onBack, children }: OtpScreenLayoutProps) {
         <img src={heroImage} alt="" className="size-full object-cover" />
         <div className="absolute inset-0 bg-primary/55" />
       </div>
-      <div className="relative flex items-center gap-4 px-12 pt-10 pb-8">
+      <div className="relative flex items-center gap-4 px-4 md:px-12 pt-6 pb-6 md:pt-10 md:pb-8">
         <button
           type="button"
           onClick={onBack}
@@ -32,7 +32,7 @@ export function OtpScreenLayout({ onBack, children }: OtpScreenLayoutProps) {
         </button>
         <h1 className="text-h1 text-white">Request a Visit</h1>
       </div>
-      <div className="relative flex flex-1 justify-center px-12 pb-16">{children}</div>
+      <div className="relative flex flex-1 justify-center px-4 md:px-12 pb-10 md:pb-16">{children}</div>
     </div>
   )
 }

@@ -4,7 +4,11 @@ import type { ApiClient } from '../data/api/api-client'
 import type { BuildingRepository } from '../data/repositories/building-repository'
 import type { FloorRepository } from '../data/repositories/floor-repository'
 import type { HostEmployeeRepository } from '../data/repositories/host-employee-repository'
-import type { ReceptionDeskRepository } from '../data/repositories/reception-desk-repository'
+import type {
+  ListReceptionDesksPageParams,
+  ReceptionDeskRepository,
+  ReceptionDesksPage,
+} from '../data/repositories/reception-desk-repository'
 import {
   ReceptionDeskListResponseSchema,
   ReceptionDeskResponseSchema,
@@ -82,6 +86,22 @@ export class HttpReceptionDeskRepository implements ReceptionDeskRepository {
     ])
 
     return response.data.map((receptionDeskOut) => this.toReceptionDesk(receptionDeskOut, lookups))
+  }
+
+  async listPage({ page, pageSize, floorId, status }: ListReceptionDesksPageParams): Promise<ReceptionDesksPage> {
+    const [response, lookups] = await Promise.all([
+      this.apiClient.makeRequest({
+        endpointConfig: API_ENDPOINTS.LIST_RECEPTION_DESKS,
+        queryParams: { page, pageSize, floorId, status },
+        parserSchema: ReceptionDeskListResponseSchema,
+      }),
+      this.buildNameLookups(),
+    ])
+
+    return {
+      items: response.data.map((receptionDeskOut) => this.toReceptionDesk(receptionDeskOut, lookups)),
+      total: response.pagination.total,
+    }
   }
 
   async create(input: ReceptionDeskInput): Promise<ReceptionDesk> {

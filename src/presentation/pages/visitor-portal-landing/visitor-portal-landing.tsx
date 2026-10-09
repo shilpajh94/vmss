@@ -16,7 +16,7 @@ export function VisitorPortalLandingPage() {
             <div className="absolute inset-0 bg-primary/55" />
           </div>
           <PortalHero />
-          <div className="relative flex w-full justify-center gap-8 px-12 pb-[100px]">
+          <div className="relative flex w-full flex-col items-center gap-4 px-4 pb-12 md:gap-8 md:px-12 lg:flex-row lg:items-stretch lg:justify-center lg:pb-[100px]">
             <ActionCard
               icon={CalendarIcon}
               title="Request a Visit"

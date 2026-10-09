@@ -1,3 +1,4 @@
+import { KeyIcon } from '../../../../assets/icons'
 import { TextField } from '../../../components/ui/TextField'
 
 interface LoginFormCardProps {
@@ -6,6 +7,7 @@ interface LoginFormCardProps {
   onEmailChange: (value: string) => void
   onPasswordChange: (value: string) => void
   onSubmit: () => void
+  onSsoSignIn: () => void
   loading: boolean
   errorMessage?: string
   emailError?: string
@@ -18,6 +20,7 @@ export function LoginFormCard({
   onEmailChange,
   onPasswordChange,
   onSubmit,
+  onSsoSignIn,
   loading,
   errorMessage,
   emailError,
@@ -29,7 +32,7 @@ export function LoginFormCard({
         event.preventDefault()
         onSubmit()
       }}
-      className="flex w-[460px] flex-col gap-8 rounded-2xl border border-border bg-surface p-12 drop-shadow-[0_16px_16px_rgba(15,23,42,0.05)]"
+      className="flex w-full max-w-[460px] flex-col gap-6 md:gap-8 rounded-2xl border border-border bg-surface p-6 md:p-12 drop-shadow-[0_16px_16px_rgba(15,23,42,0.05)]"
     >
       <div className="flex flex-col items-center gap-4">
         <span className="rounded-full bg-[#ecfeff] px-3 py-1 font-body text-[12px] font-bold tracking-[1px] text-secondary-accent uppercase">
@@ -69,6 +72,22 @@ export function LoginFormCard({
           {loading ? 'Signing in…' : 'Sign In'}
         </button>
         {errorMessage && <p className="font-body text-[13px] text-danger">{errorMessage}</p>}
+
+        <div className="flex items-center gap-3">
+          <span className="h-px flex-1 bg-border" />
+          <span className="font-body text-[12px] text-text-faint">or</span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
+
+        <button
+          type="button"
+          onClick={onSsoSignIn}
+          disabled={loading}
+          className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-border bg-surface px-6 py-3.5 font-body text-[15px] font-semibold text-text disabled:opacity-60"
+        >
+          <img src={KeyIcon} alt="" className="size-[18px]" />
+          Sign in with SSO
+        </button>
       </div>
 
       <div className="flex items-center justify-center gap-2 pt-2">

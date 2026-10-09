@@ -12,19 +12,44 @@ export class HttpStaffVisitRequestRepository implements StaffVisitRequestReposit
     this.apiClient = apiClient
   }
 
-  async submit(request: StaffVisitRequest, files: InvitationSubmissionFiles, branchId: string): Promise<VisitRequestResponse> {
+  async submit(request: StaffVisitRequest, files: InvitationSubmissionFiles): Promise<VisitRequestResponse> {
     const formData = new FormData()
     formData.append('payload', JSON.stringify(request))
-    formData.append('primary_contact_id_proof_file', files.primaryContactIdProofFile)
-    formData.append('primary_contact_photo_file', files.primaryContactPhotoFile)
+    // See visit-request-repository.ts's matching comment on why these four
+    // are snake_case while the bracket-prefixed buckets below are camelCase.
+    if (files.primaryContactIdProofFile) formData.append('primary_contact_id_proof_file', files.primaryContactIdProofFile)
+    if (files.primaryContactPhotoFile) formData.append('primary_contact_photo_file', files.primaryContactPhotoFile)
     for (const file of files.visitorIdProofFiles) {
       formData.append('visitor_id_proof_files', file)
+    }
+    for (const file of files.visitorPhotoFiles) {
+      formData.append('visitor_photo_files', file)
+    }
+    for (const [groupId, groupFiles] of Object.entries(files.groupFieldFiles)) {
+      for (const file of groupFiles) {
+        formData.append(`groupFieldFiles[${groupId}]`, file)
+      }
+    }
+    for (const [fieldId, file] of Object.entries(files.primaryContactCustomFieldFiles)) {
+      formData.append(`primaryContactCustomFieldFiles[${fieldId}]`, file)
+    }
+    for (const [fieldId, fieldFiles] of Object.entries(files.visitorCustomFieldFiles)) {
+      for (const file of fieldFiles) {
+        formData.append(`visitorCustomFieldFiles[${fieldId}]`, file)
+      }
+    }
+    for (const [fieldId, fieldFiles] of Object.entries(files.vehicleCustomFieldFiles)) {
+      for (const file of fieldFiles) {
+        formData.append(`vehicleCustomFieldFiles[${fieldId}]`, file)
+      }
+    }
+    for (const [fieldId, file] of Object.entries(files.customFieldFiles)) {
+      formData.append(`customFieldFiles[${fieldId}]`, file)
     }
 
     const envelope = await this.apiClient.makeMultipartRequest({
       endpointConfig: API_ENDPOINTS.STAFF_CREATE_VISIT_REQUEST,
       formData,
-      headers: { 'X-Branch-ID': branchId },
       parserSchema: InvitationEnvelopeSchema,
     })
 

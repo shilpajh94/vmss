@@ -1,5 +1,5 @@
 import type { ZodType } from 'zod'
-import { extractErrorMessage } from './api-error'
+import { ApiError, extractErrorMessage } from './api-error'
 import type { ApiEndpointDefinition } from './api-endpoints'
 
 type QueryParams = Record<string, string | number | boolean | undefined>
@@ -17,6 +17,8 @@ interface MakeRequestOptions<T> {
   body?: unknown
   queryParams?: QueryParams
   pathParams?: Record<string, string>
+  /** Extra request headers (e.g. `X-Branch-ID` for a branch-scoped call) merged in after the token/content-type ones. */
+  headers?: Record<string, string>
   parserSchema: ZodType<T>
 }
 
@@ -48,38 +50,47 @@ export class ApiClient {
     this.baseUrl = baseUrl.replace(/\/+$/, '')
   }
 
-  // A 401 means the stored token is dead — clear it and signal the app shell
-  // (via a plain browser event, since `data/` cannot import `presentation/`) so a
-  // single top-level listener can redirect to login, instead of letting the error
+  // A 401 on an endpoint that actually used the staff session token means
+  // that token is dead — clear it and signal the app shell (via a plain
+  // browser event, since `data/` cannot import `presentation/`) so a single
+  // top-level listener can redirect to login, instead of letting the error
   // body fail Zod parsing with an unrelated-looking validation error.
+  //
+  // A 401 on a `hasToken: false` endpoint (e.g. the visitor-portal lookup,
+  // gated by its own short-lived OTP proof token, not the staff session)
+  // does NOT mean the staff session is dead — it must fall through to the
+  // plain-error path below instead, or every expired visitor proof token
+  // would incorrectly sign the staff session out.
   //
   // A 403 is different: the token is still valid, the caller just lacks
   // permission for this endpoint. Treating it the same as a 401 forces a
   // sign-out on a permission-gated route the user is otherwise legitimately
   // logged into — throw a plain error instead and let the caller's normal
   // error handling (load-failure message, toast, etc.) take over.
-  private handleAuthFailure(response: Response): void {
-    if (response.status === 401) {
+  private handleAuthFailure(response: Response, hasToken: boolean): void {
+    if (response.status === 401 && hasToken) {
       sessionStorage.removeItem('token')
       window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
-      throw new Error('Session expired')
+      throw new ApiError('Session expired', response.status)
     }
 
     if (response.status === 403) {
-      throw new Error('You do not have permission to perform this action')
+      throw new ApiError('You do not have permission to perform this action', response.status)
     }
   }
 
-  // 401/403 get their own handling above; every other non-2xx (400, 404, 422, 500…)
-  // still carries a JSON body, but it's an error shape, not the success schema —
-  // parsing it with `parserSchema` would throw an opaque ZodError and bury the
-  // backend's actual message. Surface that message instead.
-  private async ensureOk(response: Response): Promise<void> {
-    this.handleAuthFailure(response)
+  // 401 (hasToken)/403 get their own handling above; every other non-2xx
+  // (400, 401 on a hasToken:false endpoint, 404, 422, 429, 500…) still
+  // carries a JSON body, but it's an error shape, not the success schema —
+  // parsing it with `parserSchema` would throw an opaque ZodError and bury
+  // the backend's actual message. Surface that message instead, as an
+  // `ApiError` so callers can still branch on the status.
+  private async ensureOk(response: Response, hasToken: boolean): Promise<void> {
+    this.handleAuthFailure(response, hasToken)
     if (response.ok) return
 
     const body: unknown = await response.json().catch(() => undefined)
-    throw new Error(extractErrorMessage(body, response.status))
+    throw new ApiError(extractErrorMessage(body, response.status), response.status)
   }
 
   // Exposed for adapters that need to build a full-page-navigation URL (e.g. an
@@ -107,7 +118,7 @@ export class ApiClient {
     return query ? `?${query}` : ''
   }
 
-  async makeRequest<T>({ endpointConfig, body, queryParams, pathParams, parserSchema }: MakeRequestOptions<T>): Promise<T> {
+  async makeRequest<T>({ endpointConfig, body, queryParams, pathParams, headers: extraHeaders, parserSchema }: MakeRequestOptions<T>): Promise<T> {
     const { endpoint, method, hasToken } = endpointConfig as EndpointConfigShape
     const url = `${this.baseUrl}${this.buildPath(endpoint, pathParams)}${this.buildQueryString(queryParams)}`
 
@@ -115,7 +126,10 @@ export class ApiClient {
     // JSON body parsers) try to parse the request body whenever this header is
     // present, and throw an unhandled 500 when it's empty (e.g. approveStep,
     // which has no body).
-    const headers: Record<string, string> = body !== undefined ? { 'Content-Type': 'application/json' } : {}
+    const headers: Record<string, string> = {
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...extraHeaders,
+    }
 
     if (hasToken) {
       const token = sessionStorage.getItem('token')
@@ -130,7 +144,7 @@ export class ApiClient {
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
-    await this.ensureOk(response)
+    await this.ensureOk(response, hasToken)
 
     if (response.status === 204) {
       return parserSchema.parse(undefined)
@@ -158,7 +172,7 @@ export class ApiClient {
     }
 
     const response = await fetch(url, { method, headers })
-    await this.ensureOk(response)
+    await this.ensureOk(response, hasToken)
 
     return response.blob()
   }
@@ -185,7 +199,7 @@ export class ApiClient {
       headers,
       body: formData,
     })
-    await this.ensureOk(response)
+    await this.ensureOk(response, hasToken)
 
     return parserSchema.parse(await response.json())
   }
@@ -211,7 +225,7 @@ export class ApiClient {
       headers,
       body: formData,
     })
-    await this.ensureOk(response)
+    await this.ensureOk(response, hasToken)
 
     return parserSchema.parse(await response.json())
   }

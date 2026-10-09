@@ -3,9 +3,15 @@ import type { InvitationDetail } from '../../domain/entities/invitation-detail-s
 
 // Every field is optional — a PATCH sends only what changed. Deliberately
 // excludes the visitor's personal fields, `visitorCategoryId`, and
-// `hostId`/`hostNameOrEmail`: the API rejects any of those with a
-// validation error (`extra="forbid"`), and reassigning the host stays
-// exclusively the Delegate action's job.
+// `hostId`/`hostNameOrEmail`: confirmed live (2026-09-15) the API rejects
+// any of those with "Extra inputs are not permitted" (`extra="forbid"`).
+// Reassigning the host stays exclusively the Delegate action's job
+// (`delegateStep`), which is the only endpoint that accepts it.
+//
+// `pocUserId` (Point of Contact) is a separate, independently-editable field
+// from the host — confirmed live (2026-09-15) this endpoint accepts it and
+// persists to `poc_user_id`/`poc_name`, and triggers the "you've been named
+// point of contact" notification email.
 export interface EditInvitationFields {
   purposeOfVisit?: string
   preferredVisitDate?: string
@@ -13,10 +19,20 @@ export interface EditInvitationFields {
   expectedDuration?: string
   departmentToVisit?: string
   additionalNotes?: string
+  pocUserId?: string
+}
+
+export interface ListVisitRequestsParams {
+  relevantToMe?: boolean
+  status?: string
+  registrationType?: string
+  source?: string
+  search?: string
+  pageSize?: number
 }
 
 export interface VisitRequestSummaryRepository {
-  list(params?: { relevantToMe?: boolean }): Promise<VisitRequestSummary[]>
+  list(params?: ListVisitRequestsParams): Promise<VisitRequestSummary[]>
   approve(id: string): Promise<void>
   getDetail(id: string): Promise<InvitationDetail>
   reschedule(id: string, preferredVisitDate: string, preferredVisitTime: string): Promise<void>

@@ -7,7 +7,7 @@ import { usePushNotifications } from '../../../hooks/use-push-notifications'
 export type StaffLoginStatus = 'idle' | 'submitting' | 'error'
 
 export function useStaffLoginPage() {
-  const { loginStaffUseCase, getCurrentStaffUserUseCase } = useAppDependencies()
+  const { loginStaffUseCase, getCurrentStaffUserUseCase, startSsoLoginUseCase } = useAppDependencies()
   const toast = useToast()
   const navigate = useNavigate()
   const { registerCurrentDevice } = usePushNotifications()
@@ -39,12 +39,16 @@ export function useStaffLoginPage() {
       void registerCurrentDevice()
 
       const user = await getCurrentStaffUserUseCase.execute()
-      navigate(user.isAdmin ? '/admin/dashboard' : '/staff/dashboard')
+      navigate(user.isAdmin ? '/admin/dashboard' : user.isReception ? '/reception/dashboard' : '/staff/dashboard')
     } catch {
       setErrorMessage('Invalid email or password. Please try again.')
       setStatus('error')
       toast.error('Invalid email or password. Please try again.')
     }
+  }
+
+  const startSso = () => {
+    window.location.assign(startSsoLoginUseCase.execute())
   }
 
   return {
@@ -57,5 +61,6 @@ export function useStaffLoginPage() {
     emailError,
     passwordError,
     submitLogin,
+    startSso,
   }
 }

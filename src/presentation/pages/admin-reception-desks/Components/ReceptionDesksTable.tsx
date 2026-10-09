@@ -1,6 +1,10 @@
 import { useNavigate } from 'react-router'
 import { PencilIcon, TrashIcon } from '../../../components/icons'
 import type { ReceptionDesk } from '../../../../domain/entities/reception-desk-schema'
+import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+
+// Below `md`: only the identifying, status, and actions columns stay visible.
+const TABLE_CLASS_NAME = responsiveTableClassName([2, 3, 4, 5, 6])
 
 interface ReceptionDesksTableProps {
   receptionDesks: ReceptionDesk[]
@@ -25,7 +29,7 @@ export function ReceptionDesksTable({ receptionDesks, onDelete }: ReceptionDesks
 
   return (
     <div className="w-full overflow-x-auto rounded-2xl border border-border bg-surface">
-      <table className="w-full text-left">
+      <table className={TABLE_CLASS_NAME}>
         <thead>
           <tr className="bg-border-subtle">
             {COLUMN_HEADERS.map((header) => (
@@ -63,7 +67,7 @@ export function ReceptionDesksTable({ receptionDesks, onDelete }: ReceptionDesks
                       type="button"
                       onClick={() => navigate(`/admin/reception-desks/${receptionDesk.id}/edit`)}
                       aria-label={`Edit ${receptionDesk.name}`}
-                      className="flex items-center justify-center rounded-lg bg-border-subtle p-2 text-text"
+                      className="flex items-center justify-center rounded-lg bg-border-subtle p-2 max-lg:p-3 text-text"
                     >
                       <PencilIcon className="size-3.5" />
                     </button>
@@ -71,7 +75,7 @@ export function ReceptionDesksTable({ receptionDesks, onDelete }: ReceptionDesks
                       type="button"
                       onClick={() => onDelete(receptionDesk)}
                       aria-label={`Delete ${receptionDesk.name}`}
-                      className="flex items-center justify-center rounded-lg bg-danger/15 p-2 text-danger"
+                      className="flex items-center justify-center rounded-lg bg-danger/15 p-2 max-lg:p-3 text-danger"
                     >
                       <TrashIcon className="size-3.5" />
                     </button>

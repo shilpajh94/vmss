@@ -11,7 +11,7 @@ export type OtpRequestStatus = 'idle' | 'requesting' | 'requested' | 'error'
 export type OtpVerifyStatus = 'idle' | 'verifying' | 'error'
 
 interface UseVisitorOtpOptions {
-  onVerified: (registrationType: RegistrationType, contact: string) => void
+  onVerified: (registrationType: RegistrationType, contact: string, proofToken: string) => void
 }
 
 export function useVisitorOtp({ onVerified }: UseVisitorOtpOptions) {
@@ -72,10 +72,10 @@ export function useVisitorOtp({ onVerified }: UseVisitorOtpOptions) {
     setVerifyErrorMessage(undefined)
 
     try {
-      await verifyVisitorOtpUseCase.execute({ contact: contact.trim(), code: code.trim() })
+      const response = await verifyVisitorOtpUseCase.execute({ contact: contact.trim(), code: code.trim() })
       setVerifyStatus('idle')
       toast.success('Contact verified.')
-      onVerified(registrationType, contact.trim())
+      onVerified(registrationType, contact.trim(), response.data.proofToken)
     } catch {
       setVerifyErrorMessage('That code is invalid or has expired. Please try again.')
       setVerifyStatus('error')

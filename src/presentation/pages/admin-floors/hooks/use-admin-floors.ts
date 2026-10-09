@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { usePolling } from '../../../hooks/use-polling'
+import { usePagedList } from '../../../hooks/use-paged-list'
+import { usePageRefresh } from '../../../context/refresh-context'
 import type { Floor } from '../../../../domain/entities/floor-schema'
 import type { Building } from '../../../../domain/entities/building-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
@@ -11,18 +14,22 @@ export interface FloorRow extends Floor {
   buildingName: string
 }
 
+const PAGE_SIZE = 20
+
 export function useAdminFloors() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listFloorsUseCase, listBuildingsUseCase, listDepartmentsUseCase, deleteFloorUseCase } =
+  const { getCurrentStaffUserUseCase, listFloorsPageUseCase, listBuildingsUseCase, listDepartmentsUseCase, deleteFloorUseCase } =
     useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [floorList, setFloorList] = useState<Floor[]>([])
+  const [total, setTotal] = useState(0)
   const [buildings, setBuildings] = useState<Building[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [pendingDelete, setPendingDelete] = useState<FloorRow | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -32,28 +39,52 @@ export function useAdminFloors() {
   const [accessLevelFilter, setAccessLevelFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
 
-  const loadFloors = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
-    try {
-      const [user, floorResult, buildingList, departmentList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listFloorsUseCase.execute(),
-        listBuildingsUseCase.execute(),
-        listDepartmentsUseCase.execute(),
-      ])
-      setCurrentUser(user)
-      setFloorList(floorResult)
-      setBuildings(buildingList)
-      setDepartments(departmentList)
-    } catch {
-      setErrorMessage('Something went wrong loading the floors. Please try again.')
-      toast.error('Something went wrong loading the floors. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, listFloorsUseCase, listBuildingsUseCase, listDepartmentsUseCase, toast])
+  const loadFloors = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false
+
+      if (!silent) {
+        setIsLoading(true)
+        setErrorMessage(undefined)
+      }
+
+      try {
+        const [user, floorResult, buildingList, departmentList] = await Promise.all([
+          getCurrentStaffUserUseCase.execute(),
+          listFloorsPageUseCase.execute({
+            page,
+            pageSize: PAGE_SIZE,
+            buildingId: buildingFilter || undefined,
+            status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+            accessLevel:
+              accessLevelFilter === 'public' || accessLevelFilter === 'restricted' || accessLevelFilter === 'secure'
+                ? accessLevelFilter
+                : undefined,
+          }),
+          listBuildingsUseCase.execute(),
+          listDepartmentsUseCase.execute(),
+        ])
+        setCurrentUser(user)
+        setFloorList(floorResult.items)
+        setTotal(floorResult.total)
+        setBuildings(buildingList)
+        setDepartments(departmentList)
+        setLastUpdatedAt(new Date())
+      } catch {
+        if (!silent) {
+          setErrorMessage('Something went wrong loading the floors. Please try again.')
+        }
+        toast.error('Something went wrong loading the floors. Please try again.')
+      } finally {
+        if (!silent) {
+          setIsLoading(false)
+        }
+      }
+    },
+    [getCurrentStaffUserUseCase, listFloorsPageUseCase, listBuildingsUseCase, listDepartmentsUseCase, page, buildingFilter, statusFilter, accessLevelFilter, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -67,6 +98,13 @@ export function useAdminFloors() {
   const retry = useCallback(() => {
     void loadFloors()
   }, [loadFloors])
+
+  // Auto-refreshes the inventory every 15s; skipped while a delete dialog is
+  // open so a background tick can't replace data underneath it.
+  const isActionInProgress = pendingDelete !== undefined || isDeleting
+  usePolling(() => void loadFloors({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+
+  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
 
   const buildingNameById = useMemo(() => new Map(buildings.map((building) => [building.id, building.name])), [buildings])
 
@@ -91,22 +129,37 @@ export function useAdminFloors() {
     [buildings],
   )
 
-  const filteredFloors = useMemo(() => {
-    return floors.filter((floor) => {
-      if (buildingFilter && floor.buildingId !== buildingFilter) return false
-      if (accessLevelFilter && floor.accessLevel !== accessLevelFilter) return false
-      if (statusFilter && (statusFilter === 'active') !== floor.isActive) return false
-      return true
-    })
-  }, [floors, buildingFilter, accessLevelFilter, statusFilter])
-
   const isFiltering = buildingFilter !== '' || accessLevelFilter !== '' || statusFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
+
+  const changeBuildingFilter = useCallback(
+    (value: string) => {
+      setBuildingFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
+  const changeAccessLevelFilter = useCallback(
+    (value: string) => {
+      setAccessLevelFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
+  const changeStatusFilter = useCallback(
+    (value: string) => {
+      setStatusFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
+
   const clearFilters = useCallback(() => {
     setBuildingFilter('')
     setAccessLevelFilter('')
     setStatusFilter('')
-  }, [])
+    resetToFirstPage()
+  }, [resetToFirstPage])
 
   const requestDelete = useCallback((floor: FloorRow) => setPendingDelete(floor), [])
   const cancelDelete = useCallback(() => setPendingDelete(undefined), [])
@@ -117,20 +170,24 @@ export function useAdminFloors() {
     setIsDeleting(true)
     try {
       await deleteFloorUseCase.execute(pendingDelete.id)
-      setFloorList((current) => current.filter((floor) => floor.id !== pendingDelete.id))
       toast.success('Floor deleted.')
       setPendingDelete(undefined)
+      await loadFloors({ silent: true })
     } catch {
       toast.error('Something went wrong deleting the floor. Please try again.')
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, deleteFloorUseCase, toast])
+  }, [pendingDelete, deleteFloorUseCase, toast, loadFloors])
 
   return {
     currentUser,
-    floors: filteredFloors,
-    hasAnyFloors: floors.length > 0,
+    floors,
+    total,
+    page,
+    pageSize: PAGE_SIZE,
+    goToNextPage,
+    goToPrevPage,
     departmentNamesByFloorId,
     isLoading,
     errorMessage,
@@ -139,11 +196,11 @@ export function useAdminFloors() {
     toggleFilterPanel,
     buildingOptions,
     buildingFilter,
-    setBuildingFilter,
+    setBuildingFilter: changeBuildingFilter,
     accessLevelFilter,
-    setAccessLevelFilter,
+    setAccessLevelFilter: changeAccessLevelFilter,
     statusFilter,
-    setStatusFilter,
+    setStatusFilter: changeStatusFilter,
     clearFilters,
     isFiltering,
     pendingDelete,

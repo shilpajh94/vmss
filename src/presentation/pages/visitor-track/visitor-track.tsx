@@ -17,8 +17,8 @@ export function VisitorTrackPage() {
           <img src={heroImage} alt="" className="size-full object-cover" />
           <div className="absolute inset-0 bg-primary/55" />
         </div>
-        <h1 className="text-h1 relative px-12 pt-10 pb-8 text-white">Track Your Visit</h1>
-        <div className="relative flex flex-wrap justify-center gap-8 px-12 pb-16">
+        <h1 className="text-h1 relative px-4 md:px-12 pt-6 pb-6 md:pt-10 md:pb-8 text-white">Track Your Visit</h1>
+        <div className="relative flex flex-wrap justify-center gap-4 md:gap-8 px-4 md:px-12 pb-10 md:pb-16">
           <TrackingLookupCard
             trackingId={trackingId}
             onTrackingIdChange={setTrackingId}
@@ -26,10 +26,10 @@ export function VisitorTrackPage() {
             loading={status === 'loading'}
             error={validationError}
           />
-          {status === 'loading' && <LoadingState label="Looking up your request…" className="w-[480px]" />}
+          {status === 'loading' && <LoadingState label="Looking up your request…" className="w-full max-w-[480px]" />}
           {status === 'success' && response && <StatusPanel response={response} />}
           {status === 'error' && (
-            <div className="flex w-[480px] flex-col gap-3 rounded-2xl border border-danger bg-surface p-8">
+            <div className="flex w-full max-w-[480px] flex-col gap-3 rounded-2xl border border-danger bg-surface p-5 md:p-8">
               <h3 className="text-h3 text-text">No Result</h3>
               <p className="text-body text-danger">{errorMessage}</p>
             </div>
