@@ -66,7 +66,10 @@ which linked to the portal root.
 The portal base URL SHALL be supplied per environment through deployment
 configuration, never hard-coded. It SHALL count as not configured when it
 is unset, blank, or not an absolute `http://`/`https://` URL (for example,
-a deployment token the pipeline left unreplaced). WHEN the portal base URL
+a deployment token the pipeline left unreplaced). Only the scheme and host
+of the configured value SHALL be used, so a value pointing at a page
+(e.g. `https://visit.example.com/staff/login`) yields the same links as the
+bare origin. WHEN the portal base URL
 is not configured, every email SHALL render
 without a call-to-action button and without a link line in its plain-text
 part. Otherwise it SHALL render as it did before this requirement. The
@@ -79,6 +82,12 @@ missing setting once per process, not once per email.
 - **THEN** the email is delivered with its QR pass and tracking ID, contains
   no call-to-action button, and a single `WARNING` naming the missing
   setting is logged even if several emails are sent
+
+#### Scenario: A page URL is reduced to its origin
+- **WHEN** the portal base URL is configured as
+  `https://visit.example.com/staff/login`
+- **THEN** a received email links to `https://visit.example.com/visitor/track`
+  and a host-assigned email links to `https://visit.example.com/staff/login`
 
 #### Scenario: Unreplaced deployment token sends no broken link
 - **WHEN** the portal base URL holds the literal, unreplaced token
