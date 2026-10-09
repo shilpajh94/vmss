@@ -227,6 +227,38 @@ the text wordmark, and the QR is embedded as a single `cid:visit-qr@vmss`
 inline part (`EmailSender.send(..., inline_images=[...])`). Never an
 attachment either way.
 
+**Portal links** (`add-portal-links-to-emails`): with `STAFF_PORTAL_URL`
+set, eight emails carry one call-to-action button, plus the same URL as a
+`{label}: {url}` line in the plain-text part. URLs are built only in
+`core/portal_links.py`, and each email's label/URL pair lives in
+`invitations/tasks.py::_CTAS`:
+
+| Email | Recipient | Button | Link |
+|---|---|---|---|
+| `tracking_only` | Visitor | Track your request | `/visitor/track` |
+| `visit_confirmation` | Visitor | View your visit | `/visitor/track` |
+| `reschedule` | Visitor | View your visit | `/visitor/track` |
+| `edit` | Visitor | View your visit | `/visitor/track` |
+| `denial` | Visitor | Submit a new request | `/visitor/request` |
+| `submission_role` | First-step role holders | Review request | `/staff/login` |
+| `host_assigned` | Host | View visit | `/staff/login` |
+| `poc_assigned` | Point of contact | View visit | `/staff/login` |
+
+- The verification-code and daily-snapshot emails carry no link. The
+  code email is deliberately link-free, because a code plus a link is the
+  phishing pattern.
+- Links are fixed page paths, with no tracking ID, invitation id or any
+  other personal data. The tracking-ID sentence stays, because the reader
+  enters that ID on the track page, or searches for it after signing in.
+- The plain-text render-failure fallback carries the same link.
+- `STAFF_PORTAL_URL` is the web app's origin, supplied per environment
+  through the existing `__STAFF_PORTAL_URL__` pipeline token in `.env`
+  (and `k8s.yml`). Despite its name, visitor links use it too. If it's
+  unset, or isn't an `http(s)://` URL (e.g. an unreplaced token), emails
+  go out without the button, and `portal_base_url_unset` is logged at
+  WARNING once per process.
+- No VMMS_WEB change is needed: all three linked pages already exist.
+
 **Previewing:** `ddev exec uv run python scripts/send_email_previews.py`
 sends all ten templates, with full sample data and `[Preview]` subjects,
 to `preview@visimio.local` in Mailpit (`ddev mailpit`). The QR previews
@@ -241,6 +273,7 @@ breakdown.
 |---|---|---|
 | `EMAIL_ASSET_BASE_URL` | unset (DDEV: `https://vmss-new-api.ddev.site:8443`) | Public origin of this API that email images load from. **Required in production**; unset falls back to a text wordmark and an inline QR. |
 | `EMAIL_ASSET_URL_SECRET` | unset | Signs QR image URLs; falls back to `STORAGE_LOCAL_URL_SECRET`, then `JWT_SECRET_KEY`. Rotating it invalidates QR images in already-sent emails (the tracking ID still works). |
+| `STAFF_PORTAL_URL` | unset (pipeline token `__STAFF_PORTAL_URL__`) | Public origin of the web app (VMMS_WEB) that every email button links to, visitor and staff alike. See "Portal links" above. Unset, or not an `http(s)://` URL, means emails are sent without links. |
 | `FCM_CREDENTIALS_PATH` | unset | Path to a Firebase service-account key JSON file. Left unset by default; `notifications/fcm.py` fails loudly (`FcmNotConfiguredError`) the first time a push is actually attempted, rather than silently no-op'ing — same posture `TWILIO_*`/`SMS_GATEWAY_*` already have. |
 
 ## Not yet built (flagged, not silently dropped)

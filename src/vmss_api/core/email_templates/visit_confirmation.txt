@@ -21,5 +21,8 @@ BEFORE YOU ARRIVE
   "Head to reception and show your QR code.",
   "Keep this email handy in case you're asked for your tracking ID.",
 ]) }}
-{{ m.callout("Need to change your plans?", "Contact the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " and quote your tracking ID " ~ tracking_id ~ " to reschedule or cancel.") }}
+{% if cta %}
+{{ cta.label }}: {{ cta.url }}
+
+{% endif %}{{ m.callout("Need to change your plans?", "Contact the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " and quote your tracking ID " ~ tracking_id ~ " to reschedule or cancel.") }}
 {% endblock %}

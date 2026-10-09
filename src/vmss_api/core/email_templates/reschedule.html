@@ -14,5 +14,6 @@
 {% else %}
 {{ m.note("Your visit is still awaiting approval. We'll email your check-in QR pass as soon as it's approved.") }}
 {% endif %}
+{% if cta %}{{ m.button(cta.label, cta.url) }}{% endif %}
 {{ m.callout("Can't make the new time?", "Contact the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " and quote your tracking ID " ~ tracking_id ~ ".") }}
 {% endblock %}

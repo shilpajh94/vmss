@@ -22,7 +22,6 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, TemplateError, Undefined, select_autoescape
 
 from vmss_api.core import email_assets
-from vmss_api.core.config import settings
 from vmss_api.core.logging import logger
 
 _TEMPLATES_DIR = Path(__file__).parent / "email_templates"
@@ -185,7 +184,6 @@ def render_email(template_name: str, context: dict[str, Any]) -> RenderedEmail:
         "t": asdict(TONES[tone]),
         "current_year": datetime.now(UTC).year,
         "logo_src": _logo_src(),
-        "staff_portal_url": (settings.staff_portal_url or "").strip() or None,
     }
     try:
         html_template = _html_env.get_template(f"{template_name}.html")
