@@ -6,6 +6,8 @@ Every builder returns `None` when no portal base URL is configured, and the
 email then renders without its call-to-action button.
 """
 
+from urllib.parse import urlsplit
+
 from vmss_api.core.config import settings
 from vmss_api.core.logging import logger
 
@@ -17,15 +19,18 @@ _warned_base_url_unset = False
 
 
 def base_url() -> str | None:
-    """`STAFF_PORTAL_URL`, or `None` — warned once per process, not per
-    email — when it's unset or isn't an `http(s)://` URL. The latter covers
-    an environment whose pipeline left the `__STAFF_PORTAL_URL__` token
-    unreplaced, which would otherwise produce broken links.
+    """The origin (scheme + host) of `STAFF_PORTAL_URL`, or `None` — warned
+    once per process, not per email — when it's unset or isn't an
+    `http(s)://` URL. The latter covers an environment whose pipeline left
+    the `__STAFF_PORTAL_URL__` token unreplaced, which would otherwise
+    produce broken links. Only the origin is kept because deployments set
+    this to a page (e.g. `https://host/staff/login`) from when it fed a
+    single "open the portal" link.
     """
     global _warned_base_url_unset
-    base = (settings.staff_portal_url or "").strip().rstrip("/")
-    if base.startswith(("https://", "http://")):
-        return base
+    parts = urlsplit((settings.staff_portal_url or "").strip())
+    if parts.scheme in ("https", "http") and parts.netloc:
+        return f"{parts.scheme}://{parts.netloc}"
     if not _warned_base_url_unset:
         _warned_base_url_unset = True
         logger.warning(
