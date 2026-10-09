@@ -12,5 +12,6 @@
   ("Confirmation", "Once approved, you'll get an email with your check-in QR code.", "todo"),
 ]) }}
 {{ m.visit_details(title="Your request") }}
+{% if cta %}{{ m.button(cta.label, cta.url) }}{% endif %}
 {{ m.tracking_note("Want to check on it? Look up your visit's status at any time using your tracking ID", tracking_id) }}
 {% endblock %}

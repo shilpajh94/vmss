@@ -191,8 +191,11 @@ class Settings(BaseSettings):
     # Signs QR image URLs; falls back to `storage_local_url_secret`, then
     # `jwt_secret_key`, when unset.
     email_asset_url_secret: str | None = Field(default=None, alias="EMAIL_ASSET_URL_SECRET")
-    # Staff portal URL linked from staff-facing emails (e.g. the "awaiting
-    # triage" notification). Unset means those emails omit the link.
+    # Public origin of the web app (VMMS_WEB) that notification-email
+    # call-to-action links point into (`core/portal_links.py`) — despite the
+    # name, visitor links use it too. Supplied per environment through the
+    # `__STAFF_PORTAL_URL__` pipeline token; unset (or an unreplaced token)
+    # means emails carry no link.
     staff_portal_url: str | None = Field(default=None, alias="STAFF_PORTAL_URL")
 
     # SMS gateway — no vendor chosen yet (design.md Open Questions); these are

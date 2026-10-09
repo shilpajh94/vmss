@@ -13,5 +13,8 @@ WHAT HAPPENS NEXT
 ]) }}
 
 {{ m.visit_details(title="YOUR REQUEST") }}
-Want to check on it? Look up your visit's status at any time using your tracking ID {{ tracking_id }}.
+{% if cta %}
+{{ cta.label }}: {{ cta.url }}
+
+{% endif %}Want to check on it? Look up your visit's status at any time using your tracking ID {{ tracking_id }}.
 {% endblock %}
