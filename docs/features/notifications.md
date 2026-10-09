@@ -253,7 +253,8 @@ set, eight emails carry one call-to-action button, plus the same URL as a
 - The plain-text render-failure fallback carries the same link.
 - `STAFF_PORTAL_URL` is the web app's origin, supplied per environment
   through the existing `__STAFF_PORTAL_URL__` pipeline token in `.env`
-  (and `k8s.yml`). Despite its name, visitor links use it too. If it's
+  (and `k8s.yml`). Despite its name, visitor links use it too. Only its scheme + host is
+  used, so a value like `https://host/staff/login` is fine. If it's
   unset, or isn't an `http(s)://` URL (e.g. an unreplaced token), emails
   go out without the button, and `portal_base_url_unset` is logged at
   WARNING once per process.

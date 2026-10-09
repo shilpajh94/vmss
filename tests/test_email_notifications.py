@@ -561,6 +561,18 @@ def test_portal_link_paths(_portal_base_url) -> None:
     assert portal_links.staff_login_url() == _STAFF_URL
 
 
+@pytest.mark.parametrize(
+    "value", [f"{_PORTAL}/staff/login", f"{_PORTAL}/staff/login/", f"{_PORTAL}/?next=/x"]
+)
+def test_portal_link_keeps_only_the_origin_of_a_page_url(monkeypatch, value: str) -> None:
+    """Deployments set STAFF_PORTAL_URL to the staff login page, not the
+    bare origin.
+    """
+    monkeypatch.setattr(settings, "staff_portal_url", value)
+    assert portal_links.visitor_track_url() == f"{_PORTAL}/visitor/track"
+    assert portal_links.staff_login_url() == f"{_PORTAL}/staff/login"
+
+
 def test_portal_link_strips_trailing_slash_and_whitespace(monkeypatch) -> None:
     monkeypatch.setattr(settings, "staff_portal_url", f"  {_PORTAL}/ ")
     assert portal_links.visitor_request_url() == f"{_PORTAL}/visitor/request"
