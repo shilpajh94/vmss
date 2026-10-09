@@ -140,3 +140,14 @@
 {% macro tracking_note(prefix, tracking_id, suffix=".") -%}
 <p style="margin:0 0 8px 0; font-size:14px; line-height:22px; color:#64748b;">{{ prefix }} <strong style="color:#475569;">{{ tracking_id }}</strong>{{ suffix }}</p>
 {%- endmacro %}
+
+{# A call-to-action button, coloured by the email's tone. #}
+{% macro button(label, url) -%}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+  <tr>
+    <td style="background-color:{{ t.accent }}; border-radius:8px;">
+      <a href="{{ url }}" style="display:inline-block; padding:12px 24px; {{ _font }} font-size:15px; line-height:20px; font-weight:600; color:#ffffff; text-decoration:none;">{{ label }}</a>
+    </td>
+  </tr>
+</table>
+{%- endmacro %}

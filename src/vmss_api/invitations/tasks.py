@@ -35,6 +35,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.repository import UserRepository
+from vmss_api.core import portal_links
 from vmss_api.core.celery_app import celery_app
 from vmss_api.core.database import engine, tenant_session_scope
 from vmss_api.core.email_assets import base_url as email_asset_base_url
@@ -151,6 +152,9 @@ async def _invitation_email_context(
         "place": place or None,
         "front_desk_contact": front_desk_contact,
         "is_approved": invitation.status == "approved",
+        "visitor_track_url": portal_links.visitor_track_url(),
+        "visitor_request_url": portal_links.visitor_request_url(),
+        "staff_login_url": portal_links.staff_login_url(),
         **await _resolve_contact(
             session, invitation, branch=branch, front_desk_contact=front_desk_contact
         ),
@@ -176,14 +180,43 @@ async def _qr_source(
     return f"cid:{_QR_CID}", [notifications.make_inline_image(qr_png, "image/png", _QR_CID)]
 
 
+# Each email's call-to-action: button label, and the `_invitation_email_context`
+# key holding its URL (add-portal-links-to-emails, email-notifications
+# "Actionable Emails Link Directly to the Relevant Portal Page").
+_CTAS: dict[str, tuple[str, str]] = {
+    "tracking_only": ("Track your request", "visitor_track_url"),
+    "visit_confirmation": ("View your visit", "visitor_track_url"),
+    "reschedule": ("View your visit", "visitor_track_url"),
+    "edit": ("View your visit", "visitor_track_url"),
+    "denial": ("Submit a new request", "visitor_request_url"),
+    "submission_role": ("Review request", "staff_login_url"),
+    "host_assigned": ("View visit", "staff_login_url"),
+    "poc_assigned": ("View visit", "staff_login_url"),
+}
+
+
+def _cta(template_name: str, context: dict[str, Any]) -> dict[str, str] | None:
+    """`None` when the type has no link or no portal URL is configured —
+    the template then omits its button.
+    """
+    if template_name not in _CTAS:
+        return None
+    label, url_key = _CTAS[template_name]
+    url = context.get(url_key)
+    return {"label": label, "url": url} if url else None
+
+
 def _render_or_fallback(
     template_name: str, context: dict[str, Any], *, fallback_subject: str
 ) -> tuple[str, str, str | None]:
     """Returns `(subject, text_body, html_body)`. spec.md "Template
     Rendering Failure Falls Back to a Minimal Plain-Text Email" — on any
     rendering failure, `html_body` is `None` and the text is a minimal
-    tracking-ID message, so the recipient still gets something deliverable.
+    tracking-ID message (plus the email's link, when it has one), so the
+    recipient still gets something deliverable.
     """
+    cta = _cta(template_name, context)
+    context = {**context, "cta": cta}
     try:
         rendered = render_email(template_name, context)
     except TemplateRenderError:
@@ -197,6 +230,8 @@ def _render_or_fallback(
             "There's an update on your visit. Look up this tracking ID in the "
             "visitor portal, or contact the front desk, for the details."
         )
+        if cta is not None:
+            body += f"\n\n{cta['label']}: {cta['url']}"
         return fallback_subject, body, None
     return rendered.subject, rendered.text, rendered.html
 

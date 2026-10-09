@@ -7,5 +7,8 @@
 Tracking ID: {{ tracking_id }}
 
 {{ m.visit_details(before=[("Visitor", visitor)]) }}
-Open the visitor management portal and search for tracking ID {{ tracking_id }} to approve it, deny it, or assign a host.
+{% if cta %}
+{{ cta.label }}: {{ cta.url }}
+
+{% endif %}Open the visitor management portal and search for tracking ID {{ tracking_id }} to approve it, deny it, or assign a host.
 {% endblock %}

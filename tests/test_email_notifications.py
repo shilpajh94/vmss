@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
-from vmss_api.core import email_rendering
+from vmss_api.core import email_rendering, portal_links
 from vmss_api.core.config import settings
 from vmss_api.core.email_rendering import (
     TEMPLATE_TONES,
@@ -30,6 +30,7 @@ from vmss_api.core.emailing import (
     make_attachment,
     make_inline_image,
 )
+from vmss_api.invitations import tasks as invitation_tasks
 
 # The value from the design mock that surfaced the greeting bug.
 _OPAQUE_NAME = "ccbb9a1e304730e0512d912e18f6ce6591bee85c26e3cdb7b5d4b89a3549bb731a3a"
@@ -507,3 +508,153 @@ def test_configured_confirmation_message_is_only_text_and_html(_asset_base_url) 
     assert structure == ["multipart/alternative", "text/plain", "text/html"]
     assert not any(part.get("Content-ID") for part in message.walk())
     assert not any(part.get_content_disposition() for part in message.walk())
+
+
+# --- Portal links (add-portal-links-to-emails) --------------------------------
+
+_PORTAL = "https://visit.example.test"
+_TRACK_URL = f"{_PORTAL}/visitor/track"
+_STAFF_URL = f"{_PORTAL}/staff/login"
+
+# (template, button label, URL) — email-notifications "Actionable Emails
+# Link to the Relevant Portal Page".
+_CTA_TYPES = [
+    ("tracking_only", "Track your request", _TRACK_URL),
+    ("visit_confirmation", "View your visit", _TRACK_URL),
+    ("reschedule", "View your visit", _TRACK_URL),
+    ("edit", "View your visit", _TRACK_URL),
+    ("denial", "Submit a new request", f"{_PORTAL}/visitor/request"),
+    ("submission_role", "Review request", _STAFF_URL),
+    ("host_assigned", "View visit", _STAFF_URL),
+    ("poc_assigned", "View visit", _STAFF_URL),
+]
+
+
+@pytest.fixture
+def _portal_base_url(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "staff_portal_url", _PORTAL)
+
+
+@pytest.fixture
+def _portal_unset(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "staff_portal_url", None)
+    monkeypatch.setattr(portal_links, "_warned_base_url_unset", False)
+
+
+def _link_context(**overrides: Any) -> dict[str, Any]:
+    """`_context()` plus the URL keys `_invitation_email_context` adds."""
+    return _context(
+        visitor_track_url=portal_links.visitor_track_url(),
+        visitor_request_url=portal_links.visitor_request_url(),
+        staff_login_url=portal_links.staff_login_url(),
+        **overrides,
+    )
+
+
+def _render_with_cta(template_name: str, context: dict[str, Any]) -> tuple[str, str, str | None]:
+    return invitation_tasks._render_or_fallback(template_name, context, fallback_subject="x")
+
+
+def test_portal_link_paths(_portal_base_url) -> None:
+    assert portal_links.visitor_track_url() == _TRACK_URL
+    assert portal_links.visitor_request_url() == f"{_PORTAL}/visitor/request"
+    assert portal_links.staff_login_url() == _STAFF_URL
+
+
+def test_portal_link_strips_trailing_slash_and_whitespace(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "staff_portal_url", f"  {_PORTAL}/ ")
+    assert portal_links.visitor_request_url() == f"{_PORTAL}/visitor/request"
+
+
+@pytest.mark.parametrize("value", ["__STAFF_PORTAL_URL__", "visit.example.test", "  "])
+def test_unreplaced_token_or_non_url_counts_as_unset(monkeypatch, value: str) -> None:
+    """An environment whose pipeline didn't replace the token must send no
+    link rather than `__STAFF_PORTAL_URL__/visitor/track?...`.
+    """
+    monkeypatch.setattr(settings, "staff_portal_url", value)
+    monkeypatch.setattr(portal_links, "_warned_base_url_unset", False)
+    assert portal_links.visitor_track_url() is None
+    assert portal_links.staff_login_url() is None
+
+
+def test_unset_portal_url_returns_none_and_warns_once(_portal_unset) -> None:
+    with capture_logs() as captured:
+        assert portal_links.visitor_track_url() is None
+        assert portal_links.visitor_request_url() is None
+        assert portal_links.staff_login_url() is None
+    warnings = [e for e in captured if e["event"] == "portal_base_url_unset"]
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["setting"] == "STAFF_PORTAL_URL"
+
+
+@pytest.mark.parametrize(("template_name", "label", "url"), _CTA_TYPES)
+def test_each_actionable_email_links_to_its_portal_page(
+    _portal_base_url, template_name: str, label: str, url: str
+) -> None:
+    _, text, html = _render_with_cta(template_name, _link_context())
+    assert html is not None
+    assert f'href="{url}"' in html
+    assert label in _visible_text(html)
+    assert f"{label}: {url}" in text
+    # The manual route stays for a reader who can't follow the link.
+    assert "INV-B8490B0B" in _visible_text(html)
+
+
+def test_submission_email_no_longer_links_to_the_portal_root(_portal_base_url) -> None:
+    _, text, html = _render_with_cta("submission_role", _link_context())
+    assert html is not None
+    assert f'href="{_PORTAL}"' not in html and f'href="{_PORTAL}/"' not in html
+    assert "Open staff portal" not in html + text
+
+
+@pytest.mark.parametrize(("template_name", "label", "url"), _CTA_TYPES)
+def test_unset_portal_url_omits_the_link_but_still_renders(
+    _portal_unset, template_name: str, label: str, url: str
+) -> None:
+    subject, text, html = _render_with_cta(template_name, _link_context())
+    assert html is not None and subject != "x"
+    assert "<a href" not in html
+    assert f"{label}:" not in text
+    assert "https://" not in text
+
+
+def test_verification_code_email_carries_no_links(_portal_base_url) -> None:
+    # Even a stray `cta` in the context must not surface in the code email.
+    context = _link_context(cta={"label": "x", "url": _TRACK_URL})
+    rendered = render_email("verification_code", context)
+    assert "<a href" not in rendered.html
+    assert "http://" not in rendered.text and "https://" not in rendered.text
+
+
+@pytest.mark.parametrize(("template_name", "label", "url"), _CTA_TYPES)
+def test_links_carry_no_personal_data(
+    _portal_base_url, template_name: str, label: str, url: str
+) -> None:
+    _, _, html = _render_with_cta(template_name, _link_context())
+    assert html is not None
+    hrefs = re.findall(r'href="([^"]+)"', html)
+    assert hrefs
+    for href in hrefs:
+        for value in ("Meera", "meera@example.com", "98765", "+91"):
+            assert value not in href
+
+
+def test_fallback_email_keeps_the_link(_portal_base_url) -> None:
+    subject, body, html = invitation_tasks._render_or_fallback(
+        "tracking_only",
+        _link_context(visit_date="not-a-date"),
+        fallback_subject="We've received your visit request",
+    )
+    assert html is None
+    assert subject == "We've received your visit request"
+    assert "INV-B8490B0B" in body
+    assert f"Track your request: {_TRACK_URL}" in body
+
+
+def test_fallback_email_without_portal_url_has_no_link(_portal_unset) -> None:
+    _, body, html = invitation_tasks._render_or_fallback(
+        "tracking_only", _link_context(visit_date="not-a-date"), fallback_subject="x"
+    )
+    assert html is None
+    assert "https://" not in body

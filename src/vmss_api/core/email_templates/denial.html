@@ -11,5 +11,6 @@
   "Get in touch with the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " if you think this is a mistake.",
   "Submit a new visit request with updated details if your plans have changed.",
 ]) }}
+{% if cta %}{{ m.button(cta.label, cta.url) }}{% endif %}
 {{ m.tracking_note("Please quote your tracking ID", tracking_id, " in any follow-up.") }}
 {% endblock %}

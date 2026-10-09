@@ -7,5 +7,6 @@
 {{ m.lead((visitor or "A visitor") ~ " has submitted a visit request that's waiting for your team to review and assign.") }}
 {{ m.highlight_box("Tracking ID", tracking_id) }}
 {{ m.visit_details(before=[("Visitor", visitor)]) }}
+{% if cta %}{{ m.button(cta.label, cta.url) }}{% endif %}
 {{ m.tracking_note("Open the visitor management portal and search for tracking ID", tracking_id, " to approve it, deny it, or assign a host.") }}
 {% endblock %}
