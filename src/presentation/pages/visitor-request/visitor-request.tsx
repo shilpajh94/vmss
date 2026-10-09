@@ -216,6 +216,9 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
               vehicleInfoAllFields={vehicleInfoAllFields}
               carriedItemsGroups={carriedItemsGroups}
               carriedItemsAllFields={carriedItemsAllFields}
+              visitorInfoCustomFields={visitorInfoCustomFields}
+              visitDetailsCustomFields={visitDetailsCustomFields}
+              steps={activeSteps}
               onBack={goBack}
               onSubmit={submit}
               onGoHome={() => navigate('/')}
