@@ -119,7 +119,7 @@ export function RepeatableFieldGroup({
           type="button"
           onClick={startAdd}
           disabled={atMax}
-          className="rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="cursor-pointer rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           + Add {groupName}
         </button>
@@ -152,10 +152,10 @@ export function RepeatableFieldGroup({
                     </td>
                   ))}
                   <td className="sticky right-0 bg-surface px-4 py-2 whitespace-nowrap">
-                    <button type="button" onClick={() => startEdit(index)} className="mr-2 text-secondary-accent max-lg:min-h-10 max-lg:px-2">
+                    <button type="button" onClick={() => startEdit(index)} className="mr-2 cursor-pointer text-secondary-accent max-lg:min-h-10 max-lg:px-2">
                       Edit
                     </button>
-                    <button type="button" onClick={() => removeInstance(index)} className="text-danger max-lg:min-h-10 max-lg:px-2">
+                    <button type="button" onClick={() => removeInstance(index)} className="cursor-pointer text-danger max-lg:min-h-10 max-lg:px-2">
                       Remove
                     </button>
                   </td>
@@ -178,10 +178,10 @@ export function RepeatableFieldGroup({
           )}
           {draftError && <p className="text-caption text-danger">{draftError}</p>}
           <div className="flex gap-3">
-            <button type="button" onClick={commitDraft} className="rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white">
+            <button type="button" onClick={commitDraft} className="cursor-pointer rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white">
               {editingIndex === null ? 'Add to List' : 'Save Changes'}
             </button>
-            <button type="button" onClick={cancelDraft} className="text-body font-semibold text-text-muted">
+            <button type="button" onClick={cancelDraft} className="cursor-pointer text-body font-semibold text-text-muted">
               Cancel
             </button>
           </div>
