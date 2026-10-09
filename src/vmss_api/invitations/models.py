@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime, time
+from typing import Any
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Time, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
@@ -40,6 +41,11 @@ class Invitation(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     branch_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("branches.id"), index=True)
+    # Building the visitor selected at registration; when NULL the detail view
+    # falls back to the department's building (see `InvitationRepository.get_location`).
+    building_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("buildings.id"), index=True
+    )
     # Nullable: a walk-in registration (`source="visitor_walk_in"`, API-13) has
     # no authenticated staff creator — see
     # add-walkin-visitor-registration/design.md Decision 1. Every existing row
@@ -76,8 +82,11 @@ class Invitation(Base, TimestampMixin):
     # Set (partially) at creation; fully overwritten by self-registration —
     # see the class docstring.
     primary_contact_full_name: Mapped[str] = mapped_column(String(255))
-    primary_contact_email: Mapped[str | None] = mapped_column(String(255))
-    primary_contact_phone: Mapped[str | None] = mapped_column(String(50))
+    # Indexed (`a1b2c3d4e5f6`): the `visitor_return_visit` capability looks up
+    # a verified identifier's prior visits by exact match on one of these two
+    # columns.
+    primary_contact_email: Mapped[str | None] = mapped_column(String(255), index=True)
+    primary_contact_phone: Mapped[str | None] = mapped_column(String(50), index=True)
     primary_contact_preferred_contact_method: Mapped[str] = mapped_column(String(10))
     primary_contact_id_proof_type: Mapped[str | None] = mapped_column(String(50))
     # Deliberately never resolved to a URL or exposed on any response schema
@@ -93,6 +102,14 @@ class Invitation(Base, TimestampMixin):
     # nullable, unlike the ID-proof storage key, since capturing a photo is
     # never required.
     primary_contact_photo_storage_key: Mapped[str | None] = mapped_column(String(500))
+    # Answers for admin-authored Visitor Info fields (`form-builder`'s
+    # "Fully Configurable Steps Accept Admin-Authored Fields"), keyed by
+    # field key — the primary contact's counterpart to
+    # `InvitationVisitor.custom_field_values` below. Kept separate from
+    # `custom_field_values` (invitation-level answers) so the two scopes
+    # never share a key namespace on the same row
+    # (`add-generic-custom-field-support/design.md` Decision 1).
+    primary_contact_custom_field_values: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
     # --- Visit details (self-registration only) -----------------------------
     purpose_of_visit: Mapped[str | None] = mapped_column(String(255))
@@ -132,6 +149,28 @@ class Invitation(Base, TimestampMixin):
         Uuid, ForeignKey("departments.id"), index=True
     )
 
+    # --- Point of contact (add-invitation-point-of-contact) -----------------
+    # Distinct from `host_id`/`host_name_or_email` above: the host is who the
+    # visitor is meeting, resolved only via the `approvals` workflow (or,
+    # for a single-step workflow, by directly approving its only step — see
+    # `approvals/service.py::approve_step`). The point of contact is who to
+    # actually reach about the visit's logistics, and is set directly via
+    # `PATCH /invitations/{id}/edit` by any `invitations:approve` holder at
+    # any time, regardless of the invitation's current approval step/level.
+    # Exactly one of `poc_user_id`/`poc_role_id` may be set, never both — at
+    # most one, unlike `InvitationApprovalStep`'s exactly-one XOR, since a
+    # point of contact is optional. Enforced by the
+    # `ck_invitations_poc_at_most_one` CHECK constraint (migration-only,
+    # same convention as `InvitationApprovalStep.approver_role_id`/
+    # `approver_user_id` above it — not declared in `__table_args__` here).
+    poc_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"), index=True)
+    poc_role_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("roles.id"), index=True)
+    # Snapshotted display name (the user's full_name or the role's name) at
+    # the moment POC was last set — same convention as `host_name_or_email`,
+    # so rendering it (visit info, the visitor's edit-confirmation email)
+    # never needs an extra join.
+    poc_name: Mapped[str | None] = mapped_column(String(255))
+
     # --- Carried items -------------------------------------------------------
     # JSONB list, not a child table: items have no independent identity or
     # per-row actions of their own, unlike visitors/vehicles below — same
@@ -140,10 +179,35 @@ class Invitation(Base, TimestampMixin):
     carried_items_description: Mapped[str | None] = mapped_column(String(2000))
 
     # --- Consent (security-architecture.md §4) --------------------------------
+    # `terms_accepted`/`data_processing_accepted`/`safety_guidelines_accepted`
+    # below are **deprecated** (`openspec/changes/form-builder/`): no longer
+    # written by `create_invitation`, which now records every accepted
+    # consent key (branch-configured, defaulting to these same three) in
+    # `consents` instead. Left in place for one release's burn-in — per
+    # design.md's migration plan — before a follow-up migration drops them;
+    # every row created from here on simply carries their column default.
     terms_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     data_processing_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     safety_guidelines_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+    consents: Mapped[dict[str, bool]] = mapped_column(JSONB, default=dict)
     consent_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # --- Custom fields (add-generic-custom-field-support) --------------------
+    # Answers for admin-authored fields on Visit Details, Carried Items,
+    # Consent Agreement, or a custom step — every step whose own fields have
+    # no per-entity structure of their own, so their custom-field answers
+    # are recorded once per invitation. Keyed by field key. Visitor Info and
+    # Vehicle Info custom-field answers live on `InvitationVisitor`/
+    # `primary_contact_custom_field_values` and `InvitationVehicle` instead
+    # (`design.md` Decision 1/2).
+    custom_field_values: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+    # --- Repeatable field group answers (add-repeatable-field-groups) --------
+    # Keyed by `FormFieldGroup.key`, holding an ordered list of per-instance
+    # answer maps, for any repeatable group other than the seeded Vehicle
+    # Info/Visitor Info groups (which keep their own dedicated
+    # `InvitationVehicle`/`InvitationVisitor` tables — design.md Decision 2/3).
+    group_field_values: Mapped[dict[str, list[dict[str, Any]]]] = mapped_column(JSONB, default=dict)
 
     # --- Lifecycle: denial (add-invitation-lifecycle-actions/design.md) ----
     denial_reason: Mapped[str | None] = mapped_column(String(500))
@@ -210,13 +274,21 @@ class InvitationVisitor(Base, TimestampMixin):
     full_name: Mapped[str] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(50))
-    id_proof_type: Mapped[str] = mapped_column(String(50))
+    # Nullable (form-builder): whether ID proof is captured at all for a
+    # visitor is now branch-configurable (`specs/form-builder/spec.md`'s
+    # Visitor Info toggleable tier), not unconditionally mandatory.
+    id_proof_type: Mapped[str | None] = mapped_column(String(50))
     # Deliberately never resolved to a URL or exposed on any response schema —
     # see the matching comment on `Invitation.primary_contact_id_proof_storage_key`
     # above (add-avatar-upload-and-verify-image-storage/design.md Decision 5).
-    id_proof_storage_key: Mapped[str] = mapped_column(String(500))
+    id_proof_storage_key: Mapped[str | None] = mapped_column(String(500))
     # Optional profile photo (checkin-approval-workflow-improvements).
     photo_storage_key: Mapped[str | None] = mapped_column(String(500))
+    # Answers for admin-authored Visitor Info fields, keyed by field key —
+    # this visitor's own copy, independent of any other visitor's answer
+    # for the same field (add-generic-custom-field-support/design.md
+    # Decision 2).
+    custom_field_values: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
 
 class InvitationQRCode(Base, TimestampMixin):
@@ -254,3 +326,7 @@ class InvitationVehicle(Base, TimestampMixin):
     license_plate: Mapped[str] = mapped_column(String(50))
     make_model: Mapped[str | None] = mapped_column(String(255))
     color: Mapped[str | None] = mapped_column(String(50))
+    # Answers for admin-authored Vehicle Info fields beyond the locked
+    # license-plate field, keyed by field key — this vehicle's own copy
+    # (add-generic-custom-field-support/design.md Decision 2).
+    custom_field_values: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)

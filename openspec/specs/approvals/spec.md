@@ -564,3 +564,82 @@ Push").
   invitation's own approval push (`specs/invitations/spec.md` "Invitation
   Approval, Denial, Reschedule, Check-In, and Check-Out Notify the Host via
   Push") is what notifies the host of the outcome instead
+
+### Requirement: Unresolvable Default Host Role Fails the Submission as a Server Misconfiguration
+WHEN an invitation is submitted (not auto-approved) and the tenant's default
+host role cannot be resolved (no `Company.default_host_role_id` override
+resolves to an existing role, and the tenant's standard `reception` role
+also does not exist), the system SHALL reject the submission with 500,
+log the failure at `ERROR` (per `logging-observability.md` §3), and SHALL
+NOT persist the invitation, its visitors/vehicles, or any approval step —
+this is a tenant-provisioning gap, not a validation failure the caller can
+correct by resubmitting.
+
+#### Scenario: Missing default host role rejects the submission
+- **WHEN** an invitation is submitted for a tenant whose standard
+  `reception` role does not exist and whose `Company.default_host_role_id`
+  is unset or points at a deleted role
+- **THEN** the request is rejected with 500 and no `Invitation` row (or any
+  of its visitors, vehicles, or approval steps) exists afterward
+
+#### Scenario: Failure is traceable to the affected tenant
+- **WHEN** the default-host-role resolution failure above occurs
+- **THEN** the `ERROR` log line carries the request's `tenant_id` (bound
+  automatically per `logging-observability.md` §1), so the affected tenant
+  is identifiable from the log alone
+
+### Requirement: A Step Cannot Be Delegated or Actioned While an Earlier Step Is Still Pending
+For an invitation with snapshotted approval steps, a step at `stepOrder` N
+SHALL be delegable, approvable, or rejectable only when it is the
+invitation's current pending step — i.e., only when every step at a lower
+`stepOrder` has already been approved (never merely delegated: delegation
+alone does not change a step's `pending` status). In particular, no step
+beyond the `stepOrder` 0 ownership step can be delegated, approved, or
+rejected until that ownership step has itself been approved — whether
+directly by a holder of the tenant's default host role, or by whoever that
+role delegated the step to. This holds regardless of which authorization
+clause a caller would otherwise satisfy: the invitation's resolved host
+(delegation clause (a)), a caller who holds `invitations:approve-override`,
+and a caller who personally approved the immediately preceding step
+(delegation clause (d)) are all still subject to this ordering guarantee —
+none of them can act on or delegate a step that is not yet current. A
+caller attempting to delegate, approve, or reject a step that is not
+currently the invitation's current pending step SHALL be rejected with 409,
+and no step's or invitation's status, delegate, or host assignment SHALL
+change as a result.
+
+#### Scenario: Delegating the ownership step's delegate does not itself unlock the next step
+- **WHEN** the `stepOrder` 0 ownership step has been delegated to a
+  specific host, but that host has not yet approved it (the step remains
+  `pending`), and the resolved host calls
+  `POST /invitations/{id}/approval-steps/{stepId}/delegate` on the
+  invitation's `stepOrder` 1 step
+- **THEN** the request is rejected with 409, no delegation is recorded on
+  `stepOrder` 1, and the invitation's `hostId` is unchanged
+
+#### Scenario: An override-permission holder still cannot skip ahead of a pending earlier step
+- **WHEN** a caller holding `invitations:approve` and
+  `invitations:approve-override` at the invitation's branch calls the
+  delegate endpoint on a `stepOrder` 1 step while the invitation's
+  `stepOrder` 0 step is still `pending` (approved by no one, delegated or
+  not)
+- **THEN** the request is rejected with 409 and no delegation is recorded,
+  even though the override permission would otherwise bypass the
+  role/host/delegate match
+
+#### Scenario: The ownership step's own delegate approving it unlocks the next step for delegation
+- **WHEN** the `stepOrder` 0 ownership step, delegated to a specific host,
+  is approved by that host, making `stepOrder` 1 the invitation's current
+  pending step
+- **THEN** a caller authorized on `stepOrder` 1 (its role-holder, the
+  resolved host, the `stepOrder` 0 approver via clause (d), or an
+  override-permission holder) may now delegate, approve, or reject it
+
+#### Scenario: Reception approving the ownership step directly, without ever delegating it, also unlocks the next step
+- **WHEN** a holder of the tenant's default host role approves the
+  invitation's `stepOrder` 0 step directly (never having delegated it to
+  anyone), making `stepOrder` 1 the current pending step
+- **THEN** `stepOrder` 1 becomes delegable/actionable exactly as it would
+  had `stepOrder` 0 instead been delegated then approved by its delegate —
+  the guarantee is that `stepOrder` 0 was approved by someone, not that it
+  was ever delegated

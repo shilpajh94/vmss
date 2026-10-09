@@ -54,6 +54,13 @@ _TAGS_METADATA = [
         ),
     },
     {
+        "name": "kiosks",
+        "description": (
+            "Admin management of kiosks: create, edit, hide/unhide, and "
+            "soft-delete."
+        ),
+    },
+    {
         "name": "platform",
         "description": (
             "Superadmin operations: platform login and tenant provisioning. "
@@ -63,8 +70,19 @@ _TAGS_METADATA = [
     {
         "name": "visitor-types",
         "description": (
-            "Configurable visitor categories (with a per-category form schema) "
-            "and the approval workflow rules attached to each one."
+            "Configurable visitor categories and the approval workflow rules "
+            "attached to each one. Category-specific registration fields are "
+            "authored in `form-builder` instead of a per-category form schema."
+        ),
+    },
+    {
+        "name": "form-builder",
+        "description": (
+            "Admin-configurable registration steps and fields (branch-scoped, "
+            "tenant-default-fallback), with a draft/publish lifecycle. The "
+            "published configuration is what invitation/registration "
+            "submission and the public/staff registration form render "
+            "against."
         ),
     },
     {
@@ -111,6 +129,17 @@ _TAGS_METADATA = [
         ),
     },
     {
+        "name": "visitor-portal",
+        "description": (
+            "Public, OTP-gated returning-visitor lookup: a visitor who has "
+            "verified an email/phone via `identity-verification` retrieves "
+            "their own prior visit history and a prefill payload for a new "
+            "registration. Read-only — does not create or modify any "
+            "invitation/registration, and issues no user account or "
+            "session."
+        ),
+    },
+    {
         "name": "sso",
         "description": (
             "Staff OIDC single sign-on: per-tenant provider configuration, "
@@ -144,6 +173,13 @@ _TAGS_METADATA = [
             "upcoming-visitors preview, the check-in action triggered from "
             "that preview, a paginated check-ins log, and topbar visitor "
             "search — all read from the `invitations` capability's data."
+        ),
+    },
+    {
+        "name": "email-assets",
+        "description": (
+            "Public images that emails load by URL: the Visimio header logo "
+            "and each approved visit's HMAC-signed, expiring check-in QR."
         ),
     },
     {

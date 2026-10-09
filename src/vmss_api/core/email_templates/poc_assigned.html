@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block eyebrow %}Point of contact{% endblock %}
+{% block heading %}You're the point of contact for a visit{% endblock %}
+{% block content %}
+{% set visitor = visitor_name | display_name %}
+{{ m.lead("You've been named point of contact for " ~ (visitor ~ "'s" if visitor else "a visitor's") ~ " visit. The visitor has been given your name and may reach out to you about the visit's logistics.") }}
+{{ m.visit_details(before=[("Visitor", visitor), ("Visitor phone", visitor_phone), ("Visitor email", visitor_email), ("Tracking ID", tracking_id)]) }}
+{% if cta %}{{ m.button(cta.label, cta.url) }}{% endif %}
+{{ m.tracking_note("To see the full request, open the visitor management portal and search for tracking ID", tracking_id) }}
+{% endblock %}

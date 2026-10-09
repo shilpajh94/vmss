@@ -13,9 +13,9 @@ same way `reports/repository.py::BranchRollupRepository` reads across
 
 | Method | Path | Permission | Description |
 |---|---|---|---|
-| GET | `/api/v1/admin/dashboard/overview` | `invitations:view` | Visits-today/checked-in/pending-approval/upcoming-visitor counts plus a bounded (10) upcoming-visitors preview. Each preview row includes `trackingId`, so the "check in" action calls `PATCH /api/v2/invitations/{trackingId}/check-in` directly — see "Check-in is done through the canonical invitation endpoint" below. |
-| GET | `/api/v1/admin/dashboard/checkins` | `invitations:view` | Paginated "View All" list of every invitation that has been checked in at least once (`checked_in` or `checked_out`). |
-| GET | `/api/v1/admin/dashboard/search` | `invitations:view` | Topbar search — case-insensitive partial match on the primary contact's full name, capped at 10 results. |
+| GET | `/api/v1/admin/dashboard/overview` | `invitations:view-all` | Visits-today/checked-in/pending-approval/upcoming-visitor counts plus a bounded (10) upcoming-visitors preview. Each preview row includes `trackingId`, so the "check in" action calls `PATCH /api/v2/invitations/{trackingId}/check-in` directly — see "Check-in is done through the canonical invitation endpoint" below. |
+| GET | `/api/v1/admin/dashboard/checkins` | `invitations:view-all` | Paginated "View All" list of every invitation that has been checked in at least once (`checked_in` or `checked_out`). |
+| GET | `/api/v1/admin/dashboard/search` | `invitations:view-all` | Topbar search — case-insensitive partial match on the primary contact's full name, capped at 10 results. |
 
 **Removed** (`checkin-approval-workflow-improvements`): `PATCH
 /api/v1/admin/dashboard/upcoming-visitors` — this duplicated
@@ -40,9 +40,12 @@ Decision 2.
 
 ## Reused permission codes
 
-No new permission codes exist for this feature. `invitations:view` covers the
-three read endpoints — already granted to whichever roles can see invitations
-elsewhere via `auth/rbac_catalog.py`.
+No new permission codes exist for this feature. `invitations:view-all` covers
+the three read endpoints (restrict-delegated-invitation-visibility — was
+`invitations:view`): they aggregate or search every invitation at a branch,
+which only a branch-wide viewer (Admin, Reception, Security) may see. A
+`host`, holding only `invitations:view`, gets 403. See
+`docs/features/invitations.md`'s "Who can see an invitation".
 
 ## Check-in is done through the canonical invitation endpoint
 

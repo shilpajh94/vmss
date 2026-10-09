@@ -187,7 +187,7 @@ async def test_overview_scoped_to_one_branch_via_branch_id(
         db_session,
         tenant,
         branch_ids=[branch.id, other_branch.id],
-        permission_code="invitations:view",
+        permission_code="invitations:view-all",
         role_name="viewer",
     )
     invitation = _build_invitation(db_session, branch.id, status="submitted")
@@ -217,7 +217,7 @@ async def test_overview_aggregates_across_authorized_branches_when_branch_id_omi
         db_session,
         tenant,
         branch_ids=[branch.id, other_branch.id],
-        permission_code="invitations:view",
+        permission_code="invitations:view-all",
         role_name="viewer",
     )
     invitation = _build_invitation(db_session, branch.id, status="submitted")
@@ -245,7 +245,7 @@ async def test_overview_branch_id_not_authorized_rejected(
         db_session,
         tenant,
         branch_ids=[branch.id],
-        permission_code="invitations:view",
+        permission_code="invitations:view-all",
         role_name="viewer",
     )
     token = issue_token(viewer)
@@ -375,7 +375,7 @@ async def test_list_checkins_branch_id_narrows_result(
         db_session,
         tenant,
         branch_ids=[branch.id, other_branch.id],
-        permission_code="invitations:view",
+        permission_code="invitations:view-all",
         role_name="viewer",
     )
     in_branch = _build_invitation(
@@ -474,7 +474,7 @@ async def test_search_results_limited_to_authorized_branches(
         db_session,
         tenant,
         branch_ids=[branch.id],
-        permission_code="invitations:view",
+        permission_code="invitations:view-all",
         role_name="viewer",
     )
     matching_other_branch = _build_invitation(
@@ -584,3 +584,38 @@ def test_resolve_tenant_timezone_falls_back_to_utc_for_invalid_value() -> None:
     )
 
     assert _resolve_tenant_timezone(tenant).key == "UTC"
+
+
+# --- restrict-delegated-invitation-visibility ----------------------------------
+
+
+async def test_dashboard_endpoints_reject_host_holding_only_invitations_view(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token,
+) -> None:
+    """spec.md "A host cannot search visitor names branch-wide" and "A host
+    cannot read branch-wide dashboard counts" — `invitations:view` alone no
+    longer reaches the branch-wide dashboard.
+    """
+    host = await _branch_scoped_user(
+        db_session,
+        tenant,
+        branch_ids=[branch.id],
+        permission_code="invitations:view",
+        role_name="host",
+    )
+    db_session.add(_build_invitation(db_session, branch.id, status="submitted"))
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {issue_token(host)}"}
+
+    for path, params in (
+        ("/api/v1/admin/dashboard/overview", {"branchId": str(branch.id)}),
+        ("/api/v1/admin/dashboard/overview", {}),
+        ("/api/v1/admin/dashboard/checkins", {}),
+        ("/api/v1/admin/dashboard/search", {"query": "carter"}),
+    ):
+        response = await client.get(path, params=params, headers=headers)
+        assert response.status_code == 403, (path, response.text)

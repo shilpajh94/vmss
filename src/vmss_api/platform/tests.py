@@ -1,10 +1,11 @@
 import uuid
 
+import pytest
 from httpx import AsyncClient
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.auth.models import Role, User
+from vmss_api.auth.models import Permission, Role, User
 from vmss_api.auth.rbac_catalog import ROLE_PERMISSIONS
 from vmss_api.core.database import tenant_session_scope
 from vmss_api.core.rate_limit import limiter
@@ -292,6 +293,138 @@ async def test_create_tenant_provisions_real_schema(db_session: AsyncSession) ->
         async with tenant_session_scope(tenant.schema_name) as tenant_db:
             role_names = set((await tenant_db.execute(select(Role.name))).scalars().all())
         assert set(ROLE_PERMISSIONS.keys()) <= role_names
+    finally:
+        await db_session.execute(text(f'DROP SCHEMA IF EXISTS "{tenant.schema_name}" CASCADE'))
+        await db_session.commit()
+
+
+async def test_find_tenants_behind_head_reports_none_when_current(db_session: AsyncSession) -> None:
+    """A freshly provisioned tenant's bookkeeping row is recorded at the
+    current `alembic_tenant` head (`create_tenant`), so it must not show up
+    as lagging.
+    """
+    slug = f"drift-current-{uuid.uuid4().hex[:8]}"
+    tenant = await service.create_tenant(db_session, name="Drift Current Co", slug=slug)
+    try:
+        lagging = await service.find_tenants_behind_head(db_session)
+        assert tenant.id not in {t.id for t in lagging}
+    finally:
+        await db_session.execute(text(f'DROP SCHEMA IF EXISTS "{tenant.schema_name}" CASCADE'))
+        await db_session.commit()
+
+
+async def test_upgrade_all_tenant_schemas_is_noop_when_already_current(
+    db_session: AsyncSession,
+) -> None:
+    slug = f"upgrade-noop-{uuid.uuid4().hex[:8]}"
+    tenant = await service.create_tenant(db_session, name="Upgrade Noop Co", slug=slug)
+    try:
+        upgraded = await service.upgrade_all_tenant_schemas(db_session)
+        assert tenant.id not in {t.id for t, _ in upgraded}
+    finally:
+        await db_session.execute(text(f'DROP SCHEMA IF EXISTS "{tenant.schema_name}" CASCADE'))
+        await db_session.commit()
+
+
+async def test_upgrade_tenant_schema_corrects_stale_bookkeeping(db_session: AsyncSession) -> None:
+    """Reproduces the exact drift the `afb2544db111` (form-builder) migration
+    hit in dev: a tenant's `tenant_schema_versions` row lagging the current
+    `alembic_tenant` head because nothing re-ran the upgrade for that
+    already-provisioned tenant. `find_tenants_behind_head` must catch it, and
+    `upgrade_tenant_schema`/`upgrade_all_tenant_schemas` must both re-run the
+    (idempotent) Alembic upgrade and correct the bookkeeping row.
+    """
+    slug = f"upgrade-drift-{uuid.uuid4().hex[:8]}"
+    tenant = await service.create_tenant(db_session, name="Upgrade Drift Co", slug=slug)
+    try:
+        await db_session.execute(
+            update(TenantSchemaVersion)
+            .where(TenantSchemaVersion.tenant_id == tenant.id)
+            .values(revision="stale-revision")
+        )
+        await db_session.commit()
+
+        lagging = await service.find_tenants_behind_head(db_session)
+        assert tenant.id in {t.id for t in lagging}
+
+        upgraded = await service.upgrade_all_tenant_schemas(db_session)
+        upgraded_ids = {t.id for t, _ in upgraded}
+        assert tenant.id in upgraded_ids
+
+        head = service.get_tenant_migration_head()
+        version_row = await db_session.get(TenantSchemaVersion, tenant.id)
+        assert version_row is not None
+        assert version_row.revision == head
+
+        lagging_after = await service.find_tenants_behind_head(db_session)
+        assert tenant.id not in {t.id for t in lagging_after}
+    finally:
+        await db_session.execute(text(f'DROP SCHEMA IF EXISTS "{tenant.schema_name}" CASCADE'))
+        await db_session.commit()
+
+
+def test_get_tenant_migration_head_raises_on_multiple_heads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reproduces the `fix-tenant-migration-branch-drift` bug: two
+    `alembic_tenant` migrations authored against the same `down_revision`
+    with no reconciling merge revision leaves the tree with more than one
+    head. That must surface as `TenantMigrationHeadsAmbiguousError`, not
+    Alembic's own undifferentiated `CommandError` (which `get_current_head`
+    would have raised for the same condition).
+    """
+
+    class _FakeScriptDirectory:
+        def get_heads(self) -> list[str]:
+            return ["c1d8e5f9a2b3", "f1a2c7e9b3d5"]
+
+    monkeypatch.setattr(
+        service.ScriptDirectory,
+        "from_config",
+        staticmethod(lambda cfg: _FakeScriptDirectory()),
+    )
+
+    with pytest.raises(service.TenantMigrationHeadsAmbiguousError) as exc_info:
+        service.get_tenant_migration_head()
+
+    assert set(exc_info.value.heads) == {"c1d8e5f9a2b3", "f1a2c7e9b3d5"}
+
+
+async def test_upgrade_tenant_schema_backfills_missing_role_permission(
+    db_session: AsyncSession,
+) -> None:
+    """specs/tenant-schema-maintenance/spec.md (delta) "Upgrading a Tenant
+    Also Re-Syncs Its Standard Role Grants and Default Form Config" —
+    reproduces the second half of the exact bug this change fixes: a
+    standard role missing a catalog permission (simulating a tenant seeded
+    before that permission existed) is granted it once `upgrade_tenant_schema`
+    re-runs `seed_default_roles`, without losing a grant the role already
+    held beyond the catalog.
+    """
+    slug = f"upgrade-rbac-{uuid.uuid4().hex[:8]}"
+    tenant = await service.create_tenant(db_session, name="Upgrade RBAC Co", slug=slug)
+    try:
+        async with tenant_session_scope(tenant.schema_name) as tenant_db:
+            admin_role = (
+                await tenant_db.execute(select(Role).where(Role.name == "admin"))
+            ).scalar_one()
+            permission = (
+                await tenant_db.execute(
+                    select(Permission).where(Permission.code == "form-builder:view")
+                )
+            ).scalar_one()
+            admin_role.permissions.remove(permission)
+            await tenant_db.commit()
+
+        await service.upgrade_tenant_schema(db_session, tenant=tenant)
+
+        async with tenant_session_scope(tenant.schema_name) as tenant_db:
+            admin_role = (
+                await tenant_db.execute(select(Role).where(Role.name == "admin"))
+            ).scalar_one()
+            codes = {p.code for p in admin_role.permissions}
+        assert "form-builder:view" in codes
+        assert "form-builder:manage" in codes
     finally:
         await db_session.execute(text(f'DROP SCHEMA IF EXISTS "{tenant.schema_name}" CASCADE'))
         await db_session.commit()

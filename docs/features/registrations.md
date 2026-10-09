@@ -140,6 +140,31 @@ version). Co-visitor (`visitor_photo_files`) entries remain optional. See
 `docs/features/invitations.md`'s "Primary contact profile photo" section
 for the full behavior.
 
+### Repeatable form-builder group file uploads (`add-group-field-file-upload`)
+
+`POST /registrations/walk-in` accepts an admin-defined repeatable group's
+own `file_upload`-typed field the same way `POST /invitations` does: one
+multipart list part named `groupFieldFiles[<groupId>]` (referenced by
+group id — `restructure-walkin-payload-by-field-id`), order-matched to
+that group's `payload.groups` entry's `instances` — no `instanceIndex`
+or field id in the part name, since only a group's first `file_upload`
+field is supported. The file field must be omitted from the corresponding
+instance's `customFields` array; supplying a value there instead
+of the file is rejected with a 422. See `docs/features/invitations.md`'s
+"Repeatable group file uploads" section for the full validation/storage
+behavior — it is shared verbatim via `invitations.service.create_invitation`.
+
+### Inline (non-grouped) custom-field file uploads (`add-inline-custom-field-file-upload`)
+
+`POST /registrations/walk-in` accepts the identical
+`primaryContactCustomFieldFiles[<fieldId>]`/`visitorCustomFieldFiles[<fieldId>]`/
+`vehicleCustomFieldFiles[<fieldId>]`/`customFieldFiles[<fieldId>]`
+contract `POST /invitations` does, for an admin-authored `file_upload`
+field that isn't assigned to a group — see `docs/features/invitations.md`'s
+"Inline (non-grouped) custom-field file uploads" section for the full
+validation/storage behavior, again shared verbatim via
+`invitations.service.create_invitation`.
+
 ## File uploads (API-14)
 
 ID-proof uploads go through the same `core/storage.py::validate_upload` +

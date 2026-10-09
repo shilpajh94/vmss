@@ -2050,7 +2050,7 @@ async def test_delegate_ownership_step_to_non_role_holder_succeeds(
     assert updated.delegated_to_user_id == delegate.id
 
 
-async def test_approve_ownership_step_directly_succeeds_without_delegation(
+async def test_approve_ownership_step_directly_succeeds_and_resolves_host(
     client: AsyncClient,
     branch: Branch,
     db_session: AsyncSession,
@@ -2058,12 +2058,65 @@ async def test_approve_ownership_step_directly_succeeds_without_delegation(
 ) -> None:
     """The `stepOrder` 0 ownership step is a plain role-identified step —
     its owning-role holder (e.g. `reception`) may approve it directly,
-    exactly as they could delegate it. Approving it directly just leaves
-    the invitation's `hostId` unresolved, since only delegating a step
-    resolves it (see "Delegating the Ownership Step Also Resolves the
-    Invitation's Host").
+    exactly as they could delegate it. `_role_owned_invitation` snapshots
+    only this single step (a single-step, reception-only workflow), so
+    there is no later step through which a real host could ever be
+    delegated — approving it directly resolves the invitation's `hostId`/
+    `hostNameOrEmail` to the approving caller, the same as delegating would
+    (see "Approving the Only Step of a Single-Step Workflow Also Resolves
+    the Invitation's Host"), so the approval-confirmation email can name a
+    real point of contact instead of falling back to the front desk.
     """
     invitation, owning_role = await _role_owned_invitation(db_session, branch)
+    caller = await _user_with_role(
+        db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
+    )
+    step_zero = await _get_step(db_session, invitation.id, 0)
+
+    token = issue_token(caller)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation.id}/approval-steps/{step_zero.id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["hostId"] == str(caller.id)
+
+    await db_session.refresh(invitation)
+    assert invitation.host_id == caller.id
+    assert invitation.host_name_or_email == caller.full_name
+
+    updated = await _get_step(db_session, invitation.id, 0)
+    assert updated.status == "approved"
+
+
+async def test_approve_ownership_step_directly_leaves_host_unresolved_when_multi_step(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """The single-step host-resolution exception above does NOT apply once
+    the category configured more than one step: approving the
+    host-nomination step directly in a multi-step workflow still leaves
+    `hostId` unresolved — only `delegate` (of this step or a later one)
+    resolves the host in that case.
+    """
+    invitation, owning_role = await _role_owned_invitation(db_session, branch)
+    step_one_role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"next-flow-role-{uuid.uuid4().hex[:8]}", permissions=[]
+    )
+    db_session.add(step_one_role)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(),
+            invitation_id=invitation.id,
+            step_order=1,
+            approver_role_id=step_one_role.id,
+        )
+    )
+    await db_session.commit()
+
     caller = await _user_with_role(
         db_session, branch.id, role=owning_role, extra_permission_codes=("invitations:approve",)
     )
@@ -2649,7 +2702,6 @@ async def test_category_with_no_active_rules_creates_only_the_ownership_step(
 
     from vmss_api.invitations import service as invitations_service
     from vmss_api.invitations.schemas import (
-        ConsentsSubmit,
         IdProofType,
         InvitationCreate,
         InvitationPrimaryContactCreate,
@@ -2676,9 +2728,11 @@ async def test_category_with_no_active_rules_creates_only_the_ownership_step(
             expected_duration="< 1 hour",
             department_to_visit="Test",
         ),
-        consents=ConsentsSubmit(
-            terms_accepted=True, data_processing_accepted=True, safety_guidelines_accepted=True
-        ),
+        consents={
+            "terms_accepted": True,
+            "data_processing_accepted": True,
+            "safety_guidelines_accepted": True,
+        },
     )
     invitation = await invitations_service.create_invitation(
         db_session,
@@ -2703,20 +2757,21 @@ async def test_category_with_no_active_rules_creates_only_the_ownership_step(
     assert invitation.host_id is None
 
 
-async def test_category_with_configured_rules_creates_ownership_step_ahead_of_role_chain(
+async def test_category_with_configured_rules_snapshots_exactly_the_configured_chain(
     tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
     """specs/approvals/spec.md "A category with three active rules
-    snapshots four ordered steps" — the ownership step is `stepOrder` 0,
-    the three configured rules keep their own `stepOrder` 1/2/3 unchanged.
-    Replaces the old host-as-step-0 test now that a client can no longer
-    supply a host at creation at all.
+    snapshots exactly those three ordered steps" — no separate ownership
+    step is inserted ahead of them; the first configured step (`stepOrder`
+    1 here) doubles as the host-nomination step instead
+    (`InvitationApprovalStepRepository.get_first_step`). Revises the old
+    "always an unconditional stepOrder-0 ownership step" behavior — see
+    `docs/features/approvals.md` "The host-nomination step" for why.
     """
     from datetime import date, time
 
     from vmss_api.invitations import service as invitations_service
     from vmss_api.invitations.schemas import (
-        ConsentsSubmit,
         IdProofType,
         InvitationCreate,
         InvitationPrimaryContactCreate,
@@ -2758,9 +2813,11 @@ async def test_category_with_configured_rules_creates_ownership_step_ahead_of_ro
             expected_duration="< 1 hour",
             department_to_visit="Test",
         ),
-        consents=ConsentsSubmit(
-            terms_accepted=True, data_processing_accepted=True, safety_guidelines_accepted=True
-        ),
+        consents={
+            "terms_accepted": True,
+            "data_processing_accepted": True,
+            "safety_guidelines_accepted": True,
+        },
     )
     invitation = await invitations_service.create_invitation(
         db_session,
@@ -2773,17 +2830,15 @@ async def test_category_with_configured_rules_creates_ownership_step_ahead_of_ro
         primary_contact_photo_content=_jpeg_bytes(),
         visitor_photo_contents=[],
     )
-    reception_role = await RoleRepository(db_session).get_by_name("reception")
-    assert reception_role is not None
-
     steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation.id)
-    assert len(steps) == 4
+    assert len(steps) == 3
     by_order = {s.step_order: s for s in steps}
-    assert by_order[0].approver_role_id == reception_role.id
-    assert by_order[0].approver_user_id is None
-    assert by_order[0].status == "pending"
     for step_order in (1, 2, 3):
         assert by_order[step_order].approver_role_id == role.id
         assert by_order[step_order].approver_user_id is None
         assert by_order[step_order].status == "pending"
+
+    first_step = await InvitationApprovalStepRepository(db_session).get_first_step(invitation.id)
+    assert first_step is not None
+    assert first_step.step_order == 1
     assert invitation.host_id is None

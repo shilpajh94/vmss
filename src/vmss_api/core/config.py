@@ -15,7 +15,7 @@ _DB_DRIVERS: dict[str, str] = {"pgsql": "postgresql+asyncpg"}
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "VMSS API"
+    app_name: str = "Visimio API"
     environment: str = Field(default="local", alias="APP_ENV")
     debug: bool = Field(default=True, alias="APP_DEBUG")
 
@@ -68,9 +68,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"Database is not configured: set DATABASE_URL, or all of {', '.join(missing)}."
             )
+        assert self.db_username is not None and self.db_password is not None  # validated above
         driver = _DB_DRIVERS[self.db_connection]
         return (
-            f"postgresql+asyncpg://"
+            f"{driver}://"
             f"{quote_plus(self.db_username)}:"
             f"{quote_plus(self.db_password)}@"
             f"{self.db_host}:{self.db_port}/"
@@ -181,6 +182,21 @@ class Settings(BaseSettings):
     smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
     smtp_use_tls: bool = Field(default=False, alias="SMTP_USE_TLS")
     smtp_from_address: str = Field(default="no-reply@vmss.local", alias="SMTP_FROM_ADDRESS")
+    # Display name shown in front of `smtp_from_address` ("Visimio <no-reply@…>").
+    smtp_from_name: str = Field(default="Visimio", alias="SMTP_FROM_NAME")
+    # Public origin email `<img src>` URLs are built from — the Visimio logo
+    # and the signed check-in QR (`core/email_assets.py`). Unset means
+    # emails fall back to a text wordmark and an inline `cid:` QR.
+    email_asset_base_url: str | None = Field(default=None, alias="EMAIL_ASSET_BASE_URL")
+    # Signs QR image URLs; falls back to `storage_local_url_secret`, then
+    # `jwt_secret_key`, when unset.
+    email_asset_url_secret: str | None = Field(default=None, alias="EMAIL_ASSET_URL_SECRET")
+    # Public origin of the web app (VMMS_WEB) that notification-email
+    # call-to-action links point into (`core/portal_links.py`) — despite the
+    # name, visitor links use it too. Supplied per environment through the
+    # `__STAFF_PORTAL_URL__` pipeline token; unset (or an unreplaced token)
+    # means emails carry no link.
+    staff_portal_url: str | None = Field(default=None, alias="STAFF_PORTAL_URL")
 
     # SMS gateway — no vendor chosen yet (design.md Open Questions); these are
     # placeholders the `SmsSender` adapter reads once one is picked. Left
@@ -193,6 +209,11 @@ class Settings(BaseSettings):
     # `invitations` feature config (add-pre-registration).
     invitation_token_ttl_hours: int = 168
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
+    # Only consulted at tenant/branch provisioning and by the
+    # `add-repeatable-field-groups` migration that seeded existing
+    # branches — the seed value for Visitor Info's field group
+    # `maxInstances`, which is the actual live enforcement point.
+    # `invitations/service.py` no longer reads this setting directly.
     invitation_max_group_visitors: int = 20
 
     # Optional visitor/primary-contact profile photo
@@ -300,4 +321,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
- 

@@ -1,3 +1,4 @@
+import re
 import uuid
 
 from fastapi import HTTPException, status
@@ -11,8 +12,16 @@ from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
 from vmss_api.visitors.repository import ApprovalWorkflowRuleRepository, VisitorCategoryRepository
 from vmss_api.visitors.schemas import (
     ApprovalWorkflowRuleCreate,
+    ApprovalWorkflowRuleStatus,
     ApprovalWorkflowRuleUpdate,
+    EscortRequirement,
+    NdaRequirement,
+    VisitorCategoryBulkCreate,
+    VisitorCategoryBulkCreateItem,
+    VisitorCategoryBulkCreateItemStatus,
+    VisitorCategoryBulkCreateOut,
     VisitorCategoryCreate,
+    VisitorCategoryOut,
     VisitorCategoryUpdate,
 )
 
@@ -35,6 +44,16 @@ async def _commit_or_conflict(tenant_db: AsyncSession, conflict_detail: str) -> 
 # --- Visitor Category -----------------------------------------------------
 
 
+def _slugify(name: str) -> str:
+    """Derives a `code` from a category `name` for the bulk-create path,
+    which only collects names — same algorithm as `AddFieldModal.tsx`'s
+    `slugify` (VMMS_WEB), reimplemented here since bulk-create has no
+    client-side counterpart to run it in.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower())
+    return slug.strip("_")
+
+
 async def create_visitor_category(
     tenant_db: AsyncSession, payload: VisitorCategoryCreate
 ) -> VisitorCategory:
@@ -48,7 +67,6 @@ async def create_visitor_category(
         name=payload.name,
         code=payload.code,
         description=payload.description,
-        form_schema=[f.model_dump(mode="json") for f in payload.form_schema],
         badge_color=payload.badge_color,
         nda_requirement=payload.nda_requirement.value if payload.nda_requirement else None,
         escort_requirement=(
@@ -62,16 +80,102 @@ async def create_visitor_category(
     return category
 
 
+async def bulk_create_visitor_categories(
+    tenant_db: AsyncSession, payload: VisitorCategoryBulkCreate
+) -> VisitorCategoryBulkCreateOut:
+    """Creates one `VisitorCategory` per name that doesn't collide with an
+    existing category (by name or derived code) or with an earlier name in
+    this same request — skip-and-report per name, not all-or-nothing like
+    `create_visitor_category`, since a bulk paste's whole point is
+    unattended batch processing (design.md's "Skip-and-report" decision).
+    """
+    repo = VisitorCategoryRepository(tenant_db)
+    candidates = [(raw_name.strip(), _slugify(raw_name.strip())) for raw_name in payload.names]
+    candidates = [(name, code) for name, code in candidates if name]
+    # Pre-fetch every existing code/name the batch could collide with in two
+    # queries total, instead of one `get_by_code`/`get_by_name` pair per name
+    # (query-performance.md §2) — safe to compute once up front since the
+    # `seen_names`/`seen_codes` check below already catches an
+    # intra-batch duplicate before it would ever reach these sets.
+    existing_codes = await repo.get_existing_codes([code for _, code in candidates])
+    existing_names = await repo.get_existing_names([name for name, _ in candidates])
+
+    seen_names: set[str] = set()
+    seen_codes: set[str] = set()
+    created_ids: list[uuid.UUID] = []
+    # (name, status, reason, id-if-created) — created rows are re-fetched in
+    # one batch query after the commit below, once their server-generated
+    # fields (timestamps) are populated.
+    _ResultRow = tuple[str, VisitorCategoryBulkCreateItemStatus, str | None, uuid.UUID | None]
+    results: list[_ResultRow] = []
+
+    for name, code in candidates:
+        reason: str | None = None
+        if name in seen_names or code in seen_codes:
+            reason = "Duplicate in this request"
+        elif code in existing_codes:
+            reason = "Category code already exists"
+        elif name in existing_names:
+            reason = "Category name already exists"
+
+        seen_names.add(name)
+        seen_codes.add(code)
+
+        if reason is not None:
+            results.append((name, VisitorCategoryBulkCreateItemStatus.skipped, reason, None))
+            continue
+
+        category_id = uuid.uuid4()
+        tenant_db.add(VisitorCategory(id=category_id, name=name, code=code))
+        created_ids.append(category_id)
+        results.append((name, VisitorCategoryBulkCreateItemStatus.created, None, category_id))
+
+    await _commit_or_conflict(tenant_db, "One or more categories in this batch already exist")
+
+    created_by_id = {c.id: c for c in await repo.list_by_ids(created_ids)}
+    items: list[VisitorCategoryBulkCreateItem] = []
+    created_count = 0
+    skipped_count = 0
+    for name, item_status, reason, created_id in results:
+        if created_id is not None:
+            items.append(
+                VisitorCategoryBulkCreateItem(
+                    name=name,
+                    status=item_status,
+                    category=VisitorCategoryOut.model_validate(created_by_id[created_id]),
+                )
+            )
+            created_count += 1
+        else:
+            items.append(
+                VisitorCategoryBulkCreateItem(name=name, status=item_status, reason=reason)
+            )
+            skipped_count += 1
+
+    return VisitorCategoryBulkCreateOut(
+        items=items, created_count=created_count, skipped_count=skipped_count
+    )
+
+
 async def list_visitor_categories_page(
     tenant_db: AsyncSession,
     *,
+    badge_color: str | None,
+    nda_requirement: NdaRequirement | None,
+    escort_requirement: EscortRequirement | None,
     page: int,
     page_size: int,
     sort_by: str,
     sort_order: SortOrder,
 ) -> tuple[list[VisitorCategory], int]:
     return await VisitorCategoryRepository(tenant_db).list_page(
-        page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order
+        badge_color=badge_color,
+        nda_requirement=nda_requirement,
+        escort_requirement=escort_requirement,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 
@@ -151,6 +255,7 @@ async def list_approval_workflow_rules_page(
     tenant_db: AsyncSession,
     *,
     visitor_category_id: uuid.UUID | None,
+    status: ApprovalWorkflowRuleStatus | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -158,6 +263,7 @@ async def list_approval_workflow_rules_page(
 ) -> tuple[list[ApprovalWorkflowRule], int]:
     return await ApprovalWorkflowRuleRepository(tenant_db).list_page(
         visitor_category_id=visitor_category_id,
+        status=status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

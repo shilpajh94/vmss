@@ -1,0 +1,28 @@
+{% extends "base.txt" %}
+{% import "_macros.txt" as m with context %}
+{% block content %}
+Good news - your visit has been approved. Everything you need for a smooth check-in is below.
+
+Tracking ID: {{ tracking_id }}
+
+{{ m.visit_details() }}
+{% if contact_name %}
+{{ (contact_title or "Your point of contact") | upper }}
+{{ m.detail_rows([("Name", contact_name), ("Contact", contact_detail)]) }}
+{% endif %}
+
+YOUR CHECK-IN QR CODE
+Your QR code is shown in this email - open it with images enabled and show the code at reception or the security gate. If it doesn't display, quote tracking ID {{ tracking_id }} at reception.
+
+BEFORE YOU ARRIVE
+{{ m.checklist([
+  "Plan to arrive about 10 minutes before your scheduled time.",
+  "Bring a valid government-issued photo ID.",
+  "Head to reception and show your QR code.",
+  "Keep this email handy in case you're asked for your tracking ID.",
+]) }}
+{% if cta %}
+{{ cta.label }}: {{ cta.url }}
+
+{% endif %}{{ m.callout("Need to change your plans?", "Contact the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " and quote your tracking ID " ~ tracking_id ~ " to reschedule or cancel.") }}
+{% endblock %}

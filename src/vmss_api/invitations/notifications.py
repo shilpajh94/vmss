@@ -14,13 +14,22 @@ to change.
 
 from typing import Protocol
 
-from vmss_api.core.emailing import Attachment, EmailSender, SmtpEmailSender, make_attachment
+from vmss_api.core.emailing import (
+    Attachment,
+    EmailSender,
+    InlineImage,
+    SmtpEmailSender,
+    make_attachment,
+    make_inline_image,
+)
 
 __all__ = [
     "Attachment",
     "EmailSender",
+    "InlineImage",
     "SmsSender",
     "make_attachment",
+    "make_inline_image",
     "SmsGatewayNotConfiguredError",
     "UnconfiguredSmsSender",
     "email_sender",

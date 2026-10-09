@@ -86,8 +86,6 @@ async def _send_push(
                     failed_count=len(failed),
                     total_count=len(results),
                 )
-                raise fcm.PushDeliveryError(
-                    f"{len(failed)} of {len(results)} push sends failed"
-                )
+                raise fcm.PushDeliveryError(f"{len(failed)} of {len(results)} push sends failed")
     finally:
         await engine.dispose()

@@ -31,6 +31,7 @@ from vmss_api.org_structure.repository import (
     SecurityGateRepository,
 )
 from vmss_api.org_structure.schemas import (
+    ActiveStatus,
     BranchCreate,
     BranchProvisionRequest,
     BranchUpdate,
@@ -40,12 +41,18 @@ from vmss_api.org_structure.schemas import (
     CompanyUpdate,
     DepartmentCreate,
     DepartmentUpdate,
+    DeskStatus,
+    FloorAccessLevel,
     FloorCreate,
     FloorUpdate,
+    GateType,
+    ProvisionBuilding,
+    ProvisionFloor,
     ReceptionDeskCreate,
     ReceptionDeskUpdate,
     SecurityGateCreate,
     SecurityGateUpdate,
+    SecurityLevel,
 )
 from vmss_api.registrations.repository import RegistrationDeviceKeyRepository
 
@@ -320,6 +327,7 @@ async def list_branches_page(
     tenant_db: AsyncSession,
     *,
     branch_scope: BranchScope,
+    status: ActiveStatus | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -327,6 +335,7 @@ async def list_branches_page(
 ) -> tuple[list[Branch], int]:
     return await BranchRepository(tenant_db).list_page(
         branch_scope=branch_scope,
+        status=status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -470,11 +479,15 @@ async def provision_branch(
     # No ORM `relationship()` links `Branch`/`Building`/`Floor`/... to each
     # other (only raw FK columns — see org_structure/models.py), so the
     # flush's cross-class insert ordering isn't guided by a dependency graph
-    # the way it would be with declared relationships. An explicit `flush()`
-    # after each parent is added, before any child referencing its id is
-    # added, forces the parent's row to exist in the database first — same
-    # fix `rbac_catalog.py::seed_default_roles` applies between permissions
-    # and roles. Still one `commit()` for the whole tree at the end.
+    # the way it would be with declared relationships. A `flush()` after
+    # every row at one level is added, before any child referencing that
+    # level's ids is added, forces those rows to exist in the database
+    # first — same fix `rbac_catalog.py::seed_default_roles` applies between
+    # permissions and roles. One flush per level (branch, buildings, floors)
+    # rather than one per row: every id is already client-generated via
+    # `uuid.uuid4()` above, so nothing needs a flush to *learn* an id, only
+    # to make a referenced parent row visible before its children insert.
+    # Still one `commit()` for the whole tree at the end.
     await tenant_db.flush()
 
     counts = ProvisionCounts()
@@ -485,9 +498,9 @@ async def provision_branch(
     # request rather than reset per floor.
     seen_department_codes: set[str] = set()
 
+    building_entries: list[tuple[Building, ProvisionBuilding]] = []
     for building_payload in payload.buildings:
         _reject_duplicate(seen_building_codes, building_payload.code, what="building")
-
         building = Building(
             id=uuid.uuid4(),
             branch_id=branch.id,
@@ -495,10 +508,14 @@ async def provision_branch(
             code=building_payload.code,
             address=building_payload.address,
         )
-        tenant_db.add(building)
-        await tenant_db.flush()
+        building_entries.append((building, building_payload))
         counts.buildings += 1
 
+    tenant_db.add_all(building for building, _ in building_entries)
+    await tenant_db.flush()
+
+    floor_entries: list[tuple[Floor, ProvisionFloor]] = []
+    for building, building_payload in building_entries:
         seen_floor_numbers: set[int] = set()
         for floor_payload in building_payload.floors:
             if floor_payload.floor_number in seen_floor_numbers:
@@ -517,36 +534,40 @@ async def provision_branch(
                 name=floor_payload.name,
                 floor_number=floor_payload.floor_number,
             )
-            tenant_db.add(floor)
-            await tenant_db.flush()
+            floor_entries.append((floor, floor_payload))
             counts.floors += 1
 
-            for department_payload in floor_payload.departments:
-                _reject_duplicate(seen_department_codes, department_payload.code, what="department")
-                tenant_db.add(
-                    Department(
-                        id=uuid.uuid4(),
-                        branch_id=branch.id,
-                        floor_id=floor.id,
-                        name=department_payload.name,
-                        code=department_payload.code,
-                    )
-                )
-                counts.departments += 1
+    tenant_db.add_all(floor for floor, _ in floor_entries)
+    await tenant_db.flush()
 
-            seen_desk_codes: set[str] = set()
-            for desk_payload in floor_payload.reception_desks:
-                _reject_duplicate(seen_desk_codes, desk_payload.code, what="reception desk")
-                tenant_db.add(
-                    ReceptionDesk(
-                        id=uuid.uuid4(),
-                        floor_id=floor.id,
-                        name=desk_payload.name,
-                        code=desk_payload.code,
-                    )
+    for floor, floor_payload in floor_entries:
+        for department_payload in floor_payload.departments:
+            _reject_duplicate(seen_department_codes, department_payload.code, what="department")
+            tenant_db.add(
+                Department(
+                    id=uuid.uuid4(),
+                    branch_id=branch.id,
+                    floor_id=floor.id,
+                    name=department_payload.name,
+                    code=department_payload.code,
                 )
-                counts.reception_desks += 1
+            )
+            counts.departments += 1
 
+        seen_desk_codes: set[str] = set()
+        for desk_payload in floor_payload.reception_desks:
+            _reject_duplicate(seen_desk_codes, desk_payload.code, what="reception desk")
+            tenant_db.add(
+                ReceptionDesk(
+                    id=uuid.uuid4(),
+                    floor_id=floor.id,
+                    name=desk_payload.name,
+                    code=desk_payload.code,
+                )
+            )
+            counts.reception_desks += 1
+
+    for building, building_payload in building_entries:
         for gate_payload in building_payload.security_gates:
             _reject_duplicate(seen_gate_codes, gate_payload.code, what="security gate")
             tenant_db.add(
@@ -603,6 +624,7 @@ async def list_buildings_page(
     tenant_db: AsyncSession,
     *,
     branch_scope: BranchScope,
+    status: ActiveStatus | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -610,6 +632,7 @@ async def list_buildings_page(
 ) -> tuple[list[Building], int]:
     return await BuildingRepository(tenant_db).list_page(
         branch_scope=branch_scope,
+        status=status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -680,6 +703,8 @@ async def list_floors_page(
     *,
     branch_scope: BranchScope,
     building_id: uuid.UUID | None,
+    status: ActiveStatus | None,
+    access_level: FloorAccessLevel | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -688,6 +713,8 @@ async def list_floors_page(
     return await FloorRepository(tenant_db).list_page(
         branch_scope=branch_scope,
         building_id=building_id,
+        status=status,
+        access_level=access_level,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -760,6 +787,7 @@ async def list_departments_page(
     *,
     branch_scope: BranchScope,
     floor_id: uuid.UUID | None,
+    status: ActiveStatus | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -768,6 +796,7 @@ async def list_departments_page(
     return await DepartmentRepository(tenant_db).list_page(
         branch_scope=branch_scope,
         floor_id=floor_id,
+        status=status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -840,6 +869,7 @@ async def list_reception_desks_page(
     *,
     branch_scope: BranchScope,
     floor_id: uuid.UUID | None,
+    status: DeskStatus | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -848,6 +878,7 @@ async def list_reception_desks_page(
     return await ReceptionDeskRepository(tenant_db).list_page(
         branch_scope=branch_scope,
         floor_id=floor_id,
+        status=status,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -920,6 +951,8 @@ async def list_security_gates_page(
     *,
     branch_scope: BranchScope,
     building_id: uuid.UUID | None,
+    gate_type: GateType | None,
+    security_level: SecurityLevel | None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -928,6 +961,8 @@ async def list_security_gates_page(
     return await SecurityGateRepository(tenant_db).list_page(
         branch_scope=branch_scope,
         building_id=building_id,
+        gate_type=gate_type,
+        security_level=security_level,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

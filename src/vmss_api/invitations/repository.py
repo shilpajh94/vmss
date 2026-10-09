@@ -6,9 +6,11 @@ from sqlalchemy import Select, exists, func, or_, select, update
 from sqlalchemy.orm import aliased, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
-from vmss_api.auth.models import UserBranchRole
+from vmss_api.auth.models import Role, UserBranchRole
+from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import BranchScope, SortOrder
+from vmss_api.core.tenancy import branch_filter as _core_branch_filter
 from vmss_api.invitations.models import (
     Invitation,
     InvitationQRCode,
@@ -19,11 +21,10 @@ from vmss_api.org_structure.models import Branch, Building, Department, Floor
 
 
 def _branch_filter(branch_scope: BranchScope) -> Any | None:
-    """Same `BranchScope` -> filter-clause translation as
-    `org_structure/repository.py::_branch_filter`: `None` (no filter) for a
-    company-wide "all" scope, otherwise `Invitation.branch_id IN (...)`.
+    """`Invitation.branch_id`-bound wrapper around the shared
+    `core.tenancy.branch_filter`.
     """
-    return None if branch_scope == "all" else Invitation.branch_id.in_(branch_scope)
+    return _core_branch_filter(Invitation.branch_id, branch_scope)
 
 
 def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) -> Any:
@@ -38,7 +39,8 @@ def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) 
     currently holds — via branch-scoped `UserBranchRole` at the invitation's
     own branch or company-wide — the role of the invitation's current
     pending, role-identified step, AND that step has no delegate assigned,
-    (d) has personally acted on (approved or rejected) any of the
+    AND that role is not delegation-only (`DELEGATION_ONLY_ROLE_NAMES`,
+    i.e. `host`), (d) has personally acted on (approved or rejected) any of the
     invitation's steps, regardless of that step's or the invitation's
     current status, or (e) currently holds — via branch-scoped
     `UserBranchRole` at the invitation's own branch or company-wide — the
@@ -61,6 +63,14 @@ def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) 
     of delegation or status, since that role owns front-office intake for
     the invitation's entire lifecycle — the same permanence clause (d)
     gives an individual actor, granted here to the whole role instead.
+
+    (c) never matches a delegation-only role's step
+    (restrict-delegated-invitation-visibility): no holder of such a role may
+    act on or be notified about an undelegated step of it
+    (`approvals/service.py::_caller_matches_step`,
+    `notifications/service.py::notify_step_approver`), so it must not be
+    broadcast to all of them here either — an unassigned `host` step is seen
+    only via (a), (d) and (e) until someone delegates it.
     (b), (c), (d), and (e) are expressed as (correlated, where needed)
     subqueries against `invitation_approval_steps`/`user_branch_roles`, not
     a per-invitation loop (query-performance.md §2).
@@ -99,6 +109,7 @@ def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) 
     current_role_holder = exists(
         select(current_step.id)
         .join(UserBranchRole, UserBranchRole.role_id == current_step.approver_role_id)
+        .join(Role, Role.id == current_step.approver_role_id)
         .where(
             current_step.invitation_id == Invitation.id,
             current_step.deleted_at.is_(None),
@@ -106,6 +117,7 @@ def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) 
             current_step.approver_role_id.is_not(None),
             current_step.step_order == min_pending_step_order,
             current_step.delegated_to_user_id.is_(None),
+            func.lower(Role.name).not_in(DELEGATION_ONLY_ROLE_NAMES),
             UserBranchRole.user_id == user_id,
             or_(
                 UserBranchRole.branch_id == Invitation.branch_id,
@@ -164,7 +176,11 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_location(
-        self, *, branch_id: uuid.UUID, department_id: uuid.UUID | None
+        self,
+        *,
+        branch_id: uuid.UUID,
+        department_id: uuid.UUID | None,
+        building_id: uuid.UUID | None = None,
     ) -> tuple[Branch, Department | None, Building | None]:
         """Resolves an invitation's branch and, when it has a
         `department_id` on file, that department's building via
@@ -190,7 +206,12 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             .select_from(Branch)
             .outerjoin(Department, Department.id == department_id)
             .outerjoin(Floor, Department.floor_id == Floor.id)
-            .outerjoin(Building, Floor.building_id == Building.id)
+            .outerjoin(
+                Building,
+                Building.id == building_id
+                if building_id is not None
+                else Floor.building_id == Building.id,
+            )
             .where(Branch.id == branch_id)
         )
         row = (await self.session.execute(stmt)).first()
@@ -198,7 +219,9 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         branch, department, building = row
         return branch, department, building
 
-    async def approve_if_submitted(self, id_: uuid.UUID) -> Invitation | None:
+    async def approve_if_submitted(
+        self, id_: uuid.UUID, *, expires_at: datetime | None = None
+    ) -> Invitation | None:
         """Atomic conditional transition: the `UPDATE` only affects a row
         that is still `submitted`, so two concurrent approval requests for
         the same invitation can't both transition it and both dispatch an
@@ -209,11 +232,19 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         a concurrent call) — the caller treats `None` as "not currently
         submitted", the same 409 the sequential already-approved case
         already raises.
+
+        `expires_at`, when given, overwrites the creation-time TTL with the
+        end of the approved visit day (`service.py::_end_of_visit_day_utc`)
+        — omitted (`None`) when the invitation has no `preferred_visit_date`
+        to align to, leaving the existing value untouched.
         """
+        values: dict[str, Any] = {"status": "approved", "approved_at": datetime.now(UTC)}
+        if expires_at is not None:
+            values["expires_at"] = expires_at
         stmt = (
             update(Invitation)
             .where(Invitation.id == id_, Invitation.status == "submitted")
-            .values(status="approved", approved_at=datetime.now(UTC))
+            .values(**values)
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
@@ -361,7 +392,13 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def edit_if_eligible(self, id_: uuid.UUID, **changes: Any) -> Invitation | None:
+    async def edit_if_eligible(
+        self,
+        id_: uuid.UUID,
+        *,
+        allowed_statuses: tuple[str, ...] = _RESCHEDULABLE_STATUSES,
+        **changes: Any,
+    ) -> Invitation | None:
         """Atomic conditional `UPDATE` backing `PATCH /invitations/{id}/edit`
         (role-based-invitation-workflow), same eligible-status pattern as
         `reschedule_if_eligible`/`extend_if_eligible`. `changes` is whatever
@@ -371,7 +408,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         """
         stmt = (
             update(Invitation)
-            .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
+            .where(Invitation.id == id_, Invitation.status.in_(allowed_statuses))
             .values(**changes)
             .returning(Invitation)
         )
@@ -397,7 +434,12 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def reschedule_if_eligible(
-        self, id_: uuid.UUID, *, preferred_visit_date: Any, preferred_visit_time: Any
+        self,
+        id_: uuid.UUID,
+        *,
+        preferred_visit_date: Any,
+        preferred_visit_time: Any,
+        expires_at: datetime | None = None,
     ) -> Invitation | None:
         """`previous_preferred_visit_date`/`_time` are set from
         `Invitation.preferred_visit_date`/`_time` in the same `UPDATE` that
@@ -405,18 +447,25 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         `UPDATE` reads the pre-update row, so this reliably captures the
         immediately-prior schedule rather than the just-written new one
         (`add-reschedule-history/design.md`).
+
+        `expires_at`, when given (an already-`approved` invitation moved to
+        a new visit day), realigns expiry to the end of that new day the
+        same way `approve_if_submitted` does at initial approval.
         """
+        values: dict[str, Any] = {
+            "previous_preferred_visit_date": Invitation.preferred_visit_date,
+            "previous_preferred_visit_time": Invitation.preferred_visit_time,
+            "preferred_visit_date": preferred_visit_date,
+            "preferred_visit_time": preferred_visit_time,
+            "rescheduled_at": datetime.now(UTC),
+            "reschedule_count": Invitation.reschedule_count + 1,
+        }
+        if expires_at is not None:
+            values["expires_at"] = expires_at
         stmt = (
             update(Invitation)
             .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
-            .values(
-                previous_preferred_visit_date=Invitation.preferred_visit_date,
-                previous_preferred_visit_time=Invitation.preferred_visit_time,
-                preferred_visit_date=preferred_visit_date,
-                preferred_visit_time=preferred_visit_time,
-                rescheduled_at=datetime.now(UTC),
-                reschedule_count=Invitation.reschedule_count + 1,
-            )
+            .values(**values)
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
@@ -515,6 +564,53 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def get_latest_by_primary_contact_email(self, email: str) -> Invitation | None:
+        """Backs the returning-primary-contact name/email lock
+        (`dedupe-repeat-visitor-registrations/design.md` Decision 2) — a
+        single `ORDER BY ... LIMIT 1` rather than fetching every prior
+        invitation via `list_by_primary_contact_email` and filtering in
+        Python, since this runs on every invitation creation.
+        """
+        stmt = (
+            select(Invitation)
+            .where(Invitation.primary_contact_email == email, Invitation.deleted_at.is_(None))
+            .order_by(Invitation.created_at.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_latest_by_primary_contact_phone(self, phone: str) -> Invitation | None:
+        """The phone-fallback counterpart to
+        `get_latest_by_primary_contact_email` — only ever consulted when the
+        new request has no primary contact email at all (design.md
+        Decision 5)."""
+        stmt = (
+            select(Invitation)
+            .where(Invitation.primary_contact_phone == phone, Invitation.deleted_at.is_(None))
+            .order_by(Invitation.created_at.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_latest_for_prefill_by_email(
+        self, email: str, branch_scope: BranchScope
+    ) -> Invitation | None:
+        """Backs the staff `lookup-by-email` prefill endpoint
+        (`add-invitation-lookup-by-email/design.md`) — a separate method
+        from `get_latest_by_primary_contact_email` since that one's
+        case-sensitive, branch-unscoped matching is deliberate for the
+        create-time dedupe lock it backs, and this endpoint needs different
+        semantics: case-insensitive, and scoped to the caller's authorized
+        branches.
+        """
+        filters = [func.lower(Invitation.primary_contact_email) == email.lower()]
+        filters.append(Invitation.deleted_at.is_(None))
+        branch_filter = _branch_filter(branch_scope)
+        if branch_filter is not None:
+            filters.append(branch_filter)
+        stmt = select(Invitation).where(*filters).order_by(Invitation.created_at.desc()).limit(1)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def list_page(
         self,
         *,
@@ -524,6 +620,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         status: str | None,
         registration_type: str | None,
         source: str | None,
+        search: str | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -563,12 +660,36 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             filters.append(Invitation.registration_type == registration_type)
         if source is not None:
             filters.append(Invitation.source == source)
+        if search is not None:
+            pattern = f"%{search}%"
+            filters.append(
+                or_(
+                    Invitation.primary_contact_full_name.ilike(pattern),
+                    Invitation.tracking_id.ilike(pattern),
+                )
+            )
         return await super().paginate(
             page=page,
             page_size=page_size,
             order_by=_order_clause(column, sort_order),
             filters=filters,
         )
+
+    async def is_relevant_to(
+        self, id_: uuid.UUID, *, user_id: uuid.UUID, default_host_role_id: uuid.UUID
+    ) -> bool:
+        """Single-row form of `list_page`'s `relevantToMe` predicate, so the
+        detail endpoint's participant check can never drift from the worklist
+        (restrict-delegated-invitation-visibility/design.md Decision 3).
+        """
+        stmt = select(
+            exists().where(
+                Invitation.id == id_,
+                Invitation.deleted_at.is_(None),
+                _relevant_to_me_filter(user_id, default_host_role_id),
+            )
+        )
+        return bool((await self.session.execute(stmt)).scalar())
 
     async def get_qr_code(self, invitation_id: uuid.UUID) -> InvitationQRCode | None:
         stmt = select(InvitationQRCode).where(InvitationQRCode.invitation_id == invitation_id)

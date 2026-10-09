@@ -1,0 +1,153 @@
+{# Shared building blocks for the per-type templates. Import `with context`
+   so the tone palette `t` (injected by `render_email`) is visible here:
+   every colour below comes from `t`, never a per-template literal
+   (refine-email-templates-and-visimio-brand design.md Decisions 1-2). #}
+
+{% set _font = "font-family:'Geist','Segoe UI',Arial,sans-serif;" %}
+{% set _mono = "font-family:'SFMono-Regular',Menlo,Consolas,'Courier New',monospace;" %}
+
+{% macro lead(text) -%}
+<p style="margin:0 0 20px 0;">{{ text }}</p>
+{%- endmacro %}
+
+{% macro section(title) -%}
+<p style="margin:8px 0 12px 0; font-family:'Outfit','Segoe UI',Arial,sans-serif; font-size:16px; line-height:22px; font-weight:700; color:#0f172a;">{{ title }}</p>
+{%- endmacro %}
+
+{# `rows` is a list of (label, value) pairs. Rows whose value is missing
+   are skipped here, so no template can render an empty or "None" row. #}
+{% macro detail_table(rows) -%}
+{% set present = rows | selectattr(1) | list %}
+{% if present %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0; border:1px solid #e2e8f0; border-radius:10px; border-collapse:separate; overflow:hidden; {{ _font }} font-size:14px; line-height:20px;">
+  {% for label, value in present %}
+  <tr>
+    <td class="vp-label" width="38%" valign="top" style="width:38%; padding:12px 16px; background-color:{{ '#f8fafc' if loop.index is odd else '#ffffff' }}; color:#64748b; font-size:13px;{% if not loop.last %} border-bottom:1px solid #e2e8f0;{% endif %}">{{ label }}</td>
+    <td valign="top" style="padding:12px 16px; background-color:{{ '#f8fafc' if loop.index is odd else '#ffffff' }}; color:#0f172a; font-weight:500; word-break:break-word;{% if not loop.last %} border-bottom:1px solid #e2e8f0;{% endif %}">{{ value }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{%- endmacro %}
+
+{# The standard "Visit details" rows (email-notifications: date & time,
+   place of visit, department, duration, purpose) plus any extra leading
+   rows, so every type formats "where and when" identically. Omitted
+   entirely, title included, when nothing is known. #}
+{% macro visit_details(title="Visit details", before=[], after=[]) -%}
+{% set rows = before + [
+  ("Date & time", visit_date | visit_datetime(visit_time)),
+  ("Place of visit", place),
+  ("Department", department),
+  ("Expected duration", duration),
+  ("Purpose", purpose),
+] + after %}
+{% if rows | selectattr(1) | list %}
+{{ section(title) }}
+{{ detail_table(rows) }}
+{% endif %}
+{%- endmacro %}
+
+{# Dashed, tone-tinted box for the one value the reader needs to copy or
+   quote: the tracking ID, or the verification code. #}
+{% macro highlight_box(label, value, code=false) -%}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0; border:1px dashed {{ t.accent }}; border-radius:10px; border-collapse:separate; background-color:{{ t.tint_bg }};">
+  <tr>
+    <td align="center" style="padding:18px 16px; {{ _font }}">
+      <p style="margin:0 0 6px 0; font-size:11px; line-height:14px; font-weight:700; letter-spacing:0.8px; text-transform:uppercase; color:{{ t.heading_fg }};">{{ label }}</p>
+      <p class="{{ 'vp-code' if code else '' }}" style="margin:0; {{ _mono }} font-size:{{ '28px' if code else '24px' }}; line-height:36px; font-weight:700; letter-spacing:{{ '6px' if code else '2px' }}; color:#0f172a;">{{ value }}</p>
+    </td>
+  </tr>
+</table>
+{%- endmacro %}
+
+{# `steps`: list of (title, detail, state) where state is "done",
+   "current" or "todo". Table-based so Outlook keeps the circles aligned. #}
+{% macro timeline(steps) -%}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0; {{ _font }}">
+  {% for title, detail, state in steps %}
+  <tr>
+    <td width="44" valign="top" style="width:44px; padding:0 0 {{ '0' if loop.last else '16px' }} 0;">
+      {% if state == "todo" %}
+      <div style="width:26px; height:26px; line-height:24px; border:1px solid #cbd5e1; border-radius:13px; text-align:center; font-size:12px; font-weight:700; color:#64748b; background-color:#ffffff;">{{ loop.index }}</div>
+      {% else %}
+      <div style="width:28px; height:28px; line-height:28px; border-radius:14px; text-align:center; font-size:13px; font-weight:700; color:#ffffff; background-color:#0b8b84;">{{ '&#10003;' | safe if state == 'done' else loop.index }}</div>
+      {% endif %}
+    </td>
+    <td valign="top" style="padding:2px 0 {{ '0' if loop.last else '16px' }} 0;">
+      <p style="margin:0; font-size:14px; line-height:20px; font-weight:600; color:{{ '#64748b' if state == 'todo' else '#0f172a' }};">{{ title }}</p>
+      <p style="margin:0; font-size:12px; line-height:18px; color:#64748b;">{{ detail }}</p>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{%- endmacro %}
+
+{% macro checklist(items) -%}
+{% set present = items | select | list %}
+{% if present %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0; {{ _font }} font-size:14px; line-height:21px;">
+  {% for item in present %}
+  <tr>
+    <td width="26" valign="top" style="width:26px; padding:0 0 8px 0; color:#0b8b84; font-weight:700;">&#10003;</td>
+    <td valign="top" style="padding:0 0 8px 0; color:#0f172a;">{{ item }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{%- endmacro %}
+
+{# The scannable check-in pass. The QR sits on an explicit white cell with
+   padding as a quiet zone, so forced dark mode can't make it unscannable. #}
+{% macro qr_pass(src, tracking_id) -%}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0; border:1px solid {{ t.tint_border }}; border-radius:12px; border-collapse:separate; background-color:{{ t.tint_bg }};">
+  <tr>
+    <td align="center" style="padding:24px 16px; {{ _font }}">
+      <p style="margin:0 0 4px 0; font-family:'Outfit','Segoe UI',Arial,sans-serif; font-size:17px; line-height:24px; font-weight:700; color:#0f172a;">Your check-in pass</p>
+      <p style="margin:0 0 16px 0; font-size:13px; line-height:20px; color:#64748b;">Show this QR code at reception or the security gate when you arrive. It's unique to this visit &mdash; please don't share it.</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;">
+        <tr>
+          <td bgcolor="#ffffff" style="background-color:#ffffff; padding:16px; border:1px solid #e2e8f0; border-radius:10px;">
+            <img src="{{ src }}" width="200" height="200" alt="Check-in QR code for {{ tracking_id }}" style="display:block; width:200px; max-width:100%; height:auto; border:0; outline:none;">
+          </td>
+        </tr>
+      </table>
+      <p style="margin:16px 0 0 0; font-size:11px; line-height:14px; letter-spacing:0.8px; text-transform:uppercase; color:#64748b;">Tracking ID</p>
+      <p style="margin:2px 0 0 0; {{ _mono }} font-size:20px; line-height:28px; font-weight:700; letter-spacing:1px; color:#0f172a;">{{ tracking_id }}</p>
+    </td>
+  </tr>
+</table>
+{%- endmacro %}
+
+{# A tinted callout, coloured by the email's tone. #}
+{% macro callout(title, body) -%}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0; border-left:4px solid {{ t.accent }}; background-color:{{ t.tint_bg }}; border-radius:0 8px 8px 0;">
+  <tr>
+    <td style="padding:14px 16px; {{ _font }} font-size:14px; line-height:21px; color:#0f172a;">
+      <p style="margin:0 0 4px 0; font-size:14px; line-height:20px; font-weight:700; color:{{ t.heading_fg }};">{{ title }}</p>
+      <p style="margin:0;">{{ body }}</p>
+    </td>
+  </tr>
+</table>
+{%- endmacro %}
+
+{% macro note(text) -%}
+<p style="margin:0 0 8px 0; font-size:14px; line-height:22px; color:#64748b;">{{ text }}</p>
+{%- endmacro %}
+
+{# A note ending in a bold tracking-ID quote, e.g. "…quote tracking ID
+   <b>INV-…</b>." — the one place a template needs inline emphasis. #}
+{% macro tracking_note(prefix, tracking_id, suffix=".") -%}
+<p style="margin:0 0 8px 0; font-size:14px; line-height:22px; color:#64748b;">{{ prefix }} <strong style="color:#475569;">{{ tracking_id }}</strong>{{ suffix }}</p>
+{%- endmacro %}
+
+{# A call-to-action button, coloured by the email's tone. #}
+{% macro button(label, url) -%}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+  <tr>
+    <td style="background-color:{{ t.accent }}; border-radius:8px;">
+      <a href="{{ url }}" style="display:inline-block; padding:12px 24px; {{ _font }} font-size:15px; line-height:20px; font-weight:600; color:#ffffff; text-decoration:none;">{{ label }}</a>
+    </td>
+  </tr>
+</table>
+{%- endmacro %}

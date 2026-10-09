@@ -1,21 +1,20 @@
 {% extends "base.html" %}
-{% block subject %}Your visit is confirmed{% endblock %}
+{% import "_macros.html" as m with context %}
+{% block eyebrow %}Confirmed{% endblock %}
+{% block heading %}Your visit is confirmed{% endblock %}
 {% block content %}
-<h2 style="margin-top:0; color:#1f2933;">Your visit is confirmed</h2>
-<p>Your registration is confirmed. Present the attached QR code at check-in.</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px; font-size:14px;">
-  <tr><td style="padding:4px 0; color:#6b7280; width:160px;">Tracking ID</td><td style="padding:4px 0; font-weight:bold;">{{ tracking_id }}</td></tr>
-  {% if purpose %}<tr><td style="padding:4px 0; color:#6b7280;">Purpose</td><td style="padding:4px 0;">{{ purpose }}</td></tr>{% endif %}
-  {% if visit_date %}<tr><td style="padding:4px 0; color:#6b7280;">Visit date</td><td style="padding:4px 0;">{{ visit_date }}{% if visit_time %} at {{ visit_time }}{% endif %}</td></tr>{% endif %}
-  {% if duration %}<tr><td style="padding:4px 0; color:#6b7280;">Expected duration</td><td style="padding:4px 0;">{{ duration }}</td></tr>{% endif %}
-  {% if department %}<tr><td style="padding:4px 0; color:#6b7280;">Department</td><td style="padding:4px 0;">{{ department }}</td></tr>{% endif %}
-</table>
-<div style="margin-top:20px; padding:16px; background-color:#f4f5f7; border-radius:6px;">
-  <p style="margin:0 0 4px 0; font-weight:bold; color:#1f2933;">Your point of contact</p>
-  {% if host_name %}
-    <p style="margin:0;">{{ host_name }}{% if host_contact %} — {{ host_contact }}{% endif %}</p>
-  {% else %}
-    <p style="margin:0;">{{ front_desk_contact | default('Please contact the front desk on arrival.') }}</p>
-  {% endif %}
-</div>
+{{ m.lead("Good news — your visit has been approved. Everything you need for a smooth check-in is below.") }}
+{{ m.highlight_box("Tracking ID", tracking_id) }}
+{{ m.visit_details() }}
+{% include "_contact.html" %}
+{% if qr_src %}{{ m.qr_pass(qr_src, tracking_id) }}{% endif %}
+{{ m.section("Before you arrive") }}
+{{ m.checklist([
+  "Plan to arrive about 10 minutes before your scheduled time.",
+  "Bring a valid government-issued photo ID.",
+  "Head to reception and show your QR code.",
+  "Keep this email handy in case you're asked for your tracking ID.",
+]) }}
+{% if cta %}{{ m.button(cta.label, cta.url) }}{% endif %}
+{{ m.callout("Need to change your plans?", "Contact the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " and quote your tracking ID " ~ tracking_id ~ " to reschedule or cancel.") }}
 {% endblock %}

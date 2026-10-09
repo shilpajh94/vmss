@@ -1,11 +1,17 @@
 {% extends "base.html" %}
-{% block subject %}Your registration is received{% endblock %}
+{% import "_macros.html" as m with context %}
+{% block eyebrow %}Pending approval{% endblock %}
+{% block heading %}We've received your visit request{% endblock %}
 {% block content %}
-<h2 style="margin-top:0; color:#1f2933;">Your registration is received</h2>
-<p>Your registration is awaiting approval. You'll receive a check-in QR code once it's approved.</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px; font-size:14px;">
-  <tr><td style="padding:4px 0; color:#6b7280; width:160px;">Tracking ID</td><td style="padding:4px 0; font-weight:bold;">{{ tracking_id }}</td></tr>
-  {% if purpose %}<tr><td style="padding:4px 0; color:#6b7280;">Purpose</td><td style="padding:4px 0;">{{ purpose }}</td></tr>{% endif %}
-  {% if visit_date %}<tr><td style="padding:4px 0; color:#6b7280;">Visit date</td><td style="padding:4px 0;">{{ visit_date }}{% if visit_time %} at {{ visit_time }}{% endif %}</td></tr>{% endif %}
-</table>
+{{ m.lead("Thanks for registering. Your request is being reviewed — you don't need to do anything else right now.") }}
+{{ m.highlight_box("Tracking ID", tracking_id) }}
+{{ m.section("What happens next") }}
+{{ m.timeline([
+  ("Request submitted", "We have your details.", "done"),
+  ("Under review", "Your host or the approving team is reviewing your visit.", "current"),
+  ("Confirmation", "Once approved, you'll get an email with your check-in QR code.", "todo"),
+]) }}
+{{ m.visit_details(title="Your request") }}
+{% if cta %}{{ m.button(cta.label, cta.url) }}{% endif %}
+{{ m.tracking_note("Want to check on it? Look up your visit's status at any time using your tracking ID", tracking_id) }}
 {% endblock %}

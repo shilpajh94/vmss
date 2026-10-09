@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Collection
 from typing import Any
 
 from sqlalchemy import select
@@ -6,6 +7,11 @@ from sqlalchemy import select
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import SortOrder
 from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
+from vmss_api.visitors.schemas import (
+    ApprovalWorkflowRuleStatus,
+    EscortRequirement,
+    NdaRequirement,
+)
 
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
@@ -41,12 +47,64 @@ class VisitorCategoryRepository(TenantScopedRepository[VisitorCategory]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def get_existing_codes(self, codes: Collection[str]) -> set[str]:
+        """Batch lookup for `service.py::bulk_create_visitor_categories` —
+        one `WHERE code IN (...)` for the whole requested batch, instead of
+        one `get_by_code` call per name. See query-performance.md §2.
+        """
+        if not codes:
+            return set()
+        stmt = select(VisitorCategory.code).where(
+            VisitorCategory.code.in_(codes), VisitorCategory.deleted_at.is_(None)
+        )
+        return set((await self.session.execute(stmt)).scalars().all())
+
+    async def get_existing_names(self, names: Collection[str]) -> set[str]:
+        """Batch counterpart of `get_existing_codes` for names."""
+        if not names:
+            return set()
+        stmt = select(VisitorCategory.name).where(
+            VisitorCategory.name.in_(names), VisitorCategory.deleted_at.is_(None)
+        )
+        return set((await self.session.execute(stmt)).scalars().all())
+
+    async def list_by_ids(self, ids: Collection[uuid.UUID]) -> list[VisitorCategory]:
+        """Batch re-fetch for `service.py::bulk_create_visitor_categories`,
+        used once after a bulk-insert commit to pick up server-generated
+        timestamp columns for every created row in one query instead of one
+        `session.refresh()` per row.
+        """
+        if not ids:
+            return []
+        stmt = select(VisitorCategory).where(
+            VisitorCategory.id.in_(ids), VisitorCategory.deleted_at.is_(None)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def list_page(
-        self, *, page: int, page_size: int, sort_by: str, sort_order: SortOrder
+        self,
+        *,
+        badge_color: str | None,
+        nda_requirement: NdaRequirement | None,
+        escort_requirement: EscortRequirement | None,
+        page: int,
+        page_size: int,
+        sort_by: str,
+        sort_order: SortOrder,
     ) -> tuple[list[VisitorCategory], int]:
         column = {"name": VisitorCategory.name, "created_at": VisitorCategory.created_at}[sort_by]
+        filters: list[Any] = []
+        if badge_color is not None:
+            filters.append(VisitorCategory.badge_color == badge_color)
+        if nda_requirement is not None:
+            filters.append(VisitorCategory.nda_requirement == nda_requirement.value)
+        if escort_requirement is not None:
+            filters.append(VisitorCategory.escort_requirement == escort_requirement.value)
         return await super().paginate(
-            page=page, page_size=page_size, order_by=_order_clause(column, sort_order)
+            page=page,
+            page_size=page_size,
+            order_by=_order_clause(column, sort_order),
+            filters=filters,
         )
 
 
@@ -87,6 +145,7 @@ class ApprovalWorkflowRuleRepository(TenantScopedRepository[ApprovalWorkflowRule
         self,
         *,
         visitor_category_id: uuid.UUID | None,
+        status: ApprovalWorkflowRuleStatus | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -99,6 +158,10 @@ class ApprovalWorkflowRuleRepository(TenantScopedRepository[ApprovalWorkflowRule
         filters: list[Any] = []
         if visitor_category_id is not None:
             filters.append(ApprovalWorkflowRule.visitor_category_id == visitor_category_id)
+        if status is not None:
+            filters.append(
+                ApprovalWorkflowRule.is_active.is_(status == ApprovalWorkflowRuleStatus.active)
+            )
         return await super().paginate(
             page=page,
             page_size=page_size,

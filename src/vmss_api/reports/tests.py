@@ -206,10 +206,18 @@ async def test_reports_snapshot_content_matches_on_demand_rollup(
     await tasks._send_tenant_rollup_snapshot(str(tenant.id), tenant.schema_name)
 
     assert len(sender.calls) == 1
-    body = sender.calls[0]["body"]
-    assert f"{expected.total_branches} branch(es)" in body
-    assert f"{expected.total_buildings} building(s)" in body
-    assert f"{expected.total_active_employees} active employee(s)" in body
+    call = sender.calls[0]
+    body = call["body"]
+    # reports spec "Snapshot email shows a per-branch table": HTML + text,
+    # both carrying the same figures as the on-demand rollup.
+    assert call["subject"].startswith("Daily branch rollup — ")
+    assert call["html_body"] is not None
+    assert f"Buildings: {expected.total_buildings}" in body
+    assert f"Active employees: {expected.total_active_employees}" in body
+    for branch in expected.branches:
+        branch_line = f"{branch.branch_name} ({branch.branch_code}): {branch.building_count}"
+        assert f"{branch_line} building(s)" in body
+        assert branch.branch_name in call["html_body"]
 
 
 async def test_reports_snapshot_only_admin_role_users_receive_it(
@@ -407,12 +415,12 @@ async def test_reports_snapshot_delivers_email_via_mailpit(
         detail_response = await mailpit.get(f"{_MAILPIT_BASE_URL}/message/{message_id}")
         assert detail_response.status_code == 200
         detail = detail_response.json()
-        assert detail["Subject"] == "Daily branch rollup snapshot"
+        assert detail["Subject"].startswith("Daily branch rollup — ")
         assert any(to["Address"] == recipient for to in detail["To"])
+        assert detail["HTML"]
         body_text = detail["Text"]
-        assert f"{expected.total_branches} branch(es)" in body_text
-        assert f"{expected.total_buildings} building(s)" in body_text
-        assert f"{expected.total_active_employees} active employee(s)" in body_text
+        assert f"Buildings: {expected.total_buildings}" in body_text
+        assert f"Active employees: {expected.total_active_employees}" in body_text
     # Deliberately not deleted from Mailpit afterward, matching
     # invitations/tests.py's Mailpit test — harmless to accumulate since
     # each run uses a fresh, unique recipient address.
