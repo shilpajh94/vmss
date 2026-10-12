@@ -32,9 +32,9 @@ export function LoginFormCard({
         event.preventDefault()
         onSubmit()
       }}
-      className="flex w-full max-w-[460px] flex-col gap-6 md:gap-8 rounded-2xl border border-border bg-surface p-6 md:p-12 drop-shadow-[0_16px_16px_rgba(15,23,42,0.05)]"
+      className="flex w-full max-w-[460px] flex-col gap-6 md:gap-8 md:short:gap-6 xshort:gap-4 md:xshort:gap-4 rounded-2xl border border-border bg-surface p-6 md:p-12 md:short:p-8 md:xshort:py-6 drop-shadow-[0_16px_16px_rgba(15,23,42,0.05)]"
     >
-      <div className="flex flex-col items-center gap-4">
+      <div className="flex flex-col items-center gap-4 xshort:gap-2">
         <span className="rounded-full bg-[#ecfeff] px-3 py-1 font-body text-[12px] font-bold tracking-[1px] text-secondary-accent uppercase">
           Admin Portal
         </span>
@@ -44,7 +44,7 @@ export function LoginFormCard({
         </div>
       </div>
 
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4 xshort:gap-3">
         <TextField
           label="Email"
           type="email"

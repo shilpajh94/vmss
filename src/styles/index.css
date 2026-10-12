@@ -2,6 +2,10 @@
 @import "./fonts.css";
 @import "./theme.css";
 
+/* Height-based breakpoints for screens that must fit one viewport (e.g. /admin/login). */
+@custom-variant short (@media (max-height: 900px));
+@custom-variant xshort (@media (max-height: 800px));
+
 @layer base {
   html,
   body {
