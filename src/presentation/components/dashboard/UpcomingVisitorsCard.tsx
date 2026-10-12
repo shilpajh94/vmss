@@ -1,3 +1,4 @@
+import { Avatar } from '../ui/Avatar'
 import { EmptyState } from '../ui/EmptyState'
 import { formatDate } from '../../utils/format-time'
 import type { DashboardUpcomingVisitor } from '../../../domain/entities/dashboard-overview-schema'
@@ -27,7 +28,7 @@ export function UpcomingVisitorsCard({ visitors, employeeNameById }: UpcomingVis
                 <div className="w-24 shrink-0 font-body text-sm font-semibold text-text">{formatDate(visitor.expiresAt)}</div>
 
                 <div className="flex flex-1 items-center gap-3 basis-56">
-                  <span className="size-7 shrink-0 rounded-full bg-neutral-subtle" />
+                  <Avatar name={visitor.primaryContactFullName} size="sm" />
                   <span className="font-body text-sm font-semibold text-text">{visitor.primaryContactFullName}</span>
                 </div>
 

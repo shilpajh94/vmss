@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router'
 import { PencilIcon } from '../../../components/icons'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+import { Avatar } from '../../../components/ui/Avatar'
 
 // Below `md`: only the identifying, status, and actions columns stay visible.
 const TABLE_CLASS_NAME = responsiveTableClassName([2, 3, 4])
@@ -34,7 +35,7 @@ export function HostEmployeesTable({ hostEmployees, departmentNameById }: HostEm
             <tr key={hostEmployee.id} className="border-b border-border-subtle">
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="flex items-center gap-3">
-                  <span className="size-9 shrink-0 rounded-full bg-neutral-subtle" />
+                  <Avatar name={hostEmployee.fullName} photoUrl={hostEmployee.avatarUrl} size="lg" />
                   <span className="font-body text-sm font-semibold text-text">{hostEmployee.fullName}</span>
                 </div>
               </td>

@@ -1,7 +1,7 @@
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { LogOutIcon } from '../../../components/icons'
 import { NotificationBell } from '../../../components/notification-bell/NotificationBell'
-import { initialsFor } from '../../../utils/initials'
+import { Avatar } from '../../../components/ui/Avatar'
 
 interface RegistrationWorkspaceHeaderProps {
   currentUser: StaffUser | undefined
@@ -21,9 +21,7 @@ export function RegistrationWorkspaceHeader({ currentUser, onSignOut }: Registra
 
         {currentUser && (
           <div className="flex items-center gap-3">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-full border-[1.5px] border-info bg-info/8 font-display text-[13px] font-bold text-info">
-              {initialsFor(currentUser.name)}
-            </span>
+            <Avatar name={currentUser.name} size="lg" />
             <div className="hidden flex-col gap-0.5 whitespace-nowrap md:flex">
               <p className="font-body text-[13px] font-bold text-text">{currentUser.name}</p>
               <p className="font-body text-[11px] font-medium text-text-muted">{currentUser.role}</p>

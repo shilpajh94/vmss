@@ -1,3 +1,4 @@
+import { Avatar } from '../ui/Avatar'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import {
@@ -17,11 +18,6 @@ const AVATAR_TINTS = ['#dbeafe', '#ffe4e6', '#d1fae5', '#fef3c7', '#f3e8ff', '#f
 function avatarTintFor(trackingId: string): string {
   const hash = trackingId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)
   return AVATAR_TINTS[hash % AVATAR_TINTS.length]
-}
-
-function initialsFor(fullName: string): string {
-  const parts = fullName.trim().split(/\s+/)
-  return ((parts[0]?.[0] ?? '') + (parts[parts.length - 1]?.[0] ?? '')).toUpperCase()
 }
 
 interface VisitRequestCardProps {
@@ -107,12 +103,12 @@ export function VisitRequestCard({
       className={`flex w-full flex-col gap-3 rounded-xl border border-border bg-surface p-4 drop-shadow-[0px_4px_4px_rgba(15,23,42,0.03)] ${isApproving ? 'opacity-60' : ''}`}
     >
       <div className="flex w-full items-center justify-between">
-        <span
-          className="flex size-8 shrink-0 items-center justify-center rounded-full font-display text-xs font-bold text-text"
+        <Avatar
+          name={request.primaryContactFullName}
+          size="md"
+          toneClassName="text-text"
           style={{ backgroundColor: avatarTintFor(request.trackingId) }}
-        >
-          {initialsFor(request.primaryContactFullName)}
-        </span>
+        />
         <span className="font-body text-[11px] font-semibold whitespace-nowrap text-text-faint">{request.trackingId}</span>
       </div>
 

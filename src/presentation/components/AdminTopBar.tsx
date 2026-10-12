@@ -7,7 +7,7 @@ import { useRefreshContext } from '../context/refresh-context'
 import { NotificationBell } from './notification-bell/NotificationBell'
 import { NavMenuButton } from './AppShell'
 import { adminNavLabelFor } from './AdminSidebar'
-import { initialsFor } from '../utils/initials'
+import { Avatar } from './ui/Avatar'
 
 const NOW_TICK_INTERVAL_MS = 30_000
 
@@ -110,12 +110,7 @@ export function AdminTopBar({ description, breadcrumb, currentUser }: AdminTopBa
         <NotificationBell />
 
         <div className="flex items-center gap-2">
-          <span
-            aria-hidden="true"
-            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-neutral-subtle font-display text-[12px] font-bold text-text-muted"
-          >
-            {currentUser ? initialsFor(currentUser.name) : ''}
-          </span>
+          <Avatar name={currentUser?.name ?? ''} size="md" />
           <div className="hidden flex-col gap-0.5 md:flex">
             <p className="font-body text-[13px] font-semibold text-text">{currentUser?.name ?? '—'}</p>
             <p className="font-body text-[11px] text-text-faint">{currentUser?.role ?? ''}</p>

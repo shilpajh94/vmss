@@ -34,6 +34,63 @@
   }
 }
 
+/* Step transitions in the registration wizards (staff stepper, visitor
+   sidebar and phone progress bar, and the step content). One duration and
+   easing for all of them, kept under the specs' ~300ms ceiling. */
+:root {
+  --step-motion-duration: 280ms;
+  --step-motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Unlayered, so it wins over the duration/easing a Tailwind transition-*
+   utility on the same element sets. */
+.step-motion {
+  transition-duration: var(--step-motion-duration);
+  transition-timing-function: var(--step-motion-ease);
+}
+
+@keyframes step-enter-forward {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes step-enter-backward {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Only the entering step animates (no exit), same as .route-transition.
+   `none` (first render) plays nothing. */
+.step-enter[data-direction="forward"] {
+  animation: step-enter-forward var(--step-motion-duration) var(--step-motion-ease);
+}
+
+.step-enter[data-direction="backward"] {
+  animation: step-enter-backward var(--step-motion-duration) var(--step-motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --step-motion-duration: 0ms;
+  }
+
+  .step-enter[data-direction] {
+    animation: none;
+  }
+}
+
 .sidebar-nav-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
