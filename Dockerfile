@@ -1,4 +1,3 @@
-```dockerfile
 FROM pitsdevops.azurecr.io/pits-linux-base AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -65,4 +64,3 @@ EXPOSE 8000
 ENTRYPOINT ["/entrypoint.sh"]
 
 CMD ["uvicorn", "vmss_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
