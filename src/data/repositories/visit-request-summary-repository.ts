@@ -28,11 +28,18 @@ export interface ListVisitRequestsParams {
   registrationType?: string
   source?: string
   search?: string
+  purposeOfVisit?: string
+  page?: number
   pageSize?: number
 }
 
+export interface VisitRequestsPage {
+  items: VisitRequestSummary[]
+  total: number
+}
+
 export interface VisitRequestSummaryRepository {
-  list(params?: ListVisitRequestsParams): Promise<VisitRequestSummary[]>
+  list(params?: ListVisitRequestsParams): Promise<VisitRequestsPage>
   approve(id: string): Promise<void>
   getDetail(id: string): Promise<InvitationDetail>
   reschedule(id: string, preferredVisitDate: string, preferredVisitTime: string): Promise<void>
