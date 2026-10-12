@@ -1,4 +1,3 @@
-```python
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -199,4 +198,3 @@ def require_permission(permission_code: str):
 def branch_filter(column: Any, branch_scope: BranchScope) -> Any | None:
     """Build a branch filter, or return None for company-wide access."""
     return None if branch_scope == "all" else column.in_(branch_scope)
-```
