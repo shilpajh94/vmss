@@ -744,6 +744,8 @@ Query params:
 | `status` | string | unset | Exact match against the invitation's `status` column. |
 | `registrationType` | `individual` \| `group` | unset | |
 | `source` | `staff_pre_registration` \| `visitor_walk_in` | unset | |
+| `search` | string (max 255) | unset | Case-insensitive substring match against primary contact name **or** tracking ID. |
+| `purposeOfVisit` | string (max 255) | unset | Exact (case-sensitive) match against the invitation's purpose of visit. Used by the paged web board's purpose dropdown so filtering — and `pagination.total` — happens server-side (`add-invitation-purpose-filter`). |
 | `relevantToMe` | bool | `false` | See "Relevant to me" below — a different filter mode entirely, not a narrower branch scope. |
 
 Each row is an `InvitationListItemOut` — tracking ID, registration type,

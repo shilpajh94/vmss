@@ -2342,6 +2342,7 @@ async def list_invitations_page(
     page_size: int,
     sort_by: InvitationSortableField,
     sort_order: SortOrder,
+    purpose_of_visit: str | None = None,
 ) -> tuple[list[Invitation], int]:
     return await InvitationRepository(tenant_db).list_page(
         branch_scope=branch_scope,
@@ -2355,6 +2356,7 @@ async def list_invitations_page(
         page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
+        purpose_of_visit=purpose_of_visit,
     )
 
 

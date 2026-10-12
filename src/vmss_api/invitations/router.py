@@ -1924,6 +1924,7 @@ async def list_invitations(
     registration_type: Annotated[RegistrationType | None, Query(alias="registrationType")] = None,
     source: Annotated[RegistrationSource | None, Query(alias="source")] = None,
     search: Annotated[str | None, Query(max_length=255)] = None,
+    purpose_of_visit: Annotated[str | None, Query(alias="purposeOfVisit", max_length=255)] = None,
 ) -> JSONResponse:
     """specs/invitations/spec.md "Employee Lists Invitations at Their
     Authorized Branches" (the default, branch-scoped mode) and "Caller
@@ -1937,7 +1938,9 @@ async def list_invitations(
     require_branch_scope variant"). The branch-scoped mode needs
     `invitations:view-all`, not `invitations:view`: a `host` holds only the
     latter and finds their work via `relevantToMe`
-    (restrict-delegated-invitation-visibility).
+    (restrict-delegated-invitation-visibility). `purposeOfVisit` is an
+    exact-match filter ("Invitation List Supports a Purpose-of-Visit
+    Filter") so the paged web board can filter server-side.
     """
     page, page_size = pagination
     branch_scope: BranchScope | None = None
@@ -1961,6 +1964,7 @@ async def list_invitations(
         page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
+        purpose_of_visit=purpose_of_visit,
     )
     return paginated_response(
         data=[await _to_list_item_out(invitation) for invitation in invitations],

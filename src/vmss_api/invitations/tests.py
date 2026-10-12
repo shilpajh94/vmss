@@ -3676,6 +3676,82 @@ async def test_list_invitations_filters_by_search_matching_contact_name_or_track
     assert jane.tracking_id not in id_tracking_ids
 
 
+async def test_list_invitations_filters_by_purpose_of_visit(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """specs/invitations/spec.md "Invitation List Supports a Purpose-of-Visit
+    Filter" — exact match, reflected in `pagination.total`.
+    """
+    purpose = f"Interview {uuid.uuid4().hex[:8]}"
+    matching = _build_invitation(db_session, branch.id, purpose_of_visit=purpose)
+    non_matching = _build_invitation(db_session, branch.id, purpose_of_visit="Delivery")
+    db_session.add_all([matching, non_matching])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"purposeOfVisit": purpose},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [row["trackingId"] for row in body["data"]] == [matching.tracking_id]
+    assert body["pagination"]["total"] == 1
+
+
+async def test_list_invitations_purpose_filter_combines_with_status(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    purpose = f"Interview {uuid.uuid4().hex[:8]}"
+    submitted = _build_invitation(
+        db_session, branch.id, purpose_of_visit=purpose, status="submitted"
+    )
+    approved = _build_invitation(db_session, branch.id, purpose_of_visit=purpose, status="approved")
+    db_session.add_all([submitted, approved])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"purposeOfVisit": purpose, "status": "submitted"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert [row["trackingId"] for row in response.json()["data"]] == [submitted.tracking_id]
+
+
+async def test_list_invitations_purpose_filter_requires_exact_match(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    purpose = f"Interview {uuid.uuid4().hex[:8]}"
+    invitation = _build_invitation(db_session, branch.id, purpose_of_visit=purpose)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"purposeOfVisit": purpose[:-1]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert invitation.tracking_id not in tracking_ids
+
+
+async def test_list_invitations_purpose_filter_rejects_over_long_value(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"purposeOfVisit": "x" * 256},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+
+
 @pytest.mark.parametrize(
     "status_value", ["submitted", "approved", "denied", "checked_in", "checked_out"]
 )
@@ -3831,6 +3907,37 @@ async def test_list_invitations_relevant_to_me_host_without_view_permission(
     assert response.status_code == 200, response.text
     tracking_ids = {row["trackingId"] for row in response.json()["data"]}
     assert invitation.tracking_id in tracking_ids
+
+
+async def test_list_invitations_relevant_to_me_honours_purpose_filter(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """specs/invitations/spec.md "Purpose filter applies in relevantToMe mode"."""
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    delivery = await _invitation_with_host_step(
+        db_session, branch.id, host, purpose_of_visit="Delivery"
+    )
+    interview = await _invitation_with_host_step(
+        db_session, branch.id, host, purpose_of_visit="Interview"
+    )
+
+    token = issue_token(host)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true", "purposeOfVisit": "Delivery"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    tracking_ids = {row["trackingId"] for row in response.json()["data"]}
+    assert delivery.tracking_id in tracking_ids
+    assert interview.tracking_id not in tracking_ids
 
 
 async def test_list_invitations_relevant_to_me_delegate_sees_delegated_invitation(

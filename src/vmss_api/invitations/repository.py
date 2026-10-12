@@ -626,6 +626,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         page_size: int,
         sort_by: str,
         sort_order: SortOrder,
+        purpose_of_visit: str | None = None,
     ) -> tuple[list[Invitation], int]:
         """Backs `GET /invitations` (design.md Decision 2) — deliberately no
         `selectinload` of visitors/vehicles here (unlike `_with_children`
@@ -661,6 +662,8 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             filters.append(Invitation.registration_type == registration_type)
         if source is not None:
             filters.append(Invitation.source == source)
+        if purpose_of_visit is not None:
+            filters.append(Invitation.purpose_of_visit == purpose_of_visit)
         if search is not None:
             pattern = f"%{search}%"
             filters.append(
