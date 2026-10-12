@@ -19,6 +19,7 @@ from typing import Any
 
 from sqlalchemy import select
 
+from vmss_api.core import portal_links
 from vmss_api.core.config import settings
 from vmss_api.core.database import AsyncSessionLocal, engine, tenant_session_scope
 from vmss_api.core.email_assets import sign_qr_url
@@ -26,6 +27,7 @@ from vmss_api.core.email_rendering import render_email
 from vmss_api.core.emailing import InlineImage, email_sender, make_inline_image
 from vmss_api.invitations.models import Invitation, InvitationQRCode
 from vmss_api.invitations.qr import generate_qr_png
+from vmss_api.invitations.tasks import _cta
 from vmss_api.tenant.repository import TenantRepository
 
 _QR_CID = "visit-qr@vmss"
@@ -137,9 +139,19 @@ async def send_previews(to: str, tenant_slug: str) -> None:
     try:
         qr_src, qr_images, qr_description = await _qr_source(tenant_slug)
         print(f"QR: {qr_description}")
+        # Same link keys `_invitation_email_context` adds, so each preview
+        # shows the button its real email gets (none when STAFF_PORTAL_URL
+        # is unset).
+        links = {
+            "visitor_track_url": portal_links.visitor_track_url(),
+            "visitor_request_url": portal_links.visitor_request_url(),
+            "staff_login_url": portal_links.staff_login_url(),
+        }
+        print(f"Portal links: {portal_links.base_url() or 'none (STAFF_PORTAL_URL unset)'}")
         for name in TEMPLATES:
             has_qr = name in {"visit_confirmation", "reschedule"}
-            rendered = render_email(name, {**SAMPLE_CONTEXT, "qr_src": qr_src if has_qr else None})
+            context = {**SAMPLE_CONTEXT, **links, "qr_src": qr_src if has_qr else None}
+            rendered = render_email(name, {**context, "cta": _cta(name, context)})
             await email_sender.send(
                 to=to,
                 subject=f"[Preview] {rendered.subject}",

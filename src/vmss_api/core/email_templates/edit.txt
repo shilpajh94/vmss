@@ -14,4 +14,8 @@ Some details of your upcoming visit have been updated. Here's the latest informa
 {% else %}
 Your visit is still awaiting approval. We'll email your check-in QR pass as soon as it's approved.
 {% endif %}
+
+{% if cta %}
+{{ cta.label }}: {{ cta.url }}
+{% endif %}
 {% endblock %}

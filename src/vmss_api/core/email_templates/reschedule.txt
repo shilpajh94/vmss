@@ -20,5 +20,8 @@ Your QR code is shown in this email - open it with images enabled and show it at
 Your visit is still awaiting approval. We'll email your check-in QR pass as soon as it's approved.
 {% endif %}
 
-{{ m.callout("Can't make the new time?", "Contact the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " and quote your tracking ID " ~ tracking_id ~ ".") }}
+{% if cta %}
+{{ cta.label }}: {{ cta.url }}
+
+{% endif %}{{ m.callout("Can't make the new time?", "Contact the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " and quote your tracking ID " ~ tracking_id ~ ".") }}
 {% endblock %}

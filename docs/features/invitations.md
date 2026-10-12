@@ -47,6 +47,15 @@ branch from the request body via the same `authorize_branch_id` helper.
 | POST | `/api/v1/invitations/{id}/badge/reprint` | `invitations:badge` at the invitation's branch | — | Re-renders an already-issued badge from current data and increments its reprint count. 409 if none issued yet. |
 | POST | `/api/v1/invitations/{id}/watchlist-override` | `invitations:watchlist-override` (admin only by default) at the invitation's branch | — | Clears a `watchlistFlagged` invitation, with a mandatory `reason`, so check-in can proceed. 409 if not currently flagged. Does not itself check the invitation in. |
 
+## Links in invitation emails
+
+Every visitor- and staff-facing invitation email (received, confirmed,
+rescheduled, edited, denied, submission triage, host assigned, POC
+assigned) carries a button into the web portal when `STAFF_PORTAL_URL` is
+set. Visitor emails link to `/visitor/track` (denials link to
+`/visitor/request` instead), and staff emails link to `/staff/login`. See
+`docs/features/notifications.md` "Portal links" for the full table.
+
 ## Finding the payload shape in Swagger
 
 `POST /invitations`'s `payload` field is a JSON-encoded string (multipart

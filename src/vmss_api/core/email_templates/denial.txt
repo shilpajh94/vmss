@@ -12,5 +12,8 @@ WHAT YOU CAN DO
   "Submit a new visit request with updated details if your plans have changed.",
 ]) }}
 
-Please quote your tracking ID {{ tracking_id }} in any follow-up.
+{% if cta %}
+{{ cta.label }}: {{ cta.url }}
+
+{% endif %}Please quote your tracking ID {{ tracking_id }} in any follow-up.
 {% endblock %}
