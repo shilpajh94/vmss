@@ -13,10 +13,17 @@ from structlog.testing import capture_logs
 from vmss_api.auth.models import User
 from vmss_api.core.config import settings
 from vmss_api.core.redis import get_redis
+from vmss_api.form_builder.defaults import DEFAULT_STEP_SPECS
 from vmss_api.form_builder.models import FormConfigVersion, FormField, FormFieldGroup, FormStep
 from vmss_api.form_builder.repository import FormConfigVersionRepository
 from vmss_api.form_builder.service import _step_to_snapshot, resolve_effective_form
 from vmss_api.form_builder.snapshot import SUPPORTED_FIELD_TYPES, normalize_snapshot
+from vmss_api.form_builder.step_icons import (
+    _ICON_RULES,
+    DEFAULT_STEP_ICON,
+    STEP_ICON_VOCABULARY,
+    infer_step_icon,
+)
 from vmss_api.form_builder.validation import allowed_consent_field_ids, required_consent_field_ids
 from vmss_api.org_structure.models import Branch
 from vmss_api.tenant.models import Tenant
@@ -2464,3 +2471,202 @@ async def test_required_field_of_a_removed_type_is_never_required_on_submission(
 
     assert signature_id not in required_consent_field_ids(effective)
     assert signature_id not in allowed_consent_field_ids(effective)
+
+
+# --- Step icons (auto-assign-form-step-icons) ----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Vehicle Info", "car"),
+        ("VEHICLES", "car"),
+        ("NDA Signing", "file-signature"),
+        ("Health Declaration", "heart-pulse"),
+        ("Laptop Declaration", "laptop"),
+        ("Miscellaneous", DEFAULT_STEP_ICON),
+        # Ordering guards: `visit` is a prefix of `visitor`, and a consent
+        # agreement is a consent step, not a signature step.
+        ("Visitor Info", "user"),
+        ("Visit Details", "calendar"),
+        ("Consent Agreement", "shield-check"),
+        ("Carried Items", "briefcase"),
+        # Short keywords match whole words only: "idle" is not "id".
+        ("Idle Time", "clock"),
+    ],
+)
+def test_infer_step_icon(name: str, expected: str) -> None:
+    assert infer_step_icon(name) == expected
+
+
+def test_step_icons_are_all_in_vocabulary() -> None:
+    assert {icon for icon, _ in _ICON_RULES} <= STEP_ICON_VOCABULARY
+    assert DEFAULT_STEP_ICON in STEP_ICON_VOCABULARY
+    for spec in DEFAULT_STEP_SPECS:
+        assert spec.icon in STEP_ICON_VOCABULARY, spec.key
+
+
+async def test_seeded_default_steps_have_vocabulary_icons(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    steps = (await client.get("/api/v1/form-builder/steps", headers=_auth(token))).json()["data"]
+    icons = {s["key"]: s["icon"] for s in steps}
+    assert icons["vehicle_info"] == "car"
+    assert icons["carried_items"] == "briefcase"
+    assert set(icons.values()) <= STEP_ICON_VOCABULARY
+
+
+async def _create_step(client: AsyncClient, token: str, payload: dict) -> dict:
+    response = await client.post("/api/v1/form-builder/steps", json=payload, headers=_auth(token))
+    assert response.status_code == 201, response.text
+    return response.json()["data"]
+
+
+async def test_create_step_without_icon_infers_one_from_name(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    token = issue_token(user)
+    created = await _create_step(client, token, {"key": "nda_signing", "name": "NDA Signing"})
+    assert created["icon"] == "file-signature"
+    row = await db_session.get(FormStep, uuid.UUID(created["id"]))
+    assert row is not None
+    assert row.icon == "file-signature", "the inferred icon is persisted, not just served"
+
+    unmatched = await _create_step(client, token, {"key": "misc", "name": "Miscellaneous"})
+    assert unmatched["icon"] == DEFAULT_STEP_ICON
+
+
+async def test_create_step_with_explicit_icon_is_honoured(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    created = await _create_step(
+        client, token, {"key": "parking", "name": "Vehicle Info", "icon": "package"}
+    )
+    assert created["icon"] == "package"
+
+
+async def test_rename_rederives_an_auto_assigned_icon(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    created = await _create_step(client, token, {"key": "misc", "name": "Miscellaneous"})
+    response = await client.patch(
+        f"/api/v1/form-builder/steps/{created['id']}",
+        json={"name": "Laptop Declaration"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["icon"] == "laptop"
+
+
+async def test_rename_keeps_an_explicitly_chosen_icon(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    created = await _create_step(
+        client, token, {"key": "vehicle_extra", "name": "Vehicle Info", "icon": "package"}
+    )
+    response = await client.patch(
+        f"/api/v1/form-builder/steps/{created['id']}",
+        json={"name": "Parking Details"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["icon"] == "package"
+
+
+async def test_rename_with_icon_in_same_update_uses_sent_icon(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user)
+    created = await _create_step(client, token, {"key": "misc", "name": "Miscellaneous"})
+    response = await client.patch(
+        f"/api/v1/form-builder/steps/{created['id']}",
+        json={"name": "Vehicle Info", "icon": "camera"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["icon"] == "camera"
+
+
+async def test_legacy_step_with_null_icon_is_listed_with_derived_icon(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    token = issue_token(user)
+    created = await _create_step(client, token, {"key": "legacy_vehicle", "name": "Vehicle Info"})
+    row = await db_session.get(FormStep, uuid.UUID(created["id"]))
+    assert row is not None
+    row.icon = None
+    await db_session.commit()
+
+    listed = await _get_default_step(client, token, "legacy_vehicle")
+
+    assert listed["icon"] == "car"
+
+
+async def test_effective_form_fills_null_icon_in_a_published_snapshot(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    user: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    token = issue_token(user)
+    version = await _publish_and_load_default_version(client, db_session, token)
+    legacy = copy.deepcopy(version.snapshot)
+    for step in legacy:
+        step["icon"] = None
+    await _store_snapshot(db_session, version, legacy)
+
+    response = await client.get("/api/v1/form-builder/effective")
+
+    assert response.status_code == 200, response.text
+    icons = {s["key"]: s["icon"] for s in response.json()["data"]}
+    assert icons["vehicle_info"] == "car"
+    assert icons["visitor_info"] == "user"
+    assert None not in icons.values()
+
+
+async def test_update_step_requires_manage_permission(
+    client: AsyncClient,
+    user: User,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    created = await _create_step(
+        client, issue_token(user), {"key": "misc", "name": "Miscellaneous"}
+    )
+    response = await client.patch(
+        f"/api/v1/form-builder/steps/{created['id']}",
+        json={"name": "Vehicle Info"},
+        headers=_auth(issue_token(user_without_permissions)),
+    )
+    assert response.status_code == 403
+
+
+async def test_inferred_step_icon_tenant_schema_isolation(
+    client: AsyncClient,
+    user: User,
+    issue_token: Callable[[User], str],
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    """A step created (and given an inferred icon) in this tenant's schema
+    must not be visible from a session bound to another tenant's schema."""
+    created = await _create_step(
+        client, issue_token(user), {"key": "isolated_vehicle", "name": "Vehicle Info"}
+    )
+    other_schema = "tenant_other_step_icon_test"
+    await make_tenant_schema(other_schema)
+
+    from vmss_api.form_builder.repository import FormStepRepository
+
+    async with open_tenant_session(other_schema) as other_session:
+        assert await FormStepRepository(other_session).get(uuid.UUID(created["id"])) is None

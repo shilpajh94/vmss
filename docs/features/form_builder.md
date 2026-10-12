@@ -37,6 +37,36 @@ effect on live invitation/registration submission or the public/staff
 renderer until `POST /form-builder/publish` re-validates the whole draft
 and serializes it into that scope's `FormConfigVersion`.
 
+## Step icons (`auto-assign-form-step-icons`)
+
+A step's `icon` is a slug from a fixed vocabulary
+(`form_builder/step_icons.py::STEP_ICON_VOCABULARY`) that every client maps
+to its own glyph:
+
+`user`, `calendar`, `briefcase`, `package`, `car`, `shield-check`,
+`check-circle`, `file-text`, `file-signature`, `id-card`, `camera`,
+`heart-pulse`, `laptop`, `phone`, `building`, `users`, `clock`, `map-pin`,
+`alert-triangle`, `clipboard-list` (the neutral default).
+
+- **Create** — `icon` is optional. Omitted (or `null`/empty), the server
+  infers one from the step name by keyword (case-insensitive; whole-word
+  or word-prefix match, first rule wins): "Vehicle Info" → `car`, "NDA
+  Signing" → `file-signature`, "Health Declaration" → `heart-pulse`. No
+  match → `clipboard-list`. The admin UI never sends an icon, so this is
+  how every custom step gets one.
+- **Rename** — a `PATCH` that changes `name` without sending `icon`
+  re-infers the icon only if the current one is what the *old* name would
+  have inferred (i.e. it was auto-assigned). An icon that differs was
+  chosen explicitly and is kept.
+- **Reads** — a step stored with a null icon (created before this change)
+  is served with the inferred icon from every step endpoint and from
+  `/effective`, including old published snapshots. No migration.
+- An explicit `icon` outside the vocabulary is still accepted (tightening
+  it would break existing clients); clients render a neutral glyph for an
+  unknown slug. Adding a slug to the vocabulary means adding a glyph to
+  `VMMS_WEB`'s `admin-form-builder/step-icons.ts` (and Flutter, if it
+  renders step icons).
+
 ## The six canonical steps and field tiers
 
 Every tenant starts with six steps, in order: **Visitor Info**, **Visit
