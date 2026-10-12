@@ -1,5 +1,6 @@
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 import structlog
@@ -20,15 +21,17 @@ from vmss_api.tenant.repository import TenantRepository
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
+@dataclass(frozen=True)
+class TenantContext:
+    """Tenant data that remains safe to use after the registry session ends."""
+
+    id: uuid.UUID
+    schema_name: str
+    is_active: bool
+
+
 class DefaultTenantUnresolved(Exception):
-    """Raised by `resolve_default_tenant` when `settings.default_tenant_slug`
-    doesn't resolve to an active tenant. Every public, unauthenticated
-    endpoint that falls back to this single configured tenant
-    (`registrations`, `identity_verification`, `invitations`' tracking
-    lookup) catches this and translates it into its own existing status
-    code/message — this exception only centralizes detection, not the
-    response shape, which legitimately differs per caller.
-    """
+    """Raised when the configured default tenant is missing or inactive."""
 
     def __init__(self, reason: Literal["not_found", "inactive"]) -> None:
         self.reason = reason
@@ -36,80 +39,101 @@ class DefaultTenantUnresolved(Exception):
 
 
 async def resolve_default_tenant(db: AsyncSession) -> Tenant:
-    """Resolves `settings.default_tenant_slug` to an active tenant — the
-    shared lookup behind every public endpoint that has no caller-supplied
-    tenant identifier to resolve from instead. Raises `DefaultTenantUnresolved`
-    rather than an `HTTPException` so each caller keeps its own existing
-    status code and message; only the lookup and its `reason` classification
-    (missing row vs. inactive row) are shared, per
-    `logging-observability.md` §3's requirement that a caller distinguish
-    the two when logging a server-side misconfiguration.
-    """
+    """Resolve the configured default tenant from the global registry."""
     tenant = await TenantRepository(db).get_by_slug(settings.default_tenant_slug)
+
     if tenant is None:
         raise DefaultTenantUnresolved(reason="not_found")
+
     if not tenant.is_active:
         raise DefaultTenantUnresolved(reason="inactive")
+
     return tenant
 
 
 async def get_bearer_payload(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Depends(_bearer_scheme),
+    ],
 ) -> dict[str, Any]:
-    """Decodes the bearer token only — no type check, no DB access. Shared
-    building block for both the tenant-user chain (`get_token_payload`
-    below) and superadmin auth (`platform/service.py::get_current_superadmin`),
-    which carry different `type` claims and shouldn't accept each other's
-    tokens.
-    """
+    """Decode the bearer token without performing database access."""
     if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
     return decode_token(credentials.credentials)
 
 
 async def get_token_payload(
     payload: Annotated[dict[str, Any], Depends(get_bearer_payload)],
 ) -> dict[str, Any]:
-    """Tenant and user resolution (`get_tenant`, `get_current_user` below)
-    both derive from the claims this returns, never the other way around:
-    under schema-per-tenant the `users` table can't be queried until the
-    tenant's schema is already known, so the token (not a DB lookup) has to
-    be the first hop.
-    """
+    """Validate that the decoded token is an access token."""
     if payload.get("type") != "access":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not an access token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not an access token",
+        )
+
     return payload
 
 
 async def get_tenant(
     payload: Annotated[dict[str, Any], Depends(get_token_payload)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> Tenant:
-    """Resolves the caller's tenant from the access token's `tenant_id`
-    claim, via the global `tenants` registry. See database-architecture.md §2.
-    """
+) -> TenantContext:
+    """Resolve a tenant and copy its required values before rollback."""
     raw_tenant_id = payload.get("tenant_id")
+
     if raw_tenant_id is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has no tenant")
-    tenant = await TenantRepository(db).get(uuid.UUID(raw_tenant_id))
-    # Hand the connection back to the pool now: `get_db`'s session otherwise
-    # holds it for the whole request, on top of the one `get_tenant_db` opens,
-    # so every authenticated request would pin two pool connections.
-    await db.rollback()
-    if tenant is None or not tenant.is_active:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Tenant not found or inactive"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has no tenant",
         )
-    return tenant
+
+    try:
+        tenant_id = uuid.UUID(raw_tenant_id)
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid tenant ID",
+        ) from None
+
+    try:
+        tenant = await TenantRepository(db).get(tenant_id)
+
+        if tenant is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Tenant not found or inactive",
+            )
+
+        # Read ORM attributes while the registry session is still active.
+        tenant_context = TenantContext(
+            id=tenant.id,
+            schema_name=tenant.schema_name,
+            is_active=tenant.is_active,
+        )
+
+        if not tenant_context.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Tenant not found or inactive",
+            )
+
+        return tenant_context
+
+    finally:
+        # Release the registry transaction before tenant-scoped DB work.
+        await db.rollback()
 
 
 async def get_tenant_db(
-    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant: Annotated[TenantContext, Depends(get_tenant)],
 ) -> AsyncGenerator[AsyncSession]:
-    """Yields a session bound to the resolved tenant's own Postgres schema
-    via `schema_translate_map` — see `core/database.py::get_tenant_session`.
-    Every tenant-scoped repository call in a request goes through this.
-    """
+    """Provide a database session scoped to the tenant's schema."""
     async with tenant_session_scope(tenant.schema_name) as session:
         yield session
 
@@ -118,44 +142,57 @@ async def get_current_user(
     payload: Annotated[dict[str, Any], Depends(get_token_payload)],
     db: Annotated[AsyncSession, Depends(get_tenant_db)],
 ) -> User:
-    """Loads the user from the resolved tenant's own schema.
+    """Load the authenticated user from the tenant's schema."""
+    try:
+        user_id = uuid.UUID(payload["sub"])
+    except (KeyError, ValueError, TypeError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid user ID in token",
+        ) from None
 
-    Sanctioned exception to "core doesn't depend on features": imports
-    `User` from `vmss_api.auth.models` and `Tenant`/`TenantRepository` from
-    `vmss_api.tenant` — authentication and tenant resolution are
-    cross-cutting infrastructure every other feature needs. See
-    fastapi-architecture.md §6.
-    """
-    user_id = uuid.UUID(payload["sub"])
-    stmt = select(User).where(User.id == user_id, User.deleted_at.is_(None))
+    stmt = select(User).where(
+        User.id == user_id,
+        User.deleted_at.is_(None),
+    )
+
     user = (await db.execute(stmt)).scalar_one_or_none()
+
     if user is None or not user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
         )
-    structlog.contextvars.bind_contextvars(user_id=str(user.id), tenant_id=payload["tenant_id"])
+
+    structlog.contextvars.bind_contextvars(
+        user_id=str(user.id),
+        tenant_id=payload["tenant_id"],
+    )
+
     return user
 
 
 def require_permission(permission_code: str):
-    """Dependency factory for RBAC checks. See security-architecture.md §1."""
+    """Dependency factory for RBAC checks."""
 
-    def _check(user: Annotated[User, Depends(get_current_user)]) -> User:
+    def _check(
+        user: Annotated[User, Depends(get_current_user)],
+    ) -> User:
         if not user.has_permission(permission_code):
-            logger.warning("permission_denied", permission_code=permission_code)
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permission"
+            logger.warning(
+                "permission_denied",
+                permission_code=permission_code,
             )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permission",
+            )
+
         return user
 
     return _check
 
 
 def branch_filter(column: Any, branch_scope: BranchScope) -> Any | None:
-    """Translates a resolved `BranchScope` into a filter clause: `None` (no
-    filter at all) for a company-wide "all" scope, otherwise `column IN
-    (...)` — a single-branch scope is just a one-element set, so there's no
-    separate equality-filter path to maintain. See
-    `org_structure/deps.py::require_branch_scope`.
-    """
+    """Build a branch filter, or return None for company-wide access."""
     return None if branch_scope == "all" else column.in_(branch_scope)
