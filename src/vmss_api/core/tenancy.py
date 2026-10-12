@@ -1,3 +1,4 @@
+```python
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -23,11 +24,12 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 
 @dataclass(frozen=True)
 class TenantContext:
-    """Tenant data that remains safe to use after the registry session ends."""
+    """Tenant data safe to use after the registry session ends."""
 
     id: uuid.UUID
     schema_name: str
     is_active: bool
+    timezone: str
 
 
 class DefaultTenantUnresolved(Exception):
@@ -57,7 +59,7 @@ async def get_bearer_payload(
         Depends(_bearer_scheme),
     ],
 ) -> dict[str, Any]:
-    """Decode the bearer token without performing database access."""
+    """Decode the bearer token without database access."""
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -84,7 +86,7 @@ async def get_tenant(
     payload: Annotated[dict[str, Any], Depends(get_token_payload)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TenantContext:
-    """Resolve a tenant and copy its required values before rollback."""
+    """Resolve a tenant and copy required values before rollback."""
     raw_tenant_id = payload.get("tenant_id")
 
     if raw_tenant_id is None:
@@ -110,30 +112,31 @@ async def get_tenant(
                 detail="Tenant not found or inactive",
             )
 
-        # Read ORM attributes while the registry session is still active.
+        # Copy ORM values while the registry session is active.
         tenant_context = TenantContext(
             id=tenant.id,
             schema_name=tenant.schema_name,
             is_active=tenant.is_active,
+            timezone=tenant.timezone,
         )
-
-        if not tenant_context.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Tenant not found or inactive",
-            )
-
-        return tenant_context
 
     finally:
         # Release the registry transaction before tenant-scoped DB work.
         await db.rollback()
 
+    if not tenant_context.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Tenant not found or inactive",
+        )
+
+    return tenant_context
+
 
 async def get_tenant_db(
     tenant: Annotated[TenantContext, Depends(get_tenant)],
 ) -> AsyncGenerator[AsyncSession]:
-    """Provide a database session scoped to the tenant's schema."""
+    """Provide a session scoped to the tenant's database schema."""
     async with tenant_session_scope(tenant.schema_name) as session:
         yield session
 
@@ -196,3 +199,4 @@ def require_permission(permission_code: str):
 def branch_filter(column: Any, branch_scope: BranchScope) -> Any | None:
     """Build a branch filter, or return None for company-wide access."""
     return None if branch_scope == "all" else column.in_(branch_scope)
+```
