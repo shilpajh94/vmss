@@ -1261,7 +1261,7 @@ async def test_effective_form_includes_branch_and_building_fields(
     assert by_key["branch"]["isRequired"] is True
     assert by_key["branch"]["isLocked"] is True
     assert by_key["building"]["label"] == "Building"
-    assert by_key["building"]["isRequired"] is False
+    assert by_key["building"]["isRequired"] is True
     assert by_key["building"]["fieldType"] == "dropdown_select"
 
 
