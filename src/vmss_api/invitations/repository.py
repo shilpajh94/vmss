@@ -448,9 +448,10 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         immediately-prior schedule rather than the just-written new one
         (`add-reschedule-history/design.md`).
 
-        `expires_at`, when given (an already-`approved` invitation moved to
-        a new visit day), realigns expiry to the end of that new day the
-        same way `approve_if_submitted` does at initial approval.
+        `expires_at`, when given, realigns expiry to the end of the new
+        visit day the same way `approve_if_submitted` does at initial
+        approval — the service always supplies it, for `submitted` and
+        `approved` alike.
         """
         values: dict[str, Any] = {
             "previous_preferred_visit_date": Invitation.preferred_visit_date,

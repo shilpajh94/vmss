@@ -207,7 +207,6 @@ class Settings(BaseSettings):
     sms_from_number: str | None = None
 
     # `invitations` feature config (add-pre-registration).
-    invitation_token_ttl_hours: int = 168
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
     # Only consulted at tenant/branch provisioning and by the
     # `add-repeatable-field-groups` migration that seeded existing

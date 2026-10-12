@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiosmtplib
 import pytest
@@ -11651,3 +11652,233 @@ async def test_is_relevant_to_tenant_schema_isolation(
         assert not await InvitationRepository(other_session).is_relevant_to(
             invitation.id, user_id=host.id, default_host_role_id=default_host_role_id
         )
+
+
+# --- expire-invitation-at-end-of-visit-day ------------------------------------
+# `expiresAt` is 23:59:59 on the visit day in the visit timezone
+# (company `default_timezone` → tenant `timezone` → UTC), recomputed whenever
+# the visit date actually changes. The `tenant` fixture is pinned to UTC, so
+# a company zone of Asia/Kolkata is what distinguishes the two precedence
+# levels here.
+
+_KOLKATA = "Asia/Kolkata"
+
+
+def test_end_of_visit_day_utc_is_end_of_day_in_given_zone() -> None:
+    visit = date(2026, 10, 2)
+    assert invitations_service._end_of_visit_day_utc(visit, ZoneInfo(_KOLKATA)) == datetime(
+        2026, 10, 2, 18, 29, 59, tzinfo=UTC
+    )
+    assert invitations_service._end_of_visit_day_utc(visit, ZoneInfo("UTC")) == datetime(
+        2026, 10, 2, 23, 59, 59, tzinfo=UTC
+    )
+
+
+@pytest.mark.parametrize(
+    ("company", "tenant_tz", "expected"),
+    [
+        (SimpleNamespace(default_timezone=_KOLKATA), "UTC", _KOLKATA),
+        (SimpleNamespace(default_timezone=None), _KOLKATA, _KOLKATA),
+        (None, _KOLKATA, _KOLKATA),
+        # A region directory, not a zone — `ZoneInfo` raises `IsADirectoryError`.
+        (SimpleNamespace(default_timezone="Asia"), _KOLKATA, _KOLKATA),
+        (SimpleNamespace(default_timezone="Not/AZone"), _KOLKATA, _KOLKATA),
+        (SimpleNamespace(default_timezone="bogus"), "also-bogus", "UTC"),
+    ],
+)
+def test_visit_timezone_precedence(company: Any, tenant_tz: str, expected: str) -> None:
+    tz = invitations_service._visit_timezone(company, SimpleNamespace(timezone=tenant_tz))
+    assert tz.key == expected
+
+
+async def test_create_invitation_expires_at_end_of_visit_day_in_company_timezone(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    db_session.add(
+        CompanyFactory.build(
+            id=uuid.uuid4(),
+            default_timezone=_KOLKATA,
+            auto_approve_pre_registered_visitors=False,
+        )
+    )
+    await db_session.commit()
+    monkeypatch.setattr(tasks.send_tracking_notification, "delay", lambda **kw: None)
+
+    building = BuildingFactory.build(id=uuid.uuid4(), branch_id=branch.id)
+    db_session.add(building)
+    await db_session.commit()
+    payload = _individual_payload()
+    payload["visitDetails"]["branchId"] = str(branch.id)
+    payload["visitDetails"]["buildingId"] = str(building.id)
+    token = await _login(client, user.email)
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    # `_individual_payload()` schedules 2026-08-12 10:00 — expiry ignores both
+    # the visit time and the submission time.
+    assert datetime.fromisoformat(data["expiresAt"]) == datetime(
+        2026, 8, 12, 18, 29, 59, tzinfo=UTC
+    )
+
+
+async def test_create_invitation_without_company_falls_back_to_tenant_timezone(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    monkeypatch.setattr(tasks.send_tracking_notification, "delay", lambda **kw: None)
+
+    building = BuildingFactory.build(id=uuid.uuid4(), branch_id=branch.id)
+    db_session.add(building)
+    await db_session.commit()
+    payload = _individual_payload()
+    payload["visitDetails"]["branchId"] = str(branch.id)
+    payload["visitDetails"]["buildingId"] = str(building.id)
+    token = await _login(client, user.email)
+    data = await _create_invitation_success(client, token, branch, payload=payload)
+
+    assert datetime.fromisoformat(data["expiresAt"]) == datetime(
+        2026, 8, 12, 23, 59, 59, tzinfo=UTC
+    )
+
+
+@pytest.mark.parametrize("initial_status", ["submitted", "approved"])
+async def test_reschedule_moves_expiry_to_end_of_new_visit_day(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+    initial_status: str,
+) -> None:
+    """A `submitted` invitation used to keep the old day's expiry on
+    reschedule; both statuses now realign.
+    """
+    monkeypatch.setattr(tasks.send_reschedule_notification, "delay", lambda **kw: None)
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), default_timezone=_KOLKATA))
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status=initial_status,
+        approved_at=datetime.now(UTC) if initial_status == "approved" else None,
+        preferred_visit_date=date(2026, 10, 2),
+        expires_at=datetime(2026, 10, 2, 18, 29, 59, tzinfo=UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/reschedule",
+        json={"preferredVisitDate": "2026-10-20", "preferredVisitTime": "11:00:00"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    await db_session.refresh(invitation)
+    assert invitation.expires_at == datetime(2026, 10, 20, 18, 29, 59, tzinfo=UTC)
+
+
+async def test_edit_changing_visit_date_moves_expiry(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: None)
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), default_timezone=_KOLKATA))
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="submitted",
+        preferred_visit_date=date(2026, 10, 2),
+        expires_at=datetime(2026, 10, 2, 18, 29, 59, tzinfo=UTC),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"preferredVisitDate": "2026-10-03"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    await db_session.refresh(invitation)
+    assert invitation.expires_at == datetime(2026, 10, 3, 18, 29, 59, tzinfo=UTC)
+
+
+async def test_edit_resending_same_visit_date_keeps_extended_expiry(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """The edit modal resubmits the whole form, unchanged date included —
+    that must not wipe a staff expiry extension.
+    """
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: None)
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), default_timezone=_KOLKATA))
+    extended = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="approved",
+        approved_at=datetime.now(UTC),
+        preferred_visit_date=date(2026, 10, 2),
+        expires_at=extended,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"preferredVisitDate": "2026-10-02", "additionalNotes": "Bring a laptop"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    await db_session.refresh(invitation)
+    assert invitation.additional_notes == "Bring a laptop"
+    assert invitation.expires_at == extended
+
+
+async def test_qr_check_in_visit_date_gate_uses_company_timezone(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """00:30 IST on the visit day is still the previous day in UTC (the
+    tenant's zone) — the gate must agree with the expiry's company zone
+    and let the visitor in rather than answer 425.
+    """
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return datetime(2026, 10, 1, 19, 0, tzinfo=UTC).astimezone(tz)
+
+    monkeypatch.setattr(invitations_service, "datetime", _FrozenDatetime)
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), default_timezone=_KOLKATA))
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        preferred_visit_date=date(2026, 10, 2),
+        # The repository's own expiry check reads the real clock.
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert response.status_code == 200, response.text
+
+
+async def test_visit_timezone_tenant_schema_isolation(
+    make_tenant_schema, open_tenant_session, tenant: Tenant, db_session: AsyncSession
+) -> None:
+    """One tenant's company timezone must never leak into another tenant's
+    expiry — the company lookup resolves against the session's own schema.
+    """
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), default_timezone=_KOLKATA))
+    await db_session.commit()
+    assert (await invitations_service._resolve_visit_timezone(db_session, tenant)).key == _KOLKATA
+
+    other_schema = "tenant_other_test_visit_timezone"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        tz = await invitations_service._resolve_visit_timezone(other_session, tenant)
+    assert tz.key == "UTC"
