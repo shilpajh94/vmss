@@ -1,24 +1,8 @@
 import type { ReactNode } from 'react'
-import {
-  CalendarIcon,
-  CheckIcon,
-  FileTextIcon,
-  GridIcon,
-  PencilIcon,
-  ShieldIcon,
-  UserIcon,
-} from '../../../components/icons'
+import { PencilIcon } from '../../../components/icons'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
 import type { FormStep } from '../../../../domain/entities/form-builder-schema'
-
-const STEP_ICONS: Record<string, typeof UserIcon> = {
-  user: UserIcon,
-  calendar: CalendarIcon,
-  briefcase: FileTextIcon,
-  car: GridIcon,
-  'shield-check': ShieldIcon,
-  'check-circle': CheckIcon,
-}
+import { stepIconFor } from '../step-icons'
 
 interface StepCardProps {
   step: FormStep
@@ -34,7 +18,7 @@ interface StepCardProps {
 }
 
 export function StepCard({ step, order, onToggleActive, onEditFields, onDelete, dragHandle }: StepCardProps) {
-  const Icon = (step.icon && STEP_ICONS[step.icon]) || PencilIcon
+  const Icon = stepIconFor(step.icon)
   const fieldCount = step.fields.length
 
   return (
