@@ -108,10 +108,7 @@ export function AdminFormBuilderPage() {
                   onChange={selectWorkspace}
                   placeholderSelectable
                   placeholder="Tenant Default"
-                  options={[
-                    { value: DEFAULT_WORKSPACE_VALUE, label: 'Tenant Default' },
-                    ...branches.map((branch) => ({ value: branch.id, label: branch.name })),
-                  ]}
+                  options={branches.map((branch) => ({ value: branch.id, label: branch.name }))}
                 />
               </div>
               <button

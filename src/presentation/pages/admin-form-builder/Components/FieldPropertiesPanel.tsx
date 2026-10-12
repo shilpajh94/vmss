@@ -29,7 +29,7 @@ interface FieldPropertiesPanelProps {
   onSave: (input: FormFieldUpdateInput) => Promise<string | undefined>
 }
 
-const NO_CONDITION_VALUE = '__none__'
+const NO_CONDITION_VALUE = ''
 
 interface OptionDraftRow {
   id: string
@@ -370,10 +370,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
           onChange={setConditionFieldKey}
           placeholderSelectable
           placeholder="Always shown"
-          options={[
-            { value: NO_CONDITION_VALUE, label: 'Always shown' },
-            ...siblingFields.filter((f) => f.id !== field.id).map((f) => ({ value: f.key, label: f.label })),
-          ]}
+          options={siblingFields.filter((f) => f.id !== field.id).map((f) => ({ value: f.key, label: f.label }))}
         />
         {conditionFieldKey !== NO_CONDITION_VALUE && (
           <>

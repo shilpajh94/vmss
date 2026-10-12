@@ -11,7 +11,7 @@ import type {
   FormFieldGroupUpdateInput,
 } from '../../../../domain/entities/form-builder-schema'
 
-const NO_CONDITION_VALUE = '__none__'
+const NO_CONDITION_VALUE = ''
 
 // The one seeded group whose instance count is governed entirely by
 // registrationType (individual/group) elsewhere, not an admin-configurable
@@ -168,10 +168,7 @@ export function GroupCard({ group, fieldCount, siblingFields, onSaveProperties, 
           }}
           placeholderSelectable
           placeholder="Always shown"
-          options={[
-            { value: NO_CONDITION_VALUE, label: 'Always shown' },
-            ...pickableFields.map((f) => ({ value: f.key, label: f.label })),
-          ]}
+          options={pickableFields.map((f) => ({ value: f.key, label: f.label }))}
         />
         {conditionFieldKey !== NO_CONDITION_VALUE && (
           <>
