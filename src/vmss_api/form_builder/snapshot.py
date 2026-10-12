@@ -109,6 +109,9 @@ def _normalize_step(step: dict[str, Any], *, source: str) -> dict[str, Any]:
             continue
         for key, default in SNAPSHOT_FIELD_DEFAULTS.items():
             field.setdefault(key, default)
+        if step.get("key") == "visit_details" and field.get("key") == "building":
+            # Snapshots published while `building` was optional.
+            field["isRequired"] = True
         fields.append(field)
     step["fields"] = fields
 
