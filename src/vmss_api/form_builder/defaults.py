@@ -191,7 +191,7 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
                 "Building",
                 "dropdown_select",
                 is_locked=True,
-                is_required=False,
+                is_required=True,
                 help_text="Populated from the selected branch's Buildings list.",
             ),
             DefaultFieldSpec(
