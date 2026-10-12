@@ -121,14 +121,6 @@ export function AdminFormBuilderPage() {
               </button>
               <button
                 type="button"
-                disabled
-                title="Coming soon"
-                className="cursor-not-allowed rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text-faint opacity-60"
-              >
-                Form Preview
-              </button>
-              <button
-                type="button"
                 onClick={() => void publish()}
                 disabled={isPublishing}
                 className="rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white disabled:opacity-60"
