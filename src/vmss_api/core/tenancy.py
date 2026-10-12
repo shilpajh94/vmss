@@ -92,6 +92,10 @@ async def get_tenant(
     if raw_tenant_id is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has no tenant")
     tenant = await TenantRepository(db).get(uuid.UUID(raw_tenant_id))
+    # Hand the connection back to the pool now: `get_db`'s session otherwise
+    # holds it for the whole request, on top of the one `get_tenant_db` opens,
+    # so every authenticated request would pin two pool connections.
+    await db.rollback()
     if tenant is None or not tenant.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Tenant not found or inactive"

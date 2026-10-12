@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     db_username: str | None = Field(default=None, alias="DB_USER")
     db_password: str | None = Field(default=None, alias="DB_PASSWORD")
     database_url_override: str | None = Field(default=None, alias="DATABASE_URL")
+    db_pool_size: int = Field(default=20, ge=1, alias="DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=20, ge=0, alias="DB_MAX_OVERFLOW")
+    db_pool_timeout: int = Field(default=30, ge=1, alias="DB_POOL_TIMEOUT")
+    db_pool_recycle: int = Field(default=1800, ge=-1, alias="DB_POOL_RECYCLE")
 
     @property
     def database_url(self) -> str:
