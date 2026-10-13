@@ -69,11 +69,20 @@ The system SHALL, when the invitations list fails to load, show an error message
 - **THEN** the system shows an error message, triggers an error notification, and lets the admin retry
 
 ### Requirement: Card expand, approve, reschedule, and deny behave the same as the staff dashboard
-The system SHALL provide, on this page, the same card-expansion (with step-progress and pending-approver display), drag-to-approve (direct or step-based), drag-to-deny (with a required reason, direct or step-based), and reschedule behaviors specified for the staff-dashboard capability's board, unchanged.
+The system SHALL provide on this page the same card behaviours specified for the staff-dashboard capability's board, unchanged:
+- activating a card opens Visitor Info
+- the "Level X/Y · Pending" approval badge
+- card-face Approve/Deny buttons and drag-to-approve (direct or step-based)
+- drag-to-deny, with a required reason (direct or step-based)
+- the Visitor info, Reschedule, Edit, and Delegate icon buttons and the modals they open
 
 #### Scenario: Approve, reschedule, and deny available to admins
 - **WHEN** an admin interacts with a card on the Invitations page the same way a staff member would on the staff dashboard
 - **THEN** the same approve, reschedule, and deny behaviors apply, with the same success and failure notifications
+
+#### Scenario: Activating a card opens Visitor Info
+- **WHEN** an admin clicks a card on the Invitations board outside its buttons
+- **THEN** the Visitor Info modal opens for that invitation, and the card does not expand
 
 ### Requirement: Invitations board pins its column headers and loads columns lazily
 The admin Invitations board SHALL keep each column's header visible while its cards scroll. It SHALL load each column in pages of 20 as the admin scrolls, without duplicates, and SHALL stop requesting pages once a column is fully loaded. This is the same behaviour the staff dashboard defines in "Status column headers stay visible while cards scroll" and "Columns load visit requests lazily in pages".
@@ -96,3 +105,37 @@ The system SHALL offer, on every card in the admin Invitations board's Checked-i
 #### Scenario: Check Out with the Checked-in status filter active
 - **WHEN** the admin board's status filter is set to Checked-in and an admin checks a visitor out from that column
 - **THEN** after the reload the card no longer appears in the Checked-in column, and the Checked-in count decreases by one
+
+### Requirement: Search and filters sit in one inline bar matching the staff dashboard
+The system SHALL render, above the admin Invitations board, a single bar laid out like the staff dashboard's search bar. It SHALL contain, in this order:
+- a search field the same 40px height as the filters, taking the remaining width
+- a Purpose of Visit filter, defaulting to "All purposes", whose options are the same purposes the staff dashboard offers
+- a Registration Type filter (All types / Individual / Group)
+- a Status filter, defaulting to "All statuses", offering Requested, Approved, Checked-in, Checked-out and Denied
+- a Source filter, defaulting to "All sources", offering Staff Pre-Registration and Visitor Walk-in
+
+Every filter SHALL always be visible; the page SHALL NOT have a separate "Filters" toggle or pop-open filter panel. On wide screens the controls SHALL sit on one row. On narrow screens they SHALL wrap or stack without horizontal page scroll. Selecting a filter SHALL narrow every column on the server, combined with the search text and other filters, and each column's count SHALL reflect the filtered total. A "Clear filters" action SHALL appear in the bar whenever any filter differs from its default, and SHALL reset all four filters, without clearing the search text.
+
+#### Scenario: All filters visible without a toggle
+- **WHEN** an admin opens the Invitations page
+- **THEN** the search field and the Purpose, Registration Type, Status, and Source filters are all visible in one bar, and there is no "Filters" toggle button
+
+#### Scenario: Filtering by purpose of visit
+- **WHEN** an admin selects a Purpose of Visit filter value
+- **THEN** only invitations whose purpose of visit matches that value are shown, in their existing columns, and each column's count reflects the filtered total
+
+#### Scenario: Status filter still loads one column
+- **WHEN** an admin selects "Approved" in the Status filter
+- **THEN** only the Approved column loads invitations and the other columns show zero, as before
+
+#### Scenario: Clear filters resets every filter
+- **WHEN** an admin has a Purpose and a Source filter selected and a search term entered, and activates "Clear filters"
+- **THEN** all four filters return to their defaults, the search term is kept, and "Clear filters" is no longer shown
+
+#### Scenario: Wide screen layout
+- **WHEN** the Invitations page is viewed at 1440px wide
+- **THEN** the search field and all four filters sit on a single row at equal height
+
+#### Scenario: Narrow screen layout
+- **WHEN** the Invitations page is viewed at 360px wide
+- **THEN** the search field and filters stack or wrap with no horizontal page scroll

@@ -9,8 +9,8 @@ import { DelegateInvitationModal } from '../../components/invitation-board/Deleg
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
 import { LoadingState } from '../../components/ui/LoadingState'
-import { SelectField } from '../../components/ui/SelectField'
-import { SearchGlyphIcon, SlidersIcon } from '../../components/icons'
+import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
+import { CircleDotIcon, ClipboardListIcon } from '../../components/icons'
 import { PageContentLayout } from '../../components/PageContentLayout'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminInvitations } from './hooks/use-admin-invitations'
@@ -23,16 +23,14 @@ const STATUS_OPTIONS = [
   { value: 'denied', label: 'Denied' },
 ]
 
-const REGISTRATION_TYPE_OPTIONS = [
-  { value: 'all', label: 'All types' },
-  { value: 'individual', label: 'Individual' },
-  { value: 'group', label: 'Group' },
-]
-
 const SOURCE_OPTIONS = [
   { value: 'staff_pre_registration', label: 'Staff Pre-Registration' },
   { value: 'visitor_walk_in', label: 'Visitor Walk-in' },
 ]
+
+const STATUS_FILTER_OPTIONS = [{ value: '', label: 'All statuses' }, ...STATUS_OPTIONS]
+
+const SOURCE_FILTER_OPTIONS = [{ value: '', label: 'All sources' }, ...SOURCE_OPTIONS]
 
 const EMPTY_MESSAGES: Record<string, string> = {
   requested: 'No requested visits',
@@ -43,7 +41,6 @@ const EMPTY_MESSAGES: Record<string, string> = {
 }
 
 export function AdminInvitationsPage() {
-  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [pendingApproveId, setPendingApproveId] = useState<string | undefined>(undefined)
   const {
     columns,
@@ -51,6 +48,9 @@ export function AdminInvitationsPage() {
     errorMessage,
     search,
     setSearch,
+    purposeFilter,
+    setPurposeFilter,
+    purposeOptions,
     statusFilter,
     setStatusFilter,
     registrationTypeFilter,
@@ -60,10 +60,7 @@ export function AdminInvitationsPage() {
     refresh,
     approve,
     approvingId,
-    expandedId,
-    toggleExpand,
     invitationDetails,
-    loadingDetailId,
     roleNameById,
     hostEmployees,
     employeeNameById,
@@ -111,8 +108,10 @@ export function AdminInvitationsPage() {
 
   usePageHeader({ description: 'Monitor visitor invitations, approval status, and check-in progress' })
 
-  const isFiltering = statusFilter !== '' || registrationTypeFilter !== 'all' || sourceFilter !== ''
+  const isFiltering = purposeFilter !== 'all' || statusFilter !== '' || registrationTypeFilter !== 'all' || sourceFilter !== ''
+  // Leaves the search text alone - only the dropdown filters reset.
   const clearFilters = () => {
+    setPurposeFilter('all')
     setStatusFilter('')
     setRegistrationTypeFilter('all')
     setSourceFilter('')
@@ -122,53 +121,24 @@ export function AdminInvitationsPage() {
     <PageContentLayout
       header={
         <>
-          <div className="flex w-full flex-wrap items-center justify-between gap-3">
-            <h1 className="font-display text-xl font-bold md:text-2xl text-text">Invitations</h1>
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary">
-                <SearchGlyphIcon className="size-3.5 shrink-0 text-text-faint" />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search visitor, tracking ID..."
-                  className="w-56 bg-transparent font-body text-[13px] text-text placeholder:text-text-faint focus:outline-none"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsFilterPanelOpen((current) => !current)}
-                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
-              >
-                <SlidersIcon className="size-3.5" />
-                Filters
-              </button>
-            </div>
-          </div>
+          <h1 className="font-display text-xl font-bold md:text-2xl text-text">Invitations</h1>
+          <BoardFilterBar
+            search={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search visitor, tracking ID..."
+            purposeFilter={purposeFilter}
+            onPurposeFilterChange={setPurposeFilter}
+            purposeOptions={purposeOptions}
+            registrationTypeFilter={registrationTypeFilter}
+            onRegistrationTypeFilterChange={setRegistrationTypeFilter}
+            extraFilters={[
+              { icon: CircleDotIcon, value: statusFilter, options: STATUS_FILTER_OPTIONS, onChange: setStatusFilter, ariaLabel: 'Status' },
+              { icon: ClipboardListIcon, value: sourceFilter, options: SOURCE_FILTER_OPTIONS, onChange: setSourceFilter, ariaLabel: 'Source' },
+            ]}
+            isFiltering={isFiltering}
+            onClearFilters={clearFilters}
+          />
 
-          {isFilterPanelOpen && (
-            <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-filter-panel">
-              <div className="w-full sm:w-48">
-                <SelectField label="Status" value={statusFilter} onChange={setStatusFilter} placeholder="All" options={STATUS_OPTIONS} />
-              </div>
-              <div className="w-full sm:w-48">
-                <SelectField
-                  label="Registration Type"
-                  value={registrationTypeFilter}
-                  onChange={setRegistrationTypeFilter}
-                  options={REGISTRATION_TYPE_OPTIONS}
-                />
-              </div>
-              <div className="w-full sm:w-48">
-                <SelectField label="Source" value={sourceFilter} onChange={setSourceFilter} placeholder="All" options={SOURCE_OPTIONS} />
-              </div>
-              {isFiltering && (
-                <button type="button" onClick={clearFilters} className="font-body text-[13px] font-semibold text-admin-accent">
-                  Clear filters
-                </button>
-              )}
-            </div>
-          )}
         </>
       }
     >
@@ -202,10 +172,7 @@ export function AdminInvitationsPage() {
                 onMoveToApproved={column.status === 'requested' ? setPendingApproveId : undefined}
                 onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
                 approvingId={approvingId}
-                expandedId={expandedId}
-                onToggleExpand={toggleExpand}
                 invitationDetails={invitationDetails}
-                loadingDetailId={loadingDetailId}
                 roleNameById={roleNameById}
                 employeeNameById={employeeNameById}
                 workflowRulesByCategory={workflowRulesByCategory}

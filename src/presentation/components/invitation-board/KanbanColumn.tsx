@@ -40,10 +40,7 @@ interface KanbanColumnProps {
   emptyMessage: string
   onDrop?: (id: string) => void
   approvingId?: string
-  expandedId?: string
-  onToggleExpand?: (id: string) => void
   invitationDetails?: Record<string, InvitationDetail>
-  loadingDetailId?: string
   roleNameById?: Record<string, string>
   employeeNameById?: Record<string, string>
   workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
@@ -70,10 +67,7 @@ export function KanbanColumn({
   emptyMessage,
   onDrop,
   approvingId,
-  expandedId,
-  onToggleExpand,
   invitationDetails,
-  loadingDetailId,
   roleNameById,
   employeeNameById,
   workflowRulesByCategory,
@@ -99,7 +93,7 @@ export function KanbanColumn({
 
   return (
     <div
-      className="flex min-w-0 flex-1 flex-col gap-4 lg:min-h-0 lg:min-w-[170px]"
+      className="flex min-w-0 flex-1 flex-col gap-3 lg:min-h-0 lg:min-w-[170px]"
       onDragOver={
         onDrop
           ? (event) => {
@@ -121,7 +115,7 @@ export function KanbanColumn({
       }
     >
       {/* Outside the scroll area below, so it stays put however far the cards scroll (desktop). */}
-      <div className={`flex w-full shrink-0 items-center justify-between rounded-[10px] border-l-4 px-4 py-3 ${accent.border} ${accent.tint}`}>
+      <div className={`flex w-full shrink-0 items-center justify-between rounded-[10px] border-l-4 px-4 py-2 ${accent.border} ${accent.tint}`}>
         <p className="font-display text-base font-bold text-text">{label}</p>
         <span className={`rounded-full border border-border bg-surface px-2 py-0.5 font-body text-xs font-bold ${accent.text}`}>{total}</span>
       </div>
@@ -137,7 +131,7 @@ export function KanbanColumn({
       ) : (
         <div
           ref={scrollAreaRef}
-          className={`scrollbar-thin flex w-full flex-col gap-3 rounded-xl p-1 transition-colors lg:min-h-0 lg:flex-1 lg:overflow-y-auto ${isDragOver ? `ring-2 ${accent.dragOver}` : ''}`}
+          className={`scrollbar-thin flex w-full flex-col gap-2 rounded-xl p-1 transition-colors lg:min-h-0 lg:flex-1 lg:overflow-y-auto ${isDragOver ? `ring-2 ${accent.dragOver}` : ''}`}
         >
           {requests.map((request) => (
             <VisitRequestCard
@@ -145,10 +139,7 @@ export function KanbanColumn({
               request={request}
               isDraggable={status === 'requested'}
               isApproving={approvingId === request.id}
-              isExpanded={expandedId === request.id}
-              onToggleExpand={onToggleExpand}
               detail={invitationDetails?.[request.id]}
-              isLoadingDetail={loadingDetailId === request.id}
               roleNameById={roleNameById}
               employeeNameById={employeeNameById}
               workflowRulesByCategory={workflowRulesByCategory}

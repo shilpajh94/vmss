@@ -90,9 +90,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   const debouncedSearch = useDebouncedValue(search, 300)
   const [approvingId, setApprovingId] = useState<string | undefined>(undefined)
-  const [expandedId, setExpandedId] = useState<string | undefined>(undefined)
   const [invitationDetails, setInvitationDetails] = useState<Record<string, InvitationDetail>>({})
-  const [loadingDetailId, setLoadingDetailId] = useState<string | undefined>(undefined)
   const [reschedulingId, setReschedulingId] = useState<string | undefined>(undefined)
   const [delegatingId, setDelegatingId] = useState<string | undefined>(undefined)
   const [editingId, setEditingId] = useState<string | undefined>(undefined)
@@ -361,14 +359,9 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     async (id: string, options?: { forceRefresh?: boolean }): Promise<InvitationDetail> => {
       if (!options?.forceRefresh && invitationDetails[id]) return invitationDetails[id]
 
-      setLoadingDetailId(id)
-      try {
-        const detail = await getInvitationDetailUseCase.execute(id)
-        setInvitationDetails((previous) => ({ ...previous, [id]: detail }))
-        return detail
-      } finally {
-        setLoadingDetailId(undefined)
-      }
+      const detail = await getInvitationDetailUseCase.execute(id)
+      setInvitationDetails((previous) => ({ ...previous, [id]: detail }))
+      return detail
     },
     [invitationDetails, getInvitationDetailUseCase],
   )
@@ -394,22 +387,6 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     setVisitorInfoId(undefined)
   }, [])
 
-  const toggleExpand = useCallback(
-    (id: string) => {
-      if (expandedId === id) {
-        setExpandedId(undefined)
-        return
-      }
-
-      setExpandedId(id)
-      void loadDetail(id).catch((error: unknown) => {
-        console.error('Failed to load invitation detail', error)
-        toast.error('Could not load approval progress for this request.')
-      })
-    },
-    [expandedId, loadDetail, toast],
-  )
-
   // Opens the invitation named by ?invitationId=... (e.g. from a clicked push
   // notification) the same way clicking its card does, once on mount.
   const hasOpenedDeepLinkRef = useRef(false)
@@ -419,12 +396,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     if (!invitationId) return
 
     hasOpenedDeepLinkRef.current = true
-    setExpandedId(invitationId)
-    void loadDetail(invitationId).catch((error: unknown) => {
-      console.error('Failed to load invitation detail from notification link', error)
-      toast.error('Could not load approval progress for this request.')
-    })
-  }, [searchParams, loadDetail, toast])
+    viewVisitorInfo(invitationId)
+  }, [searchParams, viewVisitorInfo])
 
   const approve = useCallback(
     async (id: string) => {
@@ -873,10 +846,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     isRefreshing,
     approve,
     approvingId,
-    expandedId,
-    toggleExpand,
     invitationDetails,
-    loadingDetailId,
     roles,
     roleNameById,
     hostEmployees,

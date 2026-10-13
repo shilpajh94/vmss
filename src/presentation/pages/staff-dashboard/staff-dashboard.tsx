@@ -1,13 +1,13 @@
 import { LoadingState } from '../../components/ui/LoadingState'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
+import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { CheckOutVisitorModal } from '../../components/invitation-board/CheckOutVisitorModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
-import { SearchActionBar } from './Components/SearchActionBar'
 import { WorkspaceHeader } from './Components/WorkspaceHeader'
 import { useStaffDashboard } from './hooks/use-staff-dashboard'
 
@@ -36,10 +36,7 @@ export function StaffDashboardPage() {
     signOut,
     approve,
     approvingId,
-    expandedId,
-    toggleExpand,
     invitationDetails,
-    loadingDetailId,
     roleNameById,
     hostEmployees,
     employeeNameById,
@@ -88,7 +85,7 @@ export function StaffDashboardPage() {
   return (
     <>
       <WorkspaceHeader currentUser={currentUser} onRefresh={refresh} onSignOut={signOut} />
-      <SearchActionBar
+      <BoardFilterBar
         search={search}
         onSearchChange={setSearch}
         purposeFilter={purposeFilter}
@@ -129,10 +126,7 @@ export function StaffDashboardPage() {
                 onMoveToApproved={column.status === 'requested' ? approve : undefined}
                 onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
                 approvingId={approvingId}
-                expandedId={expandedId}
-                onToggleExpand={toggleExpand}
                 invitationDetails={invitationDetails}
-                loadingDetailId={loadingDetailId}
                 roleNameById={roleNameById}
                 employeeNameById={employeeNameById}
                 workflowRulesByCategory={workflowRulesByCategory}
