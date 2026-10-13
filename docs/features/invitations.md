@@ -35,6 +35,7 @@ branch from the request body via the same `authorize_branch_id` helper.
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
 | GET | `/api/v1/invitations/{id}` | `invitations:view-all` at the invitation's branch, **or** being a participant (same rule as `relevantToMe`) | — | Authenticated, staff-facing single-invitation detail view (`InvitationDetailOut`) — branch/source/creator plus every lifecycle field below. Also includes resolved `branch`/`building`/`department` detail (alongside the existing raw `branchId`) and the primary contact's/each visitor's `idProofType`; `idProofUrl` (the raw document image) is included only when the caller additionally holds `documents:view` — see "Resolved location and permission-gated ID-proof documents" below. 404 unknown id; 404 also for a non-participant who holds only `invitations:view` there (e.g. an uninvolved host — existence is not disclosed); 403 if the caller holds no invitation-viewing grant there at all. See "Who can see an invitation" and "Lifecycle actions" below. |
 | PATCH | `/api/v1/invitations/{id}/deny` | `invitations:deny` at the invitation's branch | — | Transitions a `submitted` invitation to `denied`, with a mandatory `reason`, and dispatches a denial notification. 409 if not currently `submitted`. |
+| PATCH | `/api/v1/invitations/{id}/revert-approval` | `invitations:revert-approval` at the invitation's branch | — | Sends an `approved` invitation whose visitor has never checked in back to `submitted`, with a mandatory `reason` (1–500 chars, trimmed). Resets and restarts its approval workflow from step 1. See [Reverting an approval](#reverting-an-approval). 409 if not `approved` or already checked in. |
 | PATCH | `/api/v2/invitations/{trackingId}/check-in` | None (public) | 20/minute per IP | **The single staff/desk-facing check-in endpoint** — the legacy `PATCH /api/v1/invitations/{id}/check-in` route has been removed outright (`checkin-approval-workflow-improvements`). Public, unauthenticated check-in by the invitation's `tracking_id` (`INV-XXXXXXXX`). Transitions an invitation whose `checkInStatus` is `unused` or `checked_out` to `checked_in` (`allow-multiple-checkins` — `checked_out` is not terminal, mirroring the QR endpoint's cycling rule below); `status` must also show the invitation was validly approved at some point (`approved`, `checked_in`, or `checked_out` — never `submitted`/`denied`). A call while already `checked_in` is a **200 idempotent no-op** (unchanged data, no re-stamped `checkedInAt`) rather than an error — this holds even if the invitation was checked in via the *other* check-in endpoint (QR), since both read/write the same `checkInStatus` column. 409 if never approved ("Invitation is not approved") or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key` (optional — the already-checked-in case is idempotent on its own; the header only dedupes two distinct concurrent requests). No branch-authorization check since there's no authenticated caller. Audit entries for this path use `actor_user_id = null` and `action = "invitation_checked_in_public"`. Success response (`InvitationCheckInOut`) matches the public tracking lookup's field set — primary contact name, host display name, purpose of visit, department, preferred visit date/time, expected duration, additional notes, carried items, co-visitors, and vehicles — alongside the id/trackingId/status fields it already carried. It does not carry `branchId`/`createdByUserId`/badge/watchlist-override internals, resolved branch/building/department, or any ID-proof field; those stay exclusive to `GET /invitations/{id}` (branch/building/department also on the QR endpoints below) — this endpoint has no authenticated caller to gate anything by, so it stays exactly as minimally-revealing as before. See "The tracking ID is a plain, human-readable identifier" below for how tenancy resolves with no bearer token. |
 | PATCH | `/api/v2/invitations/qr/{token}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated QR scan check-in — `token` is the encrypted, tamper-evident check-in token encoded in the invitation's QR image (see "QR check-in: encrypted token and the `checkInStatus` lifecycle" below), not the tracking ID. **No longer toggles** (`checkin-approval-workflow-improvements`): entry only, `unused`/`checked_out` → `checked_in`. Scanning while already `checked_in` is a **200 idempotent no-op** (not a silent toggle to checked-out, and not an error) — same "Verification passed" message, unchanged data; use the check-out endpoint below to actually exit. 400 for an invalid/tampered token or a not-yet-approved invitation, 409 for a watchlist block, 425 if scanned before `preferredVisitDate` (`qr-checkin-scheduling-photo-email`), 410 if scanned after `expiresAt` has passed. Audit entries use `action = "invitation_qr_checked_in"`. Accepts `Idempotency-Key` — a scanning client must mint a fresh key per physical scan, not reuse one across scans. Also includes resolved `branch`/`building`/`department` detail and the primary contact's/each visitor's `idProofType` — but never an ID-proof document URL, since there's no authenticated caller to gate one by; see "Resolved location and permission-gated ID-proof documents" below. |
 | PATCH | `/api/v2/invitations/qr/{token}/check-out` | None (public) | 20/minute per IP | Exit counterpart of the QR check-in route above, added by `checkin-approval-workflow-improvements` to replace its old check-in-URL toggle. `checked_in` → `checked_out`; 409 if not currently `checked_in`. Never expiry-blocked — a visit that legitimately continues past `expiresAt` can still be closed out. Audit entries use `action = "invitation_qr_checked_out"`. Accepts `Idempotency-Key`. Same resolved `branch`/`building`/`department`/`idProofType` fields as the check-in endpoint above. |
@@ -679,6 +680,54 @@ submitted ──approve──> approved ──check-in──> checked_in ──c
   this endpoint still has no `Idempotency-Key` support, so a client retry
   can trigger more than one notification for what was meant as a single
   reschedule.
+
+## Reverting an approval
+
+`add-invitation-approval-revert`. An approval made by mistake can be undone
+until the visitor first enters:
+
+```
+approved ──revert-approval──> submitted   (only while checkInStatus = unused)
+```
+
+- **Request**: `PATCH /api/v1/invitations/{id}/revert-approval` with body
+  `{"reason": "..."}`. A reason that is missing, empty or whitespace-only,
+  or longer than 500 characters, returns 422.
+- **Eligibility**: `status = approved` **and** `checkInStatus = unused`,
+  checked in one atomic `UPDATE`. Anything else returns 409, and of two
+  concurrent reverts only one succeeds. A caller without the permission at
+  the invitation's branch gets 403, and an unknown id gets 404.
+- **Effect**:
+  - `status` becomes `submitted` and `approvedAt` is cleared.
+  - `approvalRevertedAt`, `approvalRevertedByUserId` and
+    `approvalRevertReason` record the latest revert. They're on
+    `InvitationOut` and the detail view, and every revert is also
+    audit-logged as `invitation_approval_reverted` with the reason in the
+    diff.
+  - `expiresAt`, the host, the visit details and the issued QR row are
+    left unchanged.
+- **Workflow**: every `InvitationApprovalStep` goes back to `pending`, with
+  its actor, delegation and clock cleared. The lowest `stepOrder` step
+  becomes current again (its clock restarts from now) and its approver gets
+  the usual "awaiting approval" push. The step snapshot taken at submission
+  is reused, not re-read from the category's current rules. An
+  auto-approved invitation has no steps, so it goes back to `submitted` and
+  can be approved with `POST /invitations/{id}/approve`.
+- **The pass while reverted**: every check-in path (QR, staff, public
+  tracking ID) refuses a `submitted` invitation, so the visitor's existing
+  QR doesn't admit them. Re-approval re-sends the **same** QR, which then
+  works again.
+- **Notifications**:
+  - The primary contact gets the `approval_reverted` email and SMS
+    (`send_approval_revert_notification`). They are told their approval
+    was withdrawn and the pass is on hold; the reason is not included,
+    since it's an internal note. The task skips sending if the invitation
+    has already been re-approved by the time it runs.
+  - The host gets a push (`action: approval_reverted`).
+- **Permission**: `invitations:revert-approval` is separate from
+  `invitations:approve`. It is granted by default to `admin`, `reception`
+  and `host`, but not `security`. Tenant migration `6054f5200ed1` backfills
+  it to those standard roles in existing tenants.
 
 ## Resolved location and permission-gated ID-proof documents
 

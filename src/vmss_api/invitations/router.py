@@ -60,6 +60,7 @@ from vmss_api.invitations.schemas import (
     InvitationPrimaryContactCreate,
     InvitationQrCheckInOut,
     InvitationRescheduleRequest,
+    InvitationRevertApprovalRequest,
     InvitationSortableField,
     InvitationStatus,
     InvitationTrackingOut,
@@ -328,6 +329,9 @@ def to_invitation_out(
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
         current_approval_step=current_approval_step,
+        approval_reverted_at=invitation.approval_reverted_at,
+        approval_reverted_by_user_id=invitation.approval_reverted_by_user_id,
+        approval_revert_reason=invitation.approval_revert_reason,
     )
 
 
@@ -1034,6 +1038,9 @@ async def _to_invitation_detail_out(
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
+        approval_reverted_at=invitation.approval_reverted_at,
+        approval_reverted_by_user_id=invitation.approval_reverted_by_user_id,
+        approval_revert_reason=invitation.approval_revert_reason,
         denial_reason=invitation.denial_reason,
         denied_at=invitation.denied_at,
         checked_in_at=invitation.checked_in_at,
@@ -1412,6 +1419,42 @@ async def deny_invitation(
         entity_id=invitation.id,
     )
     return success_response(data=to_invitation_out(invitation))
+
+
+@router.patch(
+    "/{invitation_id}/revert-approval",
+    response_model=Envelope[InvitationOut],
+)
+async def revert_invitation_approval(
+    invitation_id: uuid.UUID,
+    payload: InvitationRevertApprovalRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Sends a mistakenly approved, not-yet-checked-in invitation back to
+    `submitted` with a mandatory reason (spec.md "An Approved,
+    Not-Yet-Checked-In Invitation Can Have Its Approval Reverted").
+    """
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(
+        tenant_db, user, "invitations:revert-approval", invitation.branch_id
+    )
+    invitation = await service.revert_invitation_approval(
+        tenant_db, invitation, user=user, reason=payload.reason, tenant=tenant
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_approval_reverted",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+        diff={"status": {"before": "approved", "after": "submitted"}, "reason": payload.reason},
+    )
+    current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
+    return success_response(data=to_invitation_out(invitation, current_approval_step))
 
 
 # --- add-public-checkin-endpoint: public check-in by tracking ID ------------

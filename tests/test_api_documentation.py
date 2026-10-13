@@ -137,8 +137,16 @@ def test_protected_routes_declare_bearer_security() -> None:
                 "department",
                 "primaryContactIdProofType",
                 "primaryContactIdProofUrl",
+                "approvalRevertedAt",
+                "approvalRevertedByUserId",
+                "approvalRevertReason",
             },
         ),
+        (
+            "InvitationOut",
+            {"approvalRevertedAt", "approvalRevertedByUserId", "approvalRevertReason"},
+        ),
+        ("InvitationRevertApprovalRequest", {"reason"}),
         (
             "InvitationQrCheckInOut",
             {"checkInStatus", "branch", "building", "department", "primaryContactIdProofType"},

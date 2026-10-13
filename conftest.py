@@ -245,6 +245,7 @@ ADMIN_PERMISSION_CODES = [
     "invitations:approve",
     "invitations:approve-override",
     "invitations:deny",
+    "invitations:revert-approval",
     "invitations:checkin",
     "invitations:checkout",
     "invitations:reschedule",

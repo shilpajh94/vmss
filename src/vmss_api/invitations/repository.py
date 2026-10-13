@@ -249,6 +249,35 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def revert_approval_if_eligible(
+        self, id_: uuid.UUID, *, user_id: uuid.UUID, reason: str
+    ) -> Invitation | None:
+        """Atomic conditional `approved` -> `submitted` transition, same
+        shape as `approve_if_submitted`. `check_in_status = 'unused'` is
+        checked in the same `WHERE` because `status` and `check_in_status`
+        are written by different paths — this is the only place a race
+        with a concurrent check-in can be closed (add-invitation-approval-
+        revert/design.md Decision 2). `None` means "not eligible", which
+        the caller turns into a 409.
+        """
+        stmt = (
+            update(Invitation)
+            .where(
+                Invitation.id == id_,
+                Invitation.status == "approved",
+                Invitation.check_in_status == "unused",
+            )
+            .values(
+                status="submitted",
+                approved_at=None,
+                approval_reverted_at=datetime.now(UTC),
+                approval_reverted_by_user_id=user_id,
+                approval_revert_reason=reason,
+            )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def deny_if_submitted(self, id_: uuid.UUID, *, reason: str) -> Invitation | None:
         """Atomic conditional transition, same shape as `approve_if_submitted`
         — see spec.md "A Submitted Invitation Can Be Denied With a Reason".

@@ -2842,3 +2842,112 @@ async def test_category_with_configured_rules_snapshots_exactly_the_configured_c
     assert first_step is not None
     assert first_step.step_order == 1
     assert invitation.host_id is None
+
+
+# --- add-invitation-approval-revert: revert restarts the workflow -------------
+
+
+async def test_revert_approval_restarts_workflow_from_first_step(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    user: User,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    invitation, step_one_role, step_two_role = await _two_step_invitation(db_session, branch)
+    first_approver = await _user_with_role(
+        db_session, branch.id, role=step_one_role, extra_permission_codes=("invitations:approve",)
+    )
+    second_approver = await _user_with_role(
+        db_session, branch.id, role=step_two_role, extra_permission_codes=("invitations:approve",)
+    )
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", branch_roles=[]
+    )
+    db_session.add(host)
+    await db_session.flush()
+    invitation.host_id = host.id
+    step_two = await _get_step(db_session, invitation.id, 2)
+    # A delegation recorded before approval, which the revert must clear.
+    step_two.delegated_to_user_id = second_approver.id
+    step_two.delegated_by_user_id = first_approver.id
+    step_two.delegated_at = datetime.now(UTC)
+    await db_session.commit()
+    # Tokens and ids up front: the shared test session's `get_tenant`
+    # rollback expires ORM objects mid-request (see `0c4d1c1`).
+    invitation_id, host_id, step_one_role_id = invitation.id, host.id, step_one_role.id
+    first_token, second_token = issue_token(first_approver), issue_token(second_approver)
+    admin_token = issue_token(user)
+
+    step_pushes: list[dict] = []
+
+    async def _fake_notify_step_approver(tenant_db, **kwargs):
+        step_pushes.append(kwargs)
+
+    async def _fake_notify_user(**kwargs):
+        return None
+
+    approval_calls: list[dict] = []
+    monkeypatch.setattr(notifications_service, "notify_step_approver", _fake_notify_step_approver)
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+    monkeypatch.setattr(
+        tasks.send_approval_notification, "delay", lambda **kw: approval_calls.append(kw)
+    )
+    monkeypatch.setattr(tasks.send_approval_revert_notification, "delay", lambda **kw: None)
+
+    async def _approve_step(step_order: int, token: str) -> int:
+        step = await _get_step(db_session, invitation_id, step_order)
+        response = await client.post(
+            f"/api/v1/invitations/{invitation_id}/approval-steps/{step.id}/approve",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        return response.status_code
+
+    assert await _approve_step(1, first_token) == 200
+    assert await _approve_step(2, second_token) == 200
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+    step_pushes.clear()
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation_id}/revert-approval",
+        json={"reason": "Approved before the background check"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "submitted"
+    assert data["currentApprovalStep"]["stepOrder"] == 1
+
+    db_session.expire_all()
+    steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation_id)
+    assert [s.status for s in steps] == ["pending", "pending"]
+    assert all(s.acted_by_user_id is None and s.acted_at is None for s in steps)
+    assert all(s.delegated_to_user_id is None and s.delegated_at is None for s in steps)
+    # Step one's clock restarts (no minutes configured → stays unset); step
+    # two's 30-minute escalation is only computed when it becomes current.
+    assert steps[1].escalates_at is None
+    assert len(step_pushes) == 1
+    assert step_pushes[0]["approver_role_id"] == step_one_role_id
+    await db_session.refresh(invitation)
+    assert invitation.host_id == host_id
+
+    # Out-of-order and blanket approval stay blocked for the restarted workflow.
+    assert await _approve_step(2, second_token) == 409
+    response = await client.post(
+        f"/api/v1/invitations/{invitation_id}/approve",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 409
+
+    # Re-approving in order re-approves the invitation with the same pass.
+    assert await _approve_step(1, first_token) == 200
+    db_session.expire_all()
+    step_two = await _get_step(db_session, invitation_id, 2)
+    assert step_two.escalates_at is not None
+    assert await _approve_step(2, second_token) == 200
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+    assert len(approval_calls) == 2
+    assert approval_calls[0]["qr_token"] == approval_calls[1]["qr_token"]

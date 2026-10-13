@@ -12080,3 +12080,428 @@ async def test_host_cannot_check_out_visitor(
 
     await db_session.refresh(invitation)
     assert invitation.status == "checked_in"
+
+
+# --- add-invitation-approval-revert: PATCH /invitations/{id}/revert-approval --
+
+
+async def _branch_scoped_user_with(
+    db_session: AsyncSession, tenant: Tenant, branch_id: uuid.UUID, codes: tuple[str, ...]
+) -> User:
+    """A caller holding exactly `codes` at `branch_id`. Get-or-create on each
+    `Permission` because `code` is unique across the global catalog and the
+    `user` fixture (Admin) may already have inserted the same code in this
+    test.
+    """
+    permissions = []
+    for code in codes:
+        existing = (
+            await db_session.execute(select(Permission).where(Permission.code == code))
+        ).scalar_one_or_none()
+        if existing is None:
+            existing = PermissionFactory.build(id=uuid.uuid4(), code=code, description=code)
+            db_session.add(existing)
+        permissions.append(existing)
+    role = RoleFactory.build(
+        id=uuid.uuid4(), name=f"revert-test-{uuid.uuid4().hex[:8]}", permissions=permissions
+    )
+    branch_role = UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch_id)
+    test_user = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"revert-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        full_name="Revert Caller",
+        branch_roles=[branch_role],
+    )
+    db_session.add_all([role, test_user])
+    await db_session.flush()
+    db_session.add(
+        TenantUserIndex(email=test_user.email, tenant_id=tenant.id, user_id=test_user.id)
+    )
+    await db_session.commit()
+    return test_user
+
+
+def _capture_revert_dispatch(monkeypatch) -> tuple[list[dict], list[dict]]:
+    """Captures `(revert_email_calls, host_push_calls)`."""
+    email_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_approval_revert_notification, "delay", lambda **kw: email_calls.append(kw)
+    )
+    push_calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        push_calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+    return email_calls, push_calls
+
+
+async def _revert(
+    client: AsyncClient, token: str, invitation_id: uuid.UUID, reason: Any
+) -> Response:
+    return await client.patch(
+        f"/api/v1/invitations/{invitation_id}/revert-approval",
+        json={"reason": reason},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+async def test_revert_approval_success(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host = _make_host(db_session)
+    db_session.add(host)
+    await db_session.flush()
+    invitation = _approved_invitation(db_session, branch.id, host_id=host.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    # Plain ids up front: the shared test session's `get_tenant` rollback
+    # expires ORM objects mid-request (see `0c4d1c1`).
+    host_id, invitation_id, user_id = host.id, invitation.id, user.id
+    email_calls, push_calls = _capture_revert_dispatch(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await _revert(client, token, invitation_id, "  Approved the wrong visitor  ")
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "submitted"
+    assert data["approvedAt"] is None
+    assert data["approvalRevertedAt"] is not None
+    assert data["approvalRevertedByUserId"] == str(user_id)
+    assert data["approvalRevertReason"] == "Approved the wrong visitor"
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+    assert invitation.approved_at is None
+    assert invitation.approval_revert_reason == "Approved the wrong visitor"
+    assert [c["invitation_id"] for c in email_calls] == [str(invitation_id)]
+    assert len(push_calls) == 1
+    assert push_calls[0]["user_id"] == host_id
+    assert push_calls[0]["data"]["action"] == "approval_reverted"
+
+    audit = (
+        await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "invitation_approval_reverted",
+                AuditLog.entity_id == invitation_id,
+            )
+        )
+    ).scalar_one()
+    assert audit.actor_user_id == user_id
+
+
+async def test_revert_approval_auto_approved_invitation_can_be_reapproved_or_denied(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """An auto-approved invitation has no steps, so after a revert the
+    blanket approve endpoint (and deny) work on it again."""
+    approve_target = _approved_invitation(db_session, branch.id)
+    deny_target = _approved_invitation(db_session, branch.id)
+    db_session.add_all([approve_target, deny_target])
+    await db_session.commit()
+    _capture_revert_dispatch(monkeypatch)
+    monkeypatch.setattr(tasks.send_approval_notification, "delay", lambda **kw: None)
+    monkeypatch.setattr(tasks.send_denial_notification, "delay", lambda **kw: None)
+
+    approve_id, deny_id = approve_target.id, deny_target.id
+
+    token = await _login(client, user.email)
+    for target_id in (approve_id, deny_id):
+        assert (await _revert(client, token, target_id, "Mistake")).status_code == 200
+
+    response = await client.post(
+        f"/api/v1/invitations/{approve_id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "approved"
+
+    response = await client.patch(
+        f"/api/v1/invitations/{deny_id}/deny",
+        json={"reason": "Not expected after all"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "denied"
+
+
+async def test_revert_approval_without_host_skips_push(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    invitation = _approved_invitation(db_session, branch.id, host_id=None)
+    db_session.add(invitation)
+    await db_session.commit()
+    email_calls, push_calls = _capture_revert_dispatch(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await _revert(client, token, invitation.id, "Mistake")
+    assert response.status_code == 200, response.text
+    assert push_calls == []
+    assert len(email_calls) == 1
+
+
+@pytest.mark.parametrize("reason", [None, "", "   ", "x" * 501])
+async def test_revert_approval_invalid_reason_rejected(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+    reason: str | None,
+) -> None:
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    email_calls, _ = _capture_revert_dispatch(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await _revert(client, token, invitation.id, reason)
+    assert response.status_code == 422
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+    assert email_calls == []
+
+
+@pytest.mark.parametrize(
+    ("status_value", "check_in_status"),
+    [
+        ("submitted", "unused"),
+        ("denied", "unused"),
+        ("checked_in", "checked_in"),
+        ("checked_out", "checked_out"),
+        # Approved, but the visitor has already entered at some point.
+        ("approved", "checked_out"),
+    ],
+)
+async def test_revert_approval_ineligible_state_conflicts(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+    status_value: str,
+    check_in_status: str,
+) -> None:
+    invitation = _approved_invitation(
+        db_session, branch.id, status=status_value, check_in_status=check_in_status
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    email_calls, push_calls = _capture_revert_dispatch(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await _revert(client, token, invitation.id, "Mistake")
+    assert response.status_code == 409
+
+    await db_session.refresh(invitation)
+    assert invitation.status == status_value
+    assert invitation.approval_reverted_at is None
+    assert email_calls == []
+    assert push_calls == []
+
+
+@pytest.mark.parametrize(
+    "codes",
+    [
+        # Security's default grants: no revert permission.
+        ("invitations:view", "invitations:checkin", "invitations:checkout"),
+        # Can approve, but approve does not imply revert.
+        ("invitations:view", "invitations:approve"),
+    ],
+)
+async def test_revert_approval_requires_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+    codes: tuple[str, ...],
+) -> None:
+    caller = await _branch_scoped_user_with(db_session, tenant, branch.id, codes)
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    email_calls, _ = _capture_revert_dispatch(monkeypatch)
+
+    response = await _revert(client, issue_token(caller), invitation.id, "Mistake")
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+    assert email_calls == []
+
+
+async def test_revert_approval_permission_at_other_branch_forbidden(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-REVERT")
+    db_session.add(other_branch)
+    await db_session.flush()
+    caller = await _branch_scoped_user_with(
+        db_session, tenant, other_branch.id, ("invitations:view", "invitations:revert-approval")
+    )
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    _capture_revert_dispatch(monkeypatch)
+
+    response = await _revert(client, issue_token(caller), invitation.id, "Mistake")
+    assert response.status_code == 403
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+
+async def test_revert_approval_branch_scoped_holder_succeeds(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    caller = await _branch_scoped_user_with(
+        db_session, tenant, branch.id, ("invitations:view", "invitations:revert-approval")
+    )
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    _capture_revert_dispatch(monkeypatch)
+
+    response = await _revert(client, issue_token(caller), invitation.id, "Mistake")
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["approvalRevertedByUserId"] == str(caller.id)
+
+
+async def test_revert_approval_unknown_invitation_not_found(
+    client: AsyncClient, user: User
+) -> None:
+    token = await _login(client, user.email)
+    response = await _revert(client, token, uuid.uuid4(), "Mistake")
+    assert response.status_code == 404
+
+
+async def test_revert_approval_concurrent_requests_transition_exactly_once(
+    branch: Branch, tenant: Tenant, user: User, db_session: AsyncSession, monkeypatch
+) -> None:
+    """Same stale-object simulation as
+    `test_approve_invitation_concurrent_requests_transition_exactly_once`:
+    both calls see the pre-revert `approved` row, and only the atomic
+    `UPDATE` decides."""
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    email_calls, _ = _capture_revert_dispatch(monkeypatch)
+
+    first = await invitations_service.revert_invitation_approval(
+        db_session, invitation, user=user, reason="Mistake", tenant=tenant
+    )
+    assert first.status == "submitted"
+
+    with pytest.raises(HTTPException) as exc_info:
+        await invitations_service.revert_invitation_approval(
+            db_session, invitation, user=user, reason="Mistake", tenant=tenant
+        )
+    assert exc_info.value.status_code == 409
+    assert len(email_calls) == 1
+
+
+async def test_revert_approval_if_eligible_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_revert"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        updated = await InvitationRepository(other_session).revert_approval_if_eligible(
+            invitation.id, user_id=uuid.uuid4(), reason="Mistake"
+        )
+        assert updated is None
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "approved"
+
+
+async def test_reverted_invitation_pass_is_on_hold_until_reapproved(
+    client: AsyncClient,
+    tenant: Tenant,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    """The QR issued at the first approval is refused while reverted, and
+    re-approval re-sends — and re-validates — the same token."""
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="submitted",
+        preferred_visit_date=None,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    approval_calls: list[dict] = []
+    monkeypatch.setattr(
+        tasks.send_approval_notification, "delay", lambda **kw: approval_calls.append(kw)
+    )
+    _capture_revert_dispatch(monkeypatch)
+    token = await _login(client, user.email)
+    approve_url = f"/api/v1/invitations/{invitation.id}/approve"
+    auth = {"Authorization": f"Bearer {token}"}
+
+    assert (await client.post(approve_url, headers=auth)).status_code == 200
+    assert (await _revert(client, token, invitation.id, "Mistake")).status_code == 200
+
+    qr = approval_calls[0]["qr_token"]
+    response = await client.patch(f"/api/v2/invitations/qr/{qr}/check-in")
+    # Same rejection any not-yet-approved invitation's scan gets.
+    assert response.status_code == 400, response.text
+    await db_session.refresh(invitation)
+    assert invitation.status == "submitted"
+    assert invitation.check_in_status == "unused"
+
+    assert (await client.post(approve_url, headers=auth)).status_code == 200
+    assert [c["qr_token"] for c in approval_calls] == [qr, qr]
+    response = await client.patch(f"/api/v2/invitations/qr/{qr}/check-in")
+    assert response.status_code == 200, response.text
+
+
+async def test_approval_revert_notification_skipped_once_reapproved(
+    tenant: Tenant, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """A redelivered revert email must not reach a visitor whose request
+    has since been re-approved (background-jobs.md §2)."""
+    invitation = _approved_invitation(db_session, branch.id, approval_reverted_at=datetime.now(UTC))
+    db_session.add(invitation)
+    await db_session.commit()
+    sent: list[Invitation] = []
+
+    async def _fake_dispatch(inv, **kwargs):
+        sent.append(inv)
+
+    monkeypatch.setattr(tasks, "_dispatch", _fake_dispatch)
+    await tasks._send_approval_revert_notification(tenant.schema_name, str(invitation.id))
+    assert sent == []
+
+    await db_session.execute(
+        update(Invitation).where(Invitation.id == invitation.id).values(status="submitted")
+    )
+    await db_session.commit()
+    await tasks._send_approval_revert_notification(tenant.schema_name, str(invitation.id))
+    assert [inv.id for inv in sent] == [invitation.id]

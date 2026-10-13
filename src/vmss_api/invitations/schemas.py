@@ -3,7 +3,7 @@ from datetime import date, datetime, time
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import ConfigDict, EmailStr, Field, model_validator
+from pydantic import ConfigDict, EmailStr, Field, StringConstraints, model_validator
 
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.core.schemas import CamelModel
@@ -431,6 +431,9 @@ class InvitationOut(CamelModel):
     submitted_at: datetime | None
     approved_at: datetime | None
     current_approval_step: CurrentApprovalStepOut | None = None
+    approval_reverted_at: datetime | None = None
+    approval_reverted_by_user_id: uuid.UUID | None = None
+    approval_revert_reason: str | None = None
 
 
 class InvitationLookupPrefillOut(CamelModel):
@@ -708,6 +711,9 @@ class InvitationDetailOut(CamelModel):
     current_approval_step: CurrentApprovalStepOut | None = None
     denial_reason: str | None
     denied_at: datetime | None
+    approval_reverted_at: datetime | None = None
+    approval_reverted_by_user_id: uuid.UUID | None = None
+    approval_revert_reason: str | None = None
     checked_in_at: datetime | None
     checked_in_by_user_id: uuid.UUID | None
     checked_out_at: datetime | None
@@ -725,6 +731,12 @@ class InvitationDetailOut(CamelModel):
 
 class InvitationDenyRequest(CamelModel):
     reason: str = Field(min_length=1, max_length=500)
+
+
+class InvitationRevertApprovalRequest(CamelModel):
+    # Stripped before the length check, so a whitespace-only reason is a
+    # 422, not a stored blank (spec.md "Reason is mandatory").
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
 class InvitationRescheduleRequest(CamelModel):

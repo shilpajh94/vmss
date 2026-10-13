@@ -127,6 +127,7 @@ TEMPLATE_TONES: dict[str, str] = {
     "tracking_only": "pending",
     "submission_role": "pending",
     "denial": "danger",
+    "approval_reverted": "pending",
     "reschedule": "info",
     "edit": "info",
     "host_assigned": "brand",

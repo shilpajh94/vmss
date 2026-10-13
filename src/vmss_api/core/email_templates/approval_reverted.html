@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block eyebrow %}On hold{% endblock %}
+{% block heading %}Your visit approval has been withdrawn{% endblock %}
+{% block content %}
+{% set when = visit_date | visit_datetime(visit_time) %}
+{{ m.lead("The approval for your visit" ~ (" on " ~ when if when else "") ~ " has been withdrawn and your request is being reviewed again. Until it's approved again, the pass we sent you won't admit you.") }}
+{{ m.section("What happens next") }}
+{{ m.checklist([
+  "We'll email you again, with your pass, as soon as the request is approved.",
+  "Get in touch with the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " if you have questions about your visit.",
+]) }}
+{% if cta %}{{ m.button(cta.label, cta.url) }}{% endif %}
+{{ m.tracking_note("Please quote your tracking ID", tracking_id, " in any follow-up.") }}
+{% endblock %}

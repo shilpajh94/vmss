@@ -1713,6 +1713,73 @@ async def deny_invitation(
     return updated
 
 
+async def revert_invitation_approval(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    user: User,
+    reason: str,
+    tenant: Tenant,
+) -> Invitation:
+    """Sends an `approved`, never-admitted invitation back to `submitted`
+    (spec.md "An Approved, Not-Yet-Checked-In Invitation Can Have Its
+    Approval Reverted"). The pre-read only picks a specific 409 message;
+    `revert_approval_if_eligible`'s atomic `WHERE` is the real gate, same
+    as `approve_invitation`.
+
+    A workflow-backed invitation has every step reset to `pending` and the
+    first step re-activated in the same transaction (approvals spec "Reverting
+    an Approval Restarts the Invitation's Workflow From Its First Step") —
+    both calls are no-ops for an invitation without steps (auto-approved).
+    The QR row is kept: every check-in path already refuses a `submitted`
+    invitation, and re-approval re-sends the same pass (design.md
+    Decision 3).
+    """
+    if invitation.status == "approved" and invitation.check_in_status != "unused":
+        logger.warning(
+            "invitation_revert_rejected", invitation_id=str(invitation.id), reason="checked_in"
+        )
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Visitor has already checked in on this invitation"
+        )
+    updated = await InvitationRepository(tenant_db).revert_approval_if_eligible(
+        invitation.id, user_id=user.id, reason=reason
+    )
+    if updated is None:
+        logger.warning(
+            "invitation_revert_rejected", invitation_id=str(invitation.id), reason="not_approved"
+        )
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
+    step_repo = InvitationApprovalStepRepository(tenant_db)
+    await step_repo.reset_all_for_invitation(updated.id)
+    activated_step = await step_repo.activate_current_pending(updated.id)
+    await tenant_db.commit()
+    logger.info(
+        "invitation_approval_reverted",
+        invitation_id=str(updated.id),
+        workflow_restarted=activated_step is not None,
+    )
+    tasks.send_approval_revert_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(updated.id),
+    )
+    await _notify_host(tenant, updated, push_notifications.approval_reverted)
+    if activated_step is not None:
+        title, body, data = push_notifications.step_awaiting_approval(updated)
+        await notifications_service.notify_step_approver(
+            tenant_db,
+            tenant_schema=tenant.schema_name,
+            approver_user_id=activated_step.approver_user_id,
+            approver_role_id=activated_step.approver_role_id,
+            branch_id=updated.branch_id,
+            title=title,
+            body=body,
+            data=data,
+        )
+    return updated
+
+
 async def _perform_check_in(
     tenant_db: AsyncSession,
     invitation: Invitation,

@@ -1,5 +1,4 @@
 import uuid
-from datetime import UTC, datetime, timedelta
 
 import structlog
 from fastapi import HTTPException, status
@@ -121,33 +120,13 @@ async def _activate_next_step(
     tenant_db: AsyncSession, invitation_id: uuid.UUID
 ) -> InvitationApprovalStep | None:
     """After a step is approved, the next step by `step_order` (if any)
-    becomes current — its own `escalates_at`/`auto_approves_at` are computed
-    now, from its own snapshotted minute values, relative to *this* moment,
-    not the invitation's original submission time (specs/approvals/spec.md
-    "A later step's timestamps are set when it becomes current"). Returns
-    that newly-current step (or `None`) so the caller can dispatch its push
-    *after* its own commit (`approve_step` below) — never from in here, which
-    runs before that commit.
+    becomes current — see `InvitationApprovalStepRepository.
+    activate_current_pending` for how its clock is computed. Returns that
+    newly-current step (or `None`) so the caller can dispatch its push
+    *after* its own commit (`approve_step` below) — never from in here,
+    which runs before that commit.
     """
-    repo = InvitationApprovalStepRepository(tenant_db)
-    next_step = await repo.get_current_pending(invitation_id)
-    if next_step is None:
-        return None
-    now = datetime.now(UTC)
-    await repo.set_clock(
-        next_step.id,
-        escalates_at=(
-            now + timedelta(minutes=next_step.escalation_minutes)
-            if next_step.escalation_minutes is not None
-            else None
-        ),
-        auto_approves_at=(
-            now + timedelta(minutes=next_step.auto_approve_minutes)
-            if next_step.auto_approve_minutes is not None
-            else None
-        ),
-    )
-    return next_step
+    return await InvitationApprovalStepRepository(tenant_db).activate_current_pending(invitation_id)
 
 
 async def approve_step(

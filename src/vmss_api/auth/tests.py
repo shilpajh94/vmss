@@ -2699,3 +2699,49 @@ async def test_resync_role_permissions_backfills_reception_invitations_checkout(
 
     again = await resync_role_permissions(db_session)
     assert all("invitations:checkout" not in codes for codes in again.values())
+
+
+# --- add-invitation-approval-revert --------------------------------------------
+
+
+async def test_seeded_roles_grant_invitations_revert_approval_to_approving_roles(
+    db_session: AsyncSession,
+) -> None:
+    """spec.md "A newly provisioned tenant's approving roles can revert"."""
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    repo = RoleRepository(db_session)
+    for name in ("admin", "reception", "host"):
+        role = await repo.get_by_name(name)
+        assert role is not None
+        assert "invitations:revert-approval" in {p.code for p in role.permissions}, name
+    for name in ("security", "visitor"):
+        role = await repo.get_by_name(name)
+        assert role is not None
+        assert "invitations:revert-approval" not in {p.code for p in role.permissions}, name
+
+
+async def test_resync_role_permissions_backfills_invitations_revert_approval(
+    db_session: AsyncSession,
+) -> None:
+    """Service-level for the same reason as
+    `test_resync_role_permissions_backfills_reception_invitations_checkout`.
+    """
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    repo = RoleRepository(db_session)
+    for name in ("reception", "host"):
+        role = await repo.get_by_name(name)
+        assert role is not None
+        role.permissions = [p for p in role.permissions if p.code != "invitations:revert-approval"]
+    await db_session.commit()
+
+    granted = await resync_role_permissions(db_session)
+    assert "invitations:revert-approval" in granted["reception"]
+    assert "invitations:revert-approval" in granted["host"]
+    assert "invitations:revert-approval" not in granted.get("security", [])
+
+    again = await resync_role_permissions(db_session)
+    assert all("invitations:revert-approval" not in codes for codes in again.values())

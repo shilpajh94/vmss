@@ -34,6 +34,10 @@ def denied(invitation: Invitation) -> tuple[str, str, dict[str, str]]:
     return _build(invitation, title="Invitation denied", action="denied")
 
 
+def approval_reverted(invitation: Invitation) -> tuple[str, str, dict[str, str]]:
+    return _build(invitation, title="Invitation approval reverted", action="approval_reverted")
+
+
 def rescheduled(invitation: Invitation) -> tuple[str, str, dict[str, str]]:
     return _build(invitation, title="Visit rescheduled", action="rescheduled")
 
