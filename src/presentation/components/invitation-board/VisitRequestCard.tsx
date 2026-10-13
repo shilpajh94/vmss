@@ -37,6 +37,8 @@ interface VisitRequestCardProps {
   onApproveClick?: (id: string) => void
   onEditClick?: (id: string) => void
   onVisitorInfoClick?: (id: string) => void
+  // Only passed to Checked-in cards, and only for staff who may check out.
+  onCheckOutClick?: (id: string) => void
   // Approve/Deny buttons (cards are no longer draggable). Shown at every size,
   // and only when the card is actionable (`isDraggable`).
   onMoveToApproved?: (id: string) => void
@@ -60,6 +62,7 @@ export function VisitRequestCard({
   onApproveClick,
   onEditClick,
   onVisitorInfoClick,
+  onCheckOutClick,
   onMoveToApproved,
   onMoveToDenied,
 }: VisitRequestCardProps) {
@@ -150,7 +153,7 @@ export function VisitRequestCard({
         </div>
       ) : null}
 
-      {canReschedule || canDelegate || canApproveAndDelegate || canApprove || canEdit || canTapApprove || canTapDeny || onVisitorInfoClick ? (
+      {canReschedule || canDelegate || canApproveAndDelegate || canApprove || canEdit || canTapApprove || canTapDeny || onVisitorInfoClick || onCheckOutClick ? (
         <div className="flex w-full flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
           {onVisitorInfoClick ? (
             <button
@@ -159,6 +162,15 @@ export function VisitRequestCard({
               className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
             >
               Visitor Info
+            </button>
+          ) : null}
+          {onCheckOutClick ? (
+            <button
+              type="button"
+              onClick={() => onCheckOutClick(request.id)}
+              className="min-w-[92px] flex-1 rounded-lg border border-secondary-accent/40 bg-secondary-accent/8 px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-secondary-accent transition-colors hover:bg-secondary-accent/15 active:bg-secondary-accent/20 max-lg:py-2.5 max-lg:text-xs"
+            >
+              Check Out
             </button>
           ) : null}
           {canReschedule ? (

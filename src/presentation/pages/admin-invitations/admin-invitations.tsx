@@ -3,6 +3,7 @@ import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
 import { ApproveInvitationModal } from '../../components/invitation-board/ApproveInvitationModal'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
+import { CheckOutVisitorModal } from '../../components/invitation-board/CheckOutVisitorModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
@@ -81,6 +82,13 @@ export function AdminInvitationsPage() {
     cancelDeny,
     confirmDeny,
     denyingId,
+    canCheckOut,
+    pendingCheckOutId,
+    pendingCheckOutRequest,
+    requestCheckOut,
+    cancelCheckOut,
+    confirmCheckOut,
+    checkingOutId,
     pendingRescheduleId,
     requestReschedule,
     cancelReschedule,
@@ -207,6 +215,7 @@ export function AdminInvitationsPage() {
                 onApproveClick={setPendingApproveId}
                 onEditClick={requestEdit}
                 onVisitorInfoClick={viewVisitorInfo}
+                onCheckOutClick={column.status === 'checked_in' && canCheckOut ? requestCheckOut : undefined}
               />
             )}
           />
@@ -225,6 +234,15 @@ export function AdminInvitationsPage() {
       />
 
       <DenyInvitationModal isOpen={pendingDenyId !== undefined} isDenying={denyingId !== undefined} onConfirm={confirmDeny} onCancel={cancelDeny} />
+
+      <CheckOutVisitorModal
+        isOpen={pendingCheckOutId !== undefined}
+        visitorName={pendingCheckOutRequest?.primaryContactFullName}
+        trackingId={pendingCheckOutRequest?.trackingId}
+        isCheckingOut={checkingOutId !== undefined}
+        onConfirm={() => void confirmCheckOut()}
+        onCancel={cancelCheckOut}
+      />
 
       <RescheduleInvitationModal
         isOpen={pendingRescheduleId !== undefined}

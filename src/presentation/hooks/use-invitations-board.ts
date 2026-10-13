@@ -66,6 +66,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     rescheduleInvitationUseCase,
     editInvitationUseCase,
     denyInvitationUseCase,
+    checkOutInvitationUseCase,
     approveInvitationStepUseCase,
     rejectInvitationStepUseCase,
     delegateInvitationStepUseCase,
@@ -97,6 +98,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [editingId, setEditingId] = useState<string | undefined>(undefined)
   const [pendingDenyId, setPendingDenyId] = useState<string | undefined>(undefined)
   const [denyingId, setDenyingId] = useState<string | undefined>(undefined)
+  const [pendingCheckOutId, setPendingCheckOutId] = useState<string | undefined>(undefined)
+  const [checkingOutId, setCheckingOutId] = useState<string | undefined>(undefined)
   const [pendingRescheduleId, setPendingRescheduleId] = useState<string | undefined>(undefined)
   const [pendingDelegateId, setPendingDelegateId] = useState<string | undefined>(undefined)
   const [approvingAndDelegatingId, setApprovingAndDelegatingId] = useState<string | undefined>(undefined)
@@ -222,7 +225,9 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     pendingDelegateId !== undefined ||
     pendingEditId !== undefined ||
     pendingApproveAndDelegateId !== undefined ||
+    pendingCheckOutId !== undefined ||
     denyingId !== undefined ||
+    checkingOutId !== undefined ||
     reschedulingId !== undefined ||
     delegatingId !== undefined ||
     editingId !== undefined ||
@@ -779,6 +784,48 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     [pendingDenyId, denyInvitationUseCase, rejectInvitationStepUseCase, loadDashboard, loadDetail, workflowRulesByCategory, toast],
   )
 
+  // Only Admin and Reception hold `invitations:checkout` by default; the web
+  // app has no permission codes, so this role-name check decides whether the
+  // Checked-in column gets the button and the API stays the real authority.
+  const canCheckOut = Boolean(currentUser?.isAdmin || currentUser?.isReception)
+
+  const requestCheckOut = useCallback((id: string) => {
+    setPendingCheckOutId(id)
+  }, [])
+
+  const cancelCheckOut = useCallback(() => {
+    setPendingCheckOutId(undefined)
+  }, [])
+
+  const pendingCheckOutRequest = useMemo(
+    () => (pendingCheckOutId ? columnPages.checked_in.items.find((request) => request.id === pendingCheckOutId) : undefined),
+    [pendingCheckOutId, columnPages],
+  )
+
+  const confirmCheckOut = useCallback(async () => {
+    if (!pendingCheckOutId || checkingOutId) return
+    const id = pendingCheckOutId
+    const visitorName = pendingCheckOutRequest?.primaryContactFullName
+
+    setCheckingOutId(id)
+
+    try {
+      // One key per confirmation: a network-level retry of this same request
+      // replays the cached result instead of hitting a 409.
+      await checkOutInvitationUseCase.execute(id, crypto.randomUUID())
+      toast.success(visitorName ? `${visitorName} checked out.` : 'Visitor checked out.')
+    } catch (error) {
+      console.error('Failed to check out visitor', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to check out the visitor. Please try again.')
+    } finally {
+      setPendingCheckOutId(undefined)
+      setCheckingOutId(undefined)
+    }
+    // Reload on failure too: a 409 usually means a QR exit scan already
+    // moved the card, so the board should show where it actually is now.
+    await loadDashboard({ silent: true })
+  }, [pendingCheckOutId, checkingOutId, pendingCheckOutRequest, checkOutInvitationUseCase, loadDashboard, toast])
+
   // Filtered server-side by exact match, and the wizards store the purpose's
   // display name ("Interview"), not the option slug ("interview") - so the
   // label is what gets sent.
@@ -849,6 +896,13 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     cancelDeny,
     confirmDeny,
     denyingId,
+    canCheckOut,
+    pendingCheckOutId,
+    pendingCheckOutRequest,
+    requestCheckOut,
+    cancelCheckOut,
+    confirmCheckOut,
+    checkingOutId,
     pendingRescheduleId,
     requestReschedule,
     cancelReschedule,

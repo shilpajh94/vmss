@@ -99,6 +99,19 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
     }
   }
 
+  async checkOut(id: string, idempotencyKey: string): Promise<void> {
+    const response = await this.apiClient.makeRequest<InvitationActionResult>({
+      endpointConfig: API_ENDPOINTS.CHECK_OUT_INVITATION,
+      pathParams: { id },
+      headers: { 'Idempotency-Key': idempotencyKey },
+      parserSchema: InvitationActionResultSchema,
+    })
+
+    if (!response.success) {
+      throw new Error(response.message)
+    }
+  }
+
   async approveStep(invitationId: string, stepId: string): Promise<void> {
     const response = await this.apiClient.makeRequest<InvitationActionResult>({
       endpointConfig: API_ENDPOINTS.APPROVE_INVITATION_STEP,

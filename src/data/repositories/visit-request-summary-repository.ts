@@ -45,6 +45,7 @@ export interface VisitRequestSummaryRepository {
   reschedule(id: string, preferredVisitDate: string, preferredVisitTime: string): Promise<void>
   edit(id: string, fields: EditInvitationFields): Promise<void>
   deny(id: string, reason: string): Promise<void>
+  checkOut(id: string, idempotencyKey: string): Promise<void>
   approveStep(invitationId: string, stepId: string): Promise<void>
   rejectStep(invitationId: string, stepId: string, reason: string): Promise<void>
   delegateStep(invitationId: string, stepId: string, delegateUserId: string): Promise<void>

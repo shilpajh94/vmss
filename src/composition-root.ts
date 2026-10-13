@@ -44,6 +44,7 @@ import { GetInvitationDetailUseCase } from './data/use-cases/get-invitation-deta
 import { RescheduleInvitationUseCase } from './data/use-cases/reschedule-invitation'
 import { EditInvitationUseCase } from './data/use-cases/edit-invitation'
 import { DenyInvitationUseCase } from './data/use-cases/deny-invitation'
+import { CheckOutInvitationUseCase } from './data/use-cases/check-out-invitation'
 import { ApproveInvitationStepUseCase } from './data/use-cases/approve-invitation-step'
 import { RejectInvitationStepUseCase } from './data/use-cases/reject-invitation-step'
 import { DelegateInvitationStepUseCase } from './data/use-cases/delegate-invitation-step'
@@ -170,6 +171,7 @@ export interface AppDependencies {
   rescheduleInvitationUseCase: RescheduleInvitationUseCase
   editInvitationUseCase: EditInvitationUseCase
   denyInvitationUseCase: DenyInvitationUseCase
+  checkOutInvitationUseCase: CheckOutInvitationUseCase
   approveInvitationStepUseCase: ApproveInvitationStepUseCase
   rejectInvitationStepUseCase: RejectInvitationStepUseCase
   delegateInvitationStepUseCase: DelegateInvitationStepUseCase
@@ -285,6 +287,7 @@ export function createApp(): AppDependencies {
   let rescheduleInvitationUseCase: RescheduleInvitationUseCase | undefined
   let editInvitationUseCase: EditInvitationUseCase | undefined
   let denyInvitationUseCase: DenyInvitationUseCase | undefined
+  let checkOutInvitationUseCase: CheckOutInvitationUseCase | undefined
   let approveInvitationStepUseCase: ApproveInvitationStepUseCase | undefined
   let rejectInvitationStepUseCase: RejectInvitationStepUseCase | undefined
   let delegateInvitationStepUseCase: DelegateInvitationStepUseCase | undefined
@@ -502,6 +505,11 @@ export function createApp(): AppDependencies {
   const resolveDenyInvitationUseCase = (): DenyInvitationUseCase => {
     denyInvitationUseCase ??= new DenyInvitationUseCase(resolveVisitRequestSummaryRepository())
     return denyInvitationUseCase
+  }
+
+  const resolveCheckOutInvitationUseCase = (): CheckOutInvitationUseCase => {
+    checkOutInvitationUseCase ??= new CheckOutInvitationUseCase(resolveVisitRequestSummaryRepository())
+    return checkOutInvitationUseCase
   }
 
   const resolveApproveInvitationStepUseCase = (): ApproveInvitationStepUseCase => {
@@ -1092,6 +1100,9 @@ export function createApp(): AppDependencies {
     },
     get denyInvitationUseCase() {
       return resolveDenyInvitationUseCase()
+    },
+    get checkOutInvitationUseCase() {
+      return resolveCheckOutInvitationUseCase()
     },
     get approveInvitationStepUseCase() {
       return resolveApproveInvitationStepUseCase()

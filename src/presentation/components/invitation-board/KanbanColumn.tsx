@@ -53,6 +53,7 @@ interface KanbanColumnProps {
   onApproveClick?: (id: string) => void
   onEditClick?: (id: string) => void
   onVisitorInfoClick?: (id: string) => void
+  onCheckOutClick?: (id: string) => void
   onMoveToApproved?: (id: string) => void
   onMoveToDenied?: (id: string) => void
 }
@@ -82,6 +83,7 @@ export function KanbanColumn({
   onApproveClick,
   onEditClick,
   onVisitorInfoClick,
+  onCheckOutClick,
   onMoveToApproved,
   onMoveToDenied,
 }: KanbanColumnProps) {
@@ -156,6 +158,7 @@ export function KanbanColumn({
               onApproveClick={onApproveClick}
               onEditClick={onEditClick}
               onVisitorInfoClick={onVisitorInfoClick}
+              onCheckOutClick={onCheckOutClick}
               onMoveToApproved={onMoveToApproved}
               onMoveToDenied={onMoveToDenied}
             />
