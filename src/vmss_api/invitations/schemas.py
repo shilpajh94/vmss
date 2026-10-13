@@ -3,7 +3,7 @@ from datetime import date, datetime, time
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import ConfigDict, EmailStr, Field, model_validator
+from pydantic import ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.core.schemas import CamelModel
@@ -12,6 +12,15 @@ InvitationSortableField = Literal["submitted_at", "created_at"]
 """Whitelisted `sortBy` values for `GET /invitations` (api-conventions.md
 §1) — mirrors `org_structure/schemas.py`'s `SortableField` pattern.
 """
+
+
+def _blank_id_proof_type_to_none(value: Any) -> Any:
+    """`idProofType` is optional: a client sending `""` or the string
+    `"null"` means "not provided", not an (invalid) option value.
+    """
+    if isinstance(value, str) and value.strip().lower() in {"", "null"}:
+        return None
+    return value
 
 
 class RegistrationType(StrEnum):
@@ -182,6 +191,10 @@ class VisitorSubmit(CamelModel):
     # dynamically in `invitations/service.py::create_invitation`, not by
     # this schema, mirroring `CarriedItemsSubmit.items` below.
     id_proof_type: str | None = Field(default=None, max_length=100)
+
+    _normalize_id_proof_type = field_validator("id_proof_type", mode="before")(
+        _blank_id_proof_type_to_none
+    )
     # This visitor's own answers for any admin-authored Visitor Info field
     # (add-generic-custom-field-support), referenced by field id
     # (restructure-walkin-payload-by-field-id) — validated dynamically
@@ -289,6 +302,10 @@ class InvitationPrimaryContactCreate(CamelModel):
     preferred_contact_method: ContactMethod = ContactMethod.email
     # Optional (form-builder) — see `VisitorSubmit.id_proof_type`.
     id_proof_type: str | None = Field(default=None, max_length=100)
+
+    _normalize_id_proof_type = field_validator("id_proof_type", mode="before")(
+        _blank_id_proof_type_to_none
+    )
     # Accepted but ignored: the primary contact's Visitor Info-step answers
     # are sourced from the invitation-level `customFields` array instead —
     # there's exactly one primary contact per invitation, so a flat
