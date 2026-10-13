@@ -20,12 +20,16 @@ The system SHALL render, for an authenticated session, the Admin sidebar with "I
 - **WHEN** an authenticated admin's Invitations page finishes loading
 - **THEN** the sidebar shows "Invitations" marked active and the top bar shows the signed-in staff member's name and role
 
-### Requirement: Invitations are grouped into four status columns with live counts
-The system SHALL group invitations into four columns — Requested, Approved, Checked-in, Denied — each showing a count badge equal to the server's total number of invitations in that status matching the active search and filters, using the same board component as the staff dashboard. The count SHALL NOT be limited to the number of cards currently loaded. When a status filter is selected, only that status's column SHALL load invitations; the other columns SHALL show zero.
+### Requirement: Invitations are grouped into five status columns with live counts
+The system SHALL group invitations into five columns, in this order: Requested, Approved, Checked-in, Checked-out, Denied. Each column SHALL show a count badge equal to the server's total number of invitations in that status matching the active search and filters, using the same board component as the staff dashboard. The count SHALL NOT be limited to the number of cards currently loaded. When a status filter is selected, only that status's column SHALL load invitations; the other columns SHALL show zero. Every status the status filter offers, including Checked-out, SHALL have a matching column.
 
 #### Scenario: Invitations load successfully
 - **WHEN** the invitations list loads successfully
 - **THEN** each invitation appears under the column matching its status, and each column's count badge shows the server's total for that status
+
+#### Scenario: Checked-out invitations appear in their own column
+- **WHEN** the invitations list loads and some invitations have the status `checked_out`
+- **THEN** those invitations appear in the Checked-out column, which sits between Checked-in and Denied, and its count badge shows the server's total of checked-out invitations matching the active search and filters
 
 #### Scenario: Empty column
 - **WHEN** a status column has zero invitations
@@ -33,7 +37,11 @@ The system SHALL group invitations into four columns — Requested, Approved, Ch
 
 #### Scenario: Status filter limits loading to one column
 - **WHEN** an admin selects the "Approved" status filter
-- **THEN** only the Approved column loads invitations, and the Requested, Checked-in, and Denied columns show a count of zero and their empty state
+- **THEN** only the Approved column loads invitations, and the Requested, Checked-in, Checked-out, and Denied columns show a count of zero and their empty state
+
+#### Scenario: Checked-out status filter loads the Checked-out column
+- **WHEN** an admin selects the "Checked-out" status filter
+- **THEN** only the Checked-out column loads invitations and shows the server's total, and the other four columns show a count of zero and their empty state
 
 ### Requirement: Search filters visible invitations by visitor name or tracking ID
 The system SHALL, as the admin types in the search field, show only invitations whose visitor name or tracking ID contains the entered text (case-insensitive), across all columns.

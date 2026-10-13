@@ -18,6 +18,12 @@ const ACCENT_CLASSES = {
     text: 'text-secondary-accent',
     dragOver: 'border-secondary-accent bg-secondary-accent/5 ring-secondary-accent/40',
   },
+  checked_out: {
+    border: 'border-l-text-faint',
+    tint: 'bg-text-faint/8',
+    text: 'text-text-muted',
+    dragOver: 'border-text-faint bg-text-faint/5 ring-text-faint/40',
+  },
   denied: { border: 'border-l-danger', tint: 'bg-danger/8', text: 'text-danger', dragOver: 'border-danger bg-danger/5 ring-danger/40' },
 } as const
 
@@ -91,7 +97,7 @@ export function KanbanColumn({
 
   return (
     <div
-      className="flex min-w-0 flex-1 flex-col gap-4 lg:min-h-0"
+      className="flex min-w-0 flex-1 flex-col gap-4 lg:min-h-0 lg:min-w-[170px]"
       onDragOver={
         onDrop
           ? (event) => {

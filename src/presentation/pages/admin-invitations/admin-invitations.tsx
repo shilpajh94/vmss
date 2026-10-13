@@ -37,6 +37,7 @@ const EMPTY_MESSAGES: Record<string, string> = {
   requested: 'No requested visits',
   approved: 'No approved visits',
   checked_in: 'No checked-in visitors today',
+  checked_out: 'No checked-out visits',
   denied: 'No denied visits',
 }
 

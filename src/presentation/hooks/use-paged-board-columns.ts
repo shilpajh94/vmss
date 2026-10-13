@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ListVisitRequestsParams, VisitRequestsPage } from '../../data/repositories/visit-request-summary-repository'
 import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 
-export type BoardStatus = 'requested' | 'approved' | 'checked_in' | 'denied'
+export type BoardStatus = 'requested' | 'approved' | 'checked_in' | 'checked_out' | 'denied'
 
-const BOARD_STATUSES: readonly BoardStatus[] = ['requested', 'approved', 'checked_in', 'denied']
+const BOARD_STATUSES: readonly BoardStatus[] = ['requested', 'approved', 'checked_in', 'checked_out', 'denied']
 
 // Board column -> the `status` value `GET /invitations` filters on. A
 // workflow invitation stays `submitted` until its last step clears (see
@@ -14,6 +14,7 @@ const API_STATUS_BY_BOARD_STATUS: Record<BoardStatus, string> = {
   requested: 'submitted',
   approved: 'approved',
   checked_in: 'checked_in',
+  checked_out: 'checked_out',
   denied: 'denied',
 }
 
@@ -75,6 +76,7 @@ export function usePagedBoardColumns(fetchPage: FetchVisitRequestsPage, query: C
     requested: EMPTY_COLUMN,
     approved: EMPTY_COLUMN,
     checked_in: EMPTY_COLUMN,
+    checked_out: EMPTY_COLUMN,
     denied: EMPTY_COLUMN,
   })
 

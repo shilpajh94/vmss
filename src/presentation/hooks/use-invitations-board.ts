@@ -19,6 +19,7 @@ export const BOARD_STATUS_COLUMNS = [
   { status: 'requested', label: 'Requested' },
   { status: 'approved', label: 'Approved' },
   { status: 'checked_in', label: 'Checked-in' },
+  { status: 'checked_out', label: 'Checked-out' },
   { status: 'denied', label: 'Denied' },
 ] as const satisfies ReadonlyArray<{ status: BoardStatus; label: string }>
 
@@ -117,7 +118,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     [scope, registrationTypeFilter, sourceFilter, debouncedSearch, purposeFilter],
   )
   // A status filter (admin board) narrows loading to that one column; a
-  // status with no column (e.g. checked_out) leaves every column empty.
+  // status with no column leaves every column empty.
   const visibleStatuses = useMemo<readonly BoardStatus[]>(() => {
     if (!statusFilter) return ALL_BOARD_STATUSES
     const status = boardStatusForApiStatus(statusFilter)
