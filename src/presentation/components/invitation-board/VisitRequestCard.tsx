@@ -9,7 +9,7 @@ import {
   resolveTotalSteps,
 } from '../../utils/approval-step-label'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
-import { CalendarClockIcon, InfoIcon, PencilIcon, UserCheckIcon } from '../icons'
+import { CalendarClockIcon, InfoIcon, PencilIcon, UndoIcon, UserCheckIcon } from '../icons'
 import { IconActionButton } from '../ui/IconActionButton'
 
 const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved'])
@@ -43,6 +43,8 @@ interface VisitRequestCardProps {
   onVisitorInfoClick?: (id: string) => void
   // Only passed to Checked-in cards, and only for staff who may check out.
   onCheckOutClick?: (id: string) => void
+  // Shown on Approved cards only (add-invitation-approval-revert).
+  onRevertClick?: (id: string) => void
   // Approve/Deny buttons (cards are no longer draggable). Shown at every size,
   // and only when the card is actionable (`isDraggable`).
   onMoveToApproved?: (id: string) => void
@@ -64,6 +66,7 @@ export function VisitRequestCard({
   onEditClick,
   onVisitorInfoClick,
   onCheckOutClick,
+  onRevertClick,
   onMoveToApproved,
   onMoveToDenied,
 }: VisitRequestCardProps) {
@@ -84,6 +87,7 @@ export function VisitRequestCard({
   const canApproveAndDelegate = Boolean(onApproveAndDelegateClick) && isLockedToApproveAndDelegate
   const canApprove = Boolean(onApproveClick) && isReceptionApprovalStep && (totalSteps ?? 0) <= 1
   const canEdit = Boolean(onEditClick) && RESCHEDULABLE_STATUSES.has(request.status)
+  const canRevert = Boolean(onRevertClick) && request.status === 'approved'
   // Before this card's detail has loaded, we don't yet know whether it's
   // Reception's own step — default to not draggable rather than briefly
   // allowing a drag that would then be blocked once the detail arrives.
@@ -118,6 +122,7 @@ export function VisitRequestCard({
     canReschedule && { label: 'Reschedule', icon: CalendarClockIcon, onClick: () => onRescheduleClick?.(request.id) },
     canEdit && { label: 'Edit', icon: PencilIcon, onClick: () => onEditClick?.(request.id) },
     canDelegate && { label: 'Delegate', icon: UserCheckIcon, onClick: () => onDelegateClick?.(request.id) },
+    canRevert && { label: 'Revert approval', icon: UndoIcon, onClick: () => onRevertClick?.(request.id) },
   ].filter((action): action is IconAction => Boolean(action))
 
   const hostLabel = detail ? (detail.hostNameOrEmail ?? 'Unassigned — Front Office') : undefined

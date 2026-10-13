@@ -15,6 +15,9 @@ interface VisitorInfoModalProps {
   isLoading?: boolean
   detail?: InvitationDetail
   workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
+  // Names the user who reverted an approval, when the board already knows
+  // them; otherwise the note shows only the time and reason.
+  employeeNameById?: Record<string, string>
   // Read-only here — editing Point of Contact happens in EditInvitationModal.
   onClose: () => void
 }
@@ -196,6 +199,7 @@ export function VisitorInfoModal({
   isLoading,
   detail,
   workflowRulesByCategory,
+  employeeNameById,
   onClose,
 }: VisitorInfoModalProps) {
   const pointOfContact = detail?.pocName ?? (detail ? resolvePointOfContactLabel(detail, workflowRulesByCategory ?? {}) : undefined)
@@ -326,6 +330,20 @@ export function VisitorInfoModal({
               {detail.denialReason ? (
                 <div className="col-span-full">
                   <Field label="Denial reason" value={detail.denialReason} />
+                </div>
+              ) : null}
+              {detail.status === 'submitted' && detail.approvalRevertedAt ? (
+                <div className="col-span-full flex flex-col gap-1 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2">
+                  <span className="font-body text-[13px] font-semibold text-text">Approval reverted</span>
+                  <span className="font-body text-[12px] text-text-muted">
+                    {formatDateTime(detail.approvalRevertedAt)}
+                    {detail.approvalRevertedByUserId && employeeNameById?.[detail.approvalRevertedByUserId]
+                      ? ` · by ${employeeNameById[detail.approvalRevertedByUserId]}`
+                      : ''}
+                  </span>
+                  {detail.approvalRevertReason ? (
+                    <span className="font-body text-[13px] text-text">{detail.approvalRevertReason}</span>
+                  ) : null}
                 </div>
               ) : null}
             </div>

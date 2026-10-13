@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
+import { ApiError } from '../../data/api/api-error'
 import { usePolling } from './use-polling'
 import { useDebouncedValue } from './use-debounced-value'
 import { isReceptionCurrentStep, resolveApproverLabel, resolveCurrentLevel, resolveTotalSteps } from '../utils/approval-step-label'
 import { employeeAtBranch, employeeHasRoleAtBranch } from '../utils/role-name-match'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
+import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entities/invitation-detail-schema'
 import type { RoleOut } from '../../domain/entities/role-out-schema'
 import type { HostEmployee } from '../../domain/entities/host-employee-schema'
@@ -66,6 +68,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     rescheduleInvitationUseCase,
     editInvitationUseCase,
     denyInvitationUseCase,
+    revertInvitationApprovalUseCase,
     checkOutInvitationUseCase,
     approveInvitationStepUseCase,
     rejectInvitationStepUseCase,
@@ -90,6 +93,9 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   const debouncedSearch = useDebouncedValue(search, 300)
   const [approvingId, setApprovingId] = useState<string | undefined>(undefined)
+  const [pendingApproveId, setPendingApproveId] = useState<string | undefined>(undefined)
+  const [pendingRevertId, setPendingRevertId] = useState<string | undefined>(undefined)
+  const [revertingId, setRevertingId] = useState<string | undefined>(undefined)
   const [invitationDetails, setInvitationDetails] = useState<Record<string, InvitationDetail>>({})
   const [reschedulingId, setReschedulingId] = useState<string | undefined>(undefined)
   const [delegatingId, setDelegatingId] = useState<string | undefined>(undefined)
@@ -218,6 +224,10 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   // progress, so the auto-refresh tick can skip a fetch that would otherwise
   // disrupt it.
   const isActionInProgress =
+    pendingApproveId !== undefined ||
+    approvingId !== undefined ||
+    pendingRevertId !== undefined ||
+    revertingId !== undefined ||
     pendingDenyId !== undefined ||
     pendingRescheduleId !== undefined ||
     pendingDelegateId !== undefined ||
@@ -463,6 +473,36 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
       toast,
     ],
   )
+
+  // Any card currently loaded on the board, whichever column it's in — lets
+  // every action's confirmation name the visitor and REQ ID it acts on.
+  const findRequest = useCallback(
+    (id: string | undefined): VisitRequestSummary | undefined => {
+      if (!id) return undefined
+      for (const page of Object.values(columnPages)) {
+        const match = page.items.find((request) => request.id === id)
+        if (match) return match
+      }
+      return undefined
+    },
+    [columnPages],
+  )
+
+  // Approve (card button or drop) only opens the confirmation; the request
+  // goes out from `confirmApprove`.
+  const requestApprove = useCallback((id: string) => {
+    setPendingApproveId(id)
+  }, [])
+
+  const cancelApprove = useCallback(() => {
+    setPendingApproveId(undefined)
+  }, [])
+
+  const confirmApprove = useCallback(async () => {
+    if (!pendingApproveId || approvingId) return
+    await approve(pendingApproveId)
+    setPendingApproveId(undefined)
+  }, [pendingApproveId, approvingId, approve])
 
   const reschedule = useCallback(
     async (id: string, preferredVisitDate: string, preferredVisitTime: string) => {
@@ -757,6 +797,55 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     [pendingDenyId, denyInvitationUseCase, rejectInvitationStepUseCase, loadDashboard, loadDetail, workflowRulesByCategory, toast],
   )
 
+  // Shown to every board user: the web app has no permission codes, and only
+  // Security lacks `invitations:revert-approval` by default — the API's 403
+  // is the real authority.
+  const requestRevert = useCallback((id: string) => {
+    setPendingRevertId(id)
+  }, [])
+
+  const cancelRevert = useCallback(() => {
+    setPendingRevertId(undefined)
+  }, [])
+
+  // Resolves whether the dialog closed. A 409 means the visit is no longer
+  // revertible (re-approved elsewhere, or the visitor already scanned in), so
+  // the dialog closes and the board reloads to show where the card is now;
+  // any other failure keeps the dialog — and the typed reason — for a retry.
+  const confirmRevert = useCallback(
+    async (reason: string): Promise<boolean> => {
+      if (!pendingRevertId || revertingId) return false
+      const id = pendingRevertId
+      const visitorName = findRequest(id)?.primaryContactFullName
+
+      setRevertingId(id)
+
+      try {
+        await revertInvitationApprovalUseCase.execute(id, reason)
+        toast.success(visitorName ? `Approval reverted for ${visitorName}.` : 'Approval reverted.')
+        setPendingRevertId(undefined)
+        setInvitationDetails((previous) => {
+          const { [id]: _stale, ...rest } = previous
+          return rest
+        })
+        await loadDashboard({ silent: true })
+        return true
+      } catch (error) {
+        console.error('Failed to revert approval', error)
+        toast.error(error instanceof Error ? error.message : 'Failed to revert the approval. Please try again.')
+        if (error instanceof ApiError && error.status === 409) {
+          setPendingRevertId(undefined)
+          await loadDashboard({ silent: true })
+          return true
+        }
+        return false
+      } finally {
+        setRevertingId(undefined)
+      }
+    },
+    [pendingRevertId, revertingId, findRequest, revertInvitationApprovalUseCase, loadDashboard, toast],
+  )
+
   // Only Admin and Reception hold `invitations:checkout` by default; the web
   // app has no permission codes, so this role-name check decides whether the
   // Checked-in column gets the button and the API stays the real authority.
@@ -846,6 +935,16 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     isRefreshing,
     approve,
     approvingId,
+    findRequest,
+    pendingApproveId,
+    requestApprove,
+    cancelApprove,
+    confirmApprove,
+    pendingRevertId,
+    requestRevert,
+    cancelRevert,
+    confirmRevert,
+    revertingId,
     invitationDetails,
     roles,
     roleNameById,

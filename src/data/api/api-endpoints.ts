@@ -91,6 +91,11 @@ export const API_ENDPOINTS = {
     method: "PATCH",
     hasToken: true,
   },
+  REVERT_INVITATION_APPROVAL: {
+    endpoint: "/invitations/:id/revert-approval",
+    method: "PATCH",
+    hasToken: true,
+  },
   CHECK_OUT_INVITATION: {
     endpoint: "/invitations/:id/check-out",
     method: "PATCH",

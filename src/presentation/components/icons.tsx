@@ -95,6 +95,13 @@ export const PencilIcon = createIcon(
   <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />,
 )
 
+export const UndoIcon = createIcon(
+  <>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5 5.5 5.5 0 0 1-5.5 5.5H11" />
+  </>,
+)
+
 export const TrashIcon = createIcon(
   <>
     <path d="M3 6h18" />

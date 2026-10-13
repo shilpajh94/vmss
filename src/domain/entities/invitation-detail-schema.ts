@@ -104,6 +104,11 @@ export const InvitationDetailSchema = z.object({
   currentApprovalStep: CurrentApprovalStepSchema.nullable(),
   denialReason: z.string().nullable(),
   deniedAt: z.string().nullable(),
+  // Latest approval revert (add-invitation-approval-revert). Nullish so an
+  // API without the revert endpoint still parses.
+  approvalRevertedAt: z.string().nullish(),
+  approvalRevertedByUserId: z.string().nullish(),
+  approvalRevertReason: z.string().nullish(),
   checkedInAt: z.string().nullable(),
   checkedInByUserId: z.string().nullable(),
   checkedOutAt: z.string().nullable(),

@@ -1,4 +1,5 @@
 import { Modal } from '../ui/Modal'
+import { confirmSubject } from '../../utils/confirm-subject'
 
 interface CheckOutVisitorModalProps {
   isOpen: boolean
@@ -10,7 +11,7 @@ interface CheckOutVisitorModalProps {
 }
 
 export function CheckOutVisitorModal({ isOpen, visitorName, trackingId, isCheckingOut, onConfirm, onCancel }: CheckOutVisitorModalProps) {
-  const subject = visitorName ? `${visitorName}${trackingId ? ` (${trackingId})` : ''}` : 'this visitor'
+  const subject = visitorName ? confirmSubject(visitorName, trackingId) : 'this visitor'
 
   return (
     <Modal isOpen={isOpen} onClose={isCheckingOut ? () => undefined : onCancel} title="Check Out Visitor">

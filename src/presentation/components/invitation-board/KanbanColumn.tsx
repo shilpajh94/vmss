@@ -51,6 +51,7 @@ interface KanbanColumnProps {
   onEditClick?: (id: string) => void
   onVisitorInfoClick?: (id: string) => void
   onCheckOutClick?: (id: string) => void
+  onRevertClick?: (id: string) => void
   onMoveToApproved?: (id: string) => void
   onMoveToDenied?: (id: string) => void
 }
@@ -78,6 +79,7 @@ export function KanbanColumn({
   onEditClick,
   onVisitorInfoClick,
   onCheckOutClick,
+  onRevertClick,
   onMoveToApproved,
   onMoveToDenied,
 }: KanbanColumnProps) {
@@ -150,6 +152,7 @@ export function KanbanColumn({
               onEditClick={onEditClick}
               onVisitorInfoClick={onVisitorInfoClick}
               onCheckOutClick={onCheckOutClick}
+              onRevertClick={onRevertClick}
               onMoveToApproved={onMoveToApproved}
               onMoveToDenied={onMoveToDenied}
             />
