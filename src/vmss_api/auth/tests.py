@@ -22,6 +22,7 @@ from factories import (
 from vmss_api.auth.models import AuditLog, Permission, Role, User, UserBranchRole
 from vmss_api.auth.rbac_catalog import seed_default_roles
 from vmss_api.auth.repository import RoleRepository, UserRepository
+from vmss_api.auth.service import resync_role_permissions
 from vmss_api.core import storage
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
@@ -2653,3 +2654,48 @@ async def test_resync_role_permissions_backfills_invitations_view_all(
     }
     assert "invitations:view-all" in granted["reception"]
     assert "invitations:view-all" not in granted.get("host", [])
+
+
+# --- grant-reception-checkout-permission --------------------------------------
+
+
+async def test_seeded_roles_grant_invitations_checkout_to_reception(
+    db_session: AsyncSession,
+) -> None:
+    """spec.md "A newly provisioned tenant's Reception role can check visitors out"."""
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    repo = RoleRepository(db_session)
+    for name in ("admin", "reception", "security"):
+        role = await repo.get_by_name(name)
+        assert role is not None
+        assert "invitations:checkout" in {p.code for p in role.permissions}, name
+    for name in ("host", "visitor"):
+        role = await repo.get_by_name(name)
+        assert role is not None
+        assert "invitations:checkout" not in {p.code for p in role.permissions}, name
+
+
+async def test_resync_role_permissions_backfills_reception_invitations_checkout(
+    db_session: AsyncSession,
+) -> None:
+    """Service-level rather than via `POST /auth/roles/resync-permissions`:
+    the endpoint-level resync tests currently fail under the shared test
+    session (`get_tenant`'s `db.rollback()` expires the actor before the
+    audit task reads `actor.id`), unrelated to the catalog itself.
+    """
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    reception = await RoleRepository(db_session).get_by_name("reception")
+    assert reception is not None
+    reception.permissions = [p for p in reception.permissions if p.code != "invitations:checkout"]
+    await db_session.commit()
+
+    granted = await resync_role_permissions(db_session)
+    assert "invitations:checkout" in granted["reception"]
+    assert "invitations:checkout" not in granted.get("host", [])
+
+    again = await resync_role_permissions(db_session)
+    assert all("invitations:checkout" not in codes for codes in again.values())

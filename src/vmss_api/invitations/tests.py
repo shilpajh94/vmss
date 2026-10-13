@@ -44,6 +44,7 @@ from factories import (
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import AuditLog, Permission, User, UserBranchRole
+from vmss_api.auth.rbac_catalog import seed_default_roles
 from vmss_api.auth.repository import RoleRepository
 from vmss_api.core import storage
 from vmss_api.core.config import settings
@@ -11989,3 +11990,93 @@ async def test_visit_timezone_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         tz = await invitations_service._resolve_visit_timezone(other_session, tenant)
     assert tz.key == "UTC"
+
+
+# --- grant-reception-checkout-permission --------------------------------------
+
+
+def _checked_in_invitation(db_session: AsyncSession, branch_id: uuid.UUID):
+    invitation = _build_invitation(
+        db_session,
+        branch_id,
+        status="checked_in",
+        check_in_status="checked_in",
+        approved_at=datetime.now(UTC),
+        checked_in_at=datetime.now(UTC),
+    )
+    db_session.add(invitation)
+    return invitation
+
+
+async def test_reception_checks_out_checked_in_visitor(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """auth spec "Reception checks out a checked-in visitor" — goes through
+    `seed_default_roles` so this exercises the catalog default itself.
+    """
+    await seed_default_roles(db_session)
+    receptionist = await _reception_holder(db_session, branch.id)
+    invitation = _checked_in_invitation(db_session, branch.id)
+    await db_session.commit()
+
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-out",
+        headers={"Authorization": f"Bearer {issue_token(receptionist)}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "checked_out"
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_out"
+    assert invitation.checked_out_by_user_id == receptionist.id
+
+
+async def test_reception_cannot_check_out_at_another_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """auth spec "Reception at a different branch is still rejected"."""
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-CHECKOUT")
+    db_session.add(other_branch)
+    await seed_default_roles(db_session)
+    receptionist = await _reception_holder(db_session, branch.id)
+    invitation = _checked_in_invitation(db_session, other_branch.id)
+    await db_session.commit()
+
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-out",
+        headers={"Authorization": f"Bearer {issue_token(receptionist)}"},
+    )
+    assert response.status_code == 403, response.text
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_in"
+
+
+async def test_host_cannot_check_out_visitor(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    """auth spec "Host still cannot check visitors out"."""
+    await seed_default_roles(db_session)
+    host_role = await RoleRepository(db_session).get_by_name("host")
+    assert host_role is not None
+    host = _make_role_holder(db_session, host_role, branch.id)
+    invitation = _checked_in_invitation(db_session, branch.id)
+    await db_session.commit()
+
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/check-out",
+        headers={"Authorization": f"Bearer {issue_token(host)}"},
+    )
+    assert response.status_code == 403, response.text
+
+    await db_session.refresh(invitation)
+    assert invitation.status == "checked_in"

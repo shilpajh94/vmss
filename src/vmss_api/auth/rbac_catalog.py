@@ -91,6 +91,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:view-all",
         "invitations:approve",
         "invitations:deny",
+        "invitations:checkout",
         "invitations:reschedule",
         "invitations:extend",
         "invitations:edit",
