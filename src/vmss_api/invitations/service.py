@@ -52,7 +52,7 @@ from vmss_api.invitations.schemas import (
     VisitDetailsSubmit,
 )
 from vmss_api.notifications import service as notifications_service
-from vmss_api.org_structure.models import Branch, Building, Department
+from vmss_api.org_structure.models import Branch, Building, Company, Department
 from vmss_api.org_structure.repository import CompanyRepository, DepartmentRepository
 from vmss_api.org_structure.service import get_default_host_role
 from vmss_api.tenant.models import Tenant
@@ -88,29 +88,38 @@ def _current_request_id() -> str:
     return structlog.contextvars.get_contextvars().get("request_id", "")
 
 
-def _resolve_tenant_timezone(tenant: Tenant) -> ZoneInfo:
-    """Mirrors `dashboard/service.py::_resolve_tenant_timezone` — falls back
-    to UTC (logged at `WARNING`) rather than raising when `Tenant.timezone`
-    isn't a real IANA zone name. Kept as a small local duplicate rather than
-    a cross-feature import (qr-checkin-scheduling-photo-email/design.md
-    Decision 1 — no existing import between `invitations` and `dashboard`,
-    and one two-line helper doesn't justify introducing one).
+def _visit_timezone(company: Company | None, tenant: Tenant) -> ZoneInfo:
+    """The zone "the visit day" is measured in — `Company.default_timezone`
+    (the value an admin actually edits in org setup), then `Tenant.timezone`
+    (a provisioning default), then UTC. Neither column has a DB-level
+    `CHECK`, so an invalid name is skipped with a `WARNING` rather than a
+    500 (expire-invitation-at-end-of-visit-day/design.md D1).
     """
-    try:
-        return ZoneInfo(tenant.timezone)
-    except ZoneInfoNotFoundError:
-        logger.warning("invitations_invalid_tenant_timezone", tenant_timezone=tenant.timezone)
-        return ZoneInfo("UTC")
+    candidates = (
+        ("company", company.default_timezone if company is not None else None),
+        ("tenant", tenant.timezone),
+    )
+    for source, name in candidates:
+        if not name:
+            continue
+        try:
+            return ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError, OSError):
+            logger.warning("invitations_invalid_timezone", source=source, timezone=name)
+    return ZoneInfo("UTC")
 
 
-def _end_of_visit_day_utc(visit_date: date, tenant: Tenant) -> datetime:
-    """Access for an approved visit is valid through the end of the visit
-    day itself, not the fixed creation-time TTL `expires_at` starts out
-    with — computed in the tenant's local timezone (the same zone
-    `check_in_by_qr_token`'s same-day gate uses) and converted to UTC for
-    storage.
+async def _resolve_visit_timezone(tenant_db: AsyncSession, tenant: Tenant) -> ZoneInfo:
+    company = await CompanyRepository(tenant_db).get_singleton()
+    return _visit_timezone(company, tenant)
+
+
+def _end_of_visit_day_utc(visit_date: date, tz: ZoneInfo) -> datetime:
+    """Access is valid through the end of the visit day itself, regardless
+    of when the invitation was submitted — 23:59:59 in the visit timezone
+    (the same zone `check_in_by_qr_token`'s same-day gate uses), converted
+    to UTC for storage.
     """
-    tz = _resolve_tenant_timezone(tenant)
     local_end = datetime.combine(visit_date, time(23, 59, 59), tzinfo=tz)
     return local_end.astimezone(UTC)
 
@@ -1127,7 +1136,6 @@ async def create_invitation(
 
     tracking_id = await _generate_unique_tracking_id(repo)
     now = datetime.now(UTC)
-    expires_at = _end_of_visit_day_utc(payload.visit_details.preferred_visit_date, tenant)
     max_size = settings.invitation_max_upload_size_bytes
 
     # Resolved once, at creation, rather than recomputed later — an
@@ -1137,6 +1145,9 @@ async def create_invitation(
     # configured yet, matching the column's own default.
     company = await CompanyRepository(tenant_db).get_singleton()
     auto_approved = company is not None and company.auto_approve_pre_registered_visitors
+    expires_at = _end_of_visit_day_utc(
+        payload.visit_details.preferred_visit_date, _visit_timezone(company, tenant)
+    )
     initial_status = "approved" if auto_approved else "submitted"
     approved_at = now if auto_approved else None
 
@@ -1557,7 +1568,9 @@ async def approve_invitation(
             detail="Invitation has a configured approval workflow; approve its steps instead",
         )
     expires_at = (
-        _end_of_visit_day_utc(invitation.preferred_visit_date, tenant)
+        _end_of_visit_day_utc(
+            invitation.preferred_visit_date, await _resolve_visit_timezone(tenant_db, tenant)
+        )
         if invitation.preferred_visit_date is not None
         else None
     )
@@ -1828,7 +1841,9 @@ async def check_in_by_qr_token(
             status.HTTP_409_CONFLICT,
             detail="Invitation is watchlist-flagged; override required before check-in",
         )
-    today_local = datetime.now(UTC).astimezone(_resolve_tenant_timezone(tenant)).date()
+    today_local = (
+        datetime.now(UTC).astimezone(await _resolve_visit_timezone(tenant_db, tenant)).date()
+    )
     if (
         invitation.preferred_visit_date is not None
         and invitation.preferred_visit_date > today_local
@@ -1917,10 +1932,11 @@ async def reschedule_invitation(
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
         )
-    expires_at = (
-        _end_of_visit_day_utc(preferred_visit_date, tenant)
-        if invitation.status == "approved"
-        else None
+    # Realigned for `submitted` too, not just `approved` — otherwise a
+    # pending invitation moved to a later day keeps the old day's expiry
+    # (expire-invitation-at-end-of-visit-day/design.md D2).
+    expires_at = _end_of_visit_day_utc(
+        preferred_visit_date, await _resolve_visit_timezone(tenant_db, tenant)
     )
     updated = await InvitationRepository(tenant_db).reschedule_if_eligible(
         invitation.id,
@@ -2106,6 +2122,14 @@ async def edit_invitation(
         changes = {k: v for k, v in changes.items() if k in _LOCATION_EDIT_FIELDS}
     if not changes:
         return invitation
+    # Only an actual date change realigns expiry: the edit modal resubmits
+    # the unchanged date on every save, which would otherwise wipe a staff
+    # expiry extension (expire-invitation-at-end-of-visit-day/design.md D2).
+    new_visit_date = changes.get("preferred_visit_date")
+    if new_visit_date is not None and new_visit_date != invitation.preferred_visit_date:
+        changes["expires_at"] = _end_of_visit_day_utc(
+            new_visit_date, await _resolve_visit_timezone(tenant_db, tenant)
+        )
     updated = await InvitationRepository(tenant_db).edit_if_eligible(
         invitation.id, allowed_statuses=allowed_statuses, **changes
     )
@@ -2318,6 +2342,7 @@ async def list_invitations_page(
     page_size: int,
     sort_by: InvitationSortableField,
     sort_order: SortOrder,
+    purpose_of_visit: str | None = None,
 ) -> tuple[list[Invitation], int]:
     return await InvitationRepository(tenant_db).list_page(
         branch_scope=branch_scope,
@@ -2331,6 +2356,7 @@ async def list_invitations_page(
         page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
+        purpose_of_visit=purpose_of_visit,
     )
 
 

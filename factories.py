@@ -247,6 +247,9 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     host_id = None
     duration_id = None
     department_id = None
+    # Same FK-safety rationale for the explicit building override
+    # (`d4e9a2b7c1f6_invitation_building_id`).
+    building_id = None
     # add-invitation-point-of-contact: same FK-safety rationale.
     poc_user_id = None
     poc_role_id = None

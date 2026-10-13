@@ -448,9 +448,10 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         immediately-prior schedule rather than the just-written new one
         (`add-reschedule-history/design.md`).
 
-        `expires_at`, when given (an already-`approved` invitation moved to
-        a new visit day), realigns expiry to the end of that new day the
-        same way `approve_if_submitted` does at initial approval.
+        `expires_at`, when given, realigns expiry to the end of the new
+        visit day the same way `approve_if_submitted` does at initial
+        approval — the service always supplies it, for `submitted` and
+        `approved` alike.
         """
         values: dict[str, Any] = {
             "previous_preferred_visit_date": Invitation.preferred_visit_date,
@@ -625,6 +626,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         page_size: int,
         sort_by: str,
         sort_order: SortOrder,
+        purpose_of_visit: str | None = None,
     ) -> tuple[list[Invitation], int]:
         """Backs `GET /invitations` (design.md Decision 2) — deliberately no
         `selectinload` of visitors/vehicles here (unlike `_with_children`
@@ -660,6 +662,8 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             filters.append(Invitation.registration_type == registration_type)
         if source is not None:
             filters.append(Invitation.source == source)
+        if purpose_of_visit is not None:
+            filters.append(Invitation.purpose_of_visit == purpose_of_visit)
         if search is not None:
             pattern = f"%{search}%"
             filters.append(
