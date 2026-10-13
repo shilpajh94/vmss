@@ -6,7 +6,6 @@ import { usePolling } from './use-polling'
 import { useDebouncedValue } from './use-debounced-value'
 import { isReceptionCurrentStep, resolveApproverLabel, resolveCurrentLevel, resolveTotalSteps } from '../utils/approval-step-label'
 import { employeeAtBranch, employeeHasRoleAtBranch } from '../utils/role-name-match'
-import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entities/invitation-detail-schema'
 import type { RoleOut } from '../../domain/entities/role-out-schema'
@@ -14,24 +13,16 @@ import type { HostEmployee } from '../../domain/entities/host-employee-schema'
 import type { ApprovalWorkflowRule } from '../../domain/entities/approval-workflow-rule-schema'
 import type { EditInvitationFields } from '../../data/repositories/visit-request-summary-repository'
 import { PURPOSE_OF_VISIT_OPTIONS } from '../utils/purpose-of-visit-options'
+import { boardStatusForApiStatus, usePagedBoardColumns, type BoardStatus, type ColumnQuery } from './use-paged-board-columns'
 
 export const BOARD_STATUS_COLUMNS = [
   { status: 'requested', label: 'Requested' },
   { status: 'approved', label: 'Approved' },
   { status: 'checked_in', label: 'Checked-in' },
   { status: 'denied', label: 'Denied' },
-] as const
+] as const satisfies ReadonlyArray<{ status: BoardStatus; label: string }>
 
-// Maps raw API `status` values to the columns above.
-// TODO: only "submitted" -> "requested" is confirmed against real API data so far;
-// the approved/checked_in/denied wire values still need verifying against the backend.
-const STATUS_ALIASES: Record<string, (typeof BOARD_STATUS_COLUMNS)[number]['status']> = {
-  submitted: 'requested',
-}
-
-function normalizeStatus(status: string): string {
-  return STATUS_ALIASES[status] ?? status
-}
+const ALL_BOARD_STATUSES: readonly BoardStatus[] = BOARD_STATUS_COLUMNS.map((column) => column.status)
 
 // Toast copy for an approve action: names which level just cleared and,
 // unless this was the final one, who the request is now waiting on.
@@ -54,25 +45,14 @@ function describeApprovalOutcome(
   return `Level ${approvedLevel} of ${totalSteps} approved — now waiting on ${approverLabel} (level ${nextLevel} of ${totalSteps}).`
 }
 
-export interface InvitationsBoardOptions {
-  /**
-   * When true, search/status/registrationType/source are sent to the server
-   * (debounced search) and the board's fetch is bounded (not the default
-   * pageSize) rather than filtering an already-fetched list client-side.
-   * Used by the admin Invitations board only — the staff dashboard keeps
-   * its existing client-side filtering unchanged (default: false).
-   */
-  serverFilters?: boolean
-}
-
 // Shared Kanban-board data/actions behind the staff dashboard and the admin
 // invitations board — same columns, same approve/reschedule/step-progress
 // behavior, differing in where an unauthenticated visitor is redirected and
 // in scope: the staff dashboard asks the API for only the requests where the
 // current user is the host or a delegate (`relevantToMe=true`), while the
-// admin board keeps its organisation-wide view.
-export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | 'all' = 'all', options?: InvitationsBoardOptions) {
-  const serverFilters = options?.serverFilters ?? false
+// admin board keeps its organisation-wide view. Every filter is applied
+// server-side, per status column (see `usePagedBoardColumns`).
+export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | 'all' = 'all') {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const {
@@ -93,12 +73,12 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [visitRequests, setVisitRequests] = useState<VisitRequestSummary[]>([])
   const [roles, setRoles] = useState<RoleOut[]>([])
   const [roleNameById, setRoleNameById] = useState<Record<string, string>>({})
   const [hostEmployees, setHostEmployees] = useState<HostEmployee[]>([])
   const [employeeNameById, setEmployeeNameById] = useState<Record<string, string>>({})
   const [isLoading, setIsLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
   const [search, setSearch] = useState('')
   const [purposeFilter, setPurposeFilter] = useState('all')
@@ -126,33 +106,39 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [pendingEditId, setPendingEditId] = useState<string | undefined>(undefined)
   const [visitorInfoId, setVisitorInfoId] = useState<string | undefined>(undefined)
 
-  // Two separately-memoized param objects, not one memo branching at read
-  // time: `clientModeParams`'s identity only changes when `scope` does, so
-  // the staff dashboard (which always resolves to it, since it never sets
-  // serverFilters) never triggers a network refetch just because
-  // statusFilter/sourceFilter/debouncedSearch/registrationTypeFilter
-  // changed - those stay a pure client-side re-filter there, exactly as
-  // before this option existed. A single memo keyed on all those filters
-  // would give every read a fresh object reference regardless of which
-  // branch it took, defeating that.
-  const clientModeParams = useMemo(() => ({ relevantToMe: scope === 'mine' }), [scope])
-  const serverModeParams = useMemo(
+  const columnQuery = useMemo<ColumnQuery>(
     () => ({
       relevantToMe: scope === 'mine',
-      status: statusFilter || undefined,
       registrationType: registrationTypeFilter === 'all' ? undefined : registrationTypeFilter,
       source: sourceFilter || undefined,
       search: debouncedSearch.trim() || undefined,
-      // Bounded, not paginated - the board groups by status column, so a
-      // page-by-page fetch could under-populate a column until an admin
-      // paged further. See admin-invitations spec's "board's fetch is
-      // bounded" requirement. Capped at the API's hard max page size (100).
-      pageSize: 100,
+      purposeOfVisit: purposeFilter === 'all' ? undefined : purposeFilter,
     }),
-    [scope, statusFilter, registrationTypeFilter, sourceFilter, debouncedSearch],
+    [scope, registrationTypeFilter, sourceFilter, debouncedSearch, purposeFilter],
   )
-  const fetchParams = serverFilters ? serverModeParams : clientModeParams
+  // A status filter (admin board) narrows loading to that one column; a
+  // status with no column (e.g. checked_out) leaves every column empty.
+  const visibleStatuses = useMemo<readonly BoardStatus[]>(() => {
+    if (!statusFilter) return ALL_BOARD_STATUSES
+    const status = boardStatusForApiStatus(statusFilter)
+    return status ? [status] : []
+  }, [statusFilter])
 
+  const fetchVisitRequestsPage = useCallback(
+    (params: Parameters<typeof listVisitRequestsUseCase.execute>[0]) => listVisitRequestsUseCase.execute(params),
+    [listVisitRequestsUseCase],
+  )
+  const {
+    columns: columnPages,
+    reload: reloadColumns,
+    loadMore,
+  } = usePagedBoardColumns(fetchVisitRequestsPage, columnQuery, visibleStatuses)
+
+  // Every reload keeps each column's loaded depth (refresh, polling, and the
+  // reload after an action); only a filter/search change resets columns to
+  // their first page (the effect below). `silent` skips the full-board
+  // loading state, which would otherwise unmount the columns and lose their
+  // scroll position.
   const loadDashboard = useCallback(
     async (options?: { silent?: boolean }) => {
       const silent = options?.silent ?? false
@@ -163,9 +149,9 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
       }
 
       try {
-        const [user, requests, roles, employees] = await Promise.all([
+        const [user, , roles, employees] = await Promise.all([
           getCurrentStaffUserUseCase.execute(),
-          listVisitRequestsUseCase.execute(fetchParams),
+          reloadColumns({ keepDepth: true }),
           // Listing roles is admin-scoped and 403s for other staff roles
           // (e.g. host, reception). Every consumer of roleNameById already
           // falls back gracefully when a name is missing (see
@@ -179,7 +165,6 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
           listHostEmployeesUseCase.execute(),
         ])
         setCurrentUser(user)
-        setVisitRequests(requests)
         setRoles(roles)
         setRoleNameById(Object.fromEntries(roles.map((role: RoleOut) => [role.id, role.name])))
         setHostEmployees(employees)
@@ -197,19 +182,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         }
       }
     },
-    [
-      getCurrentStaffUserUseCase,
-      listVisitRequestsUseCase,
-      listRolesUseCase,
-      listHostEmployeesUseCase,
-      scope,
-      serverFilters,
-      statusFilter,
-      registrationTypeFilter,
-      sourceFilter,
-      debouncedSearch,
-      toast,
-    ],
+    [getCurrentStaffUserUseCase, reloadColumns, listRolesUseCase, listHostEmployeesUseCase, toast],
   )
 
   useEffect(() => {
@@ -221,8 +194,23 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     void loadDashboard()
   }, [navigate, loginRedirectPath, loadDashboard])
 
+  // A changed filter or (debounced) search restarts every column from its
+  // first page. Skipped on mount - the initial `loadDashboard` covers that.
+  const hasAppliedInitialQueryRef = useRef(false)
+  useEffect(() => {
+    if (!hasAppliedInitialQueryRef.current) {
+      hasAppliedInitialQueryRef.current = true
+      return
+    }
+    reloadColumns({ keepDepth: false }).catch((error: unknown) => {
+      console.error('Failed to apply board filters', error)
+      toast.error('Something went wrong loading the dashboard. Please try again.')
+    })
+  }, [columnQuery, visibleStatuses, reloadColumns, toast])
+
   const refresh = useCallback(() => {
-    void loadDashboard()
+    setIsRefreshing(true)
+    void loadDashboard({ silent: true }).finally(() => setIsRefreshing(false))
   }, [loadDashboard])
 
   // progress, so the auto-refresh tick can skip a fetch that would otherwise
@@ -294,11 +282,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
 
   // Preloads approval-step detail for pending requests so the "Level X/Y"
   // badge is visible on the collapsed card, not just after expanding it.
-  // Also covers "approved" requests: the backend's `status` field flips to
-  // "approved" as soon as an intermediate step (e.g. Reception) clears, even
-  // when a further step is still pending, so a genuinely mid-workflow request
-  // needs its detail fetched here too for `resolveEffectiveStatus` below to
-  // correctly keep it out of the Approved column.
+  // Runs only for cards actually loaded into the Requested/Approved columns,
+  // so lazy loading caps it at one page's worth per scroll.
   //
   // Kicks off the category's workflow-rules fetch (below) in parallel with
   // the detail fetch, keyed off the summary's own `visitorCategoryId` rather
@@ -308,9 +293,9 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   // category's live rules arrived on their own separate round trip.
   const pendingDetailFetchesRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    const requestsNeedingDetail = visitRequests
-      .filter((request) => ['requested', 'approved'].includes(normalizeStatus(request.status)))
-      .filter((request) => !invitationDetails[request.id] && !pendingDetailFetchesRef.current.has(request.id))
+    const requestsNeedingDetail = [...columnPages.requested.items, ...columnPages.approved.items].filter(
+      (request) => !invitationDetails[request.id] && !pendingDetailFetchesRef.current.has(request.id),
+    )
 
     requestsNeedingDetail.forEach((request) => {
       const id = request.id
@@ -331,7 +316,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         ensureWorkflowRulesLoaded(request.visitorCategoryId).catch(() => {})
       }
     })
-  }, [visitRequests, invitationDetails, getInvitationDetailUseCase, ensureWorkflowRulesLoaded])
+  }, [columnPages.requested.items, columnPages.approved.items, invitationDetails, getInvitationDetailUseCase, ensureWorkflowRulesLoaded])
 
   // Preloads workflow rules for every visible card with a live approval step,
   // so "Pending:" can preview the next level and the level/total badges can
@@ -479,7 +464,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
           toast.success('Visit request approved.')
         }
 
-        await loadDashboard()
+        await loadDashboard({ silent: true })
       } catch (error) {
         console.error('Failed to approve visit request', error)
         toast.error(error instanceof Error ? error.message : 'Failed to approve the visit request. Please try again.')
@@ -508,7 +493,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         await rescheduleInvitationUseCase.execute(id, preferredVisitDate, preferredVisitTime)
         setPendingRescheduleId(undefined)
         toast.success('Visit request rescheduled.')
-        await loadDashboard()
+        await loadDashboard({ silent: true })
       } catch (error) {
         console.error('Failed to reschedule visit request', error)
         toast.error(error instanceof Error ? error.message : 'Failed to reschedule the visit request. Please try again.')
@@ -552,7 +537,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         const delegatedLevel = resolveCurrentLevel(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory)
         toast.success(`Delegated level ${delegatedLevel} of ${resolveTotalSteps(detail, workflowRulesByCategory)} to ${approverLabel}.`)
 
-        await loadDashboard()
+        await loadDashboard({ silent: true })
       } catch (error) {
         console.error('Failed to delegate approval step', error)
         toast.error(error instanceof Error ? error.message : 'Failed to delegate this approval step. Please try again.')
@@ -693,7 +678,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         console.error('Failed to approve visit request', error)
         toast.error(error instanceof Error ? error.message : 'Failed to approve the visit request. Please try again.')
       } finally {
-        await loadDashboard()
+        await loadDashboard({ silent: true })
         setApprovingAndDelegatingId(undefined)
       }
     },
@@ -743,7 +728,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         setInvitationDetails((previous) => ({ ...previous, [id]: updatedDetail }))
         setPendingEditId(undefined)
         toast.success('Visit request updated.')
-        await loadDashboard()
+        await loadDashboard({ silent: true })
       } catch (error) {
         console.error('Failed to edit visit request', error)
         toast.error(error instanceof Error ? error.message : 'Failed to update the visit request. Please try again.')
@@ -782,7 +767,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         }
 
         setPendingDenyId(undefined)
-        await loadDashboard()
+        await loadDashboard({ silent: true })
       } catch (error) {
         console.error('Failed to deny visit request', error)
         toast.error(error instanceof Error ? error.message : 'Failed to deny the visit request. Please try again.')
@@ -793,57 +778,30 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     [pendingDenyId, denyInvitationUseCase, rejectInvitationStepUseCase, loadDashboard, loadDetail, workflowRulesByCategory, toast],
   )
 
+  // Filtered server-side by exact match, and the wizards store the purpose's
+  // display name ("Interview"), not the option slug ("interview") - so the
+  // label is what gets sent.
   const purposeOptions = useMemo(
-    () => [{ value: 'all', label: 'All purposes' }, ...PURPOSE_OF_VISIT_OPTIONS],
+    () => [{ value: 'all', label: 'All purposes' }, ...PURPOSE_OF_VISIT_OPTIONS.map(({ label }) => ({ value: label, label }))],
     [],
-  )
-
-  const filteredRequests = useMemo(() => {
-    // serverFilters mode already sent search/registrationType (and
-    // status/source) to the API - re-narrowing here with the live
-    // (non-debounced) `search` value would visibly flicker results ahead
-    // of what the debounced server fetch actually returned.
-    if (serverFilters) return visitRequests
-
-    const query = search.trim().toLowerCase()
-
-    return visitRequests.filter((request) => {
-      const matchesSearch =
-        !query ||
-        request.primaryContactFullName.toLowerCase().includes(query) ||
-        request.trackingId.toLowerCase().includes(query)
-      const matchesPurpose = purposeFilter === 'all' || request.purposeOfVisit === purposeFilter
-      const matchesRegistrationType = registrationTypeFilter === 'all' || request.registrationType === registrationTypeFilter
-
-      return matchesSearch && matchesPurpose && matchesRegistrationType
-    })
-  }, [visitRequests, search, purposeFilter, registrationTypeFilter, serverFilters])
-
-  // The backend's `status` field on a visit request flips to "approved" as
-  // soon as any single step clears (e.g. Reception approves-and-delegates),
-  // even though a further step is still pending — it doesn't track
-  // multi-step completion itself. Once this invitation's detail has been
-  // fetched, `currentApprovalStep` is the real source of truth: a step still
-  // pending means the request hasn't actually finished the workflow, so keep
-  // it in "Requested" until that step clears too (`currentApprovalStep` null).
-  const resolveEffectiveStatus = useCallback(
-    (request: VisitRequestSummary): string => {
-      const status = normalizeStatus(request.status)
-      if (status === 'approved' && invitationDetails[request.id]?.currentApprovalStep) {
-        return 'requested'
-      }
-      return status
-    },
-    [invitationDetails],
   )
 
   const columns = useMemo(
     () =>
-      BOARD_STATUS_COLUMNS.map((column) => ({
-        ...column,
-        requests: filteredRequests.filter((request) => resolveEffectiveStatus(request) === column.status),
-      })),
-    [filteredRequests, resolveEffectiveStatus],
+      BOARD_STATUS_COLUMNS.map((column) => {
+        const page = columnPages[column.status]
+        return {
+          ...column,
+          requests: page.items,
+          total: page.total,
+          hasMore: page.items.length < page.total,
+          isLoadingMore: page.isLoadingMore,
+          loadMoreFailed: page.loadMoreFailed,
+          resetKey: page.resetKey,
+          loadMore: () => void loadMore(column.status),
+        }
+      }),
+    [columnPages, loadMore],
   )
 
   return {
@@ -864,6 +822,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     setSourceFilter,
     lastUpdatedAt,
     refresh,
+    isRefreshing,
     approve,
     approvingId,
     expandedId,

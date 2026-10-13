@@ -13,7 +13,7 @@ import { useFormBuilderPublishState } from './use-form-builder-publish-state'
  * scope — `undefined` (a real branch id otherwise) is what every
  * form-builder use-case actually expects.
  */
-export const DEFAULT_WORKSPACE_VALUE = '__default__'
+export const DEFAULT_WORKSPACE_VALUE = ''
 
 export function useAdminFormBuilder() {
   const navigate = useNavigate()
@@ -90,7 +90,7 @@ export function useAdminFormBuilder() {
 
   const selectWorkspace = useCallback(
     (value: string) => {
-      const branchId = value === DEFAULT_WORKSPACE_VALUE || value === '' ? undefined : value
+      const branchId = value === DEFAULT_WORKSPACE_VALUE ? undefined : value
       setSelectedBranchId(branchId)
       void loadSteps(branchId)
     },

@@ -41,7 +41,7 @@ export function StepProgressHeader({ steps, currentStep, onStepSelect }: StepPro
         aria-label="Registration progress"
         className="h-1.5 w-full overflow-hidden rounded-full bg-border"
       >
-        <div className="h-full rounded-full bg-secondary-accent transition-[width]" style={{ width: `${progressPercent}%` }} />
+        <div className="step-motion h-full rounded-full bg-secondary-accent transition-[width]" style={{ width: `${progressPercent}%` }} />
       </div>
 
       {isListOpen && (

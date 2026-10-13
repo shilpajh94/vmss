@@ -21,15 +21,19 @@ The system SHALL render, for an authenticated session, the Admin sidebar with "I
 - **THEN** the sidebar shows "Invitations" marked active and the top bar shows the signed-in staff member's name and role
 
 ### Requirement: Invitations are grouped into four status columns with live counts
-The system SHALL group invitations into four columns — Requested, Approved, Checked-in, Denied — each showing a count badge equal to the number of invitations currently in that column, using the same board component as the staff dashboard.
+The system SHALL group invitations into four columns — Requested, Approved, Checked-in, Denied — each showing a count badge equal to the server's total number of invitations in that status matching the active search and filters, using the same board component as the staff dashboard. The count SHALL NOT be limited to the number of cards currently loaded. When a status filter is selected, only that status's column SHALL load invitations; the other columns SHALL show zero.
 
 #### Scenario: Invitations load successfully
 - **WHEN** the invitations list loads successfully
-- **THEN** each invitation appears under the column matching its status, and each column's count badge reflects the number shown in it
+- **THEN** each invitation appears under the column matching its status, and each column's count badge shows the server's total for that status
 
 #### Scenario: Empty column
 - **WHEN** a status column has zero invitations
 - **THEN** the system shows an empty-state message instead of any cards
+
+#### Scenario: Status filter limits loading to one column
+- **WHEN** an admin selects the "Approved" status filter
+- **THEN** only the Approved column loads invitations, and the Requested, Checked-in, and Denied columns show a count of zero and their empty state
 
 ### Requirement: Search filters visible invitations by visitor name or tracking ID
 The system SHALL, as the admin types in the search field, show only invitations whose visitor name or tracking ID contains the entered text (case-insensitive), across all columns.
@@ -39,11 +43,15 @@ The system SHALL, as the admin types in the search field, show only invitations 
 - **THEN** only invitations whose visitor name or tracking ID contains that text remain visible, in their existing columns
 
 ### Requirement: Refresh reloads the invitations list
-The system SHALL, when the refresh action is activated, re-fetch the invitations list, the role list, and the employee directory, and re-render the board with the latest data.
+The system SHALL, when the refresh action is activated, re-fetch every column's already-loaded pages, the role list, and the employee directory, and re-render the board with the latest data. A column the admin has scrolled into SHALL keep its loaded depth and scroll position.
 
 #### Scenario: Admin refreshes the board
 - **WHEN** an admin activates the refresh action
 - **THEN** the system re-fetches the underlying data and updates the board with the result
+
+#### Scenario: Refresh keeps a scrolled column's depth
+- **WHEN** an admin has loaded 60 cards into a column and activates the refresh action
+- **THEN** that column still holds up to 60 cards after the refresh and is not scrolled back to the top
 
 ### Requirement: List load failure is reported without crashing
 The system SHALL, when the invitations list fails to load, show an error message on the page, trigger an error notification, and allow retrying without reloading the page.
@@ -58,3 +66,14 @@ The system SHALL provide, on this page, the same card-expansion (with step-progr
 #### Scenario: Approve, reschedule, and deny available to admins
 - **WHEN** an admin interacts with a card on the Invitations page the same way a staff member would on the staff dashboard
 - **THEN** the same approve, reschedule, and deny behaviors apply, with the same success and failure notifications
+
+### Requirement: Invitations board pins its column headers and loads columns lazily
+The admin Invitations board SHALL keep each column's header visible while its cards scroll. It SHALL load each column in pages of 20 as the admin scrolls, without duplicates, and SHALL stop requesting pages once a column is fully loaded. This is the same behaviour the staff dashboard defines in "Status column headers stay visible while cards scroll" and "Columns load visit requests lazily in pages".
+
+#### Scenario: Scrolling a long column
+- **WHEN** an admin scrolls to the end of the 20 cards loaded in the Requested column at 1280px wide
+- **THEN** the "Requested" header and count stay visible, a loading indicator appears at the end of the column, and the next 20 invitations are appended
+
+#### Scenario: Search change restarts columns
+- **WHEN** an admin has scrolled a column past its first page and then changes the search text
+- **THEN** every column reloads from its first page with the new search applied

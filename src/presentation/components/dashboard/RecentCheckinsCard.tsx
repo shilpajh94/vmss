@@ -1,3 +1,4 @@
+import { Avatar } from '../ui/Avatar'
 import { EmptyState } from '../ui/EmptyState'
 import { formatTime } from '../../utils/format-time'
 import type { DashboardRecentCheckin } from '../../../domain/entities/dashboard-checkin-schema'
@@ -42,7 +43,7 @@ export function RecentCheckinsCard({ checkins, employeeNameById }: RecentCheckin
                   <tr key={checkin.id} className="border-t border-border-subtle">
                     <td className="py-3 whitespace-nowrap">
                       <div className="flex items-center gap-2.5">
-                        <span className="size-7 shrink-0 rounded-full bg-neutral-subtle" />
+                        <Avatar name={checkin.primaryContactFullName} size="sm" />
                         <span className="font-body text-sm font-semibold text-text">{checkin.primaryContactFullName}</span>
                       </div>
                     </td>

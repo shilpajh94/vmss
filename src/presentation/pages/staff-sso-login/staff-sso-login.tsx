@@ -8,7 +8,7 @@ export function StaffSsoLoginPage() {
   const { status, errorMessage, startSso } = useStaffSsoLoginPage()
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col">
+    <div className="relative flex h-dvh w-full flex-col overflow-hidden">
       <div aria-hidden className="absolute inset-0">
         <img src={heroImage} alt="" className="size-full object-cover" />
         <div className="absolute inset-0 bg-primary/55" />
@@ -16,13 +16,15 @@ export function StaffSsoLoginPage() {
 
       <StaffPortalHeader />
 
-      <main className="relative flex flex-1 flex-col items-center justify-center gap-4 md:gap-8 px-4 md:px-12 py-12 md:py-[120px]">
-        <SsoSignInCard status={status} errorMessage={errorMessage} onSignIn={startSso} />
-        <div className="flex items-center gap-4 font-body text-[13px]">
-          <span className="font-medium text-[#cbd5e1]">Need help?</span>
-          <a href="#" className="font-semibold text-secondary-accent underline">
-            Contact System Administrator
-          </a>
+      <main className="relative min-h-0 flex-1 overflow-y-auto">
+        <div className="flex min-h-full flex-col items-center justify-center gap-4 md:gap-6 xshort:gap-3 md:xshort:gap-3 px-4 md:px-12 py-6 md:py-8 xshort:py-4 md:xshort:py-4">
+          <SsoSignInCard status={status} errorMessage={errorMessage} onSignIn={startSso} />
+          <div className="flex items-center gap-4 font-body text-[13px]">
+            <span className="font-medium text-[#cbd5e1]">Need help?</span>
+            <a href="#" className="font-semibold text-secondary-accent underline">
+              Contact System Administrator
+            </a>
+          </div>
         </div>
       </main>
 

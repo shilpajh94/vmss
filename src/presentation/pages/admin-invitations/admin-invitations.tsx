@@ -173,34 +173,43 @@ export function AdminInvitationsPage() {
       ) : isLoading ? (
         <LoadingState label="Loading invitations…" className="flex-1" />
       ) : (
-        <ResponsiveBoard
-          columns={columns}
-          renderColumn={(column) => (
-            <KanbanColumn
-              key={column.status}
-              status={column.status}
-              label={column.label}
-              requests={column.requests}
-              emptyMessage={EMPTY_MESSAGES[column.status]}
-              onMoveToApproved={column.status === 'requested' ? setPendingApproveId : undefined}
-              onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
-              approvingId={approvingId}
-              expandedId={expandedId}
-              onToggleExpand={toggleExpand}
-              invitationDetails={invitationDetails}
-              loadingDetailId={loadingDetailId}
-              roleNameById={roleNameById}
-              employeeNameById={employeeNameById}
-              workflowRulesByCategory={workflowRulesByCategory}
-              onRescheduleClick={requestReschedule}
-              onDelegateClick={requestDelegate}
-              onApproveAndDelegateClick={requestApproveAndDelegate}
-              onApproveClick={setPendingApproveId}
-              onEditClick={requestEdit}
-              onVisitorInfoClick={viewVisitorInfo}
-            />
-          )}
-        />
+        // PageContentLayout's data region has a definite height on desktop;
+        // filling it lets each column scroll under its own fixed header.
+        <div className="flex flex-col lg:h-full">
+          <ResponsiveBoard
+            columns={columns}
+            renderColumn={(column) => (
+              <KanbanColumn
+                key={`${column.status}:${column.resetKey}`}
+                status={column.status}
+                label={column.label}
+                requests={column.requests}
+                total={column.total}
+                hasMore={column.hasMore}
+                isLoadingMore={column.isLoadingMore}
+                loadMoreFailed={column.loadMoreFailed}
+                onLoadMore={column.loadMore}
+                emptyMessage={EMPTY_MESSAGES[column.status]}
+                onMoveToApproved={column.status === 'requested' ? setPendingApproveId : undefined}
+                onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
+                approvingId={approvingId}
+                expandedId={expandedId}
+                onToggleExpand={toggleExpand}
+                invitationDetails={invitationDetails}
+                loadingDetailId={loadingDetailId}
+                roleNameById={roleNameById}
+                employeeNameById={employeeNameById}
+                workflowRulesByCategory={workflowRulesByCategory}
+                onRescheduleClick={requestReschedule}
+                onDelegateClick={requestDelegate}
+                onApproveAndDelegateClick={requestApproveAndDelegate}
+                onApproveClick={setPendingApproveId}
+                onEditClick={requestEdit}
+                onVisitorInfoClick={viewVisitorInfo}
+              />
+            )}
+          />
+        </div>
       )}
 
       <ApproveInvitationModal

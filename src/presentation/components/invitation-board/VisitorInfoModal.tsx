@@ -1,8 +1,8 @@
-import { useState } from 'react'
 import type { InvitationDetail, InvitationVehicle } from '../../../domain/entities/invitation-detail-schema'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
 import type { FieldAnswer, GroupAnswer } from '../../../domain/entities/form-field-answer-schema'
+import { Avatar } from '../ui/Avatar'
 import { Modal } from '../ui/Modal'
 import { CalendarClockIcon, ShieldIcon } from '../icons'
 import { formatDateTime } from '../../utils/format-time'
@@ -37,45 +37,6 @@ function statusLabel(status: string): string {
     .split('_')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ')
-}
-
-function initialsFor(fullName: string): string {
-  const parts = fullName.trim().split(/\s+/)
-  return ((parts[0]?.[0] ?? '') + (parts[parts.length - 1]?.[0] ?? '')).toUpperCase()
-}
-
-function Avatar({
-  fullName,
-  photoUrl,
-  sizeClassName,
-  toneClassName,
-}: {
-  fullName: string
-  photoUrl?: string | null
-  sizeClassName: string
-  toneClassName: string
-}) {
-  // Photo URLs are short-lived signed links (see use-invitations-board.ts's
-  // forced refetch on open) — if one still fails to load (expired, storage
-  // hiccup), fall back to the initials badge instead of a broken image icon.
-  const [failedToLoad, setFailedToLoad] = useState(false)
-
-  if (photoUrl && !failedToLoad) {
-    return (
-      <img
-        src={photoUrl}
-        alt={fullName}
-        onError={() => setFailedToLoad(true)}
-        className={`shrink-0 rounded-full object-cover ${sizeClassName}`}
-      />
-    )
-  }
-
-  return (
-    <span className={`flex shrink-0 items-center justify-center rounded-full font-display font-bold ${sizeClassName} ${toneClassName}`}>
-      {initialsFor(fullName)}
-    </span>
-  )
 }
 
 function IdProofField({ label, type, url }: { label: string; type?: string | null; url?: string | null }) {
@@ -256,9 +217,9 @@ export function VisitorInfoModal({
           <div className="flex items-start justify-between gap-3 rounded-xl border border-border-subtle bg-bg p-4">
             <div className="flex items-center gap-3">
               <Avatar
-                fullName={detail.primaryContactFullName}
+                name={detail.primaryContactFullName}
                 photoUrl={detail.primaryContactPhotoUrl}
-                sizeClassName="size-11 text-sm"
+                size="xl"
                 toneClassName="bg-secondary-accent/12 text-secondary-accent"
               />
               <div className="flex flex-col gap-0.5">

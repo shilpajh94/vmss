@@ -108,10 +108,7 @@ export function AdminFormBuilderPage() {
                   onChange={selectWorkspace}
                   placeholderSelectable
                   placeholder="Tenant Default"
-                  options={[
-                    { value: DEFAULT_WORKSPACE_VALUE, label: 'Tenant Default' },
-                    ...branches.map((branch) => ({ value: branch.id, label: branch.name })),
-                  ]}
+                  options={branches.map((branch) => ({ value: branch.id, label: branch.name }))}
                 />
               </div>
               <button
@@ -121,14 +118,6 @@ export function AdminFormBuilderPage() {
               >
                 <PlusIcon className="size-3.5" />
                 Create Registration Step
-              </button>
-              <button
-                type="button"
-                disabled
-                title="Coming soon"
-                className="cursor-not-allowed rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text-faint opacity-60"
-              >
-                Form Preview
               </button>
               <button
                 type="button"

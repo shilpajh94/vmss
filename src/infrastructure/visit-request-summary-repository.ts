@@ -4,11 +4,11 @@ import type {
   EditInvitationFields,
   ListVisitRequestsParams,
   VisitRequestSummaryRepository,
+  VisitRequestsPage,
 } from '../data/repositories/visit-request-summary-repository'
 import {
   VisitRequestSummaryListResponseSchema,
   InvitationActionResultSchema,
-  type VisitRequestSummary,
   type VisitRequestSummaryListResponse,
   type InvitationActionResult,
 } from '../domain/entities/visit-request-summary-schema'
@@ -25,7 +25,7 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
     this.apiClient = apiClient
   }
 
-  async list(params?: ListVisitRequestsParams): Promise<VisitRequestSummary[]> {
+  async list(params?: ListVisitRequestsParams): Promise<VisitRequestsPage> {
     const response = await this.apiClient.makeRequest<VisitRequestSummaryListResponse>({
       endpointConfig: API_ENDPOINTS.LIST_VISIT_REQUESTS,
       queryParams: {
@@ -34,15 +34,14 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
         registrationType: params?.registrationType,
         source: params?.source,
         search: params?.search,
-        // Previously unset (silently capped at the API's default pageSize
-        // of 20) - explicit here so the board sees its full realistic
-        // volume, same bounded-not-paginated posture as Workflows.
-        pageSize: params?.pageSize ?? 100,
+        purposeOfVisit: params?.purposeOfVisit,
+        page: params?.page,
+        pageSize: params?.pageSize,
       },
       parserSchema: VisitRequestSummaryListResponseSchema,
     })
 
-    return response.data
+    return { items: response.data, total: response.pagination.total }
   }
 
   async approve(id: string): Promise<void> {

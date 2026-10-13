@@ -4,7 +4,7 @@ import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { usePushNotifications } from '../../../hooks/use-push-notifications'
 import { NotificationBell } from '../../../components/notification-bell/NotificationBell'
 import { NavMenuButton } from '../../../components/AppShell'
-import { initialsFor } from '../../../utils/initials'
+import { Avatar } from '../../../components/ui/Avatar'
 
 interface ReceptionTopBarProps {
   description?: string
@@ -36,12 +36,7 @@ export function ReceptionTopBar({ description, currentUser }: ReceptionTopBarPro
         <NotificationBell />
 
         <div className="flex items-center gap-2">
-          <span
-            aria-hidden="true"
-            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-neutral-subtle font-display text-[12px] font-bold text-text-muted"
-          >
-            {currentUser ? initialsFor(currentUser.name) : ''}
-          </span>
+          <Avatar name={currentUser?.name ?? ''} size="md" />
           <div className="hidden flex-col gap-0.5 md:flex">
             <p className="font-body text-[13px] font-semibold text-text">{currentUser?.name ?? '—'}</p>
             <p className="font-body text-[11px] text-text-faint">{currentUser?.role ?? ''}</p>

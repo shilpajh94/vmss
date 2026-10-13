@@ -1,10 +1,13 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { VisitRequestCard } from './VisitRequestCard'
 import { UserIcon } from '../icons'
 import { EmptyState } from '../ui/EmptyState'
+import { Spinner } from '../ui/LoadingState'
+import { BOARD_PAGE_SIZE } from '../../hooks/use-paged-board-columns'
+import { useInfiniteScrollSentinel } from '../../hooks/use-infinite-scroll-sentinel'
 
 const ACCENT_CLASSES = {
   requested: { border: 'border-l-info', tint: 'bg-info/8', text: 'text-info', dragOver: 'border-info bg-info/5 ring-info/40' },
@@ -22,6 +25,12 @@ interface KanbanColumnProps {
   status: keyof typeof ACCENT_CLASSES
   label: string
   requests: VisitRequestSummary[]
+  /** Server total for this status - may exceed `requests.length` while pages remain unloaded. */
+  total: number
+  hasMore: boolean
+  isLoadingMore: boolean
+  loadMoreFailed: boolean
+  onLoadMore: () => void
   emptyMessage: string
   onDrop?: (id: string) => void
   approvingId?: string
@@ -46,6 +55,11 @@ export function KanbanColumn({
   status,
   label,
   requests,
+  total,
+  hasMore,
+  isLoadingMore,
+  loadMoreFailed,
+  onLoadMore,
   emptyMessage,
   onDrop,
   approvingId,
@@ -67,10 +81,17 @@ export function KanbanColumn({
 }: KanbanColumnProps) {
   const accent = ACCENT_CLASSES[status]
   const [isDragOver, setIsDragOver] = useState(false)
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+
+  useInfiniteScrollSentinel(sentinelRef, scrollAreaRef, onLoadMore, {
+    enabled: hasMore && !isLoadingMore && !loadMoreFailed,
+    watchKey: requests.length,
+  })
 
   return (
     <div
-      className="flex h-full min-w-0 flex-1 flex-col gap-4"
+      className="flex min-w-0 flex-1 flex-col gap-4 lg:min-h-0"
       onDragOver={
         onDrop
           ? (event) => {
@@ -91,9 +112,10 @@ export function KanbanColumn({
           : undefined
       }
     >
-      <div className={`flex w-full items-center justify-between rounded-[10px] border-l-4 px-4 py-3 ${accent.border} ${accent.tint}`}>
+      {/* Outside the scroll area below, so it stays put however far the cards scroll (desktop). */}
+      <div className={`flex w-full shrink-0 items-center justify-between rounded-[10px] border-l-4 px-4 py-3 ${accent.border} ${accent.tint}`}>
         <p className="font-display text-base font-bold text-text">{label}</p>
-        <span className={`rounded-full border border-border bg-surface px-2 py-0.5 font-body text-xs font-bold ${accent.text}`}>{requests.length}</span>
+        <span className={`rounded-full border border-border bg-surface px-2 py-0.5 font-body text-xs font-bold ${accent.text}`}>{total}</span>
       </div>
 
       {requests.length === 0 ? (
@@ -106,7 +128,8 @@ export function KanbanColumn({
         />
       ) : (
         <div
-          className={`flex w-full flex-col gap-3 rounded-xl p-1 transition-colors ${isDragOver ? `ring-2 ${accent.dragOver}` : ''}`}
+          ref={scrollAreaRef}
+          className={`scrollbar-thin flex w-full flex-col gap-3 rounded-xl p-1 transition-colors lg:min-h-0 lg:flex-1 lg:overflow-y-auto ${isDragOver ? `ring-2 ${accent.dragOver}` : ''}`}
         >
           {requests.map((request) => (
             <VisitRequestCard
@@ -131,6 +154,26 @@ export function KanbanColumn({
               onMoveToDenied={onMoveToDenied}
             />
           ))}
+          <div ref={sentinelRef} aria-hidden className="h-px shrink-0" />
+          {isLoadingMore ? (
+            <div role="status" className="flex shrink-0 items-center justify-center gap-2 py-3 font-body text-xs text-text-muted">
+              <Spinner className="size-4" />
+              Loading more…
+            </div>
+          ) : loadMoreFailed ? (
+            <div className="flex shrink-0 flex-col items-center gap-2 py-3 text-center">
+              <p className="font-body text-xs text-danger">Couldn't load more visits.</p>
+              <button
+                type="button"
+                onClick={onLoadMore}
+                className="min-h-9 rounded-lg border border-border bg-surface px-3 font-body text-xs font-semibold text-text"
+              >
+                Retry
+              </button>
+            </div>
+          ) : !hasMore && requests.length > BOARD_PAGE_SIZE ? (
+            <p className="shrink-0 py-3 text-center font-body text-xs text-text-muted">All {requests.length} shown</p>
+          ) : null}
         </div>
       )}
     </div>
