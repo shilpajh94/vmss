@@ -10320,6 +10320,25 @@ async def test_create_invitation_id_proof_not_required_when_branch_deactivates_i
     assert response.status_code == 201, response.text
 
 
+@pytest.mark.parametrize("blank", ["", "null", " NULL "])
+def test_blank_id_proof_type_is_normalized_to_none(blank: str) -> None:
+    """`idProofType` is optional: `""`/`"null"` mean "not provided" for both
+    the create-invitation and walk-in payloads (shared schemas).
+    """
+    from vmss_api.invitations.schemas import InvitationPrimaryContactCreate, VisitorSubmit
+
+    assert (
+        InvitationPrimaryContactCreate(
+            full_name="A", email="a@example.com", id_proof_type=blank
+        ).id_proof_type
+        is None
+    )
+    assert (
+        VisitorSubmit(full_name="A", email="a@example.com", id_proof_type=blank).id_proof_type
+        is None
+    )
+
+
 async def test_create_invitation_photo_not_required_when_branch_deactivates_it(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
