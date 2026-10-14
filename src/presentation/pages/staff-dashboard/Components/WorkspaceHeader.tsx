@@ -12,9 +12,9 @@ interface WorkspaceHeaderProps {
 export function WorkspaceHeader({ currentUser, onRefresh, onSignOut }: WorkspaceHeaderProps) {
   return (
     <div className="flex w-full flex-wrap items-center justify-between gap-4">
-      <div className="flex flex-col gap-1.5">
-        <h1 className="font-display text-2xl font-extrabold text-text md:text-[28px]">Visits</h1>
-        <p className="font-body text-sm text-text-muted">All visit requests for your organisation</p>
+      <div className="flex flex-col gap-0.5">
+        <h1 className="font-display text-xl font-extrabold text-text md:text-2xl">Visits</h1>
+        <p className="font-body text-[13px] text-text-muted">All visit requests for your organisation</p>
       </div>
 
       <div className="flex items-center gap-2 md:gap-4">

@@ -2,9 +2,13 @@ import { useState } from 'react'
 import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
 import { employeeAtBranch, employeeHasRoleAtBranch } from '../../utils/role-name-match'
 import { Modal } from '../ui/Modal'
+import { confirmSubject } from '../../utils/confirm-subject'
+import { FormConfirmStep } from './FormConfirmStep'
 
 interface DelegateInvitationModalProps {
   isOpen: boolean
+  visitorName?: string
+  trackingId?: string
   isDelegating?: boolean
   // 'approve-and-delegate' is Reception's (stepOrder 0) combined action: the
   // caller has already computed the candidate list from the *next* step's
@@ -37,6 +41,8 @@ interface DelegateInvitationModalProps {
 
 export function DelegateInvitationModal({
   isOpen,
+  visitorName,
+  trackingId,
   isDelegating,
   mode = 'delegate',
   isLoadingCandidates,
@@ -49,6 +55,7 @@ export function DelegateInvitationModal({
   onCancel,
 }: DelegateInvitationModalProps) {
   const [delegateUserId, setDelegateUserId] = useState('')
+  const [isConfirming, setIsConfirming] = useState(false)
 
   const isApproveAndDelegate = mode === 'approve-and-delegate'
   const isOwnershipStep = stepOrder === 0
@@ -78,7 +85,9 @@ export function DelegateInvitationModal({
         : hostEmployees
 
   const handleCancel = () => {
+    if (isDelegating) return
     setDelegateUserId('')
+    setIsConfirming(false)
     onCancel()
   }
 
@@ -86,77 +95,97 @@ export function DelegateInvitationModal({
     if (!delegateUserId) return
     onConfirm(delegateUserId)
     setDelegateUserId('')
+    setIsConfirming(false)
   }
+
+  const delegateName = delegateCandidates?.find((employee) => employee.id === delegateUserId)?.fullName ?? delegateUserId
+  const subject = confirmSubject(visitorName, trackingId)
 
   return (
     <Modal isOpen={isOpen} onClose={handleCancel} title={isApproveAndDelegate ? 'Approve & Delegate' : 'Delegate Approval Step'}>
-      <div className="flex flex-col gap-3">
-        {isApproveAndDelegate ? (
-          <p className="font-body text-[13px] text-text-faint">
-            Approves your review and assigns the next step to whoever you pick below.
-          </p>
-        ) : approverRoleId && !isOwnershipStep ? (
-          <p className="font-body text-[13px] text-text-faint">
-            {stepRoleName ? (
-              <>
-                Delegating within role: <span className="font-semibold text-text">{stepRoleName}</span>
-              </>
-            ) : (
-              "This role's name isn't available to your account — showing all active employees at this branch. The server will still confirm the delegate holds the right role."
-            )}
-          </p>
-        ) : isOwnershipStep ? (
-          <p className="font-body text-[13px] text-text-faint">
-            Assigning the actual host — any active host employee at this branch can be selected.
-          </p>
-        ) : null}
-        <label className="flex flex-col gap-1.5">
-          <span className="font-body text-[13px] font-semibold text-text">{isApproveAndDelegate ? 'Assign next step to' : 'Delegate to'}</span>
-          <select
-            value={delegateUserId}
-            onChange={(event) => setDelegateUserId(event.target.value)}
-            disabled={isApproveAndDelegate && isLoadingCandidates}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-body text-sm text-text focus:outline-none"
-          >
-            <option value="">
-              {isApproveAndDelegate
-                ? isLoadingCandidates
-                  ? 'Loading eligible employees…'
+      {isConfirming ? (
+        <FormConfirmStep
+          message={
+            isApproveAndDelegate
+              ? `Approve your step for ${subject} and assign the next step?`
+              : `Delegate the current approval step for ${subject}?`
+          }
+          rows={[{ label: isApproveAndDelegate ? 'Next step approver' : 'Delegate to', value: delegateName }]}
+          confirmLabel={isApproveAndDelegate ? 'Approve & delegate' : 'Delegate approval'}
+          busyLabel={isApproveAndDelegate ? 'Approving & delegating…' : 'Delegating…'}
+          isBusy={isDelegating}
+          onBack={() => setIsConfirming(false)}
+          onConfirm={handleConfirm}
+        />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {isApproveAndDelegate ? (
+            <p className="font-body text-[13px] text-text-faint">
+              Approves your review and assigns the next step to whoever you pick below.
+            </p>
+          ) : approverRoleId && !isOwnershipStep ? (
+            <p className="font-body text-[13px] text-text-faint">
+              {stepRoleName ? (
+                <>
+                  Delegating within role: <span className="font-semibold text-text">{stepRoleName}</span>
+                </>
+              ) : (
+                "This role's name isn't available to your account — showing all active employees at this branch. The server will still confirm the delegate holds the right role."
+              )}
+            </p>
+          ) : isOwnershipStep ? (
+            <p className="font-body text-[13px] text-text-faint">
+              Assigning the actual host — any active host employee at this branch can be selected.
+            </p>
+          ) : null}
+          <label className="flex flex-col gap-1.5">
+            <span className="font-body text-[13px] font-semibold text-text">{isApproveAndDelegate ? 'Assign next step to' : 'Delegate to'}</span>
+            <select
+              value={delegateUserId}
+              onChange={(event) => setDelegateUserId(event.target.value)}
+              disabled={isApproveAndDelegate && isLoadingCandidates}
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-body text-sm text-text focus:outline-none"
+            >
+              <option value="">
+                {isApproveAndDelegate
+                  ? isLoadingCandidates
+                    ? 'Loading eligible employees…'
+                    : delegateCandidates?.length
+                      ? 'Select employee…'
+                      : 'No employees are eligible for the next step yet.'
                   : delegateCandidates?.length
-                    ? 'Select employee…'
-                    : 'No employees are eligible for the next step yet.'
-                : delegateCandidates?.length
-                  ? 'Select host…'
-                  : stepRoleName
-                    ? `No one currently holds ${stepRoleName}`
-                    : 'No active employees at this branch'}
-            </option>
-            {delegateCandidates?.map((employee) => (
-              <option key={employee.id} value={employee.id}>
-                {employee.fullName}
+                    ? 'Select host…'
+                    : stepRoleName
+                      ? `No one currently holds ${stepRoleName}`
+                      : 'No active employees at this branch'}
               </option>
-            ))}
-          </select>
-        </label>
+              {delegateCandidates?.map((employee) => (
+                <option key={employee.id} value={employee.id}>
+                  {employee.fullName}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <div className="flex items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={handleCancel}
-            className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={!delegateUserId || isDelegating || (isApproveAndDelegate && isLoadingCandidates)}
-            onClick={handleConfirm}
-            className="rounded-full bg-secondary-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
-          >
-            {isDelegating ? (isApproveAndDelegate ? 'Approving & delegating…' : 'Delegating…') : isApproveAndDelegate ? 'Approve & delegate' : 'Delegate approval'}
-          </button>
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={handleCancel}
+              className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!delegateUserId || (isApproveAndDelegate && isLoadingCandidates)}
+              onClick={() => setIsConfirming(true)}
+              className="rounded-full bg-secondary-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
+            >
+              Review
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </Modal>
   )
 }

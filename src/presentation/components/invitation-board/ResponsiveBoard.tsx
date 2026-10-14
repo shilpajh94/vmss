@@ -28,7 +28,7 @@ export function ResponsiveBoard<TColumn extends BoardColumn>({ columns, renderCo
   const [selectedStatus, setSelectedStatus] = useState<string | undefined>(undefined)
 
   if (isDesktop) {
-    return <div className="flex min-h-0 w-full flex-1 items-stretch gap-4 overflow-x-auto">{columns.map(renderColumn)}</div>
+    return <div className="flex min-h-0 w-full flex-1 items-stretch gap-3 overflow-x-auto">{columns.map(renderColumn)}</div>
   }
 
   // Until the user picks one, open on the first column that has cards.

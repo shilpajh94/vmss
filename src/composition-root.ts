@@ -44,6 +44,9 @@ import { GetInvitationDetailUseCase } from './data/use-cases/get-invitation-deta
 import { RescheduleInvitationUseCase } from './data/use-cases/reschedule-invitation'
 import { EditInvitationUseCase } from './data/use-cases/edit-invitation'
 import { DenyInvitationUseCase } from './data/use-cases/deny-invitation'
+import { RevertInvitationApprovalUseCase } from './data/use-cases/revert-invitation-approval'
+import { CheckOutInvitationUseCase } from './data/use-cases/check-out-invitation'
+import { ExportInvitationsUseCase } from './data/use-cases/export-invitations'
 import { ApproveInvitationStepUseCase } from './data/use-cases/approve-invitation-step'
 import { RejectInvitationStepUseCase } from './data/use-cases/reject-invitation-step'
 import { DelegateInvitationStepUseCase } from './data/use-cases/delegate-invitation-step'
@@ -170,6 +173,9 @@ export interface AppDependencies {
   rescheduleInvitationUseCase: RescheduleInvitationUseCase
   editInvitationUseCase: EditInvitationUseCase
   denyInvitationUseCase: DenyInvitationUseCase
+  revertInvitationApprovalUseCase: RevertInvitationApprovalUseCase
+  checkOutInvitationUseCase: CheckOutInvitationUseCase
+  exportInvitationsUseCase: ExportInvitationsUseCase
   approveInvitationStepUseCase: ApproveInvitationStepUseCase
   rejectInvitationStepUseCase: RejectInvitationStepUseCase
   delegateInvitationStepUseCase: DelegateInvitationStepUseCase
@@ -285,6 +291,9 @@ export function createApp(): AppDependencies {
   let rescheduleInvitationUseCase: RescheduleInvitationUseCase | undefined
   let editInvitationUseCase: EditInvitationUseCase | undefined
   let denyInvitationUseCase: DenyInvitationUseCase | undefined
+  let revertInvitationApprovalUseCase: RevertInvitationApprovalUseCase | undefined
+  let checkOutInvitationUseCase: CheckOutInvitationUseCase | undefined
+  let exportInvitationsUseCase: ExportInvitationsUseCase | undefined
   let approveInvitationStepUseCase: ApproveInvitationStepUseCase | undefined
   let rejectInvitationStepUseCase: RejectInvitationStepUseCase | undefined
   let delegateInvitationStepUseCase: DelegateInvitationStepUseCase | undefined
@@ -502,6 +511,21 @@ export function createApp(): AppDependencies {
   const resolveDenyInvitationUseCase = (): DenyInvitationUseCase => {
     denyInvitationUseCase ??= new DenyInvitationUseCase(resolveVisitRequestSummaryRepository())
     return denyInvitationUseCase
+  }
+
+  const resolveRevertInvitationApprovalUseCase = (): RevertInvitationApprovalUseCase => {
+    revertInvitationApprovalUseCase ??= new RevertInvitationApprovalUseCase(resolveVisitRequestSummaryRepository())
+    return revertInvitationApprovalUseCase
+  }
+
+  const resolveCheckOutInvitationUseCase = (): CheckOutInvitationUseCase => {
+    checkOutInvitationUseCase ??= new CheckOutInvitationUseCase(resolveVisitRequestSummaryRepository())
+    return checkOutInvitationUseCase
+  }
+
+  const resolveExportInvitationsUseCase = (): ExportInvitationsUseCase => {
+    exportInvitationsUseCase ??= new ExportInvitationsUseCase(resolveVisitRequestSummaryRepository())
+    return exportInvitationsUseCase
   }
 
   const resolveApproveInvitationStepUseCase = (): ApproveInvitationStepUseCase => {
@@ -1092,6 +1116,15 @@ export function createApp(): AppDependencies {
     },
     get denyInvitationUseCase() {
       return resolveDenyInvitationUseCase()
+    },
+    get revertInvitationApprovalUseCase() {
+      return resolveRevertInvitationApprovalUseCase()
+    },
+    get checkOutInvitationUseCase() {
+      return resolveCheckOutInvitationUseCase()
+    },
+    get exportInvitationsUseCase() {
+      return resolveExportInvitationsUseCase()
     },
     get approveInvitationStepUseCase() {
       return resolveApproveInvitationStepUseCase()

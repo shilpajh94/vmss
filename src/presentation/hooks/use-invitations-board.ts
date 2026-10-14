@@ -2,23 +2,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
+import { ApiError } from '../../data/api/api-error'
 import { usePolling } from './use-polling'
 import { useDebouncedValue } from './use-debounced-value'
 import { isReceptionCurrentStep, resolveApproverLabel, resolveCurrentLevel, resolveTotalSteps } from '../utils/approval-step-label'
 import { employeeAtBranch, employeeHasRoleAtBranch } from '../utils/role-name-match'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
+import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entities/invitation-detail-schema'
 import type { RoleOut } from '../../domain/entities/role-out-schema'
 import type { HostEmployee } from '../../domain/entities/host-employee-schema'
 import type { ApprovalWorkflowRule } from '../../domain/entities/approval-workflow-rule-schema'
 import type { EditInvitationFields } from '../../data/repositories/visit-request-summary-repository'
 import { PURPOSE_OF_VISIT_OPTIONS } from '../utils/purpose-of-visit-options'
+import { saveBlob } from '../utils/save-blob'
+import { REGISTRATION_TYPE_OPTIONS, SOURCE_OPTIONS, exportFilename, optionLabel } from '../components/invitation-board/filter-options'
+import type { InvitationExportChoice } from '../components/invitation-board/ExportInvitationsModal'
 import { boardStatusForApiStatus, usePagedBoardColumns, type BoardStatus, type ColumnQuery } from './use-paged-board-columns'
 
 export const BOARD_STATUS_COLUMNS = [
   { status: 'requested', label: 'Requested' },
   { status: 'approved', label: 'Approved' },
   { status: 'checked_in', label: 'Checked-in' },
+  { status: 'checked_out', label: 'Checked-out' },
   { status: 'denied', label: 'Denied' },
 ] as const satisfies ReadonlyArray<{ status: BoardStatus; label: string }>
 
@@ -65,6 +71,9 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     rescheduleInvitationUseCase,
     editInvitationUseCase,
     denyInvitationUseCase,
+    revertInvitationApprovalUseCase,
+    checkOutInvitationUseCase,
+    exportInvitationsUseCase,
     approveInvitationStepUseCase,
     rejectInvitationStepUseCase,
     delegateInvitationStepUseCase,
@@ -88,14 +97,17 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   const debouncedSearch = useDebouncedValue(search, 300)
   const [approvingId, setApprovingId] = useState<string | undefined>(undefined)
-  const [expandedId, setExpandedId] = useState<string | undefined>(undefined)
+  const [pendingApproveId, setPendingApproveId] = useState<string | undefined>(undefined)
+  const [pendingRevertId, setPendingRevertId] = useState<string | undefined>(undefined)
+  const [revertingId, setRevertingId] = useState<string | undefined>(undefined)
   const [invitationDetails, setInvitationDetails] = useState<Record<string, InvitationDetail>>({})
-  const [loadingDetailId, setLoadingDetailId] = useState<string | undefined>(undefined)
   const [reschedulingId, setReschedulingId] = useState<string | undefined>(undefined)
   const [delegatingId, setDelegatingId] = useState<string | undefined>(undefined)
   const [editingId, setEditingId] = useState<string | undefined>(undefined)
   const [pendingDenyId, setPendingDenyId] = useState<string | undefined>(undefined)
   const [denyingId, setDenyingId] = useState<string | undefined>(undefined)
+  const [pendingCheckOutId, setPendingCheckOutId] = useState<string | undefined>(undefined)
+  const [checkingOutId, setCheckingOutId] = useState<string | undefined>(undefined)
   const [pendingRescheduleId, setPendingRescheduleId] = useState<string | undefined>(undefined)
   const [pendingDelegateId, setPendingDelegateId] = useState<string | undefined>(undefined)
   const [approvingAndDelegatingId, setApprovingAndDelegatingId] = useState<string | undefined>(undefined)
@@ -105,6 +117,10 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [isLoadingNextStepCandidates, setIsLoadingNextStepCandidates] = useState(false)
   const [pendingEditId, setPendingEditId] = useState<string | undefined>(undefined)
   const [visitorInfoId, setVisitorInfoId] = useState<string | undefined>(undefined)
+  const [isExportOpen, setIsExportOpen] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | undefined>(undefined)
+  const isExportingRef = useRef(false)
 
   const columnQuery = useMemo<ColumnQuery>(
     () => ({
@@ -117,7 +133,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     [scope, registrationTypeFilter, sourceFilter, debouncedSearch, purposeFilter],
   )
   // A status filter (admin board) narrows loading to that one column; a
-  // status with no column (e.g. checked_out) leaves every column empty.
+  // status with no column leaves every column empty.
   const visibleStatuses = useMemo<readonly BoardStatus[]>(() => {
     if (!statusFilter) return ALL_BOARD_STATUSES
     const status = boardStatusForApiStatus(statusFilter)
@@ -216,12 +232,18 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   // progress, so the auto-refresh tick can skip a fetch that would otherwise
   // disrupt it.
   const isActionInProgress =
+    pendingApproveId !== undefined ||
+    approvingId !== undefined ||
+    pendingRevertId !== undefined ||
+    revertingId !== undefined ||
     pendingDenyId !== undefined ||
     pendingRescheduleId !== undefined ||
     pendingDelegateId !== undefined ||
     pendingEditId !== undefined ||
     pendingApproveAndDelegateId !== undefined ||
+    pendingCheckOutId !== undefined ||
     denyingId !== undefined ||
+    checkingOutId !== undefined ||
     reschedulingId !== undefined ||
     delegatingId !== undefined ||
     editingId !== undefined ||
@@ -355,14 +377,9 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     async (id: string, options?: { forceRefresh?: boolean }): Promise<InvitationDetail> => {
       if (!options?.forceRefresh && invitationDetails[id]) return invitationDetails[id]
 
-      setLoadingDetailId(id)
-      try {
-        const detail = await getInvitationDetailUseCase.execute(id)
-        setInvitationDetails((previous) => ({ ...previous, [id]: detail }))
-        return detail
-      } finally {
-        setLoadingDetailId(undefined)
-      }
+      const detail = await getInvitationDetailUseCase.execute(id)
+      setInvitationDetails((previous) => ({ ...previous, [id]: detail }))
+      return detail
     },
     [invitationDetails, getInvitationDetailUseCase],
   )
@@ -388,22 +405,6 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     setVisitorInfoId(undefined)
   }, [])
 
-  const toggleExpand = useCallback(
-    (id: string) => {
-      if (expandedId === id) {
-        setExpandedId(undefined)
-        return
-      }
-
-      setExpandedId(id)
-      void loadDetail(id).catch((error: unknown) => {
-        console.error('Failed to load invitation detail', error)
-        toast.error('Could not load approval progress for this request.')
-      })
-    },
-    [expandedId, loadDetail, toast],
-  )
-
   // Opens the invitation named by ?invitationId=... (e.g. from a clicked push
   // notification) the same way clicking its card does, once on mount.
   const hasOpenedDeepLinkRef = useRef(false)
@@ -413,12 +414,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     if (!invitationId) return
 
     hasOpenedDeepLinkRef.current = true
-    setExpandedId(invitationId)
-    void loadDetail(invitationId).catch((error: unknown) => {
-      console.error('Failed to load invitation detail from notification link', error)
-      toast.error('Could not load approval progress for this request.')
-    })
-  }, [searchParams, loadDetail, toast])
+    viewVisitorInfo(invitationId)
+  }, [searchParams, viewVisitorInfo])
 
   const approve = useCallback(
     async (id: string) => {
@@ -484,6 +481,36 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
       toast,
     ],
   )
+
+  // Any card currently loaded on the board, whichever column it's in — lets
+  // every action's confirmation name the visitor and REQ ID it acts on.
+  const findRequest = useCallback(
+    (id: string | undefined): VisitRequestSummary | undefined => {
+      if (!id) return undefined
+      for (const page of Object.values(columnPages)) {
+        const match = page.items.find((request) => request.id === id)
+        if (match) return match
+      }
+      return undefined
+    },
+    [columnPages],
+  )
+
+  // Approve (card button or drop) only opens the confirmation; the request
+  // goes out from `confirmApprove`.
+  const requestApprove = useCallback((id: string) => {
+    setPendingApproveId(id)
+  }, [])
+
+  const cancelApprove = useCallback(() => {
+    setPendingApproveId(undefined)
+  }, [])
+
+  const confirmApprove = useCallback(async () => {
+    if (!pendingApproveId || approvingId) return
+    await approve(pendingApproveId)
+    setPendingApproveId(undefined)
+  }, [pendingApproveId, approvingId, approve])
 
   const reschedule = useCallback(
     async (id: string, preferredVisitDate: string, preferredVisitTime: string) => {
@@ -778,6 +805,156 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     [pendingDenyId, denyInvitationUseCase, rejectInvitationStepUseCase, loadDashboard, loadDetail, workflowRulesByCategory, toast],
   )
 
+  // Shown to every board user: the web app has no permission codes, and only
+  // Security lacks `invitations:revert-approval` by default — the API's 403
+  // is the real authority.
+  const requestRevert = useCallback((id: string) => {
+    setPendingRevertId(id)
+  }, [])
+
+  const cancelRevert = useCallback(() => {
+    setPendingRevertId(undefined)
+  }, [])
+
+  // Resolves whether the dialog closed. A 409 means the visit is no longer
+  // revertible (re-approved elsewhere, or the visitor already scanned in), so
+  // the dialog closes and the board reloads to show where the card is now;
+  // any other failure keeps the dialog — and the typed reason — for a retry.
+  const confirmRevert = useCallback(
+    async (reason: string): Promise<boolean> => {
+      if (!pendingRevertId || revertingId) return false
+      const id = pendingRevertId
+      const visitorName = findRequest(id)?.primaryContactFullName
+
+      setRevertingId(id)
+
+      try {
+        await revertInvitationApprovalUseCase.execute(id, reason)
+        toast.success(visitorName ? `Approval reverted for ${visitorName}.` : 'Approval reverted.')
+        setPendingRevertId(undefined)
+        setInvitationDetails((previous) => {
+          const { [id]: _stale, ...rest } = previous
+          return rest
+        })
+        await loadDashboard({ silent: true })
+        return true
+      } catch (error) {
+        console.error('Failed to revert approval', error)
+        toast.error(error instanceof Error ? error.message : 'Failed to revert the approval. Please try again.')
+        if (error instanceof ApiError && error.status === 409) {
+          setPendingRevertId(undefined)
+          await loadDashboard({ silent: true })
+          return true
+        }
+        return false
+      } finally {
+        setRevertingId(undefined)
+      }
+    },
+    [pendingRevertId, revertingId, findRequest, revertInvitationApprovalUseCase, loadDashboard, toast],
+  )
+
+  // Only Admin and Reception hold `invitations:checkout` by default; the web
+  // app has no permission codes, so this role-name check decides whether the
+  // Checked-in column gets the button and the API stays the real authority.
+  const canCheckOut = Boolean(currentUser?.isAdmin || currentUser?.isReception)
+
+  // `invitations:export` is granted to Admin and Reception (and Security,
+  // which has no board). Same role-name stand-in as `canCheckOut`: the admin
+  // board is Admin-only, and on the staff dashboard only Reception gets it —
+  // a host would just get a 403.
+  const canExport = scope === 'all' ? Boolean(currentUser?.isAdmin) : Boolean(currentUser?.isReception)
+
+  // What the export applies beyond the dialog's own status/dates/format,
+  // as shown read-only in the dialog — the same values `columnQuery` sends.
+  const exportFilterSummary = useMemo(() => {
+    const summary: string[] = []
+    if (columnQuery.search) summary.push(`Search: "${columnQuery.search}"`)
+    if (columnQuery.purposeOfVisit) summary.push(`Purpose: ${columnQuery.purposeOfVisit}`)
+    if (columnQuery.registrationType) summary.push(`Type: ${optionLabel(REGISTRATION_TYPE_OPTIONS, columnQuery.registrationType)}`)
+    if (columnQuery.source) summary.push(`Source: ${optionLabel(SOURCE_OPTIONS, columnQuery.source)}`)
+    return summary
+  }, [columnQuery])
+
+  const openExport = useCallback(() => {
+    setExportError(undefined)
+    setIsExportOpen(true)
+  }, [])
+
+  const closeExport = useCallback(() => {
+    if (isExportingRef.current) return
+    setIsExportOpen(false)
+    setExportError(undefined)
+  }, [])
+
+  const exportInvitations = useCallback(
+    async (choice: InvitationExportChoice) => {
+      // A ref, not `isExporting`: two clicks in one tick would both see the
+      // stale state value and start two downloads.
+      if (isExportingRef.current) return
+      isExportingRef.current = true
+      setIsExporting(true)
+      setExportError(undefined)
+      try {
+        const blob = await exportInvitationsUseCase.execute({
+          ...columnQuery,
+          status: choice.status || undefined,
+          dateFrom: choice.dateFrom || undefined,
+          dateTo: choice.dateTo || undefined,
+          format: choice.format,
+        })
+        saveBlob(blob, exportFilename(choice.status, choice.format))
+        setIsExportOpen(false)
+        toast.success('Export downloaded.')
+      } catch (error) {
+        // Kept inside the dialog (not a toast) so the user can narrow the
+        // filters and retry without re-entering their choices.
+        setExportError(error instanceof Error ? error.message : 'Something went wrong exporting invitations. Please try again.')
+      } finally {
+        isExportingRef.current = false
+        setIsExporting(false)
+      }
+    },
+    [columnQuery, exportInvitationsUseCase, toast],
+  )
+
+  const requestCheckOut = useCallback((id: string) => {
+    setPendingCheckOutId(id)
+  }, [])
+
+  const cancelCheckOut = useCallback(() => {
+    setPendingCheckOutId(undefined)
+  }, [])
+
+  const pendingCheckOutRequest = useMemo(
+    () => (pendingCheckOutId ? columnPages.checked_in.items.find((request) => request.id === pendingCheckOutId) : undefined),
+    [pendingCheckOutId, columnPages],
+  )
+
+  const confirmCheckOut = useCallback(async () => {
+    if (!pendingCheckOutId || checkingOutId) return
+    const id = pendingCheckOutId
+    const visitorName = pendingCheckOutRequest?.primaryContactFullName
+
+    setCheckingOutId(id)
+
+    try {
+      // One key per confirmation: a network-level retry of this same request
+      // replays the cached result instead of hitting a 409.
+      await checkOutInvitationUseCase.execute(id, crypto.randomUUID())
+      toast.success(visitorName ? `${visitorName} checked out.` : 'Visitor checked out.')
+    } catch (error) {
+      console.error('Failed to check out visitor', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to check out the visitor. Please try again.')
+    } finally {
+      setPendingCheckOutId(undefined)
+      setCheckingOutId(undefined)
+    }
+    // Reload on failure too: a 409 usually means a QR exit scan already
+    // moved the card, so the board should show where it actually is now.
+    await loadDashboard({ silent: true })
+  }, [pendingCheckOutId, checkingOutId, pendingCheckOutRequest, checkOutInvitationUseCase, loadDashboard, toast])
+
   // Filtered server-side by exact match, and the wizards store the purpose's
   // display name ("Interview"), not the option slug ("interview") - so the
   // label is what gets sent.
@@ -816,7 +993,6 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     purposeOptions,
     registrationTypeFilter,
     setRegistrationTypeFilter,
-    statusFilter,
     setStatusFilter,
     sourceFilter,
     setSourceFilter,
@@ -825,10 +1001,17 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     isRefreshing,
     approve,
     approvingId,
-    expandedId,
-    toggleExpand,
+    findRequest,
+    pendingApproveId,
+    requestApprove,
+    cancelApprove,
+    confirmApprove,
+    pendingRevertId,
+    requestRevert,
+    cancelRevert,
+    confirmRevert,
+    revertingId,
     invitationDetails,
-    loadingDetailId,
     roles,
     roleNameById,
     hostEmployees,
@@ -848,6 +1031,22 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     cancelDeny,
     confirmDeny,
     denyingId,
+    canCheckOut,
+    canExport,
+    isExportOpen,
+    openExport,
+    closeExport,
+    exportInvitations,
+    isExporting,
+    exportError,
+    exportFilterSummary,
+    statusFilter,
+    pendingCheckOutId,
+    pendingCheckOutRequest,
+    requestCheckOut,
+    cancelCheckOut,
+    confirmCheckOut,
+    checkingOutId,
     pendingRescheduleId,
     requestReschedule,
     cancelReschedule,

@@ -1,4 +1,13 @@
+import type { ReactNode } from 'react'
 import { Modal } from './Modal'
+
+type ConfirmTone = 'danger' | 'primary' | 'success'
+
+const TONE_CLASSES: Record<ConfirmTone, string> = {
+  danger: 'bg-danger',
+  primary: 'bg-primary',
+  success: 'bg-success',
+}
 
 interface ConfirmDialogProps {
   isOpen: boolean
@@ -7,26 +16,52 @@ interface ConfirmDialogProps {
   confirmLabel: string
   onConfirm: () => void
   onCancel: () => void
+  // Defaults keep the original look (a red confirm) for the admin CRUD
+  // pages' delete confirmations.
+  tone?: ConfirmTone
+  // While true the dialog can't be confirmed again or dismissed, so a
+  // double-click sends one request.
+  isBusy?: boolean
+  busyLabel?: string
+  cancelLabel?: string
+  // Optional summary rows (e.g. what a reschedule will change), shown under
+  // the message.
+  children?: ReactNode
 }
 
-export function ConfirmDialog({ isOpen, title, message, confirmLabel, onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({
+  isOpen,
+  title,
+  message,
+  confirmLabel,
+  onConfirm,
+  onCancel,
+  tone = 'danger',
+  isBusy = false,
+  busyLabel,
+  cancelLabel = 'Cancel',
+  children,
+}: ConfirmDialogProps) {
   return (
-    <Modal isOpen={isOpen} onClose={onCancel} title={title}>
+    <Modal isOpen={isOpen} onClose={isBusy ? () => undefined : onCancel} title={title}>
       <p className="text-body text-text-muted">{message}</p>
+      {children}
       <div className="flex items-center justify-end gap-3">
         <button
           type="button"
+          disabled={isBusy}
           onClick={onCancel}
-          className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text"
+          className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text disabled:opacity-50"
         >
-          Cancel
+          {cancelLabel}
         </button>
         <button
           type="button"
+          disabled={isBusy}
           onClick={onConfirm}
-          className="rounded-full bg-danger px-4 py-2 font-body text-[13px] font-semibold text-white"
+          className={`rounded-full ${TONE_CLASSES[tone]} px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50`}
         >
-          {confirmLabel}
+          {isBusy && busyLabel ? busyLabel : confirmLabel}
         </button>
       </div>
     </Modal>

@@ -2,6 +2,7 @@ import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
 import type {
   EditInvitationFields,
+  InvitationExportParams,
   ListVisitRequestsParams,
   VisitRequestSummaryRepository,
   VisitRequestsPage,
@@ -42,6 +43,25 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
     })
 
     return { items: response.data, total: response.pagination.total }
+  }
+
+  // The file needs the bearer token, so it's fetched here as a Blob rather
+  // than opened via browser navigation (which sends no Authorization header).
+  async export(params: InvitationExportParams): Promise<Blob> {
+    return this.apiClient.downloadBlob({
+      endpointConfig: API_ENDPOINTS.EXPORT_INVITATIONS,
+      queryParams: {
+        format: params.format,
+        status: params.status,
+        dateFrom: params.dateFrom,
+        dateTo: params.dateTo,
+        relevantToMe: params.relevantToMe ? true : undefined,
+        registrationType: params.registrationType,
+        source: params.source,
+        search: params.search,
+        purposeOfVisit: params.purposeOfVisit,
+      },
+    })
   }
 
   async approve(id: string): Promise<void> {
@@ -91,6 +111,32 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
       endpointConfig: API_ENDPOINTS.DENY_INVITATION,
       pathParams: { id },
       body: { reason },
+      parserSchema: InvitationActionResultSchema,
+    })
+
+    if (!response.success) {
+      throw new Error(response.message)
+    }
+  }
+
+  async revertApproval(id: string, reason: string): Promise<void> {
+    const response = await this.apiClient.makeRequest<InvitationActionResult>({
+      endpointConfig: API_ENDPOINTS.REVERT_INVITATION_APPROVAL,
+      pathParams: { id },
+      body: { reason },
+      parserSchema: InvitationActionResultSchema,
+    })
+
+    if (!response.success) {
+      throw new Error(response.message)
+    }
+  }
+
+  async checkOut(id: string, idempotencyKey: string): Promise<void> {
+    const response = await this.apiClient.makeRequest<InvitationActionResult>({
+      endpointConfig: API_ENDPOINTS.CHECK_OUT_INVITATION,
+      pathParams: { id },
+      headers: { 'Idempotency-Key': idempotencyKey },
       parserSchema: InvitationActionResultSchema,
     })
 

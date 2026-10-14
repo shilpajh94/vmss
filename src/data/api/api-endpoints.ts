@@ -47,6 +47,11 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  EXPORT_INVITATIONS: {
+    endpoint: "/invitations/export",
+    method: "GET",
+    hasToken: true,
+  },
   GET_CURRENT_STAFF_USER: {
     endpoint: "/auth/me",
     method: "GET",
@@ -88,6 +93,16 @@ export const API_ENDPOINTS = {
   },
   DENY_INVITATION: {
     endpoint: "/invitations/:id/deny",
+    method: "PATCH",
+    hasToken: true,
+  },
+  REVERT_INVITATION_APPROVAL: {
+    endpoint: "/invitations/:id/revert-approval",
+    method: "PATCH",
+    hasToken: true,
+  },
+  CHECK_OUT_INVITATION: {
+    endpoint: "/invitations/:id/check-out",
     method: "PATCH",
     hasToken: true,
   },

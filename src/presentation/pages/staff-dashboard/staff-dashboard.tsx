@@ -1,12 +1,17 @@
 import { LoadingState } from '../../components/ui/LoadingState'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
+import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
+import { ExportInvitationsButton } from '../../components/invitation-board/ExportInvitationsButton'
+import { ExportInvitationsModal } from '../../components/invitation-board/ExportInvitationsModal'
+import { ApproveInvitationModal } from '../../components/invitation-board/ApproveInvitationModal'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
+import { RevertApprovalModal } from '../../components/invitation-board/RevertApprovalModal'
+import { CheckOutVisitorModal } from '../../components/invitation-board/CheckOutVisitorModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
-import { SearchActionBar } from './Components/SearchActionBar'
 import { WorkspaceHeader } from './Components/WorkspaceHeader'
 import { useStaffDashboard } from './hooks/use-staff-dashboard'
 
@@ -14,6 +19,7 @@ const EMPTY_MESSAGES: Record<string, string> = {
   requested: 'No requested visits',
   approved: 'No approved visits',
   checked_in: 'No checked-in visitors today',
+  checked_out: 'No checked-out visits',
   denied: 'No denied visits',
 }
 
@@ -32,12 +38,18 @@ export function StaffDashboardPage() {
     setRegistrationTypeFilter,
     refresh,
     signOut,
-    approve,
     approvingId,
-    expandedId,
-    toggleExpand,
+    findRequest,
+    pendingApproveId,
+    requestApprove,
+    cancelApprove,
+    confirmApprove,
+    pendingRevertId,
+    requestRevert,
+    cancelRevert,
+    confirmRevert,
+    revertingId,
     invitationDetails,
-    loadingDetailId,
     roleNameById,
     hostEmployees,
     employeeNameById,
@@ -56,6 +68,21 @@ export function StaffDashboardPage() {
     cancelDeny,
     confirmDeny,
     denyingId,
+    canCheckOut,
+    canExport,
+    isExportOpen,
+    openExport,
+    closeExport,
+    exportInvitations,
+    isExporting,
+    exportError,
+    exportFilterSummary,
+    pendingCheckOutId,
+    pendingCheckOutRequest,
+    requestCheckOut,
+    cancelCheckOut,
+    confirmCheckOut,
+    checkingOutId,
     pendingRescheduleId,
     requestReschedule,
     cancelReschedule,
@@ -79,7 +106,7 @@ export function StaffDashboardPage() {
   return (
     <>
       <WorkspaceHeader currentUser={currentUser} onRefresh={refresh} onSignOut={signOut} />
-      <SearchActionBar
+      <BoardFilterBar
         search={search}
         onSearchChange={setSearch}
         purposeFilter={purposeFilter}
@@ -87,6 +114,7 @@ export function StaffDashboardPage() {
         purposeOptions={purposeOptions}
         registrationTypeFilter={registrationTypeFilter}
         onRegistrationTypeFilterChange={setRegistrationTypeFilter}
+        trailingAction={canExport ? <ExportInvitationsButton onClick={openExport} /> : undefined}
       />
 
       {errorMessage ? (
@@ -116,33 +144,68 @@ export function StaffDashboardPage() {
                 loadMoreFailed={column.loadMoreFailed}
                 onLoadMore={column.loadMore}
                 emptyMessage={EMPTY_MESSAGES[column.status]}
-                onDrop={column.status === 'approved' ? approve : column.status === 'denied' ? requestDeny : undefined}
-                onMoveToApproved={column.status === 'requested' ? approve : undefined}
+                onDrop={column.status === 'approved' ? requestApprove : column.status === 'denied' ? requestDeny : undefined}
+                onMoveToApproved={column.status === 'requested' ? requestApprove : undefined}
                 onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
                 approvingId={approvingId}
-                expandedId={expandedId}
-                onToggleExpand={toggleExpand}
                 invitationDetails={invitationDetails}
-                loadingDetailId={loadingDetailId}
                 roleNameById={roleNameById}
                 employeeNameById={employeeNameById}
                 workflowRulesByCategory={workflowRulesByCategory}
                 onRescheduleClick={requestReschedule}
                 onDelegateClick={requestDelegate}
                 onApproveAndDelegateClick={requestApproveAndDelegate}
-                onApproveClick={approve}
+                onApproveClick={requestApprove}
                 onEditClick={requestEdit}
                 onVisitorInfoClick={viewVisitorInfo}
+                onCheckOutClick={column.status === 'checked_in' && canCheckOut ? requestCheckOut : undefined}
+                onRevertClick={column.status === 'approved' ? requestRevert : undefined}
               />
             )}
           />
         </div>
       )}
 
-      <DenyInvitationModal isOpen={pendingDenyId !== undefined} isDenying={denyingId !== undefined} onConfirm={confirmDeny} onCancel={cancelDeny} />
+      <ApproveInvitationModal
+        isOpen={pendingApproveId !== undefined}
+        visitorName={findRequest(pendingApproveId)?.primaryContactFullName}
+        trackingId={findRequest(pendingApproveId)?.trackingId}
+        isApproving={approvingId !== undefined}
+        onConfirm={() => void confirmApprove()}
+        onCancel={cancelApprove}
+      />
+
+      <RevertApprovalModal
+        isOpen={pendingRevertId !== undefined}
+        visitorName={findRequest(pendingRevertId)?.primaryContactFullName}
+        trackingId={findRequest(pendingRevertId)?.trackingId}
+        isReverting={revertingId !== undefined}
+        onConfirm={confirmRevert}
+        onCancel={cancelRevert}
+      />
+
+      <DenyInvitationModal
+        isOpen={pendingDenyId !== undefined}
+        visitorName={findRequest(pendingDenyId)?.primaryContactFullName}
+        trackingId={findRequest(pendingDenyId)?.trackingId}
+        isDenying={denyingId !== undefined}
+        onConfirm={confirmDeny}
+        onCancel={cancelDeny}
+      />
+
+      <CheckOutVisitorModal
+        isOpen={pendingCheckOutId !== undefined}
+        visitorName={pendingCheckOutRequest?.primaryContactFullName}
+        trackingId={pendingCheckOutRequest?.trackingId}
+        isCheckingOut={checkingOutId !== undefined}
+        onConfirm={() => void confirmCheckOut()}
+        onCancel={cancelCheckOut}
+      />
 
       <RescheduleInvitationModal
         isOpen={pendingRescheduleId !== undefined}
+        visitorName={findRequest(pendingRescheduleId)?.primaryContactFullName}
+        trackingId={findRequest(pendingRescheduleId)?.trackingId}
         isRescheduling={reschedulingId !== undefined}
         onConfirm={(preferredVisitDate, preferredVisitTime) =>
           pendingRescheduleId && reschedule(pendingRescheduleId, preferredVisitDate, preferredVisitTime)
@@ -152,6 +215,8 @@ export function StaffDashboardPage() {
 
       <DelegateInvitationModal
         isOpen={pendingDelegateId !== undefined}
+        visitorName={findRequest(pendingDelegateId)?.primaryContactFullName}
+        trackingId={findRequest(pendingDelegateId)?.trackingId}
         isDelegating={delegatingId !== undefined}
         approverRoleId={pendingDelegateDetail?.currentApprovalStep?.approverRoleId}
         stepOrder={pendingDelegateDetail?.currentApprovalStep?.stepOrder}
@@ -164,6 +229,8 @@ export function StaffDashboardPage() {
 
       <DelegateInvitationModal
         isOpen={pendingApproveAndDelegateId !== undefined}
+        visitorName={findRequest(pendingApproveAndDelegateId)?.primaryContactFullName}
+        trackingId={findRequest(pendingApproveAndDelegateId)?.trackingId}
         isDelegating={approvingAndDelegatingId !== undefined}
         mode="approve-and-delegate"
         isLoadingCandidates={isLoadingNextStepCandidates}
@@ -182,11 +249,23 @@ export function StaffDashboardPage() {
         onCancel={cancelEdit}
       />
 
+      {/* This board has no Status filter, so the dialog opens on All statuses. */}
+      <ExportInvitationsModal
+        isOpen={isExportOpen}
+        initialStatus={''}
+        appliedFilters={exportFilterSummary}
+        isExporting={isExporting}
+        errorMessage={exportError}
+        onConfirm={(choice) => void exportInvitations(choice)}
+        onClose={closeExport}
+      />
+
       <VisitorInfoModal
         isOpen={visitorInfoId !== undefined}
         isLoading={visitorInfoId !== undefined && !invitationDetails[visitorInfoId]}
         detail={visitorInfoId ? invitationDetails[visitorInfoId] : undefined}
         workflowRulesByCategory={workflowRulesByCategory}
+        employeeNameById={employeeNameById}
         onClose={closeVisitorInfo}
       />
     </>
