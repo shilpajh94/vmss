@@ -1,4 +1,5 @@
 import z from "zod"
+import { PreferredContactMethodSchema } from "./preferred-contact-method"
 
 // Wire shape for `payload.primaryContact` and each `payload.visitors[]` entry on
 // POST /invitations — identical contract to POST /registrations/walk-in (see
@@ -8,7 +9,7 @@ export const StaffVisitorSchema = z
     fullName: z.string().min(1),
     email: z.string().email().optional(),
     phone: z.string().min(1).optional(),
-    preferredContactMethod: z.enum(["email", "sms"]).optional(),
+    preferredContactMethod: PreferredContactMethodSchema.optional(),
     // See visitor-schema.ts's matching comment.
     idProofType: z.string().min(1).optional(),
   })

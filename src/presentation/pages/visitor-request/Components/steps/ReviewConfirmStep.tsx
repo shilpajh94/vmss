@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { PREFERRED_CONTACT_METHOD_LABELS, type PreferredContactMethod } from '../../../../../domain/entities/preferred-contact-method'
 import type {
   CarriedItemsFormState,
   ConsentFormState,
@@ -26,7 +27,7 @@ export interface ReviewVisitorSummary {
   email: string
   phone: string
   visitorCategory?: string
-  preferredContactMethod?: 'email' | 'sms'
+  preferredContactMethod?: PreferredContactMethod
   idProofType: string
   idProofFileRef?: string
   idProofFileName?: string
@@ -248,7 +249,7 @@ export function ReviewConfirmStep({
   const customSteps = steps.filter((step) => !isCanonicalStepKey(step.key))
 
   const visitorCategoryName = (id: string) => visitorCategories?.find((category) => category.id === id)?.name ?? id
-  const preferredContactMethodLabel = (method?: 'email' | 'sms') => (method === 'sms' ? 'SMS' : method === 'email' ? 'Email' : '')
+  const preferredContactMethodLabel = (method?: PreferredContactMethod) => (method ? PREFERRED_CONTACT_METHOD_LABELS[method] : '')
 
   // Matches the seed values each step itself resolves group conditions
   // against (see VisitorInfoStep/VehicleInfoStep) — a group's condition can

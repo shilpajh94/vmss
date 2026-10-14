@@ -1,3 +1,4 @@
+import type { PreferredContactMethod } from '../../../domain/entities/preferred-contact-method'
 import { toConsentAnswers, toFieldAnswers } from '../../components/dynamic-fields/field-answers'
 import { toGroupAnswers } from '../../components/dynamic-fields/field-group-visibility'
 import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
@@ -17,7 +18,7 @@ export interface StaffVisitorFormEntry {
   email: string
   phone: string
   visitorCategory: string
-  preferredContactMethod?: 'email' | 'sms'
+  preferredContactMethod?: PreferredContactMethod
   idProofType: string
   idProofFileRef?: string
   idProofFileName?: string
