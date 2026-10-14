@@ -2,7 +2,7 @@ trigger:
 - none
 
 variables:
-- group: 'VMSS-WEB-OS-STAGE'
+- group: 'VMSS-API-OS-STAGE'
 
 pool:
   name: 'VMSS'
