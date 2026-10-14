@@ -1,0 +1,47 @@
+trigger:
+- none
+
+variables:
+- group: VMSS-WEB-OS-STAGE
+
+pool:
+  name: 'VMSS'
+
+stages:
+
+- stage: Build_and_Push
+  displayName: 'Build and Push Stage'
+  jobs:
+  - job: DockerBuildAndPush
+    displayName: 'Docker Build and Push'
+    steps:
+
+    - task: Docker@2
+      displayName: 'Login to Harbor Registry'
+      inputs:
+        command: 'login'
+        containerRegistry: 'Harbor_Reg'
+
+    - task: replacetokens@5
+      displayName: 'Replace Environment Variables'
+      inputs:
+        targetFiles: '.env'
+        encoding: 'auto'
+        tokenPattern: 'doubleunderscore'
+
+    - task: Docker@2
+      displayName: 'Build Docker Image'
+      inputs:
+        containerRegistry: 'Harbor_Reg'
+        repository: '$(dockerrepo)'
+        command: 'build'
+        Dockerfile: 'Dockerfile.openstack'
+        buildContext: '.'
+
+    - task: Docker@2
+      displayName: 'Push Docker Image'
+      inputs:
+        containerRegistry: 'Harbor_Reg'
+        repository: '$(dockerrepo)'
+        command: 'push'
+
