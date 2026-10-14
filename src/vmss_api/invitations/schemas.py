@@ -7,6 +7,7 @@ from pydantic import ConfigDict, EmailStr, Field, field_validator, model_validat
 
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.core.schemas import CamelModel
+from vmss_api.devices.schemas import DeviceBriefOut
 
 InvitationSortableField = Literal["submitted_at", "created_at"]
 """Whitelisted `sortBy` values for `GET /invitations` (api-conventions.md
@@ -448,6 +449,9 @@ class InvitationOut(CamelModel):
     submitted_at: datetime | None
     approved_at: datetime | None
     current_approval_step: CurrentApprovalStepOut | None = None
+    # Populated only by the check-in/out endpoints (devices spec).
+    check_in_device: DeviceBriefOut | None = None
+    check_out_device: DeviceBriefOut | None = None
 
 
 class InvitationLookupPrefillOut(CamelModel):
@@ -601,6 +605,8 @@ class InvitationCheckInOut(CamelModel):
     submitted_at: datetime | None
     approved_at: datetime | None
     current_approval_step: CurrentApprovalStepOut | None = None
+    check_in_device: DeviceBriefOut | None = None
+    check_out_device: DeviceBriefOut | None = None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
@@ -826,6 +832,8 @@ class InvitationQrCheckInOut(CamelModel):
     tracking_id: str
     status: str
     check_in_status: str
+    check_in_device: DeviceBriefOut | None = None
+    check_out_device: DeviceBriefOut | None = None
     registration_type: str
     source: str
     visitor_category_id: uuid.UUID | None

@@ -6,6 +6,8 @@ from vmss_api.auth.router import router as auth_router
 from vmss_api.core.email_assets_router import router as email_assets_router
 from vmss_api.core.storage_router import router as storage_router
 from vmss_api.dashboard.router import router as dashboard_router
+from vmss_api.devices.router import router as devices_router
+from vmss_api.devices.router import settings_router as device_settings_router
 from vmss_api.form_builder.router import router as form_builder_router
 from vmss_api.identity_verification.router import router as identity_verification_router
 from vmss_api.invitations.email_assets_router import router as invitation_email_assets_router
@@ -29,6 +31,8 @@ api_router.include_router(audit_trail_router)
 api_router.include_router(tenant_router)
 api_router.include_router(org_structure_router)
 api_router.include_router(kiosks_router)
+api_router.include_router(devices_router)
+api_router.include_router(device_settings_router)
 api_router.include_router(platform_router)
 api_router.include_router(visitors_router)
 api_router.include_router(form_builder_router)

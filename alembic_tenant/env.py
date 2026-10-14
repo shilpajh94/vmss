@@ -22,6 +22,7 @@ from vmss_api.auth.models import (  # noqa: F401
 )
 from vmss_api.core.config import settings
 from vmss_api.core.database import Base
+from vmss_api.devices.models import Device, TenantSettings  # noqa: F401
 from vmss_api.form_builder.models import (  # noqa: F401
     FormConfigVersion,
     FormField,
