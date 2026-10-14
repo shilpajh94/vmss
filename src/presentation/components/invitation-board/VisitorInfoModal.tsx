@@ -5,6 +5,7 @@ import type { EffectiveFormStep, FormField } from '../../../domain/entities/form
 import type { FieldAnswer, GroupAnswer } from '../../../domain/entities/form-field-answer-schema'
 import { Modal } from '../ui/Modal'
 import { CalendarClockIcon, ShieldIcon } from '../icons'
+import type { DeviceSummary } from '../../../domain/entities/managed-device-schema'
 import { formatDateTime } from '../../utils/format-time'
 import { resolvePointOfContactLabel } from '../../utils/approval-step-label'
 import { prettifyKey } from '../../utils/prettify-key'
@@ -108,6 +109,10 @@ function Field({ label, value }: { label: string; value: string }) {
       <span className="truncate font-body text-[13px] font-medium text-text">{value}</span>
     </div>
   )
+}
+
+function describeDevice(device: DeviceSummary): string {
+  return `${device.name} (${device.operatingMode}) · ${device.deviceId}`
 }
 
 function isFileUrl(value: unknown): value is string {
@@ -360,7 +365,9 @@ export function VisitorInfoModal({
               <Field label="Expires" value={formatDateTime(detail.expiresAt)} />
               {detail.approvedAt ? <Field label="Approved" value={formatDateTime(detail.approvedAt)} /> : null}
               {detail.checkedInAt ? <Field label="Checked in" value={formatDateTime(detail.checkedInAt)} /> : null}
+              {detail.checkInDevice ? <Field label="Checked in via" value={describeDevice(detail.checkInDevice)} /> : null}
               {detail.checkedOutAt ? <Field label="Checked out" value={formatDateTime(detail.checkedOutAt)} /> : null}
+              {detail.checkOutDevice ? <Field label="Checked out via" value={describeDevice(detail.checkOutDevice)} /> : null}
               {detail.deniedAt ? <Field label="Denied" value={formatDateTime(detail.deniedAt)} /> : null}
               {detail.denialReason ? (
                 <div className="col-span-full">

@@ -284,46 +284,6 @@ export const API_ENDPOINTS = {
     method: "DELETE",
     hasToken: true,
   },
-  LIST_RECEPTION_DESKS: {
-    endpoint: "/reception-desks",
-    method: "GET",
-    hasToken: true,
-  },
-  CREATE_RECEPTION_DESK: {
-    endpoint: "/reception-desks",
-    method: "POST",
-    hasToken: true,
-  },
-  UPDATE_RECEPTION_DESK: {
-    endpoint: "/reception-desks/:id",
-    method: "PUT",
-    hasToken: true,
-  },
-  DELETE_RECEPTION_DESK: {
-    endpoint: "/reception-desks/:id",
-    method: "DELETE",
-    hasToken: true,
-  },
-  LIST_SECURITY_GATES: {
-    endpoint: "/security-gates",
-    method: "GET",
-    hasToken: true,
-  },
-  CREATE_SECURITY_GATE: {
-    endpoint: "/security-gates",
-    method: "POST",
-    hasToken: true,
-  },
-  UPDATE_SECURITY_GATE: {
-    endpoint: "/security-gates/:id",
-    method: "PUT",
-    hasToken: true,
-  },
-  DELETE_SECURITY_GATE: {
-    endpoint: "/security-gates/:id",
-    method: "DELETE",
-    hasToken: true,
-  },
   // Kiosks are company-wide: no X-Branch-ID header.
   LIST_KIOSKS: {
     endpoint: "/kiosks",
@@ -353,6 +313,43 @@ export const API_ENDPOINTS = {
   DELETE_KIOSK: {
     endpoint: "/kiosks/:id",
     method: "DELETE",
+    hasToken: true,
+  },
+  // Registered kiosk / security devices. Reception Desks and Security Gates both
+  // read LIST_DEVICES, differing only by the `operatingMode` filter.
+  LIST_DEVICES: {
+    endpoint: "/devices",
+    method: "GET",
+    hasToken: true,
+  },
+  APPROVE_DEVICE: {
+    endpoint: "/devices/:id/approve",
+    method: "POST",
+    hasToken: true,
+  },
+  ENABLE_DEVICE: {
+    endpoint: "/devices/:id/enable",
+    method: "POST",
+    hasToken: true,
+  },
+  DISABLE_DEVICE: {
+    endpoint: "/devices/:id/disable",
+    method: "POST",
+    hasToken: true,
+  },
+  DELETE_DEVICE: {
+    endpoint: "/devices/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  GET_KIOSK_LOCATION_VALIDATION: {
+    endpoint: "/admin/settings/kiosk-location-validation",
+    method: "GET",
+    hasToken: true,
+  },
+  UPDATE_KIOSK_LOCATION_VALIDATION: {
+    endpoint: "/admin/settings/kiosk-location-validation",
+    method: "PUT",
     hasToken: true,
   },
   // Public for the pre-authentication visitor portal, same as LIST_EMPLOYEE_DIRECTORY —

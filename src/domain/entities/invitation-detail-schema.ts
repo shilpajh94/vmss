@@ -1,4 +1,5 @@
 import z from "zod"
+import { DeviceSummarySchema } from "./managed-device-schema"
 import { FieldAnswerSchema, GroupAnswerSchema } from "./form-field-answer-schema"
 
 export const CurrentApprovalStepSchema = z.object({
@@ -108,6 +109,8 @@ export const InvitationDetailSchema = z.object({
   checkedInByUserId: z.string().nullable(),
   checkedOutAt: z.string().nullable(),
   checkedOutByUserId: z.string().nullable(),
+  checkInDevice: DeviceSummarySchema.nullish(),
+  checkOutDevice: DeviceSummarySchema.nullish(),
   badgeNumber: z.string().nullable(),
   badgeIssuedAt: z.string().nullable(),
   badgeReprintCount: z.number(),
