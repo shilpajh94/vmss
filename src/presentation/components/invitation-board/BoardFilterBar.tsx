@@ -1,6 +1,7 @@
-import type { ComponentType, SVGProps } from 'react'
+import type { ComponentType, ReactNode, SVGProps } from 'react'
 import { SearchGlyphIcon, TagIcon, UsersIcon } from '../icons'
 import { DropdownFilter, type DropdownOption } from '../ui/DropdownFilter'
+import { REGISTRATION_TYPE_OPTIONS } from './filter-options'
 
 export interface BoardExtraFilter {
   icon: ComponentType<SVGProps<SVGSVGElement>>
@@ -23,13 +24,11 @@ interface BoardFilterBarProps {
   extraFilters?: BoardExtraFilter[]
   isFiltering?: boolean
   onClearFilters?: () => void
+  /** Rendered last in the bar, e.g. the staff dashboard's Export button. */
+  trailingAction?: ReactNode
 }
 
-const REGISTRATION_TYPE_OPTIONS: DropdownOption[] = [
-  { value: 'all', label: 'All types' },
-  { value: 'individual', label: 'Individual' },
-  { value: 'group', label: 'Group' },
-]
+const REGISTRATION_TYPE_FILTER_OPTIONS: DropdownOption[] = [{ value: 'all', label: 'All types' }, ...REGISTRATION_TYPE_OPTIONS]
 
 // Shared by the staff dashboard and the admin Invitations board so the two
 // bars can't drift apart.
@@ -45,13 +44,14 @@ export function BoardFilterBar({
   extraFilters = [],
   isFiltering = false,
   onClearFilters,
+  trailingAction,
 }: BoardFilterBarProps) {
-  // Four dropdowns plus a usable search field only fit on one row from `xl`
-  // inside the admin shell; the staff bar's two fit from `lg`.
-  const noWrapClass = extraFilters.length > 0 ? 'xl:flex-nowrap' : 'lg:flex-nowrap'
-
+  // Always allowed to wrap: a forced single row clipped whatever didn't fit
+  // (the admin bar's Source dropdown at 1280px, "Clear filters" once a filter
+  // was set, the staff bar's Export button at 1024px). The search field's
+  // 240px minimum means the controls still share one row whenever they fit.
   return (
-    <div className={`flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center ${noWrapClass}`}>
+    <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
       <div className="flex h-10 min-w-0 flex-none items-center gap-3 rounded-lg sm:flex-1 border border-border bg-surface px-3 sm:min-w-[240px]">
         <SearchGlyphIcon className="size-4 shrink-0 text-text-faint" />
         <input
@@ -67,7 +67,7 @@ export function BoardFilterBar({
       <DropdownFilter
         icon={UsersIcon}
         value={registrationTypeFilter}
-        options={REGISTRATION_TYPE_OPTIONS}
+        options={REGISTRATION_TYPE_FILTER_OPTIONS}
         onChange={onRegistrationTypeFilterChange}
         ariaLabel="Registration type"
       />
@@ -91,6 +91,7 @@ export function BoardFilterBar({
           Clear filters
         </button>
       ) : null}
+      {trailingAction ? <div className="flex shrink-0 sm:ml-auto [&>*]:w-full sm:[&>*]:w-auto">{trailingAction}</div> : null}
     </div>
   )
 }

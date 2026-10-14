@@ -6,6 +6,7 @@ import type { AuditLogEntry } from '../../../../domain/entities/audit-log-entry-
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { AuditReportFormat } from '../../../../data/repositories/audit-trail-repository'
 import { DEFAULT_ACTIVITY_TYPE, DEFAULT_DATE_RANGE, PAGE_SIZE } from '../types'
+import { saveBlob } from '../../../utils/save-blob'
 
 const REPORT_POLL_INTERVAL_MS = 1000
 const REPORT_POLL_MAX_ATTEMPTS = 20
@@ -124,12 +125,7 @@ export function useAdminAuditTrail() {
 
           try {
             const blob = await downloadAuditReportUseCase.execute(job.id, format)
-            const objectUrl = URL.createObjectURL(blob)
-            const anchor = document.createElement('a')
-            anchor.href = objectUrl
-            anchor.download = `audit-report.${format}`
-            anchor.click()
-            URL.revokeObjectURL(objectUrl)
+            saveBlob(blob, `audit-report.${format}`)
           } catch (error) {
             toast.error(error instanceof Error ? error.message : 'Something went wrong downloading the report. Please try again.')
           }

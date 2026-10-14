@@ -33,6 +33,23 @@ export interface ListVisitRequestsParams {
   pageSize?: number
 }
 
+export type InvitationExportFormat = 'csv' | 'xlsx'
+
+// `GET /invitations/export`: the list filters plus a status-matched date
+// range (`dateFrom`/`dateTo` as YYYY-MM-DD, inclusive). The API returns one
+// row per visitor; there's no pagination.
+export interface InvitationExportParams {
+  format: InvitationExportFormat
+  status?: string
+  dateFrom?: string
+  dateTo?: string
+  relevantToMe?: boolean
+  registrationType?: string
+  source?: string
+  search?: string
+  purposeOfVisit?: string
+}
+
 export interface VisitRequestsPage {
   items: VisitRequestSummary[]
   total: number
@@ -40,6 +57,7 @@ export interface VisitRequestsPage {
 
 export interface VisitRequestSummaryRepository {
   list(params?: ListVisitRequestsParams): Promise<VisitRequestsPage>
+  export(params: InvitationExportParams): Promise<Blob>
   approve(id: string): Promise<void>
   getDetail(id: string): Promise<InvitationDetail>
   reschedule(id: string, preferredVisitDate: string, preferredVisitTime: string): Promise<void>

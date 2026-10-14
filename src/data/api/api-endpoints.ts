@@ -47,6 +47,11 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  EXPORT_INVITATIONS: {
+    endpoint: "/invitations/export",
+    method: "GET",
+    hasToken: true,
+  },
   GET_CURRENT_STAFF_USER: {
     endpoint: "/auth/me",
     method: "GET",

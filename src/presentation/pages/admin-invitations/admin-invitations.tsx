@@ -10,27 +10,13 @@ import { EditInvitationModal } from '../../components/invitation-board/EditInvit
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
+import { SOURCE_FILTER_OPTIONS, STATUS_FILTER_OPTIONS } from '../../components/invitation-board/filter-options'
+import { ExportInvitationsButton } from '../../components/invitation-board/ExportInvitationsButton'
+import { ExportInvitationsModal } from '../../components/invitation-board/ExportInvitationsModal'
 import { CircleDotIcon, ClipboardListIcon } from '../../components/icons'
 import { PageContentLayout } from '../../components/PageContentLayout'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminInvitations } from './hooks/use-admin-invitations'
-
-const STATUS_OPTIONS = [
-  { value: 'submitted', label: 'Requested' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'checked_in', label: 'Checked-in' },
-  { value: 'checked_out', label: 'Checked-out' },
-  { value: 'denied', label: 'Denied' },
-]
-
-const SOURCE_OPTIONS = [
-  { value: 'staff_pre_registration', label: 'Staff Pre-Registration' },
-  { value: 'visitor_walk_in', label: 'Visitor Walk-in' },
-]
-
-const STATUS_FILTER_OPTIONS = [{ value: '', label: 'All statuses' }, ...STATUS_OPTIONS]
-
-const SOURCE_FILTER_OPTIONS = [{ value: '', label: 'All sources' }, ...SOURCE_OPTIONS]
 
 const EMPTY_MESSAGES: Record<string, string> = {
   requested: 'No requested visits',
@@ -88,6 +74,14 @@ export function AdminInvitationsPage() {
     confirmDeny,
     denyingId,
     canCheckOut,
+    canExport,
+    isExportOpen,
+    openExport,
+    closeExport,
+    exportInvitations,
+    isExporting,
+    exportError,
+    exportFilterSummary,
     pendingCheckOutId,
     pendingCheckOutRequest,
     requestCheckOut,
@@ -129,7 +123,12 @@ export function AdminInvitationsPage() {
     <PageContentLayout
       header={
         <>
-          <h1 className="font-display text-xl font-bold md:text-2xl text-text">Invitations</h1>
+          {/* In the title row, not the filter bar: the bar's search + four
+              dropdowns already need the full row on wide screens. */}
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="font-display text-xl font-bold md:text-2xl text-text">Invitations</h1>
+            {canExport ? <ExportInvitationsButton onClick={openExport} /> : null}
+          </div>
           <BoardFilterBar
             search={search}
             onSearchChange={setSearch}
@@ -279,6 +278,16 @@ export function AdminInvitationsPage() {
         hostEmployees={hostEmployees}
         onConfirm={(fields) => pendingEditId && edit(pendingEditId, fields)}
         onCancel={cancelEdit}
+      />
+
+      <ExportInvitationsModal
+        isOpen={isExportOpen}
+        initialStatus={statusFilter}
+        appliedFilters={exportFilterSummary}
+        isExporting={isExporting}
+        errorMessage={exportError}
+        onConfirm={(choice) => void exportInvitations(choice)}
+        onClose={closeExport}
       />
 
       <VisitorInfoModal

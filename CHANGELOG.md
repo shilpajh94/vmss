@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — Export invitations (`add-invitation-export`)
+
+- New **Export** button on `/admin/invitations` (Admin, in the title row) and on `/staff/dashboard` (Reception only, at the end of the filter bar; hosts don't see it). It opens an **Export invitations** dialog with a Status choice (prefilled from the admin board's Status filter), optional From/To dates, and CSV or Excel. The board's search, purpose, type and source filters also apply, and the dialog lists them.
+- The date range applies to the chosen status's date (for example the check-in date for Checked-in), or the created date for All statuses. From later than To is blocked in the dialog.
+- The file downloads as `invitations-<status|all>-<YYYYMMDD>.csv|xlsx`, one row per visitor. If the API rejects an export (for example too many rows), the dialog stays open and shows the message.
+- Needs VMSS_API's `add-invitation-export` (`GET /invitations/export`) and its tenant migration granting `invitations:export`.
+- **Responsive fix:** the board filter bar now wraps when its controls don't fit, instead of forcing one row and clipping. This fixes the admin Source dropdown at 1280px and "Clear filters" at 1280–1440px (both already broken before this change), and keeps the staff Export button visible at 1024px.
+- Shared helpers: `saveBlob` (now also used by audit-trail downloads), and `invitation-board/filter-options.ts` for the status, source and registration-type option lists. `BoardFilterBar` gains an optional `trailingAction` slot.
+
 ## Unreleased — Admin Invitations filter bar (`align-admin-invitations-filter-bar`)
 
 - `/admin/invitations` now uses the same inline search-and-filter bar as the staff dashboard (shared `BoardFilterBar`): a 40px search with Purpose, Registration Type, Status and Source dropdowns always visible, on one row from `xl` up. The "Filters" toggle and its pop-open panel are gone.

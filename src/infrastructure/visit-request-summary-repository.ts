@@ -2,6 +2,7 @@ import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
 import type {
   EditInvitationFields,
+  InvitationExportParams,
   ListVisitRequestsParams,
   VisitRequestSummaryRepository,
   VisitRequestsPage,
@@ -42,6 +43,25 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
     })
 
     return { items: response.data, total: response.pagination.total }
+  }
+
+  // The file needs the bearer token, so it's fetched here as a Blob rather
+  // than opened via browser navigation (which sends no Authorization header).
+  async export(params: InvitationExportParams): Promise<Blob> {
+    return this.apiClient.downloadBlob({
+      endpointConfig: API_ENDPOINTS.EXPORT_INVITATIONS,
+      queryParams: {
+        format: params.format,
+        status: params.status,
+        dateFrom: params.dateFrom,
+        dateTo: params.dateTo,
+        relevantToMe: params.relevantToMe ? true : undefined,
+        registrationType: params.registrationType,
+        source: params.source,
+        search: params.search,
+        purposeOfVisit: params.purposeOfVisit,
+      },
+    })
   }
 
   async approve(id: string): Promise<void> {

@@ -2,6 +2,8 @@ import { LoadingState } from '../../components/ui/LoadingState'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
 import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
+import { ExportInvitationsButton } from '../../components/invitation-board/ExportInvitationsButton'
+import { ExportInvitationsModal } from '../../components/invitation-board/ExportInvitationsModal'
 import { ApproveInvitationModal } from '../../components/invitation-board/ApproveInvitationModal'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { RevertApprovalModal } from '../../components/invitation-board/RevertApprovalModal'
@@ -67,6 +69,14 @@ export function StaffDashboardPage() {
     confirmDeny,
     denyingId,
     canCheckOut,
+    canExport,
+    isExportOpen,
+    openExport,
+    closeExport,
+    exportInvitations,
+    isExporting,
+    exportError,
+    exportFilterSummary,
     pendingCheckOutId,
     pendingCheckOutRequest,
     requestCheckOut,
@@ -104,6 +114,7 @@ export function StaffDashboardPage() {
         purposeOptions={purposeOptions}
         registrationTypeFilter={registrationTypeFilter}
         onRegistrationTypeFilterChange={setRegistrationTypeFilter}
+        trailingAction={canExport ? <ExportInvitationsButton onClick={openExport} /> : undefined}
       />
 
       {errorMessage ? (
@@ -236,6 +247,17 @@ export function StaffDashboardPage() {
         hostEmployees={hostEmployees}
         onConfirm={(fields) => pendingEditId && edit(pendingEditId, fields)}
         onCancel={cancelEdit}
+      />
+
+      {/* This board has no Status filter, so the dialog opens on All statuses. */}
+      <ExportInvitationsModal
+        isOpen={isExportOpen}
+        initialStatus={''}
+        appliedFilters={exportFilterSummary}
+        isExporting={isExporting}
+        errorMessage={exportError}
+        onConfirm={(choice) => void exportInvitations(choice)}
+        onClose={closeExport}
       />
 
       <VisitorInfoModal

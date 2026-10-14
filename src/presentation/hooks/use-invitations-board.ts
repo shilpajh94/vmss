@@ -15,6 +15,9 @@ import type { HostEmployee } from '../../domain/entities/host-employee-schema'
 import type { ApprovalWorkflowRule } from '../../domain/entities/approval-workflow-rule-schema'
 import type { EditInvitationFields } from '../../data/repositories/visit-request-summary-repository'
 import { PURPOSE_OF_VISIT_OPTIONS } from '../utils/purpose-of-visit-options'
+import { saveBlob } from '../utils/save-blob'
+import { REGISTRATION_TYPE_OPTIONS, SOURCE_OPTIONS, exportFilename, optionLabel } from '../components/invitation-board/filter-options'
+import type { InvitationExportChoice } from '../components/invitation-board/ExportInvitationsModal'
 import { boardStatusForApiStatus, usePagedBoardColumns, type BoardStatus, type ColumnQuery } from './use-paged-board-columns'
 
 export const BOARD_STATUS_COLUMNS = [
@@ -70,6 +73,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     denyInvitationUseCase,
     revertInvitationApprovalUseCase,
     checkOutInvitationUseCase,
+    exportInvitationsUseCase,
     approveInvitationStepUseCase,
     rejectInvitationStepUseCase,
     delegateInvitationStepUseCase,
@@ -113,6 +117,10 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [isLoadingNextStepCandidates, setIsLoadingNextStepCandidates] = useState(false)
   const [pendingEditId, setPendingEditId] = useState<string | undefined>(undefined)
   const [visitorInfoId, setVisitorInfoId] = useState<string | undefined>(undefined)
+  const [isExportOpen, setIsExportOpen] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | undefined>(undefined)
+  const isExportingRef = useRef(false)
 
   const columnQuery = useMemo<ColumnQuery>(
     () => ({
@@ -851,6 +859,65 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   // Checked-in column gets the button and the API stays the real authority.
   const canCheckOut = Boolean(currentUser?.isAdmin || currentUser?.isReception)
 
+  // `invitations:export` is granted to Admin and Reception (and Security,
+  // which has no board). Same role-name stand-in as `canCheckOut`: the admin
+  // board is Admin-only, and on the staff dashboard only Reception gets it —
+  // a host would just get a 403.
+  const canExport = scope === 'all' ? Boolean(currentUser?.isAdmin) : Boolean(currentUser?.isReception)
+
+  // What the export applies beyond the dialog's own status/dates/format,
+  // as shown read-only in the dialog — the same values `columnQuery` sends.
+  const exportFilterSummary = useMemo(() => {
+    const summary: string[] = []
+    if (columnQuery.search) summary.push(`Search: "${columnQuery.search}"`)
+    if (columnQuery.purposeOfVisit) summary.push(`Purpose: ${columnQuery.purposeOfVisit}`)
+    if (columnQuery.registrationType) summary.push(`Type: ${optionLabel(REGISTRATION_TYPE_OPTIONS, columnQuery.registrationType)}`)
+    if (columnQuery.source) summary.push(`Source: ${optionLabel(SOURCE_OPTIONS, columnQuery.source)}`)
+    return summary
+  }, [columnQuery])
+
+  const openExport = useCallback(() => {
+    setExportError(undefined)
+    setIsExportOpen(true)
+  }, [])
+
+  const closeExport = useCallback(() => {
+    if (isExportingRef.current) return
+    setIsExportOpen(false)
+    setExportError(undefined)
+  }, [])
+
+  const exportInvitations = useCallback(
+    async (choice: InvitationExportChoice) => {
+      // A ref, not `isExporting`: two clicks in one tick would both see the
+      // stale state value and start two downloads.
+      if (isExportingRef.current) return
+      isExportingRef.current = true
+      setIsExporting(true)
+      setExportError(undefined)
+      try {
+        const blob = await exportInvitationsUseCase.execute({
+          ...columnQuery,
+          status: choice.status || undefined,
+          dateFrom: choice.dateFrom || undefined,
+          dateTo: choice.dateTo || undefined,
+          format: choice.format,
+        })
+        saveBlob(blob, exportFilename(choice.status, choice.format))
+        setIsExportOpen(false)
+        toast.success('Export downloaded.')
+      } catch (error) {
+        // Kept inside the dialog (not a toast) so the user can narrow the
+        // filters and retry without re-entering their choices.
+        setExportError(error instanceof Error ? error.message : 'Something went wrong exporting invitations. Please try again.')
+      } finally {
+        isExportingRef.current = false
+        setIsExporting(false)
+      }
+    },
+    [columnQuery, exportInvitationsUseCase, toast],
+  )
+
   const requestCheckOut = useCallback((id: string) => {
     setPendingCheckOutId(id)
   }, [])
@@ -926,7 +993,6 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     purposeOptions,
     registrationTypeFilter,
     setRegistrationTypeFilter,
-    statusFilter,
     setStatusFilter,
     sourceFilter,
     setSourceFilter,
@@ -966,6 +1032,15 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     confirmDeny,
     denyingId,
     canCheckOut,
+    canExport,
+    isExportOpen,
+    openExport,
+    closeExport,
+    exportInvitations,
+    isExporting,
+    exportError,
+    exportFilterSummary,
+    statusFilter,
     pendingCheckOutId,
     pendingCheckOutRequest,
     requestCheckOut,
