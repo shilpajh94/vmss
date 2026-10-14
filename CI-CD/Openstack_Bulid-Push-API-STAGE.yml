@@ -3,12 +3,13 @@ trigger:
 
 variables:
 - group: VMSS-WEB-OS-STAGE
+- name: imageTag
+  value: '$(Build.BuildId)'
 
 pool:
   name: 'VMSS'
 
 stages:
-
 - stage: Build_and_Push
   displayName: 'Build and Push Stage'
   jobs:
@@ -19,7 +20,7 @@ stages:
     - task: Docker@2
       displayName: 'Login to Harbor Registry'
       inputs:
-        command: 'login'
+        command: login
         containerRegistry: 'Harbor_Reg'
 
     - task: replacetokens@5
@@ -27,21 +28,30 @@ stages:
       inputs:
         targetFiles: '.env'
         encoding: 'auto'
-        tokenPattern: 'doubleunderscore'
+        tokenPattern: 'doubleunderscores'
 
     - task: Docker@2
       displayName: 'Build Docker Image'
       inputs:
         containerRegistry: 'Harbor_Reg'
         repository: '$(dockerrepo)'
-        command: 'build'
+        command: build
         Dockerfile: 'Dockerfile.openstack'
         buildContext: '.'
+        tags: |
+          $(imageTag)
 
     - task: Docker@2
       displayName: 'Push Docker Image'
       inputs:
         containerRegistry: 'Harbor_Reg'
         repository: '$(dockerrepo)'
-        command: 'push'
+        command: push
+        tags: |
+          $(imageTag)
 
+    - script: |
+        echo "Repository: $(dockerrepo)"
+        echo "Tag: $(imageTag)"
+        echo "Image: harbor.openstack.mypits.org/$(dockerrepo):$(imageTag)"
+      displayName: 'Display Image Reference'
