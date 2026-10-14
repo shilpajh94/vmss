@@ -202,13 +202,37 @@ class Settings(BaseSettings):
     # means emails carry no link.
     staff_portal_url: str | None = Field(default=None, alias="STAFF_PORTAL_URL")
 
-    # SMS gateway — no vendor chosen yet (design.md Open Questions); these are
-    # placeholders the `SmsSender` adapter reads once one is picked. Left
-    # unset by default, which the adapter treats as "not configured" and
-    # fails visibly per background-jobs.md §4, rather than pretending to send.
-    sms_gateway_base_url: str | None = None
-    sms_gateway_api_key: str | None = None
-    sms_from_number: str | None = None
+    # Fast2SMS — DLT SMS (`core/sms.py`) and WhatsApp (`core/whatsapp.py`) for
+    # identity-verification OTP and invitation notifications. All optional:
+    # a blank value means "not configured" and the sender fails loudly per
+    # call (background-jobs.md §4) instead of pretending to send.
+    fast2sms_api_key: str | None = None
+    fast2sms_sender_id: str | None = None
+    fast2sms_base_url: str = "https://www.fast2sms.com"
+    # DLT-approved template IDs, one per SMS message type.
+    fast2sms_template_otp: str | None = None
+    fast2sms_template_registration_pending: str | None = None
+    fast2sms_template_registration_confirmed: str | None = None
+    fast2sms_template_registration_confirmed_code: str | None = None
+    fast2sms_template_registration_denied: str | None = None
+    fast2sms_template_visit_rescheduled: str | None = None
+    fast2sms_template_visit_details_changed: str | None = None
+    # WhatsApp: the sending number's id, Graph-style API version, template
+    # language, and the approved template *names* (not ids).
+    fast2sms_whatsapp_phone_number_id: str | None = None
+    fast2sms_whatsapp_api_version: str = "v26.0"
+    fast2sms_whatsapp_language_code: str = "en"
+    fast2sms_whatsapp_template_otp: str | None = None
+    fast2sms_whatsapp_template_registration_pending: str | None = None
+    fast2sms_whatsapp_template_registration_confirmed: str | None = None
+    fast2sms_whatsapp_template_registration_denied: str | None = None
+    fast2sms_whatsapp_template_visit_rescheduled: str | None = None
+    fast2sms_whatsapp_template_visit_details_changed: str | None = None
+
+    # Public check-in-by-code abuse limits (add-sms-numeric-checkin-code): a
+    # 8-digit code is guessable, so failed lookups per IP are capped.
+    checkin_code_max_failures: int = 10
+    checkin_code_lockout_seconds: int = 900
 
     # `invitations` feature config (add-pre-registration).
     invitation_token_ttl_hours: int = 168
@@ -255,21 +279,6 @@ class Settings(BaseSettings):
     otp_rate_limit_per_identifier: int = 5
     otp_rate_limit_window_seconds: int = 3600
 
-    # Twilio — the chosen SMS provider for `identity_verification`, distinct
-    # from the still-unconfigured `sms_gateway_*` placeholders above (those
-    # belong to `invitations`' unbuilt SMS path). Left unset by default;
-    # `identity_verification/senders.py` falls back to an unconfigured
-    # sender when any of the three is missing, rather than constructing a
-    # Twilio client with empty credentials.
-    twilio_account_sid: str | None = None
-    twilio_auth_token: str | None = None
-    twilio_sms_from_number: str | None = None
-
-    # WhatsApp gateway — no vendor chosen yet, same posture `sms_gateway_*`
-    # had before Twilio was picked for SMS.
-    whatsapp_gateway_base_url: str | None = None
-    whatsapp_gateway_api_key: str | None = None
-
     # `sso` feature config (API-19, add-sso-oidc-login). `sso_encryption_key`
     # is the Fernet key `core/encryption.py` uses to encrypt/decrypt every
     # tenant's OIDC client secret at rest — left unset by default so a
@@ -314,7 +323,7 @@ class Settings(BaseSettings):
     # Flutter app (add-invitation-push-notifications/design.md Decision 4).
     # Points at a service-account key file (the Admin SDK's own credential
     # format); left unset by default, same "not configured" posture as
-    # `sms_gateway_*`/`twilio_*` above — `notifications/fcm.py` fails loudly
+    # the Fast2SMS settings above — `notifications/fcm.py` fails loudly
     # rather than silently no-op'ing when a push is actually attempted.
     fcm_credentials_path: str | None = Field(default=None, alias="FCM_CREDENTIALS_PATH")
 

@@ -385,6 +385,19 @@ group (today's actual Vehicle Info behavior) until an admin next publishes
 that scope. See `openspec/changes/add-repeatable-field-groups/design.md`
 Risks/Migration Plan.
 
+### Preferred Contact Method offers WhatsApp
+
+The locked `preferred_contact_method` field offers `email`, `sms` and
+`whatsapp`. New tenants get all three from the seed defaults; migration
+`9d2b6f1c4a8e` appends `whatsapp` for existing tenants, in both the draft
+`form_fields` row and every published `form_config_versions` snapshot
+(idempotent; no republish needed). Rollout order: deploy WhatsApp delivery
+(`integrate-fast2sms-dlt-sms`) with its Fast2SMS settings first, then run
+`scripts/upgrade_all_tenants.py`, then flush each tenant's
+`vmss:{tenant_id}:form-builder:effective:*` Redis keys (or wait out the
+cache TTL) so the cached effective form stops hiding the option. See
+`openspec/changes/backfill-whatsapp-contact-method-form-option/design.md`.
+
 ## Locked-position ordering
 
 Locked steps (Visitor Info, Visit Details, Review & Confirm) always occupy

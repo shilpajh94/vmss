@@ -17,6 +17,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, ValidationError
+from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
@@ -41,6 +42,7 @@ from vmss_api.invitations.deps import track_default_tenant, track_default_tenant
 from vmss_api.invitations.schemas import (
     BadgeOut,
     CarriedItemsSubmit,
+    CheckInCodeRequest,
     ConsentValue,
     ContactMethod,
     CustomFieldValue,
@@ -1420,6 +1422,126 @@ async def deny_invitation(
 # endpoint (design.md Decision 1).
 
 router_v2 = APIRouter(prefix="/invitations", tags=["invitations"])
+
+
+# Registered before `/{tracking_id}/check-in`: `/code/check-in` would otherwise be
+# captured by it with `tracking_id="code"`.
+@router_v2.patch(
+    "/code/check-in",
+    response_model=Envelope[InvitationQrCheckInOut],
+)
+@limiter.limit("10/minute")
+async def check_in_by_code(
+    request: Request,
+    payload: CheckInCodeRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(track_default_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            description=(
+                "Use a fresh key per physical attempt so a retry of one "
+                "check-in isn't deduped against a later check-out. See "
+                "api-conventions.md §3."
+            ),
+        ),
+    ] = None,
+) -> JSONResponse:
+    """Public, unauthenticated check-in with the numeric code sent by SMS in
+    place of a QR (spec.md "Public Check-In by Code"). Same rules and
+    response as `PATCH /api/v2/invitations/qr/{token}/check-in`; repeated
+    failed codes from one IP lock that IP out (429).
+    """
+    cached = await _cached_response(tenant.id, idempotency_key)
+    if cached is not None:
+        return cached
+
+    invitation, message, changed = await service.check_in_by_code(
+        tenant_db, payload.code, tenant=tenant, client_ip=get_remote_address(request)
+    )
+    if changed:
+        background_tasks.add_task(
+            record_audit_log,
+            tenant.schema_name,
+            actor_user_id=None,
+            action="invitation_code_checked_in",
+            entity_type="Invitation",
+            entity_id=invitation.id,
+        )
+    branch, department, building = await service.get_invitation_location(tenant_db, invitation)
+    form_context = await service.get_invitation_detail_form_context(
+        tenant_db, tenant, invitation.branch_id
+    )
+    response = success_response(
+        data=await _to_qr_check_in_out(
+            invitation,
+            branch=branch,
+            department=department,
+            building=building,
+            form_context=form_context,
+        ),
+        message=message,
+    )
+    await _cache_response(tenant.id, idempotency_key, response)
+    return response
+
+
+@router_v2.patch(
+    "/code/check-out",
+    response_model=Envelope[InvitationQrCheckInOut],
+)
+@limiter.limit("10/minute")
+async def check_out_by_code(
+    request: Request,
+    payload: CheckInCodeRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(track_default_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            description="Fresh key per physical attempt. See api-conventions.md §3.",
+        ),
+    ] = None,
+) -> JSONResponse:
+    """Public, unauthenticated check-out with the SMS check-in code (spec.md
+    "Public Check-Out by Code"). Same rules as the QR check-out: never
+    expiry-blocked, 409 unless currently `checked_in`.
+    """
+    cached = await _cached_response(tenant.id, idempotency_key)
+    if cached is not None:
+        return cached
+
+    invitation, message = await service.check_out_by_code(
+        tenant_db, payload.code, tenant=tenant, client_ip=get_remote_address(request)
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=None,
+        action="invitation_code_checked_out",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+    )
+    branch, department, building = await service.get_invitation_location(tenant_db, invitation)
+    form_context = await service.get_invitation_detail_form_context(
+        tenant_db, tenant, invitation.branch_id
+    )
+    response = success_response(
+        data=await _to_qr_check_in_out(
+            invitation,
+            branch=branch,
+            department=department,
+            building=building,
+            form_context=form_context,
+        ),
+        message=message,
+    )
+    await _cache_response(tenant.id, idempotency_key, response)
+    return response
 
 
 @router_v2.patch(

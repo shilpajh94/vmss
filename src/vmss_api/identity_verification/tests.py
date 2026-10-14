@@ -1,6 +1,5 @@
 import asyncio
 import re
-import time
 import uuid
 
 import aiosmtplib
@@ -10,14 +9,14 @@ from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
-from twilio.base.exceptions import TwilioRestException
 
 from factories import TenantFactory
 from vmss_api.core.config import settings
 from vmss_api.core.security import decode_token
+from vmss_api.core.sms import Fast2SmsSender, SmsDispatchError, SmsNotConfiguredError, SmsTemplate
+from vmss_api.core.whatsapp import WhatsAppTemplate
 from vmss_api.identity_verification import senders, service
 from vmss_api.identity_verification.schemas import Channel
-from vmss_api.identity_verification.senders import TwilioSmsSender, UnconfiguredSmsSender
 from vmss_api.tenant.models import Tenant
 
 
@@ -154,16 +153,24 @@ async def test_request_and_verify_otp_over_email_delivers_real_email_via_mailpit
     assert data["channel"] == "email"
 
 
-# --- SMS: real dispatch via a mocked Twilio client (9.2a) -------------------
+# --- SMS/WhatsApp: dispatch through the shared Fast2SMS senders --------------
 
 
-async def test_request_otp_over_sms_with_configured_twilio_dispatches(
+class _FailingSender:
+    def __init__(self, exc: Exception) -> None:
+        self.attempts = 0
+        self._exc = exc
+
+    async def send(self, **kwargs) -> None:
+        self.attempts += 1
+        raise self._exc
+
+
+async def test_request_otp_over_sms_dispatches_otp_template(
     client: AsyncClient, tenant: Tenant, monkeypatch
 ) -> None:
-    sender = TwilioSmsSender("ACfake", "faketoken", "+15005550006")
-    calls: list[dict] = []
-    monkeypatch.setattr(sender._client.messages, "create", lambda **kw: calls.append(kw))
-    monkeypatch.setattr(senders, "sms_sender", sender)
+    recorder = _RecordingSender()
+    monkeypatch.setattr(senders, "sms_sender", recorder)
 
     identifier = _unique_phone()
     response = await client.post(
@@ -171,37 +178,37 @@ async def test_request_otp_over_sms_with_configured_twilio_dispatches(
         json={"identifier": identifier, "channel": "sms"},
     )
     assert response.status_code == 200, response.text
-    assert len(calls) == 1
-    assert calls[0]["to"] == identifier
-    assert calls[0]["from_"] == "+15005550006"
-    assert "Your verification code is" in calls[0]["body"]
+    [call] = recorder.calls
+    assert call["to"] == identifier
+    assert call["template"] == SmsTemplate.otp
+    code, minutes = call["variables"]
+    assert re.fullmatch(r"\d+", code)
+    assert minutes == settings.otp_ttl_seconds // 60
 
 
-async def test_twilio_sms_sender_send_does_not_block_the_event_loop(monkeypatch) -> None:
-    """design.md's Risk: the Twilio SDK's synchronous client must go
-    through `anyio.to_thread.run_sync`, not block the event loop for the
-    duration of the (simulated) network round-trip.
-    """
-    sender = TwilioSmsSender("ACfake", "faketoken", "+15005550006")
-    monkeypatch.setattr(sender._client.messages, "create", lambda **kw: time.sleep(0.2))
-
-    ticks: list[float] = []
-
-    async def _ticker() -> None:
-        for _ in range(4):
-            await asyncio.sleep(0.02)
-            ticks.append(time.monotonic())
-
-    await asyncio.gather(sender.send(to="+15005550006", body="hi"), _ticker())
-    # If `send` blocked the loop, the ticker couldn't have made progress
-    # concurrently with the simulated 0.2s Twilio call.
-    assert len(ticks) == 4
-
-
-async def test_request_otp_over_sms_without_twilio_configured_returns_503(
+async def test_request_otp_over_whatsapp_dispatches_otp_template(
     client: AsyncClient, tenant: Tenant, monkeypatch
 ) -> None:
-    monkeypatch.setattr(senders, "sms_sender", UnconfiguredSmsSender())
+    recorder = _RecordingSender()
+    monkeypatch.setattr(senders, "whatsapp_sender", recorder)
+
+    identifier = _unique_phone()
+    response = await client.post(
+        "/api/v1/identity-verification/otp/request",
+        json={"identifier": identifier, "channel": "whatsapp"},
+    )
+    assert response.status_code == 200, response.text
+    [call] = recorder.calls
+    assert call["to"] == identifier
+    assert call["template"] == WhatsAppTemplate.otp
+    assert len(call["variables"]) == 1
+
+
+async def test_request_otp_over_sms_without_fast2sms_configured_returns_503(
+    client: AsyncClient, tenant: Tenant, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "fast2sms_api_key", None)
+    monkeypatch.setattr(senders, "sms_sender", Fast2SmsSender())
     response = await client.post(
         "/api/v1/identity-verification/otp/request",
         json={"identifier": _unique_phone(), "channel": "sms"},
@@ -210,9 +217,10 @@ async def test_request_otp_over_sms_without_twilio_configured_returns_503(
     assert response.json()["success"] is False
 
 
-async def test_request_otp_over_whatsapp_always_returns_503(
-    client: AsyncClient, tenant: Tenant
+async def test_request_otp_over_whatsapp_without_configuration_returns_503(
+    client: AsyncClient, tenant: Tenant, monkeypatch
 ) -> None:
+    monkeypatch.setattr(settings, "fast2sms_whatsapp_phone_number_id", None)
     response = await client.post(
         "/api/v1/identity-verification/otp/request",
         json={"identifier": _unique_phone(), "channel": "whatsapp"},
@@ -221,24 +229,14 @@ async def test_request_otp_over_whatsapp_always_returns_503(
     assert response.json()["success"] is False
 
 
-async def test_request_otp_twilio_failure_returns_503_without_leaking_detail(
+async def test_request_otp_sms_failure_returns_503_without_leaking_detail(
     client: AsyncClient, tenant: Tenant, monkeypatch
 ) -> None:
-    sender = TwilioSmsSender("ACfake", "faketoken", "+15005550006")
-    attempts = {"n": 0}
-
-    def _failing_create(**kwargs):
-        attempts["n"] += 1
-        raise TwilioRestException(
-            400, "https://api.twilio.com/x", msg="Invalid To Number", code=21211
-        )
-
-    monkeypatch.setattr(sender._client.messages, "create", _failing_create)
+    sender = _FailingSender(SmsDispatchError("SMS dispatch failed"))
     monkeypatch.setattr(senders, "sms_sender", sender)
 
     idempotency_key = str(uuid.uuid4())
-    identifier = _unique_phone()
-    payload = {"identifier": identifier, "channel": "sms"}
+    payload = {"identifier": _unique_phone(), "channel": "sms"}
 
     first = await client.post(
         "/api/v1/identity-verification/otp/request",
@@ -246,19 +244,18 @@ async def test_request_otp_twilio_failure_returns_503_without_leaking_detail(
         headers={"Idempotency-Key": idempotency_key},
     )
     assert first.status_code == 503
-    assert "21211" not in first.text
-    assert "Invalid To Number" not in first.text
+    assert "Fast2SMS" not in first.text
 
     # Deliberately NOT cached (design.md's Idempotency-Key refinement) — a
     # retry with the same key re-attempts dispatch instead of replaying the
-    # same Twilio-side failure forever.
+    # same gateway-side failure forever.
     second = await client.post(
         "/api/v1/identity-verification/otp/request",
         json=payload,
         headers={"Idempotency-Key": idempotency_key},
     )
     assert second.status_code == 503
-    assert attempts["n"] == 2
+    assert sender.attempts == 2
 
 
 async def test_request_otp_smtp_failure_returns_503_without_leaking_detail(
@@ -281,7 +278,7 @@ async def test_request_otp_smtp_failure_returns_503_without_leaking_detail(
     )
     assert first.status_code == 503
 
-    # Deliberately NOT cached, same as the Twilio-failure case — a retry
+    # Deliberately NOT cached, same as the SMS-failure case — a retry
     # with the same key re-attempts dispatch instead of replaying the same
     # SMTP-side failure forever.
     recorder = _RecordingSender()
@@ -329,11 +326,11 @@ async def test_smtp_dispatch_failure_logs_host_port_and_exception_type(monkeypat
 async def test_request_otp_gateway_not_configured_response_is_cached(
     client: AsyncClient, tenant: Tenant, monkeypatch
 ) -> None:
-    """Contrasts with the transient-Twilio-failure test above: a
+    """Contrasts with the transient-SMS-failure test above: a
     `GatewayNotConfiguredError` outcome IS cached, so a retry never
     re-attempts dispatch even if the sender is reconfigured in between.
     """
-    monkeypatch.setattr(senders, "sms_sender", UnconfiguredSmsSender())
+    monkeypatch.setattr(senders, "sms_sender", _FailingSender(SmsNotConfiguredError("off")))
     idempotency_key = str(uuid.uuid4())
     identifier = _unique_phone()
     payload = {"identifier": identifier, "channel": "sms"}

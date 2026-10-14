@@ -553,6 +553,12 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_checkin_code(self, code: str) -> Invitation | None:
+        stmt = self._with_children().where(
+            Invitation.checkin_code == code, Invitation.deleted_at.is_(None)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def list_by_primary_contact_email(self, email: str) -> list[Invitation]:
         """Backs the email-based tracking lookup (spec.md "Public Lookup by
         Email Is Rate-Limited and Minimally Revealing") — no eager-load of

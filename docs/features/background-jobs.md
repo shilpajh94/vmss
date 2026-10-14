@@ -97,8 +97,8 @@ shared template, no second channel), so a plain shared sender is enough.
 `invitations/notifications.py` re-exports the pieces it needs so its
 existing call sites (`notifications.email_sender`,
 `notifications.make_attachment`) didn't need to change; it still owns the
-invitation-specific `SmsSender`/`UnconfiguredSmsSender` (reports has no SMS
-need).
+SMS and WhatsApp senders (the shared Fast2SMS clients in
+`core/sms.py`/`core/whatsapp.py`; reports has no SMS need).
 
 ## Not yet built (flagged, not silently dropped)
 

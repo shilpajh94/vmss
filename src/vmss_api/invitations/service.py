@@ -32,7 +32,7 @@ from vmss_api.core.storage import save as storage_save
 from vmss_api.core.storage import url_for as storage_url_for
 from vmss_api.form_builder import service as form_builder_service
 from vmss_api.form_builder import validation as form_builder_validation
-from vmss_api.invitations import badge, push_notifications, tasks
+from vmss_api.invitations import badge, code_lockout, push_notifications, tasks
 from vmss_api.invitations.models import (
     Invitation,
     InvitationQRCode,
@@ -59,6 +59,8 @@ from vmss_api.tenant.models import Tenant
 from vmss_api.visit_info.repository import VisitDurationRepository, VisitPurposeRepository
 from vmss_api.visitors.repository import ApprovalWorkflowRuleRepository, VisitorCategoryRepository
 
+_CHECKIN_CODE_LENGTH = 8
+
 
 async def _generate_unique_tracking_id(repo: InvitationRepository) -> str:
     """`INV-XXXXXXXX` — 32 bits of randomness is more than enough given this
@@ -71,6 +73,31 @@ async def _generate_unique_tracking_id(repo: InvitationRepository) -> str:
         if await repo.get_by_tracking_id(candidate) is None:
             return candidate
     raise RuntimeError("Could not generate a unique invitation tracking id")
+
+
+async def _generate_unique_checkin_code(repo: InvitationRepository) -> str:
+    """8 digits from a CSPRNG, retried against uniqueness (same shape as
+    `_generate_unique_tracking_id`). Low entropy by design (typed on a kiosk),
+    so the public endpoints that accept it are rate limited and locked out.
+    """
+    for _ in range(10):
+        candidate = f"{secrets.randbelow(10**_CHECKIN_CODE_LENGTH):0{_CHECKIN_CODE_LENGTH}d}"
+        if await repo.get_by_checkin_code(candidate) is None:
+            return candidate
+    raise RuntimeError("Could not generate a unique invitation check-in code")
+
+
+async def _issue_checkin_code(tenant_db: AsyncSession, invitation: Invitation) -> None:
+    """Get-or-create, only for contacts preferring `sms` (spec.md "SMS-Preferred
+    Approved Invitation Gets a Numeric Check-In Code"). Called next to
+    `_issue_qr_code` at every approval point; a no-op once a code exists so a
+    repeated approval path never rotates it.
+    """
+    if invitation.primary_contact_preferred_contact_method != "sms":
+        return
+    if invitation.checkin_code is not None:
+        return
+    invitation.checkin_code = await _generate_unique_checkin_code(InvitationRepository(tenant_db))
 
 
 async def _generate_unique_badge_number(repo: InvitationRepository) -> str:
@@ -1453,6 +1480,8 @@ async def create_invitation(
     # time, persisted") — never for a `submitted` invitation, matching
     # "a QR code is never included until the invitation is approved".
     qr_code = await _issue_qr_code(tenant_db, invitation, tenant=tenant) if auto_approved else None
+    if auto_approved:
+        await _issue_checkin_code(tenant_db, invitation)
 
     await tenant_db.commit()
 
@@ -1567,6 +1596,7 @@ async def approve_invitation(
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not awaiting approval")
     qr_code = await _issue_qr_code(tenant_db, updated, tenant=tenant)
+    await _issue_checkin_code(tenant_db, updated)
     await tenant_db.commit()
     tasks.send_approval_notification.delay(
         request_id=_current_request_id(),
@@ -1816,7 +1846,15 @@ async def check_in_by_qr_token(
     audit entry for a scan that performed no actual transition.
     """
     invitation = await _get_invitation_by_qr_token_or_400(tenant_db, token, tenant=tenant)
+    return await _check_in_resolved(tenant_db, invitation, tenant=tenant)
 
+
+async def _check_in_resolved(
+    tenant_db: AsyncSession, invitation: Invitation, *, tenant: Tenant
+) -> tuple[Invitation, str, bool]:
+    """Entry rules shared by the QR-token and check-in-code endpoints — only
+    how the invitation is resolved differs between them.
+    """
     if invitation.check_in_status == "checked_in":
         return invitation, "Verification passed", False
     if invitation.status not in ("approved", "checked_in", "checked_out"):
@@ -1866,7 +1904,13 @@ async def check_out_by_qr_token(
     `checked_in`.
     """
     invitation = await _get_invitation_by_qr_token_or_400(tenant_db, token, tenant=tenant)
+    return await _check_out_resolved(tenant_db, invitation, tenant=tenant)
 
+
+async def _check_out_resolved(
+    tenant_db: AsyncSession, invitation: Invitation, *, tenant: Tenant
+) -> tuple[Invitation, str]:
+    """Exit rules shared by the QR-token and check-in-code endpoints."""
     if invitation.check_in_status != "checked_in":
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Invitation is not currently checked in"
@@ -1880,6 +1924,48 @@ async def check_out_by_qr_token(
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_out)
     return updated, "Checked out successfully"
+
+
+async def _get_invitation_by_checkin_code_or_400(
+    tenant_db: AsyncSession, code: str, *, tenant: Tenant, client_ip: str
+) -> Invitation:
+    """Unknown codes get the same generic rejection as a bad QR token, and the
+    submitted code is never logged. A locked-out IP is refused before any
+    lookup, so a valid guess after lockout can't succeed.
+    """
+    await code_lockout.ensure_not_locked_out(tenant.id, client_ip)
+    invitation = await InvitationRepository(tenant_db).get_by_checkin_code(code)
+    if invitation is None:
+        await code_lockout.record_failure(tenant.id, client_ip)
+        logger.warning("checkin_code_invalid", tenant_id=str(tenant.id), ip=client_ip)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="Verification failed — invalid code"
+        )
+    return invitation
+
+
+async def check_in_by_code(
+    tenant_db: AsyncSession, code: str, *, tenant: Tenant, client_ip: str
+) -> tuple[Invitation, str, bool]:
+    """`PATCH /api/v2/invitations/code/check-in` (spec.md "Public Check-In by
+    Code") — identical to `check_in_by_qr_token` apart from resolution.
+    """
+    invitation = await _get_invitation_by_checkin_code_or_400(
+        tenant_db, code, tenant=tenant, client_ip=client_ip
+    )
+    return await _check_in_resolved(tenant_db, invitation, tenant=tenant)
+
+
+async def check_out_by_code(
+    tenant_db: AsyncSession, code: str, *, tenant: Tenant, client_ip: str
+) -> tuple[Invitation, str]:
+    """`PATCH /api/v2/invitations/code/check-out` (spec.md "Public Check-Out
+    by Code") — identical to `check_out_by_qr_token` apart from resolution.
+    """
+    invitation = await _get_invitation_by_checkin_code_or_400(
+        tenant_db, code, tenant=tenant, client_ip=client_ip
+    )
+    return await _check_out_resolved(tenant_db, invitation, tenant=tenant)
 
 
 async def check_out_invitation(
