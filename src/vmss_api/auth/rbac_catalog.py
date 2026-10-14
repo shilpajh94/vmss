@@ -61,6 +61,7 @@ PERMISSION_CODES = [
     "invitations:edit",
     "invitations:badge",
     "invitations:watchlist-override",
+    "invitations:export",
     "documents:view",
     "roles:manage",
     "roles:view",
@@ -98,6 +99,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:extend",
         "invitations:edit",
         "invitations:badge",
+        "invitations:export",
         "documents:view",
         "roles:view",
     ],
@@ -111,6 +113,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:view-all",
         "invitations:checkin",
         "invitations:checkout",
+        "invitations:export",
         "documents:view",
     ],
     "host": [

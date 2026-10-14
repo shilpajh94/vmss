@@ -485,6 +485,34 @@ class InvitationListItemOut(CamelModel):
     approved_at: datetime | None
 
 
+# --- add-invitation-export ---------------------------------------------------
+
+
+class ExportFormat(StrEnum):
+    csv = "csv"
+    xlsx = "xlsx"
+
+
+class InvitationExportDateRange(CamelModel):
+    """`GET /invitations/export`'s inclusive, tenant-local calendar-date
+    range (add-invitation-export/design.md Decision 3) — which timestamp it
+    applies to depends on the `status` filter, resolved in the repository.
+    """
+
+    date_from: date | None = None
+    date_to: date | None = None
+
+    @model_validator(mode="after")
+    def _check_order(self) -> Self:
+        if (
+            self.date_from is not None
+            and self.date_to is not None
+            and self.date_from > self.date_to
+        ):
+            raise ValueError("dateFrom must not be later than dateTo")
+        return self
+
+
 # --- API-12: public tracking lookup -----------------------------------------
 
 

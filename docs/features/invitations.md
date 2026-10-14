@@ -30,6 +30,7 @@ generic required-header `422`. This now matches
 `docs/features/org_structure.md`'s creation endpoints, which resolve their
 branch from the request body via the same `authorize_branch_id` helper.
 | GET | `/api/v1/invitations` | `invitations:view-all`, branch-scoped (or none with `relevantToMe=true`) | — | Paginated listing of invitations for triage/browsing — see "Listing invitations" below. |
+| GET | `/api/v1/invitations/export` | `invitations:export`, branch-scoped | — | Downloads the matching invitations as CSV or XLSX, one row per visitor, filtered by status and date range — see "Exporting invitations" below. |
 | GET | `/api/v1/invitations/lookup-by-email?email=` | `invitations:create`, branch-scoped | — | Staff-authenticated prefill lookup for the create-invitation wizard's Primary Contact fields: returns `fullName`, `phone`, `preferredContactMethod`, `visitorCategoryId`, `idProofType`, `photoUrl`, `idProofUrl` from the most recent non-deleted invitation, among the caller's authorized branches, whose primary contact email matches case-insensitively. `data: null` (not 404) when no match — same "no match is not an error" convention `GET /api/v1/visitor-portal/me` uses. Gated by `invitations:create` rather than `invitations:view` since it only exists to prefill that create flow. `photoUrl` is always resolved when captured (same as every other invitation response); `idProofUrl` is `null` unless the caller additionally holds `documents:view` at the matched invitation's branch — `invitations:create` alone does not grant identity-document visibility, matching `GET /invitations/{id}`'s existing gating. See `openspec/changes/add-invitation-lookup-by-email/`. |
 | GET | `/api/v1/invitations/track?trackingId=` | None (public) | 20/minute per IP | Full status/visit-summary lookup by the human-readable tracking ID — returns `InvitationTrackingOut`, including every visit-detail and carried-item field captured at creation. |
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
@@ -808,6 +809,123 @@ expiry/submission timestamps — deliberately narrower than
 eager-load a child collection or run the extra current-step lookup for a
 list view that doesn't render either (`query-performance.md` §1-2).
 
+## Exporting invitations
+
+`GET /invitations/export` (`add-invitation-export`) returns the invitations
+that match the filters as a file download, so staff can take a gate list,
+a security handover or a compliance extract offline — for example "everyone
+who checked in today" or "all approved visitors next week". It is a raw file
+response, not the JSON envelope; every error (403, 404, 422) still uses the
+standard JSON error envelope.
+
+**Permission.** `invitations:export`, branch-scoped exactly like the
+branch-wide listing: `X-Branch-ID` narrows to one branch, and omitting it
+exports across every branch where the caller holds `invitations:export`.
+The standard `admin`, `reception` and `security` roles hold it; `host` does
+not. Existing tenants receive the grant from tenant migration
+`4ea4f6ccffbd`. Custom roles must be granted it by an admin.
+`relevantToMe=true` *narrows* the export to invitations relevant to the
+caller — unlike the list, it never replaces the permission check.
+
+Query params — every filter of [Listing invitations](#listing-invitations)
+with the same meaning (`status`, `registrationType`, `source`, `search`,
+`purposeOfVisit`, `relevantToMe`), plus:
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `format` | `csv` \| `xlsx` | `csv` | Any other value is a 422. |
+| `dateFrom` / `dateTo` | date (`YYYY-MM-DD`) | unset | Inclusive calendar dates in the visit timezone (`Company.defaultTimezone`, then `Tenant.timezone`, then UTC). `dateFrom` later than `dateTo` is a 422. |
+
+**Which date the range applies to.** It follows `status`: `submitted` →
+submitted-at, `approved` → approved-at, `denied` → denied-at, `checked_in`
+→ checked-in-at, `checked_out` → checked-out-at. With no `status`, it
+applies to the invitation's creation time. Rows are sorted by that same
+timestamp, newest first. `status` matches the *current* status, the same as
+the list: `status=approved` does not include visitors who have since checked
+in. To get everyone approved in a period regardless of what happened next,
+export without `status`.
+
+**One row per visitor.** Each invitation produces one row for its primary
+contact, plus one row per co-visitor for a group invitation. All rows of an
+invitation are adjacent, primary contact first, and each repeats the
+invitation's visit-level fields (badge, vehicles, notes, lifecycle times and
+so on).
+
+**Columns** (`improve-invitation-export-readability`), in order: Tracking
+ID, Status, Visitor Name, Visitor Role, Email, Phone Number, ID Proof Type,
+Visitor Category, Registration Type, Source, Branch, Building, Department,
+Host, Point of Contact, Purpose of Visit, Visit Date, Visit Time, Expected
+Duration, Badge Number, Vehicle Number(s) (license plates joined with
+`, `), Carried Items (items joined with `, `, then ` — ` and the
+description if one was given), Additional Notes, Requested At, Approved At,
+Denied At, Denial Reason, Checked In At, Checked In By, Checked Out At,
+Checked Out By. A value that is not recorded is an empty cell. Custom
+form-builder fields are not exported.
+
+**Lifecycle columns follow `status`.** With a `status` filter, only the
+lifecycle columns that can hold a value for it are included. With no
+`status`, all of them are included. Scripts reading the file should look
+columns up by header, not by position.
+
+| `status` | Lifecycle columns included |
+|---|---|
+| `submitted` | Requested At |
+| `approved` | Requested At, Approved At |
+| `denied` | Requested At, Denied At, Denial Reason |
+| `checked_in` | Requested At, Approved At, Checked In At, Checked In By |
+| `checked_out` | Requested At, Approved At, Checked In At, Checked In By, Checked Out At, Checked Out By |
+
+**Labels, not codes.** Status, Source, Registration Type and Visitor Role
+use the same wording as the web invitation board:
+
+- Status: `submitted` → Requested, `approved` → Approved, `denied` →
+  Denied, `checked_in` → Checked-in, `checked_out` → Checked-out.
+- Source: `staff_pre_registration` → Staff Pre-Registration,
+  `visitor_walk_in` → Visitor Walk-in.
+- Registration Type: Individual / Group.
+- Visitor Role: Primary Contact / Co-Visitor.
+
+A code with no label is written in Title Case with spaces, never raw.
+
+**Dates and times.** Timestamps are in the visit timezone. The zone is
+named once, in each timestamp header, for example
+`Checked In At (Asia/Kolkata)`, not in every cell.
+
+- In CSV, timestamps are `YYYY-MM-DD HH:MM` (24-hour), the visit date is
+  `YYYY-MM-DD`, and the visit time is `HH:MM`.
+- In XLSX, the same values are real date/time cells shown in those
+  formats, so they sort and filter as dates.
+
+**Filename.** `invitations-<status|all>-<YYYY-MM-DD>.<csv|xlsx>`, where the
+status uses hyphens (`invitations-checked-in-2026-10-14.xlsx`) and the date
+is in the visit timezone. Browsers on the web portal cannot read this
+header across origins, so the portal names the download itself.
+
+**XLSX layout.** The header row is bold, frozen and auto-filtered, and every
+column has a preset width.
+
+**What is never exported.** ID-proof documents, photos, storage keys and
+signed URLs — whatever the caller's `documents:view` grant. Only the
+ID-proof *type* is included.
+
+**Formula-injection guard.**
+
+- **CSV:** any value starting with `=`, `+`, `-`, `@`, a tab or a carriage
+  return is prefixed with `'`, so a spreadsheet shows it as text instead of
+  evaluating it. Phone numbers stored as `+91…` therefore appear as
+  `'+91…` in CSV.
+- **XLSX:** every text value is stored as a text cell, which is never
+  evaluated, so values keep their original form, for example `+91…`. Use
+  XLSX when the file is for reading in a spreadsheet.
+
+**Size cap.** An export larger than `INVITATION_EXPORT_MAX_ROWS` visitor
+rows (default 10,000) is rejected with 422 and a message to narrow the
+filters. The file is never silently truncated.
+
+**Auditing.** Every successful export writes an `invitations_exported`
+audit entry with the actor, the filters, the format and the row count — no
+visitor data. Rejected exports are not audited as exports.
+
 ## Relevant to me
 
 `GET /invitations?relevantToMe=true` is a personal worklist, not a narrower
@@ -1123,6 +1241,7 @@ table for the S3 connection settings.
 | `INVITATION_MAX_UPLOAD_SIZE_BYTES` | `5242880` (5 MB) | Max ID-proof file size. |
 | `INVITATION_MAX_GROUP_VISITORS` | `20` | Cap on co-visitors in one group submission. |
 | `INVITATION_MAX_PHOTO_SIZE_BYTES` | `2097152` (2 MB) | Max optional profile-photo file size — independent of the ID-proof limit above. |
+| `INVITATION_EXPORT_MAX_ROWS` | `10000` | Max visitor rows per `GET /invitations/export`; an over-cap export is rejected with 422, never truncated. |
 | `STORAGE_ROOT` | `./var/storage` | Local-disk root for uploaded files in dev. |
 | `QR_TOKEN_ENCRYPTION_KEY` | unset | Fernet key encrypting/decrypting QR check-in tokens. Fails loudly the first time a token is generated or scanned without it — never a silent no-op. Generate one the same way as `SSO_ENCRYPTION_KEY`; deliberately a separate key from it. |
 | `MAIL_HOST`/`MAIL_PORT`/`MAIL_USERNAME`/`MAIL_PASSWORD`/`MAIL_USE_TLS`/`MAIL_FROM_ADDRESS` | local dev mail-catcher | Outbound email for visit confirmations. See `docs/features/configuration.md`. |

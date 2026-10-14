@@ -253,6 +253,7 @@ ADMIN_PERMISSION_CODES = [
     "invitations:edit",
     "invitations:badge",
     "invitations:watchlist-override",
+    "invitations:export",
     "documents:view",
     "roles:view",
     "roles:manage",
