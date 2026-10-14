@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import date
 from typing import Annotated, Any
 
 from fastapi import (
@@ -15,7 +16,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, EmailStr, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -44,6 +45,7 @@ from vmss_api.invitations.schemas import (
     ConsentValue,
     ContactMethod,
     CustomFieldValue,
+    ExportFormat,
     FieldGroupValuesOut,
     InvitationBranchOut,
     InvitationBuildingOut,
@@ -53,6 +55,7 @@ from vmss_api.invitations.schemas import (
     InvitationDepartmentOut,
     InvitationDetailOut,
     InvitationEditRequest,
+    InvitationExportDateRange,
     InvitationExtendRequest,
     InvitationListItemOut,
     InvitationLookupPrefillOut,
@@ -60,6 +63,7 @@ from vmss_api.invitations.schemas import (
     InvitationPrimaryContactCreate,
     InvitationQrCheckInOut,
     InvitationRescheduleRequest,
+    InvitationRevertApprovalRequest,
     InvitationSortableField,
     InvitationStatus,
     InvitationTrackingOut,
@@ -328,6 +332,9 @@ def to_invitation_out(
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
         current_approval_step=current_approval_step,
+        approval_reverted_at=invitation.approval_reverted_at,
+        approval_reverted_by_user_id=invitation.approval_reverted_by_user_id,
+        approval_revert_reason=invitation.approval_revert_reason,
     )
 
 
@@ -1034,6 +1041,9 @@ async def _to_invitation_detail_out(
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
+        approval_reverted_at=invitation.approval_reverted_at,
+        approval_reverted_by_user_id=invitation.approval_reverted_by_user_id,
+        approval_revert_reason=invitation.approval_revert_reason,
         denial_reason=invitation.denial_reason,
         denied_at=invitation.denied_at,
         checked_in_at=invitation.checked_in_at,
@@ -1412,6 +1422,42 @@ async def deny_invitation(
         entity_id=invitation.id,
     )
     return success_response(data=to_invitation_out(invitation))
+
+
+@router.patch(
+    "/{invitation_id}/revert-approval",
+    response_model=Envelope[InvitationOut],
+)
+async def revert_invitation_approval(
+    invitation_id: uuid.UUID,
+    payload: InvitationRevertApprovalRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """Sends a mistakenly approved, not-yet-checked-in invitation back to
+    `submitted` with a mandatory reason (spec.md "An Approved,
+    Not-Yet-Checked-In Invitation Can Have Its Approval Reverted").
+    """
+    invitation = await service.get_invitation(tenant_db, invitation_id)
+    await authorize_branch_id_tolerant(
+        tenant_db, user, "invitations:revert-approval", invitation.branch_id
+    )
+    invitation = await service.revert_invitation_approval(
+        tenant_db, invitation, user=user, reason=payload.reason, tenant=tenant
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitation_approval_reverted",
+        entity_type="Invitation",
+        entity_id=invitation.id,
+        diff={"status": {"before": "approved", "after": "submitted"}, "reason": payload.reason},
+    )
+    current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
+    return success_response(data=to_invitation_out(invitation, current_approval_step))
 
 
 # --- add-public-checkin-endpoint: public check-in by tracking ID ------------
@@ -1971,6 +2017,111 @@ async def list_invitations(
         page=page,
         page_size=page_size,
         total=total,
+    )
+
+
+# --- add-invitation-export ---------------------------------------------------
+# Registered before "/{invitation_id}" for the same reason as "/track" below.
+
+
+@router.get(
+    "/export",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "The matching invitations as a file, one row per visitor.",
+            "content": {
+                "text/csv": {"schema": {"type": "string", "format": "binary"}},
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                    "schema": {"type": "string", "format": "binary"}
+                },
+            },
+        }
+    },
+)
+async def export_invitations(
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("invitations:export"))],
+    export_format: Annotated[ExportFormat, Query(alias="format")] = ExportFormat.csv,
+    relevant_to_me: Annotated[bool, Query(alias="relevantToMe")] = False,
+    status_filter: Annotated[InvitationStatus | None, Query(alias="status")] = None,
+    registration_type: Annotated[RegistrationType | None, Query(alias="registrationType")] = None,
+    source: Annotated[RegistrationSource | None, Query(alias="source")] = None,
+    search: Annotated[str | None, Query(max_length=255)] = None,
+    purpose_of_visit: Annotated[str | None, Query(alias="purposeOfVisit", max_length=255)] = None,
+    date_from: Annotated[date | None, Query(alias="dateFrom")] = None,
+    date_to: Annotated[date | None, Query(alias="dateTo")] = None,
+) -> Response:
+    """specs/invitation-export/spec.md — a raw file download, so it's the
+    documented exception to `success_response`; every error path is still
+    the JSON envelope. Unlike `GET /invitations`, `relevantToMe` narrows the
+    `invitations:export` branch scope rather than replacing it
+    (add-invitation-export/design.md Decision 2), so a `host` without the
+    export grant can't reach it through their personal worklist.
+    """
+    try:
+        date_range = InvitationExportDateRange(date_from=date_from, date_to=date_to)
+    except ValidationError as exc:
+        return error_response(message=str(exc), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+    default_host_role_id = (await get_default_host_role(tenant_db)).id if relevant_to_me else None
+    filters: dict[str, Any] = {
+        "relevant_to_me": relevant_to_me,
+        "status": status_filter.value if status_filter is not None else None,
+        "registration_type": registration_type.value if registration_type is not None else None,
+        "source": source.value if source is not None else None,
+        "search": search,
+        "purpose_of_visit": purpose_of_visit,
+        "date_from": date_from.isoformat() if date_from is not None else None,
+        "date_to": date_to.isoformat() if date_to is not None else None,
+    }
+    try:
+        export_file = await service.export_invitations(
+            tenant_db,
+            tenant,
+            branch_scope=branch_scope,
+            relevant_to_user_id=user.id if relevant_to_me else None,
+            default_host_role_id=default_host_role_id,
+            status=filters["status"],
+            registration_type=filters["registration_type"],
+            source=filters["source"],
+            search=search,
+            purpose_of_visit=purpose_of_visit,
+            date_range=date_range,
+            export_format=export_format,
+        )
+    except service.ExportTooLargeError as exc:
+        logger.warning("invitations_export_too_large", format=export_format.value)
+        return error_response(message=str(exc), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+    audit_filters = {key: value for key, value in filters.items() if value not in (None, False)}
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=user.id,
+        action="invitations_exported",
+        entity_type="Invitation",
+        diff={
+            "filters": audit_filters,
+            "format": export_format.value,
+            "row_count": export_file.row_count,
+        },
+    )
+    logger.info(
+        "invitations_exported",
+        format=export_format.value,
+        row_count=export_file.row_count,
+        # `search` can hold a visitor's name — kept in the audit entry, not
+        # the log line (logging-observability.md §2).
+        filters={key: value for key, value in audit_filters.items() if key != "search"},
+    )
+    return Response(
+        content=export_file.content,
+        media_type=export_file.media_type,
+        headers={"Content-Disposition": f'attachment; filename="{export_file.filename}"'},
     )
 
 

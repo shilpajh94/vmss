@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import anyio
 import structlog
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
@@ -32,7 +33,7 @@ from vmss_api.core.storage import save as storage_save
 from vmss_api.core.storage import url_for as storage_url_for
 from vmss_api.form_builder import service as form_builder_service
 from vmss_api.form_builder import validation as form_builder_validation
-from vmss_api.invitations import badge, push_notifications, tasks
+from vmss_api.invitations import badge, export, push_notifications, tasks
 from vmss_api.invitations.models import (
     Invitation,
     InvitationQRCode,
@@ -41,10 +42,12 @@ from vmss_api.invitations.models import (
 )
 from vmss_api.invitations.qr import generate_qr_png
 from vmss_api.invitations.qr_token import decrypt_invitation_token, encrypt_invitation_token
-from vmss_api.invitations.repository import InvitationRepository
+from vmss_api.invitations.repository import InvitationExportCriteria, InvitationRepository
 from vmss_api.invitations.schemas import (
+    ExportFormat,
     InvitationCreate,
     InvitationEditRequest,
+    InvitationExportDateRange,
     InvitationLookupPrefillOut,
     InvitationSortableField,
     RegistrationSource,
@@ -1713,6 +1716,73 @@ async def deny_invitation(
     return updated
 
 
+async def revert_invitation_approval(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    user: User,
+    reason: str,
+    tenant: Tenant,
+) -> Invitation:
+    """Sends an `approved`, never-admitted invitation back to `submitted`
+    (spec.md "An Approved, Not-Yet-Checked-In Invitation Can Have Its
+    Approval Reverted"). The pre-read only picks a specific 409 message;
+    `revert_approval_if_eligible`'s atomic `WHERE` is the real gate, same
+    as `approve_invitation`.
+
+    A workflow-backed invitation has every step reset to `pending` and the
+    first step re-activated in the same transaction (approvals spec "Reverting
+    an Approval Restarts the Invitation's Workflow From Its First Step") —
+    both calls are no-ops for an invitation without steps (auto-approved).
+    The QR row is kept: every check-in path already refuses a `submitted`
+    invitation, and re-approval re-sends the same pass (design.md
+    Decision 3).
+    """
+    if invitation.status == "approved" and invitation.check_in_status != "unused":
+        logger.warning(
+            "invitation_revert_rejected", invitation_id=str(invitation.id), reason="checked_in"
+        )
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Visitor has already checked in on this invitation"
+        )
+    updated = await InvitationRepository(tenant_db).revert_approval_if_eligible(
+        invitation.id, user_id=user.id, reason=reason
+    )
+    if updated is None:
+        logger.warning(
+            "invitation_revert_rejected", invitation_id=str(invitation.id), reason="not_approved"
+        )
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
+    step_repo = InvitationApprovalStepRepository(tenant_db)
+    await step_repo.reset_all_for_invitation(updated.id)
+    activated_step = await step_repo.activate_current_pending(updated.id)
+    await tenant_db.commit()
+    logger.info(
+        "invitation_approval_reverted",
+        invitation_id=str(updated.id),
+        workflow_restarted=activated_step is not None,
+    )
+    tasks.send_approval_revert_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(updated.id),
+    )
+    await _notify_host(tenant, updated, push_notifications.approval_reverted)
+    if activated_step is not None:
+        title, body, data = push_notifications.step_awaiting_approval(updated)
+        await notifications_service.notify_step_approver(
+            tenant_db,
+            tenant_schema=tenant.schema_name,
+            approver_user_id=activated_step.approver_user_id,
+            approver_role_id=activated_step.approver_role_id,
+            branch_id=updated.branch_id,
+            title=title,
+            body=body,
+            data=data,
+        )
+    return updated
+
+
 async def _perform_check_in(
     tenant_db: AsyncSession,
     invitation: Invitation,
@@ -2357,6 +2427,94 @@ async def list_invitations_page(
         sort_by=sort_by,
         sort_order=sort_order,
         purpose_of_visit=purpose_of_visit,
+    )
+
+
+class ExportTooLargeError(Exception):
+    """`GET /invitations/export` would exceed
+    `settings.invitation_export_max_rows` — rejected rather than truncated
+    (add-invitation-export/design.md Decision 1).
+    """
+
+    def __init__(self, row_count: int, max_rows: int) -> None:
+        super().__init__(
+            f"This export would contain {row_count} rows, more than the maximum of "
+            f"{max_rows}. Narrow the filters (for example the date range) and try again."
+        )
+
+
+@dataclass(frozen=True)
+class InvitationExportFile:
+    content: bytes
+    media_type: str
+    filename: str
+    row_count: int
+
+
+_EXPORT_MEDIA_TYPES = {
+    ExportFormat.csv: "text/csv; charset=utf-8",
+    ExportFormat.xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+async def export_invitations(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    *,
+    branch_scope: BranchScope,
+    relevant_to_user_id: uuid.UUID | None,
+    default_host_role_id: uuid.UUID | None,
+    status: str | None,
+    registration_type: str | None,
+    source: str | None,
+    search: str | None,
+    purpose_of_visit: str | None,
+    date_range: InvitationExportDateRange,
+    export_format: ExportFormat,
+) -> InvitationExportFile:
+    """Backs `GET /invitations/export` (specs/invitation-export/spec.md).
+    `dateFrom`/`dateTo` are inclusive calendar dates in the visit timezone,
+    turned into half-open UTC bounds here so the repository only ever
+    compares instants (design.md Decision 3).
+    """
+    tz = await _resolve_visit_timezone(tenant_db, tenant)
+
+    def _local_midnight_utc(day: date) -> datetime:
+        return datetime.combine(day, time.min, tzinfo=tz).astimezone(UTC)
+
+    criteria = InvitationExportCriteria(
+        branch_scope=branch_scope,
+        relevant_to_user_id=relevant_to_user_id,
+        default_host_role_id=default_host_role_id,
+        status=status,
+        registration_type=registration_type,
+        source=source,
+        search=search,
+        purpose_of_visit=purpose_of_visit,
+        starts_at=_local_midnight_utc(date_range.date_from) if date_range.date_from else None,
+        ends_before=(
+            _local_midnight_utc(date_range.date_to + timedelta(days=1))
+            if date_range.date_to
+            else None
+        ),
+    )
+    repository = InvitationRepository(tenant_db)
+    row_count = await repository.count_export_rows(criteria)
+    max_rows = settings.invitation_export_max_rows
+    if row_count > max_rows:
+        raise ExportTooLargeError(row_count, max_rows)
+
+    invitations = await repository.list_for_export(criteria)
+    rows = export.build_rows(invitations, tz)
+    renderer = export.render_xlsx if export_format == ExportFormat.xlsx else export.render_csv
+    content = await anyio.to_thread.run_sync(renderer, rows, export.columns_for(status), tz.key)
+    status_slug = (status or "all").replace("_", "-")
+    filename = f"invitations-{status_slug}-{datetime.now(tz):%Y-%m-%d}.{export_format.value}"
+    return InvitationExportFile(
+        content=content,
+        media_type=_EXPORT_MEDIA_TYPES[export_format],
+        filename=filename,
+        row_count=len(rows),
     )
 
 
