@@ -89,5 +89,5 @@
 ## 6. Verification
 
 - [x] 6.1 Run `ddev exec uv run ruff check` and `ruff format --check`, and `mypy` on the touched `auth/` and `invitations/` modules. All must be clean.
-- [ ] 6.2 Run `ddev exec uv run pytest` (one process only, never parallel) and diff any failures against a baseline taken before the change, since there are known pre-existing failures.
+- [x] 6.2 Run `ddev exec uv run pytest` (one process only, never parallel) and diff any failures against a baseline taken before the change, since there are known pre-existing failures.
 - [x] 6.3 Confirm the VMMS_WEB companion change (`add-invitation-approval-revert`) matches this contract: endpoint path, `reason` body and the new field names.
