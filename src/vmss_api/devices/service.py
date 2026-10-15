@@ -11,6 +11,7 @@ from vmss_api.devices.models import Device, TenantSettings
 from vmss_api.devices.repository import DeviceRepository, TenantSettingsRepository
 from vmss_api.devices.schemas import (
     ApprovalStatus,
+    DeviceApprovalStatusOut,
     DeviceBriefOut,
     DeviceOut,
     DeviceRegister,
@@ -73,6 +74,15 @@ async def register_device(tenant_db: AsyncSession, payload: DeviceRegister) -> t
         return existing, False
     await tenant_db.refresh(device)
     return device, True
+
+
+async def get_device_approval_status(
+    tenant_db: AsyncSession, device_id: str
+) -> DeviceApprovalStatusOut:
+    device = await DeviceRepository(tenant_db).get_by_device_id(device_id)
+    if device is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Device not found")
+    return DeviceApprovalStatusOut.model_validate(device)
 
 
 async def list_devices_page(

@@ -21,6 +21,7 @@ from vmss_api.core.schemas import Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.devices import service
 from vmss_api.devices.schemas import (
     ApprovalStatus,
+    DeviceApprovalStatusOut,
     DeviceOut,
     DeviceRegister,
     DeviceRegistrationOut,
@@ -91,6 +92,22 @@ async def register_device(
         data=DeviceRegistrationOut.model_validate(device),
         status_code=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
     )
+
+
+# Declared before the `/{device_pk}` routes so `approval-status` isn't parsed as a UUID.
+@router.get(
+    "/approval-status",
+    response_model=Envelope[DeviceApprovalStatusOut],
+)
+@limiter.limit("60/minute")
+async def get_device_approval_status(
+    request: Request,
+    tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    device_id: Annotated[str, Query(alias="deviceId", min_length=1, max_length=255)],
+) -> JSONResponse:
+    """Public, read-only: has this device's registration been approved?
+    404 when the `deviceId` is unknown (never registered or deleted)."""
+    return success_response(data=await service.get_device_approval_status(tenant_db, device_id))
 
 
 @router.get(
