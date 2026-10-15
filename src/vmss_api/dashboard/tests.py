@@ -619,3 +619,240 @@ async def test_dashboard_endpoints_reject_host_holding_only_invitations_view(
     ):
         response = await client.get(path, params=params, headers=headers)
         assert response.status_code == 403, (path, response.text)
+
+
+# --- staff-lifecycle-emails-and-dashboard-landing: GET /my-overview -----------
+# spec.md "Personal Dashboard Overview Scoped to the Caller's Relevant
+# Invitations". Counted over the `relevantToMe` predicate, which resolves the
+# tenant's default host role — falling back to `reception`, seeded per test
+# below the same way `invitations/tests.py::_default_host_role` does.
+
+_MY_OVERVIEW = "/api/v1/admin/dashboard/my-overview"
+
+
+async def _host_user(db_session: AsyncSession) -> User:
+    db_session.add(RoleFactory.build(id=uuid.uuid4(), name="reception", permissions=[]))
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    return host
+
+
+def _tenant_today(tenant: Tenant):
+    return datetime.now(UTC).astimezone(_resolve_tenant_timezone(tenant)).date()
+
+
+async def test_my_overview_counts_only_the_callers_own_visits(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession, issue_token
+) -> None:
+    host = await _host_user(db_session)
+    today = _tenant_today(tenant)
+    future = datetime.now(UTC) + timedelta(days=1)
+    own = [
+        _build_invitation(
+            db_session,
+            branch.id,
+            host_id=host.id,
+            status="approved",
+            check_in_status="unused",
+            preferred_visit_date=today,
+            expires_at=future,
+        ),
+        _build_invitation(
+            db_session,
+            branch.id,
+            host_id=host.id,
+            status="checked_in",
+            check_in_status="checked_in",
+            preferred_visit_date=today,
+            expires_at=future,
+        ),
+        _build_invitation(db_session, branch.id, host_id=host.id, status="submitted"),
+    ]
+    others = [
+        _build_invitation(
+            db_session,
+            branch.id,
+            status=status,
+            check_in_status="unused",
+            preferred_visit_date=today,
+            expires_at=future,
+        )
+        for status in (
+            "approved",
+            "checked_in",
+            "submitted",
+            "submitted",
+            "approved",
+            "denied",
+            "approved",
+        )
+    ]
+    db_session.add_all([*own, *others])
+    await db_session.commit()
+
+    response = await client.get(
+        _MY_OVERVIEW, headers={"Authorization": f"Bearer {issue_token(host)}"}
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["visitsToday"] == 2
+    assert data["insideNow"] == 1
+    assert data["awaitingApproval"] == 1
+    assert data["upcoming"] == 1
+    assert [row["trackingId"] for row in data["upcomingPreview"]] == [own[0].tracking_id]
+
+
+async def test_my_overview_awaiting_approval_matches_relevant_to_me_list(
+    client: AsyncClient, branch: Branch, db_session: AsyncSession, issue_token
+) -> None:
+    host = await _host_user(db_session)
+    db_session.add_all(
+        [
+            _build_invitation(db_session, branch.id, host_id=host.id, status="submitted")
+            for _ in range(3)
+        ]
+        + [_build_invitation(db_session, branch.id, status="submitted")]
+    )
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {issue_token(host)}"}
+
+    overview = await client.get(_MY_OVERVIEW, headers=headers)
+    listing = await client.get(
+        "/api/v1/invitations",
+        params={"relevantToMe": "true", "status": "submitted"},
+        headers=headers,
+    )
+    assert overview.status_code == 200, overview.text
+    assert listing.status_code == 200, listing.text
+    assert overview.json()["data"]["awaitingApproval"] == listing.json()["pagination"]["total"]
+    assert overview.json()["data"]["awaitingApproval"] == 3
+
+
+async def test_my_overview_excludes_archived_and_denied(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession, issue_token
+) -> None:
+    host = await _host_user(db_session)
+    today = _tenant_today(tenant)
+    db_session.add_all(
+        [
+            _build_invitation(
+                db_session,
+                branch.id,
+                host_id=host.id,
+                status=status,
+                check_in_status="unused",
+                preferred_visit_date=today,
+                expires_at=datetime.now(UTC) + timedelta(hours=2),
+            )
+            for status in ("archived", "denied")
+        ]
+    )
+    await db_session.commit()
+
+    response = await client.get(
+        _MY_OVERVIEW, headers={"Authorization": f"Bearer {issue_token(host)}"}
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert (data["visitsToday"], data["insideNow"], data["awaitingApproval"], data["upcoming"]) == (
+        0,
+        0,
+        0,
+        0,
+    )
+    assert data["upcomingPreview"] == []
+
+
+async def test_my_overview_requires_authentication(client: AsyncClient) -> None:
+    response = await client.get(_MY_OVERVIEW)
+    assert response.status_code == 401, response.text
+
+
+async def test_my_overview_ignores_branch_header(
+    client: AsyncClient, branch: Branch, db_session: AsyncSession, issue_token
+) -> None:
+    host = await _host_user(db_session)
+    db_session.add(_build_invitation(db_session, branch.id, host_id=host.id, status="submitted"))
+    db_session.add(_build_invitation(db_session, branch.id, status="submitted"))
+    await db_session.commit()
+    token = issue_token(host)
+
+    plain = await client.get(_MY_OVERVIEW, headers={"Authorization": f"Bearer {token}"})
+    with_header = await client.get(
+        _MY_OVERVIEW,
+        headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(uuid.uuid4())},
+    )
+    assert plain.status_code == with_header.status_code == 200
+    assert with_header.json()["data"] == plain.json()["data"]
+    assert with_header.json()["data"]["awaitingApproval"] == 1
+
+
+async def test_my_overview_preview_is_capped_and_soonest_first(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession, issue_token
+) -> None:
+    host = await _host_user(db_session)
+    today = _tenant_today(tenant)
+    offsets = [5, 2, 8, 1, 7, 3, 6, 4]
+    invitations = [
+        _build_invitation(
+            db_session,
+            branch.id,
+            host_id=host.id,
+            status="approved",
+            check_in_status="unused",
+            preferred_visit_date=today + timedelta(days=offset),
+            preferred_visit_time=None,
+            expires_at=datetime.now(UTC) + timedelta(days=offset + 1),
+        )
+        for offset in offsets
+    ]
+    db_session.add_all(invitations)
+    await db_session.commit()
+    expected = [
+        inv.tracking_id for inv in sorted(invitations, key=lambda inv: inv.preferred_visit_date)[:5]
+    ]
+
+    response = await client.get(
+        _MY_OVERVIEW, headers={"Authorization": f"Bearer {issue_token(host)}"}
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["upcoming"] == 8
+    assert [row["trackingId"] for row in data["upcomingPreview"]] == expected
+
+
+async def test_personal_overview_tenant_schema_isolation(
+    make_tenant_schema, open_tenant_session, branch: Branch, db_session: AsyncSession
+) -> None:
+    """testing-standards.md §2 — a different tenant schema sees none of this
+    schema's invitations, even for the same host id.
+    """
+    host = await _host_user(db_session)
+    now = datetime.now(UTC)
+    db_session.add(
+        _build_invitation(
+            db_session,
+            branch.id,
+            host_id=host.id,
+            status="checked_in",
+            check_in_status="checked_in",
+            preferred_visit_date=now.date(),
+        )
+    )
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_my_overview"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        repo = DashboardRepository(other_session)
+        counts = await repo.personal_overview_counts(
+            user_id=host.id, default_host_role_id=uuid.uuid4(), today=now.date(), now_utc=now
+        )
+        assert counts == {"visits_today": 0, "inside_now": 0, "awaiting_approval": 0, "upcoming": 0}
+        preview = await repo.personal_upcoming_preview(
+            user_id=host.id, default_host_role_id=uuid.uuid4(), now_utc=now, limit=5
+        )
+        assert preview == []

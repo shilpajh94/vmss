@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Literal
 
 from vmss_api.core.schemas import CamelModel
@@ -31,6 +31,30 @@ class DashboardOverviewOut(CamelModel):
     pending_approval_count: int
     upcoming_visitor_count: int
     upcoming_visitors: list[UpcomingVisitorOut]
+
+
+class MyUpcomingVisitorOut(CamelModel):
+    """One row of `MyDashboardOverviewOut.upcoming_preview`."""
+
+    id: uuid.UUID
+    tracking_id: str
+    primary_contact_full_name: str
+    preferred_visit_date: date | None
+    preferred_visit_time: time | None
+    purpose_of_visit: str | None
+    expires_at: datetime
+
+
+class MyDashboardOverviewOut(CamelModel):
+    """`GET /admin/dashboard/my-overview` — counted over the caller's
+    `relevantToMe` invitations only.
+    """
+
+    visits_today: int
+    inside_now: int
+    awaiting_approval: int
+    upcoming: int
+    upcoming_preview: list[MyUpcomingVisitorOut]
 
 
 class DashboardCheckInListItemOut(CamelModel):

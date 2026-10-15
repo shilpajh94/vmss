@@ -4,7 +4,7 @@ import uuid
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from factories import DeviceTokenFactory, RoleFactory
+from factories import DeviceTokenFactory, RoleFactory, UserFactory
 from vmss_api.auth.models import User, UserBranchRole
 from vmss_api.notifications import fcm, service, tasks
 from vmss_api.notifications.repository import DeviceTokenRepository
@@ -516,3 +516,68 @@ async def test_notify_role_at_branch_payload_carries_assigned_role_id_and_reason
     assert data["assignedRoleId"] == str(role.id)
     assert data.get("assignedUserId") is None
     assert data["reason"] == "role_assigned"
+
+
+async def test_notify_role_at_branch_excludes_users_and_overrides_reason(
+    db_session: AsyncSession, tenant: Tenant, branch: Branch, user: User, monkeypatch
+) -> None:
+    """staff-lifecycle-emails-and-dashboard-landing design.md D4 — excluded
+    holders are dropped from the fan-out, and a caller-supplied `reason`
+    replaces the `role_assigned` default.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name="poc-exclusion-test", permissions=[])
+    other = UserFactory.build(id=uuid.uuid4())
+    db_session.add_all([role, other])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            UserBranchRole(id=uuid.uuid4(), user_id=user.id, role_id=role.id, branch_id=None),
+            UserBranchRole(id=uuid.uuid4(), user_id=other.id, role_id=role.id, branch_id=None),
+        ]
+    )
+    await db_session.commit()
+
+    delay_calls: list[dict] = []
+    monkeypatch.setattr(tasks.send_push, "delay", lambda **kwargs: delay_calls.append(kwargs))
+
+    await service.notify_role_at_branch(
+        db_session,
+        tenant_schema=tenant.schema_name,
+        role_id=role.id,
+        branch_id=branch.id,
+        title="Title",
+        body="Body",
+        exclude_user_ids={user.id},
+        reason="lifecycle_update",
+    )
+
+    assert len(delay_calls) == 1
+    assert delay_calls[0]["user_ids"] == [str(other.id)]
+    assert delay_calls[0]["data"]["reason"] == "lifecycle_update"
+
+
+async def test_notify_role_at_branch_all_holders_excluded_skips_dispatch(
+    db_session: AsyncSession, tenant: Tenant, branch: Branch, user: User, monkeypatch
+) -> None:
+    role = RoleFactory.build(id=uuid.uuid4(), name="poc-all-excluded-test", permissions=[])
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add(
+        UserBranchRole(id=uuid.uuid4(), user_id=user.id, role_id=role.id, branch_id=None)
+    )
+    await db_session.commit()
+
+    delay_calls: list[dict] = []
+    monkeypatch.setattr(tasks.send_push, "delay", lambda **kwargs: delay_calls.append(kwargs))
+
+    await service.notify_role_at_branch(
+        db_session,
+        tenant_schema=tenant.schema_name,
+        role_id=role.id,
+        branch_id=branch.id,
+        title="Title",
+        body="Body",
+        exclude_user_ids={user.id},
+    )
+
+    assert delay_calls == []

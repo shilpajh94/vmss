@@ -1423,7 +1423,7 @@ async def deny_invitation(
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:deny", invitation.branch_id)
     invitation = await service.deny_invitation(
-        tenant_db, invitation, reason=payload.reason, tenant=tenant
+        tenant_db, invitation, reason=payload.reason, tenant=tenant, actor_user_id=user.id
     )
     background_tasks.add_task(
         record_audit_log,
@@ -1749,6 +1749,7 @@ async def reschedule_invitation(
         preferred_visit_date=payload.preferred_visit_date,
         preferred_visit_time=payload.preferred_visit_time,
         tenant=tenant,
+        actor_user_id=user.id,
     )
     background_tasks.add_task(
         record_audit_log,
@@ -1854,7 +1855,7 @@ async def extend_invitation(
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:extend", invitation.branch_id)
     invitation = await service.extend_invitation(
-        tenant_db, invitation, new_expires_at=payload.expires_at
+        tenant_db, invitation, new_expires_at=payload.expires_at, tenant=tenant
     )
     background_tasks.add_task(
         record_audit_log,

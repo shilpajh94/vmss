@@ -30,7 +30,7 @@ import asyncio
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from sqlalchemy import select
@@ -196,6 +196,7 @@ _CTAS: dict[str, tuple[str, str]] = {
     "submission_role": ("Review request", "staff_login_url"),
     "host_assigned": ("View visit", "staff_login_url"),
     "poc_assigned": ("View visit", "staff_login_url"),
+    "staff_lifecycle_update": ("View visit", "staff_login_url"),
 }
 
 
@@ -844,6 +845,128 @@ async def _send_poc_creation_notification(
             )
     finally:
         await engine.dispose()
+
+
+# --- Staff lifecycle email (staff-lifecycle-emails-and-dashboard-landing) ---
+
+StaffLifecycleEvent = Literal["denied", "approval_reverted", "rescheduled"]
+
+# The statuses a reschedule can never leave an invitation in — a staff email
+# arriving after the visit was denied or already happened is stale.
+_RESCHEDULE_STALE_STATUSES = frozenset({"denied", "checked_in", "checked_out"})
+
+
+def _staff_event_still_current(invitation: Invitation, event: StaffLifecycleEvent) -> bool:
+    """Redelivery guard (background-jobs.md §2; invitations spec "Denial,
+    Approval Revert, and Reschedule Email the Responsible Staff"): skip the
+    send once the invitation no longer reflects `event`.
+    """
+    if event == "denied":
+        return invitation.status == "denied"
+    if event == "approval_reverted":
+        return invitation.status == "submitted" and invitation.approval_reverted_at is not None
+    return invitation.status not in _RESCHEDULE_STALE_STATUSES
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_staff_lifecycle_notification(
+    self,
+    *,
+    request_id: str,
+    tenant_schema: str,
+    invitation_id: str,
+    recipient_user_id: str,
+    actor_user_id: str,
+    event: StaffLifecycleEvent,
+) -> None:
+    """Emails one responsible staff member (resolved host or named point of
+    contact) that the invitation was denied, had its approval reverted, or
+    was rescheduled. One task per recipient, with the recipient passed
+    explicitly — same reasoning as `send_host_creation_notification`: a
+    retry never re-sends to someone already emailed, and an
+    exhausted-retries log names who went unnotified.
+    """
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(
+            _send_staff_lifecycle_notification(
+                tenant_schema, invitation_id, recipient_user_id, actor_user_id, event
+            )
+        )
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "staff_lifecycle_notification_dispatch_exhausted",
+                tenant_schema=tenant_schema,
+                invitation_id=invitation_id,
+                recipient_user_id=recipient_user_id,
+                lifecycle_event=event,
+            )
+        raise
+
+
+async def _send_staff_lifecycle_notification(
+    tenant_schema: str,
+    invitation_id: str,
+    recipient_user_id: str,
+    actor_user_id: str,
+    event: StaffLifecycleEvent,
+) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            if invitation is None or not _staff_event_still_current(invitation, event):
+                return
+            users = UserRepository(session)
+            recipient = await users.get_active(uuid.UUID(recipient_user_id))
+            if recipient is None:
+                logger.warning(
+                    "staff_lifecycle_notification_recipient_not_found",
+                    tenant_schema=tenant_schema,
+                    invitation_id=invitation_id,
+                    recipient_user_id=recipient_user_id,
+                    lifecycle_event=event,
+                )
+                return
+            # A deactivated actor still has a usable name; only a deleted one
+            # falls back to the template's "A staff member".
+            actor = await users.get_by_id(uuid.UUID(actor_user_id))
+            if event == "denied":
+                reason = invitation.denial_reason
+            elif event == "approval_reverted":
+                reason = invitation.approval_revert_reason
+            else:
+                reason = None
+            subject, body, html_body = _render_or_fallback(
+                "staff_lifecycle_update",
+                {
+                    **await _invitation_email_context(
+                        session,
+                        invitation,
+                        recipient_name=recipient.full_name,
+                        recipient_email=recipient.email,
+                    ),
+                    "event": event,
+                    "actor_name": actor.full_name if actor is not None else None,
+                    "reason": reason,
+                    "awaiting_approval": invitation.status == "submitted",
+                    "visitor_phone": invitation.primary_contact_phone,
+                    "visitor_email": invitation.primary_contact_email,
+                },
+                fallback_subject=_STAFF_LIFECYCLE_FALLBACK_SUBJECTS[event],
+            )
+            await notifications.email_sender.send(
+                to=recipient.email, subject=subject, body=body, html_body=html_body
+            )
+    finally:
+        await engine.dispose()
+
+
+_STAFF_LIFECYCLE_FALLBACK_SUBJECTS: dict[str, str] = {
+    "denied": "A visit request was denied",
+    "approval_reverted": "Approval withdrawn for a visit",
+    "rescheduled": "A visit has been rescheduled",
+}
 
 
 async def _dispatch(

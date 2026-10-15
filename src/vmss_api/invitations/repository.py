@@ -154,6 +154,15 @@ def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) 
     return or_(host_or_delegate_or_actor, current_role_holder, default_host_role_holder)
 
 
+def relevant_to_me_clause(user_id: uuid.UUID, default_host_role_id: uuid.UUID) -> Any:
+    """Public handle on the `relevantToMe` predicate for other features — the
+    personal dashboard counts over exactly this set so it can never disagree
+    with `GET /invitations?relevantToMe=true` (staff-lifecycle-emails-and-
+    dashboard-landing design.md D6).
+    """
+    return _relevant_to_me_filter(user_id, default_host_role_id)
+
+
 def _list_filters(
     *,
     branch_scope: BranchScope | None,

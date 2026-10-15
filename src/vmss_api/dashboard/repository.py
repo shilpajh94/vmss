@@ -1,4 +1,5 @@
-from datetime import datetime
+import uuid
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -7,8 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.tenancy import branch_filter as _core_branch_filter
 from vmss_api.invitations.models import Invitation
+from vmss_api.invitations.repository import relevant_to_me_clause
 
 _CHECKED_IN_STATUSES = ("checked_in", "checked_out")
+# A visit "happening today" — denied/archived/still-pending ones aren't.
+_VISIT_TODAY_STATUSES = ("approved", "checked_in", "checked_out")
 
 
 def _branch_filter(branch_scope: BranchScope) -> Any | None:
@@ -20,6 +24,15 @@ def _branch_filter(branch_scope: BranchScope) -> Any | None:
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
     return column.desc() if sort_order == SortOrder.desc else column.asc()
+
+
+def _upcoming_filters(now_utc: datetime) -> tuple[Any, ...]:
+    """Approved, never admitted, not yet expired."""
+    return (
+        Invitation.status == "approved",
+        Invitation.check_in_status == "unused",
+        Invitation.expires_at > now_utc,
+    )
 
 
 class DashboardRepository:
@@ -77,6 +90,58 @@ class DashboardRepository:
         if branch_filter is not None:
             filters.append(branch_filter)
         stmt = select(Invitation).where(*filters).order_by(Invitation.expires_at.asc()).limit(limit)
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def personal_overview_counts(
+        self,
+        *,
+        user_id: uuid.UUID,
+        default_host_role_id: uuid.UUID,
+        today: date,
+        now_utc: datetime,
+    ) -> dict[str, int]:
+        """dashboard spec "Personal Dashboard Overview Scoped to the Caller's
+        Relevant Invitations" — every figure in one `COUNT(*) FILTER (...)`
+        query over the caller's `relevantToMe` set.
+        """
+        stmt = select(
+            func.count()
+            .filter(
+                Invitation.preferred_visit_date == today,
+                Invitation.status.in_(_VISIT_TODAY_STATUSES),
+            )
+            .label("visits_today"),
+            func.count().filter(Invitation.status == "checked_in").label("inside_now"),
+            func.count().filter(Invitation.status == "submitted").label("awaiting_approval"),
+            func.count().filter(*_upcoming_filters(now_utc)).label("upcoming"),
+        ).where(
+            Invitation.deleted_at.is_(None),
+            relevant_to_me_clause(user_id, default_host_role_id),
+        )
+        return dict((await self.session.execute(stmt)).one()._mapping)
+
+    async def personal_upcoming_preview(
+        self,
+        *,
+        user_id: uuid.UUID,
+        default_host_role_id: uuid.UUID,
+        now_utc: datetime,
+        limit: int,
+    ) -> list[Invitation]:
+        stmt = (
+            select(Invitation)
+            .where(
+                Invitation.deleted_at.is_(None),
+                relevant_to_me_clause(user_id, default_host_role_id),
+                *_upcoming_filters(now_utc),
+            )
+            .order_by(
+                Invitation.preferred_visit_date.asc().nulls_last(),
+                Invitation.preferred_visit_time.asc().nulls_last(),
+                Invitation.expires_at.asc(),
+            )
+            .limit(limit)
+        )
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def paginated_checkins(

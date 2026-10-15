@@ -725,10 +725,48 @@ approved ──revert-approval──> submitted   (only while checkInStatus = un
     since it's an internal note. The task skips sending if the invitation
     has already been re-approved by the time it runs.
   - The host gets a push (`action: approval_reverted`).
+  - The host and point of contact also get the staff lifecycle email,
+    which does include the reason. See "Notifying the responsible staff"
+    below.
 - **Permission**: `invitations:revert-approval` is separate from
   `invitations:approve`. It is granted by default to `admin`, `reception`
   and `host`, but not `security`. Tenant migration `6054f5200ed1` backfills
   it to those standard roles in existing tenants.
+
+## Notifying the responsible staff
+
+`staff-lifecycle-emails-and-dashboard-landing`. A denial (direct, or via a
+rejected approval step), an approval revert, or a reschedule (including
+one out of `archived`) also tells the staff who own the visit, not just
+the visitor:
+
+| Who | Email | Push |
+|---|---|---|
+| Visitor (primary contact) | Existing denial / withdrawal / reschedule email or SMS | — |
+| Resolved host (`hostId`) | Staff lifecycle email | Existing host push |
+| Point-of-contact user (`pocUserId`) | Staff lifecycle email | Push, unless they're also the host |
+| Point-of-contact role (`pocRoleId`) | None, because a role POC is push-only | Push to every holder at the branch or company-wide, with `reason: "lifecycle_update"` |
+
+- **Recipients**: the person who performed the action is never emailed or
+  POC-pushed. Someone who is both host and point of contact gets one email
+  and one push. Deactivated users are skipped with a `WARNING`. The
+  existing host push is unchanged, even when the host is the actor.
+- **Email**: `send_staff_lifecycle_notification` sends one Celery task per
+  recipient, so a retry never re-sends to someone already emailed. The
+  template is `staff_lifecycle_update`, and its tone and pill vary by
+  event: red for denied, amber for approval withdrawn, blue for
+  rescheduled. It names the actor (or "A staff member" if that account is
+  gone) and includes the denial or revert reason. It never includes the QR
+  pass.
+- **Redelivery**: the task skips the send once the invitation no longer
+  reflects the event. A denial must still be `denied`. A revert must still
+  be `submitted` with `approvalRevertedAt` set. A reschedule is skipped
+  once the invitation is `denied`, `checked_in` or `checked_out`.
+- **Extend**: `PATCH …/extend` now pushes the host (`action: extended`,
+  plus `expiresAt` in the payload, with the new expiry in the body). It
+  sends no email.
+- **Not covered**: check-in and check-out stay push-only, and the
+  automatic check-out and archive sweep stays silent.
 
 ## Automatic check-out and archived no-shows
 

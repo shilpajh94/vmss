@@ -16,6 +16,7 @@ same way `reports/repository.py::BranchRollupRepository` reads across
 | GET | `/api/v1/admin/dashboard/overview` | `invitations:view-all` | Visits-today/checked-in/pending-approval/upcoming-visitor counts plus a bounded (10) upcoming-visitors preview. Each preview row includes `trackingId`, so the "check in" action calls `PATCH /api/v2/invitations/{trackingId}/check-in` directly — see "Check-in is done through the canonical invitation endpoint" below. |
 | GET | `/api/v1/admin/dashboard/checkins` | `invitations:view-all` | Paginated "View All" list of every invitation that has been checked in at least once (`checked_in` or `checked_out`). |
 | GET | `/api/v1/admin/dashboard/search` | `invitations:view-all` | Topbar search — case-insensitive partial match on the primary contact's full name, capped at 10 results. |
+| GET | `/api/v1/admin/dashboard/my-overview` | Any authenticated user | The staff landing page. Returns `visitsToday`, `insideNow`, `awaitingApproval` and `upcoming`, plus a 5-row `upcomingPreview`, all counted over the caller's own `relevantToMe` invitations. See "Personal overview" below. |
 
 **Removed** (`checkin-approval-workflow-improvements`): `PATCH
 /api/v1/admin/dashboard/upcoming-visitors` — this duplicated
@@ -25,9 +26,37 @@ canonical `PATCH /api/v2/invitations/{trackingId}/check-in` endpoint
 directly, using the `trackingId` already present on each upcoming-visitors
 preview row.
 
+## Personal overview (`my-overview`)
+
+`staff-lifecycle-emails-and-dashboard-landing`. Hosts can't read the
+branch-wide endpoints, so the staff portal's landing page uses this
+instead.
+
+- **Scope**: exactly the set `GET /invitations?relevantToMe=true` returns
+  for the same caller. The repository applies the same predicate
+  (`invitations.repository.relevant_to_me_clause`), so the dashboard and
+  the board can't disagree. A holder of the tenant's default host role
+  therefore sees branch-wide numbers here, just as on their board.
+- **No branch gate**: like the `relevantToMe` list, the predicate is the
+  whole authorization. There is no `branchId` param, and `X-Branch-ID` is
+  ignored.
+- **Figures**:
+  - `visitsToday` counts invitations scheduled today (tenant timezone) in
+    `approved`, `checked_in` or `checked_out`.
+  - `insideNow` counts `checked_in` invitations.
+  - `awaitingApproval` counts `submitted` invitations.
+  - `upcoming` counts invitations that are `approved`, never checked in,
+    and not yet expired.
+  - The preview lists upcoming invitations by scheduled date and time.
+
+  `archived` and `denied` invitations count toward nothing.
+- **Prefix**: the route lives under `/admin/dashboard` for historical
+  reasons only. That router already serves reception and security, and
+  one feature exposes one `router`.
+
 ## `branchId` query param, not `X-Branch-ID` header
 
-Every endpoint above accepts an optional `branchId` query parameter instead of
+Every branch-wide endpoint above accepts an optional `branchId` query parameter instead of
 the `X-Branch-ID` header `GET /invitations` and other list endpoints use.
 This is a deliberate, dashboard-only deviation: the dashboard page has its own
 branch-selector control, not a global per-request header, and the frontend

@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Collection
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,6 +74,8 @@ async def notify_role_at_branch(
     title: str,
     body: str,
     data: dict[str, str] | None = None,
+    exclude_user_ids: Collection[uuid.UUID] = (),
+    reason: str = "role_assigned",
 ) -> None:
     """Resolves every user holding `role_id` at `branch_id` (or company-wide)
     synchronously, then enqueues one dispatch addressed to that resolved set
@@ -81,12 +84,21 @@ async def notify_role_at_branch(
     recipient" case).
 
     Adds `assignedRoleId`/`reason` addressing metadata to the payload
-    (role-based-invitation-workflow), `reason: "role_assigned"` — the
-    role-fan-out counterpart of `notify_user`'s `assignedUserId`/`delegated`.
+    (role-based-invitation-workflow), `reason: "role_assigned"` by default —
+    the role-fan-out counterpart of `notify_user`'s `assignedUserId`/
+    `delegated`. A point-of-contact lifecycle push passes
+    `reason="lifecycle_update"` so a client doesn't label it a new
+    assignment, and `exclude_user_ids` to skip the actor and the host, who
+    already get their own push (staff-lifecycle-emails-and-dashboard-landing
+    design.md D4).
     """
-    user_ids = await UserRepository(tenant_db).list_user_ids_holding_role_at_branch(
-        role_id, branch_id
-    )
+    user_ids = [
+        user_id
+        for user_id in await UserRepository(tenant_db).list_user_ids_holding_role_at_branch(
+            role_id, branch_id
+        )
+        if user_id not in exclude_user_ids
+    ]
     if not user_ids:
         logger.warning(
             "push_notify_role_no_holders", role_id=str(role_id), branch_id=str(branch_id)
@@ -98,7 +110,7 @@ async def notify_role_at_branch(
         user_ids=[str(user_id) for user_id in user_ids],
         title=title,
         body=body,
-        data={**(data or {}), "assignedRoleId": str(role_id), "reason": "role_assigned"},
+        data={**(data or {}), "assignedRoleId": str(role_id), "reason": reason},
     )
 
 

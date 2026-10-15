@@ -13922,3 +13922,419 @@ async def test_export_archived_date_range_applies_to_archived_at(
         "Archived At",
     ]
     assert [row["Tracking ID"] for row in _csv_rows(exported.content)] == [recent.tracking_id]
+
+
+# --- staff-lifecycle-emails-and-dashboard-landing ----------------------------
+# invitations spec "Denial, Approval Revert, and Reschedule Email the
+# Responsible Staff" / "... Push the Point of Contact" / "Invitation Expiry
+# Extension Notifies the Host via Push". `staff_lifecycle_email_calls` is the
+# root conftest's autouse capture of the staff email task's `.delay`. Ids are
+# read into locals before any request (gotcha: get_tenant's rollback).
+
+
+def _capture_pushes(monkeypatch) -> tuple[list[dict], list[dict]]:
+    """Captures `(user_push_calls, role_push_calls)`."""
+    user_calls: list[dict] = []
+    role_calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        user_calls.append(kwargs)
+
+    async def _fake_notify_role_at_branch(tenant_db, **kwargs):
+        role_calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+    monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify_role_at_branch)
+    return user_calls, role_calls
+
+
+def _silence_visitor_dispatch(monkeypatch) -> None:
+    for task in (
+        tasks.send_denial_notification,
+        tasks.send_approval_revert_notification,
+        tasks.send_reschedule_notification,
+    ):
+        monkeypatch.setattr(task, "delay", lambda **kw: None)
+
+
+async def _staff_pair(db_session: AsyncSession) -> tuple[User, User]:
+    host = _make_host(db_session)
+    poc = UserFactory.build(
+        id=uuid.uuid4(), email=f"poc-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="POC"
+    )
+    db_session.add_all([host, poc])
+    await db_session.flush()
+    return host, poc
+
+
+async def test_revert_emails_host_and_poc_and_pushes_poc(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+    staff_lifecycle_email_calls: list[dict],
+) -> None:
+    host, poc = await _staff_pair(db_session)
+    invitation = _approved_invitation(db_session, branch.id, host_id=host.id, poc_user_id=poc.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    host_id, poc_id, invitation_id, user_id = host.id, poc.id, invitation.id, user.id
+    _silence_visitor_dispatch(monkeypatch)
+    user_pushes, role_pushes = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await _revert(client, token, invitation_id, "Host on leave that day")
+    assert response.status_code == 200, response.text
+
+    assert sorted(c["recipient_user_id"] for c in staff_lifecycle_email_calls) == sorted(
+        [str(host_id), str(poc_id)]
+    )
+    for call in staff_lifecycle_email_calls:
+        assert call["event"] == "approval_reverted"
+        assert call["actor_user_id"] == str(user_id)
+        assert call["invitation_id"] == str(invitation_id)
+    assert sorted(str(c["user_id"]) for c in user_pushes) == sorted([str(host_id), str(poc_id)])
+    assert all(c["data"]["action"] == "approval_reverted" for c in user_pushes)
+    assert role_pushes == []
+
+
+async def test_reschedule_by_host_does_not_email_the_actor(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+    staff_lifecycle_email_calls: list[dict],
+) -> None:
+    _, poc = await _staff_pair(db_session)
+    invitation = _build_invitation(
+        db_session, branch.id, status="submitted", host_id=user.id, poc_user_id=poc.id
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    poc_id, invitation_id, user_id = poc.id, invitation.id, user.id
+    _silence_visitor_dispatch(monkeypatch)
+    user_pushes, _ = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await _reschedule(
+        client, token, invitation_id, datetime.now(UTC).date() + timedelta(days=5)
+    )
+    assert response.status_code == 200, response.text
+
+    assert [c["recipient_user_id"] for c in staff_lifecycle_email_calls] == [str(poc_id)]
+    assert staff_lifecycle_email_calls[0]["event"] == "rescheduled"
+    # Host push is unchanged (still sent to the acting host); POC pushed once.
+    assert sorted(str(c["user_id"]) for c in user_pushes) == sorted([str(user_id), str(poc_id)])
+
+
+async def test_deny_host_who_is_also_poc_gets_one_email_and_one_push(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+    staff_lifecycle_email_calls: list[dict],
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    invitation = _build_invitation(
+        db_session, branch.id, status="submitted", host_id=host.id, poc_user_id=host.id
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    host_id, invitation_id = host.id, invitation.id
+    _silence_visitor_dispatch(monkeypatch)
+    user_pushes, _ = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation_id}/deny",
+        json={"reason": "Visitor not on the expected list"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert [c["recipient_user_id"] for c in staff_lifecycle_email_calls] == [str(host_id)]
+    assert staff_lifecycle_email_calls[0]["event"] == "denied"
+    assert [c["user_id"] for c in user_pushes] == [host_id]
+
+
+async def test_deny_with_role_poc_pushes_role_and_sends_no_email(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+    staff_lifecycle_email_calls: list[dict],
+) -> None:
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"security-{uuid.uuid4().hex[:6]}")
+    db_session.add(role)
+    await db_session.flush()
+    invitation = _build_invitation(db_session, branch.id, status="submitted", poc_role_id=role.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    role_id, branch_id, invitation_id, user_id = role.id, branch.id, invitation.id, user.id
+    _silence_visitor_dispatch(monkeypatch)
+    user_pushes, role_pushes = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation_id}/deny",
+        json={"reason": "Not expected"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert staff_lifecycle_email_calls == []
+    assert user_pushes == []
+    assert len(role_pushes) == 1
+    assert role_pushes[0]["role_id"] == role_id
+    assert role_pushes[0]["branch_id"] == branch_id
+    assert role_pushes[0]["reason"] == "lifecycle_update"
+    assert role_pushes[0]["exclude_user_ids"] == {user_id}
+    assert role_pushes[0]["data"]["action"] == "denied"
+
+
+async def test_rejected_revert_sends_no_staff_notification(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+    staff_lifecycle_email_calls: list[dict],
+) -> None:
+    host, poc = await _staff_pair(db_session)
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        host_id=host.id,
+        poc_user_id=poc.id,
+        status="checked_in",
+        check_in_status="checked_in",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    invitation_id = invitation.id
+    _silence_visitor_dispatch(monkeypatch)
+    user_pushes, _ = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await _revert(client, token, invitation_id, "Mistake")
+    assert response.status_code == 409, response.text
+    assert staff_lifecycle_email_calls == []
+    assert user_pushes == []
+
+
+async def test_reschedule_archived_emails_the_responsible_staff(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    monkeypatch,
+    staff_lifecycle_email_calls: list[dict],
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    invitation = _archived_invitation(db_session, branch.id, host_id=host.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    host_id, invitation_id = host.id, invitation.id
+    _silence_visitor_dispatch(monkeypatch)
+    _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await _reschedule(
+        client, token, invitation_id, datetime.now(UTC).date() + timedelta(days=3)
+    )
+    assert response.status_code == 200, response.text
+    assert [(c["recipient_user_id"], c["event"]) for c in staff_lifecycle_email_calls] == [
+        (str(host_id), "rescheduled")
+    ]
+
+
+# --- staff lifecycle email task (real test DB) -------------------------------
+
+
+def _record_staff_emails(monkeypatch) -> list[dict]:
+    sent: list[dict] = []
+
+    class _RecordingEmailSender:
+        async def send(self, **kwargs):
+            sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
+    return sent
+
+
+async def test_staff_lifecycle_email_names_actor_and_reason_without_qr(
+    tenant: Tenant, branch: Branch, db_session: AsyncSession, user: User, monkeypatch
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        host_id=host.id,
+        status="submitted",
+        approval_reverted_at=datetime.now(UTC),
+        approval_revert_reason="Host on leave that day",
+        primary_contact_full_name="Meera Krishnan",
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    sent = _record_staff_emails(monkeypatch)
+
+    await tasks._send_staff_lifecycle_notification(
+        tenant.schema_name, str(invitation.id), str(host.id), str(user.id), "approval_reverted"
+    )
+
+    assert len(sent) == 1
+    email = sent[0]
+    assert email["to"] == host.email
+    assert email["subject"] == "Approval withdrawn for Meera Krishnan's visit"
+    assert "Host on leave that day" in email["body"]
+    assert user.full_name in email["body"]
+    assert "Reason given" in email["html_body"]
+    assert "qr" not in email["html_body"].lower()
+    assert "inline_images" not in email
+
+
+@pytest.mark.parametrize(
+    ("event", "stale_overrides"),
+    [
+        ("denied", {"status": "submitted"}),
+        ("approval_reverted", {"status": "approved", "approval_reverted_at": None}),
+        ("rescheduled", {"status": "checked_out", "check_in_status": "checked_out"}),
+    ],
+)
+async def test_staff_lifecycle_email_skipped_when_event_no_longer_current(
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    user: User,
+    monkeypatch,
+    event: str,
+    stale_overrides: dict,
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    invitation = _approved_invitation(db_session, branch.id, host_id=host.id, **stale_overrides)
+    db_session.add(invitation)
+    await db_session.commit()
+    sent = _record_staff_emails(monkeypatch)
+
+    await tasks._send_staff_lifecycle_notification(
+        tenant.schema_name, str(invitation.id), str(host.id), str(user.id), event
+    )
+    assert sent == []
+
+
+async def test_staff_lifecycle_email_skips_inactive_recipient(
+    tenant: Tenant, branch: Branch, db_session: AsyncSession, user: User, monkeypatch
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    host.is_active = False
+    invitation = _build_invitation(
+        db_session, branch.id, status="denied", host_id=host.id, denial_reason="No"
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    sent = _record_staff_emails(monkeypatch)
+
+    with capture_logs() as logs:
+        await tasks._send_staff_lifecycle_notification(
+            tenant.schema_name, str(invitation.id), str(host.id), str(user.id), "denied"
+        )
+    assert sent == []
+    assert any(log["event"] == "staff_lifecycle_notification_recipient_not_found" for log in logs)
+
+
+async def test_staff_lifecycle_email_falls_back_when_actor_deleted(
+    tenant: Tenant, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    invitation = _build_invitation(
+        db_session, branch.id, status="denied", host_id=host.id, denial_reason="No"
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    sent = _record_staff_emails(monkeypatch)
+
+    await tasks._send_staff_lifecycle_notification(
+        tenant.schema_name, str(invitation.id), str(host.id), str(uuid.uuid4()), "denied"
+    )
+    assert len(sent) == 1
+    assert "A staff member denied" in sent[0]["body"]
+
+
+# --- extend pushes the host ----------------------------------------------------
+
+
+async def test_extend_invitation_pushes_host_with_new_expiry(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    now = datetime.now(UTC)
+    invitation = _approved_invitation(
+        db_session, branch.id, host_id=host.id, expires_at=now + timedelta(days=1)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    host_id, invitation_id = host.id, invitation.id
+    new_expiry = now + timedelta(days=7)
+    user_pushes, _ = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation_id}/extend",
+        json={"expiresAt": new_expiry.isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert len(user_pushes) == 1
+    assert user_pushes[0]["user_id"] == host_id
+    assert user_pushes[0]["title"] == "Visit pass extended"
+    assert user_pushes[0]["data"]["action"] == "extended"
+    assert datetime.fromisoformat(user_pushes[0]["data"]["expiresAt"]) == new_expiry
+    assert "valid until" in user_pushes[0]["body"]
+
+
+async def test_extend_invitation_rejected_sends_no_push(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    now = datetime.now(UTC)
+    invitation = _approved_invitation(
+        db_session, branch.id, host_id=host.id, expires_at=now + timedelta(days=2)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    invitation_id = invitation.id
+    user_pushes, _ = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation_id}/extend",
+        json={"expiresAt": (now + timedelta(days=1)).isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422, response.text
+    assert user_pushes == []
+
+
+async def test_extend_invitation_without_host_sends_no_push(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    now = datetime.now(UTC)
+    invitation = _approved_invitation(db_session, branch.id, expires_at=now + timedelta(days=1))
+    db_session.add(invitation)
+    await db_session.commit()
+    invitation_id = invitation.id
+    user_pushes, _ = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation_id}/extend",
+        json={"expiresAt": (now + timedelta(days=3)).isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert user_pushes == []

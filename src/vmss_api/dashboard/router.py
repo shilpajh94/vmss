@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.core.deps import get_pagination, get_tenant, get_tenant_db
+from vmss_api.auth.models import User
+from vmss_api.core.deps import get_current_user, get_pagination, get_tenant, get_tenant_db
 from vmss_api.core.responses import paginated_response, success_response
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.dashboard import service
@@ -14,6 +15,7 @@ from vmss_api.dashboard.schemas import (
     DashboardCheckInSortableField,
     DashboardOverviewOut,
     DashboardSearchResultOut,
+    MyDashboardOverviewOut,
 )
 from vmss_api.tenant.models import Tenant
 
@@ -37,6 +39,26 @@ async def get_overview(
     restrict-delegated-invitation-visibility).
     """
     overview = await service.get_overview(tenant_db, tenant, branch_scope)
+    return success_response(data=overview)
+
+
+@router.get(
+    "/my-overview",
+    response_model=Envelope[MyDashboardOverviewOut],
+)
+async def get_my_overview(
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """spec.md "Personal Dashboard Overview Scoped to the Caller's Relevant
+    Invitations" — the staff landing page. Any authenticated user; no
+    branch-scope dependency, so `X-Branch-ID` is never read. The
+    `/admin/dashboard` prefix is historical — the router already serves
+    reception and security (staff-lifecycle-emails-and-dashboard-landing
+    design.md D6).
+    """
+    overview = await service.get_my_overview(tenant_db, tenant, user)
     return success_response(data=overview)
 
 

@@ -227,7 +227,7 @@ async def reject_step(
         )
 
     return await invitations_service.deny_invitation(
-        tenant_db, invitation, reason=reason, tenant=tenant
+        tenant_db, invitation, reason=reason, tenant=tenant, actor_user_id=user.id
     )
 
 

@@ -3026,3 +3026,58 @@ async def test_reschedule_archived_invitation_restarts_workflow_from_first_step(
     assert [s.status for s in steps] == ["pending", "pending"]
     assert len(step_pushes) == 1
     assert step_pushes[0]["approver_role_id"] == step_one_role_id
+
+
+async def test_reject_step_emails_host_and_poc_but_not_the_rejecting_approver(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+    staff_lifecycle_email_calls: list[dict],
+) -> None:
+    """invitations spec "Denial via a rejected approval step emails the
+    staff" (staff-lifecycle-emails-and-dashboard-landing) — the rejecting
+    approver is the actor, so they're excluded even when named point of
+    contact; the host still gets the email with event `denied`.
+    """
+    role = RoleFactory.build(id=uuid.uuid4(), name="reject-staff-email-role", permissions=[])
+    db_session.add(role)
+    await db_session.flush()
+    approver = await _user_with_role(
+        db_session, branch.id, role=role, extra_permission_codes=("invitations:approve",)
+    )
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Host"
+    )
+    db_session.add(host)
+    await db_session.flush()
+    invitation = _build_invitation(db_session, branch.id, host_id=host.id, poc_user_id=approver.id)
+    db_session.add(invitation)
+    await db_session.flush()
+    db_session.add(
+        InvitationApprovalStepFactory.build(
+            id=uuid.uuid4(), invitation_id=invitation.id, step_order=1, approver_role_id=role.id
+        )
+    )
+    await db_session.commit()
+    invitation_id, host_id, approver_id = invitation.id, host.id, approver.id
+    monkeypatch.setattr(tasks.send_denial_notification, "delay", lambda **kw: None)
+
+    async def _fake_notify_user(**kwargs):
+        return None
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+
+    step = await _get_step(db_session, invitation_id, 1)
+    token = issue_token(approver)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation_id}/approval-steps/{step.id}/reject",
+        json={"reason": "Not a valid visit purpose"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    assert [
+        (c["recipient_user_id"], c["event"], c["actor_user_id"])
+        for c in staff_lifecycle_email_calls
+    ] == [(str(host_id), "denied", str(approver_id))]

@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.auth.models import User
 from vmss_api.core.logging import logger
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.dashboard.repository import DashboardRepository
@@ -10,13 +11,17 @@ from vmss_api.dashboard.schemas import (
     DashboardCheckInListItemOut,
     DashboardOverviewOut,
     DashboardSearchResultOut,
+    MyDashboardOverviewOut,
+    MyUpcomingVisitorOut,
     UpcomingVisitorOut,
 )
 from vmss_api.invitations.models import Invitation
+from vmss_api.org_structure.service import get_default_host_role
 from vmss_api.tenant.models import Tenant
 
 _UPCOMING_PREVIEW_LIMIT = 10
 _SEARCH_RESULT_LIMIT = 10
+_MY_UPCOMING_PREVIEW_LIMIT = 5
 
 
 def _resolve_tenant_timezone(tenant: Tenant) -> ZoneInfo:
@@ -94,6 +99,33 @@ async def get_overview(
     )
     return DashboardOverviewOut(
         upcoming_visitors=[_to_upcoming_visitor_out(invitation) for invitation in upcoming],
+        **counts,
+    )
+
+
+async def get_my_overview(
+    tenant_db: AsyncSession, tenant: Tenant, user: User
+) -> MyDashboardOverviewOut:
+    """No branch scope at all — the `relevantToMe` predicate is the whole
+    authorization, same as `GET /invitations?relevantToMe=true` (design.md
+    D6). The default host role is resolved here exactly as that list does.
+    """
+    now_utc = datetime.now(UTC)
+    day_start_utc, _ = _today_bounds_utc(tenant, now_utc=now_utc)
+    today = day_start_utc.astimezone(_resolve_tenant_timezone(tenant)).date()
+    default_host_role_id = (await get_default_host_role(tenant_db)).id
+    repository = DashboardRepository(tenant_db)
+    counts = await repository.personal_overview_counts(
+        user_id=user.id, default_host_role_id=default_host_role_id, today=today, now_utc=now_utc
+    )
+    upcoming = await repository.personal_upcoming_preview(
+        user_id=user.id,
+        default_host_role_id=default_host_role_id,
+        now_utc=now_utc,
+        limit=_MY_UPCOMING_PREVIEW_LIMIT,
+    )
+    return MyDashboardOverviewOut(
+        upcoming_preview=[MyUpcomingVisitorOut.model_validate(row) for row in upcoming],
         **counts,
     )
 

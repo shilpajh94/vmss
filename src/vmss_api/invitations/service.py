@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from datetime import UTC, date, datetime, time, timedelta
+from functools import partial
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -147,6 +148,94 @@ async def _notify_host(
             title=title,
             body=body,
             data=data,
+        )
+
+
+@dataclass(frozen=True)
+class _ResponsibleStaff:
+    email_user_ids: tuple[uuid.UUID, ...]
+    push_poc_user_id: uuid.UUID | None
+    push_poc_role_id: uuid.UUID | None
+
+
+def _responsible_staff(invitation: Invitation, *, actor_user_id: uuid.UUID) -> _ResponsibleStaff:
+    """Who besides the visitor hears about a denial, revert or reschedule
+    (staff-lifecycle-emails-and-dashboard-landing design.md D1). Email goes
+    to the resolved host and the named point-of-contact user — once each,
+    never to the actor. The point of contact is also pushed, unless they're
+    the actor or the host (who already gets `_notify_host`'s push). A
+    role-identified point of contact is push-only, like everywhere else.
+    """
+    email_user_ids = tuple(
+        dict.fromkeys(
+            user_id
+            for user_id in (invitation.host_id, invitation.poc_user_id)
+            if user_id is not None and user_id != actor_user_id
+        )
+    )
+    push_poc_user_id = invitation.poc_user_id
+    if push_poc_user_id in (actor_user_id, invitation.host_id):
+        push_poc_user_id = None
+    return _ResponsibleStaff(
+        email_user_ids=email_user_ids,
+        push_poc_user_id=push_poc_user_id,
+        push_poc_role_id=invitation.poc_role_id,
+    )
+
+
+_STAFF_EVENT_PUSH_BUILDERS: dict[
+    tasks.StaffLifecycleEvent, Callable[[Invitation], tuple[str, str, dict[str, str]]]
+] = {
+    "denied": push_notifications.denied,
+    "approval_reverted": push_notifications.approval_reverted,
+    "rescheduled": push_notifications.rescheduled,
+}
+
+
+async def _notify_responsible_staff(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    invitation: Invitation,
+    *,
+    event: tasks.StaffLifecycleEvent,
+    actor_user_id: uuid.UUID,
+) -> None:
+    """Called after commit, alongside the visitor dispatch and `_notify_host`
+    (invitations spec "Denial, Approval Revert, and Reschedule Email the
+    Responsible Staff" / "... Push the Point of Contact").
+    """
+    staff = _responsible_staff(invitation, actor_user_id=actor_user_id)
+    for recipient_user_id in staff.email_user_ids:
+        tasks.send_staff_lifecycle_notification.delay(
+            request_id=_current_request_id(),
+            tenant_schema=tenant.schema_name,
+            invitation_id=str(invitation.id),
+            recipient_user_id=str(recipient_user_id),
+            actor_user_id=str(actor_user_id),
+            event=event,
+        )
+    title, body, data = _STAFF_EVENT_PUSH_BUILDERS[event](invitation)
+    if staff.push_poc_user_id is not None:
+        await notifications_service.notify_user(
+            tenant_schema=tenant.schema_name,
+            user_id=staff.push_poc_user_id,
+            title=title,
+            body=body,
+            data=data,
+        )
+    if staff.push_poc_role_id is not None and invitation.branch_id is not None:
+        await notifications_service.notify_role_at_branch(
+            tenant_db,
+            tenant_schema=tenant.schema_name,
+            role_id=staff.push_poc_role_id,
+            branch_id=invitation.branch_id,
+            title=title,
+            body=body,
+            data=data,
+            exclude_user_ids={
+                user_id for user_id in (actor_user_id, invitation.host_id) if user_id is not None
+            },
+            reason="lifecycle_update",
         )
 
 
@@ -1696,7 +1785,12 @@ async def get_invitation_detail_form_context(
 
 
 async def deny_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, reason: str, tenant: Tenant
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    reason: str,
+    tenant: Tenant,
+    actor_user_id: uuid.UUID,
 ) -> Invitation:
     """Transitions a `submitted` invitation to `denied` and enqueues the
     denial notification — mirrors `approve_invitation`'s own
@@ -1713,6 +1807,9 @@ async def deny_invitation(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.denied)
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="denied", actor_user_id=actor_user_id
+    )
     return updated
 
 
@@ -1766,6 +1863,9 @@ async def revert_invitation_approval(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.approval_reverted)
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="approval_reverted", actor_user_id=user.id
+    )
     await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
     return updated
 
@@ -2037,6 +2137,7 @@ async def _reschedule_archived(
     preferred_visit_date: date,
     preferred_visit_time: Any,
     tenant: Tenant,
+    actor_user_id: uuid.UUID,
 ) -> Invitation:
     """An archived no-show goes back to `submitted` for re-approval on its new
     date, never straight to `approved` — the Company auto-approve setting is
@@ -2062,6 +2163,9 @@ async def _reschedule_archived(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.rescheduled)
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="rescheduled", actor_user_id=actor_user_id
+    )
     await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
     return updated
 
@@ -2073,6 +2177,7 @@ async def reschedule_invitation(
     preferred_visit_date: Any,
     preferred_visit_time: Any,
     tenant: Tenant,
+    actor_user_id: uuid.UUID,
 ) -> Invitation:
     """Notifies the primary contact of the new date/time on success
     (specs/invitations/spec.md "Reschedule Dispatches a Notification to the
@@ -2086,6 +2191,7 @@ async def reschedule_invitation(
             preferred_visit_date=preferred_visit_date,
             preferred_visit_time=preferred_visit_time,
             tenant=tenant,
+            actor_user_id=actor_user_id,
         )
     if invitation.status not in _RESCHEDULABLE_STATUSES:
         raise HTTPException(
@@ -2114,6 +2220,9 @@ async def reschedule_invitation(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.rescheduled)
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="rescheduled", actor_user_id=actor_user_id
+    )
     return updated
 
 
@@ -2339,7 +2448,7 @@ async def edit_invitation(
 
 
 async def extend_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, new_expires_at: datetime
+    tenant_db: AsyncSession, invitation: Invitation, *, new_expires_at: datetime, tenant: Tenant
 ) -> Invitation:
     if invitation.status not in _ACTIVE_STATUSES:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not active")
@@ -2354,6 +2463,8 @@ async def extend_invitation(
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not active")
     await tenant_db.commit()
+    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    await _notify_host(tenant, updated, partial(push_notifications.extended, tz=tz))
     return updated
 
 
