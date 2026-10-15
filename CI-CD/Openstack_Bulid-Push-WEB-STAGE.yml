@@ -1,5 +1,5 @@
 trigger:
-- none
+- openstack-stage
 
 variables:
 - group: VMSS-WEB-OS-STAGE
