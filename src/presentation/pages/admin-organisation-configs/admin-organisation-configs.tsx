@@ -2,6 +2,7 @@ import { SlidersIcon } from '../../components/icons'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { usePageHeader } from '../../context/page-header-context'
 import { GeneralInformationCard } from './Components/GeneralInformationCard'
+import { KioskLocationValidationCard } from './Components/KioskLocationValidationCard'
 import { VisitorPolicyCard } from './Components/VisitorPolicyCard'
 import { useAdminOrganisationConfigs } from './hooks/use-admin-organisation-configs'
 
@@ -70,6 +71,8 @@ export function AdminOrganisationConfigsPage() {
           </div>
         </>
       )}
+
+      <KioskLocationValidationCard />
     </>
   )
 }
