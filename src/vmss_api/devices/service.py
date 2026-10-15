@@ -81,7 +81,7 @@ async def get_device_approval_status(
 ) -> DeviceApprovalStatusOut:
     device = await DeviceRepository(tenant_db).get_by_device_id(device_id)
     if device is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Device not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Device not registered")
     return DeviceApprovalStatusOut.model_validate(device)
 
 
