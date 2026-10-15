@@ -14,10 +14,12 @@ import {
   TagIcon,
   UserCheckIcon,
   UsersIcon,
-  XIcon,
 } from './icons'
-import { BrandLogo } from './BrandLogo'
 import { useNavDrawer } from '../context/nav-drawer-context'
+import { useSidebarCollapse } from '../context/sidebar-collapse-context'
+import { SidebarFrame } from './sidebar/SidebarFrame'
+import { SidebarHeader } from './sidebar/SidebarHeader'
+import { SidebarNavItem } from './sidebar/SidebarNavItem'
 
 export type AdminSidebarActiveItem =
   | 'dashboard'
@@ -96,6 +98,7 @@ export function adminNavLabelFor(pathname: string): string {
 export function AdminSidebar({ activeItem }: AdminSidebarProps) {
   const navigate = useNavigate()
   const { closeNav } = useNavDrawer()
+  const { isCollapsed } = useSidebarCollapse()
 
   const handleActivate = (key: AdminSidebarActiveItem) => {
     closeNav()
@@ -118,49 +121,33 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
   }
 
   return (
-    <aside className="flex h-full w-[min(280px,85vw)] shrink-0 lg:h-auto lg:w-[280px] flex-col gap-4 self-stretch bg-primary p-6">
-      <div className="flex shrink-0 items-center justify-between gap-2 pb-4">
-        <button
-          type="button"
-          onClick={() => {
-            closeNav()
-            navigate('/admin/dashboard')
-          }}
-          aria-label="Visimio home"
-          className="flex shrink-0 items-center gap-2 text-left"
-        >
-          <BrandLogo variant="on-dark" decorative />
-        </button>
-        <button
-          type="button"
-          onClick={closeNav}
-          aria-label="Close navigation menu"
-          className="flex size-10 shrink-0 items-center justify-center rounded-lg text-text-faint hover:bg-white/5 lg:hidden"
-        >
-          <XIcon className="size-5" />
-        </button>
-      </div>
+    <SidebarFrame expandedWidthClassName="w-[min(280px,85vw)] lg:w-[280px]" gapClassName="gap-4">
+      <SidebarHeader
+        className="pb-4"
+        onHome={() => {
+          closeNav()
+          navigate('/admin/dashboard')
+        }}
+      />
 
       <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
-        {NAV_ITEMS.map(({ key, label, icon: ItemIcon }) => (
-          <button
+        {NAV_ITEMS.map(({ key, label, icon }) => (
+          <SidebarNavItem
             key={key}
-            type="button"
-            onClick={() => handleActivate(key)}
-            className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left font-body text-sm font-semibold whitespace-nowrap ${
-              activeItem === key ? 'bg-admin-accent text-white' : 'text-text-faint hover:bg-white/5'
-            }`}
-          >
-            <ItemIcon className="size-[18px] shrink-0" />
-            {label}
-          </button>
+            icon={icon}
+            label={label}
+            isActive={activeItem === key}
+            onActivate={() => handleActivate(key)}
+            activeClassName="bg-admin-accent text-white"
+            inactiveClassName="text-text-faint hover:bg-white/5"
+          />
         ))}
       </nav>
 
-      <div className="flex shrink-0 items-center gap-2 border-t border-[#334155] pt-4">
+      <div className={`flex shrink-0 items-center gap-2 border-t border-[#334155] pt-4 ${isCollapsed ? 'justify-center' : ''}`}>
         <span className="size-2 rounded-full bg-success" />
-        <span className="font-body text-xs font-medium text-text-faint">v1.2 Active</span>
+        <span className={isCollapsed ? 'sr-only' : 'font-body text-xs font-medium text-text-faint'}>v1.2 Active</span>
       </div>
-    </aside>
+    </SidebarFrame>
   )
 }

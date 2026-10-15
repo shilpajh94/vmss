@@ -1,7 +1,10 @@
 import { useNavigate } from 'react-router'
-import { CheckIcon, HelpCircleIcon, UsersIcon, XIcon } from './icons'
-import { BrandLogo } from './BrandLogo'
+import { CheckIcon, HelpCircleIcon, UsersIcon } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
+import { useSidebarCollapse } from '../context/sidebar-collapse-context'
+import { SidebarFrame } from './sidebar/SidebarFrame'
+import { SidebarHeader } from './sidebar/SidebarHeader'
+import { SidebarNavItem, useRailTooltip } from './sidebar/SidebarNavItem'
 
 export type DashboardSidebarActiveItem = 'all-visitors' | 'my-actions'
 
@@ -37,6 +40,8 @@ export function staffNavLabelFor(pathname: string): string {
 export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
   const navigate = useNavigate()
   const { closeNav } = useNavDrawer()
+  const { isCollapsed } = useSidebarCollapse()
+  const helpTooltip = useRailTooltip('Help & Support', isCollapsed)
 
   const handleActivate = (key: DashboardSidebarActiveItem) => {
     closeNav()
@@ -45,52 +50,43 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
   }
 
   return (
-    <aside className="flex h-full w-[min(260px,85vw)] shrink-0 lg:h-auto lg:w-[260px] flex-col gap-8 self-stretch bg-primary p-6">
-      <div className="flex shrink-0 items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={() => {
-            closeNav()
-            navigate('/staff/dashboard')
-          }}
-          aria-label="Visimio home"
-          className="flex shrink-0 items-center gap-3 text-left"
-        >
-          <BrandLogo variant="on-dark" decorative />
-        </button>
-        <button
-          type="button"
-          onClick={closeNav}
-          aria-label="Close navigation menu"
-          className="flex size-10 shrink-0 items-center justify-center rounded-lg text-text-faint hover:bg-white/5 lg:hidden"
-        >
-          <XIcon className="size-5" />
-        </button>
-      </div>
+    <SidebarFrame expandedWidthClassName="w-[min(260px,85vw)] lg:w-[260px]" gapClassName="gap-8">
+      <SidebarHeader
+        onHome={() => {
+          closeNav()
+          navigate('/staff/dashboard')
+        }}
+      />
 
       <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-        {NAV_ITEMS.map(({ key, label, icon: ItemIcon }) => (
-          <button
+        {NAV_ITEMS.map(({ key, label, icon }) => (
+          <SidebarNavItem
             key={key}
-            type="button"
-            onClick={() => handleActivate(key)}
-            className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left font-body text-sm font-semibold ${
-              activeItem === key ? 'bg-[#1e293b] text-[#f1f5f9]' : 'text-[#cbd5e1] hover:bg-[#1e293b]/60'
-            }`}
-          >
-            <ItemIcon className="size-[18px] shrink-0" />
-            {label}
-          </button>
+            icon={icon}
+            label={label}
+            isActive={activeItem === key}
+            onActivate={() => handleActivate(key)}
+            activeClassName="bg-[#1e293b] text-[#f1f5f9]"
+            inactiveClassName="text-[#cbd5e1] hover:bg-[#1e293b]/60"
+          />
         ))}
       </nav>
 
       <div className="flex shrink-0 flex-col gap-4">
         <div className="h-px w-full bg-[#1e293b]" />
-        <button type="button" className="flex w-full items-center gap-2 rounded-lg bg-[#1e293b] px-3 py-2 text-left">
-          <HelpCircleIcon className="size-4 text-secondary-accent" />
-          <span className="font-body text-[13px] font-semibold whitespace-nowrap text-secondary-accent">Help &amp; Support</span>
+        <button
+          type="button"
+          aria-label={isCollapsed ? 'Help & Support' : undefined}
+          {...helpTooltip.handlers}
+          className={`flex w-full items-center gap-2 rounded-lg bg-[#1e293b] py-2 text-left ${isCollapsed ? 'justify-center px-0' : 'px-3'}`}
+        >
+          <HelpCircleIcon className="size-4 shrink-0 text-secondary-accent" />
+          {isCollapsed ? null : (
+            <span className="font-body text-[13px] font-semibold whitespace-nowrap text-secondary-accent">Help &amp; Support</span>
+          )}
         </button>
+        {helpTooltip.tooltip}
       </div>
-    </aside>
+    </SidebarFrame>
   )
 }
