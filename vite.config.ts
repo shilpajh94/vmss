@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://vmss-new-api.ddev.site:8443',
+        target: 'https://vmss-dev.mypits.org',
         changeOrigin: true,
         secure: false,
       },
