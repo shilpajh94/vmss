@@ -35,7 +35,10 @@ the 15-second automatic interval. Every admin page under `AdminLayout` that
 fetches data on mount — including the Dashboard, Form Builder, the Form
 Builder step editor, and Organisation Configs — SHALL provide this control
 via the one shared `RefreshContext`-backed control in the admin top bar,
-not a page-local, independently implemented refresh button.
+not a page-local, independently implemented refresh button. Every staff
+page under `StaffLayout` that fetches data on mount, including the staff
+Invitations board, SHALL likewise provide it through the same shared
+control in the staff top bar.
 
 #### Scenario: User forces an immediate refresh
 - **WHEN** the user activates the manual refresh control
@@ -57,3 +60,7 @@ not a page-local, independently implemented refresh button.
 - **WHEN** an admin is on the Organisation Configs page
 - **THEN** the shared admin-top-bar refresh control re-fetches that page's
   data when activated, and shows that page's last-updated time
+
+#### Scenario: Staff Invitations board uses the shared refresh control
+- **WHEN** a staff member is on the staff Invitations page
+- **THEN** the manual refresh control shown is the shared staff-top-bar control, not a separate button rendered by the page itself

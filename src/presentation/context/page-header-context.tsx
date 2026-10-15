@@ -1,9 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { AdminTopBarBreadcrumbItem } from '../components/AdminTopBar'
+import type { AppTopBarBreadcrumbItem } from '../components/AppTopBar'
 
 export interface PageHeader {
   description?: string
-  breadcrumb?: AdminTopBarBreadcrumbItem[]
+  breadcrumb?: AppTopBarBreadcrumbItem[]
 }
 
 interface PageHeaderContextValue {
@@ -13,8 +13,8 @@ interface PageHeaderContextValue {
 
 const PageHeaderContext = createContext<PageHeaderContextValue | undefined>(undefined)
 
-// Lets the persistent AdminLayout own the one AdminTopBar instance while each
-// admin page still controls its own description/breadcrumb text, without the
+// Lets the persistent AdminLayout/StaffLayout own the one AppTopBar instance
+// while each page still controls its own description/breadcrumb text, without the
 // page needing to render (or remount) the top bar itself.
 export function PageHeaderProvider({ children }: { children: ReactNode }) {
   const [header, setHeader] = useState<PageHeader>({})
@@ -32,7 +32,7 @@ export function usePageHeaderContext(): PageHeaderContextValue {
 }
 
 // Called by a page to publish its own header content into the persistent
-// AdminLayout's AdminTopBar. Re-publishes whenever the description or
+// layout's AppTopBar. Re-publishes whenever the description or
 // breadcrumb labels change, so a breadcrumb that depends on data loaded after
 // mount (e.g. a role's name) still updates the visible top bar once it arrives.
 export function usePageHeader(header: PageHeader): void {

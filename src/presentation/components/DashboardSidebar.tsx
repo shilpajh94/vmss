@@ -10,7 +10,7 @@ interface DashboardSidebarProps {
 }
 
 const NAV_ITEMS = [
-  { key: 'all-visitors', label: 'All visitors', icon: UsersIcon },
+  { key: 'all-visitors', label: 'Invitations', icon: UsersIcon },
   { key: 'my-actions', label: 'My actions', icon: CheckIcon },
 ] as const
 
@@ -24,6 +24,14 @@ const STAFF_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: Da
 // per-page prop could.
 export function resolveStaffActiveItem(pathname: string): DashboardSidebarActiveItem {
   return STAFF_ROUTE_ACTIVE_ITEMS.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? 'all-visitors'
+}
+
+// The nav label for the current staff route, e.g. "Invitations" — what the
+// phone top bar shows as the page name. Both staff sidebars use the same
+// labels for these two routes, so this serves Reception users too.
+export function staffNavLabelFor(pathname: string): string {
+  const activeItem = resolveStaffActiveItem(pathname)
+  return NAV_ITEMS.find((item) => item.key === activeItem)?.label ?? 'Invitations'
 }
 
 export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {

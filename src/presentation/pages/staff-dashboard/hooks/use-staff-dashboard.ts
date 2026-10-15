@@ -1,22 +1,10 @@
-import { useCallback } from 'react'
-import { useNavigate } from 'react-router'
 import { useInvitationsBoard } from '../../../hooks/use-invitations-board'
-import { usePushNotifications } from '../../../hooks/use-push-notifications'
+import { usePageHeader } from '../../../context/page-header-context'
+import { usePageRefresh } from '../../../context/refresh-context'
 
 export function useStaffDashboard() {
-  const navigate = useNavigate()
   const board = useInvitationsBoard('/staff/login', 'mine')
-  const { unregisterCurrentDevice } = usePushNotifications()
-
-  const signOut = useCallback(() => {
-    void unregisterCurrentDevice().finally(() => {
-      sessionStorage.removeItem('token')
-      navigate('/staff/login')
-    })
-  }, [navigate, unregisterCurrentDevice])
-
-  return {
-    ...board,
-    signOut,
-  }
+  usePageHeader({ description: 'Track visitor invitations, approval status, and check-in progress' })
+  usePageRefresh({ refresh: board.refresh, isRefreshing: board.isLoading || board.isRefreshing, lastUpdatedAt: board.lastUpdatedAt })
+  return board
 }

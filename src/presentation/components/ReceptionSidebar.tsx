@@ -11,7 +11,7 @@ interface ReceptionSidebarProps {
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: HomeIcon },
-  { key: 'visits', label: 'Visits', icon: UsersIcon },
+  { key: 'visits', label: 'Invitations', icon: UsersIcon },
   { key: 'my-actions', label: 'My actions', icon: CheckIcon },
 ] as const satisfies ReadonlyArray<{
   key: ReceptionSidebarActiveItem

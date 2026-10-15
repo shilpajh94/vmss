@@ -167,6 +167,7 @@ export function AdminInvitationsPage() {
                 loadMoreFailed={column.loadMoreFailed}
                 onLoadMore={column.loadMore}
                 emptyMessage={EMPTY_MESSAGES[column.status]}
+                onDrop={column.status === 'approved' ? requestApprove : column.status === 'denied' ? requestDeny : undefined}
                 onMoveToApproved={column.status === 'requested' ? requestApprove : undefined}
                 onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
                 approvingId={approvingId}

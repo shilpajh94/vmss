@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Outlet, useLocation } from 'react-router'
-import { AdminSidebar, resolveAdminActiveItem } from './AdminSidebar'
-import { AdminTopBar } from './AdminTopBar'
+import { AdminSidebar, adminNavLabelFor, resolveAdminActiveItem } from './AdminSidebar'
+import { AppTopBar } from './AppTopBar'
 import { AppShell } from './AppShell'
 import { RouteTransition } from './RouteTransition'
 import { PageHeaderProvider, usePageHeaderContext } from '../context/page-header-context'
@@ -30,7 +30,16 @@ function AdminLayoutContent() {
   return (
     <AppShell
       sidebar={<AdminSidebar activeItem={resolveAdminActiveItem(location.pathname)} />}
-      topBar={<AdminTopBar description={header.description} breadcrumb={header.breadcrumb} currentUser={currentUser} />}
+      topBar={
+        <AppTopBar
+          title="Organization Admin"
+          description={header.description}
+          breadcrumb={header.breadcrumb}
+          currentUser={currentUser}
+          navLabelFor={adminNavLabelFor}
+          loginPath="/admin/login"
+        />
+      }
     >
       <RouteTransition>
         <Outlet />

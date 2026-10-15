@@ -14,7 +14,7 @@ import { todayAsDateInputValue } from '../../utils/local-date-input-value'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
-import { WorkspaceHeader } from './Components/WorkspaceHeader'
+import { PageContentLayout } from '../../components/PageContentLayout'
 import { useStaffDashboard } from './hooks/use-staff-dashboard'
 
 const EMPTY_MESSAGES: Record<string, string> = {
@@ -28,7 +28,6 @@ const EMPTY_MESSAGES: Record<string, string> = {
 
 export function StaffDashboardPage() {
   const {
-    currentUser,
     columns,
     isLoading,
     errorMessage,
@@ -46,7 +45,6 @@ export function StaffDashboardPage() {
     isFiltering,
     clearFilters,
     refresh,
-    signOut,
     approvingId,
     findRequest,
     pendingApproveId,
@@ -113,29 +111,31 @@ export function StaffDashboardPage() {
   } = useStaffDashboard()
 
   return (
-    <>
-      {/* Export sits in the header, as it does in the admin title row, so the
-          filter bar holds only search, filters and Clear filters. */}
-      <WorkspaceHeader
-        currentUser={currentUser}
-        onRefresh={refresh}
-        onSignOut={signOut}
-        leadingAction={canExport ? <ExportInvitationsButton compact onClick={openExport} /> : undefined}
-      />
-      <BoardFilterBar
-        search={search}
-        onSearchChange={setSearch}
-        searchPlaceholder="Search visitor, tracking ID..."
-        purposeFilter={purposeFilter}
-        onPurposeFilterChange={setPurposeFilter}
-        purposeOptions={purposeOptions}
-        registrationTypeFilter={registrationTypeFilter}
-        onRegistrationTypeFilterChange={setRegistrationTypeFilter}
-        extraFilters={boardExtraFilters({ statusFilter, setStatusFilter, sourceFilter, setSourceFilter })}
-        isFiltering={isFiltering}
-        onClearFilters={clearFilters}
-      />
-
+    <PageContentLayout
+      header={
+        <>
+          {/* Same title row as the admin board: Export sits here, so the
+              filter bar holds only search, filters and Clear filters. */}
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="font-display text-xl font-bold md:text-2xl text-text">Invitations</h1>
+            {canExport ? <ExportInvitationsButton onClick={openExport} /> : null}
+          </div>
+          <BoardFilterBar
+            search={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search visitor, tracking ID..."
+            purposeFilter={purposeFilter}
+            onPurposeFilterChange={setPurposeFilter}
+            purposeOptions={purposeOptions}
+            registrationTypeFilter={registrationTypeFilter}
+            onRegistrationTypeFilterChange={setRegistrationTypeFilter}
+            extraFilters={boardExtraFilters({ statusFilter, setStatusFilter, sourceFilter, setSourceFilter })}
+            isFiltering={isFiltering}
+            onClearFilters={clearFilters}
+          />
+        </>
+      }
+    >
       {errorMessage ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
@@ -144,11 +144,11 @@ export function StaffDashboardPage() {
           </button>
         </div>
       ) : isLoading ? (
-        <LoadingState label="Loading visit requests…" className="flex-1" />
+        <LoadingState label="Loading invitations…" className="flex-1" />
       ) : (
-        // Bounded to the height left under the header/search bar on desktop,
-        // so each column scrolls under its own fixed header.
-        <div className="flex flex-col lg:min-h-0 lg:flex-1">
+        // PageContentLayout's data region has a definite height on desktop;
+        // filling it lets each column scroll under its own fixed header.
+        <div className="flex flex-col lg:h-full">
           <ResponsiveBoard
             columns={columns}
             renderColumn={(column) => (
@@ -269,7 +269,6 @@ export function StaffDashboardPage() {
         onCancel={cancelEdit}
       />
 
-      {/* This board has no Status filter, so the dialog opens on All statuses. */}
       <ExportInvitationsModal
         isOpen={isExportOpen}
         initialStatus={statusFilter}
@@ -288,6 +287,6 @@ export function StaffDashboardPage() {
         employeeNameById={employeeNameById}
         onClose={closeVisitorInfo}
       />
-    </>
+    </PageContentLayout>
   )
 }

@@ -13,7 +13,7 @@ interface RefreshContextValue {
 
 const RefreshContext = createContext<RefreshContextValue | undefined>(undefined)
 
-// Lets the persistent AdminTopBar own the one shared manual-refresh control
+// Lets the persistent AppTopBar own the one shared manual-refresh control
 // while each operational list/dashboard page still controls what "refresh"
 // actually does, without the page needing to render (or remount) the control
 // itself. Mirrors page-header-context.tsx's provider/registration split.

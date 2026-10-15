@@ -6,7 +6,6 @@ import { usePushNotifications } from '../hooks/use-push-notifications'
 import { useRefreshContext } from '../context/refresh-context'
 import { NotificationBell } from './notification-bell/NotificationBell'
 import { NavMenuButton } from './AppShell'
-import { adminNavLabelFor } from './AdminSidebar'
 import { Avatar } from './ui/Avatar'
 
 const NOW_TICK_INTERVAL_MS = 30_000
@@ -56,18 +55,25 @@ function RefreshControl() {
   )
 }
 
-export interface AdminTopBarBreadcrumbItem {
+export interface AppTopBarBreadcrumbItem {
   label: string
   isActive?: boolean
 }
 
-interface AdminTopBarProps {
+interface AppTopBarProps {
+  // Section name shown on md+, e.g. "Organization Admin" or "Reception Desk".
+  title: string
   description?: string
-  breadcrumb?: AdminTopBarBreadcrumbItem[]
+  breadcrumb?: AppTopBarBreadcrumbItem[]
   currentUser: StaffUser | undefined
+  // The current page's own nav label, shown instead of `title` on phones.
+  navLabelFor: (pathname: string) => string
+  loginPath: string
 }
 
-export function AdminTopBar({ description, breadcrumb, currentUser }: AdminTopBarProps) {
+// The persistent top bar shared by the admin and staff shells, so the two
+// sections' chrome can't drift apart.
+export function AppTopBar({ title, description, breadcrumb, currentUser, navLabelFor, loginPath }: AppTopBarProps) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { unregisterCurrentDevice } = usePushNotifications()
@@ -75,7 +81,7 @@ export function AdminTopBar({ description, breadcrumb, currentUser }: AdminTopBa
   const signOut = () => {
     void unregisterCurrentDevice().finally(() => {
       sessionStorage.removeItem('token')
-      navigate('/admin/login')
+      navigate(loginPath)
     })
   }
 
@@ -96,10 +102,10 @@ export function AdminTopBar({ description, breadcrumb, currentUser }: AdminTopBa
           </div>
         ) : (
           <div className="flex min-w-0 flex-col gap-0.5">
-            {/* Below md the page's own name (from the admin nav), not a
+            {/* Below md the page's own name (from the section's nav), not a
                 generic label that truncates to "Organizat…". */}
-            <p className="truncate font-display text-lg font-bold text-text md:hidden">{adminNavLabelFor(pathname)}</p>
-            <p className="hidden truncate font-display text-xl font-bold text-text md:block">Organization Admin</p>
+            <p className="truncate font-display text-lg font-bold text-text md:hidden">{navLabelFor(pathname)}</p>
+            <p className="hidden truncate font-display text-xl font-bold text-text md:block">{title}</p>
             <p className="hidden truncate font-body text-[13px] text-text-faint md:block">{description}</p>
           </div>
         )}
