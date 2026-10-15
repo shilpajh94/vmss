@@ -111,7 +111,7 @@ The system SHALL render, above the admin Invitations board, a single bar laid ou
 - a search field the same 40px height as the filters, taking the remaining width
 - a Purpose of Visit filter, defaulting to "All purposes", whose options are the same purposes the staff dashboard offers
 - a Registration Type filter (All types / Individual / Group)
-- a Status filter, defaulting to "All statuses", offering Requested, Approved, Checked-in, Checked-out and Denied
+- a Status filter, defaulting to "All statuses", offering Requested, Approved, Checked-in, Checked-out, Denied and Archived
 - a Source filter, defaulting to "All sources", offering Staff Pre-Registration and Visitor Walk-in
 
 Every filter SHALL always be visible; the page SHALL NOT have a separate "Filters" toggle or pop-open filter panel. On wide screens the controls SHALL sit on one row. On narrow screens they SHALL wrap or stack without horizontal page scroll. Selecting a filter SHALL narrow every column on the server, combined with the search text and other filters, and each column's count SHALL reflect the filtered total. A "Clear filters" action SHALL appear in the bar whenever any filter differs from its default, and SHALL reset all four filters, without clearing the search text.
@@ -139,6 +139,10 @@ Every filter SHALL always be visible; the page SHALL NOT have a separate "Filter
 #### Scenario: Narrow screen layout
 - **WHEN** the Invitations page is viewed at 360px wide
 - **THEN** the search field and filters stack or wrap with no horizontal page scroll
+
+#### Scenario: Archived is a status option
+- **WHEN** an admin opens the Status filter
+- **THEN** "Archived" is listed after "Denied", and selecting it loads only the Archived column
 
 ### Requirement: Admins can export invitations from the board
 The admin Invitations page SHALL show an "Export" button at the end of

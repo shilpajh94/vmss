@@ -11,10 +11,9 @@ import { EditInvitationModal } from '../../components/invitation-board/EditInvit
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
 import { LoadingState } from '../../components/ui/LoadingState'
 import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
-import { SOURCE_FILTER_OPTIONS, STATUS_FILTER_OPTIONS } from '../../components/invitation-board/filter-options'
+import { boardExtraFilters } from '../../components/invitation-board/board-extra-filters'
 import { ExportInvitationsButton } from '../../components/invitation-board/ExportInvitationsButton'
 import { ExportInvitationsModal } from '../../components/invitation-board/ExportInvitationsModal'
-import { CircleDotIcon, ClipboardListIcon } from '../../components/icons'
 import { PageContentLayout } from '../../components/PageContentLayout'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminInvitations } from './hooks/use-admin-invitations'
@@ -44,6 +43,8 @@ export function AdminInvitationsPage() {
     setRegistrationTypeFilter,
     sourceFilter,
     setSourceFilter,
+    isFiltering,
+    clearFilters,
     refresh,
     approvingId,
     findRequest,
@@ -112,15 +113,6 @@ export function AdminInvitationsPage() {
 
   usePageHeader({ description: 'Monitor visitor invitations, approval status, and check-in progress' })
 
-  const isFiltering = purposeFilter !== 'all' || statusFilter !== '' || registrationTypeFilter !== 'all' || sourceFilter !== ''
-  // Leaves the search text alone - only the dropdown filters reset.
-  const clearFilters = () => {
-    setPurposeFilter('all')
-    setStatusFilter('')
-    setRegistrationTypeFilter('all')
-    setSourceFilter('')
-  }
-
   return (
     <PageContentLayout
       header={
@@ -140,10 +132,7 @@ export function AdminInvitationsPage() {
             purposeOptions={purposeOptions}
             registrationTypeFilter={registrationTypeFilter}
             onRegistrationTypeFilterChange={setRegistrationTypeFilter}
-            extraFilters={[
-              { icon: CircleDotIcon, value: statusFilter, options: STATUS_FILTER_OPTIONS, onChange: setStatusFilter, ariaLabel: 'Status' },
-              { icon: ClipboardListIcon, value: sourceFilter, options: SOURCE_FILTER_OPTIONS, onChange: setSourceFilter, ariaLabel: 'Source' },
-            ]}
+            extraFilters={boardExtraFilters({ statusFilter, setStatusFilter, sourceFilter, setSourceFilter })}
             isFiltering={isFiltering}
             onClearFilters={clearFilters}
           />

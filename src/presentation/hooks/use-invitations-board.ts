@@ -135,8 +135,18 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     }),
     [scope, registrationTypeFilter, sourceFilter, debouncedSearch, purposeFilter],
   )
-  // A status filter (admin board) narrows loading to that one column; a
-  // status with no column leaves every column empty.
+  // Owned here, not by either page, so the staff and admin bars share one
+  // definition of "a filter is set" and of what Clear filters resets.
+  const isFiltering = purposeFilter !== 'all' || statusFilter !== '' || registrationTypeFilter !== 'all' || sourceFilter !== ''
+  // Leaves the search text alone - only the dropdown filters reset.
+  const clearFilters = useCallback(() => {
+    setPurposeFilter('all')
+    setStatusFilter('')
+    setRegistrationTypeFilter('all')
+    setSourceFilter('')
+  }, [])
+  // A status filter narrows loading to that one column; a status with no
+  // column leaves every column empty.
   const visibleStatuses = useMemo<readonly BoardStatus[]>(() => {
     if (!statusFilter) return ALL_BOARD_STATUSES
     const status = boardStatusForApiStatus(statusFilter)
@@ -1002,6 +1012,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     setStatusFilter,
     sourceFilter,
     setSourceFilter,
+    isFiltering,
+    clearFilters,
     lastUpdatedAt,
     refresh,
     isRefreshing,

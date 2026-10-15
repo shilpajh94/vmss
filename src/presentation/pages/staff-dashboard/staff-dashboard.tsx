@@ -2,6 +2,7 @@ import { LoadingState } from '../../components/ui/LoadingState'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
 import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
+import { boardExtraFilters } from '../../components/invitation-board/board-extra-filters'
 import { ExportInvitationsButton } from '../../components/invitation-board/ExportInvitationsButton'
 import { ExportInvitationsModal } from '../../components/invitation-board/ExportInvitationsModal'
 import { ApproveInvitationModal } from '../../components/invitation-board/ApproveInvitationModal'
@@ -38,6 +39,12 @@ export function StaffDashboardPage() {
     purposeOptions,
     registrationTypeFilter,
     setRegistrationTypeFilter,
+    statusFilter,
+    setStatusFilter,
+    sourceFilter,
+    setSourceFilter,
+    isFiltering,
+    clearFilters,
     refresh,
     signOut,
     approvingId,
@@ -111,11 +118,15 @@ export function StaffDashboardPage() {
       <BoardFilterBar
         search={search}
         onSearchChange={setSearch}
+        searchPlaceholder="Search visitor, tracking ID..."
         purposeFilter={purposeFilter}
         onPurposeFilterChange={setPurposeFilter}
         purposeOptions={purposeOptions}
         registrationTypeFilter={registrationTypeFilter}
         onRegistrationTypeFilterChange={setRegistrationTypeFilter}
+        extraFilters={boardExtraFilters({ statusFilter, setStatusFilter, sourceFilter, setSourceFilter })}
+        isFiltering={isFiltering}
+        onClearFilters={clearFilters}
         trailingAction={canExport ? <ExportInvitationsButton onClick={openExport} /> : undefined}
       />
 
@@ -255,7 +266,7 @@ export function StaffDashboardPage() {
       {/* This board has no Status filter, so the dialog opens on All statuses. */}
       <ExportInvitationsModal
         isOpen={isExportOpen}
-        initialStatus={''}
+        initialStatus={statusFilter}
         appliedFilters={exportFilterSummary}
         isExporting={isExporting}
         errorMessage={exportError}
