@@ -55,9 +55,13 @@ _TAGS_METADATA = [
     },
     {
         "name": "kiosks",
+        "description": ("Admin management of kiosks: create, edit, hide/unhide, and soft-delete."),
+    },
+    {
+        "name": "devices",
         "description": (
-            "Admin management of kiosks: create, edit, hide/unhide, and "
-            "soft-delete."
+            "Kiosk and security device registration, admin approval, "
+            "enable/disable, and the branch/building check-in validation setting."
         ),
     },
     {

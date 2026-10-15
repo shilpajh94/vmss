@@ -227,6 +227,15 @@ class Invitation(Base, TimestampMixin):
     checked_in_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     checked_out_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+    # Device that performed the most recent state-changing check-in/out
+    # (add-kiosk-device-approval-and-traceability/design.md Decision 7). Null
+    # when the caller sent no `device-id` header.
+    check_in_device_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("devices.id"), index=True
+    )
+    check_out_device_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("devices.id"), index=True
+    )
 
     # --- Lifecycle: QR check-in scan state (add-qr-checkin-security) -----------
     # Deliberately parallel to, not derived from, `status` above: `status`
