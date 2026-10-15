@@ -29,15 +29,17 @@ inline only as the fallback.
 import asyncio
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.repository import UserRepository
 from vmss_api.core import portal_links
 from vmss_api.core.celery_app import celery_app
-from vmss_api.core.database import engine, tenant_session_scope
+from vmss_api.core.database import AsyncSessionLocal, engine, tenant_session_scope
 from vmss_api.core.email_assets import base_url as email_asset_base_url
 from vmss_api.core.email_assets import sign_qr_url
 from vmss_api.core.email_rendering import TemplateRenderError, display_name, render_email
@@ -48,6 +50,7 @@ from vmss_api.invitations.qr import generate_qr_png
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.org_structure.models import Branch
 from vmss_api.org_structure.repository import CompanyRepository
+from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
 
 # `cid:` content id the confirmation and reschedule templates' QR block
@@ -876,3 +879,84 @@ async def _dispatch(
     else:
         assert invitation.primary_contact_phone is not None
         await notifications.sms_sender.send(to=invitation.primary_contact_phone, body=sms_body)
+
+
+# --- Visit-lifecycle sweep (auto-checkout-and-archive-no-shows) --------------
+# Same dispatcher/per-tenant split as `reports.tasks` (background-jobs
+# "Scheduled Tasks Run Independently of Any Request"). No Redis run-marker:
+# each transition is a conditional bulk `UPDATE`, so a redelivered or
+# concurrent run simply matches nothing already transitioned (design.md D2).
+
+
+@celery_app.task(bind=True)
+def dispatch_visit_lifecycle_sweep(self) -> None:
+    structlog.contextvars.bind_contextvars(task="dispatch_visit_lifecycle_sweep")
+    asyncio.run(_dispatch_visit_lifecycle_sweep())
+
+
+async def _dispatch_visit_lifecycle_sweep() -> None:
+    try:
+        async with AsyncSessionLocal() as session:
+            stmt = select(Tenant).where(Tenant.is_active.is_(True), Tenant.deleted_at.is_(None))
+            tenants = list((await session.execute(stmt)).scalars().all())
+    finally:
+        await engine.dispose()
+    for tenant in tenants:
+        try:
+            sweep_tenant_visit_lifecycle.delay(
+                tenant_id=str(tenant.id), tenant_schema=tenant.schema_name
+            )
+        except Exception:
+            logger.error(
+                "visit_lifecycle_sweep_enqueue_failed",
+                tenant_id=str(tenant.id),
+                tenant_schema=tenant.schema_name,
+            )
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def sweep_tenant_visit_lifecycle(self, *, tenant_id: str, tenant_schema: str) -> None:
+    structlog.contextvars.bind_contextvars(tenant_id=tenant_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(_sweep_tenant_visit_lifecycle(tenant_schema))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "visit_lifecycle_sweep_exhausted",
+                tenant_id=tenant_id,
+                tenant_schema=tenant_schema,
+            )
+        raise
+
+
+async def _sweep_tenant_visit_lifecycle(tenant_schema: str) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            checked_out, archived = await sweep_visit_lifecycle(session, now=datetime.now(UTC))
+    finally:
+        await engine.dispose()
+    logger.info(
+        "visit_lifecycle_swept",
+        tenant_schema=tenant_schema,
+        auto_checked_out=checked_out,
+        archived=archived,
+    )
+
+
+async def sweep_visit_lifecycle(session: AsyncSession, *, now: datetime) -> tuple[int, int]:
+    """Auto-checks-out expired check-ins and archives approved no-shows, each
+    with its audit rows, in one commit. Sends nothing — both transitions are
+    deliberately silent (visit-lifecycle-sweep spec). Returns
+    `(auto_checked_out, archived)` counts.
+    """
+    repo = InvitationRepository(session)
+    checked_out_ids = await repo.auto_check_out_expired(now=now)
+    await repo.record_system_audit(
+        checked_out_ids, action="invitation_auto_checked_out", diff={"reason": "expired"}
+    )
+    archived_ids = await repo.archive_expired_no_shows(now=now)
+    await repo.record_system_audit(
+        archived_ids, action="invitation_archived", diff={"reason": "no_show"}
+    )
+    await session.commit()
+    return len(checked_out_ids), len(archived_ids)

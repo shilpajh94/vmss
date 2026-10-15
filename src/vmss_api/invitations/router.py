@@ -335,6 +335,8 @@ def to_invitation_out(
         approval_reverted_at=invitation.approval_reverted_at,
         approval_reverted_by_user_id=invitation.approval_reverted_by_user_id,
         approval_revert_reason=invitation.approval_revert_reason,
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -677,6 +679,8 @@ async def _to_qr_check_in_out(
             )
             for v in invitation.vehicles
         ],
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -701,6 +705,8 @@ async def _to_list_item_out(invitation) -> InvitationListItemOut:
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -781,6 +787,8 @@ async def _to_tracking_out(
             )
             for v in invitation.vehicles
         ],
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -863,6 +871,8 @@ async def _to_check_in_out(
             )
             for v in invitation.vehicles
         ],
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -1089,6 +1099,8 @@ async def _to_invitation_detail_out(
             )
             for v in invitation.vehicles
         ],
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -1772,7 +1784,10 @@ async def reschedule_invitation(
             },
         },
     )
-    return success_response(data=to_invitation_out(invitation))
+    # Leaving `archived` restarts approval, so the response names the step
+    # it now waits on (auto-checkout-and-archive-no-shows).
+    current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
+    return success_response(data=to_invitation_out(invitation, current_approval_step))
 
 
 @router.patch(
@@ -1815,7 +1830,10 @@ async def edit_invitation(
         entity_id=invitation.id,
         diff=payload.model_dump(exclude_unset=True, mode="json"),
     )
-    return success_response(data=to_invitation_out(invitation))
+    # Leaving `archived` restarts approval, so the response names the step
+    # it now waits on (auto-checkout-and-archive-no-shows).
+    current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
+    return success_response(data=to_invitation_out(invitation, current_approval_step))
 
 
 @router.patch(

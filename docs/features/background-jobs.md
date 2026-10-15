@@ -35,6 +35,7 @@ every recurring task is registered:
 | Schedule name | Cadence | Task |
 |---|---|---|
 | `dispatch-daily-rollup-snapshots` | Daily, 02:00 UTC | `reports.tasks.dispatch_daily_rollup_snapshots` — see `docs/features/reports.md`'s "Scheduled snapshot" section. |
+| `visit-lifecycle-sweep` | Every 15 minutes | `invitations.tasks.dispatch_visit_lifecycle_sweep`. It fans out to `sweep_tenant_visit_lifecycle` per tenant, which auto-checks-out expired check-ins and archives approved no-shows. See `docs/features/invitations.md`'s "Automatic check-out and archived no-shows" section. Both tasks are routed to the cron queue by exact name, ahead of the `vmss_api.invitations.tasks.*` → notifications glob. If beat or the cron worker isn't running, nothing is swept. |
 
 Adding a new scheduled task: register it in `beat_schedule`, add its module
 to `celery_app.autodiscover_tasks([...])` if it's a new feature package, and
@@ -54,8 +55,10 @@ This means one tenant's failure is a separate Celery message from every
 other tenant's — it can't block or delay them, and Celery's own retry
 mechanism applies to that one tenant's task in isolation. `reports/tasks.py`
 (`dispatch_daily_rollup_snapshots` / `send_tenant_rollup_snapshot`) is the
-reference implementation; a single task that loops over every tenant inline
-does not satisfy this.
+reference implementation. `invitations/tasks.py`'s visit-lifecycle sweep
+follows the same shape. It needs no Redis run-marker, because its
+conditional bulk `UPDATE`s already match nothing on a redelivered run.
+A single task that loops over every tenant inline does not satisfy this.
 
 ## Every task's contract
 

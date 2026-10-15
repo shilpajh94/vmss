@@ -1753,9 +1753,7 @@ async def revert_invitation_approval(
             "invitation_revert_rejected", invitation_id=str(invitation.id), reason="not_approved"
         )
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
-    step_repo = InvitationApprovalStepRepository(tenant_db)
-    await step_repo.reset_all_for_invitation(updated.id)
-    activated_step = await step_repo.activate_current_pending(updated.id)
+    activated_step = await _restart_approval(tenant_db, updated)
     await tenant_db.commit()
     logger.info(
         "invitation_approval_reverted",
@@ -1768,19 +1766,13 @@ async def revert_invitation_approval(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.approval_reverted)
-    if activated_step is not None:
-        title, body, data = push_notifications.step_awaiting_approval(updated)
-        await notifications_service.notify_step_approver(
-            tenant_db,
-            tenant_schema=tenant.schema_name,
-            approver_user_id=activated_step.approver_user_id,
-            approver_role_id=activated_step.approver_role_id,
-            branch_id=updated.branch_id,
-            title=title,
-            body=body,
-            data=data,
-        )
+    await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
     return updated
+
+
+# An archived no-show's pass is inert until rescheduled (auto-checkout-and-
+# archive-no-shows spec "An Archived Invitation Does Not Admit the Visitor").
+_ARCHIVED_CHECK_IN_DETAIL = "Invitation is archived; reschedule it to admit the visitor"
 
 
 async def _perform_check_in(
@@ -1817,6 +1809,8 @@ async def _perform_check_in(
     """
     if invitation.check_in_status == "checked_in":
         return invitation, False
+    if invitation.status == "archived":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=_ARCHIVED_CHECK_IN_DETAIL)
     if invitation.watchlist_flagged:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -1902,6 +1896,8 @@ async def check_in_by_qr_token(
 
     if invitation.check_in_status == "checked_in":
         return invitation, "Verification passed", False
+    if invitation.status == "archived":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=_ARCHIVED_CHECK_IN_DETAIL)
     if invitation.status not in ("approved", "checked_in", "checked_out"):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, detail="Verification failed — invitation not approved"
@@ -1985,6 +1981,91 @@ _ACTIVE_STATUSES = ("approved", "checked_in")
 _LOCATION_EDIT_FIELDS = frozenset({"department_to_visit", "department_id", "building_id"})
 
 
+async def _reject_past_visit_date(
+    tenant_db: AsyncSession, tenant: Tenant, visit_date: date
+) -> ZoneInfo:
+    """Leaving `archived` needs a date the visitor can still make — today or
+    later in the visit timezone (design.md D6). Returns the zone so the
+    caller can realign `expires_at` without resolving it twice.
+    """
+    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    if visit_date < datetime.now(UTC).astimezone(tz).date():
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="New visit date cannot be in the past",
+        )
+    return tz
+
+
+async def _restart_approval(
+    tenant_db: AsyncSession, invitation: Invitation
+) -> InvitationApprovalStep | None:
+    """Same workflow restart as `revert_invitation_approval`: every step back
+    to `pending`, first one re-activated. Both calls are no-ops for an
+    invitation without steps. Caller commits.
+    """
+    step_repo = InvitationApprovalStepRepository(tenant_db)
+    await step_repo.reset_all_for_invitation(invitation.id)
+    return await step_repo.activate_current_pending(invitation.id)
+
+
+async def _notify_activated_approver(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    invitation: Invitation,
+    activated_step: InvitationApprovalStep | None,
+) -> None:
+    if activated_step is None:
+        return
+    title, body, data = push_notifications.step_awaiting_approval(invitation)
+    await notifications_service.notify_step_approver(
+        tenant_db,
+        tenant_schema=tenant.schema_name,
+        approver_user_id=activated_step.approver_user_id,
+        approver_role_id=activated_step.approver_role_id,
+        branch_id=invitation.branch_id,
+        title=title,
+        body=body,
+        data=data,
+    )
+
+
+async def _reschedule_archived(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    preferred_visit_date: date,
+    preferred_visit_time: Any,
+    tenant: Tenant,
+) -> Invitation:
+    """An archived no-show goes back to `submitted` for re-approval on its new
+    date, never straight to `approved` — the Company auto-approve setting is
+    a creation-time rule only (design.md D6). The original QR row is kept;
+    re-approval re-sends that same pass.
+    """
+    tz = await _reject_past_visit_date(tenant_db, tenant, preferred_visit_date)
+    updated = await InvitationRepository(tenant_db).reschedule_archived_if_eligible(
+        invitation.id,
+        preferred_visit_date=preferred_visit_date,
+        preferred_visit_time=preferred_visit_time,
+        expires_at=_end_of_visit_day_utc(preferred_visit_date, tz),
+    )
+    if updated is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
+        )
+    activated_step = await _restart_approval(tenant_db, updated)
+    await tenant_db.commit()
+    tasks.send_reschedule_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(updated.id),
+    )
+    await _notify_host(tenant, updated, push_notifications.rescheduled)
+    await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
+    return updated
+
+
 async def reschedule_invitation(
     tenant_db: AsyncSession,
     invitation: Invitation,
@@ -1998,6 +2079,14 @@ async def reschedule_invitation(
     Primary Contact") — enqueued only after the commit below, never for a
     request rejected by either guard.
     """
+    if invitation.status == "archived":
+        return await _reschedule_archived(
+            tenant_db,
+            invitation,
+            preferred_visit_date=preferred_visit_date,
+            preferred_visit_time=preferred_visit_time,
+            tenant=tenant,
+        )
     if invitation.status not in _RESCHEDULABLE_STATUSES:
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
@@ -2167,9 +2256,17 @@ async def edit_invitation(
     # corrected; every other field the client sends is ignored once the visit
     # is underway (the edit modal always submits the whole form).
     checked_in = invitation.status == "checked_in"
-    allowed_statuses = (
-        (*_RESCHEDULABLE_STATUSES, "checked_in") if checked_in else _RESCHEDULABLE_STATUSES
-    )
+    # An archived no-show stays editable; only a date change takes it out of
+    # `archived`, back into approval (auto-checkout-and-archive-no-shows D7).
+    # Gated on exactly `archived` so a concurrent reschedule can't be undone.
+    archived = invitation.status == "archived"
+    allowed_statuses: tuple[str, ...]
+    if checked_in:
+        allowed_statuses = (*_RESCHEDULABLE_STATUSES, "checked_in")
+    elif archived:
+        allowed_statuses = ("archived",)
+    else:
+        allowed_statuses = _RESCHEDULABLE_STATUSES
     if invitation.status not in allowed_statuses:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
     if not checked_in and (payload.poc_user_id is not None or payload.poc_role_id is not None):
@@ -2196,15 +2293,21 @@ async def edit_invitation(
     # the unchanged date on every save, which would otherwise wipe a staff
     # expiry extension (expire-invitation-at-end-of-visit-day/design.md D2).
     new_visit_date = changes.get("preferred_visit_date")
+    leaves_archive = False
     if new_visit_date is not None and new_visit_date != invitation.preferred_visit_date:
-        changes["expires_at"] = _end_of_visit_day_utc(
-            new_visit_date, await _resolve_visit_timezone(tenant_db, tenant)
-        )
+        if archived:
+            tz = await _reject_past_visit_date(tenant_db, tenant, new_visit_date)
+            changes.update(status="submitted", approved_at=None)
+            leaves_archive = True
+        else:
+            tz = await _resolve_visit_timezone(tenant_db, tenant)
+        changes["expires_at"] = _end_of_visit_day_utc(new_visit_date, tz)
     updated = await InvitationRepository(tenant_db).edit_if_eligible(
         invitation.id, allowed_statuses=allowed_statuses, **changes
     )
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
+    activated_step = await _restart_approval(tenant_db, updated) if leaves_archive else None
     await tenant_db.commit()
     tasks.send_edit_notification.delay(
         request_id=_current_request_id(),
@@ -2212,6 +2315,7 @@ async def edit_invitation(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.edited)
+    await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
     if "poc_user_id" in changes or "poc_role_id" in changes:
         title, body, data = push_notifications.poc_assigned(updated)
         await notifications_service.notify_step_approver(

@@ -730,6 +730,76 @@ approved ──revert-approval──> submitted   (only while checkInStatus = un
   and `host`, but not `security`. Tenant migration `6054f5200ed1` backfills
   it to those standard roles in existing tenants.
 
+## Automatic check-out and archived no-shows
+
+`auto-checkout-and-archive-no-shows`. A visit nobody closes by hand is
+closed by the visit-lifecycle sweep. That is a Celery beat task running
+every 15 minutes per tenant; see `docs/features/background-jobs.md`.
+
+```
+checked_in ──expiresAt passes──> checked_out   (checkedOutAutomatically = true)
+approved (checkInStatus unused) ──expiresAt passes──> archived
+archived ──reschedule / edit date──> submitted ──approve──> approved
+```
+
+- **Trigger**: the invitation's live `expiresAt`, which is the end of the
+  visit day in the visit timezone. An extension via `PATCH …/extend`
+  postpones both transitions. No timezone logic lives in the sweep itself.
+- **Auto check-out**:
+  - It applies to any row where `status` or `checkInStatus` is
+    `checked_in`. Both columns become `checked_out`.
+  - `checkedOutAt` is set to the invitation's `expiresAt`, not the sweep
+    time.
+  - `checkedOutByUserId` stays null and `checkedOutAutomatically` is
+    `true`.
+  - Any later manual check-out (staff or QR) writes the flag back to
+    `false`.
+  - A QR check-out of a visit the sweep already closed returns 409.
+- **Archive**:
+  - Only `approved` rows whose `checkInStatus` is still `unused` are
+    archived. `status` becomes `archived` and `archivedAt` is set.
+  - A `submitted` row whose date passed is left alone.
+  - `expiresAt`, the visit details, the approval steps and the QR row are
+    unchanged.
+- **Silent and audited**:
+  - No email, SMS or push is sent for either transition.
+  - Each changed invitation gets one audit row with no actor
+    (`invitation_auto_checked_out` / `invitation_archived`), written in the
+    same transaction as the change.
+  - Re-running the sweep changes nothing.
+- **An archived pass is inert**:
+  - Every check-in path (QR, staff, public tracking ID) returns 409 with
+    "Invitation is archived; reschedule it to admit the visitor".
+  - Extend, badge, revert, approve and deny also return 409.
+- **Leaving `archived`**:
+  - `PATCH …/reschedule` accepts an archived invitation, with a new date
+    of today or later in the visit timezone (otherwise 422). It returns to
+    `submitted`: `approvedAt` is cleared, `expiresAt` is realigned to the
+    new day, and the reschedule history columns are filled as usual.
+  - Every approval step resets and the first is re-activated, with the
+    approver pushed, exactly like a revert.
+  - The Company auto-approve setting does **not** apply, so someone must
+    approve it again. Re-approval re-sends the original QR.
+  - `archivedAt` is kept as history.
+  - The response includes `currentApprovalStep`.
+- **Editing an archived invitation**: `PATCH …/edit` is allowed. If the
+  edit doesn't change `preferredVisitDate`, the invitation stays
+  `archived`. A date change behaves like the reschedule above (past date →
+  422).
+- **Response fields**: `archivedAt` and `checkedOutAutomatically` are on
+  `InvitationOut`, the list row, the detail view, the tracking lookup and
+  both check-in responses. `GET /invitations?status=archived` filters on
+  the new status.
+- **Export**: status label `Archived`, with an `Archived At` column
+  (column 32). `status=archived` keeps Requested At / Approved At /
+  Archived At, and its date range applies to `archivedAt`. Checked Out By
+  reads `System (auto check-out)` for an automatic check-out.
+- **Deploy note**: the first sweep after release processes the backlog.
+  Every old approved no-show is archived, and every stuck check-in is
+  closed with `checkedOutAt` = its old `expiresAt`. Tenant migration
+  `ee5f27776d94` adds the two columns. Its downgrade returns `archived`
+  rows to `approved` first.
+
 ## Resolved location and permission-gated ID-proof documents
 
 `enrich-invitation-checkin-and-detail-views` adds resolved facility detail

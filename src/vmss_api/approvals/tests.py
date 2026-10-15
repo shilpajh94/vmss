@@ -1,7 +1,7 @@
 import io
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest_asyncio
 from httpx import AsyncClient
@@ -2951,3 +2951,78 @@ async def test_revert_approval_restarts_workflow_from_first_step(
     assert invitation.status == "approved"
     assert len(approval_calls) == 2
     assert approval_calls[0]["qr_token"] == approval_calls[1]["qr_token"]
+
+
+# --- auto-checkout-and-archive-no-shows: rescheduling an archived no-show ----
+
+
+async def test_reschedule_archived_invitation_restarts_workflow_from_first_step(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    user: User,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    """invitations "Workflow restarts from the first step": an approved
+    workflow-backed invitation archived by the sweep goes back through its
+    whole workflow when rescheduled, and the first step's approver is pushed.
+    """
+    invitation, step_one_role, step_two_role = await _two_step_invitation(db_session, branch)
+    first_approver = await _user_with_role(
+        db_session, branch.id, role=step_one_role, extra_permission_codes=("invitations:approve",)
+    )
+    second_approver = await _user_with_role(
+        db_session, branch.id, role=step_two_role, extra_permission_codes=("invitations:approve",)
+    )
+    invitation.preferred_visit_date = None
+    invitation.expires_at = datetime.now(UTC) - timedelta(hours=1)
+    await db_session.commit()
+    invitation_id, step_one_role_id = invitation.id, step_one_role.id
+    first_token, second_token = issue_token(first_approver), issue_token(second_approver)
+    admin_token = issue_token(user)
+
+    step_pushes: list[dict] = []
+
+    async def _fake_notify_step_approver(tenant_db, **kwargs):
+        step_pushes.append(kwargs)
+
+    async def _fake_notify_user(**kwargs):
+        return None
+
+    monkeypatch.setattr(notifications_service, "notify_step_approver", _fake_notify_step_approver)
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+    monkeypatch.setattr(tasks.send_approval_notification, "delay", lambda **kw: None)
+    monkeypatch.setattr(tasks.send_reschedule_notification, "delay", lambda **kw: None)
+
+    for step_order, token in ((1, first_token), (2, second_token)):
+        step = await _get_step(db_session, invitation_id, step_order)
+        response = await client.post(
+            f"/api/v1/invitations/{invitation_id}/approval-steps/{step.id}/approve",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200, response.text
+
+    await tasks.sweep_visit_lifecycle(db_session, now=datetime.now(UTC))
+    await db_session.refresh(invitation)
+    assert invitation.status == "archived"
+
+    step_pushes.clear()
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation_id}/reschedule",
+        json={
+            "preferredVisitDate": (datetime.now(UTC).date() + timedelta(days=2)).isoformat(),
+            "preferredVisitTime": "09:00:00",
+        },
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["status"] == "submitted"
+    assert data["currentApprovalStep"]["stepOrder"] == 1
+
+    db_session.expire_all()
+    steps = await InvitationApprovalStepRepository(db_session).list_for_invitation(invitation_id)
+    assert [s.status for s in steps] == ["pending", "pending"]
+    assert len(step_pushes) == 1
+    assert step_pushes[0]["approver_role_id"] == step_one_role_id
