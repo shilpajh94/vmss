@@ -112,7 +112,7 @@ export function StaffVisitorRegistrationPage() {
 
   const cancelRegistration = () => {
     reset()
-    navigate('/staff/dashboard')
+    navigate('/staff/invitations')
   }
 
   return (

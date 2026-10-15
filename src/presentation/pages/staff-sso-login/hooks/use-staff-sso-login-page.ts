@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePushNotifications } from '../../../hooks/use-push-notifications'
+import { landingPathFor } from '../../../utils/landing-path'
 
 export type StaffSsoLoginStatus = 'idle' | 'redirecting' | 'completing' | 'error'
 
@@ -26,7 +27,7 @@ export function useStaffSsoLoginPage() {
         sessionStorage.setItem('token', token)
         void registerCurrentDevice()
         const user = await getCurrentStaffUserUseCase.execute()
-        navigate(user.isAdmin ? '/admin/dashboard' : '/staff/dashboard')
+        navigate(landingPathFor(user))
       } catch {
         setErrorMessage('Sign-in could not be completed. Please try again.')
         setStatus('error')

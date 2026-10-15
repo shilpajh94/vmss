@@ -26,7 +26,7 @@ function buildAddressingLabel(reason: NotificationAddressingReason | undefined, 
 // not a recipient-role field, so admin vs. staff is inferred from which area this
 // tab is currently in.
 function buildInvitationPath(invitationId: string): string {
-  const basePath = window.location.pathname.startsWith('/admin') ? '/admin/invitations' : '/staff/dashboard'
+  const basePath = window.location.pathname.startsWith('/admin') ? '/admin/invitations' : '/staff/invitations'
   return `${basePath}?invitationId=${encodeURIComponent(invitationId)}`
 }
 

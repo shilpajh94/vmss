@@ -4,8 +4,11 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 // (role-based-invitation-workflow): `role_assigned` when the recipient was
 // reached via role-at-branch fan-out, `delegated` when reached as one
 // specific named person (a step delegate, or a newly assigned host).
-// Undefined for any push predating this addressing metadata.
-export type NotificationAddressingReason = 'role_assigned' | 'delegated'
+// `lifecycle_update` is a point-of-contact role's push about a denial,
+// revert, or reschedule — deliberately unlabelled (no "New invitation for…"
+// badge), since nothing new was assigned. Undefined for any push predating
+// this addressing metadata.
+export type NotificationAddressingReason = 'role_assigned' | 'delegated' | 'lifecycle_update'
 
 export interface NotificationCenterItem {
   id: string

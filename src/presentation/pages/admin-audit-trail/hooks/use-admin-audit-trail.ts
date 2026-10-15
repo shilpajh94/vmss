@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { landingPathFor } from '../../../utils/landing-path'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { AuditLogEntry } from '../../../../domain/entities/audit-log-entry-schema'
@@ -56,7 +57,7 @@ export function useAdminAuditTrail() {
     }
 
     if (!user.isAdmin) {
-      navigate('/staff/dashboard', { replace: true })
+      navigate(landingPathFor(user), { replace: true })
       return
     }
     setCurrentUser(user)

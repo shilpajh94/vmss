@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePushNotifications } from '../../../hooks/use-push-notifications'
+import { landingPathFor } from '../../../utils/landing-path'
 
 export type StaffLoginStatus = 'idle' | 'submitting' | 'error'
 
@@ -39,7 +40,7 @@ export function useStaffLoginPage() {
       void registerCurrentDevice()
 
       const user = await getCurrentStaffUserUseCase.execute()
-      navigate(user.isAdmin ? '/admin/dashboard' : user.isReception ? '/reception/dashboard' : '/staff/dashboard')
+      navigate(landingPathFor(user))
     } catch {
       setErrorMessage('Invalid email or password. Please try again.')
       setStatus('error')

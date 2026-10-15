@@ -23,7 +23,7 @@ const NAV_ITEMS = [
 
 const RECEPTION_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: ReceptionSidebarActiveItem]> = [
   ['/reception/dashboard', 'dashboard'],
-  ['/staff/dashboard', 'visits'],
+  ['/staff/invitations', 'visits'],
   ['/staff/visitors/new', 'my-actions'],
 ]
 
@@ -41,7 +41,7 @@ export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
   const handleActivate = (key: ReceptionSidebarActiveItem) => {
     closeNav()
     if (key === 'dashboard') navigate('/reception/dashboard')
-    if (key === 'visits') navigate('/staff/dashboard')
+    if (key === 'visits') navigate('/staff/invitations')
     if (key === 'my-actions') navigate('/staff/visitors/new')
   }
 

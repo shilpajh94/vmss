@@ -74,6 +74,7 @@ import { CreateFloorUseCase } from './data/use-cases/create-floor'
 import { UpdateFloorUseCase } from './data/use-cases/update-floor'
 import { DeleteFloorUseCase } from './data/use-cases/delete-floor'
 import { GetDashboardOverviewUseCase } from './data/use-cases/get-dashboard-overview'
+import { GetMyDashboardOverviewUseCase } from './data/use-cases/get-my-dashboard-overview'
 import { ListRecentCheckinsUseCase } from './data/use-cases/list-recent-checkins'
 import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
 import { ListHostEmployeesPageUseCase } from './data/use-cases/list-host-employees-page'
@@ -209,6 +210,7 @@ export interface AppDependencies {
   updateFloorUseCase: UpdateFloorUseCase
   deleteFloorUseCase: DeleteFloorUseCase
   getDashboardOverviewUseCase: GetDashboardOverviewUseCase
+  getMyDashboardOverviewUseCase: GetMyDashboardOverviewUseCase
   listRecentCheckinsUseCase: ListRecentCheckinsUseCase
   listHostEmployeesUseCase: ListHostEmployeesUseCase
   listHostEmployeesPageUseCase: ListHostEmployeesPageUseCase
@@ -336,6 +338,7 @@ export function createApp(): AppDependencies {
   let deleteFloorUseCase: DeleteFloorUseCase | undefined
   let dashboardRepository: DashboardRepository | undefined
   let getDashboardOverviewUseCase: GetDashboardOverviewUseCase | undefined
+  let getMyDashboardOverviewUseCase: GetMyDashboardOverviewUseCase | undefined
   let listRecentCheckinsUseCase: ListRecentCheckinsUseCase | undefined
   let hostEmployeeRepository: HostEmployeeRepository | undefined
   let listHostEmployeesUseCase: ListHostEmployeesUseCase | undefined
@@ -737,6 +740,11 @@ export function createApp(): AppDependencies {
   const resolveGetDashboardOverviewUseCase = (): GetDashboardOverviewUseCase => {
     getDashboardOverviewUseCase ??= new GetDashboardOverviewUseCase(resolveDashboardRepository())
     return getDashboardOverviewUseCase
+  }
+
+  const resolveGetMyDashboardOverviewUseCase = (): GetMyDashboardOverviewUseCase => {
+    getMyDashboardOverviewUseCase ??= new GetMyDashboardOverviewUseCase(resolveDashboardRepository())
+    return getMyDashboardOverviewUseCase
   }
 
   const resolveListRecentCheckinsUseCase = (): ListRecentCheckinsUseCase => {
@@ -1227,6 +1235,9 @@ export function createApp(): AppDependencies {
     },
     get getDashboardOverviewUseCase() {
       return resolveGetDashboardOverviewUseCase()
+    },
+    get getMyDashboardOverviewUseCase() {
+      return resolveGetMyDashboardOverviewUseCase()
     },
     get listRecentCheckinsUseCase() {
       return resolveListRecentCheckinsUseCase()

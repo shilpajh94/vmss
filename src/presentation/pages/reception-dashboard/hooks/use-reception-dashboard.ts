@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { landingPathFor } from '../../../utils/landing-path'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { DashboardOverview, DashboardKpi } from '../../../../domain/entities/dashboard-overview-schema'
@@ -42,7 +43,7 @@ export function useReceptionDashboard() {
     }
 
     if (!user.isReception) {
-      navigate('/staff/dashboard', { replace: true })
+      navigate(landingPathFor(user), { replace: true })
       return
     }
     setCurrentUser(user)

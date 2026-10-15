@@ -1,298 +1,57 @@
+import { CalendarIcon } from '../../components/icons'
 import { LoadingState } from '../../components/ui/LoadingState'
-import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
-import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
-import { CLOSED_BOARD_STATUSES } from '../../hooks/use-invitations-board'
-import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
-import { boardExtraFilters } from '../../components/invitation-board/board-extra-filters'
-import { ExportInvitationsButton } from '../../components/invitation-board/ExportInvitationsButton'
-import { ExportInvitationsModal } from '../../components/invitation-board/ExportInvitationsModal'
-import { ApproveInvitationModal } from '../../components/invitation-board/ApproveInvitationModal'
-import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
-import { RevertApprovalModal } from '../../components/invitation-board/RevertApprovalModal'
-import { CheckOutVisitorModal } from '../../components/invitation-board/CheckOutVisitorModal'
-import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
-import { todayAsDateInputValue } from '../../utils/local-date-input-value'
-import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
-import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
-import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
-import { PageContentLayout } from '../../components/PageContentLayout'
+import { usePageHeader } from '../../context/page-header-context'
+import { KpiRow } from '../../components/dashboard/KpiRow'
+import { MyUpcomingVisitorsCard } from '../../components/dashboard/MyUpcomingVisitorsCard'
 import { useStaffDashboard } from './hooks/use-staff-dashboard'
 
-const EMPTY_MESSAGES: Record<string, string> = {
-  requested: 'No requested visits',
-  approved: 'No approved visits',
-  checked_in: 'No checked-in visitors today',
-  checked_out: 'No checked-out visits',
-  denied: 'No denied visits',
-  archived: 'No archived visits',
+function greetingForHour(hour: number): string {
+  if (hour < 12) return 'Good Morning'
+  if (hour < 18) return 'Good Afternoon'
+  return 'Good Evening'
 }
 
+const TODAY_LABEL = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }).format(new Date())
+
 export function StaffDashboardPage() {
-  const {
-    columns,
-    isLoading,
-    errorMessage,
-    search,
-    setSearch,
-    purposeFilter,
-    setPurposeFilter,
-    purposeOptions,
-    registrationTypeFilter,
-    setRegistrationTypeFilter,
-    statusFilter,
-    focusClosedStatus,
-    setStatusFilter,
-    sourceFilter,
-    setSourceFilter,
-    isFiltering,
-    clearFilters,
-    refresh,
-    approvingId,
-    findRequest,
-    pendingApproveId,
-    requestApprove,
-    cancelApprove,
-    confirmApprove,
-    pendingRevertId,
-    requestRevert,
-    cancelRevert,
-    confirmRevert,
-    revertingId,
-    invitationDetails,
-    roleNameById,
-    hostEmployees,
-    employeeNameById,
-    reschedule,
-    reschedulingId,
-    delegate,
-    delegatingId,
-    edit,
-    editingId,
-    requestEdit,
-    cancelEdit,
-    pendingEditId,
-    pendingEditDetail,
-    pendingDenyId,
-    requestDeny,
-    cancelDeny,
-    confirmDeny,
-    denyingId,
-    canCheckOut,
-    canExport,
-    isExportOpen,
-    openExport,
-    closeExport,
-    exportInvitations,
-    isExporting,
-    exportError,
-    exportFilterSummary,
-    pendingCheckOutId,
-    pendingCheckOutRequest,
-    requestCheckOut,
-    cancelCheckOut,
-    confirmCheckOut,
-    checkingOutId,
-    pendingRescheduleId,
-    requestReschedule,
-    cancelReschedule,
-    pendingDelegateId,
-    requestDelegate,
-    cancelDelegate,
-    pendingDelegateDetail,
-    approveAndDelegate,
-    approvingAndDelegatingId,
-    pendingApproveAndDelegateId,
-    requestApproveAndDelegate,
-    cancelApproveAndDelegate,
-    nextStepCandidates,
-    isLoadingNextStepCandidates,
-    workflowRulesByCategory,
-    visitorInfoId,
-    viewVisitorInfo,
-    closeVisitorInfo,
-  } = useStaffDashboard()
+  const { currentUser, overview, kpis, isLoading, errorMessage, retry, openVisit } = useStaffDashboard()
+
+  const firstName = currentUser?.name.split(' ')[0] ?? ''
+  const greeting = greetingForHour(new Date().getHours())
+
+  usePageHeader({ description: 'Your visitors at a glance' })
 
   return (
-    <PageContentLayout
-      header={
-        <>
-          {/* Same title row as the admin board: Export sits here, so the
-              filter bar holds only search, filters and Clear filters. */}
-          <div className="flex items-center justify-between gap-3">
-            <h1 className="font-display text-xl font-bold md:text-2xl text-text">Invitations</h1>
-            {canExport ? <ExportInvitationsButton onClick={openExport} /> : null}
-          </div>
-          <BoardFilterBar
-            search={search}
-            onSearchChange={setSearch}
-            searchPlaceholder="Search visitor, tracking ID..."
-            purposeFilter={purposeFilter}
-            onPurposeFilterChange={setPurposeFilter}
-            purposeOptions={purposeOptions}
-            registrationTypeFilter={registrationTypeFilter}
-            onRegistrationTypeFilterChange={setRegistrationTypeFilter}
-            extraFilters={boardExtraFilters({ statusFilter, setStatusFilter, sourceFilter, setSourceFilter })}
-            isFiltering={isFiltering}
-            onClearFilters={clearFilters}
-          />
-        </>
-      }
-    >
+    <>
       {errorMessage ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={refresh} className="rounded-lg bg-secondary-accent px-4 py-2 font-body text-sm font-semibold text-white">
+          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
             Try again
           </button>
         </div>
-      ) : isLoading ? (
-        <LoadingState label="Loading invitations…" className="flex-1" />
+      ) : isLoading || !overview ? (
+        <LoadingState label="Loading dashboard…" className="flex-1" />
       ) : (
-        // PageContentLayout's data region has a definite height on desktop;
-        // filling it lets each column scroll under its own fixed header.
-        <div className="flex flex-col lg:h-full">
-          <ResponsiveBoard
-            boardKey="staff"
-            columns={columns}
-            closedStatuses={CLOSED_BOARD_STATUSES}
-            focusClosedStatus={focusClosedStatus}
-            renderColumn={(column, { embedded }) => (
-              <KanbanColumn
-                key={`${column.status}:${column.resetKey}`}
-                status={column.status}
-                label={column.label}
-                requests={column.requests}
-                total={column.total}
-                hasMore={column.hasMore}
-                isLoadingMore={column.isLoadingMore}
-                loadMoreFailed={column.loadMoreFailed}
-                onLoadMore={column.loadMore}
-                emptyMessage={EMPTY_MESSAGES[column.status]}
-                embedded={embedded}
-                onDrop={column.status === 'approved' ? requestApprove : column.status === 'denied' ? requestDeny : undefined}
-                onMoveToApproved={column.status === 'requested' ? requestApprove : undefined}
-                onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
-                approvingId={approvingId}
-                invitationDetails={invitationDetails}
-                roleNameById={roleNameById}
-                employeeNameById={employeeNameById}
-                workflowRulesByCategory={workflowRulesByCategory}
-                onRescheduleClick={requestReschedule}
-                onDelegateClick={requestDelegate}
-                onApproveAndDelegateClick={requestApproveAndDelegate}
-                onApproveClick={requestApprove}
-                onEditClick={requestEdit}
-                onVisitorInfoClick={viewVisitorInfo}
-                onCheckOutClick={column.status === 'checked_in' && canCheckOut ? requestCheckOut : undefined}
-                onRevertClick={column.status === 'approved' ? requestRevert : undefined}
-              />
-            )}
-          />
-        </div>
+        <>
+          <div className="flex w-full flex-col gap-3 rounded-2xl border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between md:p-6">
+            <div className="flex flex-col gap-1">
+              <h1 className="font-display text-xl font-bold text-text">
+                {greeting}{firstName ? `, ${firstName}` : ''}
+              </h1>
+              <p className="font-body text-sm text-text-faint">Here's how your visitors are doing today.</p>
+            </div>
+            <div className="flex items-center gap-2 font-body text-sm font-medium text-text-muted">
+              <CalendarIcon className="size-4 text-admin-accent" />
+              {TODAY_LABEL}
+            </div>
+          </div>
+
+          <KpiRow kpis={kpis} />
+
+          <MyUpcomingVisitorsCard visitors={overview.upcomingPreview} onOpen={openVisit} />
+        </>
       )}
-
-      <ApproveInvitationModal
-        isOpen={pendingApproveId !== undefined}
-        visitorName={findRequest(pendingApproveId)?.primaryContactFullName}
-        trackingId={findRequest(pendingApproveId)?.trackingId}
-        isApproving={approvingId !== undefined}
-        onConfirm={() => void confirmApprove()}
-        onCancel={cancelApprove}
-      />
-
-      <RevertApprovalModal
-        isOpen={pendingRevertId !== undefined}
-        visitorName={findRequest(pendingRevertId)?.primaryContactFullName}
-        trackingId={findRequest(pendingRevertId)?.trackingId}
-        isReverting={revertingId !== undefined}
-        onConfirm={confirmRevert}
-        onCancel={cancelRevert}
-      />
-
-      <DenyInvitationModal
-        isOpen={pendingDenyId !== undefined}
-        visitorName={findRequest(pendingDenyId)?.primaryContactFullName}
-        trackingId={findRequest(pendingDenyId)?.trackingId}
-        isDenying={denyingId !== undefined}
-        onConfirm={confirmDeny}
-        onCancel={cancelDeny}
-      />
-
-      <CheckOutVisitorModal
-        isOpen={pendingCheckOutId !== undefined}
-        visitorName={pendingCheckOutRequest?.primaryContactFullName}
-        trackingId={pendingCheckOutRequest?.trackingId}
-        isCheckingOut={checkingOutId !== undefined}
-        onConfirm={() => void confirmCheckOut()}
-        onCancel={cancelCheckOut}
-      />
-
-      <RescheduleInvitationModal
-        isOpen={pendingRescheduleId !== undefined}
-        visitorName={findRequest(pendingRescheduleId)?.primaryContactFullName}
-        trackingId={findRequest(pendingRescheduleId)?.trackingId}
-        isRescheduling={reschedulingId !== undefined}
-        minDate={findRequest(pendingRescheduleId)?.status === 'archived' ? todayAsDateInputValue() : undefined}
-        onConfirm={(preferredVisitDate, preferredVisitTime) =>
-          pendingRescheduleId && reschedule(pendingRescheduleId, preferredVisitDate, preferredVisitTime)
-        }
-        onCancel={cancelReschedule}
-      />
-
-      <DelegateInvitationModal
-        isOpen={pendingDelegateId !== undefined}
-        visitorName={findRequest(pendingDelegateId)?.primaryContactFullName}
-        trackingId={findRequest(pendingDelegateId)?.trackingId}
-        isDelegating={delegatingId !== undefined}
-        approverRoleId={pendingDelegateDetail?.currentApprovalStep?.approverRoleId}
-        stepOrder={pendingDelegateDetail?.currentApprovalStep?.stepOrder}
-        roleNameById={roleNameById}
-        hostEmployees={hostEmployees}
-        branchId={pendingDelegateDetail?.branchId}
-        onConfirm={(delegateUserId) => pendingDelegateId && delegate(pendingDelegateId, delegateUserId)}
-        onCancel={cancelDelegate}
-      />
-
-      <DelegateInvitationModal
-        isOpen={pendingApproveAndDelegateId !== undefined}
-        visitorName={findRequest(pendingApproveAndDelegateId)?.primaryContactFullName}
-        trackingId={findRequest(pendingApproveAndDelegateId)?.trackingId}
-        isDelegating={approvingAndDelegatingId !== undefined}
-        mode="approve-and-delegate"
-        isLoadingCandidates={isLoadingNextStepCandidates}
-        hostEmployees={nextStepCandidates}
-        onConfirm={(delegateUserId) => pendingApproveAndDelegateId && approveAndDelegate(pendingApproveAndDelegateId, delegateUserId)}
-        onCancel={cancelApproveAndDelegate}
-      />
-
-      <EditInvitationModal
-        isOpen={pendingEditId !== undefined}
-        isSaving={editingId !== undefined}
-        detail={pendingEditDetail}
-        workflowRulesByCategory={workflowRulesByCategory}
-        hostEmployees={hostEmployees}
-        onConfirm={(fields) => pendingEditId && edit(pendingEditId, fields)}
-        onCancel={cancelEdit}
-      />
-
-      <ExportInvitationsModal
-        isOpen={isExportOpen}
-        initialStatus={statusFilter}
-        appliedFilters={exportFilterSummary}
-        isExporting={isExporting}
-        errorMessage={exportError}
-        onConfirm={(choice) => void exportInvitations(choice)}
-        onClose={closeExport}
-      />
-
-      <VisitorInfoModal
-        isOpen={visitorInfoId !== undefined}
-        isLoading={visitorInfoId !== undefined && !invitationDetails[visitorInfoId]}
-        detail={visitorInfoId ? invitationDetails[visitorInfoId] : undefined}
-        workflowRulesByCategory={workflowRulesByCategory}
-        employeeNameById={employeeNameById}
-        onClose={closeVisitorInfo}
-      />
-    </PageContentLayout>
+    </>
   )
 }

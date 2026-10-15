@@ -13,6 +13,7 @@ import { VisitorTrackPage } from './presentation/pages/visitor-track/visitor-tra
 import { StaffLoginPage } from './presentation/pages/staff-login/staff-login'
 import { StaffSsoLoginPage } from './presentation/pages/staff-sso-login/staff-sso-login'
 import { StaffDashboardPage } from './presentation/pages/staff-dashboard/staff-dashboard'
+import { StaffInvitationsPage } from './presentation/pages/staff-invitations/staff-invitations'
 import { StaffVisitorRegistrationPage } from './presentation/pages/staff-visitor-registration/staff-visitor-registration'
 import { AdminDashboardPage } from './presentation/pages/admin-dashboard/admin-dashboard'
 import { AdminOrganisationConfigsPage } from './presentation/pages/admin-organisation-configs/admin-organisation-configs'
@@ -106,6 +107,7 @@ function RootLayout() {
 
               <Route element={<StaffLayout />}>
                 <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
+                <Route path="/staff/invitations" element={<StaffInvitationsPage />} />
                 <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
               </Route>
             </Routes>
