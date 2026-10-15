@@ -65,6 +65,20 @@ class DeviceRegistrationOut(CamelModel):
     is_active: bool
 
 
+class DeviceApprovalStatusOut(CamelModel):
+    """Public, minimal view: no name/branch/approver details."""
+
+    device_id: str
+    operating_mode: OperatingMode
+    approval_status: ApprovalStatus
+    is_active: bool
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def approved(self) -> bool:
+        return self.approval_status == ApprovalStatus.approved and self.is_active
+
+
 class DeviceBriefOut(CamelModel):
     """Embedded in invitation check-in/out responses."""
 

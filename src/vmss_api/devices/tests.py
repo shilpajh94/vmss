@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from factories import BranchFactory, BuildingFactory, DeviceFactory, InvitationFactory
 from vmss_api.auth.models import User
 from vmss_api.core.config import settings
+from vmss_api.core.rate_limit import limiter
 from vmss_api.devices.models import Device, TenantSettings
 from vmss_api.devices.repository import DeviceRepository, TenantSettingsRepository
 from vmss_api.invitations import qr_token
@@ -152,6 +153,79 @@ async def test_deleted_device_id_can_register_again(
     again = await client.post("/api/v1/devices/register", json=payload)
     assert again.status_code == 201
     assert again.json()["data"]["id"] != pk
+
+
+# --- approval status lookup ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("approval_status", "is_active", "approved"),
+    [("pending", False, False), ("approved", True, True), ("approved", False, False)],
+)
+async def test_approval_status_reflects_device_state(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    approval_status: str,
+    is_active: bool,
+    approved: bool,
+) -> None:
+    await _device(
+        db_session, branch, device_id="ipad-s", approval_status=approval_status, is_active=is_active
+    )
+    response = await client.get("/api/v1/devices/approval-status", params={"deviceId": "ipad-s"})
+    assert response.status_code == 200
+    assert response.json()["data"] == {
+        "deviceId": "ipad-s",
+        "operatingMode": "kiosk",
+        "approvalStatus": approval_status,
+        "isActive": is_active,
+        "approved": approved,
+    }
+
+
+async def test_approval_status_unknown_or_deleted_device_is_404_and_creates_nothing(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    await _device(db_session, branch, device_id="gone", deleted_at=datetime.now(UTC))
+    for device_id in ("never-registered", "gone"):
+        response = await client.get(
+            "/api/v1/devices/approval-status", params={"deviceId": device_id}
+        )
+        assert response.status_code == 404
+    assert await DeviceRepository(db_session).get_by_device_id("never-registered") is None
+
+
+async def test_approval_status_requires_device_id(client: AsyncClient, tenant: Tenant) -> None:
+    assert (await client.get("/api/v1/devices/approval-status")).status_code == 422
+    empty = await client.get("/api/v1/devices/approval-status", params={"deviceId": ""})
+    assert empty.status_code == 422
+
+
+async def test_approval_status_does_not_shadow_device_lookup(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    user: User,
+    issue_token: Callable[[User], str],
+    db_session: AsyncSession,
+) -> None:
+    device = await _device(db_session, branch)
+    response = await client.get(f"/api/v1/devices/{device.id}", headers=_auth(user, issue_token))
+    assert response.status_code == 200
+    assert response.json()["data"]["id"] == str(device.id)
+
+
+async def test_approval_status_rate_limit_trips(
+    client: AsyncClient, tenant: Tenant, monkeypatch
+) -> None:
+    monkeypatch.setattr(limiter, "enabled", True)
+    responses = [
+        await client.get("/api/v1/devices/approval-status", params={"deviceId": "x"})
+        for _ in range(65)
+    ]
+    assert any(r.status_code == 429 for r in responses)
 
 
 # --- admin lifecycle -----------------------------------------------------------
