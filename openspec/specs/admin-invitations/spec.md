@@ -20,28 +20,28 @@ The system SHALL render, for an authenticated session, the Admin sidebar with "I
 - **WHEN** an authenticated admin's Invitations page finishes loading
 - **THEN** the sidebar shows "Invitations" marked active and the top bar shows the signed-in staff member's name and role
 
-### Requirement: Invitations are grouped into five status columns with live counts
-The system SHALL group invitations into five columns, in this order: Requested, Approved, Checked-in, Checked-out, Denied. Each column SHALL show a count badge equal to the server's total number of invitations in that status matching the active search and filters, using the same board component as the staff dashboard. The count SHALL NOT be limited to the number of cards currently loaded. When a status filter is selected, only that status's column SHALL load invitations; the other columns SHALL show zero. Every status the status filter offers, including Checked-out, SHALL have a matching column.
+### Requirement: Invitations are grouped by status with live counts
+The system SHALL group invitations by the same six statuses, in the same order, as the staff dashboard's "Visit requests are grouped by status with live counts", using the same board component. At `lg` and wider, that means three working columns followed by the Closed column. Every status SHALL show the server's total of invitations in that status matching the active search and filters, not the number of cards currently loaded. When a status filter is selected, only that status SHALL load invitations, and every other status SHALL show zero. Every status the status filter offers SHALL have a matching column or Closed-column entry.
 
 #### Scenario: Invitations load successfully
-- **WHEN** the invitations list loads successfully
-- **THEN** each invitation appears under the column matching its status, and each column's count badge shows the server's total for that status
+- **WHEN** the invitations list loads successfully at 1536px wide
+- **THEN** the board shows the Requested, Approved, Checked-in, and Closed columns, each invitation appears under its own status, and every status shows the server's total
 
 #### Scenario: Checked-out invitations appear in their own column
 - **WHEN** the invitations list loads and some invitations have the status `checked_out`
-- **THEN** those invitations appear in the Checked-out column, which sits between Checked-in and Denied, and its count badge shows the server's total of checked-out invitations matching the active search and filters
+- **THEN** those invitations are listed when Checked-out is selected in the Closed column, and the Checked-out count shows the server's total matching the active search and filters
 
 #### Scenario: Empty column
-- **WHEN** a status column has zero invitations
-- **THEN** the system shows an empty-state message instead of any cards
+- **WHEN** a status has zero invitations
+- **THEN** its column, or its Closed-column entry when selected, shows an empty-state message instead of any cards
 
 #### Scenario: Status filter limits loading to one column
 - **WHEN** an admin selects the "Approved" status filter
-- **THEN** only the Approved column loads invitations, and the Requested, Checked-in, Checked-out, and Denied columns show a count of zero and their empty state
+- **THEN** only the Approved column loads invitations, and the Requested and Checked-in columns and all three closed statuses show a count of zero
 
 #### Scenario: Checked-out status filter loads the Checked-out column
 - **WHEN** an admin selects the "Checked-out" status filter
-- **THEN** only the Checked-out column loads invitations and shows the server's total, and the other four columns show a count of zero and their empty state
+- **THEN** the Closed column selects Checked-out, only Checked-out loads invitations and shows the server's total, and every other status shows a count of zero
 
 ### Requirement: Search filters visible invitations by visitor name or tracking ID
 The system SHALL, as the admin types in the search field, show only invitations whose visitor name or tracking ID contains the entered text (case-insensitive), across all columns.
@@ -249,3 +249,14 @@ four filters SHALL still share one row.
 #### Scenario: No filters at 1440px
 - **WHEN** the Invitations page is viewed at 1440px wide with no filter set
 - **THEN** the search field and all four filters sit on one row
+
+### Requirement: Invitations board groups closed statuses and keeps a readable width
+The admin Invitations board SHALL provide the same Closed column and minimum column width that the staff dashboard defines in "Closed statuses share one column on desktop" and "Board columns keep a readable minimum width". The admin board SHALL remember its last-selected closed status separately from the staff board's.
+
+#### Scenario: Switching statuses on the admin board
+- **WHEN** an admin at 1536px wide selects Denied in the Closed column on `/admin/invitations`
+- **THEN** the Closed column lists Denied invitations and the other columns are unchanged
+
+#### Scenario: Admin and staff boards remember independently
+- **WHEN** a user selects Archived on the admin board and then opens the staff Invitations board in the same browser
+- **THEN** the staff board's Closed column selects its own last choice, or Checked-out if it has none

@@ -64,12 +64,12 @@ The system SHALL, when "Sign out" is activated, clear the stored auth token and 
 - **WHEN** a staff member activates "Sign out"
 - **THEN** the auth token is cleared and the system navigates to `/staff/login`
 
-### Requirement: Visit requests are grouped into five status columns with live counts
-The system SHALL group visit requests into five columns, in this order: Requested, Approved, Checked-in, Checked-out, Denied. Each column SHALL show a count badge equal to the total number of visit requests in that status that match the active search and filters, as reported by the server. The count SHALL NOT be limited to the number of cards currently loaded in the column.
+### Requirement: Visit requests are grouped by status with live counts
+The system SHALL group visit requests by six statuses, in this order: Requested, Approved, Checked-in, Checked-out, Denied, Archived. Requested, Approved, and Checked-in are the working statuses. Checked-out, Denied, and Archived are the closed statuses. At `lg` and wider, each working status SHALL be its own column, and the three closed statuses SHALL share one Closed column after them (see "Closed statuses share one column on desktop"). Below `lg`, every status SHALL be its own tab (see responsive-layout "Invitation Boards Show One Status Column at a Time Below Desktop"). Every status SHALL show a count equal to the total number of visit requests in that status that match the active search and filters, as reported by the server. The count SHALL NOT be limited to the number of cards currently loaded.
 
 #### Scenario: Requests load successfully
-- **WHEN** the visit-requests list loads successfully
-- **THEN** each request appears under the column matching its status, and each column's count badge shows the server's total for that status
+- **WHEN** the visit-requests list loads successfully at 1536px wide
+- **THEN** the board shows the Requested, Approved, Checked-in, and Closed columns, each request appears under its own status, and every status shows the server's total
 
 #### Scenario: Count reflects the full total, not the loaded cards
 - **WHEN** 250 visit requests are in the Requested status and only the first 20 have been loaded into the Requested column
@@ -77,7 +77,7 @@ The system SHALL group visit requests into five columns, in this order: Requeste
 
 #### Scenario: Checked-out visitors stay visible on the board
 - **WHEN** a visitor on one of the staff member's visit requests checks out
-- **THEN** after the next refresh or poll, that request appears in the Checked-out column instead of disappearing from the board, and the Checked-in and Checked-out counts reflect the move
+- **THEN** after the next refresh or poll, that request appears under Checked-out in the Closed column instead of disappearing from the board, and the Checked-in and Checked-out counts reflect the move
 
 ### Requirement: Visit request cards display identifying details
 The system SHALL render, for each visit request, an avatar showing the visitor's initials, the REQ ID, the visitor's name, the assigned host's name, and the scheduled visit date and time. The scheduled time is the request's current preferred visit date/time, distinct from the timestamp the request was submitted. The visitor's name and REQ ID SHALL appear beside the avatar. Purpose of visit and host SHALL share a single line that truncates with an ellipsis rather than wrapping, with the full text available on hover. The scheduled date/time SHALL appear directly beneath that line, above any card-face buttons.
@@ -612,3 +612,53 @@ At the same viewport width, the title row, filter bar and board SHALL have the s
 #### Scenario: Loading text
 - **WHEN** the staff Invitations board is loading
 - **THEN** it shows "Loading invitations…"
+
+### Requirement: Board columns keep a readable minimum width
+At `lg` and wider, a board column SHALL NOT render narrower than 240px. When the columns cannot all fit at that width, the board SHALL scroll horizontally within its own region. The page itself SHALL NOT gain a horizontal scrollbar, and the page header, search field, filters, and every column header SHALL stay in place while the board scrolls vertically. When all columns fit, no horizontal scrollbar SHALL appear.
+
+#### Scenario: Laptop width with the sidebar expanded
+- **WHEN** a staff member views the board at 1366px wide with the sidebar expanded
+- **THEN** all four columns fit side by side, each at least 240px wide, and no horizontal scrollbar appears
+
+#### Scenario: Narrow desktop with the sidebar expanded
+- **WHEN** a staff member views the board at 1280px wide with the sidebar expanded
+- **THEN** each column is at least 240px wide, the board scrolls horizontally within its own area, and the page does not scroll horizontally
+
+#### Scenario: Room freed by collapsing removes the scroll
+- **WHEN** a staff member at 1280px wide collapses the sidebar
+- **THEN** all four columns fit side by side and no horizontal scrollbar appears on the board
+
+### Requirement: Closed statuses share one column on desktop
+At `lg` and wider, the board SHALL show the Checked-out, Denied, and Archived statuses in a single column after the Checked-in column. The column SHALL have no title row and no combined total. Its header SHALL be a segmented switcher listing Checked-out, Denied, and Archived, in that order, each with its own server total. The switcher SHALL sit where the other columns' headers sit and SHALL be the same height as they are, so that the first card in every column starts at the same vertical position. The switcher SHALL show each status's full label at every column width the board allows. It SHALL be exposed to assistive technology as a tab list named "Closed status", and exactly one status SHALL be selected at a time. The column body SHALL show the selected status's cards with the same paging, empty-state message, card actions, and Visitor Info behaviour as that status had as its own column.
+
+Switching statuses SHALL NOT refetch any status, reset any other column's scroll position, or change the search or filters. Statuses that are not selected SHALL NOT request further pages. Every count SHALL keep updating on manual and background refreshes whichever status is selected.
+
+When the status filter is set to Checked-out, Denied, or Archived, the switcher SHALL select that status. Otherwise, the switcher SHALL select the status last chosen on this board in this browser, remembered across reloads and new sessions. If no choice is stored, or stored preferences cannot be read, it SHALL select Checked-out. Status columns SHALL NOT offer any control to collapse or hide them.
+
+#### Scenario: Default view
+- **WHEN** a staff member opens the board for the first time at 1536px wide
+- **THEN** the fourth column's header is the switcher showing Checked-out, Denied, and Archived with their counts, with no "Closed" title or combined total, and Checked-out is selected with its cards listed
+
+#### Scenario: Switcher header lines up with the other headers
+- **WHEN** a staff member views the board at 1366px wide with the sidebar expanded
+- **THEN** the switcher header is the same height as the Requested, Approved, and Checked-in headers, the first card in all four columns starts at the same vertical position, and "Checked-out", "Denied", and "Archived" are each shown in full
+
+#### Scenario: Switching to Denied
+- **WHEN** a staff member selects Denied in the switcher
+- **THEN** the column lists Denied cards, each offering only Visitor info, and the Requested, Approved, and Checked-in columns keep their scroll positions
+
+#### Scenario: Status filter drives the switcher
+- **WHEN** a staff member picks "Archived" in the status filter
+- **THEN** the switcher selects Archived and the column lists the matching archived visits, and the other closed statuses show a count of zero
+
+#### Scenario: Choice is remembered
+- **WHEN** a staff member selects Denied and then reloads the page
+- **THEN** the switcher opens with Denied selected
+
+#### Scenario: Counts update while another status is selected
+- **WHEN** Denied is selected and a background refresh moves a visit from Checked-in to Checked-out
+- **THEN** the Checked-out count in the switcher updates and Denied stays selected
+
+#### Scenario: Phones and tablets keep separate tabs
+- **WHEN** a staff member opens the board at 390px wide
+- **THEN** the status tabs list Requested, Approved, Checked-in, Checked-out, Denied, and Archived as six separate tabs, with no grouping

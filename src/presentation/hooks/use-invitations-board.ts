@@ -33,6 +33,10 @@ export const BOARD_STATUS_COLUMNS = [
 
 const ALL_BOARD_STATUSES: readonly BoardStatus[] = BOARD_STATUS_COLUMNS.map((column) => column.status)
 
+// Mostly look-up statuses, grouped into one Closed column on desktop
+// (staff-dashboard "Closed statuses share one column on desktop").
+export const CLOSED_BOARD_STATUSES: readonly BoardStatus[] = ['checked_out', 'denied', 'archived']
+
 // Toast copy for an approve action: names which level just cleared and,
 // unless this was the final one, who the request is now waiting on.
 function describeApprovalOutcome(
@@ -151,6 +155,12 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     if (!statusFilter) return ALL_BOARD_STATUSES
     const status = boardStatusForApiStatus(statusFilter)
     return status ? [status] : []
+  }, [statusFilter])
+
+  // A closed status chosen in the filter should be the one the Closed column shows.
+  const focusClosedStatus = useMemo(() => {
+    const status = boardStatusForApiStatus(statusFilter)
+    return status && CLOSED_BOARD_STATUSES.includes(status) ? status : undefined
   }, [statusFilter])
 
   const fetchVisitRequestsPage = useCallback(
@@ -1059,6 +1069,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     exportError,
     exportFilterSummary,
     statusFilter,
+    focusClosedStatus,
     pendingCheckOutId,
     pendingCheckOutRequest,
     requestCheckOut,

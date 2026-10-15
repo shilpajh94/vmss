@@ -1,6 +1,7 @@
 import { LoadingState } from '../../components/ui/LoadingState'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
+import { CLOSED_BOARD_STATUSES } from '../../hooks/use-invitations-board'
 import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
 import { boardExtraFilters } from '../../components/invitation-board/board-extra-filters'
 import { ExportInvitationsButton } from '../../components/invitation-board/ExportInvitationsButton'
@@ -39,6 +40,7 @@ export function StaffDashboardPage() {
     registrationTypeFilter,
     setRegistrationTypeFilter,
     statusFilter,
+    focusClosedStatus,
     setStatusFilter,
     sourceFilter,
     setSourceFilter,
@@ -150,8 +152,11 @@ export function StaffDashboardPage() {
         // filling it lets each column scroll under its own fixed header.
         <div className="flex flex-col lg:h-full">
           <ResponsiveBoard
+            boardKey="staff"
             columns={columns}
-            renderColumn={(column) => (
+            closedStatuses={CLOSED_BOARD_STATUSES}
+            focusClosedStatus={focusClosedStatus}
+            renderColumn={(column, { embedded }) => (
               <KanbanColumn
                 key={`${column.status}:${column.resetKey}`}
                 status={column.status}
@@ -163,6 +168,7 @@ export function StaffDashboardPage() {
                 loadMoreFailed={column.loadMoreFailed}
                 onLoadMore={column.loadMore}
                 emptyMessage={EMPTY_MESSAGES[column.status]}
+                embedded={embedded}
                 onDrop={column.status === 'approved' ? requestApprove : column.status === 'denied' ? requestDeny : undefined}
                 onMoveToApproved={column.status === 'requested' ? requestApprove : undefined}
                 onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}

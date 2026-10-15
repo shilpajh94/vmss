@@ -1,5 +1,6 @@
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
+import { CLOSED_BOARD_STATUSES } from '../../hooks/use-invitations-board'
 import { ApproveInvitationModal } from '../../components/invitation-board/ApproveInvitationModal'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { RevertApprovalModal } from '../../components/invitation-board/RevertApprovalModal'
@@ -38,6 +39,7 @@ export function AdminInvitationsPage() {
     setPurposeFilter,
     purposeOptions,
     statusFilter,
+    focusClosedStatus,
     setStatusFilter,
     registrationTypeFilter,
     setRegistrationTypeFilter,
@@ -154,8 +156,11 @@ export function AdminInvitationsPage() {
         // filling it lets each column scroll under its own fixed header.
         <div className="flex flex-col lg:h-full">
           <ResponsiveBoard
+            boardKey="admin"
             columns={columns}
-            renderColumn={(column) => (
+            closedStatuses={CLOSED_BOARD_STATUSES}
+            focusClosedStatus={focusClosedStatus}
+            renderColumn={(column, { embedded }) => (
               <KanbanColumn
                 key={`${column.status}:${column.resetKey}`}
                 status={column.status}
@@ -167,6 +172,7 @@ export function AdminInvitationsPage() {
                 loadMoreFailed={column.loadMoreFailed}
                 onLoadMore={column.loadMore}
                 emptyMessage={EMPTY_MESSAGES[column.status]}
+                embedded={embedded}
                 onDrop={column.status === 'approved' ? requestApprove : column.status === 'denied' ? requestDeny : undefined}
                 onMoveToApproved={column.status === 'requested' ? requestApprove : undefined}
                 onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
