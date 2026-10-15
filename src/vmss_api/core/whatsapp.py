@@ -35,8 +35,56 @@ class WhatsAppTemplate(StrEnum):
 
 
 class Fast2WhatsAppSender:
+    async def _upload_png(
+        self,
+        png: bytes,
+        api_key: str,
+        phone_number_id: str,
+        masked_number: str,
+        template: WhatsAppTemplate,
+    ) -> str:
+        """Uploads the image to the gateway's media store and returns its id —
+        no public URL needed, unlike a header `link`.
+        """
+        url = (
+            f"{settings.fast2sms_base_url}/dev/whatsapp/"
+            f"{settings.fast2sms_whatsapp_api_version}/{phone_number_id}/media"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS) as client:
+                response = await client.post(
+                    url,
+                    headers={"Authorization": api_key},
+                    data={"messaging_product": "whatsapp", "type": "image/png"},
+                    files={"file": ("qr.png", png, "image/png")},
+                )
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning(
+                "fast2sms_whatsapp_media_upload_failed",
+                template=template.value,
+                identifier=masked_number,
+                exception_type=type(exc).__name__,
+            )
+            raise SmsDispatchError("WhatsApp media upload failed") from exc
+        media_id = payload.get("id") if isinstance(payload, dict) else None
+        if response.status_code == 200 and media_id:
+            return str(media_id)
+        logger.warning(
+            "fast2sms_whatsapp_media_upload_failed",
+            template=template.value,
+            identifier=masked_number,
+            http_status=response.status_code,
+        )
+        raise SmsDispatchError("WhatsApp media upload failed")
+
     async def send(
-        self, *, to: str, template: WhatsAppTemplate, variables: Sequence[object]
+        self,
+        *,
+        to: str,
+        template: WhatsAppTemplate,
+        variables: Sequence[object],
+        header_image_png: bytes | None = None,
     ) -> None:
         api_key = settings.fast2sms_api_key
         phone_number_id = settings.fast2sms_whatsapp_phone_number_id
@@ -46,11 +94,26 @@ class Fast2WhatsAppSender:
                 f"Fast2SMS WhatsApp is not configured for template '{template.value}' — "
                 "set FAST2SMS_API_KEY, FAST2SMS_WHATSAPP_PHONE_NUMBER_ID and the template's name"
             )
+        if template is WhatsAppTemplate.registration_confirmed and not header_image_png:
+            # The approved template has an image header (the QR pass); Meta
+            # rejects it without one.
+            raise SmsNotConfiguredError("WhatsApp registration_confirmed needs a QR image")
         number = normalise_indian_mobile(to)
         parameters = [
             {"type": "text", "text": sanitise_variable(v, max_length=None)} for v in variables
         ]
-        components: list[dict[str, Any]] = [{"type": "body", "parameters": parameters}]
+        components: list[dict[str, Any]] = []
+        if header_image_png:
+            media_id = await self._upload_png(
+                header_image_png, api_key, phone_number_id, mask_phone(number), template
+            )
+            components.append(
+                {
+                    "type": "header",
+                    "parameters": [{"type": "image", "image": {"id": media_id}}],
+                }
+            )
+        components.append({"type": "body", "parameters": parameters})
         if template is WhatsAppTemplate.otp:
             # The authentication template also carries the code in its
             # copy-code button; Fast2SMS wants sub_type "url" for that.

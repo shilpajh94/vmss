@@ -8231,7 +8231,9 @@ async def test_send_reschedule_notification_routes_to_whatsapp_when_preferred(
     [call] = sent["whatsapp"]
     assert call["to"] == "9876543210"
     assert call["template"] == WhatsAppTemplate.visit_rescheduled
-    assert call["variables"] == ["2026-12-01", "15:30:00", "INV-TEST0003"]
+    # `visitor_updates` template: name, tracking ID, when, point of contact.
+    assert len(call["variables"]) == 4
+    assert call["variables"][1] == "INV-TEST0003"
 
 
 def test_whatsapp_preference_requires_a_phone() -> None:
@@ -11995,3 +11997,44 @@ async def test_checkin_code_tenant_isolation(
     await make_tenant_schema(other_schema)
     async with open_tenant_session(other_schema) as other_session:
         assert await InvitationRepository(other_session).get_by_checkin_code("55556666") is None
+
+
+async def test_whatsapp_confirmed_uploads_qr_png_and_sends_media_id_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from vmss_api.core import whatsapp as whatsapp_module
+    from vmss_api.core.config import settings
+
+    monkeypatch.setattr(settings, "fast2sms_api_key", "k")
+    monkeypatch.setattr(settings, "fast2sms_whatsapp_phone_number_id", "123")
+    monkeypatch.setattr(settings, "fast2sms_whatsapp_template_registration_confirmed", "qr")
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/media"):
+            return httpx.Response(200, json={"id": "MEDIA1"})
+        return httpx.Response(200, json={"messages": [{"id": "wamid.1"}]})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        whatsapp_module.httpx,
+        "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
+    )
+    await whatsapp_module.Fast2WhatsAppSender().send(
+        to="9876543210",
+        template=whatsapp_module.WhatsAppTemplate.registration_confirmed,
+        variables=["Asha", "INV-1", "15 Oct 2026"],
+        header_image_png=b"\x89PNG",
+    )
+    assert requests[0].url.path.endswith("/media")
+    sent = json.loads(requests[1].content)
+    components = sent["template"]["components"]
+    assert components[0] == {
+        "type": "header",
+        "parameters": [{"type": "image", "image": {"id": "MEDIA1"}}],
+    }
+    assert [p["text"] for p in components[1]["parameters"]] == ["Asha", "INV-1", "15 Oct 2026"]

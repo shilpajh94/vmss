@@ -29,6 +29,7 @@ inline only as the fallback.
 import asyncio
 import uuid
 from collections.abc import Sequence
+from datetime import date, time
 from typing import Any
 
 import structlog
@@ -46,7 +47,7 @@ from vmss_api.core.sms import SmsInvalidNumberError, SmsNotConfiguredError, SmsT
 from vmss_api.core.whatsapp import WhatsAppTemplate
 from vmss_api.invitations import notifications
 from vmss_api.invitations.models import Invitation
-from vmss_api.invitations.qr import generate_qr_png
+from vmss_api.invitations.qr import generate_qr_png, generate_qr_png_rgb
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.org_structure.models import Branch
 from vmss_api.org_structure.repository import CompanyRepository
@@ -63,6 +64,31 @@ _CONTACT_TITLE = "Your point of contact"
 
 def _contact(name: str, detail: str | None) -> dict[str, str | None]:
     return {"contact_title": _CONTACT_TITLE, "contact_name": name, "contact_detail": detail}
+
+
+def _whatsapp_visit_when(invitation: Invitation) -> str:
+    visit_date, visit_time = invitation.preferred_visit_date, invitation.preferred_visit_time
+    date_part = visit_date.strftime("%d %b %Y") if isinstance(visit_date, date) else "-"
+    if isinstance(visit_time, time):
+        return f"{date_part} {visit_time.strftime('%H:%M')}"
+    return date_part
+
+
+def _whatsapp_visitor_update_variables(
+    invitation: Invitation, contact_name: str | None
+) -> list[object]:
+    """The approved `visitor_updates` template: "Hello {{1}}, Your visit
+    request {{2}} for {{3}} has been updated. Your visit time and host have
+    changed. New host: {{4}}." — name, tracking ID, when, point of contact.
+    Its fixed wording only truly fits reschedule/edit; pending/denied reuse
+    it as a stopgap until they get their own approved templates.
+    """
+    return [
+        invitation.primary_contact_full_name,
+        invitation.tracking_id,
+        _whatsapp_visit_when(invitation),
+        contact_name or "Front desk",
+    ]
 
 
 async def _resolve_contact(
@@ -313,6 +339,8 @@ async def _send_approval_notification(
             # Embeds the QR Code in a Dedicated Scannable Block"). A
             # plain-text-only fallback send carries no image at all, and its
             # text directs the visitor to quote the tracking ID instead.
+            # The WhatsApp `qr` template: image header (the QR PNG, uploaded to
+            # the gateway as media) plus name / tracking ID / date variables.
             await _dispatch(
                 invitation,
                 subject=subject,
@@ -321,6 +349,16 @@ async def _send_approval_notification(
                 sms_variables=sms_variables,
                 html_body=html_body,
                 inline_images=qr_images if html_body is not None else [],
+                whatsapp_variables=[
+                    invitation.primary_contact_full_name,
+                    invitation.tracking_id,
+                    _whatsapp_visit_when(invitation),
+                ],
+                whatsapp_header_image_png=(
+                    await generate_qr_png_rgb(qr_token)
+                    if invitation.primary_contact_preferred_contact_method == "whatsapp"
+                    else None
+                ),
             )
     finally:
         # `send_approval_notification`/`send_tracking_notification` below run
@@ -359,15 +397,14 @@ async def _send_tracking_notification(tenant_schema: str, invitation_id: str) ->
             invitation = await session.get(Invitation, uuid.UUID(invitation_id))
             if invitation is None:
                 return
+            context = await _invitation_email_context(
+                session,
+                invitation,
+                recipient_name=invitation.primary_contact_full_name,
+                recipient_email=invitation.primary_contact_email,
+            )
             subject, body, html_body = _render_or_fallback(
-                "tracking_only",
-                await _invitation_email_context(
-                    session,
-                    invitation,
-                    recipient_name=invitation.primary_contact_full_name,
-                    recipient_email=invitation.primary_contact_email,
-                ),
-                fallback_subject="We've received your visit request",
+                "tracking_only", context, fallback_subject="We've received your visit request"
             )
             await _dispatch(
                 invitation,
@@ -376,6 +413,9 @@ async def _send_tracking_notification(tenant_schema: str, invitation_id: str) ->
                 sms_template=SmsTemplate.registration_pending,
                 sms_variables=[invitation.tracking_id],
                 html_body=html_body,
+                whatsapp_variables=_whatsapp_visitor_update_variables(
+                    invitation, context.get("contact_name")
+                ),
             )
     finally:
         await engine.dispose()
@@ -409,18 +449,17 @@ async def _send_denial_notification(tenant_schema: str, invitation_id: str) -> N
             invitation = await session.get(Invitation, uuid.UUID(invitation_id))
             if invitation is None:
                 return
+            context = {
+                **await _invitation_email_context(
+                    session,
+                    invitation,
+                    recipient_name=invitation.primary_contact_full_name,
+                    recipient_email=invitation.primary_contact_email,
+                ),
+                "denial_reason": invitation.denial_reason,
+            }
             subject, body, html_body = _render_or_fallback(
-                "denial",
-                {
-                    **await _invitation_email_context(
-                        session,
-                        invitation,
-                        recipient_name=invitation.primary_contact_full_name,
-                        recipient_email=invitation.primary_contact_email,
-                    ),
-                    "denial_reason": invitation.denial_reason,
-                },
-                fallback_subject="Your visit request wasn't approved",
+                "denial", context, fallback_subject="Your visit request wasn't approved"
             )
             await _dispatch(
                 invitation,
@@ -429,6 +468,9 @@ async def _send_denial_notification(tenant_schema: str, invitation_id: str) -> N
                 sms_template=SmsTemplate.registration_denied,
                 sms_variables=[invitation.tracking_id, invitation.denial_reason or ""],
                 html_body=html_body,
+                whatsapp_variables=_whatsapp_visitor_update_variables(
+                    invitation, context.get("contact_name")
+                ),
             )
     finally:
         await engine.dispose()
@@ -500,6 +542,9 @@ async def _send_reschedule_notification(tenant_schema: str, invitation_id: str) 
                 ],
                 html_body=html_body,
                 inline_images=qr_images if html_body is not None else [],
+                whatsapp_variables=_whatsapp_visitor_update_variables(
+                    invitation, context.get("contact_name")
+                ),
             )
     finally:
         await engine.dispose()
@@ -536,18 +581,17 @@ async def _send_edit_notification(tenant_schema: str, invitation_id: str) -> Non
             invitation = await session.get(Invitation, uuid.UUID(invitation_id))
             if invitation is None:
                 return
+            context = {
+                **await _invitation_email_context(
+                    session,
+                    invitation,
+                    recipient_name=invitation.primary_contact_full_name,
+                    recipient_email=invitation.primary_contact_email,
+                ),
+                "poc_name": invitation.poc_name,
+            }
             subject, body, html_body = _render_or_fallback(
-                "edit",
-                {
-                    **await _invitation_email_context(
-                        session,
-                        invitation,
-                        recipient_name=invitation.primary_contact_full_name,
-                        recipient_email=invitation.primary_contact_email,
-                    ),
-                    "poc_name": invitation.poc_name,
-                },
-                fallback_subject="Your visit details have changed",
+                "edit", context, fallback_subject="Your visit details have changed"
             )
             await _dispatch(
                 invitation,
@@ -560,6 +604,9 @@ async def _send_edit_notification(tenant_schema: str, invitation_id: str) -> Non
                     invitation.preferred_visit_time,
                 ],
                 html_body=html_body,
+                whatsapp_variables=_whatsapp_visitor_update_variables(
+                    invitation, context.get("contact_name")
+                ),
             )
     finally:
         await engine.dispose()
@@ -802,6 +849,8 @@ async def _dispatch(
     sms_variables: Sequence[object],
     html_body: str | None = None,
     inline_images: Sequence[notifications.InlineImage] = (),
+    whatsapp_variables: Sequence[object] | None = None,
+    whatsapp_header_image_png: bytes | None = None,
 ) -> None:
     """Routes to email, SMS or WhatsApp per the invitation's
     `preferred_contact_method` — never more than one. `body`/`html_body` are
@@ -829,7 +878,8 @@ async def _dispatch(
         await notifications.whatsapp_sender.send(
             to=invitation.primary_contact_phone,
             template=WhatsAppTemplate(sms_template.value),
-            variables=sms_variables,
+            variables=sms_variables if whatsapp_variables is None else whatsapp_variables,
+            header_image_png=whatsapp_header_image_png,
         )
     else:
         assert invitation.primary_contact_phone is not None
