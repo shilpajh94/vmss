@@ -213,6 +213,15 @@ class Invitation(Base, TimestampMixin):
     denial_reason: Mapped[str | None] = mapped_column(String(500))
     denied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # --- Lifecycle: approval revert (add-invitation-approval-revert) --------
+    # Latest revert only — overwritten on each revert; the full history is
+    # in `audit_logs` (design.md Decision 1).
+    approval_reverted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approval_reverted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id")
+    )
+    approval_revert_reason: Mapped[str | None] = mapped_column(String(500))
+
     # --- Lifecycle: check-in / check-out --------------------------------------
     checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     checked_in_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))

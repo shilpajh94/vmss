@@ -66,10 +66,88 @@ tracking ID (displayable and speakable, e.g. for a phone lookup) and an
 expiry timestamp set at creation time, neither of which the request body can
 override.
 
+The expiry timestamp SHALL be 23:59:59 on the invitation's
+`preferredVisitDate`, measured in the **visit timezone**, and SHALL NOT
+depend on when the invitation was submitted. The visit timezone SHALL be the
+first valid IANA zone name among: the company's configured default timezone,
+the tenant's timezone, and `UTC`. A configured value that isn't a valid IANA
+zone name SHALL be skipped in favour of the next option, not rejected with
+an error.
+
+Whenever `preferredVisitDate` changes (reschedule, or an edit that sets
+`preferredVisitDate` to a different date), the system SHALL recalculate the expiry to the end of
+the new visit day in the visit timezone, whatever the invitation's approval
+status. Approving an invitation SHALL also set the expiry to the end of its
+visit day. Only an explicit staff expiry extension MAY set the expiry to any
+other value.
+
 #### Scenario: Tracking ID is generated, not client-supplied
 - **WHEN** an invitation is created
 - **THEN** the response includes a system-generated tracking ID and an
   expiry timestamp, regardless of any value the request body supplied
+
+#### Scenario: Expiry is the end of the visit day, not a fixed duration from submission
+- **WHEN** an invitation (staff pre-registration or visitor walk-in) is
+  created at 2026-09-25 14:53 IST with `preferredVisitDate` 2026-10-02 and
+  `preferredVisitTime` 11:00, and the visit timezone is `Asia/Kolkata`
+- **THEN** `expiresAt` is 2026-10-02 23:59:59 in `Asia/Kolkata`
+  (2026-10-02T18:29:59Z)
+
+#### Scenario: Company timezone takes precedence over tenant timezone
+- **WHEN** the company's default timezone is `Asia/Kolkata`, the tenant's
+  timezone is `UTC`, and an invitation is created for 2026-10-02
+- **THEN** `expiresAt` is 2026-10-02T18:29:59Z, not 2026-10-02T23:59:59Z
+
+#### Scenario: Missing or invalid company timezone falls back to the tenant timezone
+- **WHEN** the company's default timezone is unset or isn't a valid IANA zone
+  name, the tenant's timezone is `Asia/Kolkata`, and an invitation is created
+  for 2026-10-02
+- **THEN** `expiresAt` is 2026-10-02T18:29:59Z and the request succeeds
+
+#### Scenario: No valid timezone configured falls back to UTC
+- **WHEN** neither the company's default timezone nor the tenant's timezone
+  is a valid IANA zone name, and an invitation is created for 2026-10-02
+- **THEN** `expiresAt` is 2026-10-02T23:59:59Z and the request succeeds
+
+#### Scenario: Rescheduling a submitted invitation moves its expiry
+- **WHEN** a `submitted` invitation for 2026-10-02 is rescheduled to
+  2026-10-20, with the visit timezone `Asia/Kolkata`
+- **THEN** `expiresAt` becomes 2026-10-20 23:59:59 in `Asia/Kolkata`
+
+#### Scenario: Rescheduling an approved invitation moves its expiry
+- **WHEN** an `approved` invitation for 2026-10-02 is rescheduled to
+  2026-10-05, with the visit timezone `Asia/Kolkata`
+- **THEN** `expiresAt` becomes 2026-10-05 23:59:59 in `Asia/Kolkata`
+
+#### Scenario: Editing the visit date moves the expiry
+- **WHEN** an invitation is edited and the edit request sets
+  `preferredVisitDate` from 2026-10-02 to 2026-10-03
+- **THEN** `expiresAt` becomes 2026-10-03 23:59:59 in the visit timezone
+
+#### Scenario: Editing other fields leaves the expiry unchanged
+- **WHEN** an invitation is edited and the edit request either omits
+  `preferredVisitDate` or resends the invitation's current date unchanged
+- **THEN** `expiresAt` is unchanged, including a value previously set by a
+  staff expiry extension
+
+#### Scenario: Existing open invitations are realigned
+- **WHEN** an invitation created before this change has a non-terminal
+  `status` (`pending`, `submitted`, `approved`, or `checked_in`), a set
+  `preferredVisitDate`, and an `expiresAt` still equal to its submission
+  time + 7 days
+- **THEN** after the deployment's migrations run, its `expiresAt` is the end
+  of its `preferredVisitDate` in the visit timezone
+
+#### Scenario: Terminal invitations are not realigned
+- **WHEN** an invitation created before this change has `status` `denied`,
+  `cancelled`, or `checked_out`
+- **THEN** its `expiresAt` is unchanged by the deployment's migrations
+
+#### Scenario: Staff-extended or already-aligned expiries are not realigned
+- **WHEN** an existing open invitation's `expiresAt` is no longer its
+  submission time + 7 days (a staff extension or a value already computed by
+  the end-of-visit-day rule)
+- **THEN** its `expiresAt` is unchanged by the deployment's migrations
 
 ### Requirement: Visitor List Matches Registration Type
 The system SHALL require the visitor list to be empty when
@@ -456,20 +534,21 @@ invitation whose `checkInStatus` is `unused` or `checked_out` to
 its scheduled visit date, and not expired (`expiresAt` has not already
 passed). "Not scanned before its scheduled visit date" means: WHEN the
 invitation has a `preferredVisitDate` set, THEN a scan is rejected if the
-current date (tenant-local calendar day) is earlier than `preferredVisitDate`
-— the comparison is date-only, so a scan is accepted at any time of day on
-or after that date, up until `expiresAt`. WHEN the invitation has no
-`preferredVisitDate` set, THEN this check is skipped entirely and only the
-existing `expiresAt` gate applies. Calling this endpoint for an invitation
-whose `checkInStatus` is already `checked_in` SHALL be rejected with 409 and
-SHALL NOT change `checkInStatus` — the caller MUST call the check-out
-endpoint instead. This endpoint does not toggle between check-in and
-check-out; each action has its own endpoint (see "QR Check-Out Endpoint
-Transitions a Checked-In Visitor to Checked-Out"). Repeated entry/exit
-cycles are otherwise unrestricted — a visitor may enter and exit as many
-times as the visit requires (e.g. leaving for lunch and returning, or moving
-between buildings on a multi-building site); there is no terminal state
-short of the invitation's own expiry.
+current date (calendar day in the visit timezone, the same timezone used to
+compute `expiresAt`) is earlier than `preferredVisitDate`. The comparison is
+date-only, so a scan is accepted at any time of day on or after that date,
+up until `expiresAt`. WHEN the
+invitation has no `preferredVisitDate` set, THEN this check is skipped
+entirely and only the existing `expiresAt` gate applies. Calling this
+endpoint for an invitation whose `checkInStatus` is already `checked_in`
+SHALL be rejected with 409 and SHALL NOT change `checkInStatus`; the caller
+MUST call the check-out endpoint instead. This endpoint does not toggle
+between check-in and check-out; each action has its own endpoint (see "QR
+Check-Out Endpoint Transitions a Checked-In Visitor to Checked-Out").
+Repeated entry/exit cycles are otherwise unrestricted. A visitor may enter
+and exit as many times as the visit requires (e.g. leaving for lunch and
+returning, or moving between buildings on a multi-building site); there is
+no terminal state short of the invitation's own expiry.
 
 #### Scenario: First scan checks the visitor in
 - **WHEN** this endpoint is called for an invitation whose `checkInStatus`
@@ -499,22 +578,30 @@ short of the invitation's own expiry.
 #### Scenario: Entry scan before the scheduled visit date is rejected
 - **WHEN** this endpoint is called for an invitation whose `checkInStatus`
   is `unused` or `checked_out`, whose `preferredVisitDate` is set, and whose
-  `preferredVisitDate` is later than the current tenant-local calendar date
+  `preferredVisitDate` is later than the current calendar date in the visit
+  timezone
 - **THEN** the request is rejected as too early, `checkInStatus` is
   unchanged, and the rejection is distinguishable from the expiry-rejection
   case
 
 #### Scenario: Entry scan on the scheduled visit date succeeds regardless of time of day
 - **WHEN** this endpoint is called for an invitation whose `preferredVisitDate`
-  equals the current tenant-local calendar date, at any time of day, and the
-  invitation is otherwise eligible
-- **THEN** the check-in succeeds — the scheduled-date check is date-only and
+  equals the current calendar date in the visit timezone, at any time of
+  day, and the invitation is otherwise eligible
+- **THEN** the check-in succeeds. The scheduled-date check is date-only and
   does not additionally require a specific time of day
+
+#### Scenario: Visit-date gate and expiry agree on the visit day
+- **WHEN** the company's default timezone is `Asia/Kolkata`, the tenant's
+  timezone is `UTC`, and an approved invitation for 2026-10-02 is scanned at
+  2026-10-02 00:30 IST (2026-10-01T19:00Z)
+- **THEN** the check-in succeeds, because the visit-timezone date is
+  2026-10-02, even though the UTC date is still 2026-10-01
 
 #### Scenario: Entry scan with no scheduled visit date set falls back to expiry-only gating
 - **WHEN** this endpoint is called for an invitation whose `preferredVisitDate`
   is not set, and the invitation is otherwise eligible and not expired
-- **THEN** the check-in succeeds exactly as it did before this change — the
+- **THEN** the check-in succeeds exactly as it did before this change. The
   scheduled-date check is skipped entirely
 
 ### Requirement: QR Check-Out Endpoint Transitions a Checked-In Visitor to Checked-Out
@@ -2055,3 +2142,173 @@ requirement.
   `GET /invitations/{id}` with the id of an invitation that exists only in
   tenant B's schema
 - **THEN** the system returns 404
+
+### Requirement: Invitation List Supports a Purpose-of-Visit Filter
+`GET /invitations` SHALL accept an optional `purposeOfVisit` query parameter
+(max 255 characters) that, when present, narrows results to invitations
+whose purpose of visit is exactly equal to the given value. It SHALL combine
+with the endpoint's existing `status`/`registrationType`/`source`/`search`/
+`relevantToMe` filters (`AND` semantics), the response's `pagination.total`
+SHALL count only matching invitations, and it SHALL apply no filter when
+omitted.
+
+#### Scenario: Filtering by purpose of visit
+- **WHEN** a caller requests `GET /invitations?purposeOfVisit=Interview`
+- **THEN** only invitations whose purpose of visit is exactly "Interview"
+  are returned, and `pagination.total` equals the number of such invitations
+
+#### Scenario: Purpose filter combines with status
+- **WHEN** a caller requests
+  `GET /invitations?purposeOfVisit=Interview&status=submitted`
+- **THEN** only submitted invitations whose purpose of visit is
+  "Interview" are returned
+
+#### Scenario: Purpose filter applies in relevantToMe mode
+- **WHEN** a caller requests
+  `GET /invitations?relevantToMe=true&purposeOfVisit=Delivery`
+- **THEN** only invitations on the caller's personal worklist whose
+  purpose of visit is "Delivery" are returned
+
+#### Scenario: Partial value does not match
+- **WHEN** a caller requests `GET /invitations?purposeOfVisit=Inter`
+- **THEN** an invitation whose purpose of visit is "Interview" is not
+  returned
+
+#### Scenario: Over-long value rejected
+- **WHEN** a caller requests `GET /invitations` with a `purposeOfVisit`
+  value longer than 255 characters
+- **THEN** the system rejects the request with a validation error
+
+### Requirement: An Approved, Not-Yet-Checked-In Invitation Can Have Its Approval Reverted
+A caller holding `invitations:revert-approval` at the invitation's own branch
+SHALL be able to revert an invitation's approval through
+`PATCH /api/v1/invitations/{id}/revert-approval`, supplying a mandatory
+`reason` of 1–500 characters (surrounding whitespace trimmed; empty or
+whitespace-only rejected with 422). Revert SHALL succeed only when the
+invitation's `status` is `approved` and its `checkInStatus` is `unused` —
+i.e. the visitor has never been admitted. On success the system SHALL:
+
+- transition `status` back to `submitted`, clear `approvedAt`, and record
+  `approvalRevertedAt`, `approvalRevertedByUserId`, and
+  `approvalRevertReason` (overwriting any values left by an earlier revert);
+- return the updated invitation in the standard envelope, including those
+  three fields;
+- write an `invitation_approval_reverted` audit-log entry naming the actor
+  and the invitation;
+- dispatch an email to the primary contact stating that the visit's
+  approval was withdrawn and that their pass will not admit them until the
+  request is reviewed again;
+- dispatch a push notification to the invitation's resolved host, if one
+  exists — an invitation with no resolved host SHALL skip the push without
+  failing the request.
+
+The invitation's existing `expiresAt`, tracking ID, host, visit details, and
+issued QR pass SHALL be left unchanged. Reverting an invitation in any other
+state — `submitted`, `denied`, `checked_in`, `checked_out`, or `approved`
+with a `checkInStatus` other than `unused` — SHALL be rejected with 409 and
+SHALL NOT change the invitation or dispatch any notification. An unknown
+invitation id SHALL be rejected with 404; a caller lacking the permission,
+or holding it only at a different branch, SHALL be rejected with 403. The
+transition SHALL be atomic: of two concurrent revert requests for the same
+invitation, exactly one SHALL succeed and dispatch notifications, and the
+other SHALL receive 409.
+
+#### Scenario: Reverting a manually approved invitation
+- **WHEN** a caller with `invitations:revert-approval` at the invitation's
+  branch reverts an `approved` invitation with `checkInStatus` `unused`,
+  giving a reason
+- **THEN** the response is 200, `status` is `submitted`, `approvedAt` is
+  null, `approvalRevertedAt`/`approvalRevertedByUserId`/
+  `approvalRevertReason` are set, an `invitation_approval_reverted` audit
+  entry is recorded, and the primary contact is emailed
+
+#### Scenario: Reverting an auto-approved invitation
+- **WHEN** an invitation that was auto-approved at creation (no approval
+  steps) is reverted
+- **THEN** it becomes `submitted` exactly like a manually approved one, and
+  can then be approved through `POST /invitations/{id}/approve` or denied
+  through `PATCH /invitations/{id}/deny`
+
+#### Scenario: Reason is mandatory
+- **WHEN** a revert request omits `reason`, or sends an empty or
+  whitespace-only reason, or one longer than 500 characters
+- **THEN** the request is rejected with 422 and the invitation is unchanged
+
+#### Scenario: A checked-in or checked-out invitation cannot be reverted
+- **WHEN** a caller attempts to revert an invitation whose status is
+  `checked_in` or `checked_out`
+- **THEN** the request is rejected with 409 and the invitation is unchanged
+
+#### Scenario: An approved invitation whose visitor has already entered cannot be reverted
+- **WHEN** a caller attempts to revert an invitation whose status is
+  `approved` but whose `checkInStatus` is not `unused`
+- **THEN** the request is rejected with 409 and the invitation is unchanged
+
+#### Scenario: A submitted or denied invitation cannot be reverted
+- **WHEN** a caller attempts to revert an invitation whose status is
+  `submitted` or `denied`
+- **THEN** the request is rejected with 409 and no notification is
+  dispatched
+
+#### Scenario: Caller lacks invitations:revert-approval
+- **WHEN** a caller holding `invitations:approve` but not
+  `invitations:revert-approval` attempts to revert an approved invitation
+- **THEN** the request is rejected with 403 and the invitation stays
+  `approved`
+
+#### Scenario: Caller holds the permission only at another branch
+- **WHEN** a caller with `invitations:revert-approval` only at branch A
+  attempts to revert an approved invitation at branch B
+- **THEN** the request is rejected with 403, not 404
+
+#### Scenario: Unknown invitation id
+- **WHEN** a caller names an invitation id that does not exist
+- **THEN** the request is rejected with 404
+
+#### Scenario: Concurrent reverts result in exactly one transition
+- **WHEN** two otherwise-authorized revert requests for the same approved
+  invitation are processed concurrently
+- **THEN** exactly one succeeds and dispatches notifications, and the other
+  is rejected with 409
+
+#### Scenario: Revert notifies the host
+- **WHEN** an invitation with a resolved host has its approval reverted
+- **THEN** the host user receives a push notification stating the approval
+  was reverted
+
+#### Scenario: Revert of an invitation with no resolved host still succeeds
+- **WHEN** an invitation whose host never resolved has its approval reverted
+- **THEN** the request succeeds and no push notification is dispatched
+
+#### Scenario: Revert is invisible to another tenant
+- **WHEN** a caller authenticated against tenant A names the id of an
+  approved invitation that exists only in tenant B
+- **THEN** the request is rejected with 404 and tenant B's invitation is
+  unchanged
+
+### Requirement: A Reverted Invitation's Pass Does Not Admit the Visitor Until Re-Approved
+While an invitation is `submitted` following an approval revert, every
+check-in path — QR scan, staff check-in, and public tracking-ID check-in —
+SHALL reject it exactly as it rejects any other not-yet-approved invitation,
+even though the visitor still holds the QR pass issued at the original
+approval. When the invitation is approved again (directly, or by completing
+its restarted approval workflow), the system SHALL dispatch the approval
+notification again carrying the same QR pass issued originally, and that
+pass SHALL admit the visitor again.
+
+#### Scenario: QR scan of a reverted invitation is rejected
+- **WHEN** a visitor scans the QR pass of an invitation whose approval was
+  reverted and which is still `submitted`
+- **THEN** check-in is rejected and the invitation stays `submitted` with
+  `checkInStatus` `unused`
+
+#### Scenario: Re-approval restores the original pass
+- **WHEN** a reverted invitation is approved again
+- **THEN** its status becomes `approved`, `approvedAt` is set to the new
+  approval time, the approval notification is dispatched with the same QR
+  token as the original approval, and a scan of that pass is admitted
+
+#### Scenario: Re-denial after revert
+- **WHEN** a reverted invitation is denied with a reason
+- **THEN** it becomes `denied` and the denial notification is dispatched,
+  exactly as for any other submitted invitation

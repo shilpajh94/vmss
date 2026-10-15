@@ -189,6 +189,7 @@ _CTAS: dict[str, tuple[str, str]] = {
     "reschedule": ("View your visit", "visitor_track_url"),
     "edit": ("View your visit", "visitor_track_url"),
     "denial": ("Submit a new request", "visitor_request_url"),
+    "approval_reverted": ("Track your request", "visitor_track_url"),
     "submission_role": ("Review request", "staff_login_url"),
     "host_assigned": ("View visit", "staff_login_url"),
     "poc_assigned": ("View visit", "staff_login_url"),
@@ -415,6 +416,63 @@ async def _send_denial_notification(tenant_schema: str, invitation_id: str) -> N
                 f"Your registration was not approved. Tracking ID: "
                 f"{invitation.tracking_id}.\n"
                 f"Reason: {invitation.denial_reason}"
+            )
+            await _dispatch(
+                invitation, subject=subject, body=body, sms_body=sms_body, html_body=html_body
+            )
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_approval_revert_notification(
+    self, *, request_id: str, tenant_schema: str, invitation_id: str
+) -> None:
+    """add-invitation-approval-revert/design.md Decision 8: same shape as
+    `send_denial_notification`. Idempotent per `background-jobs.md` §2 — it
+    only sends while the invitation is still in the reverted state, so a
+    redelivery after a quick re-approval doesn't tell the visitor their
+    (now valid again) pass is on hold.
+    """
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(_send_approval_revert_notification(tenant_schema, invitation_id))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "approval_revert_notification_dispatch_exhausted",
+                tenant_schema=tenant_schema,
+                invitation_id=invitation_id,
+            )
+        raise
+
+
+async def _send_approval_revert_notification(tenant_schema: str, invitation_id: str) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            if (
+                invitation is None
+                or invitation.status != "submitted"
+                or invitation.approval_reverted_at is None
+            ):
+                return
+            # The revert reason is deliberately not passed: it's an internal
+            # note, not addressed to the visitor (design.md Decision 8).
+            subject, body, html_body = _render_or_fallback(
+                "approval_reverted",
+                await _invitation_email_context(
+                    session,
+                    invitation,
+                    recipient_name=invitation.primary_contact_full_name,
+                    recipient_email=invitation.primary_contact_email,
+                ),
+                fallback_subject="Your visit approval has been withdrawn",
+            )
+            sms_body = (
+                f"The approval for your visit has been withdrawn while it's reviewed "
+                f"again; your pass won't admit you until it's re-approved. Tracking ID: "
+                f"{invitation.tracking_id}."
             )
             await _dispatch(
                 invitation, subject=subject, body=body, sms_body=sms_body, html_body=html_body

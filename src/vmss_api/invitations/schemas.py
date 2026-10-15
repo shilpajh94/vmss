@@ -3,7 +3,14 @@ from datetime import date, datetime, time
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.core.schemas import CamelModel
@@ -452,6 +459,9 @@ class InvitationOut(CamelModel):
     # Populated only by the check-in/out endpoints (devices spec).
     check_in_device: DeviceBriefOut | None = None
     check_out_device: DeviceBriefOut | None = None
+    approval_reverted_at: datetime | None = None
+    approval_reverted_by_user_id: uuid.UUID | None = None
+    approval_revert_reason: str | None = None
 
 
 class InvitationLookupPrefillOut(CamelModel):
@@ -501,6 +511,34 @@ class InvitationListItemOut(CamelModel):
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
+
+
+# --- add-invitation-export ---------------------------------------------------
+
+
+class ExportFormat(StrEnum):
+    csv = "csv"
+    xlsx = "xlsx"
+
+
+class InvitationExportDateRange(CamelModel):
+    """`GET /invitations/export`'s inclusive, tenant-local calendar-date
+    range (add-invitation-export/design.md Decision 3) — which timestamp it
+    applies to depends on the `status` filter, resolved in the repository.
+    """
+
+    date_from: date | None = None
+    date_to: date | None = None
+
+    @model_validator(mode="after")
+    def _check_order(self) -> Self:
+        if (
+            self.date_from is not None
+            and self.date_to is not None
+            and self.date_from > self.date_to
+        ):
+            raise ValueError("dateFrom must not be later than dateTo")
+        return self
 
 
 # --- API-12: public tracking lookup -----------------------------------------
@@ -731,6 +769,9 @@ class InvitationDetailOut(CamelModel):
     current_approval_step: CurrentApprovalStepOut | None = None
     denial_reason: str | None
     denied_at: datetime | None
+    approval_reverted_at: datetime | None = None
+    approval_reverted_by_user_id: uuid.UUID | None = None
+    approval_revert_reason: str | None = None
     checked_in_at: datetime | None
     checked_in_by_user_id: uuid.UUID | None
     checked_out_at: datetime | None
@@ -748,6 +789,12 @@ class InvitationDetailOut(CamelModel):
 
 class InvitationDenyRequest(CamelModel):
     reason: str = Field(min_length=1, max_length=500)
+
+
+class InvitationRevertApprovalRequest(CamelModel):
+    # Stripped before the length check, so a whitespace-only reason is a
+    # 422, not a stored blank (spec.md "Reason is mandatory").
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
 class InvitationRescheduleRequest(CamelModel):

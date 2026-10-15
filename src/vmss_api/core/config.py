@@ -211,7 +211,6 @@ class Settings(BaseSettings):
     sms_from_number: str | None = None
 
     # `invitations` feature config (add-pre-registration).
-    invitation_token_ttl_hours: int = 168
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
     # Only consulted at tenant/branch provisioning and by the
     # `add-repeatable-field-groups` migration that seeded existing
@@ -225,6 +224,11 @@ class Settings(BaseSettings):
     # from `invitation_max_upload_size_bytes` (ID proof scans), per
     # file-upload-handling.md §1's "tune per artifact type".
     invitation_max_photo_size_bytes: int = 2 * 1024 * 1024
+
+    # Visitor rows per `GET /invitations/export` (add-invitation-export/
+    # design.md Decision 1) — an over-cap export is rejected with 422, never
+    # truncated.
+    invitation_export_max_rows: int = 10_000
 
     # User profile picture upload (add-avatar-upload-and-verify-image-storage).
     avatar_max_upload_size_bytes: int = 2 * 1024 * 1024

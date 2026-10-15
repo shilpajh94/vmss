@@ -41,6 +41,7 @@ _TYPES = [
     ("visit_confirmation", "success", "Confirmed", "Your visit is confirmed"),
     ("tracking_only", "pending", "Pending approval", "We've received your visit request"),
     ("denial", "danger", "Not approved", "Your visit request wasn't approved"),
+    ("approval_reverted", "pending", "On hold", "Your visit approval has been withdrawn"),
     ("reschedule", "info", "Rescheduled", "Your visit has been rescheduled"),
     ("edit", "info", "Details updated", "Your visit details have changed"),
     ("submission_role", "pending", "Action needed", "New visit request awaiting triage"),
