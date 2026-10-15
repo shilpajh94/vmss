@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { LogOutIcon, RefreshCcwIcon } from '../../../components/icons'
 import { NotificationBell } from '../../../components/notification-bell/NotificationBell'
@@ -7,9 +8,11 @@ interface WorkspaceHeaderProps {
   currentUser: StaffUser | undefined
   onRefresh: () => void
   onSignOut: () => void
+  /** Rendered first in the right-hand group, before Refresh (e.g. Reception's Export). */
+  leadingAction?: ReactNode
 }
 
-export function WorkspaceHeader({ currentUser, onRefresh, onSignOut }: WorkspaceHeaderProps) {
+export function WorkspaceHeader({ currentUser, onRefresh, onSignOut, leadingAction }: WorkspaceHeaderProps) {
   return (
     <div className="flex w-full flex-wrap items-center justify-between gap-4">
       <div className="flex flex-col gap-0.5">
@@ -18,6 +21,7 @@ export function WorkspaceHeader({ currentUser, onRefresh, onSignOut }: Workspace
       </div>
 
       <div className="flex items-center gap-2 md:gap-4">
+        {leadingAction}
         <button
           type="button"
           onClick={onRefresh}

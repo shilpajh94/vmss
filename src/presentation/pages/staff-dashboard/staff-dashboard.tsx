@@ -114,7 +114,14 @@ export function StaffDashboardPage() {
 
   return (
     <>
-      <WorkspaceHeader currentUser={currentUser} onRefresh={refresh} onSignOut={signOut} />
+      {/* Export sits in the header, as it does in the admin title row, so the
+          filter bar holds only search, filters and Clear filters. */}
+      <WorkspaceHeader
+        currentUser={currentUser}
+        onRefresh={refresh}
+        onSignOut={signOut}
+        leadingAction={canExport ? <ExportInvitationsButton compact onClick={openExport} /> : undefined}
+      />
       <BoardFilterBar
         search={search}
         onSearchChange={setSearch}
@@ -127,7 +134,6 @@ export function StaffDashboardPage() {
         extraFilters={boardExtraFilters({ statusFilter, setStatusFilter, sourceFilter, setSourceFilter })}
         isFiltering={isFiltering}
         onClearFilters={clearFilters}
-        trailingAction={canExport ? <ExportInvitationsButton onClick={openExport} /> : undefined}
       />
 
       {errorMessage ? (
