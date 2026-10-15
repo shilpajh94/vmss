@@ -194,6 +194,11 @@ async def test_approval_status_unknown_or_deleted_device_is_404_and_creates_noth
             "/api/v1/devices/approval-status", params={"deviceId": device_id}
         )
         assert response.status_code == 404
+        assert response.json() == {
+            "success": False,
+            "message": "Device not registered",
+            "errors": None,
+        }
     assert await DeviceRepository(db_session).get_by_device_id("never-registered") is None
 
 
