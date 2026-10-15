@@ -12,7 +12,9 @@ import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-wor
 import { CalendarClockIcon, InfoIcon, PencilIcon, UndoIcon, UserCheckIcon } from '../icons'
 import { IconActionButton } from '../ui/IconActionButton'
 
-const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved'])
+// An archived no-show can be rescheduled or edited; the API sends it back for
+// re-approval when its date changes.
+const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved', 'archived'])
 
 const AVATAR_TINTS = ['#dbeafe', '#ffe4e6', '#d1fae5', '#fef3c7', '#f3e8ff', '#fee2e2']
 

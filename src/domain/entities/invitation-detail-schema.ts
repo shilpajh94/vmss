@@ -113,6 +113,10 @@ export const InvitationDetailSchema = z.object({
   checkedInByUserId: z.string().nullable(),
   checkedOutAt: z.string().nullable(),
   checkedOutByUserId: z.string().nullable(),
+  // VMSS_API auto-checkout-and-archive-no-shows. Optional so an API without
+  // the visit-lifecycle sweep still parses.
+  checkedOutAutomatically: z.boolean().default(false),
+  archivedAt: z.string().nullish(),
   badgeNumber: z.string().nullable(),
   badgeIssuedAt: z.string().nullable(),
   badgeReprintCount: z.number(),

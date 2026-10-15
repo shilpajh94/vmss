@@ -25,6 +25,7 @@ const ACCENT_CLASSES = {
     dragOver: 'border-text-faint bg-text-faint/5 ring-text-faint/40',
   },
   denied: { border: 'border-l-danger', tint: 'bg-danger/8', text: 'text-danger', dragOver: 'border-danger bg-danger/5 ring-danger/40' },
+  archived: { border: 'border-l-warning', tint: 'bg-warning/8', text: 'text-warning', dragOver: 'border-warning bg-warning/5 ring-warning/40' },
 } as const
 
 interface KanbanColumnProps {

@@ -26,6 +26,9 @@ export const BOARD_STATUS_COLUMNS = [
   { status: 'checked_in', label: 'Checked-in' },
   { status: 'checked_out', label: 'Checked-out' },
   { status: 'denied', label: 'Denied' },
+  // Approved visitors who never arrived; the API's visit-lifecycle sweep moves
+  // them here the day after their visit (VMSS_API auto-checkout-and-archive-no-shows).
+  { status: 'archived', label: 'Archived' },
 ] as const satisfies ReadonlyArray<{ status: BoardStatus; label: string }>
 
 const ALL_BOARD_STATUSES: readonly BoardStatus[] = BOARD_STATUS_COLUMNS.map((column) => column.status)
@@ -515,11 +518,14 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const reschedule = useCallback(
     async (id: string, preferredVisitDate: string, preferredVisitTime: string) => {
       setReschedulingId(id)
+      // Rescheduling an archived no-show sends it back for approval rather
+      // than keeping it approved, so the toast says so.
+      const wasArchived = findRequest(id)?.status === 'archived'
 
       try {
         await rescheduleInvitationUseCase.execute(id, preferredVisitDate, preferredVisitTime)
         setPendingRescheduleId(undefined)
-        toast.success('Visit request rescheduled.')
+        toast.success(wasArchived ? 'Visit rescheduled — awaiting re-approval.' : 'Visit request rescheduled.')
         await loadDashboard({ silent: true })
       } catch (error) {
         console.error('Failed to reschedule visit request', error)
@@ -528,7 +534,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         setReschedulingId(undefined)
       }
     },
-    [rescheduleInvitationUseCase, loadDashboard, toast],
+    [rescheduleInvitationUseCase, findRequest, loadDashboard, toast],
   )
 
   const requestReschedule = useCallback((id: string) => {

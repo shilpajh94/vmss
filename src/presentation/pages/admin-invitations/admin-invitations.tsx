@@ -5,6 +5,7 @@ import { DenyInvitationModal } from '../../components/invitation-board/DenyInvit
 import { RevertApprovalModal } from '../../components/invitation-board/RevertApprovalModal'
 import { CheckOutVisitorModal } from '../../components/invitation-board/CheckOutVisitorModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
+import { todayAsDateInputValue } from '../../utils/local-date-input-value'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
@@ -24,6 +25,7 @@ const EMPTY_MESSAGES: Record<string, string> = {
   checked_in: 'No checked-in visitors today',
   checked_out: 'No checked-out visits',
   denied: 'No denied visits',
+  archived: 'No archived visits',
 }
 
 export function AdminInvitationsPage() {
@@ -238,6 +240,7 @@ export function AdminInvitationsPage() {
         visitorName={findRequest(pendingRescheduleId)?.primaryContactFullName}
         trackingId={findRequest(pendingRescheduleId)?.trackingId}
         isRescheduling={reschedulingId !== undefined}
+        minDate={findRequest(pendingRescheduleId)?.status === 'archived' ? todayAsDateInputValue() : undefined}
         onConfirm={(preferredVisitDate, preferredVisitTime) =>
           pendingRescheduleId && reschedule(pendingRescheduleId, preferredVisitDate, preferredVisitTime)
         }
