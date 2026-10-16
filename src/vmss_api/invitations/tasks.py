@@ -48,6 +48,7 @@ from vmss_api.invitations import notifications
 from vmss_api.invitations.models import Invitation
 from vmss_api.invitations.qr import generate_qr_png
 from vmss_api.invitations.repository import InvitationRepository
+from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.models import Branch
 from vmss_api.org_structure.repository import CompanyRepository
 from vmss_api.tenant.models import Tenant
@@ -1055,7 +1056,12 @@ def sweep_tenant_visit_lifecycle(self, *, tenant_id: str, tenant_schema: str) ->
 async def _sweep_tenant_visit_lifecycle(tenant_schema: str) -> None:
     try:
         async with tenant_session_scope(tenant_schema) as session:
-            checked_out, archived = await sweep_visit_lifecycle(session, now=datetime.now(UTC))
+            now = datetime.now(UTC)
+            checked_out, archived = await sweep_visit_lifecycle(session, now=now)
+            # Rides the same per-tenant tick rather than a second beat
+            # schedule; committed separately, after the lifecycle commit, so
+            # a purge error can't undo a check-out or archive.
+            purged = await notifications_service.purge_expired_notifications(session, now=now)
     finally:
         await engine.dispose()
     logger.info(
@@ -1063,6 +1069,7 @@ async def _sweep_tenant_visit_lifecycle(tenant_schema: str) -> None:
         tenant_schema=tenant_schema,
         auto_checked_out=checked_out,
         archived=archived,
+        notifications_purged=purged,
     )
 
 

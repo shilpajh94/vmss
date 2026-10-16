@@ -1,13 +1,17 @@
 import asyncio
 import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from factories import DeviceTokenFactory, RoleFactory, UserFactory
 from vmss_api.auth.models import User, UserBranchRole
 from vmss_api.notifications import fcm, service, tasks
-from vmss_api.notifications.repository import DeviceTokenRepository
+from vmss_api.notifications.models import Notification
+from vmss_api.notifications.repository import DeviceTokenRepository, NotificationRepository
 from vmss_api.org_structure.models import Branch
 from vmss_api.tenant.models import Tenant
 
@@ -300,7 +304,7 @@ async def test_send_push_exhausted_retries_logs_error(monkeypatch, tenant: Tenan
 
     # A recipient with no registered device would short-circuit before ever
     # calling the (failing) sender, so give the task a real device to send to.
-    async def _fake_send_push(tenant_schema, user_ids, title, body, data):
+    async def _fake_send_push(tenant_schema, user_ids, title, body, data, *, dispatch_id):
         raise RuntimeError("FCM is unreachable")
 
     monkeypatch.setattr(tasks, "_send_push", _fake_send_push)
@@ -581,3 +585,290 @@ async def test_notify_role_at_branch_all_holders_excluded_skips_dispatch(
     )
 
     assert delay_calls == []
+
+
+# --- In-app notification feed (fix-web-push-and-add-notification-feed) ------
+
+
+def _send_push_kwargs(tenant: Tenant, user_ids: list[uuid.UUID], **overrides) -> dict:
+    kwargs = {
+        "request_id": "test",
+        "tenant_schema": tenant.schema_name,
+        "user_ids": [str(u) for u in user_ids],
+        "title": "Invitation approved",
+        "body": "Ada Visitor — tracking ID INV-1",
+        "data": {"invitationId": str(uuid.uuid4()), "action": "approved"},
+    }
+    return {**kwargs, **overrides}
+
+
+async def _rows_for(db_session: AsyncSession, user_id: uuid.UUID) -> list[Notification]:
+    db_session.expire_all()
+    stmt = select(Notification).where(Notification.user_id == user_id)
+    return list((await db_session.execute(stmt)).scalars().all())
+
+
+async def _make_users(db_session: AsyncSession, count: int) -> list[User]:
+    users = [
+        UserFactory.build(id=uuid.uuid4(), email=f"feed-{uuid.uuid4().hex[:8]}@acme-test.example")
+        for _ in range(count)
+    ]
+    db_session.add_all(users)
+    await db_session.commit()
+    return users
+
+
+def _notification(user_id: uuid.UUID, **overrides) -> Notification:
+    values = {
+        "id": uuid.uuid4(),
+        "user_id": user_id,
+        "dispatch_id": uuid.uuid4(),
+        "title": "Visitor checked in",
+        "body": "Ada Visitor — tracking ID INV-1",
+        "data": {"action": "checked_in"},
+    }
+    return Notification(**{**values, **overrides})
+
+
+async def test_send_push_records_notification_without_a_device(
+    monkeypatch, tenant: Tenant, user: User, db_session: AsyncSession
+) -> None:
+    """spec "Recipient without a device still gets an in-app notification" /
+    "Recipient has no registered device" — the row is recorded and the
+    zero-device send is logged at INFO.
+    """
+    user_id, schema_name = user.id, tenant.schema_name
+    logged: list[tuple[str, dict]] = []
+    monkeypatch.setattr(tasks.logger, "info", lambda event, **kw: logged.append((event, kw)))
+
+    result = await asyncio.to_thread(
+        tasks.send_push.apply, kwargs=_send_push_kwargs(tenant, [user_id])
+    )
+    result.get(propagate=True)
+
+    rows = await _rows_for(db_session, user_id)
+    assert len(rows) == 1
+    assert rows[0].title == "Invitation approved"
+    assert rows[0].data["action"] == "approved"
+    assert rows[0].read_at is None
+    assert (
+        "push_no_registered_devices",
+        {"tenant_schema": schema_name, "recipient_count": 1},
+    ) in logged
+
+
+async def test_send_push_redelivery_does_not_duplicate_and_records_each_recipient(
+    tenant: Tenant, db_session: AsyncSession
+) -> None:
+    """spec "Redelivered dispatch does not duplicate" / "Role fan-out records
+    one notification per holder" — same `dispatch_id` processed twice, three
+    recipients.
+    """
+    users = await _make_users(db_session, 3)
+    user_ids = [u.id for u in users]
+    kwargs = _send_push_kwargs(tenant, user_ids, dispatch_id=str(uuid.uuid4()))
+
+    for _ in range(2):
+        result = await asyncio.to_thread(tasks.send_push.apply, kwargs=kwargs)
+        result.get(propagate=True)
+
+    for user_id in user_ids:
+        assert len(await _rows_for(db_session, user_id)) == 1
+
+
+async def test_send_push_failure_still_records_notification(
+    monkeypatch, tenant: Tenant, user: User, db_session: AsyncSession
+) -> None:
+    """design.md D1 — recorded and committed before the FCM call, so a send
+    that exhausts its retries still leaves the in-app copy.
+    """
+    db_session.add(
+        DeviceTokenFactory.build(
+            id=uuid.uuid4(), user_id=user.id, fcm_token="failing-device", platform="web"
+        )
+    )
+    await db_session.commit()
+    user_id = user.id
+
+    class _FailingPushSender:
+        async def send_each(self, messages):
+            raise RuntimeError("FCM is unreachable")
+
+    monkeypatch.setattr(fcm, "push_sender", _FailingPushSender())
+    monkeypatch.setattr(tasks.send_push, "max_retries", 0)
+
+    result = await asyncio.to_thread(
+        tasks.send_push.apply, kwargs=_send_push_kwargs(tenant, [user_id])
+    )
+    assert result.failed()
+    assert len(await _rows_for(db_session, user_id)) == 1
+
+
+async def test_send_push_unrecordable_recipient_does_not_block_the_push(
+    tenant: Tenant,
+) -> None:
+    """A recording failure (here: a recipient id with no `users` row) is
+    logged and the dispatch still completes, rather than failing and
+    retrying the whole push.
+    """
+    result = await asyncio.to_thread(
+        tasks.send_push.apply, kwargs=_send_push_kwargs(tenant, [uuid.uuid4()])
+    )
+    result.get(propagate=True)
+
+
+async def test_list_notifications_returns_only_callers_newest_first(
+    client: AsyncClient,
+    user: User,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    (other,) = await _make_users(db_session, 1)
+    now = datetime.now(UTC)
+    older = _notification(user.id, title="Older", created_at=now - timedelta(hours=2))
+    newer = _notification(user.id, title="Newer", created_at=now - timedelta(minutes=5))
+    db_session.add_all([older, newer, _notification(other.id, title="Someone else's")])
+    await db_session.commit()
+    token = issue_token(user)
+
+    response = await client.get(
+        "/api/v1/notifications", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [item["title"] for item in body["data"]] == ["Newer", "Older"]
+    assert body["pagination"] == {"page": 1, "pageSize": 20, "total": 2, "totalPages": 1}
+    first = body["data"][0]
+    assert {"id", "title", "body", "data", "createdAt", "readAt"} <= first.keys()
+    assert first["data"] == {"action": "checked_in"}
+
+
+async def test_unread_filter_and_count_agree(
+    client: AsyncClient,
+    user: User,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    read_at = datetime.now(UTC)
+    db_session.add_all(
+        [_notification(user.id) for _ in range(3)]
+        + [_notification(user.id, read_at=read_at) for _ in range(2)]
+    )
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {issue_token(user)}"}
+
+    unread = await client.get("/api/v1/notifications?unreadOnly=true", headers=headers)
+    count = await client.get("/api/v1/notifications/unread-count", headers=headers)
+
+    assert unread.status_code == 200, unread.text
+    assert len(unread.json()["data"]) == 3
+    assert count.json()["data"] == {"unreadCount": 3}
+
+
+async def test_mark_read_and_re_mark_keeps_original_read_at(
+    client: AsyncClient,
+    user: User,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    notification = _notification(user.id)
+    db_session.add(notification)
+    await db_session.commit()
+    notification_id = notification.id
+    headers = {"Authorization": f"Bearer {issue_token(user)}"}
+    url = f"/api/v1/notifications/{notification_id}/read"
+
+    first = await client.patch(url, headers=headers)
+    assert first.status_code == 200, first.text
+    first_read_at = first.json()["data"]["readAt"]
+    assert first_read_at is not None
+
+    second = await client.patch(url, headers=headers)
+    assert second.status_code == 200, second.text
+    assert second.json()["data"]["readAt"] == first_read_at
+
+
+async def test_mark_read_of_another_users_notification_is_404(
+    client: AsyncClient,
+    user: User,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    (other,) = await _make_users(db_session, 1)
+    theirs = _notification(other.id)
+    db_session.add(theirs)
+    await db_session.commit()
+    theirs_id, other_id = theirs.id, other.id
+
+    response = await client.patch(
+        f"/api/v1/notifications/{theirs_id}/read",
+        headers={"Authorization": f"Bearer {issue_token(user)}"},
+    )
+    assert response.status_code == 404, response.text
+    assert (await _rows_for(db_session, other_id))[0].read_at is None
+
+
+async def test_read_all_only_changes_callers_notifications(
+    client: AsyncClient,
+    user: User,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    (other,) = await _make_users(db_session, 1)
+    db_session.add_all([_notification(user.id) for _ in range(3)] + [_notification(other.id)])
+    await db_session.commit()
+    user_id, other_id = user.id, other.id
+    headers = {"Authorization": f"Bearer {issue_token(user)}"}
+
+    response = await client.post("/api/v1/notifications/read-all", headers=headers)
+    assert response.status_code == 200, response.text
+
+    count = await client.get("/api/v1/notifications/unread-count", headers=headers)
+    assert count.json()["data"] == {"unreadCount": 0}
+    assert all(row.read_at is not None for row in await _rows_for(db_session, user_id))
+    assert (await _rows_for(db_session, other_id))[0].read_at is None
+
+
+async def test_feed_endpoints_require_auth(client: AsyncClient) -> None:
+    """testing-standards.md §2's permission-denied case doesn't apply: the
+    feed has no `require_permission` gate — every route is self-scoped to
+    the caller — so the access-control case is "no token → 401".
+    """
+    notification_id = uuid.uuid4()
+    for method, url in (
+        ("GET", "/api/v1/notifications"),
+        ("GET", "/api/v1/notifications/unread-count"),
+        ("POST", "/api/v1/notifications/read-all"),
+        ("PATCH", f"/api/v1/notifications/{notification_id}/read"),
+    ):
+        response = await client.request(method, url)
+        assert response.status_code == 401, (method, url, response.text)
+
+
+async def test_notification_tenant_isolation(
+    make_tenant_schema, open_tenant_session, user: User, db_session: AsyncSession
+) -> None:
+    db_session.add(_notification(user.id))
+    await db_session.commit()
+
+    other_schema = "tenant_other_notification_feed_test"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        assert await NotificationRepository(other_session).count_unread(user.id) == 0
+
+
+async def test_purge_removes_only_notifications_older_than_90_days(
+    user: User, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC)
+    stale = _notification(user.id, title="Stale", created_at=now - timedelta(days=91))
+    fresh = _notification(user.id, title="Fresh", created_at=now - timedelta(days=1))
+    db_session.add_all([stale, fresh])
+    await db_session.commit()
+    user_id = user.id
+
+    purged = await service.purge_expired_notifications(db_session, now=now)
+
+    assert purged == 1
+    assert [row.title for row in await _rows_for(db_session, user_id)] == ["Fresh"]

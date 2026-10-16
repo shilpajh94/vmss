@@ -1,16 +1,23 @@
 import uuid
 from collections.abc import Collection
+from datetime import datetime, timedelta
 
 import structlog
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
 from vmss_api.auth.repository import RoleRepository, UserRepository
 from vmss_api.core.logging import logger
 from vmss_api.notifications import tasks
-from vmss_api.notifications.models import DeviceToken
-from vmss_api.notifications.repository import DeviceTokenRepository
+from vmss_api.notifications.models import DeviceToken, Notification
+from vmss_api.notifications.repository import DeviceTokenRepository, NotificationRepository
 from vmss_api.notifications.schemas import DevicePlatform
+
+# In-app notifications are disposable UI state; anything older is purged by
+# the recurring visit-lifecycle sweep (fix-web-push-and-add-notification-
+# feed design.md D4).
+NOTIFICATION_RETENTION = timedelta(days=90)
 
 
 def _current_request_id() -> str:
@@ -58,6 +65,7 @@ async def notify_user(
     tasks.send_push.delay(
         request_id=_current_request_id(),
         tenant_schema=tenant_schema,
+        dispatch_id=str(uuid.uuid4()),
         user_ids=[str(user_id)],
         title=title,
         body=body,
@@ -107,6 +115,7 @@ async def notify_role_at_branch(
     tasks.send_push.delay(
         request_id=_current_request_id(),
         tenant_schema=tenant_schema,
+        dispatch_id=str(uuid.uuid4()),
         user_ids=[str(user_id) for user_id in user_ids],
         title=title,
         body=body,
@@ -167,3 +176,42 @@ async def notify_step_approver(
         body=body,
         data=data,
     )
+
+
+async def list_notifications(
+    tenant_db: AsyncSession, *, user_id: uuid.UUID, unread_only: bool, page: int, page_size: int
+) -> tuple[list[Notification], int]:
+    return await NotificationRepository(tenant_db).list_page(
+        user_id, unread_only=unread_only, page=page, page_size=page_size
+    )
+
+
+async def count_unread(tenant_db: AsyncSession, *, user_id: uuid.UUID) -> int:
+    return await NotificationRepository(tenant_db).count_unread(user_id)
+
+
+async def mark_read(
+    tenant_db: AsyncSession, *, user_id: uuid.UUID, notification_id: uuid.UUID
+) -> Notification:
+    """404 for an unknown id and for another user's notification alike, so
+    the response never reveals whether someone else's id exists.
+    """
+    notification = await NotificationRepository(tenant_db).mark_read(user_id, notification_id)
+    if notification is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Notification not found")
+    await tenant_db.commit()
+    return notification
+
+
+async def mark_all_read(tenant_db: AsyncSession, *, user_id: uuid.UUID) -> None:
+    await NotificationRepository(tenant_db).mark_all_read(user_id)
+    await tenant_db.commit()
+
+
+async def purge_expired_notifications(session: AsyncSession, *, now: datetime) -> int:
+    """Hard-deletes notifications older than `NOTIFICATION_RETENTION`, in its
+    own commit. Returns how many were deleted.
+    """
+    purged = await NotificationRepository(session).purge_older_than(now - NOTIFICATION_RETENTION)
+    await session.commit()
+    return purged
