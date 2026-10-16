@@ -199,6 +199,32 @@ def require_permission(permission_code: str):
     return _check
 
 
+def require_permission_anywhere(permission_code: str):
+    """RBAC check for reading tenant-wide configuration (workflow rules, the
+    role catalog, visitor categories) that isn't tied to any one branch: a
+    grant at any branch is enough. `require_permission` only accepts a
+    company-wide grant, which wrongly rejected branch-scoped Reception from
+    reading the workflow it approves against (auth spec "Role Grants Are
+    Scoped Per Branch/Location")."""
+
+    def _check(
+        user: Annotated[User, Depends(get_current_user)],
+    ) -> User:
+        if not user.authorized_branch_ids(permission_code):
+            logger.warning(
+                "permission_denied",
+                permission_code=permission_code,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permission",
+            )
+
+        return user
+
+    return _check
+
+
 def branch_filter(column: Any, branch_scope: BranchScope) -> Any | None:
     """Build a branch filter, or return None for company-wide access."""
     return None if branch_scope == "all" else column.in_(branch_scope)

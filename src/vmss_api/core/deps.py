@@ -11,7 +11,13 @@ from typing import Annotated
 from fastapi import Query
 
 from vmss_api.core.database import get_db
-from vmss_api.core.tenancy import get_current_user, get_tenant, get_tenant_db, require_permission
+from vmss_api.core.tenancy import (
+    get_current_user,
+    get_tenant,
+    get_tenant_db,
+    require_permission,
+    require_permission_anywhere,
+)
 
 __all__ = [
     "get_current_user",
@@ -20,6 +26,7 @@ __all__ = [
     "get_tenant",
     "get_tenant_db",
     "require_permission",
+    "require_permission_anywhere",
 ]
 
 

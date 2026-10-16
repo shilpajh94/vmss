@@ -5,10 +5,17 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from factories import ApprovalWorkflowRuleFactory, RoleFactory, VisitorCategoryFactory
-from vmss_api.auth.models import Role, User
+from factories import (
+    ApprovalWorkflowRuleFactory,
+    PermissionFactory,
+    RoleFactory,
+    UserFactory,
+    VisitorCategoryFactory,
+)
+from vmss_api.auth.models import Role, User, UserBranchRole
 from vmss_api.core.config import settings
 from vmss_api.core.schemas import SortOrder
+from vmss_api.org_structure.models import Branch
 from vmss_api.tenant.models import Tenant
 from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
 from vmss_api.visitors.repository import (
@@ -703,6 +710,53 @@ async def test_get_approval_workflow_rule_requires_permission(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
+
+
+async def _branch_scoped_reader(db_session: AsyncSession, branch: Branch) -> User:
+    """A Reception-like user whose catalog-read permissions are granted at
+    one branch only, never company-wide."""
+    permissions = [
+        PermissionFactory.build(id=uuid.uuid4(), code=code, description=code)
+        for code in ("approval-workflow-rules:view", "visitor-categories:view", "roles:view")
+    ]
+    role = RoleFactory.build(id=uuid.uuid4(), name="branch-reader", permissions=permissions)
+    reader = UserFactory.build(
+        id=uuid.uuid4(),
+        email="branch-reader@acme-test.example",
+        branch_roles=[UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch.id)],
+    )
+    db_session.add_all([*permissions, role, reader])
+    await db_session.commit()
+    return reader
+
+
+async def test_branch_scoped_grant_can_read_workflow_catalog(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    branch: Branch,
+    approval_workflow_rule: ApprovalWorkflowRule,
+    issue_token: Callable[[User], str],
+) -> None:
+    """Workflow rules, visitor categories and the role catalog are
+    tenant-wide configuration: a `:view` grant at any one branch is enough
+    to read them (auth spec "Role Grants Are Scoped Per Branch/Location").
+    Before, only company-wide grants passed, so branch-scoped Reception got
+    403 reading the workflow it approves against."""
+    rule_id = approval_workflow_rule.id
+    category_id = approval_workflow_rule.visitor_category_id
+    branch_id = branch.id
+    token = issue_token(await _branch_scoped_reader(db_session, branch))
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch_id)}
+
+    for path in (
+        "/api/v1/approval-workflow-rules",
+        f"/api/v1/approval-workflow-rules/{rule_id}",
+        f"/api/v1/visitor-categories/{category_id}",
+        "/api/v1/auth/roles",
+        "/api/v1/auth/permissions",
+    ):
+        response = await client.get(path, headers=headers)
+        assert response.status_code == 200, (path, response.text)
 
 
 async def test_list_approval_workflow_rules_filtered_by_category(
