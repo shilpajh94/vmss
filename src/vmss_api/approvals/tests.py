@@ -3081,3 +3081,46 @@ async def test_reject_step_emails_host_and_poc_but_not_the_rejecting_approver(
         (c["recipient_user_id"], c["event"], c["actor_user_id"])
         for c in staff_lifecycle_email_calls
     ] == [(str(host_id), "denied", str(approver_id))]
+
+
+async def test_approve_final_step_pushes_poc(
+    client: AsyncClient,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+    monkeypatch,
+) -> None:
+    """invitations spec "Point of contact is pushed on final-step approval"
+    (complete-staff-push-coverage) — the final step's approval reaches
+    `invitations.service.approve_invitation` with the approver as actor, so
+    the point of contact gets the `approved` push alongside the host.
+    """
+    invitation, host = await _host_step_invitation(db_session, branch)
+    await _grant_approve_permission(db_session, host, branch.id)
+    poc = UserFactory.build(
+        id=uuid.uuid4(), email=f"poc-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="POC"
+    )
+    db_session.add(poc)
+    invitation.poc_user_id = poc.id
+    await db_session.commit()
+    host_id, poc_id, invitation_id = host.id, poc.id, invitation.id
+    step_zero = await _get_step(db_session, invitation_id, 0)
+    step_id = step_zero.id
+    token = issue_token(host)
+
+    calls: list[dict] = []
+
+    async def _fake_notify_user(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(notifications_service, "notify_user", _fake_notify_user)
+    monkeypatch.setattr(tasks.send_approval_notification, "delay", lambda **kw: None)
+
+    response = await client.post(
+        f"/api/v1/invitations/{invitation_id}/approval-steps/{step_id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert sorted(str(c["user_id"]) for c in calls) == sorted([str(host_id), str(poc_id)])
+    assert all(c["data"]["action"] == "approved" for c in calls)

@@ -180,7 +180,9 @@ async def approve_step(
             )
             if updated_invitation is not None:
                 invitation = updated_invitation
-        return await invitations_service.approve_invitation(tenant_db, invitation, tenant=tenant)
+        return await invitations_service.approve_invitation(
+            tenant_db, invitation, tenant=tenant, actor_user_id=user.id
+        )
 
     activated_step = await _activate_next_step(tenant_db, invitation.id)
     await tenant_db.commit()

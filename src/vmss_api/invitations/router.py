@@ -1393,7 +1393,9 @@ async def approve_invitation(
     """
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:approve", invitation.branch_id)
-    invitation = await service.approve_invitation(tenant_db, invitation, tenant=tenant)
+    invitation = await service.approve_invitation(
+        tenant_db, invitation, tenant=tenant, actor_user_id=user.id
+    )
     background_tasks.add_task(
         record_audit_log,
         tenant.schema_name,
@@ -1890,7 +1892,11 @@ async def extend_invitation(
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:extend", invitation.branch_id)
     invitation = await service.extend_invitation(
-        tenant_db, invitation, new_expires_at=payload.expires_at, tenant=tenant
+        tenant_db,
+        invitation,
+        new_expires_at=payload.expires_at,
+        tenant=tenant,
+        actor_user_id=user.id,
     )
     background_tasks.add_task(
         record_audit_log,

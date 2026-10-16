@@ -768,6 +768,34 @@ the visitor:
 - **Not covered**: check-in and check-out stay push-only, and the
   automatic check-out and archive sweep stays silent.
 
+## Staff push coverage
+
+`complete-staff-push-coverage`. Every lifecycle event that pushes the host
+also pushes the point of contact. The POC rules are the same for every
+event: the actor and the host are never POC-pushed (the host already gets
+the host push), a role POC fans out to every holder at the branch or
+company-wide with `reason: "lifecycle_update"`, and an invitation with no
+POC skips the push. QR and kiosk check-in/check-out have no human actor, so
+only the host is excluded there. Staff email is unchanged: only deny,
+revert and reschedule email staff.
+
+| Event (`action`) | Host | Point of contact | Approver(s) |
+|---|---|---|---|
+| Submitted (`step_awaiting_approval`) | — | — | Push to the first step's user or role (not Admin or `host` role) |
+| Next step activated (`step_awaiting_approval`) | — | — | Push to that step's user or role |
+| Host named by delegation (`host_assigned`) | Push + email to the new host | — | — |
+| POC named by edit (`poc_assigned`) | — | Push to the new POC (+ email for a user POC) | — |
+| Approved (`approved`) | Push | Push | — |
+| Denied / reverted / rescheduled | Push + email | Push (+ email for a user POC) | — |
+| Checked in / out (`checked_in`, `checked_out`) | Push | Push | — |
+| Pass extended (`extended`) | Push | Push | — |
+| Details edited (`edited`) | Push | Push to a POC already in place; a POC named by this same edit gets only `poc_assigned` | — |
+
+Not pushed to any staff: auto-approved creation (no host or POC exists yet),
+the visit-lifecycle sweep's auto check-out and no-show archive, watchlist
+flags and kiosk device registrations (no recipient role is defined for
+either).
+
 ## Automatic check-out and archived no-shows
 
 `auto-checkout-and-archive-no-shows`. A visit nobody closes by hand is

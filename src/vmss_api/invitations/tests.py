@@ -14338,3 +14338,286 @@ async def test_extend_invitation_without_host_sends_no_push(
     )
     assert response.status_code == 200, response.text
     assert user_pushes == []
+
+
+# --- complete-staff-push-coverage --------------------------------------------
+# invitations spec "Approval, Check-In, Check-Out, Extension, and Edit Push
+# the Point of Contact". Reuses `_capture_pushes`/`_staff_pair` above; ids are
+# read into locals before any request (gotcha: get_tenant's rollback).
+
+
+def _pushed_user_ids(user_pushes: list[dict]) -> list[str]:
+    return sorted(str(c["user_id"]) for c in user_pushes)
+
+
+async def test_tracking_id_check_in_pushes_poc_and_host(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host, poc = await _staff_pair(db_session)
+    invitation = _approved_invitation(db_session, branch.id, host_id=host.id, poc_user_id=poc.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    host_id, poc_id, tracking_id = host.id, poc.id, invitation.tracking_id
+    user_pushes, role_pushes = _capture_pushes(monkeypatch)
+
+    response = await client.patch(f"/api/v2/invitations/{tracking_id}/check-in")
+    assert response.status_code == 200, response.text
+
+    assert _pushed_user_ids(user_pushes) == sorted([str(host_id), str(poc_id)])
+    assert all(c["data"]["action"] == "checked_in" for c in user_pushes)
+    assert role_pushes == []
+
+
+async def test_qr_check_out_pushes_role_poc_excluding_host(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    role = RoleFactory.build(id=uuid.uuid4(), name=f"security-{uuid.uuid4().hex[:6]}")
+    db_session.add(role)
+    await db_session.flush()
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        check_in_status="checked_in",
+        checked_in_at=datetime.now(UTC),
+        host_id=host.id,
+        poc_role_id=role.id,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    host_id, role_id, branch_id = host.id, role.id, branch.id
+    qr = qr_token.encrypt_invitation_token(invitation.id)
+    user_pushes, role_pushes = _capture_pushes(monkeypatch)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{qr}/check-out")
+    assert response.status_code == 200, response.text
+
+    assert [c["user_id"] for c in user_pushes] == [host_id]
+    assert len(role_pushes) == 1
+    assert role_pushes[0]["role_id"] == role_id
+    assert role_pushes[0]["branch_id"] == branch_id
+    assert role_pushes[0]["reason"] == "lifecycle_update"
+    assert role_pushes[0]["exclude_user_ids"] == {host_id}
+    assert role_pushes[0]["data"]["action"] == "checked_out"
+
+
+async def test_approve_pushes_poc(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host, poc = await _staff_pair(db_session)
+    invitation = _build_invitation(
+        db_session, branch.id, status="submitted", host_id=host.id, poc_user_id=poc.id
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    host_id, poc_id, invitation_id = host.id, poc.id, invitation.id
+    monkeypatch.setattr(tasks.send_approval_notification, "delay", lambda **kw: None)
+    user_pushes, _ = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation_id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert _pushed_user_ids(user_pushes) == sorted([str(host_id), str(poc_id)])
+    assert all(c["data"]["action"] == "approved" for c in user_pushes)
+
+
+async def test_extend_pushes_poc_with_new_expiry(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host, poc = await _staff_pair(db_session)
+    now = datetime.now(UTC)
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        host_id=host.id,
+        poc_user_id=poc.id,
+        expires_at=now + timedelta(days=1),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    poc_id, invitation_id = poc.id, invitation.id
+    new_expiry = now + timedelta(days=7)
+    user_pushes, _ = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation_id}/extend",
+        json={"expiresAt": new_expiry.isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    poc_pushes = [c for c in user_pushes if c["user_id"] == poc_id]
+    assert len(poc_pushes) == 1
+    assert poc_pushes[0]["data"]["action"] == "extended"
+    assert datetime.fromisoformat(poc_pushes[0]["data"]["expiresAt"]) == new_expiry
+
+
+async def test_rejected_extend_sends_no_poc_push(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    _, poc = await _staff_pair(db_session)
+    now = datetime.now(UTC)
+    invitation = _approved_invitation(
+        db_session, branch.id, poc_user_id=poc.id, expires_at=now + timedelta(days=2)
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    invitation_id = invitation.id
+    user_pushes, role_pushes = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation_id}/extend",
+        json={"expiresAt": (now + timedelta(days=1)).isoformat()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422, response.text
+    assert user_pushes == []
+    assert role_pushes == []
+
+
+def _silence_edit_dispatch(monkeypatch) -> None:
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: None)
+    monkeypatch.setattr(tasks.send_poc_creation_notification, "delay", lambda **kw: None)
+
+
+async def test_edit_without_poc_change_pushes_existing_poc(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    _, poc = await _staff_pair(db_session)
+    invitation = _approved_invitation(
+        db_session, branch.id, poc_user_id=poc.id, visitor_category_id=None
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    poc_id, invitation_id = poc.id, invitation.id
+    _silence_edit_dispatch(monkeypatch)
+    user_pushes, _ = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await _edit(client, token, invitation_id, {"additionalNotes": "Call ahead"})
+    assert response.status_code == 200, response.text
+
+    assert [c["user_id"] for c in user_pushes] == [poc_id]
+    assert user_pushes[0]["data"]["action"] == "edited"
+
+
+async def test_edit_changing_poc_pushes_only_poc_assigned_to_new_poc(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host, old_poc = await _staff_pair(db_session)
+    new_poc = UserFactory.build(
+        id=uuid.uuid4(), email=f"poc-{uuid.uuid4().hex[:8]}@acme-test.example", full_name="Q"
+    )
+    db_session.add(new_poc)
+    invitation = _approved_invitation(
+        db_session, branch.id, poc_user_id=old_poc.id, visitor_category_id=None
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    new_poc_id, invitation_id = new_poc.id, invitation.id
+    _silence_edit_dispatch(monkeypatch)
+    user_pushes, _ = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await _edit(client, token, invitation_id, {"pocUserId": str(new_poc_id)})
+    assert response.status_code == 200, response.text
+
+    assert [c["user_id"] for c in user_pushes] == [new_poc_id]
+    assert user_pushes[0]["data"]["action"] == "poc_assigned"
+
+
+async def test_poc_who_checks_the_visitor_out_is_not_pushed(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        status="checked_in",
+        check_in_status="checked_in",
+        checked_in_at=datetime.now(UTC),
+        host_id=host.id,
+        poc_user_id=user.id,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    host_id, invitation_id = host.id, invitation.id
+    user_pushes, _ = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation_id}/check-out",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert [c["user_id"] for c in user_pushes] == [host_id]
+
+
+async def test_host_who_is_also_poc_is_pushed_once_on_check_in(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    invitation = _approved_invitation(db_session, branch.id, host_id=host.id, poc_user_id=host.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    host_id, tracking_id = host.id, invitation.tracking_id
+    user_pushes, role_pushes = _capture_pushes(monkeypatch)
+
+    response = await client.patch(f"/api/v2/invitations/{tracking_id}/check-in")
+    assert response.status_code == 200, response.text
+
+    assert [c["user_id"] for c in user_pushes] == [host_id]
+    assert role_pushes == []
+
+
+async def test_approve_without_poc_pushes_only_the_host(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    host, _ = await _staff_pair(db_session)
+    invitation = _build_invitation(
+        db_session, branch.id, status="submitted", host_id=host.id, poc_user_id=None
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    host_id, invitation_id = host.id, invitation.id
+    monkeypatch.setattr(tasks.send_approval_notification, "delay", lambda **kw: None)
+    user_pushes, role_pushes = _capture_pushes(monkeypatch)
+
+    token = await _login(client, user.email)
+    response = await client.post(
+        f"/api/v1/invitations/{invitation_id}/approve",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    assert [c["user_id"] for c in user_pushes] == [host_id]
+    assert role_pushes == []
+
+
+async def test_rejected_qr_check_in_sends_no_poc_push(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    _, poc = await _staff_pair(db_session)
+    invitation = _approved_invitation(
+        db_session,
+        branch.id,
+        poc_user_id=poc.id,
+        expires_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    qr = qr_token.encrypt_invitation_token(invitation.id)
+    user_pushes, role_pushes = _capture_pushes(monkeypatch)
+
+    response = await client.patch(f"/api/v2/invitations/qr/{qr}/check-in")
+    assert response.status_code == 410, response.text
+    assert user_pushes == []
+    assert role_pushes == []

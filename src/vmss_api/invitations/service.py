@@ -153,36 +153,65 @@ async def _notify_host(
         )
 
 
-@dataclass(frozen=True)
-class _ResponsibleStaff:
-    email_user_ids: tuple[uuid.UUID, ...]
-    push_poc_user_id: uuid.UUID | None
-    push_poc_role_id: uuid.UUID | None
-
-
-def _responsible_staff(invitation: Invitation, *, actor_user_id: uuid.UUID) -> _ResponsibleStaff:
-    """Who besides the visitor hears about a denial, revert or reschedule
-    (staff-lifecycle-emails-and-dashboard-landing design.md D1). Email goes
-    to the resolved host and the named point-of-contact user — once each,
-    never to the actor. The point of contact is also pushed, unless they're
-    the actor or the host (who already gets `_notify_host`'s push). A
-    role-identified point of contact is push-only, like everywhere else.
+def _staff_email_recipients(
+    invitation: Invitation, *, actor_user_id: uuid.UUID
+) -> tuple[uuid.UUID, ...]:
+    """Who besides the visitor is emailed about a denial, revert or
+    reschedule (staff-lifecycle-emails-and-dashboard-landing design.md D1):
+    the resolved host and the named point-of-contact user — once each,
+    never the actor. A role-identified point of contact is push-only, like
+    everywhere else.
     """
-    email_user_ids = tuple(
+    return tuple(
         dict.fromkeys(
             user_id
             for user_id in (invitation.host_id, invitation.poc_user_id)
             if user_id is not None and user_id != actor_user_id
         )
     )
-    push_poc_user_id = invitation.poc_user_id
-    if push_poc_user_id in (actor_user_id, invitation.host_id):
-        push_poc_user_id = None
-    return _ResponsibleStaff(
-        email_user_ids=email_user_ids,
-        push_poc_user_id=push_poc_user_id,
-        push_poc_role_id=invitation.poc_role_id,
-    )
+
+
+async def _push_point_of_contact(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    invitation: Invitation,
+    *,
+    push_builder: Callable[[Invitation], tuple[str, str, dict[str, str]]],
+    actor_user_id: uuid.UUID | None,
+) -> None:
+    """The point-of-contact counterpart of `_notify_host`, for every
+    lifecycle event that pushes the host (complete-staff-push-coverage
+    design.md D1). Never pushes the actor or the host — the host already
+    gets `_notify_host`'s push for the same action. `actor_user_id` is None
+    for a QR/kiosk action with no human actor. A role-identified point of
+    contact fans out as `lifecycle_update`, not a new assignment.
+    """
+    excluded = {user_id for user_id in (actor_user_id, invitation.host_id) if user_id is not None}
+    poc_user_id = invitation.poc_user_id
+    poc_role_id = invitation.poc_role_id
+    if poc_user_id is None and poc_role_id is None:
+        return
+    title, body, data = push_builder(invitation)
+    if poc_user_id is not None and poc_user_id not in excluded:
+        await notifications_service.notify_user(
+            tenant_schema=tenant.schema_name,
+            user_id=poc_user_id,
+            title=title,
+            body=body,
+            data=data,
+        )
+    if poc_role_id is not None and invitation.branch_id is not None:
+        await notifications_service.notify_role_at_branch(
+            tenant_db,
+            tenant_schema=tenant.schema_name,
+            role_id=poc_role_id,
+            branch_id=invitation.branch_id,
+            title=title,
+            body=body,
+            data=data,
+            exclude_user_ids=excluded,
+            reason="lifecycle_update",
+        )
 
 
 _STAFF_EVENT_PUSH_BUILDERS: dict[
@@ -206,8 +235,7 @@ async def _notify_responsible_staff(
     (invitations spec "Denial, Approval Revert, and Reschedule Email the
     Responsible Staff" / "... Push the Point of Contact").
     """
-    staff = _responsible_staff(invitation, actor_user_id=actor_user_id)
-    for recipient_user_id in staff.email_user_ids:
+    for recipient_user_id in _staff_email_recipients(invitation, actor_user_id=actor_user_id):
         tasks.send_staff_lifecycle_notification.delay(
             request_id=_current_request_id(),
             tenant_schema=tenant.schema_name,
@@ -216,29 +244,13 @@ async def _notify_responsible_staff(
             actor_user_id=str(actor_user_id),
             event=event,
         )
-    title, body, data = _STAFF_EVENT_PUSH_BUILDERS[event](invitation)
-    if staff.push_poc_user_id is not None:
-        await notifications_service.notify_user(
-            tenant_schema=tenant.schema_name,
-            user_id=staff.push_poc_user_id,
-            title=title,
-            body=body,
-            data=data,
-        )
-    if staff.push_poc_role_id is not None and invitation.branch_id is not None:
-        await notifications_service.notify_role_at_branch(
-            tenant_db,
-            tenant_schema=tenant.schema_name,
-            role_id=staff.push_poc_role_id,
-            branch_id=invitation.branch_id,
-            title=title,
-            body=body,
-            data=data,
-            exclude_user_ids={
-                user_id for user_id in (actor_user_id, invitation.host_id) if user_id is not None
-            },
-            reason="lifecycle_update",
-        )
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        invitation,
+        push_builder=_STAFF_EVENT_PUSH_BUILDERS[event],
+        actor_user_id=actor_user_id,
+    )
 
 
 async def _issue_qr_code(
@@ -1630,7 +1642,11 @@ async def get_invitation(tenant_db: AsyncSession, invitation_id: uuid.UUID) -> I
 
 
 async def approve_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, tenant: Tenant
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    tenant: Tenant,
+    actor_user_id: uuid.UUID | None = None,
 ) -> Invitation:
     """Transitions a `submitted` invitation to `approved` and enqueues the
     approval notification (`add-invitation-approval-flow-and-role-resync/
@@ -1682,6 +1698,13 @@ async def approve_invitation(
         qr_token=qr_code.qr_token,
     )
     await _notify_host(tenant, updated, push_notifications.approved)
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        updated,
+        push_builder=push_notifications.approved,
+        actor_user_id=actor_user_id,
+    )
     return updated
 
 
@@ -1950,6 +1973,13 @@ async def _perform_check_in(
         )
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_in)
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        updated,
+        push_builder=push_notifications.checked_in,
+        actor_user_id=actor_user_id,
+    )
     return updated, True
 
 
@@ -2058,6 +2088,9 @@ async def check_in_by_qr_token(
 
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_in)
+    await _push_point_of_contact(
+        tenant_db, tenant, updated, push_builder=push_notifications.checked_in, actor_user_id=None
+    )
     return updated, "Verification passed", True
 
 
@@ -2088,6 +2121,9 @@ async def check_out_by_qr_token(
 
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_out)
+    await _push_point_of_contact(
+        tenant_db, tenant, updated, push_builder=push_notifications.checked_out, actor_user_id=None
+    )
     return updated, "Checked out successfully"
 
 
@@ -2106,6 +2142,13 @@ async def check_out_invitation(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not checked in")
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_out)
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        updated,
+        push_builder=push_notifications.checked_out,
+        actor_user_id=user_id,
+    )
     return updated
 
 
@@ -2458,7 +2501,18 @@ async def edit_invitation(
     )
     await _notify_host(tenant, updated, push_notifications.edited)
     await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
-    if "poc_user_id" in changes or "poc_role_id" in changes:
+    poc_changed = "poc_user_id" in changes or "poc_role_id" in changes
+    # A newly named point of contact gets `poc_assigned` below instead — one
+    # push per edit, never "details updated" on top (design.md D3).
+    if not poc_changed:
+        await _push_point_of_contact(
+            tenant_db,
+            tenant,
+            updated,
+            push_builder=push_notifications.edited,
+            actor_user_id=user.id,
+        )
+    if poc_changed:
         title, body, data = push_notifications.poc_assigned(updated)
         await notifications_service.notify_step_approver(
             tenant_db,
@@ -2481,7 +2535,12 @@ async def edit_invitation(
 
 
 async def extend_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, new_expires_at: datetime, tenant: Tenant
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    new_expires_at: datetime,
+    tenant: Tenant,
+    actor_user_id: uuid.UUID | None = None,
 ) -> Invitation:
     if invitation.status not in _ACTIVE_STATUSES:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not active")
@@ -2497,7 +2556,11 @@ async def extend_invitation(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not active")
     await tenant_db.commit()
     tz = await _resolve_visit_timezone(tenant_db, tenant)
-    await _notify_host(tenant, updated, partial(push_notifications.extended, tz=tz))
+    extended = partial(push_notifications.extended, tz=tz)
+    await _notify_host(tenant, updated, extended)
+    await _push_point_of_contact(
+        tenant_db, tenant, updated, push_builder=extended, actor_user_id=actor_user_id
+    )
     return updated
 
 
