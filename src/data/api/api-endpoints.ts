@@ -429,6 +429,26 @@ export const API_ENDPOINTS = {
     method: "DELETE",
     hasToken: true,
   },
+  LIST_NOTIFICATIONS: {
+    endpoint: "/notifications",
+    method: "GET",
+    hasToken: true,
+  },
+  NOTIFICATIONS_UNREAD_COUNT: {
+    endpoint: "/notifications/unread-count",
+    method: "GET",
+    hasToken: true,
+  },
+  MARK_NOTIFICATION_READ: {
+    endpoint: "/notifications/:id/read",
+    method: "PATCH",
+    hasToken: true,
+  },
+  MARK_ALL_NOTIFICATIONS_READ: {
+    endpoint: "/notifications/read-all",
+    method: "POST",
+    hasToken: true,
+  },
   LIST_FORM_STEPS: {
     endpoint: "/form-builder/steps",
     method: "GET",

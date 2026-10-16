@@ -129,6 +129,10 @@ import { SaveWorkflowUseCase } from './data/use-cases/save-workflow'
 import { DeleteWorkflowUseCase } from './data/use-cases/delete-workflow'
 import { RegisterDeviceUseCase } from './data/use-cases/register-device'
 import { UnregisterDeviceUseCase } from './data/use-cases/unregister-device'
+import { ListNotificationsUseCase } from './data/use-cases/list-notifications'
+import { GetUnreadNotificationCountUseCase } from './data/use-cases/get-unread-notification-count'
+import { MarkNotificationReadUseCase } from './data/use-cases/mark-notification-read'
+import { MarkAllNotificationsReadUseCase } from './data/use-cases/mark-all-notifications-read'
 import { HttpVisitRequestRepository } from './infrastructure/visit-request-repository'
 import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-request-summary-repository'
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
@@ -245,6 +249,10 @@ export interface AppDependencies {
   deleteWorkflowUseCase: DeleteWorkflowUseCase
   registerDeviceUseCase: RegisterDeviceUseCase
   unregisterDeviceUseCase: UnregisterDeviceUseCase
+  listNotificationsUseCase: ListNotificationsUseCase
+  getUnreadNotificationCountUseCase: GetUnreadNotificationCountUseCase
+  markNotificationReadUseCase: MarkNotificationReadUseCase
+  markAllNotificationsReadUseCase: MarkAllNotificationsReadUseCase
   listFormStepsUseCase: ListFormStepsUseCase
   createFormStepUseCase: CreateFormStepUseCase
   updateFormStepUseCase: UpdateFormStepUseCase
@@ -396,6 +404,10 @@ export function createApp(): AppDependencies {
   let notificationRepository: NotificationRepository | undefined
   let registerDeviceUseCase: RegisterDeviceUseCase | undefined
   let unregisterDeviceUseCase: UnregisterDeviceUseCase | undefined
+  let listNotificationsUseCase: ListNotificationsUseCase | undefined
+  let getUnreadNotificationCountUseCase: GetUnreadNotificationCountUseCase | undefined
+  let markNotificationReadUseCase: MarkNotificationReadUseCase | undefined
+  let markAllNotificationsReadUseCase: MarkAllNotificationsReadUseCase | undefined
 
   const resolveApiClient = (): ApiClient => {
     apiClient ??= new ApiClient(import.meta.env.VITE_API_BASE_URL)
@@ -1052,6 +1064,26 @@ export function createApp(): AppDependencies {
     return unregisterDeviceUseCase
   }
 
+  const resolveListNotificationsUseCase = (): ListNotificationsUseCase => {
+    listNotificationsUseCase ??= new ListNotificationsUseCase(resolveNotificationRepository())
+    return listNotificationsUseCase
+  }
+
+  const resolveGetUnreadNotificationCountUseCase = (): GetUnreadNotificationCountUseCase => {
+    getUnreadNotificationCountUseCase ??= new GetUnreadNotificationCountUseCase(resolveNotificationRepository())
+    return getUnreadNotificationCountUseCase
+  }
+
+  const resolveMarkNotificationReadUseCase = (): MarkNotificationReadUseCase => {
+    markNotificationReadUseCase ??= new MarkNotificationReadUseCase(resolveNotificationRepository())
+    return markNotificationReadUseCase
+  }
+
+  const resolveMarkAllNotificationsReadUseCase = (): MarkAllNotificationsReadUseCase => {
+    markAllNotificationsReadUseCase ??= new MarkAllNotificationsReadUseCase(resolveNotificationRepository())
+    return markAllNotificationsReadUseCase
+  }
+
   return {
     get apiClient() {
       return resolveApiClient()
@@ -1319,6 +1351,18 @@ export function createApp(): AppDependencies {
     },
     get unregisterDeviceUseCase() {
       return resolveUnregisterDeviceUseCase()
+    },
+    get listNotificationsUseCase() {
+      return resolveListNotificationsUseCase()
+    },
+    get getUnreadNotificationCountUseCase() {
+      return resolveGetUnreadNotificationCountUseCase()
+    },
+    get markNotificationReadUseCase() {
+      return resolveMarkNotificationReadUseCase()
+    },
+    get markAllNotificationsReadUseCase() {
+      return resolveMarkAllNotificationsReadUseCase()
     },
     get listFormStepsUseCase() {
       return resolveListFormStepsUseCase()

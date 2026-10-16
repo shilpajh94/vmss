@@ -12,7 +12,7 @@ export function useStaffSsoLoginPage() {
   const toast = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { registerCurrentDevice } = usePushNotifications()
+  const { refreshRegistrationIfGranted } = usePushNotifications()
 
   const [status, setStatus] = useState<StaffSsoLoginStatus>('idle')
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
@@ -25,7 +25,7 @@ export function useStaffSsoLoginPage() {
       try {
         const { token } = await exchangeSsoCodeUseCase.execute(code)
         sessionStorage.setItem('token', token)
-        void registerCurrentDevice()
+        void refreshRegistrationIfGranted()
         const user = await getCurrentStaffUserUseCase.execute()
         navigate(landingPathFor(user))
       } catch {
@@ -34,7 +34,7 @@ export function useStaffSsoLoginPage() {
         toast.error('Sign-in could not be completed. Please try again.')
       }
     },
-    [exchangeSsoCodeUseCase, getCurrentStaffUserUseCase, navigate, toast, registerCurrentDevice],
+    [exchangeSsoCodeUseCase, getCurrentStaffUserUseCase, navigate, toast, refreshRegistrationIfGranted],
   )
 
   useEffect(() => {

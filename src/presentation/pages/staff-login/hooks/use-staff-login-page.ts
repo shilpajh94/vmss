@@ -11,7 +11,7 @@ export function useStaffLoginPage() {
   const { loginStaffUseCase, getCurrentStaffUserUseCase, startSsoLoginUseCase } = useAppDependencies()
   const toast = useToast()
   const navigate = useNavigate()
-  const { registerCurrentDevice } = usePushNotifications()
+  const { refreshRegistrationIfGranted } = usePushNotifications()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -37,7 +37,7 @@ export function useStaffLoginPage() {
     try {
       const { token } = await loginStaffUseCase.execute(trimmedEmail, trimmedPassword)
       sessionStorage.setItem('token', token)
-      void registerCurrentDevice()
+      void refreshRegistrationIfGranted()
 
       const user = await getCurrentStaffUserUseCase.execute()
       navigate(landingPathFor(user))
