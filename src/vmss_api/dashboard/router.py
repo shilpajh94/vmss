@@ -11,10 +11,13 @@ from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, Sort
 from vmss_api.dashboard import service
 from vmss_api.dashboard.deps import resolve_dashboard_branch_scope
 from vmss_api.dashboard.schemas import (
+    DashboardAnalyticsOut,
     DashboardCheckInListItemOut,
     DashboardCheckInSortableField,
     DashboardOverviewOut,
+    DashboardRange,
     DashboardSearchResultOut,
+    MyDashboardAnalyticsOut,
     MyDashboardOverviewOut,
 )
 from vmss_api.tenant.models import Tenant
@@ -60,6 +63,42 @@ async def get_my_overview(
     """
     overview = await service.get_my_overview(tenant_db, tenant, user)
     return success_response(data=overview)
+
+
+@router.get(
+    "/analytics",
+    response_model=Envelope[DashboardAnalyticsOut],
+)
+async def get_analytics(
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    branch_scope: Annotated[
+        BranchScope, Depends(resolve_dashboard_branch_scope("invitations:view-all"))
+    ],
+    range_: Annotated[DashboardRange, Query(alias="range")] = "7d",
+) -> JSONResponse:
+    """spec.md "Branch-Wide Dashboard Analytics" — the chart series behind
+    the admin and reception dashboards, same branch scope as `/overview`.
+    """
+    analytics = await service.get_analytics(tenant_db, tenant, branch_scope, range_=range_)
+    return success_response(data=analytics)
+
+
+@router.get(
+    "/my-analytics",
+    response_model=Envelope[MyDashboardAnalyticsOut],
+)
+async def get_my_analytics(
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    range_: Annotated[DashboardRange, Query(alias="range")] = "7d",
+) -> JSONResponse:
+    """spec.md "Personal Dashboard Analytics" — same gate and relevance
+    rule as `/my-overview`; `X-Branch-ID` is never read.
+    """
+    analytics = await service.get_my_analytics(tenant_db, tenant, user, range_=range_)
+    return success_response(data=analytics)
 
 
 @router.get(

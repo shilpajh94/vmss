@@ -2,7 +2,18 @@ import uuid
 from datetime import date, datetime, time
 from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Time, Uuid
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Time,
+    Uuid,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -38,6 +49,22 @@ class Invitation(Base, TimestampMixin):
     """
 
     __tablename__ = "invitations"
+    # Dashboard analytics range scans (live-dashboards-and-analytics
+    # design.md D4); mirrors alembic_tenant revision 6791c5e6a421.
+    __table_args__ = (
+        Index(
+            "ix_invitations_branch_visit_date",
+            "branch_id",
+            "preferred_visit_date",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "ix_invitations_branch_checked_in_at",
+            "branch_id",
+            "checked_in_at",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     branch_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("branches.id"), index=True)
