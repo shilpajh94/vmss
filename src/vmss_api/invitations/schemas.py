@@ -903,7 +903,6 @@ class InvitationQrCheckInOut(CamelModel):
     primary_contact_photo_url: str | None = None
     primary_contact_preferred_contact_method: ContactMethod
     primary_contact_id_proof_type: str | None = None
-    primary_contact_id_proof_url: str | None = None
     primary_contact_email: str | None
     primary_contact_phone: str | None
     host_id: uuid.UUID | None = None
@@ -933,7 +932,7 @@ class InvitationQrCheckInOut(CamelModel):
     archived_at: datetime | None = None
     checked_out_automatically: bool = False
     expires_at: datetime
-    visitors: list[InvitationVisitorDetailOut]
+    visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 
 

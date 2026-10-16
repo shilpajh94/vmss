@@ -572,11 +572,12 @@ async def _to_qr_check_in_out(
     form_context: service.InvitationDetailFormContext,
 ) -> InvitationQrCheckInOut:
     """Public, unauthenticated QR check-in/check-out. There is no
-    `documents:view` caller to gate on, but Reception verifies IDs at this
-    step, so the signed QR token is treated as the capability: the primary
-    contact's ID proof and every `file_upload` field (custom fields, group
-    instances, visitors' `idProofUrl`) resolve to signed URLs, same as the
-    staff detail view. Raw storage keys are never returned."""
+    `documents:view` caller to gate on, so no ID-proof document or
+    `file_upload` field resolves to a URL here (spec.md "QR Check-In
+    Response Surfaces Full Invitation Detail": that stays exclusive to the
+    authenticated staff detail view). Visitors use `InvitationVisitorOut`,
+    which has no `idProofUrl` key at all. Raw storage keys are never
+    returned."""
     branch_out, building_out, department_out = _to_location_outs(
         branch, department, building, invitation.department_to_visit
     )
@@ -600,9 +601,6 @@ async def _to_qr_check_in_out(
             invitation.primary_contact_preferred_contact_method
         ),
         primary_contact_id_proof_type=invitation.primary_contact_id_proof_type,
-        primary_contact_id_proof_url=await _resolve_document_url(
-            invitation.primary_contact_id_proof_storage_key
-        ),
         primary_contact_email=invitation.primary_contact_email,
         primary_contact_phone=invitation.primary_contact_phone,
         host_id=invitation.host_id,
@@ -629,19 +627,19 @@ async def _to_qr_check_in_out(
                 **await _resolve_custom_field_file_values(
                     invitation.primary_contact_custom_field_values,
                     form_context.visitor_info_file_ids,
-                    include_documents=True,
+                    include_documents=False,
                 ),
                 **await _resolve_custom_field_file_values(
                     invitation.custom_field_values,
                     form_context.invitation_scope_file_ids,
-                    include_documents=True,
+                    include_documents=False,
                 ),
             },
         ),
         groups=_dict_to_groups(
             form_context.field_meta,
             await _resolve_group_field_values(
-                invitation.group_field_values, form_context.group_file_ids, include_documents=True
+                invitation.group_field_values, form_context.group_file_ids, include_documents=False
             ),
             form_context.group_names,
         ),
@@ -651,18 +649,21 @@ async def _to_qr_check_in_out(
         checked_out_at=invitation.checked_out_at,
         expires_at=invitation.expires_at,
         visitors=[
-            *await _to_visitor_detail_outs(
-                invitation.visitors,
-                include_documents=True,
-                visitor_info_file_ids=form_context.visitor_info_file_ids,
-                field_meta=form_context.field_meta,
-            ),
-            *await _group_collected_visitor_detail_outs(
-                invitation,
-                form_context.visitor_info_groups,
-                include_documents=True,
-                field_meta=form_context.field_meta,
-            ),
+            InvitationVisitorOut(**visitor.model_dump(exclude={"id_proof_url"}))
+            for visitor in [
+                *await _to_visitor_detail_outs(
+                    invitation.visitors,
+                    include_documents=False,
+                    visitor_info_file_ids=form_context.visitor_info_file_ids,
+                    field_meta=form_context.field_meta,
+                ),
+                *await _group_collected_visitor_detail_outs(
+                    invitation,
+                    form_context.visitor_info_groups,
+                    include_documents=False,
+                    field_meta=form_context.field_meta,
+                ),
+            ]
         ],
         vehicles=[
             InvitationVehicleOut(
@@ -676,7 +677,7 @@ async def _to_qr_check_in_out(
                     await _resolve_custom_field_file_values(
                         v.custom_field_values,
                         form_context.vehicle_info_file_ids,
-                        include_documents=True,
+                        include_documents=False,
                     ),
                 ),
             )

@@ -7548,7 +7548,7 @@ async def test_qr_check_out_response_includes_captured_photos(
     assert response.json()["data"]["primaryContactPhotoUrl"] is not None
 
 
-async def test_qr_check_in_response_includes_primary_contact_id_proof_url_only(
+async def test_qr_check_in_response_includes_id_proof_type_but_never_a_document_url(
     client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
 ) -> None:
     """enrich-invitation-checkin-and-detail-views spec.md "QR Check-In
@@ -7571,7 +7571,7 @@ async def test_qr_check_in_response_includes_primary_contact_id_proof_url_only(
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["primaryContactIdProofType"] == invitation.primary_contact_id_proof_type
-    assert "primaryContactIdProofUrl" in data
+    assert "primaryContactIdProofUrl" not in data
     [visitor_out] = data["visitors"]
     assert visitor_out["idProofType"] == co_visitor.id_proof_type
     assert "idProofUrl" not in visitor_out
