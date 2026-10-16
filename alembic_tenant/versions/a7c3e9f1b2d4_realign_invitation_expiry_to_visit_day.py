@@ -50,7 +50,7 @@ def upgrade() -> None:
     schema = op.get_context().version_table_schema
     conn = op.get_bind()
     company_tz = conn.execute(
-        text(f"SELECT default_timezone FROM {schema}.companies WHERE deleted_at IS NULL LIMIT 1")
+        text(f'SELECT default_timezone FROM "{schema}".companies WHERE deleted_at IS NULL LIMIT 1')
     ).scalar_one_or_none()
     tenant_tz = conn.execute(
         text(f"SELECT timezone FROM {settings.global_schema_name}.tenants WHERE schema_name = :s"),
@@ -60,7 +60,7 @@ def upgrade() -> None:
 
     conn.execute(
         text(
-            f"UPDATE {schema}.invitations "
+            f'UPDATE "{schema}".invitations '
             "SET expires_at = (preferred_visit_date + time '23:59:59') AT TIME ZONE :zone "
             "WHERE preferred_visit_date IS NOT NULL "
             "AND status IN ('pending', 'submitted', 'approved', 'checked_in') "
