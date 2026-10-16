@@ -17,9 +17,9 @@ import type { FloorRepository } from './data/repositories/floor-repository'
 import type { DashboardRepository } from './data/repositories/dashboard-repository'
 import type { HostEmployeeRepository } from './data/repositories/host-employee-repository'
 import type { EmployeeDirectoryRepository } from './data/repositories/employee-directory-repository'
-import type { ReceptionDeskRepository } from './data/repositories/reception-desk-repository'
-import type { SecurityGateRepository } from './data/repositories/security-gate-repository'
 import type { KioskRepository } from './data/repositories/kiosk-repository'
+import type { DeviceRepository } from './data/repositories/device-repository'
+import type { KioskLocationValidationRepository } from './data/repositories/kiosk-location-validation-repository'
 import type { VisitorCategoryRepository } from './data/repositories/visitor-category-repository'
 import type { ApprovalWorkflowRuleRepository } from './data/repositories/approval-workflow-rule-repository'
 import type { NotificationRepository } from './data/repositories/notification-repository'
@@ -88,22 +88,19 @@ import { UpdateRolePermissionsUseCase } from './data/use-cases/update-role-permi
 import { ResyncRolePermissionsUseCase } from './data/use-cases/resync-role-permissions'
 import { AssignHostEmployeeRoleUseCase } from './data/use-cases/assign-host-employee-role'
 import { RevokeHostEmployeeRoleUseCase } from './data/use-cases/revoke-host-employee-role'
-import { ListReceptionDesksUseCase } from './data/use-cases/list-reception-desks'
-import { ListReceptionDesksPageUseCase } from './data/use-cases/list-reception-desks-page'
-import { CreateReceptionDeskUseCase } from './data/use-cases/create-reception-desk'
-import { UpdateReceptionDeskUseCase } from './data/use-cases/update-reception-desk'
-import { DeleteReceptionDeskUseCase } from './data/use-cases/delete-reception-desk'
-import { ListSecurityGatesUseCase } from './data/use-cases/list-security-gates'
-import { ListSecurityGatesPageUseCase } from './data/use-cases/list-security-gates-page'
-import { CreateSecurityGateUseCase } from './data/use-cases/create-security-gate'
-import { UpdateSecurityGateUseCase } from './data/use-cases/update-security-gate'
-import { DeleteSecurityGateUseCase } from './data/use-cases/delete-security-gate'
 import { ListKiosksPageUseCase } from './data/use-cases/list-kiosks-page'
 import { GetKioskUseCase } from './data/use-cases/get-kiosk'
 import { CreateKioskUseCase } from './data/use-cases/create-kiosk'
 import { UpdateKioskUseCase } from './data/use-cases/update-kiosk'
 import { SetKioskVisibilityUseCase } from './data/use-cases/set-kiosk-visibility'
 import { DeleteKioskUseCase } from './data/use-cases/delete-kiosk'
+import { ListDevicesPageUseCase } from './data/use-cases/list-devices-page'
+import { ApproveDeviceUseCase } from './data/use-cases/approve-device'
+import { EnableDeviceUseCase } from './data/use-cases/enable-device'
+import { DisableDeviceUseCase } from './data/use-cases/disable-device'
+import { DeleteDeviceUseCase } from './data/use-cases/delete-device'
+import { GetKioskLocationValidationUseCase } from './data/use-cases/get-kiosk-location-validation'
+import { UpdateKioskLocationValidationUseCase } from './data/use-cases/update-kiosk-location-validation'
 import { ListVisitorCategoriesUseCase } from './data/use-cases/list-visitor-categories'
 import { ListVisitorCategoriesPageUseCase } from './data/use-cases/list-visitor-categories-page'
 import { CreateVisitorCategoryUseCase } from './data/use-cases/create-visitor-category'
@@ -150,9 +147,9 @@ import { HttpFloorRepository } from './infrastructure/floor-repository'
 import { HttpDashboardRepository } from './infrastructure/dashboard-repository'
 import { HttpHostEmployeeRepository } from './infrastructure/host-employee-repository'
 import { HttpEmployeeDirectoryRepository } from './infrastructure/employee-directory-repository'
-import { HttpReceptionDeskRepository } from './infrastructure/reception-desk-repository'
-import { HttpSecurityGateRepository } from './infrastructure/security-gate-repository'
 import { HttpKioskRepository } from './infrastructure/kiosk-repository'
+import { HttpDeviceRepository } from './infrastructure/device-repository'
+import { HttpKioskLocationValidationRepository } from './infrastructure/kiosk-location-validation-repository'
 import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category-repository'
 import { HttpFormBuilderRepository } from './infrastructure/form-builder-repository'
 import { HttpApprovalWorkflowRuleRepository } from './infrastructure/approval-workflow-rule-repository'
@@ -224,22 +221,19 @@ export interface AppDependencies {
   resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase
   assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase
   revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase
-  listReceptionDesksUseCase: ListReceptionDesksUseCase
-  listReceptionDesksPageUseCase: ListReceptionDesksPageUseCase
-  createReceptionDeskUseCase: CreateReceptionDeskUseCase
-  updateReceptionDeskUseCase: UpdateReceptionDeskUseCase
-  deleteReceptionDeskUseCase: DeleteReceptionDeskUseCase
-  listSecurityGatesUseCase: ListSecurityGatesUseCase
-  listSecurityGatesPageUseCase: ListSecurityGatesPageUseCase
-  createSecurityGateUseCase: CreateSecurityGateUseCase
-  updateSecurityGateUseCase: UpdateSecurityGateUseCase
-  deleteSecurityGateUseCase: DeleteSecurityGateUseCase
   listKiosksPageUseCase: ListKiosksPageUseCase
   getKioskUseCase: GetKioskUseCase
   createKioskUseCase: CreateKioskUseCase
   updateKioskUseCase: UpdateKioskUseCase
   setKioskVisibilityUseCase: SetKioskVisibilityUseCase
   deleteKioskUseCase: DeleteKioskUseCase
+  listDevicesPageUseCase: ListDevicesPageUseCase
+  approveDeviceUseCase: ApproveDeviceUseCase
+  enableDeviceUseCase: EnableDeviceUseCase
+  disableDeviceUseCase: DisableDeviceUseCase
+  deleteDeviceUseCase: DeleteDeviceUseCase
+  getKioskLocationValidationUseCase: GetKioskLocationValidationUseCase
+  updateKioskLocationValidationUseCase: UpdateKioskLocationValidationUseCase
   listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase
   listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase
   createVisitorCategoryUseCase: CreateVisitorCategoryUseCase
@@ -354,18 +348,6 @@ export function createApp(): AppDependencies {
   let resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase | undefined
   let assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase | undefined
   let revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase | undefined
-  let receptionDeskRepository: ReceptionDeskRepository | undefined
-  let listReceptionDesksUseCase: ListReceptionDesksUseCase | undefined
-  let listReceptionDesksPageUseCase: ListReceptionDesksPageUseCase | undefined
-  let createReceptionDeskUseCase: CreateReceptionDeskUseCase | undefined
-  let updateReceptionDeskUseCase: UpdateReceptionDeskUseCase | undefined
-  let deleteReceptionDeskUseCase: DeleteReceptionDeskUseCase | undefined
-  let securityGateRepository: SecurityGateRepository | undefined
-  let listSecurityGatesUseCase: ListSecurityGatesUseCase | undefined
-  let listSecurityGatesPageUseCase: ListSecurityGatesPageUseCase | undefined
-  let createSecurityGateUseCase: CreateSecurityGateUseCase | undefined
-  let updateSecurityGateUseCase: UpdateSecurityGateUseCase | undefined
-  let deleteSecurityGateUseCase: DeleteSecurityGateUseCase | undefined
   let kioskRepository: KioskRepository | undefined
   let listKiosksPageUseCase: ListKiosksPageUseCase | undefined
   let getKioskUseCase: GetKioskUseCase | undefined
@@ -373,6 +355,15 @@ export function createApp(): AppDependencies {
   let updateKioskUseCase: UpdateKioskUseCase | undefined
   let setKioskVisibilityUseCase: SetKioskVisibilityUseCase | undefined
   let deleteKioskUseCase: DeleteKioskUseCase | undefined
+  let deviceRepository: DeviceRepository | undefined
+  let listDevicesPageUseCase: ListDevicesPageUseCase | undefined
+  let approveDeviceUseCase: ApproveDeviceUseCase | undefined
+  let enableDeviceUseCase: EnableDeviceUseCase | undefined
+  let disableDeviceUseCase: DisableDeviceUseCase | undefined
+  let deleteDeviceUseCase: DeleteDeviceUseCase | undefined
+  let kioskLocationValidationRepository: KioskLocationValidationRepository | undefined
+  let getKioskLocationValidationUseCase: GetKioskLocationValidationUseCase | undefined
+  let updateKioskLocationValidationUseCase: UpdateKioskLocationValidationUseCase | undefined
   let visitorCategoryRepository: VisitorCategoryRepository | undefined
   let listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase | undefined
   let listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase | undefined
@@ -611,7 +602,6 @@ export function createApp(): AppDependencies {
     return updateOrganisationConfigUseCase
   }
 
-
   const resolveBranchRepository = (): BranchRepository => {
     branchRepository ??= new HttpBranchRepository(resolveApiClient())
     return branchRepository
@@ -822,71 +812,6 @@ export function createApp(): AppDependencies {
     return revokeHostEmployeeRoleUseCase
   }
 
-  const resolveReceptionDeskRepository = (): ReceptionDeskRepository => {
-    receptionDeskRepository ??= new HttpReceptionDeskRepository(
-      resolveApiClient(),
-      resolveBuildingRepository(),
-      resolveFloorRepository(),
-      resolveHostEmployeeRepository(),
-    )
-    return receptionDeskRepository
-  }
-
-  const resolveListReceptionDesksPageUseCase = (): ListReceptionDesksPageUseCase => {
-    listReceptionDesksPageUseCase ??= new ListReceptionDesksPageUseCase(resolveReceptionDeskRepository())
-    return listReceptionDesksPageUseCase
-  }
-
-  const resolveListReceptionDesksUseCase = (): ListReceptionDesksUseCase => {
-    listReceptionDesksUseCase ??= new ListReceptionDesksUseCase(resolveReceptionDeskRepository())
-    return listReceptionDesksUseCase
-  }
-
-  const resolveCreateReceptionDeskUseCase = (): CreateReceptionDeskUseCase => {
-    createReceptionDeskUseCase ??= new CreateReceptionDeskUseCase(resolveReceptionDeskRepository())
-    return createReceptionDeskUseCase
-  }
-
-  const resolveUpdateReceptionDeskUseCase = (): UpdateReceptionDeskUseCase => {
-    updateReceptionDeskUseCase ??= new UpdateReceptionDeskUseCase(resolveReceptionDeskRepository())
-    return updateReceptionDeskUseCase
-  }
-
-  const resolveDeleteReceptionDeskUseCase = (): DeleteReceptionDeskUseCase => {
-    deleteReceptionDeskUseCase ??= new DeleteReceptionDeskUseCase(resolveReceptionDeskRepository())
-    return deleteReceptionDeskUseCase
-  }
-
-  const resolveSecurityGateRepository = (): SecurityGateRepository => {
-    securityGateRepository ??= new HttpSecurityGateRepository(resolveApiClient(), resolveBuildingRepository())
-    return securityGateRepository
-  }
-
-  const resolveListSecurityGatesPageUseCase = (): ListSecurityGatesPageUseCase => {
-    listSecurityGatesPageUseCase ??= new ListSecurityGatesPageUseCase(resolveSecurityGateRepository())
-    return listSecurityGatesPageUseCase
-  }
-
-  const resolveListSecurityGatesUseCase = (): ListSecurityGatesUseCase => {
-    listSecurityGatesUseCase ??= new ListSecurityGatesUseCase(resolveSecurityGateRepository())
-    return listSecurityGatesUseCase
-  }
-
-  const resolveCreateSecurityGateUseCase = (): CreateSecurityGateUseCase => {
-    createSecurityGateUseCase ??= new CreateSecurityGateUseCase(resolveSecurityGateRepository())
-    return createSecurityGateUseCase
-  }
-
-  const resolveUpdateSecurityGateUseCase = (): UpdateSecurityGateUseCase => {
-    updateSecurityGateUseCase ??= new UpdateSecurityGateUseCase(resolveSecurityGateRepository())
-    return updateSecurityGateUseCase
-  }
-
-  const resolveDeleteSecurityGateUseCase = (): DeleteSecurityGateUseCase => {
-    deleteSecurityGateUseCase ??= new DeleteSecurityGateUseCase(resolveSecurityGateRepository())
-    return deleteSecurityGateUseCase
-  }
-
   const resolveKioskRepository = (): KioskRepository => {
     kioskRepository ??= new HttpKioskRepository(resolveApiClient())
     return kioskRepository
@@ -920,6 +845,51 @@ export function createApp(): AppDependencies {
   const resolveDeleteKioskUseCase = (): DeleteKioskUseCase => {
     deleteKioskUseCase ??= new DeleteKioskUseCase(resolveKioskRepository())
     return deleteKioskUseCase
+  }
+
+  const resolveDeviceRepository = (): DeviceRepository => {
+    deviceRepository ??= new HttpDeviceRepository(resolveApiClient())
+    return deviceRepository
+  }
+
+  const resolveListDevicesPageUseCase = (): ListDevicesPageUseCase => {
+    listDevicesPageUseCase ??= new ListDevicesPageUseCase(resolveDeviceRepository())
+    return listDevicesPageUseCase
+  }
+
+  const resolveApproveDeviceUseCase = (): ApproveDeviceUseCase => {
+    approveDeviceUseCase ??= new ApproveDeviceUseCase(resolveDeviceRepository())
+    return approveDeviceUseCase
+  }
+
+  const resolveEnableDeviceUseCase = (): EnableDeviceUseCase => {
+    enableDeviceUseCase ??= new EnableDeviceUseCase(resolveDeviceRepository())
+    return enableDeviceUseCase
+  }
+
+  const resolveDisableDeviceUseCase = (): DisableDeviceUseCase => {
+    disableDeviceUseCase ??= new DisableDeviceUseCase(resolveDeviceRepository())
+    return disableDeviceUseCase
+  }
+
+  const resolveDeleteDeviceUseCase = (): DeleteDeviceUseCase => {
+    deleteDeviceUseCase ??= new DeleteDeviceUseCase(resolveDeviceRepository())
+    return deleteDeviceUseCase
+  }
+
+  const resolveKioskLocationValidationRepository = (): KioskLocationValidationRepository => {
+    kioskLocationValidationRepository ??= new HttpKioskLocationValidationRepository(resolveApiClient())
+    return kioskLocationValidationRepository
+  }
+
+  const resolveGetKioskLocationValidationUseCase = (): GetKioskLocationValidationUseCase => {
+    getKioskLocationValidationUseCase ??= new GetKioskLocationValidationUseCase(resolveKioskLocationValidationRepository())
+    return getKioskLocationValidationUseCase
+  }
+
+  const resolveUpdateKioskLocationValidationUseCase = (): UpdateKioskLocationValidationUseCase => {
+    updateKioskLocationValidationUseCase ??= new UpdateKioskLocationValidationUseCase(resolveKioskLocationValidationRepository())
+    return updateKioskLocationValidationUseCase
   }
 
   const resolveVisitorCategoryRepository = (): VisitorCategoryRepository => {
@@ -1278,36 +1248,6 @@ export function createApp(): AppDependencies {
     get revokeHostEmployeeRoleUseCase() {
       return resolveRevokeHostEmployeeRoleUseCase()
     },
-    get listReceptionDesksUseCase() {
-      return resolveListReceptionDesksUseCase()
-    },
-    get listReceptionDesksPageUseCase() {
-      return resolveListReceptionDesksPageUseCase()
-    },
-    get createReceptionDeskUseCase() {
-      return resolveCreateReceptionDeskUseCase()
-    },
-    get updateReceptionDeskUseCase() {
-      return resolveUpdateReceptionDeskUseCase()
-    },
-    get deleteReceptionDeskUseCase() {
-      return resolveDeleteReceptionDeskUseCase()
-    },
-    get listSecurityGatesUseCase() {
-      return resolveListSecurityGatesUseCase()
-    },
-    get listSecurityGatesPageUseCase() {
-      return resolveListSecurityGatesPageUseCase()
-    },
-    get createSecurityGateUseCase() {
-      return resolveCreateSecurityGateUseCase()
-    },
-    get updateSecurityGateUseCase() {
-      return resolveUpdateSecurityGateUseCase()
-    },
-    get deleteSecurityGateUseCase() {
-      return resolveDeleteSecurityGateUseCase()
-    },
     get listKiosksPageUseCase() {
       return resolveListKiosksPageUseCase()
     },
@@ -1325,6 +1265,27 @@ export function createApp(): AppDependencies {
     },
     get deleteKioskUseCase() {
       return resolveDeleteKioskUseCase()
+    },
+    get listDevicesPageUseCase() {
+      return resolveListDevicesPageUseCase()
+    },
+    get approveDeviceUseCase() {
+      return resolveApproveDeviceUseCase()
+    },
+    get enableDeviceUseCase() {
+      return resolveEnableDeviceUseCase()
+    },
+    get disableDeviceUseCase() {
+      return resolveDisableDeviceUseCase()
+    },
+    get deleteDeviceUseCase() {
+      return resolveDeleteDeviceUseCase()
+    },
+    get getKioskLocationValidationUseCase() {
+      return resolveGetKioskLocationValidationUseCase()
+    },
+    get updateKioskLocationValidationUseCase() {
+      return resolveUpdateKioskLocationValidationUseCase()
     },
     get listVisitorCategoriesUseCase() {
       return resolveListVisitorCategoriesUseCase()

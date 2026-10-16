@@ -1,4 +1,5 @@
 import z from "zod"
+import { DeviceSummarySchema } from "./managed-device-schema"
 import { FieldAnswerSchema, GroupAnswerSchema } from "./form-field-answer-schema"
 
 export const CurrentApprovalStepSchema = z.object({
@@ -117,6 +118,8 @@ export const InvitationDetailSchema = z.object({
   // the visit-lifecycle sweep still parses.
   checkedOutAutomatically: z.boolean().default(false),
   archivedAt: z.string().nullish(),
+  checkInDevice: DeviceSummarySchema.nullish(),
+  checkOutDevice: DeviceSummarySchema.nullish(),
   badgeNumber: z.string().nullable(),
   badgeIssuedAt: z.string().nullable(),
   badgeReprintCount: z.number(),

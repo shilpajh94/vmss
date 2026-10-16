@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import { AppDependenciesProvider } from './presentation/context/app-dependencies-context'
 import { ToastProvider } from './presentation/components/toast/toast-context'
 import { PushNotificationsProvider } from './presentation/components/push-notifications/PushNotificationsProvider'
@@ -28,9 +28,7 @@ import { AdminFloorFormPage } from './presentation/pages/admin-floors/admin-floo
 import { AdminHostEmployeesPage } from './presentation/pages/admin-host-employees/admin-host-employees'
 import { AdminHostEmployeeFormPage } from './presentation/pages/admin-host-employees/admin-host-employee-form'
 import { AdminReceptionDesksPage } from './presentation/pages/admin-reception-desks/admin-reception-desks'
-import { AdminReceptionDeskFormPage } from './presentation/pages/admin-reception-desks/admin-reception-desk-form'
 import { AdminSecurityGatesPage } from './presentation/pages/admin-security-gates/admin-security-gates'
-import { AdminSecurityGateFormPage } from './presentation/pages/admin-security-gates/admin-security-gate-form'
 import { AdminKiosksPage } from './presentation/pages/admin-kiosks/admin-kiosks'
 import { AdminKioskFormPage } from './presentation/pages/admin-kiosks/admin-kiosk-form'
 import { AdminVisitorCategoriesPage } from './presentation/pages/admin-visitor-categories/admin-visitor-categories'
@@ -82,11 +80,9 @@ function RootLayout() {
                 <Route path="/admin/host-employees/new" element={<AdminHostEmployeeFormPage />} />
                 <Route path="/admin/host-employees/:id/edit" element={<AdminHostEmployeeFormPage />} />
                 <Route path="/admin/reception-desks" element={<AdminReceptionDesksPage />} />
-                <Route path="/admin/reception-desks/new" element={<AdminReceptionDeskFormPage />} />
-                <Route path="/admin/reception-desks/:id/edit" element={<AdminReceptionDeskFormPage />} />
+                <Route path="/admin/reception-desks/*" element={<Navigate to="/admin/reception-desks" replace />} />
                 <Route path="/admin/security-gates" element={<AdminSecurityGatesPage />} />
-                <Route path="/admin/security-gates/new" element={<AdminSecurityGateFormPage />} />
-                <Route path="/admin/security-gates/:id/edit" element={<AdminSecurityGateFormPage />} />
+                <Route path="/admin/security-gates/*" element={<Navigate to="/admin/security-gates" replace />} />
                 <Route path="/admin/kiosks" element={<AdminKiosksPage />} />
                 <Route path="/admin/kiosks/new" element={<AdminKioskFormPage />} />
                 <Route path="/admin/kiosks/:id/edit" element={<AdminKioskFormPage />} />
