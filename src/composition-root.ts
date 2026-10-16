@@ -75,6 +75,8 @@ import { UpdateFloorUseCase } from './data/use-cases/update-floor'
 import { DeleteFloorUseCase } from './data/use-cases/delete-floor'
 import { GetDashboardOverviewUseCase } from './data/use-cases/get-dashboard-overview'
 import { GetMyDashboardOverviewUseCase } from './data/use-cases/get-my-dashboard-overview'
+import { GetDashboardAnalyticsUseCase } from './data/use-cases/get-dashboard-analytics'
+import { GetMyDashboardAnalyticsUseCase } from './data/use-cases/get-my-dashboard-analytics'
 import { ListRecentCheckinsUseCase } from './data/use-cases/list-recent-checkins'
 import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
 import { ListHostEmployeesPageUseCase } from './data/use-cases/list-host-employees-page'
@@ -212,6 +214,8 @@ export interface AppDependencies {
   deleteFloorUseCase: DeleteFloorUseCase
   getDashboardOverviewUseCase: GetDashboardOverviewUseCase
   getMyDashboardOverviewUseCase: GetMyDashboardOverviewUseCase
+  getDashboardAnalyticsUseCase: GetDashboardAnalyticsUseCase
+  getMyDashboardAnalyticsUseCase: GetMyDashboardAnalyticsUseCase
   listRecentCheckinsUseCase: ListRecentCheckinsUseCase
   listHostEmployeesUseCase: ListHostEmployeesUseCase
   listHostEmployeesPageUseCase: ListHostEmployeesPageUseCase
@@ -341,6 +345,8 @@ export function createApp(): AppDependencies {
   let dashboardRepository: DashboardRepository | undefined
   let getDashboardOverviewUseCase: GetDashboardOverviewUseCase | undefined
   let getMyDashboardOverviewUseCase: GetMyDashboardOverviewUseCase | undefined
+  let getDashboardAnalyticsUseCase: GetDashboardAnalyticsUseCase | undefined
+  let getMyDashboardAnalyticsUseCase: GetMyDashboardAnalyticsUseCase | undefined
   let listRecentCheckinsUseCase: ListRecentCheckinsUseCase | undefined
   let hostEmployeeRepository: HostEmployeeRepository | undefined
   let listHostEmployeesUseCase: ListHostEmployeesUseCase | undefined
@@ -747,6 +753,16 @@ export function createApp(): AppDependencies {
   const resolveGetMyDashboardOverviewUseCase = (): GetMyDashboardOverviewUseCase => {
     getMyDashboardOverviewUseCase ??= new GetMyDashboardOverviewUseCase(resolveDashboardRepository())
     return getMyDashboardOverviewUseCase
+  }
+
+  const resolveGetDashboardAnalyticsUseCase = (): GetDashboardAnalyticsUseCase => {
+    getDashboardAnalyticsUseCase ??= new GetDashboardAnalyticsUseCase(resolveDashboardRepository())
+    return getDashboardAnalyticsUseCase
+  }
+
+  const resolveGetMyDashboardAnalyticsUseCase = (): GetMyDashboardAnalyticsUseCase => {
+    getMyDashboardAnalyticsUseCase ??= new GetMyDashboardAnalyticsUseCase(resolveDashboardRepository())
+    return getMyDashboardAnalyticsUseCase
   }
 
   const resolveListRecentCheckinsUseCase = (): ListRecentCheckinsUseCase => {
@@ -1240,6 +1256,12 @@ export function createApp(): AppDependencies {
     },
     get getMyDashboardOverviewUseCase() {
       return resolveGetMyDashboardOverviewUseCase()
+    },
+    get getDashboardAnalyticsUseCase() {
+      return resolveGetDashboardAnalyticsUseCase()
+    },
+    get getMyDashboardAnalyticsUseCase() {
+      return resolveGetMyDashboardAnalyticsUseCase()
     },
     get listRecentCheckinsUseCase() {
       return resolveListRecentCheckinsUseCase()

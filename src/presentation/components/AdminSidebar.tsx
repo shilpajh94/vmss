@@ -21,6 +21,8 @@ import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
 
+const BUILD_LABEL = [__APP_VERSION__ ? `v${__APP_VERSION__}` : '', __BUILD_SHA__].filter(Boolean).join(' · ')
+
 export type AdminSidebarActiveItem =
   | 'dashboard'
   | 'organisation-configs'
@@ -144,10 +146,15 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
         ))}
       </nav>
 
-      <div className={`flex shrink-0 items-center gap-2 border-t border-[#334155] pt-4 ${isCollapsed ? 'justify-center' : ''}`}>
-        <span className="size-2 rounded-full bg-success" />
-        <span className={isCollapsed ? 'sr-only' : 'font-body text-xs font-medium text-text-faint'}>v1.2 Active</span>
-      </div>
+      {/* The deployed build, injected at build time (app-shell "The sidebar
+          footer shows the real build identifier") — hidden on the rail. */}
+      {BUILD_LABEL && !isCollapsed ? (
+        <div className="flex shrink-0 items-center border-t border-[#334155] pt-4">
+          <span className="font-body text-xs font-medium text-text-faint" title="Deployed build">
+            {BUILD_LABEL}
+          </span>
+        </div>
+      ) : null}
     </SidebarFrame>
   )
 }

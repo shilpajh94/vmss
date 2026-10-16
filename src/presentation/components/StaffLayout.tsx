@@ -7,6 +7,7 @@ import { AppTopBar } from './AppTopBar'
 import { RouteTransition } from './RouteTransition'
 import { PageHeaderProvider, usePageHeaderContext } from '../context/page-header-context'
 import { RefreshProvider } from '../context/refresh-context'
+import { CurrentUserProvider } from '../context/current-user-context'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
 
@@ -48,9 +49,11 @@ function StaffLayoutContent() {
         />
       }
     >
-      <RouteTransition>
-        <Outlet />
-      </RouteTransition>
+      <CurrentUserProvider user={currentUser}>
+        <RouteTransition>
+          <Outlet />
+        </RouteTransition>
+      </CurrentUserProvider>
     </AppShell>
   )
 }

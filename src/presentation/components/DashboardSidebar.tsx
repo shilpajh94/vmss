@@ -1,10 +1,9 @@
 import { useNavigate } from 'react-router'
-import { CheckIcon, HelpCircleIcon, HomeIcon, UsersIcon } from './icons'
+import { CheckIcon, HomeIcon, UsersIcon } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
-import { useSidebarCollapse } from '../context/sidebar-collapse-context'
 import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
-import { SidebarNavItem, useRailTooltip } from './sidebar/SidebarNavItem'
+import { SidebarNavItem } from './sidebar/SidebarNavItem'
 
 export type DashboardSidebarActiveItem = 'dashboard' | 'all-visitors' | 'my-actions'
 
@@ -42,8 +41,6 @@ export function staffNavLabelFor(pathname: string): string {
 export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
   const navigate = useNavigate()
   const { closeNav } = useNavDrawer()
-  const { isCollapsed } = useSidebarCollapse()
-  const helpTooltip = useRailTooltip('Help & Support', isCollapsed)
 
   const handleActivate = (key: DashboardSidebarActiveItem) => {
     closeNav()
@@ -75,21 +72,6 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
         ))}
       </nav>
 
-      <div className="flex shrink-0 flex-col gap-4">
-        <div className="h-px w-full bg-[#1e293b]" />
-        <button
-          type="button"
-          aria-label={isCollapsed ? 'Help & Support' : undefined}
-          {...helpTooltip.handlers}
-          className={`flex w-full items-center gap-2 rounded-lg bg-[#1e293b] py-2 text-left ${isCollapsed ? 'justify-center px-0' : 'px-3'}`}
-        >
-          <HelpCircleIcon className="size-4 shrink-0 text-secondary-accent" />
-          {isCollapsed ? null : (
-            <span className="font-body text-[13px] font-semibold whitespace-nowrap text-secondary-accent">Help &amp; Support</span>
-          )}
-        </button>
-        {helpTooltip.tooltip}
-      </div>
     </SidebarFrame>
   )
 }

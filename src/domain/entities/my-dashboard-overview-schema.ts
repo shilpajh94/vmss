@@ -18,6 +18,8 @@ export const MyDashboardOverviewSchema = z.object({
   awaitingApproval: z.number(),
   upcoming: z.number(),
   upcomingPreview: z.array(MyUpcomingVisitorSchema),
+  today: z.string().min(1),
+  generatedAt: z.string().min(1),
 })
 
 export type MyUpcomingVisitor = z.infer<typeof MyUpcomingVisitorSchema>

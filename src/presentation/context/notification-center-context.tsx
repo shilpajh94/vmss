@@ -18,6 +18,12 @@ interface NotificationCenterContextValue {
   refresh: () => void
   markRead: (notificationId: string) => void
   markAllRead: () => void
+  // Subscribes to "new invitation activity arrived" — fired once per feed
+  // load that brings in items carrying an `invitationId`, so a dashboard can
+  // re-fetch at once instead of waiting for its next poll
+  // (live-data-refresh "Dashboards refresh when invitation activity is
+  // notified"). Returns the unsubscribe function.
+  onInvitationActivity: (callback: () => void) => () => void
 }
 
 const NotificationCenterContext = createContext<NotificationCenterContextValue | null>(null)
@@ -42,14 +48,31 @@ export function NotificationCenterProvider({ children }: { children: ReactNode }
   const [notifications, setNotifications] = useState<NotificationFeedItem[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const wasSignedInRef = useRef(false)
+  // Ids already seen this session; undefined until the first load, which
+  // only primes the set (old items aren't "new activity").
+  const seenIdsRef = useRef<Set<string> | undefined>(undefined)
+  const activityListenersRef = useRef(new Set<() => void>())
+
+  const onInvitationActivity = useCallback((callback: () => void) => {
+    activityListenersRef.current.add(callback)
+    return () => {
+      activityListenersRef.current.delete(callback)
+    }
+  }, [])
 
   const refresh = useCallback(() => {
     if (!isSignedIn()) return
 
     Promise.all([listNotificationsUseCase.execute({ pageSize: FEED_PAGE_SIZE }), getUnreadNotificationCountUseCase.execute()])
       .then(([page, count]) => {
+        const seenIds = seenIdsRef.current
+        const hasNewInvitationActivity =
+          seenIds !== undefined && page.items.some((item) => !seenIds.has(item.id) && Boolean(item.data.invitationId))
+        seenIdsRef.current = new Set([...(seenIds ?? []), ...page.items.map((item) => item.id)])
+
         setNotifications(page.items)
         setUnreadCount(count)
+        if (hasNewInvitationActivity) activityListenersRef.current.forEach((listener) => listener())
       })
       .catch((error: unknown) => {
         console.error('Failed to load notifications', error)
@@ -65,6 +88,7 @@ export function NotificationCenterProvider({ children }: { children: ReactNode }
     if (!signedIn && wasSignedInRef.current) {
       setNotifications([])
       setUnreadCount(0)
+      seenIdsRef.current = undefined
     }
     wasSignedInRef.current = signedIn
   }, [location.pathname, refresh])
@@ -115,8 +139,8 @@ export function NotificationCenterProvider({ children }: { children: ReactNode }
   }, [markAllNotificationsReadUseCase, refresh])
 
   const value = useMemo(
-    () => ({ notifications, unreadCount, refresh, markRead, markAllRead }),
-    [notifications, unreadCount, refresh, markRead, markAllRead],
+    () => ({ notifications, unreadCount, refresh, markRead, markAllRead, onInvitationActivity }),
+    [notifications, unreadCount, refresh, markRead, markAllRead, onInvitationActivity],
   )
 
   return <NotificationCenterContext.Provider value={value}>{children}</NotificationCenterContext.Provider>

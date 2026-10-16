@@ -1,4 +1,6 @@
+import { lazy, Suspense, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
+import { LoadingState } from './presentation/components/ui/LoadingState'
 import { AppDependenciesProvider } from './presentation/context/app-dependencies-context'
 import { ToastProvider } from './presentation/components/toast/toast-context'
 import { PushNotificationsProvider } from './presentation/components/push-notifications/PushNotificationsProvider'
@@ -12,10 +14,8 @@ import { VisitorRequestPage } from './presentation/pages/visitor-request/visitor
 import { VisitorTrackPage } from './presentation/pages/visitor-track/visitor-track'
 import { StaffLoginPage } from './presentation/pages/staff-login/staff-login'
 import { StaffSsoLoginPage } from './presentation/pages/staff-sso-login/staff-sso-login'
-import { StaffDashboardPage } from './presentation/pages/staff-dashboard/staff-dashboard'
 import { StaffInvitationsPage } from './presentation/pages/staff-invitations/staff-invitations'
 import { StaffVisitorRegistrationPage } from './presentation/pages/staff-visitor-registration/staff-visitor-registration'
-import { AdminDashboardPage } from './presentation/pages/admin-dashboard/admin-dashboard'
 import { AdminOrganisationConfigsPage } from './presentation/pages/admin-organisation-configs/admin-organisation-configs'
 import { AdminBranchesPage } from './presentation/pages/admin-branches/admin-branches'
 import { AdminBranchCreatePage } from './presentation/pages/admin-branches/admin-branch-create'
@@ -42,7 +42,23 @@ import { AdminRoleCreateFormPage } from './presentation/pages/admin-roles/admin-
 import { AdminFormBuilderPage } from './presentation/pages/admin-form-builder/admin-form-builder'
 import { AdminFormBuilderStepEditorPage } from './presentation/pages/admin-form-builder/admin-form-builder-step-editor'
 import { AdminAuditTrailPage } from './presentation/pages/admin-audit-trail/admin-audit-trail'
-import { ReceptionDashboardPage } from './presentation/pages/reception-dashboard/reception-dashboard'
+
+// The dashboards are the only pages that render charts; loading them lazily
+// keeps the chart library out of the public portal and login bundles
+// (live-dashboards-and-analytics design.md W5).
+const AdminDashboardPage = lazy(() =>
+  import('./presentation/pages/admin-dashboard/admin-dashboard').then((module) => ({ default: module.AdminDashboardPage })),
+)
+const ReceptionDashboardPage = lazy(() =>
+  import('./presentation/pages/reception-dashboard/reception-dashboard').then((module) => ({ default: module.ReceptionDashboardPage })),
+)
+const StaffDashboardPage = lazy(() =>
+  import('./presentation/pages/staff-dashboard/staff-dashboard').then((module) => ({ default: module.StaffDashboardPage })),
+)
+
+function LazyPage({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<LoadingState label="Loading dashboard…" className="flex-1" />}>{children}</Suspense>
+}
 
 function RootLayout() {
   return (
@@ -60,10 +76,15 @@ function RootLayout() {
                 <Route path="/staff/login" element={<StaffSsoLoginPage />} />
               </Route>
 
-              <Route path="/reception/dashboard" element={<ReceptionDashboardPage />} />
-
               <Route element={<AdminLayout />}>
-                <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
+                <Route
+                  path="/admin/dashboard"
+                  element={
+                    <LazyPage>
+                      <AdminDashboardPage />
+                    </LazyPage>
+                  }
+                />
                 <Route path="/admin/organisation-configs" element={<AdminOrganisationConfigsPage />} />
                 <Route path="/admin/branches" element={<AdminBranchesPage />} />
                 <Route path="/admin/branches/new" element={<AdminBranchCreatePage />} />
@@ -102,7 +123,25 @@ function RootLayout() {
               </Route>
 
               <Route element={<StaffLayout />}>
-                <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
+                <Route
+                  path="/staff/dashboard"
+                  element={
+                    <LazyPage>
+                      <StaffDashboardPage />
+                    </LazyPage>
+                  }
+                />
+                {/* Under the staff layout so reception shares its top bar,
+                    refresh control and current-user context; the page
+                    keeps its own Reception-role guard. */}
+                <Route
+                  path="/reception/dashboard"
+                  element={
+                    <LazyPage>
+                      <ReceptionDashboardPage />
+                    </LazyPage>
+                  }
+                />
                 <Route path="/staff/invitations" element={<StaffInvitationsPage />} />
                 <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
               </Route>

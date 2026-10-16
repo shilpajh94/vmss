@@ -16,7 +16,7 @@ import type { ApprovalWorkflowRule } from '../../domain/entities/approval-workfl
 import type { EditInvitationFields } from '../../data/repositories/visit-request-summary-repository'
 import { PURPOSE_OF_VISIT_OPTIONS } from '../utils/purpose-of-visit-options'
 import { saveBlob } from '../utils/save-blob'
-import { REGISTRATION_TYPE_OPTIONS, SOURCE_OPTIONS, exportFilename, optionLabel } from '../components/invitation-board/filter-options'
+import { REGISTRATION_TYPE_OPTIONS, SOURCE_OPTIONS, STATUS_OPTIONS, exportFilename, optionLabel } from '../components/invitation-board/filter-options'
 import type { InvitationExportChoice } from '../components/invitation-board/ExportInvitationsModal'
 import { boardStatusForApiStatus, usePagedBoardColumns, type BoardStatus, type ColumnQuery } from './use-paged-board-columns'
 
@@ -99,7 +99,14 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [search, setSearch] = useState('')
   const [purposeFilter, setPurposeFilter] = useState('all')
   const [registrationTypeFilter, setRegistrationTypeFilter] = useState('all')
-  const [statusFilter, setStatusFilter] = useState('')
+  // A dashboard tile or "View all" link opens the board on one status via
+  // ?status=<api status>, applied once as the initial filter; an unknown
+  // value is ignored (staff-dashboard / admin-invitations "opens a status
+  // from a deep link").
+  const [statusFilter, setStatusFilter] = useState(() => {
+    const requested = searchParams.get('status') ?? ''
+    return STATUS_OPTIONS.some((option) => option.value === requested) ? requested : ''
+  })
   const [sourceFilter, setSourceFilter] = useState('')
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   const debouncedSearch = useDebouncedValue(search, 300)

@@ -252,6 +252,16 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  GET_DASHBOARD_ANALYTICS: {
+    endpoint: "/admin/dashboard/analytics",
+    method: "GET",
+    hasToken: true,
+  },
+  GET_MY_DASHBOARD_ANALYTICS: {
+    endpoint: "/admin/dashboard/my-analytics",
+    method: "GET",
+    hasToken: true,
+  },
   LIST_HOST_EMPLOYEES: {
     endpoint: "/auth/employees",
     method: "GET",

@@ -41,15 +41,23 @@ function RefreshControl() {
       <button
         type="button"
         onClick={activeRefresh.refresh}
-        aria-label="Refresh"
-        className="flex size-10 items-center justify-center rounded-full border border-border bg-surface text-text lg:size-8"
+        aria-label={activeRefresh.hasFailed ? "Refresh (last refresh failed, retrying)" : 'Refresh'}
+        className={`flex size-10 items-center justify-center rounded-full border bg-surface text-text lg:size-8 ${
+          activeRefresh.hasFailed ? 'border-warning' : 'border-border'
+        }`}
       >
         <RefreshCcwIcon className={`size-3.5 ${activeRefresh.isRefreshing ? 'animate-spin' : ''}`} />
       </button>
-      {activeRefresh.lastUpdatedAt && (
-        <span className="hidden font-body text-[11px] whitespace-nowrap text-text-faint md:inline">
-          Updated {formatRelativeTime(activeRefresh.lastUpdatedAt, now)}
+      {activeRefresh.hasFailed ? (
+        <span role="status" className="hidden font-body text-[11px] whitespace-nowrap text-warning md:inline">
+          Couldn't refresh · retrying
         </span>
+      ) : (
+        activeRefresh.lastUpdatedAt && (
+          <span className="hidden font-body text-[11px] whitespace-nowrap text-text-faint md:inline">
+            Updated {formatRelativeTime(activeRefresh.lastUpdatedAt, now)}
+          </span>
+        )
       )}
     </div>
   )
