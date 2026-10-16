@@ -428,7 +428,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def check_in_if_eligible(
-        self, id_: uuid.UUID, *, user_id: uuid.UUID | None
+        self, id_: uuid.UUID, *, user_id: uuid.UUID | None, device_pk: uuid.UUID | None = None
     ) -> Invitation | None:
         """Gated on `check_in_status` (not `status` alone), same cycling
         rule as `check_in_by_qr_if_eligible` (allow-multiple-checkins):
@@ -463,13 +463,15 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 check_in_status="checked_in",
                 checked_in_at=datetime.now(UTC),
                 checked_in_by_user_id=user_id,
+                check_in_device_id=device_pk,
+                check_out_device_id=None,
             )
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def check_in_by_qr_if_eligible(
-        self, id_: uuid.UUID, *, today_local: date
+        self, id_: uuid.UUID, *, today_local: date, device_pk: uuid.UUID | None = None
     ) -> Invitation | None:
         """The `unused`/`checked_out` -> `checked_in` transition driven by
         a QR scan (spec.md "QR Check-In Drives a Cycling
@@ -511,12 +513,16 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 check_in_status="checked_in",
                 status="checked_in",
                 checked_in_at=datetime.now(UTC),
+                check_in_device_id=device_pk,
+                check_out_device_id=None,
             )
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def check_out_by_qr_if_eligible(self, id_: uuid.UUID) -> Invitation | None:
+    async def check_out_by_qr_if_eligible(
+        self, id_: uuid.UUID, *, device_pk: uuid.UUID | None = None
+    ) -> Invitation | None:
         """The `checked_in` -> `checked_out` transition driven by a second
         scan of the same QR token — deliberately not subject to the expiry
         check `check_in_by_qr_if_eligible` applies on entry (spec.md "QR
@@ -530,13 +536,14 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 status="checked_out",
                 checked_out_at=datetime.now(UTC),
                 checked_out_automatically=False,
+                check_out_device_id=device_pk,
             )
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def check_out_if_checked_in(
-        self, id_: uuid.UUID, *, user_id: uuid.UUID
+        self, id_: uuid.UUID, *, user_id: uuid.UUID, device_pk: uuid.UUID | None = None
     ) -> Invitation | None:
         """Also writes `check_in_status="checked_out"` (allow-multiple-
         checkins) — this path previously left `check_in_status` untouched,
@@ -555,6 +562,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 checked_out_at=datetime.now(UTC),
                 checked_out_by_user_id=user_id,
                 checked_out_automatically=False,
+                check_out_device_id=device_pk,
             )
             .returning(Invitation)
         )

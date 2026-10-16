@@ -37,6 +37,9 @@ from vmss_api.core.responses import (
 )
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.core.storage import url_for as storage_url_for
+from vmss_api.devices import service as device_service
+from vmss_api.devices.deps import make_device_dependency
+from vmss_api.devices.models import Device
 from vmss_api.invitations import service
 from vmss_api.invitations.deps import track_default_tenant, track_default_tenant_db
 from vmss_api.invitations.schemas import (
@@ -1479,6 +1482,25 @@ async def revert_invitation_approval(
 
 router_v2 = APIRouter(prefix="/invitations", tags=["invitations"])
 
+# Optional `device-id` header (devices spec). Bound to each route's own
+# tenant-session dependency so the lookup runs against the right schema.
+_public_device = make_device_dependency(track_default_tenant_db)
+_staff_device = make_device_dependency(get_tenant_db)
+
+
+async def _attach_devices(out, invitation, tenant_db: AsyncSession):
+    """Fills `checkInDevice`/`checkOutDevice` with one lookup for both ids."""
+    briefs = await device_service.device_briefs(
+        tenant_db, invitation.check_in_device_id, invitation.check_out_device_id
+    )
+    out.check_in_device = briefs.get(invitation.check_in_device_id)
+    out.check_out_device = briefs.get(invitation.check_out_device_id)
+    return out
+
+
+def _device_diff(device: Device | None) -> dict[str, str] | None:
+    return {"device_id": device.device_id} if device else None
+
 
 @router_v2.patch(
     "/{tracking_id}/check-in",
@@ -1491,6 +1513,7 @@ async def check_in_invitation_by_tracking_id(
     background_tasks: BackgroundTasks,
     tenant: Annotated[Tenant, Depends(track_default_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    device: Annotated[Device | None, Depends(_public_device)],
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -1525,7 +1548,7 @@ async def check_in_invitation_by_tracking_id(
         return cached
 
     invitation, changed = await service.check_in_invitation_by_tracking_id(
-        tenant_db, tracking_id, tenant=tenant
+        tenant_db, tracking_id, tenant=tenant, device=device
     )
     if changed:
         background_tasks.add_task(
@@ -1535,11 +1558,13 @@ async def check_in_invitation_by_tracking_id(
             action="invitation_checked_in_public",
             entity_type="Invitation",
             entity_id=invitation.id,
+            diff=_device_diff(device),
         )
     form_context = await service.get_invitation_detail_form_context(
         tenant_db, tenant, invitation.branch_id
     )
-    response = success_response(data=await _to_check_in_out(invitation, form_context=form_context))
+    out = await _to_check_in_out(invitation, form_context=form_context)
+    response = success_response(data=await _attach_devices(out, invitation, tenant_db))
     await _cache_response(tenant.id, idempotency_key, response)
     return response
 
@@ -1555,6 +1580,7 @@ async def check_in_by_qr_token(
     background_tasks: BackgroundTasks,
     tenant: Annotated[Tenant, Depends(track_default_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    device: Annotated[Device | None, Depends(_public_device)],
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -1588,7 +1614,7 @@ async def check_in_by_qr_token(
         return cached
 
     invitation, message, changed = await service.check_in_by_qr_token(
-        tenant_db, token, tenant=tenant
+        tenant_db, token, tenant=tenant, device=device
     )
     if changed:
         background_tasks.add_task(
@@ -1598,20 +1624,21 @@ async def check_in_by_qr_token(
             action="invitation_qr_checked_in",
             entity_type="Invitation",
             entity_id=invitation.id,
+            diff=_device_diff(device),
         )
     branch, department, building = await service.get_invitation_location(tenant_db, invitation)
     form_context = await service.get_invitation_detail_form_context(
         tenant_db, tenant, invitation.branch_id
     )
+    out = await _to_qr_check_in_out(
+        invitation,
+        branch=branch,
+        department=department,
+        building=building,
+        form_context=form_context,
+    )
     response = success_response(
-        data=await _to_qr_check_in_out(
-            invitation,
-            branch=branch,
-            department=department,
-            building=building,
-            form_context=form_context,
-        ),
-        message=message,
+        data=await _attach_devices(out, invitation, tenant_db), message=message
     )
     await _cache_response(tenant.id, idempotency_key, response)
     return response
@@ -1628,6 +1655,7 @@ async def check_out_by_qr_token(
     background_tasks: BackgroundTasks,
     tenant: Annotated[Tenant, Depends(track_default_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    device: Annotated[Device | None, Depends(_public_device)],
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -1653,7 +1681,9 @@ async def check_out_by_qr_token(
     if cached is not None:
         return cached
 
-    invitation, message = await service.check_out_by_qr_token(tenant_db, token, tenant=tenant)
+    invitation, message = await service.check_out_by_qr_token(
+        tenant_db, token, tenant=tenant, device=device
+    )
     background_tasks.add_task(
         record_audit_log,
         tenant.schema_name,
@@ -1661,20 +1691,21 @@ async def check_out_by_qr_token(
         action="invitation_qr_checked_out",
         entity_type="Invitation",
         entity_id=invitation.id,
+        diff=_device_diff(device),
     )
     branch, department, building = await service.get_invitation_location(tenant_db, invitation)
     form_context = await service.get_invitation_detail_form_context(
         tenant_db, tenant, invitation.branch_id
     )
+    out = await _to_qr_check_in_out(
+        invitation,
+        branch=branch,
+        department=department,
+        building=building,
+        form_context=form_context,
+    )
     response = success_response(
-        data=await _to_qr_check_in_out(
-            invitation,
-            branch=branch,
-            department=department,
-            building=building,
-            form_context=form_context,
-        ),
-        message=message,
+        data=await _attach_devices(out, invitation, tenant_db), message=message
     )
     await _cache_response(tenant.id, idempotency_key, response)
     return response
@@ -1690,6 +1721,7 @@ async def check_out_invitation(
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
+    device: Annotated[Device | None, Depends(_staff_device)],
     idempotency_key: Annotated[
         str | None, Header(alias="Idempotency-Key", description="Optional — see check-in.")
     ] = None,
@@ -1706,7 +1738,7 @@ async def check_out_invitation(
         tenant_db, user, "invitations:checkout", invitation.branch_id
     )
     invitation = await service.check_out_invitation(
-        tenant_db, invitation, user_id=user.id, tenant=tenant
+        tenant_db, invitation, user_id=user.id, tenant=tenant, device=device
     )
     background_tasks.add_task(
         record_audit_log,
@@ -1715,8 +1747,10 @@ async def check_out_invitation(
         action="invitation_checked_out",
         entity_type="Invitation",
         entity_id=invitation.id,
+        diff=_device_diff(device),
     )
-    response = success_response(data=to_invitation_out(invitation))
+    out = await _attach_devices(to_invitation_out(invitation), invitation, tenant_db)
+    response = success_response(data=out)
     await _cache_response(tenant.id, idempotency_key, response)
     return response
 

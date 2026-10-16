@@ -239,6 +239,16 @@ class Invitation(Base, TimestampMixin):
     # of `archived` as history; overwritten if archived again (design.md D4).
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Device that performed the most recent state-changing check-in/out
+    # (add-kiosk-device-approval-and-traceability/design.md Decision 7). Null
+    # when the caller sent no `device-id` header.
+    check_in_device_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("devices.id"), index=True
+    )
+    check_out_device_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("devices.id"), index=True
+    )
+
     # --- Lifecycle: QR check-in scan state (add-qr-checkin-security) -----------
     # Deliberately parallel to, not derived from, `status` above: `status`
     # keeps carrying its existing `checked_in`/`checked_out` values for the

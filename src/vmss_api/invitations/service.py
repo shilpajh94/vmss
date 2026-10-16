@@ -32,6 +32,8 @@ from vmss_api.core.storage import (
 )
 from vmss_api.core.storage import save as storage_save
 from vmss_api.core.storage import url_for as storage_url_for
+from vmss_api.devices import service as device_service
+from vmss_api.devices.models import Device
 from vmss_api.form_builder import service as form_builder_service
 from vmss_api.form_builder import validation as form_builder_validation
 from vmss_api.invitations import badge, export, push_notifications, tasks
@@ -1813,6 +1815,22 @@ async def deny_invitation(
     return updated
 
 
+async def _enforce_device_location(
+    tenant_db: AsyncSession, device: Device | None, invitation: Invitation
+) -> None:
+    """Branch/building mismatch guard (devices spec "Check-In Validates
+    Device Branch and Building"). Runs before the state change so a
+    rejection leaves no trace. No-op without a device or with the tenant
+    setting off."""
+    if device is None or not await device_service.get_enforce_location_validation(tenant_db):
+        return
+    device_service.check_device_location(
+        device,
+        invitation_branch_id=invitation.branch_id,
+        invitation_building_id=invitation.building_id,
+    )
+
+
 async def revert_invitation_approval(
     tenant_db: AsyncSession,
     invitation: Invitation,
@@ -1881,6 +1899,7 @@ async def _perform_check_in(
     *,
     actor_user_id: uuid.UUID | None,
     tenant: Tenant,
+    device: Device | None = None,
 ) -> tuple[Invitation, bool]:
     """spec.md "An Approved Invitation Can Be Checked In" /
     "A Watchlist-Flagged Invitation Blocks Check-In Until Overridden" /
@@ -1907,6 +1926,9 @@ async def _perform_check_in(
     below: a flag added after a visitor already entered must not turn their
     repeat/duplicate check-in call into an error.
     """
+    # Before the idempotent early return, so a repeat call from a device at the
+    # wrong branch/building is rejected rather than silently succeeding.
+    await _enforce_device_location(tenant_db, device, invitation)
     if invitation.check_in_status == "checked_in":
         return invitation, False
     if invitation.status == "archived":
@@ -1919,7 +1941,7 @@ async def _perform_check_in(
     if invitation.status not in ("approved", "checked_in", "checked_out"):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
     updated = await InvitationRepository(tenant_db).check_in_if_eligible(
-        invitation.id, user_id=actor_user_id
+        invitation.id, user_id=actor_user_id, device_pk=device.id if device else None
     )
     if updated is None:
         raise HTTPException(
@@ -1932,7 +1954,7 @@ async def _perform_check_in(
 
 
 async def check_in_invitation_by_tracking_id(
-    tenant_db: AsyncSession, tracking_id: str, *, tenant: Tenant
+    tenant_db: AsyncSession, tracking_id: str, *, tenant: Tenant, device: Device | None = None
 ) -> tuple[Invitation, bool]:
     """`PATCH /api/v2/invitations/{trackingId}/check-in` — public,
     unauthenticated, tracking-ID-keyed (spec.md "An Approved Invitation Can
@@ -1942,7 +1964,9 @@ async def check_in_invitation_by_tracking_id(
     invitation = await InvitationRepository(tenant_db).get_by_tracking_id(tracking_id)
     if invitation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Invitation not found")
-    return await _perform_check_in(tenant_db, invitation, actor_user_id=None, tenant=tenant)
+    return await _perform_check_in(
+        tenant_db, invitation, actor_user_id=None, tenant=tenant, device=device
+    )
 
 
 async def _get_invitation_by_qr_token_or_400(
@@ -1968,7 +1992,7 @@ async def _get_invitation_by_qr_token_or_400(
 
 
 async def check_in_by_qr_token(
-    tenant_db: AsyncSession, token: str, *, tenant: Tenant
+    tenant_db: AsyncSession, token: str, *, tenant: Tenant, device: Device | None = None
 ) -> tuple[Invitation, str, bool]:
     """`PATCH /api/v2/invitations/qr/{token}/check-in` — public,
     unauthenticated, driven by the encrypted QR token rather than the
@@ -1994,6 +2018,8 @@ async def check_in_by_qr_token(
     """
     invitation = await _get_invitation_by_qr_token_or_400(tenant_db, token, tenant=tenant)
 
+    # Before the idempotent early return — see `_perform_check_in`.
+    await _enforce_device_location(tenant_db, device, invitation)
     if invitation.check_in_status == "checked_in":
         return invitation, "Verification passed", False
     if invitation.status == "archived":
@@ -2023,7 +2049,7 @@ async def check_in_by_qr_token(
             status.HTTP_410_GONE, detail="Verification failed — visit window expired"
         )
     updated = await InvitationRepository(tenant_db).check_in_by_qr_if_eligible(
-        invitation.id, today_local=today_local
+        invitation.id, today_local=today_local, device_pk=device.id if device else None
     )
     if updated is None:
         raise HTTPException(
@@ -2036,7 +2062,7 @@ async def check_in_by_qr_token(
 
 
 async def check_out_by_qr_token(
-    tenant_db: AsyncSession, token: str, *, tenant: Tenant
+    tenant_db: AsyncSession, token: str, *, tenant: Tenant, device: Device | None = None
 ) -> tuple[Invitation, str]:
     """`PATCH /api/v2/invitations/qr/{token}/check-out` — public,
     unauthenticated exit counterpart of `check_in_by_qr_token` (spec.md "QR
@@ -2052,7 +2078,9 @@ async def check_out_by_qr_token(
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Invitation is not currently checked in"
         )
-    updated = await InvitationRepository(tenant_db).check_out_by_qr_if_eligible(invitation.id)
+    updated = await InvitationRepository(tenant_db).check_out_by_qr_if_eligible(
+        invitation.id, device_pk=device.id if device else None
+    )
     if updated is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Invitation is no longer eligible for check-out"
@@ -2064,10 +2092,15 @@ async def check_out_by_qr_token(
 
 
 async def check_out_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID, tenant: Tenant
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    user_id: uuid.UUID,
+    tenant: Tenant,
+    device: Device | None = None,
 ) -> Invitation:
     updated = await InvitationRepository(tenant_db).check_out_if_checked_in(
-        invitation.id, user_id=user_id
+        invitation.id, user_id=user_id, device_pk=device.id if device else None
     )
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not checked in")

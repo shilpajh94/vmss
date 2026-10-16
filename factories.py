@@ -49,6 +49,7 @@ from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.audit_trail.models import AuditReportJob
 from vmss_api.auth.models import AuditLog, Permission, Role, User, UserBranchRole
+from vmss_api.devices.models import Device
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
 from vmss_api.notifications.models import DeviceToken
 from vmss_api.org_structure.models import (
@@ -129,6 +130,22 @@ class AuditReportJobFactory(SQLAlchemyFactory[AuditReportJob]):
     error_message = None
     completed_at = None
     deleted_at = None
+
+
+class DeviceFactory(SQLAlchemyFactory[Device]):
+    """An approved, enabled kiosk by default; override `approval_status`/
+    `is_active` for pending/disabled. `branch_id` must be supplied.
+    """
+
+    __model__ = Device
+    deleted_at = None
+    building_id = None
+    approved_by_user_id = None
+    approved_at = None
+    operating_mode = "kiosk"
+    approval_status = "approved"
+    is_active = True
+    device_id = Use(lambda: f"dev-{token_hex(6)}")
 
 
 class CompanyFactory(SQLAlchemyFactory[Company]):
@@ -249,6 +266,12 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     # nullable — a random polyfactory-generated UUID here would violate
     # each one's constraint unless a real row happens to exist with that id.
     purpose_id = None
+    # Same FK-safety rationale: nullable `building_id` (added by a later
+    # migration) otherwise gets a random UUID that violates its FK on insert.
+    building_id = None
+    # Same FK-safety rationale: device traceability columns start empty.
+    check_in_device_id = None
+    check_out_device_id = None
     host_id = None
     duration_id = None
     department_id = None
