@@ -26,6 +26,8 @@ class TenantContext:
     """Tenant data safe to use after the registry session ends."""
 
     id: uuid.UUID
+    name: str
+    slug: str
     schema_name: str
     is_active: bool
     timezone: str
@@ -114,6 +116,8 @@ async def get_tenant(
         # Copy ORM values while the registry session is active.
         tenant_context = TenantContext(
             id=tenant.id,
+            name=tenant.name,
+            slug=tenant.slug,
             schema_name=tenant.schema_name,
             is_active=tenant.is_active,
             timezone=tenant.timezone,
