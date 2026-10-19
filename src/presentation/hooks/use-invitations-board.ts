@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
 import { ApiError } from '../../data/api/api-error'
-import { usePolling } from './use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from './use-polling'
 import { useLoadTracker, type LoadMode } from './use-load-tracker'
 import { useDebouncedValue } from './use-debounced-value'
 import { isReceptionCurrentStep, resolveApproverLabel, resolveCurrentLevel, resolveTotalSteps } from '../utils/approval-step-label'
@@ -111,7 +111,6 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     return STATUS_OPTIONS.some((option) => option.value === requested) ? requested : ''
   })
   const [sourceFilter, setSourceFilter] = useState('')
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   const debouncedSearch = useDebouncedValue(search, 300)
   const [approvingId, setApprovingId] = useState<string | undefined>(undefined)
   const [pendingApproveId, setPendingApproveId] = useState<string | undefined>(undefined)
@@ -214,7 +213,6 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         setRoleNameById(Object.fromEntries(roles.map((role: RoleOut) => [role.id, role.name])))
         setHostEmployees(employees)
         setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
-        setLastUpdatedAt(new Date())
       } catch (error) {
         console.error('Failed to load dashboard', error)
         if (!request.fail()) return
@@ -279,7 +277,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     editingId !== undefined ||
     approvingAndDelegatingId !== undefined
 
-  usePolling(() => void loadDashboard('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadDashboard('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
   // Workflow rules are defined per visitor category, not per invitation, so
   // every card sharing a category reuses one fetch instead of one each. The
@@ -1030,7 +1028,6 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     setSourceFilter,
     isFiltering,
     clearFilters,
-    lastUpdatedAt,
     refresh,
     isRefreshing,
     approve,

@@ -15,7 +15,7 @@ export type NotificationAddressingReason = 'role_assigned' | 'delegated' | 'life
 interface NotificationCenterContextValue {
   notifications: NotificationFeedItem[]
   unreadCount: number
-  refresh: () => void
+  refresh: () => Promise<void>
   markRead: (notificationId: string) => void
   markAllRead: () => void
   // Subscribes to "new invitation activity arrived" — fired once per feed
@@ -24,6 +24,16 @@ interface NotificationCenterContextValue {
   // (live-data-refresh "Dashboards refresh when invitation activity is
   // notified"). Returns the unsubscribe function.
   onInvitationActivity: (callback: () => void) => () => void
+  // Bumped once per feed load that brings in any item not seen this
+  // session (never by the first load after sign-in); the bell rings on each
+  // bump (app-shell "The notification bell rings when a new notification
+  // arrives").
+  newArrivalCount: number
+  // Asks the bell to open its panel (e.g. from a grouped push summary
+  // toast). A counter, not a flag, so every request re-triggers and the bell
+  // keeps sole ownership of closing.
+  openPanel: () => void
+  panelOpenRequest: number
 }
 
 const NotificationCenterContext = createContext<NotificationCenterContextValue | null>(null)
@@ -47,11 +57,32 @@ export function NotificationCenterProvider({ children }: { children: ReactNode }
   const location = useLocation()
   const [notifications, setNotifications] = useState<NotificationFeedItem[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
+  const [newArrivalCount, setNewArrivalCount] = useState(0)
+  const [panelOpenRequest, setPanelOpenRequest] = useState(0)
   const wasSignedInRef = useRef(false)
   // Ids already seen this session; undefined until the first load, which
   // only primes the set (old items aren't "new activity").
   const seenIdsRef = useRef<Set<string> | undefined>(undefined)
   const activityListenersRef = useRef(new Set<() => void>())
+  // Bumped when a mark-read/mark-all-read starts and again when it settles.
+  // A feed response requested under an older version can predate that read
+  // on the server, so it's dropped instead of overwriting the optimistic
+  // update with a stale unread count.
+  const readVersionRef = useRef(0)
+
+  const trackRead = useCallback(<T,>(request: Promise<T>): Promise<T> => {
+    readVersionRef.current += 1
+    return request.then(
+      (result) => {
+        readVersionRef.current += 1
+        return result
+      },
+      (error: unknown) => {
+        readVersionRef.current += 1
+        throw error
+      },
+    )
+  }, [])
 
   const onInvitationActivity = useCallback((callback: () => void) => {
     activityListenersRef.current.add(callback)
@@ -61,17 +92,20 @@ export function NotificationCenterProvider({ children }: { children: ReactNode }
   }, [])
 
   const refresh = useCallback(() => {
-    if (!isSignedIn()) return
+    if (!isSignedIn()) return Promise.resolve()
 
-    Promise.all([listNotificationsUseCase.execute({ pageSize: FEED_PAGE_SIZE }), getUnreadNotificationCountUseCase.execute()])
+    const readVersion = readVersionRef.current
+    return Promise.all([listNotificationsUseCase.execute({ pageSize: FEED_PAGE_SIZE }), getUnreadNotificationCountUseCase.execute()])
       .then(([page, count]) => {
+        if (readVersion !== readVersionRef.current) return
         const seenIds = seenIdsRef.current
-        const hasNewInvitationActivity =
-          seenIds !== undefined && page.items.some((item) => !seenIds.has(item.id) && Boolean(item.data.invitationId))
+        const unseenItems = seenIds === undefined ? [] : page.items.filter((item) => !seenIds.has(item.id))
+        const hasNewInvitationActivity = unseenItems.some((item) => Boolean(item.data.invitationId))
         seenIdsRef.current = new Set([...(seenIds ?? []), ...page.items.map((item) => item.id)])
 
         setNotifications(page.items)
         setUnreadCount(count)
+        if (unseenItems.length > 0) setNewArrivalCount((previous) => previous + 1)
         if (hasNewInvitationActivity) activityListenersRef.current.forEach((listener) => listener())
       })
       .catch((error: unknown) => {
@@ -119,12 +153,12 @@ export function NotificationCenterProvider({ children }: { children: ReactNode }
       setNotifications((previous) => previous.map((item) => (item.id === notificationId ? { ...item, readAt } : item)))
       setUnreadCount((previous) => Math.max(0, previous - 1))
 
-      markNotificationReadUseCase.execute(notificationId).catch((error: unknown) => {
+      trackRead(markNotificationReadUseCase.execute(notificationId)).catch((error: unknown) => {
         console.error('Failed to mark notification read', error)
         refresh()
       })
     },
-    [notifications, markNotificationReadUseCase, refresh],
+    [notifications, markNotificationReadUseCase, refresh, trackRead],
   )
 
   const markAllRead = useCallback(() => {
@@ -132,15 +166,17 @@ export function NotificationCenterProvider({ children }: { children: ReactNode }
     setNotifications((previous) => previous.map((item) => (item.readAt ? item : { ...item, readAt })))
     setUnreadCount(0)
 
-    markAllNotificationsReadUseCase.execute().catch((error: unknown) => {
+    trackRead(markAllNotificationsReadUseCase.execute()).catch((error: unknown) => {
       console.error('Failed to mark all notifications read', error)
       refresh()
     })
-  }, [markAllNotificationsReadUseCase, refresh])
+  }, [markAllNotificationsReadUseCase, refresh, trackRead])
+
+  const openPanel = useCallback(() => setPanelOpenRequest((previous) => previous + 1), [])
 
   const value = useMemo(
-    () => ({ notifications, unreadCount, refresh, markRead, markAllRead, onInvitationActivity }),
-    [notifications, unreadCount, refresh, markRead, markAllRead, onInvitationActivity],
+    () => ({ notifications, unreadCount, refresh, markRead, markAllRead, onInvitationActivity, newArrivalCount, openPanel, panelOpenRequest }),
+    [notifications, unreadCount, refresh, markRead, markAllRead, onInvitationActivity, newArrivalCount, openPanel, panelOpenRequest],
   )
 
   return <NotificationCenterContext.Provider value={value}>{children}</NotificationCenterContext.Provider>

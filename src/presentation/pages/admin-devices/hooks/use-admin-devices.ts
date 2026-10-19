@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
@@ -46,7 +46,6 @@ export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string
   const { phase, isRefreshing, begin } = useLoadTracker()
   // Only shown when the first load fails; keeps the 403 vs generic wording.
   const [loadErrorMessage, setLoadErrorMessage] = useState<string | undefined>(undefined)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [pendingDelete, setPendingDelete] = useState<Device | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -89,7 +88,6 @@ export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string
         setTotal(devicePage.total)
         setBranches(branchList)
         setBuildings(buildingList)
-        setLastUpdatedAt(new Date())
       } catch (error) {
         if (!request.fail()) return
         const message =
@@ -131,9 +129,9 @@ export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string
   }, [loadDevices])
 
   const isActionInProgress = pendingDelete !== undefined || isDeleting || busyDeviceId !== undefined
-  usePolling(() => void loadDevices('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadDevices('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const isFiltering = statusFilter !== '' || branchFilter !== '' || buildingFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])

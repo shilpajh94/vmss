@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePresence } from '../../hooks/use-presence'
 import { PendingButton } from '../ui/PendingButton'
 import { useNavigate } from 'react-router'
@@ -7,6 +7,11 @@ import { useNotificationCenter } from '../../context/notification-center-context
 import { getPushState, usePushNotifications, type PushState } from '../../hooks/use-push-notifications'
 import { buildInvitationPath } from '../../utils/notification-links'
 import type { NotificationFeedItem } from '../../../domain/entities/notification-feed-schema'
+
+// While anything is unread, the bell rings again this long after its last
+// ring (app-shell "The notification bell repeats its ring while
+// notifications stay unread").
+const UNREAD_REMINDER_INTERVAL_MS = 15_000
 
 function formatRelativeTime(iso: string): string {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
@@ -112,13 +117,67 @@ function PushStatusRow() {
 }
 
 export function NotificationBell() {
-  const { notifications, unreadCount, markRead, markAllRead } = useNotificationCenter()
+  const { notifications, unreadCount, markRead, markAllRead, newArrivalCount, panelOpenRequest } = useNotificationCenter()
   const navigate = useNavigate()
   const [isOpen, setIsOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   // Fades/scales out from the bell before unmounting (ui-motion "Popovers
   // and menus animate from their anchor").
   const popover = usePresence(isOpen)
+
+  // Every ring - a new arrival or a reminder - bumps this key, which
+  // remounts the icon wrapper and replays the ring animation.
+  const [ringKey, setRingKey] = useState(0)
+  const lastRingAtRef = useRef(Date.now())
+
+  // The one place a ring starts: with nothing unread the bell never
+  // animates, whatever asked for the ring (app-shell "The notification bell
+  // rings when a new notification arrives"). Reads the latest count through
+  // a ref so both the effect and the timeout below see the current value.
+  const unreadCountRef = useRef(unreadCount)
+  unreadCountRef.current = unreadCount
+  const ring = useCallback(() => {
+    if (unreadCountRef.current > 0) setRingKey((previous) => previous + 1)
+  }, [])
+  const [isTabVisible, setIsTabVisible] = useState(() => document.visibilityState === 'visible')
+
+  // Ring only when the count moves after mount, so a bell remounted later
+  // in the session doesn't replay an arrival it already rang for.
+  const seenArrivalCountRef = useRef(newArrivalCount)
+  useEffect(() => {
+    if (newArrivalCount === seenArrivalCountRef.current) return
+    seenArrivalCountRef.current = newArrivalCount
+    ring()
+  }, [newArrivalCount, ring])
+
+  useEffect(() => {
+    lastRingAtRef.current = Date.now()
+  }, [ringKey])
+
+  useEffect(() => {
+    const updateVisibility = () => setIsTabVisible(document.visibilityState === 'visible')
+    document.addEventListener('visibilitychange', updateVisibility)
+    return () => document.removeEventListener('visibilitychange', updateVisibility)
+  }, [])
+
+  // Re-armed after every ring; measured from the last ring so a changing
+  // count doesn't postpone it. Nothing is scheduled while all is read, the
+  // popover is open, or the tab is hidden.
+  useEffect(() => {
+    if (unreadCount === 0 || isOpen || !isTabVisible) return
+    const delay = Math.max(0, lastRingAtRef.current + UNREAD_REMINDER_INTERVAL_MS - Date.now())
+    const timeoutId = window.setTimeout(ring, delay)
+    return () => window.clearTimeout(timeoutId)
+  }, [ringKey, unreadCount, isOpen, isTabVisible, ring])
+
+  // Open on request from elsewhere (a grouped push summary toast); like
+  // the ring, only requests made after mount count.
+  const seenPanelOpenRequestRef = useRef(panelOpenRequest)
+  useEffect(() => {
+    if (panelOpenRequest === seenPanelOpenRequestRef.current) return
+    seenPanelOpenRequestRef.current = panelOpenRequest
+    setIsOpen(true)
+  }, [panelOpenRequest])
 
   useEffect(() => {
     if (!isOpen) return
@@ -140,23 +199,31 @@ export function NotificationBell() {
     if (invitationId) navigate(buildInvitationPath(invitationId))
   }
 
-  const badgeLabel = unreadCount > 9 ? '9+' : String(unreadCount)
-
   return (
     <div ref={containerRef} className="relative">
       <button
         type="button"
         onClick={() => setIsOpen((previous) => !previous)}
-        aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
+        aria-label={`Notifications, ${unreadCount} unread`}
         aria-expanded={isOpen}
         className="relative flex size-10 items-center justify-center rounded-full bg-border-subtle transition-colors duration-fast hover:bg-border lg:size-9"
       >
-        <BellIcon className="size-4 text-text" />
-        {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 font-body text-[10px] leading-none font-semibold text-white">
-            {badgeLabel}
-          </span>
-        )}
+        {/* Keyed by the ring count so each ring remounts it and replays the
+            animation; no class before the first ring, so loading the page
+            never rings. */}
+        <span key={ringKey} className={ringKey > 0 ? 'motion-bell-ring' : 'inline-flex'}>
+          <BellIcon className="size-4 text-text" />
+        </span>
+        {/* Exact count, always shown; anchored by its left edge so extra
+            digits grow outward instead of across the icon. */}
+        <span
+          aria-hidden
+          className={`absolute -top-0.5 left-[55%] flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-body text-[10px] leading-none font-semibold tabular-nums ${
+            unreadCount > 0 ? 'bg-danger text-white' : 'bg-border text-text-muted'
+          }`}
+        >
+          {unreadCount}
+        </span>
       </button>
 
       {popover.isMounted && (

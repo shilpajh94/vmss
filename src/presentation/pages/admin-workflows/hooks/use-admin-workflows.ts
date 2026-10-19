@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
@@ -38,7 +38,6 @@ export function useAdminWorkflows() {
   const [workflows, setWorkflows] = useState<WorkflowGroup[]>([])
   const [categoryOptions, setCategoryOptions] = useState<{ value: string; label: string }[]>([])
   const { phase, isRefreshing, begin } = useLoadTracker()
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [pendingDelete, setPendingDelete] = useState<WorkflowGroup | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -99,7 +98,6 @@ export function useAdminWorkflows() {
         })
 
         setWorkflows(groups)
-        setLastUpdatedAt(new Date())
       } catch {
         if (!request.fail()) return
         toast.error('Something went wrong loading the workflows. Please try again.')
@@ -131,9 +129,9 @@ export function useAdminWorkflows() {
   }, [loadWorkflows])
 
   const isActionInProgress = pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadWorkflows('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadWorkflows('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const isFiltering = categoryFilter !== '' || statusFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])

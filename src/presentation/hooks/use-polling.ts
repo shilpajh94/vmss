@@ -4,6 +4,10 @@ import { useEffect, useRef } from 'react'
 // focus run at most this often - the two events usually fire together.
 const RESUME_THROTTLE_MS = 5_000
 
+// The one automatic-refresh interval for every operational list, board and
+// dashboard page (live-data-refresh).
+export const LIVE_REFRESH_INTERVAL_MS = 10_000
+
 interface UsePollingOptions {
   intervalMs: number
   isBusy: boolean

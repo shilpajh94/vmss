@@ -112,7 +112,15 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
       const dispatch = (roleName: string | undefined) => {
         const addressingLabel = buildAddressingLabel(reason, roleName)
         const displayMessage = addressingLabel ? `${addressingLabel}: ${message}` : message
-        toast.info(displayMessage, { onClick })
+        // A push arriving while another push toast is still up joins it as
+        // one "N new notifications" summary that opens the bell, so a burst
+        // never floods the screen (notifications "A burst of push
+        // notifications is grouped into one summary").
+        toast.info(displayMessage, {
+          onClick,
+          groupKey: 'push',
+          groupSummary: (count) => ({ message: `${count} new notifications`, onClick: () => latestRef.current.notificationCenter.openPanel() }),
+        })
         // The API recorded this push before sending it, so a refetch finds
         // it — the bell never shows a client-only item the server lacks.
         notificationCenter.refresh()

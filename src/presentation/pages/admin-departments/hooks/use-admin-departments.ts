@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
@@ -24,7 +24,6 @@ export function useAdminDepartments() {
   const [branchOptions, setBranchOptions] = useState<{ value: string; label: string }[]>([])
   const [employees, setEmployees] = useState<HostEmployee[]>([])
   const { phase, isRefreshing, begin } = useLoadTracker()
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [pendingDelete, setPendingDelete] = useState<Department | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -59,7 +58,6 @@ export function useAdminDepartments() {
         setTotal(page_.total)
         setEmployees(employeeList)
         setBranchOptions(branches.map((branch) => ({ value: branch.id, label: branch.name })).sort((a, b) => a.label.localeCompare(b.label)))
-        setLastUpdatedAt(new Date())
       } catch {
         if (!request.fail()) return
         toast.error('Something went wrong loading the departments. Please try again.')
@@ -84,9 +82,9 @@ export function useAdminDepartments() {
   // Auto-refreshes the register every 15s; skipped while a delete dialog is
   // open so a background tick can't replace data underneath it.
   const isActionInProgress = pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadDepartments('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadDepartments('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const requestDelete = useCallback((department: Department) => {
     setPendingDelete(department)

@@ -41,6 +41,9 @@
   --motion-fast: 100ms; /* hover/press micro-feedback */
   --motion-standard: 180ms; /* overlays, popovers, panels, content fade-in */
   --motion-slow: 280ms; /* route and wizard step transitions */
+  /* The new-notification bell ring: ui-motion's one exception to the
+     300ms cap (an attention cue, played once). Not read from JS. */
+  --motion-attention: 700ms;
 }
 
 @utility duration-fast {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { FormStep } from '../../../../domain/entities/form-builder-schema'
@@ -35,7 +35,6 @@ export function useAdminFormBuilder() {
   const [selectedBranchId, setSelectedBranchId] = useState<string | undefined>(undefined)
   const [steps, setSteps] = useState<FormStep[]>([])
   const { phase, isRefreshing, begin } = useLoadTracker()
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   const [isPublishing, setIsPublishing] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<FormStep | undefined>(undefined)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -58,7 +57,6 @@ export function useAdminFormBuilder() {
         const list = await listFormStepsUseCase.execute(branchId)
         if (!request.succeed()) return
         setSteps([...list].sort((a, b) => a.orderIndex - b.orderIndex))
-        setLastUpdatedAt(new Date())
       } catch {
         if (!request.fail()) return
         toast.error('Something went wrong loading the registration steps. Please try again.')
@@ -96,9 +94,9 @@ export function useAdminFormBuilder() {
   // action is in progress so a background tick can't replace data underneath
   // an in-progress user action (same convention as use-admin-branches.ts).
   const isActionInProgress = isCreateOpen || pendingDelete !== undefined || isPublishing
-  usePolling(() => void loadSteps(selectedBranchId, 'background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadSteps(selectedBranchId, 'background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const toggleStepActive = useCallback(
     async (step: FormStep) => {

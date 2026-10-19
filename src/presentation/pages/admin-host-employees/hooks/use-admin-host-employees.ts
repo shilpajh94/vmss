@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
@@ -23,7 +23,6 @@ export function useAdminHostEmployees() {
   const [departments, setDepartments] = useState<Department[]>([])
   const [roleOptions, setRoleOptions] = useState<string[]>([])
   const { phase, isRefreshing, begin } = useLoadTracker()
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [departmentFilter, setDepartmentFilter] = useState('')
@@ -57,7 +56,6 @@ export function useAdminHostEmployees() {
         setTotal(page_.total)
         setDepartments(departmentList)
         setRoleOptions([...new Set(roles.map((role) => role.name))].sort((a, b) => a.localeCompare(b)))
-        setLastUpdatedAt(new Date())
       } catch {
         if (!request.fail()) return
         toast.error('Something went wrong loading the employees. Please try again.')
@@ -81,9 +79,9 @@ export function useAdminHostEmployees() {
 
   // Auto-refreshes the directory every 15s; there's no form/delete dialog
   // state on this page to protect, so polling is never suppressed.
-  usePolling(() => void loadHostEmployees('background'), { intervalMs: 15_000, isBusy: false })
+  usePolling(() => void loadHostEmployees('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: false })
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const departmentNameById = useMemo(() => new Map(departments.map((department) => [department.id, department.name])), [departments])
 

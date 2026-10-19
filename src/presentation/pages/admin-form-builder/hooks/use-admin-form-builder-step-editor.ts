@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type {
@@ -46,7 +46,6 @@ export function useAdminFormBuilderStepEditor() {
   const [groups, setGroups] = useState<FormFieldGroup[]>([])
   const [selectedFieldId, setSelectedFieldId] = useState<string | undefined>(undefined)
   const { phase, isRefreshing, begin } = useLoadTracker()
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   const [isAddFieldOpen, setIsAddFieldOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<FormField | undefined>(undefined)
   const [isAddGroupOpen, setIsAddGroupOpen] = useState(false)
@@ -72,7 +71,6 @@ export function useAdminFormBuilderStepEditor() {
         setFields(sortedFields)
         setGroups([...stepGroups].sort((a, b) => a.orderIndex - b.orderIndex))
         setSelectedFieldId((current) => current ?? sortedFields[0]?.id)
-        setLastUpdatedAt(new Date())
       } catch {
         if (!request.fail()) return
         toast.error('Something went wrong loading this step. Please try again.')
@@ -97,9 +95,9 @@ export function useAdminFormBuilderStepEditor() {
   // action is in progress (same convention as use-admin-form-builder.ts).
   const isActionInProgress =
     isAddFieldOpen || pendingDelete !== undefined || isAddGroupOpen || pendingDeleteGroup !== undefined || isPublishing
-  usePolling(() => void load('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void load('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   // Bumped only on an explicit Edit/select click (not the auto-select on
   // load) so the page can scroll the properties panel into view.

@@ -5,6 +5,6 @@ import { usePageRefresh } from '../../../context/refresh-context'
 export function useStaffInvitations() {
   const board = useInvitationsBoard('/staff/login', 'mine')
   usePageHeader({ description: 'Track visitor invitations, approval status, and check-in progress' })
-  usePageRefresh({ refresh: board.refresh, isRefreshing: board.phase === 'initial' || board.isRefreshing, lastUpdatedAt: board.lastUpdatedAt })
+  usePageRefresh({ refresh: board.refresh, isRefreshing: board.phase === 'initial' || board.isRefreshing })
   return board
 }

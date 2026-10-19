@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useToast } from '../components/toast/toast-context'
 import { useNotificationCenter } from '../context/notification-center-context'
 import { usePageRefresh } from '../context/refresh-context'
-import { usePolling } from './use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from './use-polling'
 
-const POLL_INTERVAL_MS = 15_000
 
 export interface LiveResource<T> {
   data: T | undefined
@@ -12,7 +11,6 @@ export interface LiveResource<T> {
   // load; otherwise a background refresh, and `data` is the last good value.
   hasError: boolean
   isLoading: boolean
-  lastSuccessAt: Date | undefined
   load: () => Promise<void>
 }
 
@@ -24,7 +22,6 @@ export function useLiveResource<T>(fetcher: () => Promise<T>, key: string, enabl
   const [data, setData] = useState<T | undefined>(undefined)
   const [hasError, setHasError] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [lastSuccessAt, setLastSuccessAt] = useState<Date | undefined>(undefined)
   const fetcherRef = useRef(fetcher)
   fetcherRef.current = fetcher
   const requestIdRef = useRef(0)
@@ -37,7 +34,6 @@ export function useLiveResource<T>(fetcher: () => Promise<T>, key: string, enabl
       if (requestId !== requestIdRef.current) return
       setData(result)
       setHasError(false)
-      setLastSuccessAt(new Date())
     } catch {
       if (requestId !== requestIdRef.current) return
       setHasError(true)
@@ -50,7 +46,7 @@ export function useLiveResource<T>(fetcher: () => Promise<T>, key: string, enabl
     if (enabled) void load()
   }, [enabled, key, load])
 
-  return { data, hasError, isLoading, lastSuccessAt, load }
+  return { data, hasError, isLoading, load }
 }
 
 interface LiveDashboardState {
@@ -76,7 +72,7 @@ export function useLiveDashboard(resources: LiveResource<unknown>[], errorText: 
     resourcesRef.current.forEach((resource) => void resource.load())
   }, [])
 
-  usePolling(refreshAll, { intervalMs: POLL_INTERVAL_MS, isBusy: !enabled, refetchOn: onInvitationActivity })
+  usePolling(refreshAll, { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: !enabled, refetchOn: onInvitationActivity })
 
   const anyError = resources.some((resource) => resource.hasError)
   const wasErroringRef = useRef(false)
@@ -88,16 +84,10 @@ export function useLiveDashboard(resources: LiveResource<unknown>[], errorText: 
   const hasInitialError = resources.some((resource) => resource.hasError && resource.data === undefined)
   const isInitialLoading = !hasInitialError && resources.some((resource) => resource.data === undefined)
   const isRefreshing = resources.some((resource) => resource.isLoading)
-  const successTimes = resources.map((resource) => resource.lastSuccessAt?.getTime() ?? 0)
-  const oldestSuccess = Math.min(...successTimes)
-  // Memoized on the timestamp: the page consumes the refresh context it
-  // publishes into, so a fresh Date each render would re-publish forever.
-  const lastUpdatedAt = useMemo(() => (oldestSuccess > 0 ? new Date(oldestSuccess) : undefined), [oldestSuccess])
 
   usePageRefresh({
     refresh: refreshAll,
     isRefreshing,
-    lastUpdatedAt,
     hasFailed: anyError && !hasInitialError,
   })
 

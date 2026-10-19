@@ -80,10 +80,54 @@
   }
 }
 
-@keyframes motion-slide-in-top {
+@keyframes motion-slide-in-bottom {
   from {
     opacity: 0;
-    transform: translateY(-8px);
+    transform: translateY(8px);
+  }
+}
+
+/* Damped swing about the bell's top, like a struck bell. */
+@keyframes motion-bell-ring {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  15% {
+    transform: rotate(14deg);
+  }
+  30% {
+    transform: rotate(-12deg);
+  }
+  45% {
+    transform: rotate(8deg);
+  }
+  60% {
+    transform: rotate(-5deg);
+  }
+  75% {
+    transform: rotate(2deg);
+  }
+}
+
+/* Plays once per new arrival; NotificationBell remounts the element to
+   replay it. The global reduced-motion rule below makes it instant. */
+.motion-bell-ring {
+  display: inline-flex;
+  transform-origin: 50% 10%;
+  animation: motion-bell-ring var(--motion-attention) var(--ease-motion-out);
+}
+
+/* Top-bar refresh control's idle affordance: a small turn on hover/focus,
+   on its own wrapper so it never fights the spin (use-refresh-spin.ts).
+   Off while spinning, and under reduced motion. */
+.refresh-nudge {
+  transition: transform var(--motion-standard) var(--ease-motion-out);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .refresh-control:is(:hover, :focus-visible) .refresh-nudge:not([data-spinning]) {
+    transform: rotate(30deg);
   }
 }
 
@@ -124,8 +168,9 @@
   animation: motion-scale-out var(--motion-standard) var(--ease-motion-in) forwards;
 }
 
-/* Toasts: the outer wrapper collapses its height on exit (grid-rows trick)
-   so the toasts below glide up into the freed space. */
+/* Toasts (bottom-anchored): the outer wrapper collapses its height on exit
+   (grid-rows trick) so the neighbouring toasts glide into the freed space.
+   They enter up from the bottom edge on phones, in from the right above. */
 .motion-toast {
   display: grid;
   grid-template-rows: 1fr;
@@ -137,7 +182,7 @@
 }
 
 .motion-toast[data-state="open"] > * {
-  animation: motion-slide-in-top var(--motion-standard) var(--ease-motion-out);
+  animation: motion-slide-in-bottom var(--motion-standard) var(--ease-motion-out);
 }
 
 @media (width >= 40rem) {
