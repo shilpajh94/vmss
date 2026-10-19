@@ -1,4 +1,5 @@
 import z from "zod"
+import { PreferredContactMethodSchema } from "./preferred-contact-method"
 
 // Wire shape of `GET /invitations/lookup-by-email`'s `data` — the most
 // recently known profile for a visitor identified by email, used by staff
@@ -10,7 +11,7 @@ import z from "zod"
 export const StaffVisitorLookupSchema = z.object({
   fullName: z.string().min(1),
   phone: z.string().nullable(),
-  preferredContactMethod: z.enum(["email", "sms"]).nullable(),
+  preferredContactMethod: PreferredContactMethodSchema.nullable(),
   visitorCategoryId: z.string().nullable(),
   idProofType: z.string().nullable(),
   idProofUrl: z.string().nullish(),

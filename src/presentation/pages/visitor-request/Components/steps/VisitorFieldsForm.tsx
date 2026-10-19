@@ -1,4 +1,5 @@
 import { CustomFieldsSection } from '../../../../components/dynamic-fields/CustomFieldsSection'
+import type { PreferredContactMethod } from '../../../../../domain/entities/preferred-contact-method'
 import { FileUploadField } from '../../../../components/ui/FileUploadField'
 import { SegmentedToggle } from '../../../../components/ui/SegmentedToggle'
 import { SelectField } from '../../../../components/ui/SelectField'
@@ -91,7 +92,7 @@ export function VisitorFieldsForm({
         value={value.phone}
         onChange={(phone) => onChange({ ...value, phone })}
         error={errors?.phone}
-        required={showContactMethod ? value.preferredContactMethod === 'sms' : undefined}
+        required={showContactMethod ? (value.preferredContactMethod === 'sms' || value.preferredContactMethod === 'whatsapp') : undefined}
       />
       {showExtendedFields && (
         <div className="flex flex-col gap-1.5">
@@ -128,10 +129,11 @@ export function VisitorFieldsForm({
             options={[
               { value: 'email', label: 'Email' },
               { value: 'sms', label: 'SMS' },
+              { value: 'whatsapp', label: 'WhatsApp' },
             ]}
             value={value.preferredContactMethod ?? 'email'}
             onChange={(preferredContactMethod) =>
-              onChange({ ...value, preferredContactMethod: preferredContactMethod as 'email' | 'sms' })
+              onChange({ ...value, preferredContactMethod: preferredContactMethod as PreferredContactMethod })
             }
             variant="divided"
           />

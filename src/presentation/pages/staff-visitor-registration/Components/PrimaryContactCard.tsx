@@ -1,4 +1,5 @@
 import { CustomFieldsSection } from '../../../components/dynamic-fields/CustomFieldsSection'
+import type { PreferredContactMethod } from '../../../../domain/entities/preferred-contact-method'
 import { FileUploadField } from '../../../components/ui/FileUploadField'
 import { SegmentedToggle } from '../../../components/ui/SegmentedToggle'
 import { SelectField } from '../../../components/ui/SelectField'
@@ -70,7 +71,7 @@ export function PrimaryContactCard({
           value={value.phone}
           onChange={(phone) => onChange({ ...value, phone })}
           error={errors.phone}
-          required={value.preferredContactMethod === 'sms'}
+          required={value.preferredContactMethod === 'sms' || value.preferredContactMethod === 'whatsapp'}
         />
         <SelectField
           label="Visitor Category"
@@ -90,9 +91,10 @@ export function PrimaryContactCard({
             options={[
               { value: 'email', label: 'Email' },
               { value: 'sms', label: 'SMS' },
+              { value: 'whatsapp', label: 'WhatsApp' },
             ]}
             value={value.preferredContactMethod ?? 'email'}
-            onChange={(preferredContactMethod) => onChange({ ...value, preferredContactMethod: preferredContactMethod as 'email' | 'sms' })}
+            onChange={(preferredContactMethod) => onChange({ ...value, preferredContactMethod: preferredContactMethod as PreferredContactMethod })}
             variant="divided"
           />
         </div>
