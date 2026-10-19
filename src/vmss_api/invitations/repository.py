@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, NamedTuple
 
-from sqlalchemy import Select, exists, func, insert, or_, select, update
+from sqlalchemy import Select, case, exists, func, insert, or_, select, update
 from sqlalchemy.orm import aliased, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
@@ -262,6 +262,38 @@ def _export_filters(criteria: InvitationExportCriteria) -> list[Any]:
 
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
     return column.desc() if sort_order == SortOrder.desc else column.asc()
+
+
+def _status_changed_at_expr() -> Any:
+    """When the invitation entered its current status — the SQL half of
+    `service.status_changed_at`, which mirrors it in Python for the list row
+    (sort-invitation-board-by-status-date/design.md Decisions 1-2). Postgres
+    `GREATEST` skips NULLs, so a revert/reschedule time only counts when
+    set; `rescheduled_at` only counts once the row has been archived, since
+    only a reschedule out of `archived` changes the status.
+    """
+    rescheduled_from_archive = case(
+        (Invitation.archived_at.is_not(None), Invitation.rescheduled_at)
+    )
+    return func.coalesce(
+        case(
+            (
+                Invitation.status == "submitted",
+                func.greatest(
+                    Invitation.submitted_at,
+                    Invitation.approval_reverted_at,
+                    rescheduled_from_archive,
+                ),
+            ),
+            (Invitation.status == "approved", Invitation.approved_at),
+            (Invitation.status == "checked_in", Invitation.checked_in_at),
+            (Invitation.status == "checked_out", Invitation.checked_out_at),
+            (Invitation.status == "denied", Invitation.denied_at),
+            (Invitation.status == "archived", Invitation.archived_at),
+        ),
+        Invitation.submitted_at,
+        Invitation.created_at,
+    )
 
 
 # add-invitation-lifecycle-actions/design.md Decision 1: statuses eligible
@@ -915,9 +947,11 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         harden-approval-gate-and-narrow-delegate-visibility/design.md
         Decision 1) and is otherwise ignored.
         """
-        column = {"submitted_at": Invitation.submitted_at, "created_at": Invitation.created_at}[
-            sort_by
-        ]
+        column = {
+            "submitted_at": Invitation.submitted_at,
+            "created_at": Invitation.created_at,
+            "status_changed_at": _status_changed_at_expr(),
+        }[sort_by]
         if relevant_to_user_id is not None:
             branch_scope = None
         else:
@@ -935,7 +969,9 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         return await super().paginate(
             page=page,
             page_size=page_size,
-            order_by=_order_clause(column, sort_order),
+            # `id` breaks timestamp ties so offset paging never repeats or
+            # skips a row (design.md Decision 3).
+            order_by=(_order_clause(column, sort_order).nulls_last(), Invitation.id.asc()),
             filters=filters,
         )
 
