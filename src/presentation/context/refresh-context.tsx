@@ -4,6 +4,10 @@ export interface PageRefreshState {
   refresh: () => void
   isRefreshing: boolean
   lastUpdatedAt: Date | undefined
+  // True while background refreshes are failing after a successful load:
+  // the page keeps its last data and the control says it is retrying
+  // (live-data-refresh "Background refresh failures are reported once").
+  hasFailed?: boolean
 }
 
 interface RefreshContextValue {
@@ -13,7 +17,7 @@ interface RefreshContextValue {
 
 const RefreshContext = createContext<RefreshContextValue | undefined>(undefined)
 
-// Lets the persistent AdminTopBar own the one shared manual-refresh control
+// Lets the persistent AppTopBar own the one shared manual-refresh control
 // while each operational list/dashboard page still controls what "refresh"
 // actually does, without the page needing to render (or remount) the control
 // itself. Mirrors page-header-context.tsx's provider/registration split.
@@ -39,11 +43,11 @@ export function useRefreshContext(): RefreshContextValue {
 // that does) doesn't leave a stale control behind.
 export function usePageRefresh(state: PageRefreshState): void {
   const { setActiveRefresh } = useRefreshContext()
-  const { refresh, isRefreshing, lastUpdatedAt } = state
+  const { refresh, isRefreshing, lastUpdatedAt, hasFailed = false } = state
 
   useEffect(() => {
-    setActiveRefresh({ refresh, isRefreshing, lastUpdatedAt })
+    setActiveRefresh({ refresh, isRefreshing, lastUpdatedAt, hasFailed })
     return () => setActiveRefresh(undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refresh, isRefreshing, lastUpdatedAt])
+  }, [refresh, isRefreshing, lastUpdatedAt, hasFailed])
 }

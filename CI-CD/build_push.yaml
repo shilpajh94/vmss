@@ -27,6 +27,7 @@ stages:
 
         arguments: >
           --build-arg VITE_API_BASE_URL=$(VITE_API_BASE_URL)
+          --build-arg VITE_BUILD_SHA=$(Build.SourceVersion)
           --build-arg VITE_ENTRA_CLIENT_ID=$(VITE_ENTRA_CLIENT_ID)
           --build-arg VITE_ENTRA_TENANT_ID=$(VITE_ENTRA_TENANT_ID)
           --build-arg VITE_ENTRA_REDIRECT_URI=$(VITE_ENTRA_REDIRECT_URI)

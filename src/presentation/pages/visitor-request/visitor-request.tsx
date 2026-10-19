@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { PreferredContactMethodSchema } from '../../../domain/entities/preferred-contact-method'
+import { FormSkeleton, Skeleton } from '../../components/ui/Skeleton'
 import { GroupErrorsContext } from '../../components/dynamic-fields/group-errors-context'
 import { useNavigate } from 'react-router'
 import { PortalFooter } from '../../components/PortalFooter'
 import { PortalHeader } from '../../components/PortalHeader'
 import { StepProgressHeader } from './Components/StepProgressHeader'
 import { useAppDependencies } from '../../context/app-dependencies-context'
-import { Spinner } from '../../components/ui/LoadingState'
 import type { Branch } from '../../../domain/entities/branch-schema'
 import type { Building } from '../../../domain/entities/building-schema'
 import type { VisitorPortalMe } from '../../../domain/entities/visitor-portal-schema'
@@ -15,6 +15,7 @@ import { OtpRequestScreen } from './Components/otp/OtpRequestScreen'
 import { OtpScreenLayout } from './Components/otp/OtpScreenLayout'
 import { OtpVerifyScreen } from './Components/otp/OtpVerifyScreen'
 import { StepSidebar } from './Components/StepSidebar'
+import { useStepDirection } from '../../hooks/use-step-direction'
 import { CarriedItemsStep } from './Components/steps/CarriedItemsStep'
 import { ConsentStep } from './Components/steps/ConsentStep'
 import { GenericConfiguredStep } from './Components/steps/GenericConfiguredStep'
@@ -76,6 +77,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
 
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
   const activeStep = activeSteps[currentStep]
+  const stepDirection = useStepDirection(currentStep)
 
   // Also used as the retry action from the Visitor Category field's error
   // state — re-running it resets status to 'loading' first.
@@ -117,125 +119,128 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
       <div className="flex w-full flex-1 flex-col gap-4 px-4 py-4 md:flex-row md:gap-8 md:px-12 md:py-10">
         <StepSidebar steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
         <StepProgressHeader steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
-        <div className="min-w-0 flex-1 rounded-2xl border border-border bg-surface p-4 sm:p-6 md:p-8">
-          {isFormConfigLoading && <p className="text-body text-text-muted">Loading…</p>}
+        <div className="min-w-0 flex-1 overflow-x-clip rounded-2xl border border-border bg-surface p-4 sm:p-6 md:p-8">
+          {/* The action bar below stays outside this keyed wrapper, so only the step content slides. */}
+          <div key={currentStep} data-direction={stepDirection} className="step-enter">
+            {isFormConfigLoading && <FormSkeleton bare rows={3} label="Loading the registration form…" />}
 
-          {!isFormConfigLoading && formConfigError && (
-            <p className="text-body text-danger">Something went wrong loading the registration form. Please refresh the page.</p>
-          )}
+            {!isFormConfigLoading && formConfigError && (
+              <p className="text-body text-danger">Something went wrong loading the registration form. Please refresh the page.</p>
+            )}
 
-          {!isFormConfigLoading && !formConfigError && activeStep?.key === 'visitor_info' && (
-            <VisitorInfoStep
-              registrationType={formState.registrationType}
-              onRegistrationTypeChange={(registrationType) => setFormState({ ...formState, registrationType })}
-              primaryContact={formState.primaryContact}
-              onPrimaryContactChange={(primaryContact) => setFormState({ ...formState, primaryContact })}
-              primaryContactNameLocked={primaryContactNameLocked}
-              uploadFile={uploadFile}
-              getFilePreviewUrl={getFilePreviewUrl}
-              errors={errors}
-              visitorCategoriesState={visitorCategoriesState}
-              onRetryVisitorCategories={loadVisitorCategories}
-              visitorInfoFields={visitorInfoFields}
-              customFields={visitorInfoCustomFields}
-              groups={visitorInfoGroups}
-              groupFields={visitorInfoAllFields}
-              groupValues={formState.groupValues}
-              onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
-            />
-          )}
-          {!isFormConfigLoading && !formConfigError && activeStep?.key === 'visit_details' && (
-            <VisitInfoStep
-              value={formState.visitInfo}
-              onChange={(visitInfo) => setFormState({ ...formState, visitInfo })}
-              errors={errors}
-              branches={branches}
-              buildings={buildings}
-              purposeOfVisitOptions={purposeOfVisitOptions}
-              customFields={visitDetailsCustomFields}
-              customFieldValues={formState.customFieldValues}
-              onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
-              uploadFile={uploadFile}
-              getFilePreviewUrl={getFilePreviewUrl}
-            />
-          )}
-          {!isFormConfigLoading && !formConfigError && activeStep?.key === 'carried_items' && (
-            <CarriedItemsStep
-              fields={carriedItemsFields}
-              isLoading={false}
-              value={formState.carriedItems}
-              onChange={(carriedItems) => setFormState({ ...formState, carriedItems })}
-              customFields={carriedItemsCustomFields}
-              customFieldValues={formState.customFieldValues}
-              onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
-              groups={carriedItemsGroups}
-              groupFields={carriedItemsAllFields}
-              groupValues={formState.groupValues}
-              onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
-              uploadFile={uploadFile}
-              getFilePreviewUrl={getFilePreviewUrl}
-            />
-          )}
-          {!isFormConfigLoading && !formConfigError && activeStep?.key === 'vehicle_info' && (
-            <VehicleInfoStep
-              vehicles={formState.vehicles}
-              onChange={(vehicles) => setFormState({ ...formState, vehicles })}
-              errors={errors}
-              vehicleInfoFields={vehicleInfoFields}
-              customFields={vehicleInfoCustomFields}
-              groups={vehicleInfoGroups}
-              groupFields={vehicleInfoAllFields}
-              groupValues={formState.groupValues}
-              onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
-              uploadFile={uploadFile}
-              getFilePreviewUrl={getFilePreviewUrl}
-            />
-          )}
-          {!isFormConfigLoading && !formConfigError && activeStep?.key === 'consent_agreement' && (
-            <ConsentStep
-              fields={consentFields}
-              isLoading={false}
-              value={formState.consent}
-              onChange={(consent) => setFormState({ ...formState, consent })}
-              error={errors.consent}
-            />
-          )}
-          {!isFormConfigLoading && !formConfigError && activeStep?.key === 'review_confirm' && (
-            <ReviewConfirmStep
-              formState={formState}
-              status={submissionStatus}
-              trackingId={trackingId}
-              confirmedFullName={confirmedFullName}
-              errorMessage={submissionError}
-              visitorCategories={visitorCategoriesState.categories}
-              getFilePreviewUrl={getFilePreviewUrl}
-              vehicleCustomFields={vehicleInfoCustomFields}
-              carriedItemsCustomFields={carriedItemsCustomFields}
-              visitorInfoGroups={visitorInfoGroups}
-              visitorInfoAllFields={visitorInfoAllFields}
-              vehicleInfoGroups={vehicleInfoGroups}
-              vehicleInfoAllFields={vehicleInfoAllFields}
-              carriedItemsGroups={carriedItemsGroups}
-              carriedItemsAllFields={carriedItemsAllFields}
-              visitorInfoCustomFields={visitorInfoCustomFields}
-              visitDetailsCustomFields={visitDetailsCustomFields}
-              steps={activeSteps}
-              onBack={goBack}
-              onSubmit={submit}
-              onGoHome={() => navigate('/')}
-            />
-          )}
-          {!isFormConfigLoading && !formConfigError && activeStep && !isCanonicalStepKey(activeStep.key) && (
-            <GenericConfiguredStep
-              step={activeStep}
-              value={formState.customFieldValues}
-              onChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
-              groupValues={formState.groupValues}
-              onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
-              uploadFile={uploadFile}
-              getFilePreviewUrl={getFilePreviewUrl}
-            />
-          )}
+            {!isFormConfigLoading && !formConfigError && activeStep?.key === 'visitor_info' && (
+              <VisitorInfoStep
+                registrationType={formState.registrationType}
+                onRegistrationTypeChange={(registrationType) => setFormState({ ...formState, registrationType })}
+                primaryContact={formState.primaryContact}
+                onPrimaryContactChange={(primaryContact) => setFormState({ ...formState, primaryContact })}
+                primaryContactNameLocked={primaryContactNameLocked}
+                uploadFile={uploadFile}
+                getFilePreviewUrl={getFilePreviewUrl}
+                errors={errors}
+                visitorCategoriesState={visitorCategoriesState}
+                onRetryVisitorCategories={loadVisitorCategories}
+                visitorInfoFields={visitorInfoFields}
+                customFields={visitorInfoCustomFields}
+                groups={visitorInfoGroups}
+                groupFields={visitorInfoAllFields}
+                groupValues={formState.groupValues}
+                onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
+              />
+            )}
+            {!isFormConfigLoading && !formConfigError && activeStep?.key === 'visit_details' && (
+              <VisitInfoStep
+                value={formState.visitInfo}
+                onChange={(visitInfo) => setFormState({ ...formState, visitInfo })}
+                errors={errors}
+                branches={branches}
+                buildings={buildings}
+                purposeOfVisitOptions={purposeOfVisitOptions}
+                customFields={visitDetailsCustomFields}
+                customFieldValues={formState.customFieldValues}
+                onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
+                uploadFile={uploadFile}
+                getFilePreviewUrl={getFilePreviewUrl}
+              />
+            )}
+            {!isFormConfigLoading && !formConfigError && activeStep?.key === 'carried_items' && (
+              <CarriedItemsStep
+                fields={carriedItemsFields}
+                isLoading={false}
+                value={formState.carriedItems}
+                onChange={(carriedItems) => setFormState({ ...formState, carriedItems })}
+                customFields={carriedItemsCustomFields}
+                customFieldValues={formState.customFieldValues}
+                onCustomFieldValuesChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
+                groups={carriedItemsGroups}
+                groupFields={carriedItemsAllFields}
+                groupValues={formState.groupValues}
+                onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
+                uploadFile={uploadFile}
+                getFilePreviewUrl={getFilePreviewUrl}
+              />
+            )}
+            {!isFormConfigLoading && !formConfigError && activeStep?.key === 'vehicle_info' && (
+              <VehicleInfoStep
+                vehicles={formState.vehicles}
+                onChange={(vehicles) => setFormState({ ...formState, vehicles })}
+                errors={errors}
+                vehicleInfoFields={vehicleInfoFields}
+                customFields={vehicleInfoCustomFields}
+                groups={vehicleInfoGroups}
+                groupFields={vehicleInfoAllFields}
+                groupValues={formState.groupValues}
+                onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
+                uploadFile={uploadFile}
+                getFilePreviewUrl={getFilePreviewUrl}
+              />
+            )}
+            {!isFormConfigLoading && !formConfigError && activeStep?.key === 'consent_agreement' && (
+              <ConsentStep
+                fields={consentFields}
+                isLoading={false}
+                value={formState.consent}
+                onChange={(consent) => setFormState({ ...formState, consent })}
+                error={errors.consent}
+              />
+            )}
+            {!isFormConfigLoading && !formConfigError && activeStep?.key === 'review_confirm' && (
+              <ReviewConfirmStep
+                formState={formState}
+                status={submissionStatus}
+                trackingId={trackingId}
+                confirmedFullName={confirmedFullName}
+                errorMessage={submissionError}
+                visitorCategories={visitorCategoriesState.categories}
+                getFilePreviewUrl={getFilePreviewUrl}
+                vehicleCustomFields={vehicleInfoCustomFields}
+                carriedItemsCustomFields={carriedItemsCustomFields}
+                visitorInfoGroups={visitorInfoGroups}
+                visitorInfoAllFields={visitorInfoAllFields}
+                vehicleInfoGroups={vehicleInfoGroups}
+                vehicleInfoAllFields={vehicleInfoAllFields}
+                carriedItemsGroups={carriedItemsGroups}
+                carriedItemsAllFields={carriedItemsAllFields}
+                visitorInfoCustomFields={visitorInfoCustomFields}
+                visitDetailsCustomFields={visitDetailsCustomFields}
+                steps={activeSteps}
+                onBack={goBack}
+                onSubmit={submit}
+                onGoHome={() => navigate('/')}
+              />
+            )}
+            {!isFormConfigLoading && !formConfigError && activeStep && !isCanonicalStepKey(activeStep.key) && (
+              <GenericConfiguredStep
+                step={activeStep}
+                value={formState.customFieldValues}
+                onChange={(customFieldValues) => setFormState({ ...formState, customFieldValues })}
+                groupValues={formState.groupValues}
+                onGroupValuesChange={(groupValues) => setFormState({ ...formState, groupValues })}
+                uploadFile={uploadFile}
+                getFilePreviewUrl={getFilePreviewUrl}
+              />
+            )}
+          </div>
 
           {!isFormConfigLoading && !formConfigError && activeStep?.key !== 'review_confirm' && (
             // Pinned to the bottom of the viewport below `md`, so Back/Next
@@ -380,9 +385,14 @@ export function VisitorRequestPage() {
       <PortalHeader />
       <OtpScreenLayout onBack={() => navigate('/')}>
         {isLookingUpHistory ? (
-          <div className="flex h-fit w-full max-w-[480px] items-center justify-center gap-2 rounded-2xl border border-border bg-surface p-8 text-body text-text-muted shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
-            <Spinner className="size-4 border-border border-t-secondary-accent" />
-            Looking up your visits…
+          <div
+            role="status"
+            aria-label="Looking up your visits…"
+            className="flex h-fit w-full max-w-[480px] flex-col gap-3 rounded-2xl border border-border bg-surface p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]"
+          >
+            <Skeleton className="h-5 w-48" />
+            <Skeleton className="h-3.5 w-full" />
+            <Skeleton className="h-3.5 w-2/3" />
           </div>
         ) : otp.phase === 'request' ? (
           <OtpRequestScreen

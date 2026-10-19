@@ -1,5 +1,6 @@
 import { ChevronLeftIcon } from '../../components/icons'
-import { LoadingState } from '../../components/ui/LoadingState'
+import { FormSkeleton } from '../../components/ui/Skeleton'
+import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
@@ -58,7 +59,7 @@ export function AdminFloorFormPage() {
             </button>
           </div>
         ) : isLoading ? (
-          <LoadingState label="Loading…" className="py-12" />
+          <FormSkeleton rows={3} columns={2} label="Loading floor…" />
         ) : (
           <div className="flex w-full flex-col gap-6 rounded-2xl border border-border bg-surface px-6 py-8">
             <div className="flex flex-col gap-4 md:flex-row md:gap-6">
@@ -119,14 +120,14 @@ export function AdminFloorFormPage() {
               <button type="button" onClick={cancel} className="rounded-full border border-border bg-surface px-6 py-2.5 font-body text-sm font-semibold text-text">
                 Cancel
               </button>
-              <button
-                type="button"
+              <PendingButton
                 onClick={() => void submit()}
-                disabled={isSaving}
+                pending={isSaving}
+                pendingLabel="Saving…"
                 className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-white disabled:opacity-50"
               >
-                {isSaving ? 'Saving…' : isEditMode ? 'Save Changes' : 'Save Floor'}
-              </button>
+                {isEditMode ? 'Save Changes' : 'Save Floor'}
+              </PendingButton>
             </div>
           </div>
         )}

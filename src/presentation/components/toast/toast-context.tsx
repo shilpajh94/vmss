@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useReducer, type ReactNode } from 'react'
 import { ToastViewport } from './ToastViewport'
+import { MOTION_MS } from '../../utils/motion'
 
 export type ToastVariant = 'success' | 'error' | 'info'
 
@@ -14,14 +15,21 @@ export interface ToastItem {
   variant: ToastVariant
   message: string
   onClick?: () => void
+  // Set once dismissed: the toast plays its exit animation (and its slot
+  // collapses so the rest glide up) before it is removed for real.
+  isClosing?: boolean
 }
 
-type ToastAction = { type: 'ADD'; toast: ToastItem } | { type: 'REMOVE'; id: string }
+type ToastAction = { type: 'ADD'; toast: ToastItem } | { type: 'CLOSE'; id: string } | { type: 'REMOVE'; id: string }
 
 function toastReducer(state: ToastItem[], action: ToastAction): ToastItem[] {
   if (action.type === 'ADD') return [...state, action.toast]
+  if (action.type === 'CLOSE') return state.map((toast) => (toast.id === action.id ? { ...toast, isClosing: true } : toast))
   return state.filter((toast) => toast.id !== action.id)
 }
+
+// Exit animation length plus slack (ui-motion "Toasts animate in and out").
+const EXIT_MS = MOTION_MS.standard + 50
 
 // Errors get more reading time than success/info before they auto-dismiss.
 const AUTO_DISMISS_MS: Record<ToastVariant, number> = {
@@ -41,13 +49,21 @@ const ToastContext = createContext<ToastContextValue | null>(null)
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, dispatch] = useReducer(toastReducer, [] as ToastItem[])
 
-  const dismiss = useCallback((id: string) => dispatch({ type: 'REMOVE', id }), [])
-
-  const show = useCallback((variant: ToastVariant, message: string, options?: ToastOptions) => {
-    const id = crypto.randomUUID()
-    dispatch({ type: 'ADD', toast: { id, variant, message, onClick: options?.onClick } })
-    setTimeout(() => dispatch({ type: 'REMOVE', id }), AUTO_DISMISS_MS[variant])
+  // Dismissing twice (click, then the auto-dismiss timer) is harmless:
+  // CLOSE is idempotent and REMOVE of a missing id is a no-op.
+  const dismiss = useCallback((id: string) => {
+    dispatch({ type: 'CLOSE', id })
+    setTimeout(() => dispatch({ type: 'REMOVE', id }), EXIT_MS)
   }, [])
+
+  const show = useCallback(
+    (variant: ToastVariant, message: string, options?: ToastOptions) => {
+      const id = crypto.randomUUID()
+      dispatch({ type: 'ADD', toast: { id, variant, message, onClick: options?.onClick } })
+      setTimeout(() => dismiss(id), AUTO_DISMISS_MS[variant])
+    },
+    [dismiss],
+  )
 
   const success = useCallback((message: string, options?: ToastOptions) => show('success', message, options), [show])
   const error = useCallback((message: string, options?: ToastOptions) => show('error', message, options), [show])

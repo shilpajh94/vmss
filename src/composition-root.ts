@@ -17,9 +17,9 @@ import type { FloorRepository } from './data/repositories/floor-repository'
 import type { DashboardRepository } from './data/repositories/dashboard-repository'
 import type { HostEmployeeRepository } from './data/repositories/host-employee-repository'
 import type { EmployeeDirectoryRepository } from './data/repositories/employee-directory-repository'
-import type { ReceptionDeskRepository } from './data/repositories/reception-desk-repository'
-import type { SecurityGateRepository } from './data/repositories/security-gate-repository'
 import type { KioskRepository } from './data/repositories/kiosk-repository'
+import type { DeviceRepository } from './data/repositories/device-repository'
+import type { KioskLocationValidationRepository } from './data/repositories/kiosk-location-validation-repository'
 import type { VisitorCategoryRepository } from './data/repositories/visitor-category-repository'
 import type { ApprovalWorkflowRuleRepository } from './data/repositories/approval-workflow-rule-repository'
 import type { NotificationRepository } from './data/repositories/notification-repository'
@@ -44,6 +44,9 @@ import { GetInvitationDetailUseCase } from './data/use-cases/get-invitation-deta
 import { RescheduleInvitationUseCase } from './data/use-cases/reschedule-invitation'
 import { EditInvitationUseCase } from './data/use-cases/edit-invitation'
 import { DenyInvitationUseCase } from './data/use-cases/deny-invitation'
+import { RevertInvitationApprovalUseCase } from './data/use-cases/revert-invitation-approval'
+import { CheckOutInvitationUseCase } from './data/use-cases/check-out-invitation'
+import { ExportInvitationsUseCase } from './data/use-cases/export-invitations'
 import { ApproveInvitationStepUseCase } from './data/use-cases/approve-invitation-step'
 import { RejectInvitationStepUseCase } from './data/use-cases/reject-invitation-step'
 import { DelegateInvitationStepUseCase } from './data/use-cases/delegate-invitation-step'
@@ -71,6 +74,9 @@ import { CreateFloorUseCase } from './data/use-cases/create-floor'
 import { UpdateFloorUseCase } from './data/use-cases/update-floor'
 import { DeleteFloorUseCase } from './data/use-cases/delete-floor'
 import { GetDashboardOverviewUseCase } from './data/use-cases/get-dashboard-overview'
+import { GetMyDashboardOverviewUseCase } from './data/use-cases/get-my-dashboard-overview'
+import { GetDashboardAnalyticsUseCase } from './data/use-cases/get-dashboard-analytics'
+import { GetMyDashboardAnalyticsUseCase } from './data/use-cases/get-my-dashboard-analytics'
 import { ListRecentCheckinsUseCase } from './data/use-cases/list-recent-checkins'
 import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
 import { ListHostEmployeesPageUseCase } from './data/use-cases/list-host-employees-page'
@@ -84,22 +90,19 @@ import { UpdateRolePermissionsUseCase } from './data/use-cases/update-role-permi
 import { ResyncRolePermissionsUseCase } from './data/use-cases/resync-role-permissions'
 import { AssignHostEmployeeRoleUseCase } from './data/use-cases/assign-host-employee-role'
 import { RevokeHostEmployeeRoleUseCase } from './data/use-cases/revoke-host-employee-role'
-import { ListReceptionDesksUseCase } from './data/use-cases/list-reception-desks'
-import { ListReceptionDesksPageUseCase } from './data/use-cases/list-reception-desks-page'
-import { CreateReceptionDeskUseCase } from './data/use-cases/create-reception-desk'
-import { UpdateReceptionDeskUseCase } from './data/use-cases/update-reception-desk'
-import { DeleteReceptionDeskUseCase } from './data/use-cases/delete-reception-desk'
-import { ListSecurityGatesUseCase } from './data/use-cases/list-security-gates'
-import { ListSecurityGatesPageUseCase } from './data/use-cases/list-security-gates-page'
-import { CreateSecurityGateUseCase } from './data/use-cases/create-security-gate'
-import { UpdateSecurityGateUseCase } from './data/use-cases/update-security-gate'
-import { DeleteSecurityGateUseCase } from './data/use-cases/delete-security-gate'
 import { ListKiosksPageUseCase } from './data/use-cases/list-kiosks-page'
 import { GetKioskUseCase } from './data/use-cases/get-kiosk'
 import { CreateKioskUseCase } from './data/use-cases/create-kiosk'
 import { UpdateKioskUseCase } from './data/use-cases/update-kiosk'
 import { SetKioskVisibilityUseCase } from './data/use-cases/set-kiosk-visibility'
 import { DeleteKioskUseCase } from './data/use-cases/delete-kiosk'
+import { ListDevicesPageUseCase } from './data/use-cases/list-devices-page'
+import { ApproveDeviceUseCase } from './data/use-cases/approve-device'
+import { EnableDeviceUseCase } from './data/use-cases/enable-device'
+import { DisableDeviceUseCase } from './data/use-cases/disable-device'
+import { DeleteDeviceUseCase } from './data/use-cases/delete-device'
+import { GetKioskLocationValidationUseCase } from './data/use-cases/get-kiosk-location-validation'
+import { UpdateKioskLocationValidationUseCase } from './data/use-cases/update-kiosk-location-validation'
 import { ListVisitorCategoriesUseCase } from './data/use-cases/list-visitor-categories'
 import { ListVisitorCategoriesPageUseCase } from './data/use-cases/list-visitor-categories-page'
 import { CreateVisitorCategoryUseCase } from './data/use-cases/create-visitor-category'
@@ -128,6 +131,10 @@ import { SaveWorkflowUseCase } from './data/use-cases/save-workflow'
 import { DeleteWorkflowUseCase } from './data/use-cases/delete-workflow'
 import { RegisterDeviceUseCase } from './data/use-cases/register-device'
 import { UnregisterDeviceUseCase } from './data/use-cases/unregister-device'
+import { ListNotificationsUseCase } from './data/use-cases/list-notifications'
+import { GetUnreadNotificationCountUseCase } from './data/use-cases/get-unread-notification-count'
+import { MarkNotificationReadUseCase } from './data/use-cases/mark-notification-read'
+import { MarkAllNotificationsReadUseCase } from './data/use-cases/mark-all-notifications-read'
 import { HttpVisitRequestRepository } from './infrastructure/visit-request-repository'
 import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-request-summary-repository'
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
@@ -146,9 +153,9 @@ import { HttpFloorRepository } from './infrastructure/floor-repository'
 import { HttpDashboardRepository } from './infrastructure/dashboard-repository'
 import { HttpHostEmployeeRepository } from './infrastructure/host-employee-repository'
 import { HttpEmployeeDirectoryRepository } from './infrastructure/employee-directory-repository'
-import { HttpReceptionDeskRepository } from './infrastructure/reception-desk-repository'
-import { HttpSecurityGateRepository } from './infrastructure/security-gate-repository'
 import { HttpKioskRepository } from './infrastructure/kiosk-repository'
+import { HttpDeviceRepository } from './infrastructure/device-repository'
+import { HttpKioskLocationValidationRepository } from './infrastructure/kiosk-location-validation-repository'
 import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category-repository'
 import { HttpFormBuilderRepository } from './infrastructure/form-builder-repository'
 import { HttpApprovalWorkflowRuleRepository } from './infrastructure/approval-workflow-rule-repository'
@@ -170,6 +177,9 @@ export interface AppDependencies {
   rescheduleInvitationUseCase: RescheduleInvitationUseCase
   editInvitationUseCase: EditInvitationUseCase
   denyInvitationUseCase: DenyInvitationUseCase
+  revertInvitationApprovalUseCase: RevertInvitationApprovalUseCase
+  checkOutInvitationUseCase: CheckOutInvitationUseCase
+  exportInvitationsUseCase: ExportInvitationsUseCase
   approveInvitationStepUseCase: ApproveInvitationStepUseCase
   rejectInvitationStepUseCase: RejectInvitationStepUseCase
   delegateInvitationStepUseCase: DelegateInvitationStepUseCase
@@ -203,6 +213,9 @@ export interface AppDependencies {
   updateFloorUseCase: UpdateFloorUseCase
   deleteFloorUseCase: DeleteFloorUseCase
   getDashboardOverviewUseCase: GetDashboardOverviewUseCase
+  getMyDashboardOverviewUseCase: GetMyDashboardOverviewUseCase
+  getDashboardAnalyticsUseCase: GetDashboardAnalyticsUseCase
+  getMyDashboardAnalyticsUseCase: GetMyDashboardAnalyticsUseCase
   listRecentCheckinsUseCase: ListRecentCheckinsUseCase
   listHostEmployeesUseCase: ListHostEmployeesUseCase
   listHostEmployeesPageUseCase: ListHostEmployeesPageUseCase
@@ -216,22 +229,19 @@ export interface AppDependencies {
   resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase
   assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase
   revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase
-  listReceptionDesksUseCase: ListReceptionDesksUseCase
-  listReceptionDesksPageUseCase: ListReceptionDesksPageUseCase
-  createReceptionDeskUseCase: CreateReceptionDeskUseCase
-  updateReceptionDeskUseCase: UpdateReceptionDeskUseCase
-  deleteReceptionDeskUseCase: DeleteReceptionDeskUseCase
-  listSecurityGatesUseCase: ListSecurityGatesUseCase
-  listSecurityGatesPageUseCase: ListSecurityGatesPageUseCase
-  createSecurityGateUseCase: CreateSecurityGateUseCase
-  updateSecurityGateUseCase: UpdateSecurityGateUseCase
-  deleteSecurityGateUseCase: DeleteSecurityGateUseCase
   listKiosksPageUseCase: ListKiosksPageUseCase
   getKioskUseCase: GetKioskUseCase
   createKioskUseCase: CreateKioskUseCase
   updateKioskUseCase: UpdateKioskUseCase
   setKioskVisibilityUseCase: SetKioskVisibilityUseCase
   deleteKioskUseCase: DeleteKioskUseCase
+  listDevicesPageUseCase: ListDevicesPageUseCase
+  approveDeviceUseCase: ApproveDeviceUseCase
+  enableDeviceUseCase: EnableDeviceUseCase
+  disableDeviceUseCase: DisableDeviceUseCase
+  deleteDeviceUseCase: DeleteDeviceUseCase
+  getKioskLocationValidationUseCase: GetKioskLocationValidationUseCase
+  updateKioskLocationValidationUseCase: UpdateKioskLocationValidationUseCase
   listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase
   listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase
   createVisitorCategoryUseCase: CreateVisitorCategoryUseCase
@@ -243,6 +253,10 @@ export interface AppDependencies {
   deleteWorkflowUseCase: DeleteWorkflowUseCase
   registerDeviceUseCase: RegisterDeviceUseCase
   unregisterDeviceUseCase: UnregisterDeviceUseCase
+  listNotificationsUseCase: ListNotificationsUseCase
+  getUnreadNotificationCountUseCase: GetUnreadNotificationCountUseCase
+  markNotificationReadUseCase: MarkNotificationReadUseCase
+  markAllNotificationsReadUseCase: MarkAllNotificationsReadUseCase
   listFormStepsUseCase: ListFormStepsUseCase
   createFormStepUseCase: CreateFormStepUseCase
   updateFormStepUseCase: UpdateFormStepUseCase
@@ -285,6 +299,9 @@ export function createApp(): AppDependencies {
   let rescheduleInvitationUseCase: RescheduleInvitationUseCase | undefined
   let editInvitationUseCase: EditInvitationUseCase | undefined
   let denyInvitationUseCase: DenyInvitationUseCase | undefined
+  let revertInvitationApprovalUseCase: RevertInvitationApprovalUseCase | undefined
+  let checkOutInvitationUseCase: CheckOutInvitationUseCase | undefined
+  let exportInvitationsUseCase: ExportInvitationsUseCase | undefined
   let approveInvitationStepUseCase: ApproveInvitationStepUseCase | undefined
   let rejectInvitationStepUseCase: RejectInvitationStepUseCase | undefined
   let delegateInvitationStepUseCase: DelegateInvitationStepUseCase | undefined
@@ -327,6 +344,9 @@ export function createApp(): AppDependencies {
   let deleteFloorUseCase: DeleteFloorUseCase | undefined
   let dashboardRepository: DashboardRepository | undefined
   let getDashboardOverviewUseCase: GetDashboardOverviewUseCase | undefined
+  let getMyDashboardOverviewUseCase: GetMyDashboardOverviewUseCase | undefined
+  let getDashboardAnalyticsUseCase: GetDashboardAnalyticsUseCase | undefined
+  let getMyDashboardAnalyticsUseCase: GetMyDashboardAnalyticsUseCase | undefined
   let listRecentCheckinsUseCase: ListRecentCheckinsUseCase | undefined
   let hostEmployeeRepository: HostEmployeeRepository | undefined
   let listHostEmployeesUseCase: ListHostEmployeesUseCase | undefined
@@ -342,18 +362,6 @@ export function createApp(): AppDependencies {
   let resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase | undefined
   let assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase | undefined
   let revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase | undefined
-  let receptionDeskRepository: ReceptionDeskRepository | undefined
-  let listReceptionDesksUseCase: ListReceptionDesksUseCase | undefined
-  let listReceptionDesksPageUseCase: ListReceptionDesksPageUseCase | undefined
-  let createReceptionDeskUseCase: CreateReceptionDeskUseCase | undefined
-  let updateReceptionDeskUseCase: UpdateReceptionDeskUseCase | undefined
-  let deleteReceptionDeskUseCase: DeleteReceptionDeskUseCase | undefined
-  let securityGateRepository: SecurityGateRepository | undefined
-  let listSecurityGatesUseCase: ListSecurityGatesUseCase | undefined
-  let listSecurityGatesPageUseCase: ListSecurityGatesPageUseCase | undefined
-  let createSecurityGateUseCase: CreateSecurityGateUseCase | undefined
-  let updateSecurityGateUseCase: UpdateSecurityGateUseCase | undefined
-  let deleteSecurityGateUseCase: DeleteSecurityGateUseCase | undefined
   let kioskRepository: KioskRepository | undefined
   let listKiosksPageUseCase: ListKiosksPageUseCase | undefined
   let getKioskUseCase: GetKioskUseCase | undefined
@@ -361,6 +369,15 @@ export function createApp(): AppDependencies {
   let updateKioskUseCase: UpdateKioskUseCase | undefined
   let setKioskVisibilityUseCase: SetKioskVisibilityUseCase | undefined
   let deleteKioskUseCase: DeleteKioskUseCase | undefined
+  let deviceRepository: DeviceRepository | undefined
+  let listDevicesPageUseCase: ListDevicesPageUseCase | undefined
+  let approveDeviceUseCase: ApproveDeviceUseCase | undefined
+  let enableDeviceUseCase: EnableDeviceUseCase | undefined
+  let disableDeviceUseCase: DisableDeviceUseCase | undefined
+  let deleteDeviceUseCase: DeleteDeviceUseCase | undefined
+  let kioskLocationValidationRepository: KioskLocationValidationRepository | undefined
+  let getKioskLocationValidationUseCase: GetKioskLocationValidationUseCase | undefined
+  let updateKioskLocationValidationUseCase: UpdateKioskLocationValidationUseCase | undefined
   let visitorCategoryRepository: VisitorCategoryRepository | undefined
   let listVisitorCategoriesUseCase: ListVisitorCategoriesUseCase | undefined
   let listVisitorCategoriesPageUseCase: ListVisitorCategoriesPageUseCase | undefined
@@ -393,6 +410,10 @@ export function createApp(): AppDependencies {
   let notificationRepository: NotificationRepository | undefined
   let registerDeviceUseCase: RegisterDeviceUseCase | undefined
   let unregisterDeviceUseCase: UnregisterDeviceUseCase | undefined
+  let listNotificationsUseCase: ListNotificationsUseCase | undefined
+  let getUnreadNotificationCountUseCase: GetUnreadNotificationCountUseCase | undefined
+  let markNotificationReadUseCase: MarkNotificationReadUseCase | undefined
+  let markAllNotificationsReadUseCase: MarkAllNotificationsReadUseCase | undefined
 
   const resolveApiClient = (): ApiClient => {
     apiClient ??= new ApiClient(import.meta.env.VITE_API_BASE_URL)
@@ -504,6 +525,21 @@ export function createApp(): AppDependencies {
     return denyInvitationUseCase
   }
 
+  const resolveRevertInvitationApprovalUseCase = (): RevertInvitationApprovalUseCase => {
+    revertInvitationApprovalUseCase ??= new RevertInvitationApprovalUseCase(resolveVisitRequestSummaryRepository())
+    return revertInvitationApprovalUseCase
+  }
+
+  const resolveCheckOutInvitationUseCase = (): CheckOutInvitationUseCase => {
+    checkOutInvitationUseCase ??= new CheckOutInvitationUseCase(resolveVisitRequestSummaryRepository())
+    return checkOutInvitationUseCase
+  }
+
+  const resolveExportInvitationsUseCase = (): ExportInvitationsUseCase => {
+    exportInvitationsUseCase ??= new ExportInvitationsUseCase(resolveVisitRequestSummaryRepository())
+    return exportInvitationsUseCase
+  }
+
   const resolveApproveInvitationStepUseCase = (): ApproveInvitationStepUseCase => {
     approveInvitationStepUseCase ??= new ApproveInvitationStepUseCase(resolveVisitRequestSummaryRepository())
     return approveInvitationStepUseCase
@@ -583,7 +619,6 @@ export function createApp(): AppDependencies {
     updateOrganisationConfigUseCase ??= new UpdateOrganisationConfigUseCase(resolveOrganisationConfigRepository())
     return updateOrganisationConfigUseCase
   }
-
 
   const resolveBranchRepository = (): BranchRepository => {
     branchRepository ??= new HttpBranchRepository(resolveApiClient())
@@ -715,6 +750,21 @@ export function createApp(): AppDependencies {
     return getDashboardOverviewUseCase
   }
 
+  const resolveGetMyDashboardOverviewUseCase = (): GetMyDashboardOverviewUseCase => {
+    getMyDashboardOverviewUseCase ??= new GetMyDashboardOverviewUseCase(resolveDashboardRepository())
+    return getMyDashboardOverviewUseCase
+  }
+
+  const resolveGetDashboardAnalyticsUseCase = (): GetDashboardAnalyticsUseCase => {
+    getDashboardAnalyticsUseCase ??= new GetDashboardAnalyticsUseCase(resolveDashboardRepository())
+    return getDashboardAnalyticsUseCase
+  }
+
+  const resolveGetMyDashboardAnalyticsUseCase = (): GetMyDashboardAnalyticsUseCase => {
+    getMyDashboardAnalyticsUseCase ??= new GetMyDashboardAnalyticsUseCase(resolveDashboardRepository())
+    return getMyDashboardAnalyticsUseCase
+  }
+
   const resolveListRecentCheckinsUseCase = (): ListRecentCheckinsUseCase => {
     listRecentCheckinsUseCase ??= new ListRecentCheckinsUseCase(resolveDashboardRepository())
     return listRecentCheckinsUseCase
@@ -790,71 +840,6 @@ export function createApp(): AppDependencies {
     return revokeHostEmployeeRoleUseCase
   }
 
-  const resolveReceptionDeskRepository = (): ReceptionDeskRepository => {
-    receptionDeskRepository ??= new HttpReceptionDeskRepository(
-      resolveApiClient(),
-      resolveBuildingRepository(),
-      resolveFloorRepository(),
-      resolveHostEmployeeRepository(),
-    )
-    return receptionDeskRepository
-  }
-
-  const resolveListReceptionDesksPageUseCase = (): ListReceptionDesksPageUseCase => {
-    listReceptionDesksPageUseCase ??= new ListReceptionDesksPageUseCase(resolveReceptionDeskRepository())
-    return listReceptionDesksPageUseCase
-  }
-
-  const resolveListReceptionDesksUseCase = (): ListReceptionDesksUseCase => {
-    listReceptionDesksUseCase ??= new ListReceptionDesksUseCase(resolveReceptionDeskRepository())
-    return listReceptionDesksUseCase
-  }
-
-  const resolveCreateReceptionDeskUseCase = (): CreateReceptionDeskUseCase => {
-    createReceptionDeskUseCase ??= new CreateReceptionDeskUseCase(resolveReceptionDeskRepository())
-    return createReceptionDeskUseCase
-  }
-
-  const resolveUpdateReceptionDeskUseCase = (): UpdateReceptionDeskUseCase => {
-    updateReceptionDeskUseCase ??= new UpdateReceptionDeskUseCase(resolveReceptionDeskRepository())
-    return updateReceptionDeskUseCase
-  }
-
-  const resolveDeleteReceptionDeskUseCase = (): DeleteReceptionDeskUseCase => {
-    deleteReceptionDeskUseCase ??= new DeleteReceptionDeskUseCase(resolveReceptionDeskRepository())
-    return deleteReceptionDeskUseCase
-  }
-
-  const resolveSecurityGateRepository = (): SecurityGateRepository => {
-    securityGateRepository ??= new HttpSecurityGateRepository(resolveApiClient(), resolveBuildingRepository())
-    return securityGateRepository
-  }
-
-  const resolveListSecurityGatesPageUseCase = (): ListSecurityGatesPageUseCase => {
-    listSecurityGatesPageUseCase ??= new ListSecurityGatesPageUseCase(resolveSecurityGateRepository())
-    return listSecurityGatesPageUseCase
-  }
-
-  const resolveListSecurityGatesUseCase = (): ListSecurityGatesUseCase => {
-    listSecurityGatesUseCase ??= new ListSecurityGatesUseCase(resolveSecurityGateRepository())
-    return listSecurityGatesUseCase
-  }
-
-  const resolveCreateSecurityGateUseCase = (): CreateSecurityGateUseCase => {
-    createSecurityGateUseCase ??= new CreateSecurityGateUseCase(resolveSecurityGateRepository())
-    return createSecurityGateUseCase
-  }
-
-  const resolveUpdateSecurityGateUseCase = (): UpdateSecurityGateUseCase => {
-    updateSecurityGateUseCase ??= new UpdateSecurityGateUseCase(resolveSecurityGateRepository())
-    return updateSecurityGateUseCase
-  }
-
-  const resolveDeleteSecurityGateUseCase = (): DeleteSecurityGateUseCase => {
-    deleteSecurityGateUseCase ??= new DeleteSecurityGateUseCase(resolveSecurityGateRepository())
-    return deleteSecurityGateUseCase
-  }
-
   const resolveKioskRepository = (): KioskRepository => {
     kioskRepository ??= new HttpKioskRepository(resolveApiClient())
     return kioskRepository
@@ -888,6 +873,51 @@ export function createApp(): AppDependencies {
   const resolveDeleteKioskUseCase = (): DeleteKioskUseCase => {
     deleteKioskUseCase ??= new DeleteKioskUseCase(resolveKioskRepository())
     return deleteKioskUseCase
+  }
+
+  const resolveDeviceRepository = (): DeviceRepository => {
+    deviceRepository ??= new HttpDeviceRepository(resolveApiClient())
+    return deviceRepository
+  }
+
+  const resolveListDevicesPageUseCase = (): ListDevicesPageUseCase => {
+    listDevicesPageUseCase ??= new ListDevicesPageUseCase(resolveDeviceRepository())
+    return listDevicesPageUseCase
+  }
+
+  const resolveApproveDeviceUseCase = (): ApproveDeviceUseCase => {
+    approveDeviceUseCase ??= new ApproveDeviceUseCase(resolveDeviceRepository())
+    return approveDeviceUseCase
+  }
+
+  const resolveEnableDeviceUseCase = (): EnableDeviceUseCase => {
+    enableDeviceUseCase ??= new EnableDeviceUseCase(resolveDeviceRepository())
+    return enableDeviceUseCase
+  }
+
+  const resolveDisableDeviceUseCase = (): DisableDeviceUseCase => {
+    disableDeviceUseCase ??= new DisableDeviceUseCase(resolveDeviceRepository())
+    return disableDeviceUseCase
+  }
+
+  const resolveDeleteDeviceUseCase = (): DeleteDeviceUseCase => {
+    deleteDeviceUseCase ??= new DeleteDeviceUseCase(resolveDeviceRepository())
+    return deleteDeviceUseCase
+  }
+
+  const resolveKioskLocationValidationRepository = (): KioskLocationValidationRepository => {
+    kioskLocationValidationRepository ??= new HttpKioskLocationValidationRepository(resolveApiClient())
+    return kioskLocationValidationRepository
+  }
+
+  const resolveGetKioskLocationValidationUseCase = (): GetKioskLocationValidationUseCase => {
+    getKioskLocationValidationUseCase ??= new GetKioskLocationValidationUseCase(resolveKioskLocationValidationRepository())
+    return getKioskLocationValidationUseCase
+  }
+
+  const resolveUpdateKioskLocationValidationUseCase = (): UpdateKioskLocationValidationUseCase => {
+    updateKioskLocationValidationUseCase ??= new UpdateKioskLocationValidationUseCase(resolveKioskLocationValidationRepository())
+    return updateKioskLocationValidationUseCase
   }
 
   const resolveVisitorCategoryRepository = (): VisitorCategoryRepository => {
@@ -1050,6 +1080,26 @@ export function createApp(): AppDependencies {
     return unregisterDeviceUseCase
   }
 
+  const resolveListNotificationsUseCase = (): ListNotificationsUseCase => {
+    listNotificationsUseCase ??= new ListNotificationsUseCase(resolveNotificationRepository())
+    return listNotificationsUseCase
+  }
+
+  const resolveGetUnreadNotificationCountUseCase = (): GetUnreadNotificationCountUseCase => {
+    getUnreadNotificationCountUseCase ??= new GetUnreadNotificationCountUseCase(resolveNotificationRepository())
+    return getUnreadNotificationCountUseCase
+  }
+
+  const resolveMarkNotificationReadUseCase = (): MarkNotificationReadUseCase => {
+    markNotificationReadUseCase ??= new MarkNotificationReadUseCase(resolveNotificationRepository())
+    return markNotificationReadUseCase
+  }
+
+  const resolveMarkAllNotificationsReadUseCase = (): MarkAllNotificationsReadUseCase => {
+    markAllNotificationsReadUseCase ??= new MarkAllNotificationsReadUseCase(resolveNotificationRepository())
+    return markAllNotificationsReadUseCase
+  }
+
   return {
     get apiClient() {
       return resolveApiClient()
@@ -1092,6 +1142,15 @@ export function createApp(): AppDependencies {
     },
     get denyInvitationUseCase() {
       return resolveDenyInvitationUseCase()
+    },
+    get revertInvitationApprovalUseCase() {
+      return resolveRevertInvitationApprovalUseCase()
+    },
+    get checkOutInvitationUseCase() {
+      return resolveCheckOutInvitationUseCase()
+    },
+    get exportInvitationsUseCase() {
+      return resolveExportInvitationsUseCase()
     },
     get approveInvitationStepUseCase() {
       return resolveApproveInvitationStepUseCase()
@@ -1195,6 +1254,15 @@ export function createApp(): AppDependencies {
     get getDashboardOverviewUseCase() {
       return resolveGetDashboardOverviewUseCase()
     },
+    get getMyDashboardOverviewUseCase() {
+      return resolveGetMyDashboardOverviewUseCase()
+    },
+    get getDashboardAnalyticsUseCase() {
+      return resolveGetDashboardAnalyticsUseCase()
+    },
+    get getMyDashboardAnalyticsUseCase() {
+      return resolveGetMyDashboardAnalyticsUseCase()
+    },
     get listRecentCheckinsUseCase() {
       return resolveListRecentCheckinsUseCase()
     },
@@ -1234,36 +1302,6 @@ export function createApp(): AppDependencies {
     get revokeHostEmployeeRoleUseCase() {
       return resolveRevokeHostEmployeeRoleUseCase()
     },
-    get listReceptionDesksUseCase() {
-      return resolveListReceptionDesksUseCase()
-    },
-    get listReceptionDesksPageUseCase() {
-      return resolveListReceptionDesksPageUseCase()
-    },
-    get createReceptionDeskUseCase() {
-      return resolveCreateReceptionDeskUseCase()
-    },
-    get updateReceptionDeskUseCase() {
-      return resolveUpdateReceptionDeskUseCase()
-    },
-    get deleteReceptionDeskUseCase() {
-      return resolveDeleteReceptionDeskUseCase()
-    },
-    get listSecurityGatesUseCase() {
-      return resolveListSecurityGatesUseCase()
-    },
-    get listSecurityGatesPageUseCase() {
-      return resolveListSecurityGatesPageUseCase()
-    },
-    get createSecurityGateUseCase() {
-      return resolveCreateSecurityGateUseCase()
-    },
-    get updateSecurityGateUseCase() {
-      return resolveUpdateSecurityGateUseCase()
-    },
-    get deleteSecurityGateUseCase() {
-      return resolveDeleteSecurityGateUseCase()
-    },
     get listKiosksPageUseCase() {
       return resolveListKiosksPageUseCase()
     },
@@ -1281,6 +1319,27 @@ export function createApp(): AppDependencies {
     },
     get deleteKioskUseCase() {
       return resolveDeleteKioskUseCase()
+    },
+    get listDevicesPageUseCase() {
+      return resolveListDevicesPageUseCase()
+    },
+    get approveDeviceUseCase() {
+      return resolveApproveDeviceUseCase()
+    },
+    get enableDeviceUseCase() {
+      return resolveEnableDeviceUseCase()
+    },
+    get disableDeviceUseCase() {
+      return resolveDisableDeviceUseCase()
+    },
+    get deleteDeviceUseCase() {
+      return resolveDeleteDeviceUseCase()
+    },
+    get getKioskLocationValidationUseCase() {
+      return resolveGetKioskLocationValidationUseCase()
+    },
+    get updateKioskLocationValidationUseCase() {
+      return resolveUpdateKioskLocationValidationUseCase()
     },
     get listVisitorCategoriesUseCase() {
       return resolveListVisitorCategoriesUseCase()
@@ -1314,6 +1373,18 @@ export function createApp(): AppDependencies {
     },
     get unregisterDeviceUseCase() {
       return resolveUnregisterDeviceUseCase()
+    },
+    get listNotificationsUseCase() {
+      return resolveListNotificationsUseCase()
+    },
+    get getUnreadNotificationCountUseCase() {
+      return resolveGetUnreadNotificationCountUseCase()
+    },
+    get markNotificationReadUseCase() {
+      return resolveMarkNotificationReadUseCase()
+    },
+    get markAllNotificationsReadUseCase() {
+      return resolveMarkAllNotificationsReadUseCase()
     },
     get listFormStepsUseCase() {
       return resolveListFormStepsUseCase()

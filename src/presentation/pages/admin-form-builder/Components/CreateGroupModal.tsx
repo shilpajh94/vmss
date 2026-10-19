@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Collapsible } from '../../../components/ui/Collapsible'
 import { Modal } from '../../../components/ui/Modal'
 import { TextField } from '../../../components/ui/TextField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
@@ -55,12 +56,13 @@ export function CreateGroupModal({ isOpen, onClose, onCreate }: CreateGroupModal
       </p>
       <TextField label="Group Name" value={name} onChange={setName} placeholder="e.g. Parcels" required />
       <ToggleSwitch checked={isRepeatable} onChange={setIsRepeatable} label="Repeatable (visitors can add multiple)" />
-      {isRepeatable && (
+      {/* -mt-5 cancels the Modal body's gap-5 while closed. */}
+      <Collapsible open={isRepeatable} closedClassName="-mt-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <TextField label="Min Instances" value={minInstances} onChange={setMinInstances} type="number" placeholder="No minimum" />
           <TextField label="Max Instances" value={maxInstances} onChange={setMaxInstances} type="number" placeholder="No maximum" />
         </div>
-      )}
+      </Collapsible>
       <div className="flex items-center justify-end gap-3">
         <button
           type="button"

@@ -10,6 +10,8 @@ import { TextareaField } from '../ui/TextareaField'
 import { EXPECTED_DURATION_OPTIONS } from '../../utils/expected-duration-options'
 import { PURPOSE_OF_VISIT_OPTIONS } from '../../utils/purpose-of-visit-options'
 import { canEditPointOfContact, resolvePointOfContactLabel } from '../../utils/approval-step-label'
+import { confirmSubject } from '../../utils/confirm-subject'
+import { FormConfirmStep, type ConfirmSummaryRow } from './FormConfirmStep'
 
 interface EditInvitationModalProps {
   isOpen: boolean
@@ -31,6 +33,35 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
       <span className="truncate font-body text-[13px] font-medium text-text">{value}</span>
     </div>
   )
+}
+
+const FIELD_LABELS: Record<keyof EditInvitationFields, string> = {
+  purposeOfVisit: 'Purpose of Visit',
+  preferredVisitDate: 'Preferred Visit Date',
+  preferredVisitTime: 'Preferred Visit Time',
+  expectedDuration: 'Expected Duration',
+  departmentToVisit: 'Department to Visit',
+  additionalNotes: 'Additional Notes',
+  pocUserId: 'Point of Contact',
+}
+
+function optionLabel(options: { value: string; label: string }[], value: string): string {
+  return options.find((option) => option.value === value)?.label ?? value
+}
+
+// Only the fields whose value differs from what the invitation already has,
+// labelled the way the form shows them — the confirmation step's summary.
+function changedFieldRows(initial: EditInvitationFields, fields: EditInvitationFields, hostEmployees: HostEmployee[]): ConfirmSummaryRow[] {
+  return (Object.keys(FIELD_LABELS) as (keyof EditInvitationFields)[])
+    .filter((key) => (fields[key] ?? '') !== (initial[key] ?? ''))
+    .map((key) => {
+      const raw = fields[key] ?? ''
+      let value = raw
+      if (key === 'pocUserId') value = hostEmployees.find((employee) => employee.id === raw)?.fullName ?? raw
+      if (key === 'expectedDuration') value = optionLabel(EXPECTED_DURATION_OPTIONS, raw)
+      if (key === 'purposeOfVisit') value = optionLabel(PURPOSE_OF_VISIT_OPTIONS, raw)
+      return { label: FIELD_LABELS[key], value: value || '—' }
+    })
 }
 
 function toFormState(detail?: InvitationDetail): EditInvitationFields {
@@ -63,6 +94,7 @@ export function EditInvitationModal({
   onCancel,
 }: EditInvitationModalProps) {
   const [fields, setFields] = useState<EditInvitationFields>(() => toFormState(detail))
+  const [isConfirming, setIsConfirming] = useState(false)
 
   const pointOfContactLabel = detail?.pocName ?? (detail ? resolvePointOfContactLabel(detail, workflowRulesByCategory ?? {}) : undefined)
   const canEditPoc = detail ? canEditPointOfContact(detail, workflowRulesByCategory ?? {}) : false
@@ -72,10 +104,16 @@ export function EditInvitationModal({
   // `DelegateInvitationModal` don't need this since they always start blank;
   // Edit needs to start from the invitation's current values instead.
   useEffect(() => {
-    if (isOpen) setFields(toFormState(detail))
+    if (isOpen) {
+      setFields(toFormState(detail))
+      setIsConfirming(false)
+    }
   }, [isOpen, detail])
 
+  const changedRows = changedFieldRows(toFormState(detail), fields, hostEmployees ?? [])
+
   const handleCancel = () => {
+    if (isSaving) return
     onCancel()
   }
 
@@ -90,6 +128,16 @@ export function EditInvitationModal({
           <div className="size-6 animate-spin rounded-full border-2 border-border-subtle border-t-secondary-accent" />
           <p className="font-body text-sm text-text-muted">Loading invitation…</p>
         </div>
+      ) : isConfirming ? (
+        <FormConfirmStep
+          message={`Save these changes to the visit request for ${confirmSubject(detail.primaryContactFullName, detail.trackingId)}?`}
+          rows={changedRows}
+          confirmLabel="Save changes"
+          busyLabel="Saving…"
+          isBusy={isSaving}
+          onBack={() => setIsConfirming(false)}
+          onConfirm={handleConfirm}
+        />
       ) : (
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-3">
@@ -165,11 +213,11 @@ export function EditInvitationModal({
             </button>
             <button
               type="button"
-              disabled={isSaving}
-              onClick={handleConfirm}
+              disabled={changedRows.length === 0}
+              onClick={() => setIsConfirming(true)}
               className="rounded-full bg-secondary-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
             >
-              {isSaving ? 'Saving…' : 'Save changes'}
+              Review changes
             </button>
           </div>
         </div>

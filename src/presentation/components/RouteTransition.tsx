@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { useLocation } from 'react-router'
 
 interface RouteTransitionProps {
@@ -26,11 +26,23 @@ interface RouteTransitionProps {
 // <main>'s only child, so a page that returns a fragment of sections would
 // otherwise render them touching (fix-layout-spacing-and-footer-logo
 // design.md Decision 1). A single-root page has one child, so it's a no-op.
+//
+// Every navigation also starts the new page at the top (app-shell "Scroll
+// position resets on navigation"): the shells' scrolling <main>, or the
+// window on the public pages that scroll as a whole. A layout effect, so
+// the reset lands before the first paint of the incoming page.
 export function RouteTransition({ children }: RouteTransitionProps) {
   const location = useLocation()
+  const wrapperRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const scrollContainer = wrapperRef.current?.closest('main')
+    if (scrollContainer) scrollContainer.scrollTo({ top: 0 })
+    else window.scrollTo({ top: 0 })
+  }, [location.pathname])
 
   return (
-    <div key={location.pathname} className="route-transition flex h-full min-h-0 flex-col gap-page-section">
+    <div ref={wrapperRef} key={location.pathname} className="route-transition flex h-full min-h-0 flex-col gap-page-section">
       {children}
     </div>
   )

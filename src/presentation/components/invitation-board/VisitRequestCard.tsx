@@ -1,3 +1,4 @@
+import { Avatar } from '../ui/Avatar'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import {
@@ -8,9 +9,12 @@ import {
   resolveTotalSteps,
 } from '../../utils/approval-step-label'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
-import { CalendarClockIcon } from '../icons'
+import { CalendarClockIcon, InfoIcon, PencilIcon, UndoIcon, UserCheckIcon } from '../icons'
+import { IconActionButton } from '../ui/IconActionButton'
 
-const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved'])
+// An archived no-show can be rescheduled or edited; the API sends it back for
+// re-approval when its date changes.
+const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved', 'archived'])
 
 const AVATAR_TINTS = ['#dbeafe', '#ffe4e6', '#d1fae5', '#fef3c7', '#f3e8ff', '#fee2e2']
 
@@ -19,19 +23,17 @@ function avatarTintFor(trackingId: string): string {
   return AVATAR_TINTS[hash % AVATAR_TINTS.length]
 }
 
-function initialsFor(fullName: string): string {
-  const parts = fullName.trim().split(/\s+/)
-  return ((parts[0]?.[0] ?? '') + (parts[parts.length - 1]?.[0] ?? '')).toUpperCase()
+interface IconAction {
+  label: string
+  icon: typeof InfoIcon
+  onClick: () => void
 }
 
 interface VisitRequestCardProps {
   request: VisitRequestSummary
   isDraggable?: boolean
   isApproving?: boolean
-  isExpanded?: boolean
-  onToggleExpand?: (id: string) => void
   detail?: InvitationDetail
-  isLoadingDetail?: boolean
   roleNameById?: Record<string, string>
   employeeNameById?: Record<string, string>
   workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
@@ -41,6 +43,10 @@ interface VisitRequestCardProps {
   onApproveClick?: (id: string) => void
   onEditClick?: (id: string) => void
   onVisitorInfoClick?: (id: string) => void
+  // Only passed to Checked-in cards, and only for staff who may check out.
+  onCheckOutClick?: (id: string) => void
+  // Shown on Approved cards only (add-invitation-approval-revert).
+  onRevertClick?: (id: string) => void
   // Approve/Deny buttons (cards are no longer draggable). Shown at every size,
   // and only when the card is actionable (`isDraggable`).
   onMoveToApproved?: (id: string) => void
@@ -51,10 +57,7 @@ export function VisitRequestCard({
   request,
   isDraggable,
   isApproving,
-  isExpanded,
-  onToggleExpand,
   detail,
-  isLoadingDetail,
   roleNameById,
   employeeNameById,
   workflowRulesByCategory,
@@ -64,6 +67,8 @@ export function VisitRequestCard({
   onApproveClick,
   onEditClick,
   onVisitorInfoClick,
+  onCheckOutClick,
+  onRevertClick,
   onMoveToApproved,
   onMoveToDenied,
 }: VisitRequestCardProps) {
@@ -84,6 +89,7 @@ export function VisitRequestCard({
   const canApproveAndDelegate = Boolean(onApproveAndDelegateClick) && isLockedToApproveAndDelegate
   const canApprove = Boolean(onApproveClick) && isReceptionApprovalStep && (totalSteps ?? 0) <= 1
   const canEdit = Boolean(onEditClick) && RESCHEDULABLE_STATUSES.has(request.status)
+  const canRevert = Boolean(onRevertClick) && request.status === 'approved'
   // Before this card's detail has loaded, we don't yet know whether it's
   // Reception's own step — default to not draggable rather than briefly
   // allowing a drag that would then be blocked once the detail arrives.
@@ -101,31 +107,74 @@ export function VisitRequestCard({
   const canTapApprove = isActionable && !isReceptionApprovalStep && Boolean(onMoveToApproved)
   const canTapDeny = isActionable && Boolean(onMoveToDenied)
 
+
+  // Only the actions that decide the request's next state are labelled
+  // buttons; the rest are a compact icon row so cards stay short.
+  const approveAction = canApproveAndDelegate
+    ? { label: 'Approve & Delegate', onClick: () => onApproveAndDelegateClick?.(request.id) }
+    : canApprove
+      ? { label: 'Approve', onClick: () => onApproveClick?.(request.id) }
+      : canTapApprove
+        ? { label: 'Approve', onClick: () => onMoveToApproved?.(request.id) }
+        : undefined
+  const hasPrimaryActions = Boolean(approveAction) || canTapDeny || Boolean(onCheckOutClick)
+
+  const iconActions = [
+    onVisitorInfoClick && { label: 'Visitor info', icon: InfoIcon, onClick: () => onVisitorInfoClick(request.id) },
+    canReschedule && { label: 'Reschedule', icon: CalendarClockIcon, onClick: () => onRescheduleClick?.(request.id) },
+    canEdit && { label: 'Edit', icon: PencilIcon, onClick: () => onEditClick?.(request.id) },
+    canDelegate && { label: 'Delegate', icon: UserCheckIcon, onClick: () => onDelegateClick?.(request.id) },
+    canRevert && { label: 'Revert approval', icon: UndoIcon, onClick: () => onRevertClick?.(request.id) },
+  ].filter((action): action is IconAction => Boolean(action))
+
+  const hostLabel = detail ? (detail.hostNameOrEmail ?? 'Unassigned — Front Office') : undefined
+  const metaLine = hostLabel ? `${request.purposeOfVisit} · ${hostLabel}` : request.purposeOfVisit
+  const hasSchedule = Boolean(request.preferredVisitDate && request.preferredVisitTime)
+
   return (
     <div
-      onClick={() => onToggleExpand?.(request.id)}
-      className={`flex w-full flex-col gap-3 rounded-xl border border-border bg-surface p-4 drop-shadow-[0px_4px_4px_rgba(15,23,42,0.03)] ${isApproving ? 'opacity-60' : ''}`}
+      role={onVisitorInfoClick ? 'button' : undefined}
+      tabIndex={onVisitorInfoClick ? 0 : undefined}
+      aria-label={onVisitorInfoClick ? `Open visitor info for ${request.primaryContactFullName}, ${request.trackingId}` : undefined}
+      onClick={() => onVisitorInfoClick?.(request.id)}
+      onKeyDown={(event) => {
+        // Only the card itself — keys pressed on its buttons or menu items
+        // bubble up here too and must not also open Visitor Info.
+        if (event.target !== event.currentTarget || !onVisitorInfoClick) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onVisitorInfoClick(request.id)
+        }
+      }}
+      className={`relative flex w-full flex-col gap-2 rounded-xl border border-border bg-surface p-3 drop-shadow-[0px_4px_4px_rgba(15,23,42,0.03)] ${
+        onVisitorInfoClick
+          ? 'cursor-pointer transition-colors hover:border-secondary-accent/40 focus-visible:ring-2 focus-visible:ring-secondary-accent/40 focus-visible:outline-none'
+          : ''
+      } ${isApproving ? 'opacity-60' : ''}`}
     >
-      <div className="flex w-full items-center justify-between">
-        <span
-          className="flex size-8 shrink-0 items-center justify-center rounded-full font-display text-xs font-bold text-text"
+      <div className="flex w-full items-center gap-2.5">
+        <Avatar
+          name={request.primaryContactFullName}
+          size="md"
+          toneClassName="text-text"
           style={{ backgroundColor: avatarTintFor(request.trackingId) }}
-        >
-          {initialsFor(request.primaryContactFullName)}
-        </span>
-        <span className="font-body text-[11px] font-semibold whitespace-nowrap text-text-faint">{request.trackingId}</span>
+        />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <p className="truncate font-body text-sm font-bold text-text">{request.primaryContactFullName}</p>
+          <span className="truncate font-body text-[11px] font-semibold text-text-faint">{request.trackingId}</span>
+        </div>
       </div>
 
       <div className="flex w-full flex-col gap-1">
-        <p className="truncate font-body text-sm font-bold text-text">{request.primaryContactFullName}</p>
-        <div className="flex items-center gap-1 font-body text-xs">
-          <span className="text-text-muted">Purpose:</span>
-          <span className="font-medium text-text">{request.purposeOfVisit}</span>
-        </div>
-        {detail ? (
-          <div className="flex items-center gap-1 font-body text-xs">
-            <span className="text-text-muted">Host:</span>
-            <span className="font-medium text-text">{detail.hostNameOrEmail ?? 'Unassigned — Front Office'}</span>
+        <p title={metaLine} className="truncate font-body text-xs font-medium text-text-muted">
+          {metaLine}
+        </p>
+        {hasSchedule ? (
+          <div className="flex w-full items-center gap-1.5">
+            <CalendarClockIcon className="size-3 shrink-0 text-text-faint" />
+            <span className="truncate font-body text-[11px] text-text-faint">
+              {request.preferredVisitDate} {request.preferredVisitTime}
+            </span>
           </div>
         ) : null}
       </div>
@@ -139,119 +188,58 @@ export function VisitRequestCard({
         </div>
       ) : null}
 
-      {isExpanded ? (
-        <div className="flex w-full items-center rounded-lg bg-bg px-2.5 py-1.5 font-body text-[11px] text-text-muted">
-          {isLoadingDetail ? (
-            <span>Loading approval progress…</span>
-          ) : detail?.currentApprovalStep ? (
-            <span>
-              Step {resolveCurrentLevel(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory ?? {})} of {totalSteps} —
-              pending: {pendingApproverLabel}
-            </span>
-          ) : (
-            <span>No multi-step approval workflow for this request.</span>
-          )}
-        </div>
-      ) : null}
-
-      {canReschedule || canDelegate || canApproveAndDelegate || canApprove || canEdit || canTapApprove || canTapDeny || onVisitorInfoClick ? (
-        <div className="flex w-full flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
-          {onVisitorInfoClick ? (
+      {isApproving ? (
+        <p role="status" className="font-body text-[11px] text-text-faint">
+          Approving…
+        </p>
+      ) : hasPrimaryActions ? (
+        <div className="grid w-full grid-cols-2 gap-2" onClick={(event) => event.stopPropagation()}>
+          {approveAction ? (
             <button
               type="button"
-              onClick={() => onVisitorInfoClick(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+              onClick={approveAction.onClick}
+              className={`truncate rounded-lg border border-success/40 bg-success/10 px-2 py-1.5 font-body text-[11px] font-semibold text-success transition-colors hover:bg-success/15 max-lg:min-h-10 max-lg:text-xs ${
+                canTapDeny ? '' : 'col-span-full'
+              }`}
             >
-              Visitor Info
-            </button>
-          ) : null}
-          {canReschedule ? (
-            <button
-              type="button"
-              onClick={() => onRescheduleClick?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
-            >
-              Reschedule
-            </button>
-          ) : null}
-          {canDelegate ? (
-            <button
-              type="button"
-              onClick={() => onDelegateClick?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
-            >
-              Delegate
-            </button>
-          ) : null}
-          {canApproveAndDelegate ? (
-            <button
-              type="button"
-              onClick={() => onApproveAndDelegateClick?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
-            >
-              Approve &amp; Delegate
-            </button>
-          ) : null}
-          {canApprove ? (
-            <button
-              type="button"
-              onClick={() => onApproveClick?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
-            >
-              Approve
-            </button>
-          ) : null}
-          {canTapApprove ? (
-            <button
-              type="button"
-              onClick={() => onMoveToApproved?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-success/40 bg-success/10 px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-success max-lg:py-2.5 max-lg:text-xs"
-            >
-              Approve
+              {approveAction.label}
             </button>
           ) : null}
           {canTapDeny ? (
             <button
               type="button"
               onClick={() => onMoveToDenied?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-danger/40 bg-danger/10 px-2 py-1.5 font-body text-[11px] font-semibold whitespace-nowrap text-danger max-lg:py-2.5 max-lg:text-xs"
+              className={`truncate rounded-lg border border-danger/40 bg-danger/10 px-2 py-1.5 font-body text-[11px] font-semibold text-danger transition-colors hover:bg-danger/15 max-lg:min-h-10 max-lg:text-xs ${
+                approveAction ? '' : 'col-span-full'
+              }`}
             >
               Deny
             </button>
           ) : null}
-          {canEdit ? (
+          {onCheckOutClick ? (
             <button
               type="button"
-              onClick={() => onEditClick?.(request.id)}
-              className="min-w-[92px] flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-[11px] font-semibold max-lg:py-2.5 max-lg:text-xs whitespace-nowrap text-text transition-colors hover:border-secondary-accent/40 hover:bg-secondary-accent/8 hover:text-secondary-accent active:bg-secondary-accent/15"
+              onClick={() => onCheckOutClick(request.id)}
+              className="col-span-full rounded-lg border border-secondary-accent/40 bg-secondary-accent/8 px-2 py-1.5 font-body text-[11px] font-semibold text-secondary-accent transition-colors hover:bg-secondary-accent/15 active:bg-secondary-accent/20 max-lg:min-h-10 max-lg:text-xs"
             >
-              Edit
+              Check Out
             </button>
           ) : null}
         </div>
       ) : null}
 
-      {(request.preferredVisitDate && request.preferredVisitTime) || isApproving ? (
-        <>
-          <div className="h-px w-full bg-border-subtle" />
-
-          <div className="flex w-full flex-col gap-1">
-            {request.preferredVisitDate && request.preferredVisitTime ? (
-              <div className="flex w-full items-center gap-1.5">
-                <CalendarClockIcon className="size-3 shrink-0 text-text-faint" />
-                <span className="font-body text-[11px] whitespace-nowrap text-text-faint">
-                  Scheduled: {request.preferredVisitDate} {request.preferredVisitTime}
-                </span>
-              </div>
-            ) : null}
-            {isApproving ? (
-              <div className="flex w-full items-center gap-1.5">
-                <CalendarClockIcon className="size-3 shrink-0 text-text-faint" />
-                <span className="font-body text-[11px] whitespace-nowrap text-text-faint">Approving…</span>
-              </div>
-            ) : null}
-          </div>
-        </>
+      {iconActions.length > 0 ? (
+        <div className="-mx-1 -mb-1 flex w-full items-center gap-1" onClick={(event) => event.stopPropagation()}>
+          {iconActions.map((action) => (
+            <IconActionButton
+              key={action.label}
+              icon={action.icon}
+              label={action.label}
+              accessibleName={`${action.label} for ${request.trackingId}`}
+              onClick={action.onClick}
+            />
+          ))}
+        </div>
       ) : null}
     </div>
   )

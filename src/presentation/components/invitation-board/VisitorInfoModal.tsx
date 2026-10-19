@@ -1,10 +1,11 @@
-import { useState } from 'react'
 import type { InvitationDetail, InvitationVehicle } from '../../../domain/entities/invitation-detail-schema'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
 import type { FieldAnswer, GroupAnswer } from '../../../domain/entities/form-field-answer-schema'
+import { Avatar } from '../ui/Avatar'
 import { Modal } from '../ui/Modal'
 import { CalendarClockIcon, ShieldIcon } from '../icons'
+import type { DeviceSummary } from '../../../domain/entities/managed-device-schema'
 import { formatDateTime } from '../../utils/format-time'
 import { resolvePointOfContactLabel } from '../../utils/approval-step-label'
 import { prettifyKey } from '../../utils/prettify-key'
@@ -15,6 +16,9 @@ interface VisitorInfoModalProps {
   isLoading?: boolean
   detail?: InvitationDetail
   workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
+  // Names the user who reverted an approval, when the board already knows
+  // them; otherwise the note shows only the time and reason.
+  employeeNameById?: Record<string, string>
   // Read-only here — editing Point of Contact happens in EditInvitationModal.
   onClose: () => void
 }
@@ -26,6 +30,7 @@ const STATUS_TONE_CLASSES: Record<string, string> = {
   checked_in: 'bg-secondary-accent/10 text-secondary-accent',
   checked_out: 'bg-text-faint/15 text-text-muted',
   denied: 'bg-danger/10 text-danger',
+  archived: 'bg-warning/10 text-warning',
 }
 
 function statusToneClass(status: string): string {
@@ -37,45 +42,6 @@ function statusLabel(status: string): string {
     .split('_')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ')
-}
-
-function initialsFor(fullName: string): string {
-  const parts = fullName.trim().split(/\s+/)
-  return ((parts[0]?.[0] ?? '') + (parts[parts.length - 1]?.[0] ?? '')).toUpperCase()
-}
-
-function Avatar({
-  fullName,
-  photoUrl,
-  sizeClassName,
-  toneClassName,
-}: {
-  fullName: string
-  photoUrl?: string | null
-  sizeClassName: string
-  toneClassName: string
-}) {
-  // Photo URLs are short-lived signed links (see use-invitations-board.ts's
-  // forced refetch on open) — if one still fails to load (expired, storage
-  // hiccup), fall back to the initials badge instead of a broken image icon.
-  const [failedToLoad, setFailedToLoad] = useState(false)
-
-  if (photoUrl && !failedToLoad) {
-    return (
-      <img
-        src={photoUrl}
-        alt={fullName}
-        onError={() => setFailedToLoad(true)}
-        className={`shrink-0 rounded-full object-cover ${sizeClassName}`}
-      />
-    )
-  }
-
-  return (
-    <span className={`flex shrink-0 items-center justify-center rounded-full font-display font-bold ${sizeClassName} ${toneClassName}`}>
-      {initialsFor(fullName)}
-    </span>
-  )
 }
 
 function IdProofField({ label, type, url }: { label: string; type?: string | null; url?: string | null }) {
@@ -108,6 +74,10 @@ function Field({ label, value }: { label: string; value: string }) {
       <span className="truncate font-body text-[13px] font-medium text-text">{value}</span>
     </div>
   )
+}
+
+function describeDevice(device: DeviceSummary): string {
+  return `${device.name} (${device.operatingMode}) · ${device.deviceId}`
 }
 
 function isFileUrl(value: unknown): value is string {
@@ -235,6 +205,7 @@ export function VisitorInfoModal({
   isLoading,
   detail,
   workflowRulesByCategory,
+  employeeNameById,
   onClose,
 }: VisitorInfoModalProps) {
   const pointOfContact = detail?.pocName ?? (detail ? resolvePointOfContactLabel(detail, workflowRulesByCategory ?? {}) : undefined)
@@ -256,9 +227,9 @@ export function VisitorInfoModal({
           <div className="flex items-start justify-between gap-3 rounded-xl border border-border-subtle bg-bg p-4">
             <div className="flex items-center gap-3">
               <Avatar
-                fullName={detail.primaryContactFullName}
+                name={detail.primaryContactFullName}
                 photoUrl={detail.primaryContactPhotoUrl}
-                sizeClassName="size-11 text-sm"
+                size="xl"
                 toneClassName="bg-secondary-accent/12 text-secondary-accent"
               />
               <div className="flex flex-col gap-0.5">
@@ -360,11 +331,43 @@ export function VisitorInfoModal({
               <Field label="Expires" value={formatDateTime(detail.expiresAt)} />
               {detail.approvedAt ? <Field label="Approved" value={formatDateTime(detail.approvedAt)} /> : null}
               {detail.checkedInAt ? <Field label="Checked in" value={formatDateTime(detail.checkedInAt)} /> : null}
-              {detail.checkedOutAt ? <Field label="Checked out" value={formatDateTime(detail.checkedOutAt)} /> : null}
+              {detail.checkInDevice ? <Field label="Checked in via" value={describeDevice(detail.checkInDevice)} /> : null}
+              {detail.checkedOutAt ? (
+                <Field
+                  label={detail.checkedOutAutomatically ? 'Checked out automatically' : 'Checked out'}
+                  value={formatDateTime(detail.checkedOutAt)}
+                />
+              ) : null}
+              {detail.checkOutDevice ? <Field label="Checked out via" value={describeDevice(detail.checkOutDevice)} /> : null}
+              {detail.archivedAt ? <Field label="Archived" value={formatDateTime(detail.archivedAt)} /> : null}
               {detail.deniedAt ? <Field label="Denied" value={formatDateTime(detail.deniedAt)} /> : null}
               {detail.denialReason ? (
                 <div className="col-span-full">
                   <Field label="Denial reason" value={detail.denialReason} />
+                </div>
+              ) : null}
+              {detail.status === 'checked_out' && detail.checkedOutAutomatically ? (
+                <div className="col-span-full rounded-lg border border-border-subtle bg-neutral-subtle px-3 py-2 font-body text-[12px] text-text-muted">
+                  Nobody checked this visitor out, so the system closed the visit when the pass expired.
+                </div>
+              ) : null}
+              {detail.status === 'archived' ? (
+                <div className="col-span-full rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 font-body text-[13px] text-text">
+                  The visitor didn't arrive on the scheduled day. Reschedule or edit the visit date to send it for approval again.
+                </div>
+              ) : null}
+              {detail.status === 'submitted' && detail.approvalRevertedAt ? (
+                <div className="col-span-full flex flex-col gap-1 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2">
+                  <span className="font-body text-[13px] font-semibold text-text">Approval reverted</span>
+                  <span className="font-body text-[12px] text-text-muted">
+                    {formatDateTime(detail.approvalRevertedAt)}
+                    {detail.approvalRevertedByUserId && employeeNameById?.[detail.approvalRevertedByUserId]
+                      ? ` · by ${employeeNameById[detail.approvalRevertedByUserId]}`
+                      : ''}
+                  </span>
+                  {detail.approvalRevertReason ? (
+                    <span className="font-body text-[13px] text-text">{detail.approvalRevertReason}</span>
+                  ) : null}
                 </div>
               ) : null}
             </div>

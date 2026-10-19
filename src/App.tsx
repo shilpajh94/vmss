@@ -1,4 +1,6 @@
-import { BrowserRouter, Route, Routes } from 'react-router'
+import { lazy, Suspense, type ReactNode } from 'react'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
+import { LoadingState } from './presentation/components/ui/LoadingState'
 import { AppDependenciesProvider } from './presentation/context/app-dependencies-context'
 import { ToastProvider } from './presentation/components/toast/toast-context'
 import { PushNotificationsProvider } from './presentation/components/push-notifications/PushNotificationsProvider'
@@ -12,9 +14,8 @@ import { VisitorRequestPage } from './presentation/pages/visitor-request/visitor
 import { VisitorTrackPage } from './presentation/pages/visitor-track/visitor-track'
 import { StaffLoginPage } from './presentation/pages/staff-login/staff-login'
 import { StaffSsoLoginPage } from './presentation/pages/staff-sso-login/staff-sso-login'
-import { StaffDashboardPage } from './presentation/pages/staff-dashboard/staff-dashboard'
+import { StaffInvitationsPage } from './presentation/pages/staff-invitations/staff-invitations'
 import { StaffVisitorRegistrationPage } from './presentation/pages/staff-visitor-registration/staff-visitor-registration'
-import { AdminDashboardPage } from './presentation/pages/admin-dashboard/admin-dashboard'
 import { AdminOrganisationConfigsPage } from './presentation/pages/admin-organisation-configs/admin-organisation-configs'
 import { AdminBranchesPage } from './presentation/pages/admin-branches/admin-branches'
 import { AdminBranchCreatePage } from './presentation/pages/admin-branches/admin-branch-create'
@@ -27,9 +28,7 @@ import { AdminFloorFormPage } from './presentation/pages/admin-floors/admin-floo
 import { AdminHostEmployeesPage } from './presentation/pages/admin-host-employees/admin-host-employees'
 import { AdminHostEmployeeFormPage } from './presentation/pages/admin-host-employees/admin-host-employee-form'
 import { AdminReceptionDesksPage } from './presentation/pages/admin-reception-desks/admin-reception-desks'
-import { AdminReceptionDeskFormPage } from './presentation/pages/admin-reception-desks/admin-reception-desk-form'
 import { AdminSecurityGatesPage } from './presentation/pages/admin-security-gates/admin-security-gates'
-import { AdminSecurityGateFormPage } from './presentation/pages/admin-security-gates/admin-security-gate-form'
 import { AdminKiosksPage } from './presentation/pages/admin-kiosks/admin-kiosks'
 import { AdminKioskFormPage } from './presentation/pages/admin-kiosks/admin-kiosk-form'
 import { AdminVisitorCategoriesPage } from './presentation/pages/admin-visitor-categories/admin-visitor-categories'
@@ -43,7 +42,23 @@ import { AdminRoleCreateFormPage } from './presentation/pages/admin-roles/admin-
 import { AdminFormBuilderPage } from './presentation/pages/admin-form-builder/admin-form-builder'
 import { AdminFormBuilderStepEditorPage } from './presentation/pages/admin-form-builder/admin-form-builder-step-editor'
 import { AdminAuditTrailPage } from './presentation/pages/admin-audit-trail/admin-audit-trail'
-import { ReceptionDashboardPage } from './presentation/pages/reception-dashboard/reception-dashboard'
+
+// The dashboards are the only pages that render charts; loading them lazily
+// keeps the chart library out of the public portal and login bundles
+// (live-dashboards-and-analytics design.md W5).
+const AdminDashboardPage = lazy(() =>
+  import('./presentation/pages/admin-dashboard/admin-dashboard').then((module) => ({ default: module.AdminDashboardPage })),
+)
+const ReceptionDashboardPage = lazy(() =>
+  import('./presentation/pages/reception-dashboard/reception-dashboard').then((module) => ({ default: module.ReceptionDashboardPage })),
+)
+const StaffDashboardPage = lazy(() =>
+  import('./presentation/pages/staff-dashboard/staff-dashboard').then((module) => ({ default: module.StaffDashboardPage })),
+)
+
+function LazyPage({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<LoadingState label="Loading dashboard…" className="flex-1" />}>{children}</Suspense>
+}
 
 function RootLayout() {
   return (
@@ -61,10 +76,15 @@ function RootLayout() {
                 <Route path="/staff/login" element={<StaffSsoLoginPage />} />
               </Route>
 
-              <Route path="/reception/dashboard" element={<ReceptionDashboardPage />} />
-
               <Route element={<AdminLayout />}>
-                <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
+                <Route
+                  path="/admin/dashboard"
+                  element={
+                    <LazyPage>
+                      <AdminDashboardPage />
+                    </LazyPage>
+                  }
+                />
                 <Route path="/admin/organisation-configs" element={<AdminOrganisationConfigsPage />} />
                 <Route path="/admin/branches" element={<AdminBranchesPage />} />
                 <Route path="/admin/branches/new" element={<AdminBranchCreatePage />} />
@@ -81,11 +101,9 @@ function RootLayout() {
                 <Route path="/admin/host-employees/new" element={<AdminHostEmployeeFormPage />} />
                 <Route path="/admin/host-employees/:id/edit" element={<AdminHostEmployeeFormPage />} />
                 <Route path="/admin/reception-desks" element={<AdminReceptionDesksPage />} />
-                <Route path="/admin/reception-desks/new" element={<AdminReceptionDeskFormPage />} />
-                <Route path="/admin/reception-desks/:id/edit" element={<AdminReceptionDeskFormPage />} />
+                <Route path="/admin/reception-desks/*" element={<Navigate to="/admin/reception-desks" replace />} />
                 <Route path="/admin/security-gates" element={<AdminSecurityGatesPage />} />
-                <Route path="/admin/security-gates/new" element={<AdminSecurityGateFormPage />} />
-                <Route path="/admin/security-gates/:id/edit" element={<AdminSecurityGateFormPage />} />
+                <Route path="/admin/security-gates/*" element={<Navigate to="/admin/security-gates" replace />} />
                 <Route path="/admin/kiosks" element={<AdminKiosksPage />} />
                 <Route path="/admin/kiosks/new" element={<AdminKioskFormPage />} />
                 <Route path="/admin/kiosks/:id/edit" element={<AdminKioskFormPage />} />
@@ -105,7 +123,26 @@ function RootLayout() {
               </Route>
 
               <Route element={<StaffLayout />}>
-                <Route path="/staff/dashboard" element={<StaffDashboardPage />} />
+                <Route
+                  path="/staff/dashboard"
+                  element={
+                    <LazyPage>
+                      <StaffDashboardPage />
+                    </LazyPage>
+                  }
+                />
+                {/* Under the staff layout so reception shares its top bar,
+                    refresh control and current-user context; the page
+                    keeps its own Reception-role guard. */}
+                <Route
+                  path="/reception/dashboard"
+                  element={
+                    <LazyPage>
+                      <ReceptionDashboardPage />
+                    </LazyPage>
+                  }
+                />
+                <Route path="/staff/invitations" element={<StaffInvitationsPage />} />
                 <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
               </Route>
             </Routes>

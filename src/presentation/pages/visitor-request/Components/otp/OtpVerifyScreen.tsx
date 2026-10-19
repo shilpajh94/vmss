@@ -1,4 +1,4 @@
-import { Spinner } from '../../../../components/ui/LoadingState'
+import { PendingButton } from '../../../../components/ui/PendingButton'
 
 interface OtpVerifyScreenProps {
   code: string
@@ -61,16 +61,15 @@ export function OtpVerifyScreen({
 
       {verifyErrorMessage && <p className="text-caption text-danger">{verifyErrorMessage}</p>}
 
-      <button
-        type="button"
+      <PendingButton
         onClick={onSubmit}
-        disabled={loading}
         title="Verify the code sent to your contact and continue"
+        pending={loading}
+        pendingLabel="Verifying…"
         className="flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white transition-colors enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {loading && <Spinner className="size-4 border-white/40 border-t-white" />}
-        {loading ? 'Verifying…' : 'Verify and continue'}
-      </button>
+        Verify and continue
+      </PendingButton>
 
       <button
         type="button"

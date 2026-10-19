@@ -1,5 +1,6 @@
 import { ChevronLeftIcon, PlusIcon, TrashIcon } from '../../components/icons'
-import { LoadingState } from '../../components/ui/LoadingState'
+import { FormSkeleton } from '../../components/ui/Skeleton'
+import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminWorkflowForm } from './hooks/use-admin-workflow-form'
@@ -52,7 +53,7 @@ export function AdminWorkflowFormPage() {
             </button>
           </div>
         ) : isLoading ? (
-          <LoadingState label="Loading…" className="py-12" />
+          <FormSkeleton rows={4} columns={1} label="Loading workflow…" />
         ) : (
           <div className="flex w-full flex-col gap-8 rounded-2xl border border-border bg-surface p-10">
             <div className="flex flex-col gap-6">
@@ -125,14 +126,14 @@ export function AdminWorkflowFormPage() {
               >
                 Cancel
               </button>
-              <button
-                type="button"
+              <PendingButton
                 onClick={() => void submit()}
-                disabled={isSaving}
+                pending={isSaving}
+                pendingLabel="Saving…"
                 className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-white disabled:opacity-50"
               >
-                {isSaving ? 'Saving…' : 'Save Workflow'}
-              </button>
+                Save Workflow
+              </PendingButton>
             </div>
           </div>
         )}

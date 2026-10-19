@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePushNotifications } from '../../../hooks/use-push-notifications'
+import { landingPathFor } from '../../../utils/landing-path'
 
 export type StaffSsoLoginStatus = 'idle' | 'redirecting' | 'completing' | 'error'
 
@@ -11,7 +12,7 @@ export function useStaffSsoLoginPage() {
   const toast = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { registerCurrentDevice } = usePushNotifications()
+  const { refreshRegistrationIfGranted } = usePushNotifications()
 
   const [status, setStatus] = useState<StaffSsoLoginStatus>('idle')
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
@@ -24,16 +25,16 @@ export function useStaffSsoLoginPage() {
       try {
         const { token } = await exchangeSsoCodeUseCase.execute(code)
         sessionStorage.setItem('token', token)
-        void registerCurrentDevice()
+        void refreshRegistrationIfGranted()
         const user = await getCurrentStaffUserUseCase.execute()
-        navigate(user.isAdmin ? '/admin/dashboard' : '/staff/dashboard')
+        navigate(landingPathFor(user))
       } catch {
         setErrorMessage('Sign-in could not be completed. Please try again.')
         setStatus('error')
         toast.error('Sign-in could not be completed. Please try again.')
       }
     },
-    [exchangeSsoCodeUseCase, getCurrentStaffUserUseCase, navigate, toast, registerCurrentDevice],
+    [exchangeSsoCodeUseCase, getCurrentStaffUserUseCase, navigate, toast, refreshRegistrationIfGranted],
   )
 
   useEffect(() => {

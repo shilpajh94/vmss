@@ -1,5 +1,6 @@
 import { BackButton } from '../../components/BackButton'
 import { SelectField } from '../../components/ui/SelectField'
+import { PendingButton } from '../../components/ui/PendingButton'
 import { TextField } from '../../components/ui/TextField'
 import { TextareaField } from '../../components/ui/TextareaField'
 import { SwitchField } from '../../components/ui/ToggleSwitch'
@@ -158,14 +159,14 @@ export function AdminBranchCreatePage() {
           <button type="button" onClick={cancel} className="rounded-lg px-5 py-2.5 font-body text-sm font-semibold text-text-muted">
             Cancel
           </button>
-          <button
-            type="button"
+          <PendingButton
             onClick={() => void submit()}
-            disabled={isSaving}
+            pending={isSaving}
+            pendingLabel="Creating…"
             className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-white disabled:opacity-50"
           >
-            {isSaving ? 'Creating…' : 'Create Branch'}
-          </button>
+            Create Branch
+          </PendingButton>
         </div>
       </div>
     </>

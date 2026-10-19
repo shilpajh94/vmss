@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { landingPathFor } from '../../../utils/landing-path'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { AuditLogEntry } from '../../../../domain/entities/audit-log-entry-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { AuditReportFormat } from '../../../../data/repositories/audit-trail-repository'
 import { DEFAULT_ACTIVITY_TYPE, DEFAULT_DATE_RANGE, PAGE_SIZE } from '../types'
+import { saveBlob } from '../../../utils/save-blob'
 
 const REPORT_POLL_INTERVAL_MS = 1000
 const REPORT_POLL_MAX_ATTEMPTS = 20
@@ -33,29 +36,28 @@ export function useAdminAuditTrail() {
   const [entries, setEntries] = useState<AuditLogEntry[]>([])
   const [total, setTotal] = useState(0)
   const [employeeNameById, setEmployeeNameById] = useState<Record<string, string>>({})
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const { phase, isRefreshing, begin } = useLoadTracker()
   const [downloadingFormat, setDownloadingFormat] = useState<AuditReportFormat | undefined>(undefined)
 
   // Admins only: confirm the signed-in user's admin status before loading any
   // audit data, redirecting a non-admin authenticated user back to their own
   // dashboard instead of rendering this page.
-  const load = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  // Every caller (initial load, filter/page change, retry) is a `user` load:
+  // once rows exist they stay on screen with a progress cue.
+  const load = useCallback(async (mode: LoadMode = 'user') => {
+    const request = begin(mode)
 
     let user: StaffUser
     try {
       user = await getCurrentStaffUserUseCase.execute()
     } catch {
-      setErrorMessage('Something went wrong loading the audit trail. Please try again.')
+      if (!request.fail()) return
       toast.error('Something went wrong loading the audit trail. Please try again.')
-      setIsLoading(false)
       return
     }
 
     if (!user.isAdmin) {
-      navigate('/staff/dashboard', { replace: true })
+      navigate(landingPathFor(user), { replace: true })
       return
     }
     setCurrentUser(user)
@@ -70,16 +72,15 @@ export function useAdminAuditTrail() {
         }),
         listHostEmployeesUseCase.execute(),
       ])
+      if (!request.succeed()) return
       setEntries(response.items)
       setTotal(response.total)
       setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
     } catch {
-      setErrorMessage('Something went wrong loading the audit trail. Please try again.')
+      if (!request.fail()) return
       toast.error('Something went wrong loading the audit trail. Please try again.')
-    } finally {
-      setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, getAuditTrailUseCase, listHostEmployeesUseCase, dateRange, activityType, page, toast, navigate])
+  }, [begin, getCurrentStaffUserUseCase, getAuditTrailUseCase, listHostEmployeesUseCase, dateRange, activityType, page, toast, navigate])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -89,6 +90,10 @@ export function useAdminAuditTrail() {
 
     void load()
   }, [navigate, load])
+
+  const retry = useCallback(() => {
+    void load()
+  }, [load])
 
   const changeDateRange = useCallback((value: string) => {
     setDateRange(value)
@@ -124,12 +129,7 @@ export function useAdminAuditTrail() {
 
           try {
             const blob = await downloadAuditReportUseCase.execute(job.id, format)
-            const objectUrl = URL.createObjectURL(blob)
-            const anchor = document.createElement('a')
-            anchor.href = objectUrl
-            anchor.download = `audit-report.${format}`
-            anchor.click()
-            URL.revokeObjectURL(objectUrl)
+            saveBlob(blob, `audit-report.${format}`)
           } catch (error) {
             toast.error(error instanceof Error ? error.message : 'Something went wrong downloading the report. Please try again.')
           }
@@ -155,13 +155,13 @@ export function useAdminAuditTrail() {
     entries,
     total,
     employeeNameById,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     changeDateRange,
     changeActivityType,
     goToNextPage,
     goToPrevPage,
-    retry: load,
+    retry,
     downloadingFormat,
     downloadReport,
   }

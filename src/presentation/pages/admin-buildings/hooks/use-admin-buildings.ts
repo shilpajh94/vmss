@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import { usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { Building } from '../../../../domain/entities/building-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
@@ -19,8 +20,7 @@ export function useAdminBuildings() {
   const [buildings, setBuildings] = useState<Building[]>([])
   const [total, setTotal] = useState(0)
   const [branchOptions, setBranchOptions] = useState<{ value: string; label: string }[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const { phase, isRefreshing, begin } = useLoadTracker()
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [pendingDelete, setPendingDelete] = useState<Building | undefined>(undefined)
@@ -32,14 +32,11 @@ export function useAdminBuildings() {
 
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
+  // `user` (default): filter/page/retry/refresh/post-mutation - keeps the
+  // current rows on screen with a progress cue. `background`: the 15s poll.
   const loadBuildings = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false
-
-      if (!silent) {
-        setIsLoading(true)
-        setErrorMessage(undefined)
-      }
+    async (mode: LoadMode = 'user') => {
+      const request = begin(mode)
 
       try {
         const [user, page_, branches] = await Promise.all([
@@ -52,23 +49,18 @@ export function useAdminBuildings() {
           }),
           listBranchesUseCase.execute(),
         ])
+        if (!request.succeed()) return
         setCurrentUser(user)
         setBuildings(page_.items)
         setTotal(page_.total)
         setBranchOptions(branches.map((branch) => ({ value: branch.id, label: branch.name })).sort((a, b) => a.label.localeCompare(b.label)))
         setLastUpdatedAt(new Date())
       } catch {
-        if (!silent) {
-          setErrorMessage('Something went wrong loading the buildings. Please try again.')
-        }
+        if (!request.fail()) return
         toast.error('Something went wrong loading the buildings. Please try again.')
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
       }
     },
-    [getCurrentStaffUserUseCase, listBuildingsPageUseCase, listBranchesUseCase, page, statusFilter, branchFilter, toast],
+    [begin, getCurrentStaffUserUseCase, listBuildingsPageUseCase, listBranchesUseCase, page, statusFilter, branchFilter, toast],
   )
 
   useEffect(() => {
@@ -87,9 +79,9 @@ export function useAdminBuildings() {
   // Auto-refreshes the registry every 15s; skipped while a delete dialog is
   // open so a background tick can't replace data underneath it.
   const isActionInProgress = pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadBuildings({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadBuildings('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
 
   const requestDelete = useCallback((building: Building) => {
     setPendingDelete(building)
@@ -107,7 +99,7 @@ export function useAdminBuildings() {
       await deleteBuildingUseCase.execute(pendingDelete.id)
       toast.success('Building deleted.')
       setPendingDelete(undefined)
-      await loadBuildings({ silent: true })
+      await loadBuildings()
     } catch {
       toast.error('Something went wrong deleting the building. Please try again.')
     } finally {
@@ -148,8 +140,8 @@ export function useAdminBuildings() {
     pageSize: PAGE_SIZE,
     goToNextPage,
     goToPrevPage,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     isFilterPanelOpen,
     toggleFilterPanel,

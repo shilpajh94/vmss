@@ -1,4 +1,5 @@
 import { ChevronLeftIcon, ChevronRightIcon } from './icons'
+import { PRESS_FEEDBACK_CLASS } from './ui/interactive'
 
 interface PaginationProps {
   page: number
@@ -31,7 +32,7 @@ export function Pagination({ page, pageSize, total, onPrev, onNext }: Pagination
           onClick={onPrev}
           disabled={!hasPrev}
           aria-label="Previous page"
-          className="flex size-10 items-center justify-center rounded-lg border border-border bg-surface disabled:opacity-40 lg:size-8"
+          className={`flex size-10 items-center justify-center rounded-lg border border-border bg-surface enabled:hover:bg-border-subtle disabled:opacity-40 lg:size-8 ${PRESS_FEEDBACK_CLASS}`}
         >
           <ChevronLeftIcon className="size-4 text-text" />
         </button>
@@ -40,7 +41,7 @@ export function Pagination({ page, pageSize, total, onPrev, onNext }: Pagination
           onClick={onNext}
           disabled={!hasNext}
           aria-label="Next page"
-          className="flex size-10 items-center justify-center rounded-lg border border-border bg-surface disabled:opacity-40 lg:size-8"
+          className={`flex size-10 items-center justify-center rounded-lg border border-border bg-surface enabled:hover:bg-border-subtle disabled:opacity-40 lg:size-8 ${PRESS_FEEDBACK_CLASS}`}
         >
           <ChevronRightIcon className="size-4 text-text" />
         </button>

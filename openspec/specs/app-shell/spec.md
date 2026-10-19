@@ -69,7 +69,7 @@ The system SHALL, when a request to an authenticated endpoint receives a 401 or 
 - **THEN** the same session-expired message and redirect occur without requiring that page's own code to detect it individually
 
 ### Requirement: Sidebar and top navigation remain fixed while content scrolls independently
-The system SHALL render the top navigation bar in a fixed position that does not move when the page's main content is scrolled, and SHALL confine vertical scrolling caused by page content to the main content region only. At viewport widths of 1024px and wider, the sidebar SHALL likewise be permanently visible in a fixed position beside the content. Below 1024px, the sidebar SHALL be hidden by default and SHALL open as an off-canvas drawer over the content, with a dimmed backdrop, from a menu button in the top bar; see "Sidebar collapses into a drawer below desktop width". Within the sidebar itself (docked or drawer), the logo/header area and any footer content SHALL remain pinned in place, and the navigation item list SHALL scroll independently when it is taller than the space available, so no navigation item becomes unreachable. Where the sidebar's navigation list scrolls, its scrollbar SHALL be styled to fit the sidebar's dark theme rather than rendered as the browser's unstyled default.
+The system SHALL render the top navigation bar in a fixed position that does not move when the page's main content is scrolled, and SHALL confine vertical scrolling caused by page content to the main content region only. At viewport widths of 1024px and wider, the sidebar SHALL likewise be permanently visible in a fixed position beside the content, either expanded or collapsed to an icon rail; see "Desktop sidebar can be collapsed to an icon rail". Below 1024px, the sidebar SHALL be hidden by default and SHALL open as an off-canvas drawer over the content, with a dimmed backdrop, from a menu button in the top bar; see "Sidebar collapses into a drawer below desktop width". Within the sidebar itself (docked or drawer), the logo/header area and any footer content SHALL remain pinned in place, and the navigation item list SHALL scroll independently when it is taller than the space available, so no navigation item becomes unreachable. Where the sidebar's navigation list scrolls, its scrollbar SHALL be styled to fit the sidebar's dark theme rather than rendered as the browser's unstyled default.
 
 #### Scenario: Long content scrolls only the content region
 - **WHEN** a page's main content is taller than the viewport
@@ -91,6 +91,10 @@ The system SHALL render the top navigation bar in a fixed position that does not
 - **WHEN** the sidebar's navigation item list is scrolled or its scrollbar is otherwise visible
 - **THEN** the scrollbar renders as a thin, flat control whose thumb and track colors fit the sidebar's dark background, instead of the browser's default light, bordered scrollbar
 
+#### Scenario: Collapsed sidebar stays fixed too
+- **WHEN** the desktop sidebar is collapsed to its icon rail and the user scrolls a long page
+- **THEN** the icon rail stays visible and stationary beside the content, exactly as the expanded sidebar does
+
 ### Requirement: No page triggers horizontal scrolling of the overall page
 The system SHALL prevent any page's content from causing the outer page (document body/viewport) to scroll horizontally. Content that is intrinsically wider than the viewport (for example, a data table with many columns) SHALL scroll within its own contained region instead of widening the page.
 
@@ -102,24 +106,76 @@ The system SHALL prevent any page's content from causing the outer page (documen
 - **WHEN** a page's content fits within the viewport width
 - **THEN** no horizontal scrollbar appears anywhere on the page
 
+### Requirement: Content does not shift sideways when a scrollbar appears
+The system SHALL reserve space for the main content region's vertical
+scrollbar, so that page content does not move horizontally when that region
+becomes scrollable or stops being scrollable. This happens, for example,
+when a filter shrinks a long page or a re-fetch grows it. A page's inner
+data region that scrolls beneath a fixed heading row SHALL NOT reserve its
+own scrollbar gutter, because the reserved strip would leave the data
+narrower than the heading and filter row above it.
+
+#### Scenario: Filter shrinks a long page
+- **WHEN** a page long enough to scroll its main content region is filtered
+  down to a few rows, so that region no longer needs a scrollbar
+- **THEN** the page heading and the content keep their horizontal positions
+
+#### Scenario: Data region stays aligned with its heading row
+- **WHEN** a list page's data region scrolls beneath its fixed heading,
+  Filters, and Add row on a system with always-visible scrollbars
+- **THEN** the table's left and right edges line up with the heading row
+  and filter panel above it
+
 ### Requirement: Route navigation is accompanied by a transition animation
-The system SHALL play a brief visual transition when the user navigates from one route to another, instead of replacing the page's content instantaneously. Where a route belongs to a section with a shared sidebar (and, for the admin section, a shared top bar), that transition SHALL be scoped to the main content region only: the sidebar and top bar SHALL remain mounted and SHALL NOT re-render or participate in the transition when navigating between routes within the same section.
+The system SHALL play a brief visual transition when the user navigates
+from one route to another, instead of replacing the page's content
+instantly. Where a route belongs to a section with a shared sidebar (and,
+for the admin section, a shared top bar), that transition SHALL be scoped
+to the main content region only. The sidebar and top bar SHALL remain
+mounted and SHALL NOT re-render or take part in the transition when
+navigating between routes in the same section. The incoming page SHALL
+render its final layout from the first frame of the transition, using
+skeleton placeholders for any data still loading, so that its heading,
+controls, and content regions do not change size or position after the
+transition ends. On every route change, the main content region SHALL
+start scrolled to the top.
 
 #### Scenario: Navigating between two pages
 - **WHEN** a user navigates from one route to another within the app
-- **THEN** the outgoing view's content transitions out and the incoming view's content transitions in, rather than one instantly replacing the other
+- **THEN** the outgoing view's content transitions out and the incoming
+  view's content transitions in, rather than one instantly replacing the
+  other
 
 #### Scenario: Reduced motion is requested
-- **WHEN** the user's operating system or browser is set to prefer reduced motion
-- **THEN** the system skips or minimizes the transition instead of playing it in full
+- **WHEN** the user's operating system or browser is set to prefer reduced
+  motion
+- **THEN** the system skips or minimizes the transition instead of playing
+  it in full
 
 #### Scenario: Navigating within the admin section
-- **WHEN** an authenticated admin user navigates from one admin page to another (e.g. from the branches list to the departments list)
-- **THEN** the sidebar and top bar remain the same, unchanged elements on screen — they do not unmount, flash, or reset — and only the main content region plays the transition and shows the new page's content
+- **WHEN** an authenticated admin user navigates from one admin page to
+  another (e.g. from the branches list to the departments list)
+- **THEN** the sidebar and top bar remain the same, unchanged elements on
+  screen — they do not unmount, flash, or reset — and only the main content
+  region plays the transition and shows the new page's content
 
 #### Scenario: Navigating within the staff section
-- **WHEN** a staff user navigates from one staff page to another (e.g. from the dashboard to the audit trail)
-- **THEN** the sidebar remains the same, unchanged element on screen — it does not unmount, flash, or reset — while the rest of the page (including that page's own header) transitions in as content
+- **WHEN** a staff user navigates from one staff page to another (e.g. from
+  the dashboard to the audit trail)
+- **THEN** the sidebar remains the same, unchanged element on screen — it
+  does not unmount, flash, or reset — while the rest of the page (including
+  that page's own header) transitions in as content
+
+#### Scenario: Incoming page does not jump after it enters
+- **WHEN** a user navigates to a data-driven page whose data has not loaded
+  yet
+- **THEN** the page enters showing its heading, controls, and skeleton
+  placeholders in their final positions, and when the data arrives only the
+  placeholders change; nothing above or around them moves
+
+#### Scenario: Scroll position resets on navigation
+- **WHEN** a user scrolls far down one page and then navigates to another
+- **THEN** the new page's content region starts at the top
 
 ### Requirement: Drill-down pages provide a way back to their parent page
 The system SHALL show a back-navigation control on any page that is reached by navigating from another in-app page rather than directly from the sidebar (for example, a create/edit form reached from a list page's "Add" or "Edit" action). Activating that control SHALL return the user to the parent page they navigated from.
@@ -164,3 +220,28 @@ The Reception Dashboard SHALL render inside the same shell as the other staff pa
 #### Scenario: Reception dashboard on a tablet
 - **WHEN** a reception user opens the Reception Dashboard at 768px wide
 - **THEN** the reception sidebar is available through the top-bar menu button as a drawer, and the dashboard's KPI row and cards reflow to the tablet width
+
+### Requirement: Desktop sidebar can be collapsed to an icon rail
+At viewport widths of 1024px and wider, the Admin, Staff, and Reception sidebars SHALL each offer a collapse toggle in the sidebar header. Activating it SHALL collapse the sidebar to an icon rail no wider than 80px. The rail SHALL show the compact brand mark, every navigation item as its icon only, and any footer content in icon-only form. The content region SHALL widen to use the freed space. While collapsed, every navigation item SHALL remain operable and SHALL keep its current-page highlight. Each item SHALL expose its full label as its accessible name and SHALL show that label as a tooltip on hover and keyboard focus. Activating the toggle again SHALL restore the full sidebar. The toggle SHALL be labelled "Collapse sidebar" or "Expand sidebar" according to its state and SHALL expose its expanded/collapsed state to assistive technology.
+
+The collapsed/expanded choice SHALL be remembered in the current browser across route changes, page reloads, and new sessions, and SHALL be shared by the admin and staff shells. When no choice has been stored, or stored preferences cannot be read, the sidebar SHALL start expanded. Below 1024px the toggle SHALL NOT be shown, and the off-canvas drawer SHALL always open with the full, expanded sidebar regardless of the stored choice.
+
+#### Scenario: Collapsing the sidebar on the Invitations board
+- **WHEN** a reception user at 1536px wide activates "Collapse sidebar" on the Invitations page
+- **THEN** the sidebar shrinks to an icon rail showing the brand mark and the Dashboard, Invitations, and My actions icons, with Invitations highlighted, and the board widens into the freed space
+
+#### Scenario: Navigating from the icon rail
+- **WHEN** the sidebar is collapsed and an admin hovers over the Branches icon and then activates it
+- **THEN** a "Branches" tooltip appears, the Branches page opens, and the sidebar stays collapsed
+
+#### Scenario: Choice survives a reload
+- **WHEN** a staff member collapses the sidebar and then reloads the page
+- **THEN** the page renders with the sidebar already collapsed and no visible expand-then-collapse flicker
+
+#### Scenario: Storage unavailable
+- **WHEN** the browser blocks site storage and a user opens any staff or admin page at desktop width
+- **THEN** the sidebar renders expanded and the collapse toggle still works for the current page view
+
+#### Scenario: Drawer ignores the collapsed choice
+- **WHEN** a user who collapsed the sidebar at 1440px narrows the window to 800px and opens the menu
+- **THEN** the drawer shows the full sidebar with labels, and widening back to 1440px shows the icon rail again

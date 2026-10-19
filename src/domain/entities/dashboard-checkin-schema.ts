@@ -6,6 +6,7 @@ export const DashboardRecentCheckinSchema = z.object({
   trackingId: z.string().min(1),
   primaryContactFullName: z.string().min(1),
   hostId: z.string().nullable(),
+  hostFullName: z.string().nullable(),
   status: z.string().min(1),
   checkedInAt: z.string().nullable(),
   checkedOutAt: z.string().nullable(),

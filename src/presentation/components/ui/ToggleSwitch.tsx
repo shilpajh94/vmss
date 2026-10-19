@@ -27,9 +27,9 @@ function SwitchControl({ id, checked, onChange, labelledBy }: SwitchControlProps
         onChange={(event) => onChange(event.target.checked)}
         className="peer sr-only"
       />
-      <span className={`h-6 w-11 rounded-full transition-colors ${checked ? 'bg-admin-accent' : 'bg-neutral-subtle'}`} />
+      <span className={`h-6 w-11 rounded-full transition-colors duration-standard ${checked ? 'bg-admin-accent' : 'bg-neutral-subtle'}`} />
       <span
-        className={`absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow transition-transform ${
+        className={`absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow transition-transform duration-standard ease-motion-out ${
           checked ? 'translate-x-5' : ''
         }`}
       />

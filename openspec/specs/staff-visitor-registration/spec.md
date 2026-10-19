@@ -18,11 +18,15 @@ The system SHALL check for a staff auth token before rendering the Register Visi
 - **THEN** the system renders the wizard's first step, "Visitor Info"
 
 ### Requirement: Wizard is reachable from the staff dashboard
-The system SHALL render the Register Visitor wizard inside the staff shell (sidebar and workspace header matching the dashboard) when a staff member activates "My actions" from the dashboard sidebar.
+The system SHALL render the Register Visitor wizard inside the staff shell (the same sidebar and shared staff top bar as the staff Invitations page), with its own "Register Visitor" title and subtitle as the page's title row. The page SHALL NOT render its own identity or "Sign out" block; those are in the top bar when a staff member activates "My actions" from the dashboard sidebar.
 
 #### Scenario: Staff opens the wizard from the dashboard
 - **WHEN** an authenticated staff member activates "My actions" in the dashboard sidebar
 - **THEN** the system renders the Register Visitor wizard's "Visitor Info" step inside the staff shell
+
+#### Scenario: Register Visitor uses the shared top bar
+- **WHEN** an authenticated staff member opens the Register Visitor wizard at 1440px wide
+- **THEN** the shared staff top bar shows their name, role and "Sign out", and the page content starts with the "Register Visitor" title row, with no second identity or "Sign out" block
 
 ### Requirement: A progress stepper shows the current step, reflecting the branch's published form-builder configuration
 The system SHALL display a stepper listing the steps present in the branch's published effective form configuration, in that configuration's order, and SHALL visually mark which step is currently active. A step the configuration omits (deactivated by an admin, or never enabled for the branch) SHALL NOT appear in the stepper and SHALL NOT be reachable by navigation. A step present in the configuration whose key is not one of the wizard's built-in steps (Visitor Info, Visit Info, Carried Items, Vehicle Info, Consent Agreement, Review & Confirm) SHALL still render, using its configured fields, rather than being silently omitted. The stepper's total count and "Next"/"Back" transitions SHALL be computed from the number of steps actually present, not a fixed count of six.
@@ -207,3 +211,49 @@ Every other field and step SHALL render as configured.
   contains a `signature_pad` field
 - **THEN** the stepper lists the configured steps, the visitor-info step
   renders its supported fields, and no load error is shown
+
+### Requirement: The wizard's form region scrolls independently of the page header, stepper, and action bar on desktop widths
+At desktop widths, where the navigation sidebar is docked, the staff Register Visitor page SHALL keep the staff top bar, its page title row (title and subtitle), the progress stepper, and the Cancel / Next action bar fixed in view. The current step's form region SHALL be the only part of the page that scrolls, filling the vertical space between the stepper and the action bar. When the staff member moves to a different step, the form region SHALL show the top of that step. Below desktop width the whole page SHALL scroll as one, with the action bar kept visible at the bottom of the viewport. On those widths the stacked header and stepper would otherwise leave too little height for the form.
+
+#### Scenario: Scrolling a tall step on desktop keeps the chrome in view
+- **WHEN** the staff member is on a step whose fields are taller than the space available at a desktop viewport width and scrolls down within the form
+- **THEN** the form fields scroll while the page header, the progress stepper, and the Cancel / Next buttons stay visible and do not move
+
+#### Scenario: Action buttons are reachable without scrolling on desktop
+- **WHEN** a step's content is taller than the available space at a desktop viewport width
+- **THEN** the Cancel and Next buttons are visible and can be activated without first scrolling to the end of the form
+
+#### Scenario: Short step on desktop shows no scroll
+- **WHEN** a step's content fits within the available space at a desktop viewport width
+- **THEN** the form region shows no scrollbar and the action bar sits directly below the form area
+
+#### Scenario: Changing step starts the new step at the top
+- **WHEN** the staff member has scrolled part-way down a step and moves to another step (via Next, Back, or the stepper)
+- **THEN** the form region shows the beginning of the newly displayed step
+
+#### Scenario: Below desktop width the page scrolls as one
+- **WHEN** the wizard is shown below desktop width and the content is taller than the viewport
+- **THEN** the header, stepper, and form scroll together as one page, and the Cancel / Next action bar stays visible at the bottom of the viewport
+
+#### Scenario: Validation errors remain visible
+- **WHEN** the staff member activates Next with a required field missing that is outside the visible part of the form region
+- **THEN** the field's validation error can be reached by scrolling the form region, without any part of the form being clipped or unreachable
+
+### Requirement: Moving between steps is animated
+When the staff member moves to another step of the Register Visitor wizard, the stepper SHALL animate the change. On a forward move, the connector between the step left and the step entered SHALL fill toward the new step, and the step left SHALL change to a completed state that shows a checkmark instead of its number. On a backward move, the connectors and completed states SHALL reverse. The step content SHALL enter from the right on a forward move and from the left on a backward move. The full transition SHALL take no more than about 300ms. Inputs SHALL be usable as soon as the new step is shown, without waiting for the animation to finish. When the user's system requests reduced motion, the stepper state and step content SHALL change instantly, with no movement.
+
+#### Scenario: Advancing to the next step
+- **WHEN** the staff member completes Visitor Info and activates Next
+- **THEN** the connector from step 1 to step 2 fills toward step 2, step 1 shows a checkmark, step 2 becomes active, and the Visit Details content slides in from the right
+
+#### Scenario: Going back to an earlier step
+- **WHEN** the staff member is on step 3 and selects step 1 in the stepper
+- **THEN** the connectors after step 1 un-fill, step 1 becomes active again, and its content slides in from the left with the previously entered data intact
+
+#### Scenario: Validation failure does not animate
+- **WHEN** the staff member activates Next with a required field missing
+- **THEN** the stepper and content stay on the current step, with no transition played
+
+#### Scenario: Reduced motion is requested
+- **WHEN** the operating system's reduced-motion preference is on and the staff member activates Next
+- **THEN** the next step is shown immediately with no sliding or filling animation, and the stepper shows the same completed/active states

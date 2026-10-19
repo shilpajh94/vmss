@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import { usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
@@ -21,8 +22,7 @@ export function useAdminHostEmployees() {
   const [total, setTotal] = useState(0)
   const [departments, setDepartments] = useState<Department[]>([])
   const [roleOptions, setRoleOptions] = useState<string[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const { phase, isRefreshing, begin } = useLoadTracker()
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
@@ -32,14 +32,11 @@ export function useAdminHostEmployees() {
 
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
+  // `user` (default): filter/page/retry/refresh - keeps the current rows on
+  // screen with a progress cue. `background`: the 15s poll.
   const loadHostEmployees = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false
-
-      if (!silent) {
-        setIsLoading(true)
-        setErrorMessage(undefined)
-      }
+    async (mode: LoadMode = 'user') => {
+      const request = begin(mode)
 
       try {
         const [user, page_, departmentList, roles] = await Promise.all([
@@ -54,6 +51,7 @@ export function useAdminHostEmployees() {
           listDepartmentsUseCase.execute(),
           listRolesUseCase.execute(),
         ])
+        if (!request.succeed()) return
         setCurrentUser(user)
         setHostEmployees(page_.items)
         setTotal(page_.total)
@@ -61,17 +59,11 @@ export function useAdminHostEmployees() {
         setRoleOptions([...new Set(roles.map((role) => role.name))].sort((a, b) => a.localeCompare(b)))
         setLastUpdatedAt(new Date())
       } catch {
-        if (!silent) {
-          setErrorMessage('Something went wrong loading the employees. Please try again.')
-        }
+        if (!request.fail()) return
         toast.error('Something went wrong loading the employees. Please try again.')
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
       }
     },
-    [getCurrentStaffUserUseCase, listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase, page, departmentFilter, roleFilter, statusFilter, toast],
+    [begin, getCurrentStaffUserUseCase, listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase, page, departmentFilter, roleFilter, statusFilter, toast],
   )
 
   useEffect(() => {
@@ -89,9 +81,9 @@ export function useAdminHostEmployees() {
 
   // Auto-refreshes the directory every 15s; there's no form/delete dialog
   // state on this page to protect, so polling is never suppressed.
-  usePolling(() => void loadHostEmployees({ silent: true }), { intervalMs: 15_000, isBusy: false })
+  usePolling(() => void loadHostEmployees('background'), { intervalMs: 15_000, isBusy: false })
 
-  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
 
   const departmentNameById = useMemo(() => new Map(departments.map((department) => [department.id, department.name])), [departments])
 
@@ -137,8 +129,8 @@ export function useAdminHostEmployees() {
     goToNextPage,
     goToPrevPage,
     departmentNameById,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     isFilterPanelOpen,
     toggleFilterPanel,

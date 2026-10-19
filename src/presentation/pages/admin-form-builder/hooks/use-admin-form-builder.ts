@@ -4,6 +4,7 @@ import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePolling } from '../../../hooks/use-polling'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { FormStep } from '../../../../domain/entities/form-builder-schema'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
@@ -13,7 +14,7 @@ import { useFormBuilderPublishState } from './use-form-builder-publish-state'
  * scope — `undefined` (a real branch id otherwise) is what every
  * form-builder use-case actually expects.
  */
-export const DEFAULT_WORKSPACE_VALUE = '__default__'
+export const DEFAULT_WORKSPACE_VALUE = ''
 
 export function useAdminFormBuilder() {
   const navigate = useNavigate()
@@ -33,8 +34,7 @@ export function useAdminFormBuilder() {
   const [branches, setBranches] = useState<Branch[]>([])
   const [selectedBranchId, setSelectedBranchId] = useState<string | undefined>(undefined)
   const [steps, setSteps] = useState<FormStep[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const { phase, isRefreshing, begin } = useLoadTracker()
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   const [isPublishing, setIsPublishing] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<FormStep | undefined>(undefined)
@@ -51,29 +51,20 @@ export function useAdminFormBuilder() {
   }, [listBranchesUseCase])
 
   const loadSteps = useCallback(
-    async (branchId: string | undefined, options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false
+    async (branchId: string | undefined, mode: LoadMode = 'user') => {
+      const request = begin(mode)
 
-      if (!silent) {
-        setIsLoading(true)
-        setErrorMessage(undefined)
-      }
       try {
         const list = await listFormStepsUseCase.execute(branchId)
+        if (!request.succeed()) return
         setSteps([...list].sort((a, b) => a.orderIndex - b.orderIndex))
         setLastUpdatedAt(new Date())
       } catch {
-        if (!silent) {
-          setErrorMessage('Something went wrong loading the registration steps. Please try again.')
-        }
+        if (!request.fail()) return
         toast.error('Something went wrong loading the registration steps. Please try again.')
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
       }
     },
-    [listFormStepsUseCase, toast],
+    [begin, listFormStepsUseCase, toast],
   )
 
   useEffect(() => {
@@ -90,7 +81,7 @@ export function useAdminFormBuilder() {
 
   const selectWorkspace = useCallback(
     (value: string) => {
-      const branchId = value === DEFAULT_WORKSPACE_VALUE || value === '' ? undefined : value
+      const branchId = value === DEFAULT_WORKSPACE_VALUE ? undefined : value
       setSelectedBranchId(branchId)
       void loadSteps(branchId)
     },
@@ -105,9 +96,9 @@ export function useAdminFormBuilder() {
   // action is in progress so a background tick can't replace data underneath
   // an in-progress user action (same convention as use-admin-branches.ts).
   const isActionInProgress = isCreateOpen || pendingDelete !== undefined || isPublishing
-  usePolling(() => void loadSteps(selectedBranchId, { silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadSteps(selectedBranchId, 'background'), { intervalMs: 15_000, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
 
   const toggleStepActive = useCallback(
     async (step: FormStep) => {
@@ -213,8 +204,8 @@ export function useAdminFormBuilder() {
     selectedBranchId,
     selectWorkspace,
     steps,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     toggleStepActive,
     pendingDelete,
