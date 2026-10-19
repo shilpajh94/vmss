@@ -66,7 +66,7 @@ def _contact(name: str, detail: str | None) -> dict[str, str | None]:
     return {"contact_title": _CONTACT_TITLE, "contact_name": name, "contact_detail": detail}
 
 
-def _whatsapp_visit_when(invitation: Invitation) -> str:
+def _visit_when(invitation: Invitation) -> str:
     visit_date, visit_time = invitation.preferred_visit_date, invitation.preferred_visit_time
     date_part = visit_date.strftime("%d %b %Y") if isinstance(visit_date, date) else "-"
     if isinstance(visit_time, time):
@@ -74,20 +74,30 @@ def _whatsapp_visit_when(invitation: Invitation) -> str:
     return date_part
 
 
-def _whatsapp_visitor_update_variables(
-    invitation: Invitation, contact_name: str | None
-) -> list[object]:
-    """The approved `visitor_updates` template: "Hello {{1}}, Your visit
-    request {{2}} for {{3}} has been updated. Your visit time and host have
-    changed. New host: {{4}}." — name, tracking ID, when, point of contact.
-    Its fixed wording only truly fits reschedule/edit; pending/denied reuse
-    it as a stopgap until they get their own approved templates.
+def _visitor_update_variables(invitation: Invitation, contact_name: str | None) -> list[object]:
+    """Variables shared by the approved pending and rescheduled SMS templates
+    and the WhatsApp `visit_request_received__...pending`, `visit_rescheduled`
+    and `visitor_updates` templates: name, tracking ID, when, point of contact.
     """
     return [
         invitation.primary_contact_full_name,
         invitation.tracking_id,
-        _whatsapp_visit_when(invitation),
+        _visit_when(invitation),
         contact_name or "Front desk",
+    ]
+
+
+def _denial_variables(invitation: Invitation) -> list[object]:
+    """The approved denial SMS / WhatsApp `visit_request_denied__request_denied`
+    template: "Hello {{1}}, your visit request {{2}} for {{3}} could not be
+    approved. Reason: {{4}}." Gateways reject an empty variable, hence the
+    reason fallback.
+    """
+    return [
+        invitation.primary_contact_full_name,
+        invitation.tracking_id,
+        _visit_when(invitation),
+        (invitation.denial_reason or "").strip() or "Not specified",
     ]
 
 
@@ -352,7 +362,7 @@ async def _send_approval_notification(
                 whatsapp_variables=[
                     invitation.primary_contact_full_name,
                     invitation.tracking_id,
-                    _whatsapp_visit_when(invitation),
+                    _visit_when(invitation),
                 ],
                 whatsapp_header_image_png=(
                     await generate_qr_png_rgb(qr_token)
@@ -411,11 +421,8 @@ async def _send_tracking_notification(tenant_schema: str, invitation_id: str) ->
                 subject=subject,
                 body=body,
                 sms_template=SmsTemplate.registration_pending,
-                sms_variables=[invitation.tracking_id],
+                sms_variables=_visitor_update_variables(invitation, context.get("contact_name")),
                 html_body=html_body,
-                whatsapp_variables=_whatsapp_visitor_update_variables(
-                    invitation, context.get("contact_name")
-                ),
             )
     finally:
         await engine.dispose()
@@ -466,11 +473,8 @@ async def _send_denial_notification(tenant_schema: str, invitation_id: str) -> N
                 subject=subject,
                 body=body,
                 sms_template=SmsTemplate.registration_denied,
-                sms_variables=[invitation.tracking_id, invitation.denial_reason or ""],
+                sms_variables=_denial_variables(invitation),
                 html_body=html_body,
-                whatsapp_variables=_whatsapp_visitor_update_variables(
-                    invitation, context.get("contact_name")
-                ),
             )
     finally:
         await engine.dispose()
@@ -535,16 +539,9 @@ async def _send_reschedule_notification(tenant_schema: str, invitation_id: str) 
                 subject=subject,
                 body=body,
                 sms_template=SmsTemplate.visit_rescheduled,
-                sms_variables=[
-                    invitation.preferred_visit_date,
-                    invitation.preferred_visit_time,
-                    invitation.tracking_id,
-                ],
+                sms_variables=_visitor_update_variables(invitation, context.get("contact_name")),
                 html_body=html_body,
                 inline_images=qr_images if html_body is not None else [],
-                whatsapp_variables=_whatsapp_visitor_update_variables(
-                    invitation, context.get("contact_name")
-                ),
             )
     finally:
         await engine.dispose()
@@ -604,7 +601,7 @@ async def _send_edit_notification(tenant_schema: str, invitation_id: str) -> Non
                     invitation.preferred_visit_time,
                 ],
                 html_body=html_body,
-                whatsapp_variables=_whatsapp_visitor_update_variables(
+                whatsapp_variables=_visitor_update_variables(
                     invitation, context.get("contact_name")
                 ),
             )

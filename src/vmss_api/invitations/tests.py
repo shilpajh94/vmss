@@ -8164,8 +8164,9 @@ async def test_send_reschedule_notification_routes_to_sms_when_preferred(monkeyp
     monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
     fake_invitation = _FakeInvitation(
         tracking_id="INV-TEST0002",
-        preferred_visit_date="2026-12-01",
-        preferred_visit_time="15:30:00",
+        primary_contact_full_name="Asha Rao",
+        preferred_visit_date=date(2026, 12, 1),
+        preferred_visit_time=time(15, 30),
         primary_contact_preferred_contact_method="sms",
         primary_contact_email=None,
         primary_contact_phone="+919876543210",
@@ -8186,7 +8187,12 @@ async def test_send_reschedule_notification_routes_to_sms_when_preferred(monkeyp
     assert len(sms_sent) == 1
     assert sms_sent[0]["to"] == "+919876543210"
     assert sms_sent[0]["template"] == SmsTemplate.visit_rescheduled
-    assert sms_sent[0]["variables"] == ["2026-12-01", "15:30:00", "INV-TEST0002"]
+    assert sms_sent[0]["variables"] == [
+        "Asha Rao",
+        "INV-TEST0002",
+        "01 Dec 2026 15:30",
+        "Reception",
+    ]
 
 
 async def test_send_reschedule_notification_routes_to_whatsapp_when_preferred(
