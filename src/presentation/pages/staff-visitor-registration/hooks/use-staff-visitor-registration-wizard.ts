@@ -20,6 +20,7 @@ import { isValidIndianMobileNumber } from '../../../utils/is-valid-indian-mobile
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { Building } from '../../../../domain/entities/building-schema'
+import type { StaffVisitorLookup } from '../../../../domain/entities/staff-visitor-lookup-schema'
 import { getActiveSteps, type StepKey } from '../../visitor-request/registration-wizard-steps'
 import type { SubmissionStatus } from '../../visitor-request/Components/steps/ReviewConfirmStep'
 import {
@@ -32,6 +33,12 @@ import {
 // Matches the input's own `type="email"` validation closely enough to gate
 // a lookup request without firing on every keystroke of a half-typed address.
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+// The backend rejects phone lookups with fewer than 7 digits (422) or more
+// than 50 characters, so those are gated client-side instead of sent.
+const MIN_PHONE_LOOKUP_DIGITS = 7
+const MAX_PHONE_LOOKUP_LENGTH = 50
+const digitsOf = (value: string) => value.replace(/\D/g, '')
 
 // Mirrors use-visitor-request-wizard.ts's matching helper — kept local
 // rather than shared across features for one small helper.
@@ -124,7 +131,7 @@ function validateStep(
 }
 
 export function useStaffVisitorRegistrationWizard(branches?: Branch[], buildings?: Building[]) {
-  const { submitStaffVisitRequestUseCase, trackVisitRequestUseCase, lookupStaffVisitorByEmailUseCase } = useAppDependencies()
+  const { submitStaffVisitRequestUseCase, trackVisitRequestUseCase, lookupStaffVisitorByEmailUseCase, lookupStaffVisitorByPhoneUseCase } = useAppDependencies()
   const toast = useToast()
 
   const [currentStep, setCurrentStep] = useState(0)
@@ -135,11 +142,92 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[], buildings
   const [confirmedFullName, setConfirmedFullName] = useState<string | undefined>(undefined)
   const [submissionError, setSubmissionError] = useState<string | undefined>(undefined)
 
-  // Debounced "email → prefill" lookup for the primary contact only (an
-  // additional group visitor's email isn't looked up). Tracks the last email
-  // a lookup was actually issued for so re-renders that don't change the
-  // email (e.g. typing into another field) don't re-trigger it.
+  // Debounced "email/phone → prefill" lookups for the primary contact only
+  // (an additional group visitor isn't looked up). Each tracks the last value
+  // a lookup was actually issued for so re-renders that don't change it
+  // (e.g. typing into another field) don't re-trigger it.
   const lastLookedUpEmailRef = useRef<string | null>(null)
+  const lastLookedUpPhoneRef = useRef<string | null>(null)
+  const formStateRef = useRef(formState)
+  formStateRef.current = formState
+
+  // Applies a lookup match to the primary contact, filling only fields that
+  // are still empty so nothing the staff member typed is overwritten.
+  // `isCurrent` guards against a response arriving after the triggering
+  // field was edited again.
+  const applyLookupMatch = (match: StaffVisitorLookup, isCurrent: (entry: StaffVisitorFormEntry) => boolean) => {
+    const before = formStateRef.current.primaryContact
+    if (!isCurrent(before)) return
+
+    // Mark the other trigger field as already looked up so a prefilled email
+    // (or phone) doesn't fire a redundant second lookup.
+    if (!before.email.trim() && match.email) lastLookedUpEmailRef.current = match.email.trim().toLowerCase()
+    if (!before.phone.trim() && match.phone) lastLookedUpPhoneRef.current = digitsOf(match.phone)
+
+    // The contact-method toggle starts on 'email', so that default counts as unset.
+    const methodIsDefault = before.preferredContactMethod === undefined || before.preferredContactMethod === 'email'
+    const patch: Partial<StaffVisitorFormEntry> = {}
+    if (!before.fullName.trim()) patch.fullName = match.fullName
+    if (!before.email.trim() && match.email) patch.email = match.email
+    if (!before.phone.trim() && match.phone) patch.phone = match.phone
+    if (methodIsDefault && match.preferredContactMethod) patch.preferredContactMethod = match.preferredContactMethod
+    if (!before.visitorCategory && match.visitorCategoryId) patch.visitorCategory = match.visitorCategoryId
+    if (!before.idProofType && match.idProofType) patch.idProofType = match.idProofType
+
+    const wantsPhoto = !!match.photoUrl && !before.profileImageFileRef
+    const wantsIdProof = !!match.idProofUrl && !before.idProofFileRef
+
+    if (Object.keys(patch).length > 0) {
+      setFormState((current) =>
+        isCurrent(current.primaryContact)
+          ? { ...current, primaryContact: { ...current.primaryContact, ...patch } }
+          : current,
+      )
+    }
+    if (Object.keys(patch).length > 0 || wantsPhoto || wantsIdProof) {
+      toast.success('Existing visitor found — details prefilled.')
+    }
+
+    // Best-effort, same pattern as use-visitor-request-wizard.ts's
+    // existing-file reuse: fetch the signed URL into a real File and
+    // register it, so the upload control shows it prefilled instead
+    // of demanding a fresh upload. A fetch failure (expired
+    // signature, network) just leaves that field as a normal empty
+    // upload control — each file is independent of the other. A null
+    // `idProofUrl` (caller lacks documents:view) simply skips that file.
+    if (wantsIdProof && match.idProofUrl) {
+      fetchExistingStaffFile(match.idProofUrl, 'id-proof')
+        .then(async (file) => {
+          const fileRef = await uploadFile(file)
+          setFormState((current) => {
+            if (!isCurrent(current.primaryContact) || current.primaryContact.idProofFileRef) return current
+            return { ...current, primaryContact: { ...current.primaryContact, idProofFileRef: fileRef, idProofFileName: file.name } }
+          })
+        })
+        .catch(() => {
+          // Leave idProofFileRef unset — field renders as a normal, empty upload control.
+        })
+    }
+    if (wantsPhoto && match.photoUrl) {
+      fetchExistingStaffFile(match.photoUrl, 'profile-photo')
+        .then(async (file) => {
+          const fileRef = await uploadFile(file)
+          setFormState((current) => {
+            if (!isCurrent(current.primaryContact) || current.primaryContact.profileImageFileRef) return current
+            return {
+              ...current,
+              primaryContact: { ...current.primaryContact, profileImageFileRef: fileRef, profileImageFileName: file.name },
+            }
+          })
+        })
+        .catch(() => {
+          // Leave profileImageFileRef unset — field renders as a normal, empty upload control.
+        })
+    }
+  }
+  const applyLookupMatchRef = useRef(applyLookupMatch)
+  applyLookupMatchRef.current = applyLookupMatch
+
   useEffect(() => {
     const email = formState.primaryContact.email.trim().toLowerCase()
     if (!EMAIL_PATTERN.test(email) || lastLookedUpEmailRef.current === email) return
@@ -150,60 +238,7 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[], buildings
         .execute(email)
         .then((match) => {
           if (!match) return
-          setFormState((current) => {
-            // The staff member may have edited the email again while the
-            // request was in flight — only apply a match for the email it
-            // was actually issued for.
-            if (current.primaryContact.email.trim().toLowerCase() !== email) return current
-            return {
-              ...current,
-              primaryContact: {
-                ...current.primaryContact,
-                fullName: match.fullName,
-                phone: match.phone ?? current.primaryContact.phone,
-                preferredContactMethod: match.preferredContactMethod ?? current.primaryContact.preferredContactMethod,
-                visitorCategory: match.visitorCategoryId ?? current.primaryContact.visitorCategory,
-                idProofType: match.idProofType ?? current.primaryContact.idProofType,
-              },
-            }
-          })
-          toast.success('Existing visitor found — details prefilled.')
-
-          // Best-effort, same pattern as use-visitor-request-wizard.ts's
-          // existing-file reuse: fetch the signed URL into a real File and
-          // register it, so the upload control shows it prefilled instead
-          // of demanding a fresh upload. A fetch failure (expired
-          // signature, network) just leaves that field as a normal empty
-          // upload control — each file is independent of the other.
-          if (match.idProofUrl) {
-            fetchExistingStaffFile(match.idProofUrl, 'id-proof')
-              .then(async (file) => {
-                const fileRef = await uploadFile(file)
-                setFormState((current) => {
-                  if (current.primaryContact.email.trim().toLowerCase() !== email) return current
-                  return { ...current, primaryContact: { ...current.primaryContact, idProofFileRef: fileRef, idProofFileName: file.name } }
-                })
-              })
-              .catch(() => {
-                // Leave idProofFileRef unset — field renders as a normal, empty upload control.
-              })
-          }
-          if (match.photoUrl) {
-            fetchExistingStaffFile(match.photoUrl, 'profile-photo')
-              .then(async (file) => {
-                const fileRef = await uploadFile(file)
-                setFormState((current) => {
-                  if (current.primaryContact.email.trim().toLowerCase() !== email) return current
-                  return {
-                    ...current,
-                    primaryContact: { ...current.primaryContact, profileImageFileRef: fileRef, profileImageFileName: file.name },
-                  }
-                })
-              })
-              .catch(() => {
-                // Leave profileImageFileRef unset — field renders as a normal, empty upload control.
-              })
-          }
+          applyLookupMatchRef.current(match, (entry) => entry.email.trim().toLowerCase() === email)
         })
         .catch(() => {
           // No match, or the lookup failed — leave the form exactly as the
@@ -212,7 +247,29 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[], buildings
     }, 400)
 
     return () => clearTimeout(timeoutId)
-  }, [formState.primaryContact.email, lookupStaffVisitorByEmailUseCase, toast])
+  }, [formState.primaryContact.email, lookupStaffVisitorByEmailUseCase])
+
+  useEffect(() => {
+    const rawPhone = formState.primaryContact.phone.trim()
+    const digits = digitsOf(rawPhone)
+    if (digits.length < MIN_PHONE_LOOKUP_DIGITS || rawPhone.length > MAX_PHONE_LOOKUP_LENGTH) return
+    if (lastLookedUpPhoneRef.current === digits) return
+
+    const timeoutId = setTimeout(() => {
+      lastLookedUpPhoneRef.current = digits
+      lookupStaffVisitorByPhoneUseCase
+        .execute(rawPhone)
+        .then((match) => {
+          if (!match) return
+          applyLookupMatchRef.current(match, (entry) => digitsOf(entry.phone) === digits)
+        })
+        .catch(() => {
+          // No match, 422, or network failure — leave the form as typed.
+        })
+    }, 400)
+
+    return () => clearTimeout(timeoutId)
+  }, [formState.primaryContact.phone, lookupStaffVisitorByPhoneUseCase])
 
   const branchId = useMemo(
     () => branches?.find((branch) => branch.name === formState.visitInfo.location)?.id,

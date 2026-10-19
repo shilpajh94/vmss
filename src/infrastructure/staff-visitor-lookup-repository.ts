@@ -19,4 +19,14 @@ export class HttpStaffVisitorLookupRepository implements StaffVisitorLookupRepos
 
     return response.data
   }
+
+  async lookupByPhone(phone: string): Promise<StaffVisitorLookup | null> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.LOOKUP_STAFF_VISITOR_BY_PHONE,
+      queryParams: { phone },
+      parserSchema: StaffVisitorLookupResponseSchema,
+    })
+
+    return response.data
+  }
 }
