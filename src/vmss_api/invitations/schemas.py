@@ -75,6 +75,7 @@ class RegistrationSource(StrEnum):
 class ContactMethod(StrEnum):
     email = "email"
     sms = "sms"
+    whatsapp = "whatsapp"
 
 
 # --- Admin-authored answers, joined by field/group id — never by key -------
@@ -182,8 +183,8 @@ def _require_contact_for_method(
     """
     if method == ContactMethod.email and not email:
         raise ValueError("email is required when preferredContactMethod is 'email'")
-    if method == ContactMethod.sms and not phone:
-        raise ValueError("phone is required when preferredContactMethod is 'sms'")
+    if method in (ContactMethod.sms, ContactMethod.whatsapp) and not phone:
+        raise ValueError(f"phone is required when preferredContactMethod is '{method.value}'")
 
 
 # --- Shared nested request shapes, used by the single invitation-creation --
@@ -876,6 +877,14 @@ class InvitationEditRequest(CamelModel):
 
 class WatchlistOverrideRequest(CamelModel):
     reason: str = Field(min_length=1, max_length=500)
+
+
+class CheckInCodeRequest(CamelModel):
+    """Body of `PATCH /api/v2/invitations/code/check-in|check-out` — the code
+    travels in the body, not the path, so it stays out of access logs.
+    """
+
+    code: str = Field(pattern=r"^\d{8}$", min_length=8, max_length=8)
 
 
 class InvitationQrCheckInOut(CamelModel):

@@ -98,6 +98,9 @@ class Invitation(Base, TimestampMixin):
         Uuid, ForeignKey("visitor_categories.id"), index=True
     )
     tracking_id: Mapped[str] = mapped_column(String(20), unique=True, index=True)
+    # 8-digit code sent by SMS instead of a QR image; only issued at approval
+    # for contacts preferring `sms` (add-sms-numeric-checkin-code).
+    checkin_code: Mapped[str | None] = mapped_column(String(8), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set when `status` transitions to "approved" — either resolved

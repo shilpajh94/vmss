@@ -40,6 +40,8 @@ branch from the request body via the same `authorize_branch_id` helper.
 | PATCH | `/api/v2/invitations/{trackingId}/check-in` | None (public) | 20/minute per IP | **The single staff/desk-facing check-in endpoint** — the legacy `PATCH /api/v1/invitations/{id}/check-in` route has been removed outright (`checkin-approval-workflow-improvements`). Public, unauthenticated check-in by the invitation's `tracking_id` (`INV-XXXXXXXX`). Transitions an invitation whose `checkInStatus` is `unused` or `checked_out` to `checked_in` (`allow-multiple-checkins` — `checked_out` is not terminal, mirroring the QR endpoint's cycling rule below); `status` must also show the invitation was validly approved at some point (`approved`, `checked_in`, or `checked_out` — never `submitted`/`denied`). A call while already `checked_in` is a **200 idempotent no-op** (unchanged data, no re-stamped `checkedInAt`) rather than an error — this holds even if the invitation was checked in via the *other* check-in endpoint (QR), since both read/write the same `checkInStatus` column. 409 if never approved ("Invitation is not approved") or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key` (optional — the already-checked-in case is idempotent on its own; the header only dedupes two distinct concurrent requests). No branch-authorization check since there's no authenticated caller. Audit entries for this path use `actor_user_id = null` and `action = "invitation_checked_in_public"`. Success response (`InvitationCheckInOut`) matches the public tracking lookup's field set — primary contact name, host display name, purpose of visit, department, preferred visit date/time, expected duration, additional notes, carried items, co-visitors, and vehicles — alongside the id/trackingId/status fields it already carried. It does not carry `branchId`/`createdByUserId`/badge/watchlist-override internals, resolved branch/building/department, or any ID-proof field; those stay exclusive to `GET /invitations/{id}` (branch/building/department also on the QR endpoints below) — this endpoint has no authenticated caller to gate anything by, so it stays exactly as minimally-revealing as before. See "The tracking ID is a plain, human-readable identifier" below for how tenancy resolves with no bearer token. |
 | PATCH | `/api/v2/invitations/qr/{token}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated QR scan check-in — `token` is the encrypted, tamper-evident check-in token encoded in the invitation's QR image (see "QR check-in: encrypted token and the `checkInStatus` lifecycle" below), not the tracking ID. **No longer toggles** (`checkin-approval-workflow-improvements`): entry only, `unused`/`checked_out` → `checked_in`. Scanning while already `checked_in` is a **200 idempotent no-op** (not a silent toggle to checked-out, and not an error) — same "Verification passed" message, unchanged data; use the check-out endpoint below to actually exit. 400 for an invalid/tampered token or a not-yet-approved invitation, 409 for a watchlist block, 425 if scanned before `preferredVisitDate` (`qr-checkin-scheduling-photo-email`), 410 if scanned after `expiresAt` has passed. Audit entries use `action = "invitation_qr_checked_in"`. Accepts `Idempotency-Key` — a scanning client must mint a fresh key per physical scan, not reuse one across scans. Also includes resolved `branch`/`building`/`department` detail and the primary contact's/each visitor's `idProofType` — but never an ID-proof document URL, since there's no authenticated caller to gate one by; see "Resolved location and permission-gated ID-proof documents" below. |
 | PATCH | `/api/v2/invitations/qr/{token}/check-out` | None (public) | 20/minute per IP | Exit counterpart of the QR check-in route above, added by `checkin-approval-workflow-improvements` to replace its old check-in-URL toggle. `checked_in` → `checked_out`; 409 if not currently `checked_in`. Never expiry-blocked — a visit that legitimately continues past `expiresAt` can still be closed out. Audit entries use `action = "invitation_qr_checked_out"`. Accepts `Idempotency-Key`. Same resolved `branch`/`building`/`department`/`idProofType` fields as the check-in endpoint above. |
+| PATCH | `/api/v2/invitations/code/check-in` | None (public) | 10/minute per IP, plus lockout | Check-in with the numeric code sent by SMS instead of a QR (`add-sms-numeric-checkin-code`). Body `{"code": "<8 digits>"}` — in the body, not the path, so it stays out of access logs. Same rules and response (`InvitationQrCheckInOut`) as the QR check-in above: idempotent when already `checked_in`, 400 for an unknown code (generic "invalid code"), 409 watchlist, 425 before `preferredVisitDate`, 410 after `expiresAt`. 422 for a code that isn't exactly 8 digits. After `CHECKIN_CODE_MAX_FAILURES` unknown codes from one IP within `CHECKIN_CODE_LOCKOUT_SECONDS`, that IP gets 429 even for a valid code (503 if Redis is unreachable — it fails closed). Audit `action = "invitation_code_checked_in"`. Accepts `Idempotency-Key`. |
+| PATCH | `/api/v2/invitations/code/check-out` | None (public) | 10/minute per IP, plus lockout | Exit counterpart: `checked_in` → `checked_out`, 409 if not currently `checked_in`, never expiry-blocked. Same body, lockout and response as above. Audit `action = "invitation_code_checked_out"`. |
 | GET | `/api/v1/public/email-assets/{tenantId}/qr/{invitationId}.png?exp=&sig=` | None (public; HMAC-signed URL) | 60/minute per IP | (`serve-email-images-by-url-and-complete-contact`) The check-in QR image that confirmation and approved-reschedule emails reference by URL instead of embedding it. Returns `image/png`, regenerated from the token persisted at approval. The signature covers tenant id, invitation id and `exp` (the invitation's `expiresAt` + 7 days at send time): 403 on a mismatch — including a swapped tenant or invitation id — 410 once expired, 404 for an unknown tenant/invitation/QR row. See `docs/features/notifications.md` "Images load by URL". |
 | PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. Standard roles holding `invitations:checkout`: Admin, Security, and Reception (`grant-reception-checkout-permission` — backs the web board's manual Check Out button; existing tenants are backfilled by tenant migration `bff38dfa42e7`). Host does not. |
 | PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`, and dispatches a reschedule notification to the primary contact. 409 once `checked_in`/`checked_out`/`denied`. |
@@ -383,7 +385,7 @@ identity fields it's created with may be overridden:
   through creation.
 - **Phone fallback**: when the request omits `primaryContact.email`
   entirely (only `phone` supplied — requires `preferredContactMethod:
-  "sms"`, see `InvitationPrimaryContactCreate._check_contact`) and that
+  "sms"` or `"whatsapp"`, see `InvitationPrimaryContactCreate._check_contact`) and that
   phone matches a prior invitation's phone, the new invitation's
   `primaryContactFullName` **and** `primaryContactEmail` are both carried
   forward from that prior invitation, rather than leaving email null.
@@ -1268,6 +1270,16 @@ never checked `expiresAt`.
   single-configured-tenant shortcut described above). Revisit once a
   second tenant exists.
 
+## SMS check-in code (`add-sms-numeric-checkin-code`)
+
+An SMS can't carry a scannable QR image, so when an invitation is approved and its primary contact's `preferredContactMethod` is `sms`, approval also issues an 8-digit numeric `checkin_code` (stored on `invitations`, unique per tenant schema, generated once and never rotated). Email and WhatsApp contacts get none. The approval SMS then uses the `registration_confirmed_code` DLT template with variables `[trackingId, code]` — configure its ID as `FAST2SMS_TEMPLATE_REGISTRATION_CONFIRMED_CODE`. Until that ID is set, the SMS fails as "not configured" (not retried) and approval itself is unaffected.
+
+QR check-in/check-out and the badge QR keep working for the same invitation; only the SMS stops referencing a QR. The code endpoints are in the table above. The code is read back from the row by the notification task (never a task argument) and is never logged.
+
+Suggested DLT template text to register: `Your visit {#var#} is approved. Check-in code: {#var#}. Use it to check in and out at the gate.`
+
+Settings: `CHECKIN_CODE_MAX_FAILURES` (default 10) and `CHECKIN_CODE_LOCKOUT_SECONDS` (default 900). The failure counter lives at `vmss:{tenantId}:invitations:code_fail:{ip}`.
+
 ## Minimal disclosure on the email-based tracking lookup
 
 `GET /invitations/track?email=` returns only a tracking ID and status per
@@ -1296,9 +1308,14 @@ one of these four tasks resolves its own tenant-bound session from a
 (redelivery after removal), and declares
 `autoretry_for`/`retry_backoff`/`max_retries`, logging at `ERROR` with full
 context if retries are exhausted. Email goes out over SMTP
-(`invitations/notifications.py::SmtpEmailSender`); SMS has no gateway wired up
-yet (`UnconfiguredSmsSender` raises loudly rather than pretending to send —
-this is a known open item, not an oversight).
+(`invitations/notifications.py::SmtpEmailSender`); SMS goes through Fast2SMS DLT (`core/sms.py`) and WhatsApp through the
+Fast2SMS WhatsApp API (`core/whatsapp.py`), chosen by the primary contact's
+`preferredContactMethod` (`email`, `sms` or `whatsapp`; one channel only).
+Both send pre-approved templates (`registration_pending`,
+`registration_confirmed`, `registration_denied`, `visit_rescheduled`,
+`visit_details_changed`) with ordered variables; wording is in
+`openspec/changes/integrate-fast2sms-dlt-sms/design.md`. A blank setting or
+unusable phone number is not retried.
 
 **Every email is a branded Visimio HTML template**
 (`role-based-invitation-workflow`, restyled by
@@ -1312,8 +1329,8 @@ sent as a `multipart/alternative` message
 `heading` block. If a template fails to render for any reason, including a
 filter receiving an unexpected value type, the failure is logged at
 `ERROR` and the task sends a minimal plain-text email (tracking ID plus
-"look it up") instead of failing the dispatch. The SMS path sends its own
-short one-line `sms_body`, never the email text. See
+"look it up") instead of failing the dispatch. The SMS and WhatsApp paths send their own
+template and variables, never the email text. See
 `docs/features/notifications.md` "Notification emails" for the layout,
 the per-type content, and the name and date rules.
 

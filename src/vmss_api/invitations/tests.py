@@ -56,9 +56,11 @@ from vmss_api.core.database import AsyncSessionLocal
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.schemas import SortOrder
 from vmss_api.core.security import hash_password
+from vmss_api.core.sms import SmsTemplate
+from vmss_api.core.whatsapp import WhatsAppTemplate
 from vmss_api.form_builder.defaults import _stable_id as _form_builder_stable_id
+from vmss_api.invitations import code_lockout, notifications, qr_token, tasks
 from vmss_api.invitations import export as invitation_export
-from vmss_api.invitations import notifications, qr_token, tasks
 from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.models import (
     Invitation,
@@ -8698,11 +8700,12 @@ async def test_send_reschedule_notification_routes_to_sms_when_preferred(monkeyp
     monkeypatch.setattr(notifications, "email_sender", _RecordingEmailSender())
     fake_invitation = _FakeInvitation(
         tracking_id="INV-TEST0002",
-        preferred_visit_date="2026-12-01",
-        preferred_visit_time="15:30:00",
+        primary_contact_full_name="Asha Rao",
+        preferred_visit_date=date(2026, 12, 1),
+        preferred_visit_time=time(15, 30),
         primary_contact_preferred_contact_method="sms",
         primary_contact_email=None,
-        primary_contact_phone="+1 555 0100",
+        primary_contact_phone="+919876543210",
     )
     monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
 
@@ -8718,8 +8721,69 @@ async def test_send_reschedule_notification_routes_to_sms_when_preferred(monkeyp
 
     assert email_sent == []
     assert len(sms_sent) == 1
-    assert sms_sent[0]["to"] == "+1 555 0100"
-    assert "INV-TEST0002" in sms_sent[0]["body"]
+    assert sms_sent[0]["to"] == "+919876543210"
+    assert sms_sent[0]["template"] == SmsTemplate.visit_rescheduled
+    assert sms_sent[0]["variables"] == [
+        "Asha Rao",
+        "INV-TEST0002",
+        "01 Dec 2026 15:30",
+        "Reception",
+    ]
+
+
+async def test_send_reschedule_notification_routes_to_whatsapp_when_preferred(
+    monkeypatch,
+) -> None:
+    """specs/whatsapp-notifications "Reschedule by WhatsApp": one WhatsApp
+    template message, no email and no SMS.
+    """
+    sent: dict[str, list[dict]] = {"whatsapp": [], "sms": [], "email": []}
+
+    def _recorder(channel: str):
+        class _Recorder:
+            async def send(self, **kwargs):
+                sent[channel].append(kwargs)
+
+        return _Recorder()
+
+    monkeypatch.setattr(notifications, "whatsapp_sender", _recorder("whatsapp"))
+    monkeypatch.setattr(notifications, "sms_sender", _recorder("sms"))
+    monkeypatch.setattr(notifications, "email_sender", _recorder("email"))
+    fake_invitation = _FakeInvitation(
+        tracking_id="INV-TEST0003",
+        preferred_visit_date="2026-12-01",
+        preferred_visit_time="15:30:00",
+        primary_contact_preferred_contact_method="whatsapp",
+        primary_contact_email=None,
+        primary_contact_phone="9876543210",
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_reschedule_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(uuid.uuid4()),
+        },
+    )
+    result.get(propagate=True)
+
+    assert sent["email"] == [] and sent["sms"] == []
+    [call] = sent["whatsapp"]
+    assert call["to"] == "9876543210"
+    assert call["template"] == WhatsAppTemplate.visit_rescheduled
+    # `visitor_updates` template: name, tracking ID, when, point of contact.
+    assert len(call["variables"]) == 4
+    assert call["variables"][1] == "INV-TEST0003"
+
+
+def test_whatsapp_preference_requires_a_phone() -> None:
+    from vmss_api.invitations.schemas import ContactMethod, _require_contact_for_method
+
+    with pytest.raises(ValueError, match="phone is required"):
+        _require_contact_for_method("a@b.com", None, ContactMethod.whatsapp)
+    _require_contact_for_method(None, "9876543210", ContactMethod.whatsapp)
 
 
 # --- PATCH /invitations/{id}/extend ---------------------------------------------
@@ -12208,6 +12272,259 @@ async def test_is_relevant_to_tenant_schema_isolation(
         )
 
 
+# --- add-sms-numeric-checkin-code ---------------------------------------------
+
+
+class _FakeRedis:
+    """In-memory stand-in for the two Redis calls `code_lockout` makes, so the
+    lockout tests don't leak per-IP failure counters between runs."""
+
+    def __init__(self) -> None:
+        self.store: dict[str, int] = {}
+
+    async def get(self, key: str):
+        return self.store.get(key)
+
+    async def incr(self, key: str) -> int:
+        self.store[key] = self.store.get(key, 0) + 1
+        return self.store[key]
+
+    async def expire(self, key: str, seconds: int) -> None:
+        return None
+
+
+@pytest.fixture
+def fake_lockout_redis(monkeypatch) -> _FakeRedis:
+    fake = _FakeRedis()
+
+    async def _get_redis() -> _FakeRedis:
+        return fake
+
+    monkeypatch.setattr(code_lockout, "get_redis", _get_redis)
+    return fake
+
+
+def _sms_invitation(db_session: AsyncSession, branch_id: uuid.UUID, code: str, **overrides):
+    overrides.setdefault("primary_contact_preferred_contact_method", "sms")
+    overrides.setdefault("primary_contact_phone", "+919876543210")
+    return _approved_invitation(db_session, branch_id, checkin_code=code, **overrides)
+
+
+async def test_issue_checkin_code_only_for_sms_contacts_and_is_stable(
+    tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "SMS-Preferred Approved Invitation Gets a Numeric Check-In Code"."""
+    sms = _approved_invitation(
+        db_session, branch.id, primary_contact_preferred_contact_method="sms"
+    )
+    email = _approved_invitation(
+        db_session, branch.id, primary_contact_preferred_contact_method="email"
+    )
+    whatsapp = _approved_invitation(
+        db_session, branch.id, primary_contact_preferred_contact_method="whatsapp"
+    )
+    sms.checkin_code = email.checkin_code = whatsapp.checkin_code = None
+    db_session.add_all([sms, email, whatsapp])
+    await db_session.commit()
+
+    for invitation in (sms, email, whatsapp):
+        await invitations_service._issue_checkin_code(db_session, invitation)
+    assert sms.checkin_code is not None
+    assert re.fullmatch(r"\d{8}", sms.checkin_code)
+    assert email.checkin_code is None
+    assert whatsapp.checkin_code is None
+
+    first = sms.checkin_code
+    await invitations_service._issue_checkin_code(db_session, sms)
+    assert sms.checkin_code == first
+
+
+async def test_generate_unique_checkin_code_retries_on_collision(
+    branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    taken = _sms_invitation(db_session, branch.id, "00000001")
+    db_session.add(taken)
+    await db_session.commit()
+
+    draws = iter([1, 2])
+    monkeypatch.setattr(invitations_service.secrets, "randbelow", lambda _n: next(draws))
+    code = await invitations_service._generate_unique_checkin_code(InvitationRepository(db_session))
+    assert code == "00000002"
+
+
+async def test_send_approval_notification_sms_sends_code_template(monkeypatch) -> None:
+    """specs "Approval SMS Carries the Check-In Code Instead of a QR"."""
+    sms_sent: list[dict] = []
+
+    class _RecordingSmsSender:
+        async def send(self, **kwargs):
+            sms_sent.append(kwargs)
+
+    monkeypatch.setattr(notifications, "sms_sender", _RecordingSmsSender())
+    fake_invitation = _FakeInvitation(
+        id=uuid.uuid4(),
+        status="approved",
+        tracking_id="INV-TEST0010",
+        checkin_code="12345678",
+        primary_contact_preferred_contact_method="sms",
+        primary_contact_email=None,
+        primary_contact_phone="+919876543210",
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_approval_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(fake_invitation.id),
+            "qr_token": "fake-qr-token",
+        },
+    )
+    result.get(propagate=True)
+
+    assert len(sms_sent) == 1
+    assert sms_sent[0]["template"] == SmsTemplate.registration_confirmed_code
+    assert sms_sent[0]["variables"] == ["INV-TEST0010", "12345678"]
+
+
+async def test_send_approval_notification_sms_code_template_not_configured_not_retried(
+    monkeypatch,
+) -> None:
+    """The real sender with no template ID configured fails as not-configured,
+    which `send_approval_notification` excludes from autoretry."""
+    monkeypatch.setattr(settings, "fast2sms_api_key", "k")
+    monkeypatch.setattr(settings, "fast2sms_sender_id", "S")
+    monkeypatch.setattr(settings, "fast2sms_template_registration_confirmed_code", None)
+    monkeypatch.setattr(notifications, "sms_sender", notifications.Fast2SmsSender())
+    fake_invitation = _FakeInvitation(
+        id=uuid.uuid4(),
+        status="approved",
+        tracking_id="INV-TEST0011",
+        checkin_code="12345678",
+        primary_contact_preferred_contact_method="sms",
+        primary_contact_email=None,
+        primary_contact_phone="+919876543210",
+    )
+    monkeypatch.setattr(tasks, "tenant_session_scope", _fake_tenant_session_scope(fake_invitation))
+
+    result = await asyncio.to_thread(
+        tasks.send_approval_notification.apply,
+        kwargs={
+            "request_id": "test",
+            "tenant_schema": "tenant_acme_test",
+            "invitation_id": str(fake_invitation.id),
+            "qr_token": "fake-qr-token",
+        },
+    )
+    assert result.failed()
+    assert result.traceback is not None and "SmsNotConfiguredError" in result.traceback
+
+
+async def test_check_in_by_code_full_lifecycle(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    fake_lockout_redis,
+) -> None:
+    invitation = _sms_invitation(db_session, branch.id, "11112222")
+    db_session.add(invitation)
+    await db_session.commit()
+    body = {"code": "11112222"}
+
+    check_in = await client.patch("/api/v2/invitations/code/check-in", json=body)
+    assert check_in.status_code == 200
+    assert check_in.json()["data"]["checkInStatus"] == "checked_in"
+
+    repeat = await client.patch("/api/v2/invitations/code/check-in", json=body)
+    assert repeat.status_code == 200
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "checked_in"
+
+    check_out = await client.patch("/api/v2/invitations/code/check-out", json=body)
+    assert check_out.status_code == 200
+    assert check_out.json()["message"] == "Checked out successfully"
+
+    not_in = await client.patch("/api/v2/invitations/code/check-out", json=body)
+    assert not_in.status_code == 409
+
+    re_entry = await client.patch("/api/v2/invitations/code/check-in", json=body)
+    assert re_entry.status_code == 200
+    assert re_entry.json()["data"]["checkInStatus"] == "checked_in"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"expires_at": datetime.now(UTC) - timedelta(minutes=1)}, 410),
+        ({"preferred_visit_date": date.today() + timedelta(days=30)}, 425),
+        ({"watchlist_flagged": True}, 409),
+    ],
+)
+async def test_check_in_by_code_rejections(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    fake_lockout_redis,
+    overrides: dict,
+    expected: int,
+) -> None:
+    invitation = _sms_invitation(db_session, branch.id, "22223333", **overrides)
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch("/api/v2/invitations/code/check-in", json={"code": "22223333"})
+    assert response.status_code == expected
+
+
+async def test_check_in_by_code_unknown_and_malformed(
+    client: AsyncClient, tenant: Tenant, fake_lockout_redis
+) -> None:
+    unknown = await client.patch("/api/v2/invitations/code/check-in", json={"code": "99999999"})
+    assert unknown.status_code == 400
+    assert "invalid code" in unknown.json()["message"].lower()
+    for bad in ("1234", "abcdefgh", "123456789"):
+        response = await client.patch("/api/v2/invitations/code/check-in", json={"code": bad})
+        assert response.status_code == 422
+
+
+async def test_check_in_by_code_locks_out_ip_after_repeated_failures(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    fake_lockout_redis,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "checkin_code_max_failures", 3)
+    invitation = _sms_invitation(db_session, branch.id, "33334444")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    for _ in range(3):
+        wrong = await client.patch("/api/v2/invitations/code/check-in", json={"code": "00000000"})
+        assert wrong.status_code == 400
+
+    locked = await client.patch("/api/v2/invitations/code/check-in", json={"code": "33334444"})
+    assert locked.status_code == 429
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "unused"
+
+
+async def test_qr_check_in_still_works_for_sms_invitation(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _sms_invitation(db_session, branch.id, "44445555")
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    assert (await client.patch(f"/api/v2/invitations/qr/{token}/check-in")).status_code == 200
+    assert (await client.patch(f"/api/v2/invitations/qr/{token}/check-out")).status_code == 200
+
+
 # --- expire-invitation-at-end-of-visit-day ------------------------------------
 # `expiresAt` is 23:59:59 on the visit day in the visit timezone
 # (company `default_timezone` → tenant `timezone` → UTC), recomputed whenever
@@ -12416,8 +12733,65 @@ async def test_qr_check_in_visit_date_gate_uses_company_timezone(
     await db_session.commit()
     token = qr_token.encrypt_invitation_token(invitation.id)
 
-    response = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
-    assert response.status_code == 200, response.text
+    assert (await client.patch(f"/api/v2/invitations/qr/{token}/check-in")).status_code == 200
+    assert (await client.patch(f"/api/v2/invitations/qr/{token}/check-out")).status_code == 200
+
+
+async def test_checkin_code_tenant_isolation(
+    branch: Branch,
+    db_session: AsyncSession,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    invitation = _sms_invitation(db_session, branch.id, "55556666")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    other_schema = "tenant_other_checkin_code_test"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        assert await InvitationRepository(other_session).get_by_checkin_code("55556666") is None
+
+
+async def test_whatsapp_confirmed_uploads_qr_png_and_sends_media_id_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from vmss_api.core import whatsapp as whatsapp_module
+    from vmss_api.core.config import settings
+
+    monkeypatch.setattr(settings, "fast2sms_api_key", "k")
+    monkeypatch.setattr(settings, "fast2sms_whatsapp_phone_number_id", "123")
+    monkeypatch.setattr(settings, "fast2sms_whatsapp_template_registration_confirmed", "qr")
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/media"):
+            return httpx.Response(200, json={"id": "MEDIA1"})
+        return httpx.Response(200, json={"messages": [{"id": "wamid.1"}]})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        whatsapp_module.httpx,
+        "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
+    )
+    await whatsapp_module.Fast2WhatsAppSender().send(
+        to="9876543210",
+        template=whatsapp_module.WhatsAppTemplate.registration_confirmed,
+        variables=["Asha", "INV-1", "15 Oct 2026"],
+        header_image_png=b"\x89PNG",
+    )
+    assert requests[0].url.path.endswith("/media")
+    sent = json.loads(requests[1].content)
+    components = sent["template"]["components"]
+    assert components[0] == {
+        "type": "header",
+        "parameters": [{"type": "image", "image": {"id": "MEDIA1"}}],
+    }
+    assert [p["text"] for p in components[1]["parameters"]] == ["Asha", "INV-1", "15 Oct 2026"]
 
 
 async def test_visit_timezone_tenant_schema_isolation(

@@ -17,6 +17,8 @@ from vmss_api.core.email_rendering import TemplateRenderError, render_email
 from vmss_api.core.logging import logger
 from vmss_api.core.redis import get_redis
 from vmss_api.core.security import create_identity_verified_token
+from vmss_api.core.sms import SmsTemplate
+from vmss_api.core.whatsapp import WhatsAppTemplate
 from vmss_api.identity_verification import senders
 from vmss_api.identity_verification.masking import mask_identifier
 from vmss_api.identity_verification.schemas import Channel
@@ -116,9 +118,13 @@ async def request_otp(
             to=identifier, subject=subject, body=text_body, html_body=html_body
         )
     elif channel == Channel.sms:
-        await senders.sms_sender.send(to=identifier, body=body)
+        await senders.sms_sender.send(
+            to=identifier, template=SmsTemplate.otp, variables=[code, minutes]
+        )
     else:
-        await senders.whatsapp_sender.send(to=identifier, body=body)
+        await senders.whatsapp_sender.send(
+            to=identifier, template=WhatsAppTemplate.otp, variables=[code]
+        )
 
     logger.info("otp_requested", channel=channel.value, identifier=mask_identifier(identifier))
     return OtpDispatchResult(identifier=identifier, channel=channel)
