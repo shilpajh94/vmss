@@ -2198,7 +2198,12 @@ async def _get_invitation_by_checkin_code_or_400(
 
 
 async def check_in_by_code(
-    tenant_db: AsyncSession, code: str, *, tenant: Tenant, client_ip: str
+    tenant_db: AsyncSession,
+    code: str,
+    *,
+    tenant: Tenant,
+    client_ip: str,
+    device: Device | None = None,
 ) -> tuple[Invitation, str, bool]:
     """`PATCH /api/v2/invitations/code/check-in` (spec.md "Public Check-In by
     Code") — identical to `check_in_by_qr_token` apart from resolution.
@@ -2206,11 +2211,16 @@ async def check_in_by_code(
     invitation = await _get_invitation_by_checkin_code_or_400(
         tenant_db, code, tenant=tenant, client_ip=client_ip
     )
-    return await _check_in_resolved(tenant_db, invitation, tenant=tenant)
+    return await _check_in_resolved(tenant_db, invitation, tenant=tenant, device=device)
 
 
 async def check_out_by_code(
-    tenant_db: AsyncSession, code: str, *, tenant: Tenant, client_ip: str
+    tenant_db: AsyncSession,
+    code: str,
+    *,
+    tenant: Tenant,
+    client_ip: str,
+    device: Device | None = None,
 ) -> tuple[Invitation, str]:
     """`PATCH /api/v2/invitations/code/check-out` (spec.md "Public Check-Out
     by Code") — identical to `check_out_by_qr_token` apart from resolution.
@@ -2218,7 +2228,7 @@ async def check_out_by_code(
     invitation = await _get_invitation_by_checkin_code_or_400(
         tenant_db, code, tenant=tenant, client_ip=client_ip
     )
-    return await _check_out_resolved(tenant_db, invitation, tenant=tenant)
+    return await _check_out_resolved(tenant_db, invitation, tenant=tenant, device=device)
 
 
 async def check_out_invitation(
@@ -2960,27 +2970,19 @@ async def is_invitation_relevant_to(
     )
 
 
-async def get_prefill_by_email(
-    tenant_db: AsyncSession, email: str, branch_scope: BranchScope, user: User
-) -> InvitationLookupPrefillOut | None:
-    """Backs `GET /invitations/lookup-by-email`
-    (`add-invitation-lookup-by-email/proposal.md`) — `None` on no match is
-    the normal, expected case, not an error (spec.md "No Matching
-    Invitation Returns Null Data, Not an Error"). `photo_url` is resolved
-    unconditionally; `id_proof_url` only when `user` holds `documents:view`
-    at the matched invitation's branch — same split
-    `router.py::_to_invitation_detail_out` uses for the staff detail view
-    (design.md "photoUrl unconditional, idProofUrl gated...")."""
-    invitation = await InvitationRepository(tenant_db).get_latest_for_prefill_by_email(
-        email, branch_scope
-    )
-    if invitation is None:
-        return None
+async def _build_prefill(invitation: Invitation, user: User) -> InvitationLookupPrefillOut:
+    """`photo_url` is resolved unconditionally; `id_proof_url` only when
+    `user` holds `documents:view` at the matched invitation's branch — same
+    split `router.py::_to_invitation_detail_out` uses for the staff detail
+    view (add-invitation-lookup-by-email/design.md "photoUrl unconditional,
+    idProofUrl gated...").
+    """
     include_documents = user.has_permission("documents:view", invitation.branch_id)
     photo_key = invitation.primary_contact_photo_storage_key
     id_proof_key = invitation.primary_contact_id_proof_storage_key
     return InvitationLookupPrefillOut(
         full_name=invitation.primary_contact_full_name,
+        email=invitation.primary_contact_email,
         phone=invitation.primary_contact_phone,
         preferred_contact_method=invitation.primary_contact_preferred_contact_method,
         visitor_category_id=invitation.visitor_category_id,
@@ -2992,6 +2994,40 @@ async def get_prefill_by_email(
             else None
         ),
     )
+
+
+async def get_prefill_by_email(
+    tenant_db: AsyncSession, email: str, branch_scope: BranchScope, user: User
+) -> InvitationLookupPrefillOut | None:
+    """Backs `GET /invitations/lookup-by-email`
+    (`add-invitation-lookup-by-email/proposal.md`) — `None` on no match is
+    the normal, expected case, not an error (spec.md "No Matching
+    Invitation Returns Null Data, Not an Error")."""
+    invitation = await InvitationRepository(tenant_db).get_latest_for_prefill_by_email(
+        email, branch_scope
+    )
+    if invitation is None:
+        return None
+    return await _build_prefill(invitation, user)
+
+
+async def get_prefill_by_phone(
+    tenant_db: AsyncSession, phone_digits_value: str, branch_scope: BranchScope, user: User
+) -> InvitationLookupPrefillOut | None:
+    """Backs `GET /invitations/lookup-by-phone`
+    (`reception-phone-prefill-lookup/proposal.md`); `phone_digits_value` is
+    already normalized by the router. Logs the masked phone only."""
+    invitation = await InvitationRepository(tenant_db).get_latest_for_prefill_by_phone(
+        phone_digits_value, branch_scope
+    )
+    logger.info(
+        "invitation_prefill_lookup_by_phone",
+        phone=f"***{phone_digits_value[-2:]}",
+        matched=invitation is not None,
+    )
+    if invitation is None:
+        return None
+    return await _build_prefill(invitation, user)
 
 
 async def email_qr_png(schema_name: str, invitation_id: uuid.UUID) -> bytes | None:
