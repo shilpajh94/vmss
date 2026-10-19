@@ -3241,11 +3241,15 @@ async def test_list_invitations_success(
         "primaryContactPhone",
         "primaryContactPhotoUrl",
         "purposeOfVisit",
+        "departmentToVisit",
+        "departmentId",
+        "buildingId",
         "expiresAt",
         "submittedAt",
         "approvedAt",
         "archivedAt",
         "checkedOutAutomatically",
+        "statusChangedAt",
     }
     assert row["visitorCategoryId"] is None
     assert row["primaryContactPhotoUrl"] is None
@@ -3845,6 +3849,414 @@ async def test_list_invitations_invalid_sort_by_rejected(client: AsyncClient, us
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 422
+
+
+# --- sort-invitation-board-by-status-date -------------------------------------
+
+_STATUS_TIMESTAMP_FIELDS = (
+    "submitted_at",
+    "approved_at",
+    "checked_in_at",
+    "checked_out_at",
+    "denied_at",
+    "archived_at",
+    "approval_reverted_at",
+    "rescheduled_at",
+)
+
+
+def _build_status_row(
+    db_session: AsyncSession,
+    branch_id: uuid.UUID,
+    marker: str,
+    status: str,
+    **timestamps: datetime | None,
+):
+    """An invitation in `status` with every status timestamp pinned (None
+    unless given) so the factory's random values can't affect the sort, and
+    `marker` in the contact name so `search` isolates a test's own rows."""
+    overrides: dict[str, Any] = dict.fromkeys(_STATUS_TIMESTAMP_FIELDS)
+    overrides.update(timestamps)
+    return _build_invitation(
+        db_session,
+        branch_id,
+        status=status,
+        primary_contact_full_name=f"{marker} {uuid.uuid4().hex[:6]}",
+        **overrides,
+    )
+
+
+async def _list_rows(
+    client: AsyncClient, token: str, marker: str, **params: Any
+) -> list[dict[str, Any]]:
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"search": marker, "pageSize": 100, **params},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+async def test_list_invitations_status_changed_at_orders_checked_in_by_check_in_time(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Checked-in column orders by most recent check-in"."""
+    marker = f"chk{uuid.uuid4().hex[:8]}"
+    now = datetime.now(UTC)
+    recent_check_in = _build_status_row(
+        db_session,
+        branch.id,
+        marker,
+        "checked_in",
+        submitted_at=now - timedelta(days=3),
+        checked_in_at=now - timedelta(minutes=5),
+    )
+    older_check_in = _build_status_row(
+        db_session,
+        branch.id,
+        marker,
+        "checked_in",
+        submitted_at=now - timedelta(days=1),
+        checked_in_at=now - timedelta(hours=2),
+    )
+    db_session.add_all([recent_check_in, older_check_in])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    rows = await _list_rows(client, token, marker, status="checked_in", sortBy="status_changed_at")
+    assert [row["trackingId"] for row in rows] == [
+        recent_check_in.tracking_id,
+        older_check_in.tracking_id,
+    ]
+    assert datetime.fromisoformat(rows[0]["statusChangedAt"]) == recent_check_in.checked_in_at
+
+    default_rows = await _list_rows(client, token, marker, status="checked_in")
+    assert [row["trackingId"] for row in default_rows] == [
+        older_check_in.tracking_id,
+        recent_check_in.tracking_id,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("status", "timestamp_field"),
+    [
+        ("approved", "approved_at"),
+        ("checked_out", "checked_out_at"),
+        ("denied", "denied_at"),
+        ("archived", "archived_at"),
+    ],
+)
+async def test_list_invitations_status_changed_at_uses_each_status_timestamp(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    status: str,
+    timestamp_field: str,
+) -> None:
+    """spec.md "Each status column orders by its own status time" and
+    "Ascending order is supported" — the older-submitted row changed status
+    most recently, so it leads under `desc` and trails under `asc`."""
+    marker = f"st{uuid.uuid4().hex[:8]}"
+    now = datetime.now(UTC)
+    changed_recently = _build_status_row(
+        db_session,
+        branch.id,
+        marker,
+        status,
+        submitted_at=now - timedelta(days=5),
+        **{timestamp_field: now - timedelta(minutes=1)},
+    )
+    changed_earlier = _build_status_row(
+        db_session,
+        branch.id,
+        marker,
+        status,
+        submitted_at=now - timedelta(days=1),
+        **{timestamp_field: now - timedelta(hours=6)},
+    )
+    db_session.add_all([changed_recently, changed_earlier])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    desc_rows = await _list_rows(client, token, marker, status=status, sortBy="status_changed_at")
+    assert [row["trackingId"] for row in desc_rows] == [
+        changed_recently.tracking_id,
+        changed_earlier.tracking_id,
+    ]
+    asc_rows = await _list_rows(
+        client, token, marker, status=status, sortBy="status_changed_at", sortOrder="asc"
+    )
+    assert [row["trackingId"] for row in asc_rows] == [
+        changed_earlier.tracking_id,
+        changed_recently.tracking_id,
+    ]
+
+
+async def test_list_invitations_status_changed_at_requested_column_revert_and_reschedule(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "An invitation whose approval was reverted returns to the top
+    of Requested" / "An archived invitation rescheduled back into approval
+    is ordered by the reschedule" — and a plain reschedule of a
+    never-archived request does not move it."""
+    marker = f"req{uuid.uuid4().hex[:8]}"
+    now = datetime.now(UTC)
+    reverted = _build_status_row(
+        db_session,
+        branch.id,
+        marker,
+        "submitted",
+        submitted_at=now - timedelta(days=7),
+        approval_reverted_at=now - timedelta(minutes=1),
+    )
+    back_from_archive = _build_status_row(
+        db_session,
+        branch.id,
+        marker,
+        "submitted",
+        submitted_at=now - timedelta(days=10),
+        archived_at=now - timedelta(days=2),
+        rescheduled_at=now - timedelta(minutes=10),
+    )
+    submitted_today = _build_status_row(
+        db_session, branch.id, marker, "submitted", submitted_at=now - timedelta(hours=1)
+    )
+    plainly_rescheduled = _build_status_row(
+        db_session,
+        branch.id,
+        marker,
+        "submitted",
+        submitted_at=now - timedelta(days=4),
+        rescheduled_at=now - timedelta(seconds=30),
+    )
+    db_session.add_all([reverted, back_from_archive, submitted_today, plainly_rescheduled])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    rows = await _list_rows(client, token, marker, status="submitted", sortBy="status_changed_at")
+    assert [row["trackingId"] for row in rows] == [
+        reverted.tracking_id,
+        back_from_archive.tracking_id,
+        submitted_today.tracking_id,
+        plainly_rescheduled.tracking_id,
+    ]
+
+
+async def test_list_invitations_status_changed_at_interleaves_mixed_statuses(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Mixed-status list orders by each row's own status time"."""
+    marker = f"mix{uuid.uuid4().hex[:8]}"
+    now = datetime.now(UTC)
+    old_submission = now - timedelta(days=2)
+    checked_out = _build_status_row(
+        db_session,
+        branch.id,
+        marker,
+        "checked_out",
+        submitted_at=old_submission,
+        checked_in_at=now - timedelta(hours=3),
+        checked_out_at=now - timedelta(minutes=2),
+    )
+    submitted = _build_status_row(
+        db_session, branch.id, marker, "submitted", submitted_at=now - timedelta(hours=1)
+    )
+    approved = _build_status_row(
+        db_session,
+        branch.id,
+        marker,
+        "approved",
+        submitted_at=old_submission,
+        approved_at=now - timedelta(hours=5),
+    )
+    db_session.add_all([checked_out, submitted, approved])
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    rows = await _list_rows(client, token, marker, sortBy="status_changed_at")
+    assert [row["trackingId"] for row in rows] == [
+        checked_out.tracking_id,
+        submitted.tracking_id,
+        approved.tracking_id,
+    ]
+
+
+@pytest.mark.parametrize("sort_by", [None, "created_at", "status_changed_at"])
+async def test_list_invitations_equal_sort_keys_page_stably(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    sort_by: str | None,
+) -> None:
+    """spec.md "Equal sort keys page stably" — every row shares one
+    timestamp, so only the id tie-breaker decides the order."""
+    marker = f"tie{uuid.uuid4().hex[:8]}"
+    same_moment = datetime.now(UTC) - timedelta(hours=1)
+    invitations = [
+        _build_status_row(
+            db_session,
+            branch.id,
+            marker,
+            "approved",
+            submitted_at=same_moment,
+            approved_at=same_moment,
+            created_at=same_moment,
+        )
+        for _ in range(7)
+    ]
+    db_session.add_all(invitations)
+    await db_session.commit()
+
+    token = await _login(client, user.email)
+    params: dict[str, Any] = {"search": marker, "pageSize": 2}
+    if sort_by is not None:
+        params["sortBy"] = sort_by
+    seen: list[str] = []
+    for page in range(1, 5):
+        response = await client.get(
+            "/api/v1/invitations",
+            params={**params, "page": page},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200
+        seen.extend(row["trackingId"] for row in response.json()["data"])
+    assert sorted(seen) == sorted(invitation.tracking_id for invitation in invitations)
+
+
+async def test_status_changed_at_matches_sql_ordering(
+    branch: Branch, db_session: AsyncSession
+) -> None:
+    """design.md Decision 2 — `service.status_changed_at` (the row field)
+    must agree with the SQL expression `sortBy=status_changed_at` orders
+    by, for every status and for the revert/reschedule/fallback cases."""
+    marker = f"par{uuid.uuid4().hex[:8]}"
+    now = datetime.now(UTC)
+    minutes = iter(range(1, 100))
+
+    def ago() -> datetime:
+        return now - timedelta(minutes=next(minutes) * 7)
+
+    invitations = [
+        _build_status_row(db_session, branch.id, marker, "submitted", submitted_at=ago()),
+        _build_status_row(
+            db_session,
+            branch.id,
+            marker,
+            "submitted",
+            submitted_at=now - timedelta(days=9),
+            approval_reverted_at=ago(),
+        ),
+        _build_status_row(
+            db_session,
+            branch.id,
+            marker,
+            "submitted",
+            submitted_at=now - timedelta(days=9),
+            archived_at=now - timedelta(days=8),
+            rescheduled_at=ago(),
+        ),
+        _build_status_row(
+            db_session,
+            branch.id,
+            marker,
+            "submitted",
+            submitted_at=ago(),
+            rescheduled_at=now,
+        ),
+        _build_status_row(
+            db_session, branch.id, marker, "approved", submitted_at=ago(), approved_at=ago()
+        ),
+        _build_status_row(
+            db_session, branch.id, marker, "checked_in", submitted_at=ago(), checked_in_at=ago()
+        ),
+        _build_status_row(
+            db_session,
+            branch.id,
+            marker,
+            "checked_out",
+            submitted_at=ago(),
+            checked_out_at=ago(),
+        ),
+        _build_status_row(
+            db_session, branch.id, marker, "denied", submitted_at=ago(), denied_at=ago()
+        ),
+        _build_status_row(
+            db_session, branch.id, marker, "archived", submitted_at=ago(), archived_at=ago()
+        ),
+        # Missing status timestamp: falls back to submitted_at.
+        _build_status_row(db_session, branch.id, marker, "approved", submitted_at=ago()),
+    ]
+    db_session.add_all(invitations)
+    await db_session.commit()
+
+    rows, total = await InvitationRepository(db_session).list_page(
+        branch_scope="all",
+        status=None,
+        registration_type=None,
+        source=None,
+        search=marker,
+        page=1,
+        page_size=100,
+        sort_by="status_changed_at",
+        sort_order=SortOrder.desc,
+    )
+    assert total == len(invitations)
+    python_order = sorted(
+        invitations,
+        key=lambda invitation: (
+            -invitations_service.status_changed_at(invitation).timestamp(),
+            invitation.id,
+        ),
+    )
+    assert [row.id for row in rows] == [invitation.id for invitation in python_order]
+
+
+async def test_list_invitations_status_changed_at_sort_requires_permission(
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
+) -> None:
+    token = issue_token(user_without_permissions)
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"sortBy": "status_changed_at"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+async def test_list_invitations_status_changed_at_tenant_schema_isolation(
+    make_tenant_schema,
+    open_tenant_session,
+    branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    """testing-standards.md §2 — the status-time sort reads only the
+    session's own tenant schema."""
+    marker = f"iso{uuid.uuid4().hex[:8]}"
+    db_session.add(
+        _build_status_row(db_session, branch.id, marker, "approved", submitted_at=datetime.now(UTC))
+    )
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_invitation_status_sort"
+    await make_tenant_schema(other_schema)
+
+    async with open_tenant_session(other_schema) as other_session:
+        rows, total = await InvitationRepository(other_session).list_page(
+            branch_scope="all",
+            status=None,
+            registration_type=None,
+            source=None,
+            search=marker,
+            page=1,
+            page_size=20,
+            sort_by="status_changed_at",
+            sort_order=SortOrder.desc,
+        )
+        assert rows == []
+        assert total == 0
 
 
 # --- relevantToMe filter (invitation-relevant-to-me-and-delegation) ----------

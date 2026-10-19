@@ -2813,6 +2813,31 @@ async def track_by_email(tenant_db: AsyncSession, email: str) -> list[Invitation
     return await InvitationRepository(tenant_db).list_by_primary_contact_email(email)
 
 
+def status_changed_at(invitation: Invitation) -> datetime:
+    """Python mirror of `repository._status_changed_at_expr`, so the list
+    row's `statusChangedAt` is exactly the value `sortBy=status_changed_at`
+    ordered by (sort-invitation-board-by-status-date/design.md Decision 2).
+    Keep the two in step — `test_status_changed_at_matches_sql_ordering`
+    checks it.
+    """
+    by_status: datetime | None
+    if invitation.status == "submitted":
+        candidates = [invitation.submitted_at, invitation.approval_reverted_at]
+        if invitation.archived_at is not None:
+            candidates.append(invitation.rescheduled_at)
+        present = [value for value in candidates if value is not None]
+        by_status = max(present) if present else None
+    else:
+        by_status = {
+            "approved": invitation.approved_at,
+            "checked_in": invitation.checked_in_at,
+            "checked_out": invitation.checked_out_at,
+            "denied": invitation.denied_at,
+            "archived": invitation.archived_at,
+        }.get(invitation.status)
+    return by_status or invitation.submitted_at or invitation.created_at
+
+
 async def list_invitations_page(
     tenant_db: AsyncSession,
     *,

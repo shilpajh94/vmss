@@ -928,7 +928,7 @@ Query params:
 | Param | Type | Default | Notes |
 |---|---|---|---|
 | `page` / `pageSize` | int | `1` / `20` (max `100`) | Standard pagination (`api-conventions.md` §1). |
-| `sortBy` | `submitted_at` \| `created_at` | `submitted_at` | Whitelisted — any other value is rejected with a validation error rather than passed to the database. |
+| `sortBy` | `submitted_at` \| `created_at` \| `status_changed_at` | `submitted_at` | Whitelisted — any other value is rejected with a validation error rather than passed to the database. `status_changed_at` orders by when each invitation entered its current status — see "Sorting by status time" below. Every sort breaks ties by invitation id, so paging never repeats or skips a row. |
 | `sortOrder` | `asc` \| `desc` | `desc` | |
 | `status` | string | unset | Exact match against the invitation's `status` column. |
 | `registrationType` | `individual` \| `group` | unset | |
@@ -947,6 +947,30 @@ expiry/submission timestamps — deliberately narrower than
 `currentApprovalStep` either, so the underlying query never needs to
 eager-load a child collection or run the extra current-step lookup for a
 list view that doesn't render either (`query-performance.md` §1-2).
+Each row also carries `statusChangedAt` (below).
+
+### Sorting by status time
+
+`sortBy=status_changed_at` (`sort-invitation-board-by-status-date`) orders
+rows by when each invitation entered its **current** status, so a status
+column on the web board reads "most recent activity first". With the
+default `submitted_at` sort, a visitor who checked in a minute ago but
+submitted last week sits below one who submitted yesterday.
+
+| Current status | Status time |
+|---|---|
+| `submitted` | Latest of `submittedAt`, the approval-revert time, and — only if the invitation was archived and rescheduled back into approval — the reschedule time |
+| `approved` | `approvedAt` |
+| `checked_in` | Latest check-in time |
+| `checked_out` | Latest check-out time |
+| `denied` | Denial time |
+| `archived` | `archivedAt` |
+
+A missing timestamp falls back to `submittedAt`, then the creation time,
+so the value is never null. Each row exposes it as `statusChangedAt`
+whatever `sortBy` is. The value is computed in the query, not stored, so
+it uses no index; each board column is already narrowed by status and
+branch. The default sort is unchanged, so existing clients are unaffected.
 
 ## Exporting invitations
 
