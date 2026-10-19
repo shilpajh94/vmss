@@ -13,7 +13,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
-from factories import BranchFactory, RoleFactory, VisitorCategoryFactory
+from factories import (
+    BranchFactory,
+    BuildingFactory,
+    CompanyFactory,
+    RoleFactory,
+    VisitorCategoryFactory,
+)
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import AuditLog, User
@@ -271,6 +277,28 @@ async def test_create_individual_walk_in_registration_success(
     assert data["trackingId"].startswith("INV-")
 
 
+async def test_walk_in_registration_expires_at_end_of_visit_day(
+    client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession, branch: Branch
+) -> None:
+    """expire-invitation-at-end-of-visit-day — a walk-in's pass runs to the
+    end of its visit day in the company's timezone, not a fixed TTL from
+    submission.
+    """
+    building = BuildingFactory.build(id=uuid.uuid4(), branch_id=branch.id)
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), default_timezone="Asia/Kolkata"))
+    db_session.add(building)
+    await db_session.commit()
+
+    payload = _individual_payload()
+    payload["visitDetails"]["branchId"] = str(branch.id)
+    payload["visitDetails"]["buildingId"] = str(building.id)
+    data = await _create_walk_in_success(client, registration_device_raw_key, payload=payload)
+    # `_individual_payload()` schedules 2026-08-19 → 23:59:59 IST.
+    assert datetime.fromisoformat(data["expiresAt"]) == datetime(
+        2026, 8, 19, 18, 29, 59, tzinfo=UTC
+    )
+
+
 async def test_create_group_walk_in_registration_success(
     client: AsyncClient, registration_device_raw_key: str, db_session: AsyncSession
 ) -> None:
@@ -397,6 +425,8 @@ async def test_walk_in_registration_response_has_no_check_in_state(
         "submittedAt",
         "approvedAt",
         "currentApprovalStep",
+        "archivedAt",
+        "checkedOutAutomatically",
     }
 
 

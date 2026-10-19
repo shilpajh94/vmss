@@ -22,6 +22,10 @@ touch its `DeviceToken` table or the FCM SDK directly; they call
 |---|---|---|---|
 | POST | `/api/v1/notifications/devices` | Any authenticated staff user (self-service, like `GET /auth/me` — no permission check) | Registers/updates a device token (`fcmToken`, `platform`: `web`/`android`/`ios`) against the caller's own account. Re-registering an already-known token updates it in place; a token previously owned by a *different* user is reassigned to the caller (a device is physically one browser/app install). |
 | DELETE | `/api/v1/notifications/devices/{fcmToken}` | Any authenticated staff user | Removes one of the caller's own device tokens. A no-op (still 200), not an error, if the token was never registered or belongs to someone else. |
+| GET | `/api/v1/notifications` | Any authenticated staff user (own notifications only) | The caller's in-app notifications, newest first. `page`/`pageSize` (default 20, max 100) and an optional `unreadOnly=true`. Each item: `id`, `title`, `body`, `data` (the push `data` verbatim), `createdAt`, `readAt`. |
+| GET | `/api/v1/notifications/unread-count` | Any authenticated staff user | `{"unreadCount": n}` for the caller. |
+| PATCH | `/api/v1/notifications/{id}/read` | Any authenticated staff user | Marks one of the caller's notifications read. Already read: 200, original `readAt` kept. Another user's or an unknown id: 404. |
+| POST | `/api/v1/notifications/read-all` | Any authenticated staff user | Marks every unread notification of the caller read, in one statement. |
 
 ## Dispatch primitive
 
@@ -106,6 +110,39 @@ carry a `Role`/`User` id already implied by which step is current, nothing
   cleared) is deleted from `device_tokens` so future dispatches stop
   attempting delivery to it — a transient send failure is left for the
   task's own retry instead.
+
+## In-app feed and push state (`fix-web-push-and-add-notification-feed`)
+
+- **Every dispatch is recorded.** `send_push` writes one `notifications`
+  row per recipient (same title, body and `data` as the push), then commits,
+  *before* looking up devices or calling FCM. A recipient with no device,
+  or a send that exhausts its retries, still gets the in-app row.
+  `(dispatch_id, user_id)` is unique: the service generates `dispatch_id`
+  at enqueue time, so a redelivery or retry is an `ON CONFLICT DO NOTHING`.
+  A recording failure logs `WARNING notification_record_failed` and the
+  push still goes out.
+- **Zero-device sends are logged.** `INFO push_no_registered_devices` with
+  `recipient_count`. If staff report "no notifications", check this line
+  and `device_tokens` first — a push to nobody used to look like success.
+- **Retention.** Rows older than 90 days are hard-deleted by the
+  visit-lifecycle sweep (every 15 minutes per tenant), in a commit separate
+  from the sweep's own work. The sweep's log line reports
+  `notifications_purged`.
+- **Portal bell.** Loads the feed and unread count from the API on sign-in,
+  on tab focus, every 60 seconds while visible, and when a foreground push
+  arrives (the push itself only triggers a refetch). Clicking an item marks
+  it read and opens its invitation; "Mark all read" calls `read-all`.
+- **Push state.** The bell panel shows this browser's state: *enabled*,
+  *off* (with **Enable notifications**), *blocked* (re-allow in the
+  browser's site settings — a page can't re-prompt), or *unavailable*
+  (insecure context or unsupported browser). Only that button asks for
+  permission, because browsers suppress prompts not triggered by a click.
+  Sign-in, tab focus and the 30-minute timer only re-register a browser
+  that already granted permission.
+- **Testing push locally.** Open the portal on `http://localhost:5173` or
+  the DDEV HTTPS URL. On `http://<LAN-IP>:5173` the browser isn't a secure
+  context, so push shows as unavailable (the in-app feed still works).
+  Restart the DDEV Celery worker after changing `notifications/tasks.py`.
 
 ## Notification emails (`redesign-notification-email-templates`)
 

@@ -34,6 +34,7 @@ from vmss_api.form_builder.schemas import (
     ReorderRequest,
 )
 from vmss_api.form_builder.snapshot import is_supported_field_type, supported_field_rows
+from vmss_api.form_builder.step_icons import resolve_step_icon
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/form-builder", tags=["form-builder"])
@@ -78,7 +79,7 @@ def _step_out(
         key=step.key,
         name=step.name,
         description=step.description,
-        icon=step.icon,
+        icon=resolve_step_icon(step.icon, step.name),
         is_system=step.is_system,
         is_locked=step.is_locked,
         is_active=step.is_active,

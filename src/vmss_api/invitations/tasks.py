@@ -29,16 +29,17 @@ inline only as the fallback.
 import asyncio
 import uuid
 from collections.abc import Sequence
-from datetime import date, time
-from typing import Any
+from datetime import UTC, date, datetime, time
+from typing import Any, Literal
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.repository import UserRepository
 from vmss_api.core import portal_links
 from vmss_api.core.celery_app import celery_app
-from vmss_api.core.database import engine, tenant_session_scope
+from vmss_api.core.database import AsyncSessionLocal, engine, tenant_session_scope
 from vmss_api.core.email_assets import base_url as email_asset_base_url
 from vmss_api.core.email_assets import sign_qr_url
 from vmss_api.core.email_rendering import TemplateRenderError, display_name, render_email
@@ -49,8 +50,10 @@ from vmss_api.invitations import notifications
 from vmss_api.invitations.models import Invitation
 from vmss_api.invitations.qr import generate_qr_png, generate_qr_png_rgb
 from vmss_api.invitations.repository import InvitationRepository
+from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.models import Branch
 from vmss_api.org_structure.repository import CompanyRepository
+from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
 
 # `cid:` content id the confirmation and reschedule templates' QR block
@@ -227,9 +230,11 @@ _CTAS: dict[str, tuple[str, str]] = {
     "reschedule": ("View your visit", "visitor_track_url"),
     "edit": ("View your visit", "visitor_track_url"),
     "denial": ("Submit a new request", "visitor_request_url"),
+    "approval_reverted": ("Track your request", "visitor_track_url"),
     "submission_role": ("Review request", "staff_login_url"),
     "host_assigned": ("View visit", "staff_login_url"),
     "poc_assigned": ("View visit", "staff_login_url"),
+    "staff_lifecycle_update": ("View visit", "staff_login_url"),
 }
 
 
@@ -475,6 +480,63 @@ async def _send_denial_notification(tenant_schema: str, invitation_id: str) -> N
                 sms_template=SmsTemplate.registration_denied,
                 sms_variables=_denial_variables(invitation),
                 html_body=html_body,
+            )
+    finally:
+        await engine.dispose()
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_approval_revert_notification(
+    self, *, request_id: str, tenant_schema: str, invitation_id: str
+) -> None:
+    """add-invitation-approval-revert/design.md Decision 8: same shape as
+    `send_denial_notification`. Idempotent per `background-jobs.md` §2 — it
+    only sends while the invitation is still in the reverted state, so a
+    redelivery after a quick re-approval doesn't tell the visitor their
+    (now valid again) pass is on hold.
+    """
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(_send_approval_revert_notification(tenant_schema, invitation_id))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "approval_revert_notification_dispatch_exhausted",
+                tenant_schema=tenant_schema,
+                invitation_id=invitation_id,
+            )
+        raise
+
+
+async def _send_approval_revert_notification(tenant_schema: str, invitation_id: str) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            if (
+                invitation is None
+                or invitation.status != "submitted"
+                or invitation.approval_reverted_at is None
+            ):
+                return
+            # The revert reason is deliberately not passed: it's an internal
+            # note, not addressed to the visitor (design.md Decision 8).
+            subject, body, html_body = _render_or_fallback(
+                "approval_reverted",
+                await _invitation_email_context(
+                    session,
+                    invitation,
+                    recipient_name=invitation.primary_contact_full_name,
+                    recipient_email=invitation.primary_contact_email,
+                ),
+                fallback_subject="Your visit approval has been withdrawn",
+            )
+            sms_body = (
+                f"The approval for your visit has been withdrawn while it's reviewed "
+                f"again; your pass won't admit you until it's re-approved. Tracking ID: "
+                f"{invitation.tracking_id}."
+            )
+            await _dispatch(
+                invitation, subject=subject, body=body, sms_body=sms_body, html_body=html_body
             )
     finally:
         await engine.dispose()
@@ -837,6 +899,128 @@ async def _send_poc_creation_notification(
         await engine.dispose()
 
 
+# --- Staff lifecycle email (staff-lifecycle-emails-and-dashboard-landing) ---
+
+StaffLifecycleEvent = Literal["denied", "approval_reverted", "rescheduled"]
+
+# The statuses a reschedule can never leave an invitation in — a staff email
+# arriving after the visit was denied or already happened is stale.
+_RESCHEDULE_STALE_STATUSES = frozenset({"denied", "checked_in", "checked_out"})
+
+
+def _staff_event_still_current(invitation: Invitation, event: StaffLifecycleEvent) -> bool:
+    """Redelivery guard (background-jobs.md §2; invitations spec "Denial,
+    Approval Revert, and Reschedule Email the Responsible Staff"): skip the
+    send once the invitation no longer reflects `event`.
+    """
+    if event == "denied":
+        return invitation.status == "denied"
+    if event == "approval_reverted":
+        return invitation.status == "submitted" and invitation.approval_reverted_at is not None
+    return invitation.status not in _RESCHEDULE_STALE_STATUSES
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_staff_lifecycle_notification(
+    self,
+    *,
+    request_id: str,
+    tenant_schema: str,
+    invitation_id: str,
+    recipient_user_id: str,
+    actor_user_id: str,
+    event: StaffLifecycleEvent,
+) -> None:
+    """Emails one responsible staff member (resolved host or named point of
+    contact) that the invitation was denied, had its approval reverted, or
+    was rescheduled. One task per recipient, with the recipient passed
+    explicitly — same reasoning as `send_host_creation_notification`: a
+    retry never re-sends to someone already emailed, and an
+    exhausted-retries log names who went unnotified.
+    """
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(
+            _send_staff_lifecycle_notification(
+                tenant_schema, invitation_id, recipient_user_id, actor_user_id, event
+            )
+        )
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "staff_lifecycle_notification_dispatch_exhausted",
+                tenant_schema=tenant_schema,
+                invitation_id=invitation_id,
+                recipient_user_id=recipient_user_id,
+                lifecycle_event=event,
+            )
+        raise
+
+
+async def _send_staff_lifecycle_notification(
+    tenant_schema: str,
+    invitation_id: str,
+    recipient_user_id: str,
+    actor_user_id: str,
+    event: StaffLifecycleEvent,
+) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            if invitation is None or not _staff_event_still_current(invitation, event):
+                return
+            users = UserRepository(session)
+            recipient = await users.get_active(uuid.UUID(recipient_user_id))
+            if recipient is None:
+                logger.warning(
+                    "staff_lifecycle_notification_recipient_not_found",
+                    tenant_schema=tenant_schema,
+                    invitation_id=invitation_id,
+                    recipient_user_id=recipient_user_id,
+                    lifecycle_event=event,
+                )
+                return
+            # A deactivated actor still has a usable name; only a deleted one
+            # falls back to the template's "A staff member".
+            actor = await users.get_by_id(uuid.UUID(actor_user_id))
+            if event == "denied":
+                reason = invitation.denial_reason
+            elif event == "approval_reverted":
+                reason = invitation.approval_revert_reason
+            else:
+                reason = None
+            subject, body, html_body = _render_or_fallback(
+                "staff_lifecycle_update",
+                {
+                    **await _invitation_email_context(
+                        session,
+                        invitation,
+                        recipient_name=recipient.full_name,
+                        recipient_email=recipient.email,
+                    ),
+                    "event": event,
+                    "actor_name": actor.full_name if actor is not None else None,
+                    "reason": reason,
+                    "awaiting_approval": invitation.status == "submitted",
+                    "visitor_phone": invitation.primary_contact_phone,
+                    "visitor_email": invitation.primary_contact_email,
+                },
+                fallback_subject=_STAFF_LIFECYCLE_FALLBACK_SUBJECTS[event],
+            )
+            await notifications.email_sender.send(
+                to=recipient.email, subject=subject, body=body, html_body=html_body
+            )
+    finally:
+        await engine.dispose()
+
+
+_STAFF_LIFECYCLE_FALLBACK_SUBJECTS: dict[str, str] = {
+    "denied": "A visit request was denied",
+    "approval_reverted": "Approval withdrawn for a visit",
+    "rescheduled": "A visit has been rescheduled",
+}
+
+
 async def _dispatch(
     invitation: Invitation,
     *,
@@ -885,3 +1069,90 @@ async def _dispatch(
             template=sms_template,
             variables=sms_variables,
         )
+
+
+# --- Visit-lifecycle sweep (auto-checkout-and-archive-no-shows) --------------
+# Same dispatcher/per-tenant split as `reports.tasks` (background-jobs
+# "Scheduled Tasks Run Independently of Any Request"). No Redis run-marker:
+# each transition is a conditional bulk `UPDATE`, so a redelivered or
+# concurrent run simply matches nothing already transitioned (design.md D2).
+
+
+@celery_app.task(bind=True)
+def dispatch_visit_lifecycle_sweep(self) -> None:
+    structlog.contextvars.bind_contextvars(task="dispatch_visit_lifecycle_sweep")
+    asyncio.run(_dispatch_visit_lifecycle_sweep())
+
+
+async def _dispatch_visit_lifecycle_sweep() -> None:
+    try:
+        async with AsyncSessionLocal() as session:
+            stmt = select(Tenant).where(Tenant.is_active.is_(True), Tenant.deleted_at.is_(None))
+            tenants = list((await session.execute(stmt)).scalars().all())
+    finally:
+        await engine.dispose()
+    for tenant in tenants:
+        try:
+            sweep_tenant_visit_lifecycle.delay(
+                tenant_id=str(tenant.id), tenant_schema=tenant.schema_name
+            )
+        except Exception:
+            logger.error(
+                "visit_lifecycle_sweep_enqueue_failed",
+                tenant_id=str(tenant.id),
+                tenant_schema=tenant.schema_name,
+            )
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def sweep_tenant_visit_lifecycle(self, *, tenant_id: str, tenant_schema: str) -> None:
+    structlog.contextvars.bind_contextvars(tenant_id=tenant_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(_sweep_tenant_visit_lifecycle(tenant_schema))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "visit_lifecycle_sweep_exhausted",
+                tenant_id=tenant_id,
+                tenant_schema=tenant_schema,
+            )
+        raise
+
+
+async def _sweep_tenant_visit_lifecycle(tenant_schema: str) -> None:
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            now = datetime.now(UTC)
+            checked_out, archived = await sweep_visit_lifecycle(session, now=now)
+            # Rides the same per-tenant tick rather than a second beat
+            # schedule; committed separately, after the lifecycle commit, so
+            # a purge error can't undo a check-out or archive.
+            purged = await notifications_service.purge_expired_notifications(session, now=now)
+    finally:
+        await engine.dispose()
+    logger.info(
+        "visit_lifecycle_swept",
+        tenant_schema=tenant_schema,
+        auto_checked_out=checked_out,
+        archived=archived,
+        notifications_purged=purged,
+    )
+
+
+async def sweep_visit_lifecycle(session: AsyncSession, *, now: datetime) -> tuple[int, int]:
+    """Auto-checks-out expired check-ins and archives approved no-shows, each
+    with its audit rows, in one commit. Sends nothing — both transitions are
+    deliberately silent (visit-lifecycle-sweep spec). Returns
+    `(auto_checked_out, archived)` counts.
+    """
+    repo = InvitationRepository(session)
+    checked_out_ids = await repo.auto_check_out_expired(now=now)
+    await repo.record_system_audit(
+        checked_out_ids, action="invitation_auto_checked_out", diff={"reason": "expired"}
+    )
+    archived_ids = await repo.archive_expired_no_shows(now=now)
+    await repo.record_system_audit(
+        archived_ids, action="invitation_archived", diff={"reason": "no_show"}
+    )
+    await session.commit()
+    return len(checked_out_ids), len(archived_ids)

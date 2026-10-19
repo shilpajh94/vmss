@@ -42,6 +42,7 @@ from vmss_api.core.deps import (
     get_tenant,
     get_tenant_db,
     require_permission,
+    require_permission_anywhere,
 )
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
@@ -418,7 +419,7 @@ def _to_role_out(role: Role) -> RoleOut:
 @router.get(
     "/permissions",
     response_model=PaginatedEnvelope[PermissionOut],
-    dependencies=[Depends(require_permission("roles:view"))],
+    dependencies=[Depends(require_permission_anywhere("roles:view"))],
 )
 async def list_permissions(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -471,7 +472,7 @@ async def create_role(
 @router.get(
     "/roles",
     response_model=PaginatedEnvelope[RoleOut],
-    dependencies=[Depends(require_permission("roles:view"))],
+    dependencies=[Depends(require_permission_anywhere("roles:view"))],
 )
 async def list_roles(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
@@ -491,7 +492,7 @@ async def list_roles(
 @router.get(
     "/roles/verify",
     response_model=Envelope[RoleVerifyResponse],
-    dependencies=[Depends(require_permission("roles:view"))],
+    dependencies=[Depends(require_permission_anywhere("roles:view"))],
 )
 async def verify_role_name(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
@@ -504,7 +505,7 @@ async def verify_role_name(
 @router.get(
     "/roles/{role_id}",
     response_model=Envelope[RoleOut],
-    dependencies=[Depends(require_permission("roles:view"))],
+    dependencies=[Depends(require_permission_anywhere("roles:view"))],
 )
 async def get_role(
     role_id: uuid.UUID, tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)]

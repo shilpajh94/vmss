@@ -3,10 +3,18 @@ from datetime import date, datetime, time
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.core.schemas import CamelModel
+from vmss_api.devices.schemas import DeviceBriefOut
 
 InvitationSortableField = Literal["submitted_at", "created_at"]
 """Whitelisted `sortBy` values for `GET /invitations` (api-conventions.md
@@ -33,12 +41,13 @@ class InvitationStatus(StrEnum):
     application code — `models.py`'s state-machine writes (`create_invitation`,
     `approve_if_submitted`, `deny_if_submitted`, `check_in_if_eligible`/
     `check_in_by_qr_if_eligible`, `check_out_if_checked_in`/
-    `check_out_by_qr_if_eligible`, `service.py`'s `initial_status`). `pending`
-    is the column's DB-level default but is never produced by any code path
-    (see `models.py::Invitation`'s own docstring) — deliberately excluded so
-    `GET /invitations?status=` can't be used to fish for a state that no row
-    can actually be in. `api-conventions.md` §1's real-enum-filter rule,
-    matching `RegistrationType`/`RegistrationSource` above.
+    `check_out_by_qr_if_eligible`, `archive_expired_no_shows`, `service.py`'s
+    `initial_status`). `pending` is the column's DB-level default but is
+    never produced by any code path (see `models.py::Invitation`'s own
+    docstring) — deliberately excluded so `GET /invitations?status=` can't
+    be used to fish for a state that no row can actually be in.
+    `api-conventions.md` §1's real-enum-filter rule, matching
+    `RegistrationType`/`RegistrationSource` above.
     """
 
     submitted = "submitted"
@@ -46,6 +55,7 @@ class InvitationStatus(StrEnum):
     denied = "denied"
     checked_in = "checked_in"
     checked_out = "checked_out"
+    archived = "archived"
 
 
 class RegistrationSource(StrEnum):
@@ -449,6 +459,14 @@ class InvitationOut(CamelModel):
     submitted_at: datetime | None
     approved_at: datetime | None
     current_approval_step: CurrentApprovalStepOut | None = None
+    # Populated only by the check-in/out endpoints (devices spec).
+    check_in_device: DeviceBriefOut | None = None
+    check_out_device: DeviceBriefOut | None = None
+    approval_reverted_at: datetime | None = None
+    approval_reverted_by_user_id: uuid.UUID | None = None
+    approval_revert_reason: str | None = None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
 
 
 class InvitationLookupPrefillOut(CamelModel):
@@ -498,6 +516,36 @@ class InvitationListItemOut(CamelModel):
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
+
+
+# --- add-invitation-export ---------------------------------------------------
+
+
+class ExportFormat(StrEnum):
+    csv = "csv"
+    xlsx = "xlsx"
+
+
+class InvitationExportDateRange(CamelModel):
+    """`GET /invitations/export`'s inclusive, tenant-local calendar-date
+    range (add-invitation-export/design.md Decision 3) — which timestamp it
+    applies to depends on the `status` filter, resolved in the repository.
+    """
+
+    date_from: date | None = None
+    date_to: date | None = None
+
+    @model_validator(mode="after")
+    def _check_order(self) -> Self:
+        if (
+            self.date_from is not None
+            and self.date_to is not None
+            and self.date_from > self.date_to
+        ):
+            raise ValueError("dateFrom must not be later than dateTo")
+        return self
 
 
 # --- API-12: public tracking lookup -----------------------------------------
@@ -602,6 +650,10 @@ class InvitationCheckInOut(CamelModel):
     submitted_at: datetime | None
     approved_at: datetime | None
     current_approval_step: CurrentApprovalStepOut | None = None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
+    check_in_device: DeviceBriefOut | None = None
+    check_out_device: DeviceBriefOut | None = None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
@@ -652,6 +704,8 @@ class InvitationTrackingOut(CamelModel):
     submitted_at: datetime | None
     approved_at: datetime | None
     current_approval_step: CurrentApprovalStepOut | None = None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
     visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 
@@ -726,10 +780,15 @@ class InvitationDetailOut(CamelModel):
     current_approval_step: CurrentApprovalStepOut | None = None
     denial_reason: str | None
     denied_at: datetime | None
+    approval_reverted_at: datetime | None = None
+    approval_reverted_by_user_id: uuid.UUID | None = None
+    approval_revert_reason: str | None = None
     checked_in_at: datetime | None
     checked_in_by_user_id: uuid.UUID | None
     checked_out_at: datetime | None
     checked_out_by_user_id: uuid.UUID | None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
     badge_number: str | None
     badge_issued_at: datetime | None
     badge_reprint_count: int
@@ -743,6 +802,12 @@ class InvitationDetailOut(CamelModel):
 
 class InvitationDenyRequest(CamelModel):
     reason: str = Field(min_length=1, max_length=500)
+
+
+class InvitationRevertApprovalRequest(CamelModel):
+    # Stripped before the length check, so a whitespace-only reason is a
+    # 422, not a stored blank (spec.md "Reason is mandatory").
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
 class InvitationRescheduleRequest(CamelModel):
@@ -835,6 +900,8 @@ class InvitationQrCheckInOut(CamelModel):
     tracking_id: str
     status: str
     check_in_status: str
+    check_in_device: DeviceBriefOut | None = None
+    check_out_device: DeviceBriefOut | None = None
     registration_type: str
     source: str
     visitor_category_id: uuid.UUID | None
@@ -845,7 +912,6 @@ class InvitationQrCheckInOut(CamelModel):
     primary_contact_photo_url: str | None = None
     primary_contact_preferred_contact_method: ContactMethod
     primary_contact_id_proof_type: str | None = None
-    primary_contact_id_proof_url: str | None = None
     primary_contact_email: str | None
     primary_contact_phone: str | None
     host_id: uuid.UUID | None = None
@@ -872,8 +938,10 @@ class InvitationQrCheckInOut(CamelModel):
     approved_at: datetime | None
     checked_in_at: datetime | None
     checked_out_at: datetime | None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
     expires_at: datetime
-    visitors: list[InvitationVisitorDetailOut]
+    visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 
 

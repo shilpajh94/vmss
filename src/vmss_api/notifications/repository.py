@@ -1,11 +1,13 @@
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.notifications.models import DeviceToken
+from vmss_api.notifications.models import DeviceToken, Notification
 
 
 class DeviceTokenRepository:
@@ -79,3 +81,112 @@ class DeviceTokenRepository:
             return
         stmt = delete(DeviceToken).where(DeviceToken.fcm_token.in_(tokens))
         await self.session.execute(stmt)
+
+
+class NotificationRepository:
+    """In-app notifications in whichever tenant schema `session` is bound to.
+    Every read/update method takes the caller's `user_id` and filters on it —
+    there is no method that returns or changes another user's rows
+    (fix-web-push-and-add-notification-feed design.md D3). Hard-deleted, so
+    not a `TenantScopedRepository` (same posture as `DeviceTokenRepository`).
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def record_for_users(
+        self,
+        *,
+        dispatch_id: uuid.UUID,
+        user_ids: Sequence[uuid.UUID],
+        title: str,
+        body: str,
+        data: dict[str, Any],
+    ) -> None:
+        """One bulk insert per dispatch (query-performance.md §3). The unique
+        `(dispatch_id, user_id)` makes a redelivered dispatch a no-op
+        (background-jobs.md §2).
+        """
+        if not user_ids:
+            return
+        stmt = (
+            insert(Notification)
+            .values(
+                [
+                    {
+                        "id": uuid.uuid4(),
+                        "dispatch_id": dispatch_id,
+                        "user_id": user_id,
+                        "title": title,
+                        "body": body,
+                        "data": data,
+                    }
+                    for user_id in dict.fromkeys(user_ids)
+                ]
+            )
+            .on_conflict_do_nothing(constraint="uq_notifications_dispatch_user")
+        )
+        await self.session.execute(stmt)
+
+    async def list_page(
+        self, user_id: uuid.UUID, *, unread_only: bool, page: int, page_size: int
+    ) -> tuple[list[Notification], int]:
+        conditions = [Notification.user_id == user_id]
+        if unread_only:
+            conditions.append(Notification.read_at.is_(None))
+        total_stmt = select(func.count()).select_from(Notification).where(*conditions)
+        total = (await self.session.execute(total_stmt)).scalar_one()
+        stmt = (
+            select(Notification)
+            .where(*conditions)
+            .order_by(Notification.created_at.desc(), Notification.id.desc())
+            .limit(page_size)
+            .offset((page - 1) * page_size)
+        )
+        return list((await self.session.execute(stmt)).scalars().all()), total
+
+    async def count_unread(self, user_id: uuid.UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(Notification)
+            .where(Notification.user_id == user_id, Notification.read_at.is_(None))
+        )
+        return (await self.session.execute(stmt)).scalar_one()
+
+    async def mark_read(
+        self, user_id: uuid.UUID, notification_id: uuid.UUID
+    ) -> Notification | None:
+        """Returns the caller's notification, read. `None` when the id is
+        unknown or belongs to someone else — the caller can't tell which.
+        An already-read row is returned unchanged, keeping its `read_at`.
+        """
+        stmt = (
+            update(Notification)
+            .where(
+                Notification.id == notification_id,
+                Notification.user_id == user_id,
+                Notification.read_at.is_(None),
+            )
+            .values(read_at=func.now())
+            .returning(Notification)
+        )
+        updated = (await self.session.execute(stmt)).scalar_one_or_none()
+        if updated is not None:
+            return updated
+        existing_stmt = select(Notification).where(
+            Notification.id == notification_id, Notification.user_id == user_id
+        )
+        return (await self.session.execute(existing_stmt)).scalar_one_or_none()
+
+    async def mark_all_read(self, user_id: uuid.UUID) -> None:
+        stmt = (
+            update(Notification)
+            .where(Notification.user_id == user_id, Notification.read_at.is_(None))
+            .values(read_at=func.now())
+        )
+        await self.session.execute(stmt)
+
+    async def purge_older_than(self, cutoff: datetime) -> int:
+        stmt = delete(Notification).where(Notification.created_at < cutoff)
+        result = cast(CursorResult[Any], await self.session.execute(stmt))
+        return result.rowcount

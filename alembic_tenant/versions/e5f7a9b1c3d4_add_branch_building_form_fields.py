@@ -46,7 +46,7 @@ def _target_schema() -> str:
 def _backfill_rows(conn: sa.Connection, schema: str) -> dict[str, dict[str, str]]:
     """Returns {step_id: {field_key: field_id}} for every visit_details step."""
     steps = conn.execute(
-        text(f"SELECT id FROM {schema}.form_steps WHERE key = 'visit_details'")
+        text(f"SELECT id FROM \"{schema}\".form_steps WHERE key = 'visit_details'")
     ).fetchall()
     ids: dict[str, dict[str, str]] = {}
     for step in steps:
@@ -54,7 +54,7 @@ def _backfill_rows(conn: sa.Connection, schema: str) -> dict[str, dict[str, str]
             r.key: str(r.id)
             for r in conn.execute(
                 text(
-                    f"SELECT id, key FROM {schema}.form_fields "
+                    f'SELECT id, key FROM "{schema}".form_fields '
                     "WHERE step_id = :step_id AND key IN ('branch', 'building')"
                 ),
                 {"step_id": step.id},
@@ -63,7 +63,7 @@ def _backfill_rows(conn: sa.Connection, schema: str) -> dict[str, dict[str, str]
         if "branch" not in existing:
             conn.execute(
                 text(
-                    f"UPDATE {schema}.form_fields SET order_index = order_index + 2 "
+                    f'UPDATE "{schema}".form_fields SET order_index = order_index + 2 '
                     "WHERE step_id = :step_id"
                 ),
                 {"step_id": step.id},
@@ -72,7 +72,7 @@ def _backfill_rows(conn: sa.Connection, schema: str) -> dict[str, dict[str, str]
                 field_id = uuid.uuid4()
                 conn.execute(
                     text(
-                        f"INSERT INTO {schema}.form_fields (id, step_id, key, label, help_text, "
+                        f'INSERT INTO "{schema}".form_fields (id, step_id, key, label, help_text, '
                         "field_type, is_system, is_locked, is_active, is_required, width, "
                         "hide_label, order_index) VALUES (:id, :step_id, :key, :label, "
                         ":help_text, 'dropdown_select', true, true, true, :required, 'full', "
@@ -134,7 +134,7 @@ def upgrade() -> None:
     conn = op.get_bind()
     row_ids = _backfill_rows(conn, schema)
 
-    for row in conn.execute(text(f"SELECT id, snapshot FROM {schema}.form_config_versions")):
+    for row in conn.execute(text(f'SELECT id, snapshot FROM "{schema}".form_config_versions')):
         snapshot: list[dict[str, Any]] = row.snapshot
         changed = False
         for step in snapshot:
@@ -142,7 +142,8 @@ def upgrade() -> None:
         if changed:
             conn.execute(
                 text(
-                    f"UPDATE {schema}.form_config_versions SET snapshot = :snapshot WHERE id = :id"
+                    f'UPDATE "{schema}".form_config_versions '
+                    "SET snapshot = :snapshot WHERE id = :id"
                 ).bindparams(sa.bindparam("snapshot", type_=JSONB)),
                 {"id": row.id, "snapshot": snapshot},
             )

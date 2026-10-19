@@ -26,6 +26,8 @@ class TenantContext:
     """Tenant data safe to use after the registry session ends."""
 
     id: uuid.UUID
+    name: str
+    slug: str
     schema_name: str
     is_active: bool
     timezone: str
@@ -114,6 +116,8 @@ async def get_tenant(
         # Copy ORM values while the registry session is active.
         tenant_context = TenantContext(
             id=tenant.id,
+            name=tenant.name,
+            slug=tenant.slug,
             schema_name=tenant.schema_name,
             is_active=tenant.is_active,
             timezone=tenant.timezone,
@@ -181,6 +185,32 @@ def require_permission(permission_code: str):
         user: Annotated[User, Depends(get_current_user)],
     ) -> User:
         if not user.has_permission(permission_code):
+            logger.warning(
+                "permission_denied",
+                permission_code=permission_code,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permission",
+            )
+
+        return user
+
+    return _check
+
+
+def require_permission_anywhere(permission_code: str):
+    """RBAC check for reading tenant-wide configuration (workflow rules, the
+    role catalog, visitor categories) that isn't tied to any one branch: a
+    grant at any branch is enough. `require_permission` only accepts a
+    company-wide grant, which wrongly rejected branch-scoped Reception from
+    reading the workflow it approves against (auth spec "Role Grants Are
+    Scoped Per Branch/Location")."""
+
+    def _check(
+        user: Annotated[User, Depends(get_current_user)],
+    ) -> User:
+        if not user.authorized_branch_ids(permission_code):
             logger.warning(
                 "permission_denied",
                 permission_code=permission_code,

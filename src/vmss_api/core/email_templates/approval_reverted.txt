@@ -1,0 +1,17 @@
+{% extends "base.txt" %}
+{% import "_macros.txt" as m with context %}
+{% block content %}
+{% set when = visit_date | visit_datetime(visit_time) %}
+The approval for your visit{% if when %} on {{ when }}{% endif %} has been withdrawn and your request is being reviewed again. Until it's approved again, the pass we sent you won't admit you.
+
+WHAT HAPPENS NEXT
+{{ m.checklist([
+  "We'll email you again, with your pass, as soon as the request is approved.",
+  "Get in touch with the front desk" ~ (" on " ~ front_desk_contact if front_desk_contact else "") ~ " if you have questions about your visit.",
+]) }}
+
+{% if cta %}
+{{ cta.label }}: {{ cta.url }}
+
+{% endif %}Please quote your tracking ID {{ tracking_id }} in any follow-up.
+{% endblock %}

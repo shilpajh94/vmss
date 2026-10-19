@@ -5,9 +5,15 @@ import qrcode
 
 
 def _render_png(data: str) -> bytes:
-    image = qrcode.make(data)
+    # A fixed mask skips qrcode's search over all eight masks for the one
+    # with the lowest readability-penalty score. Decoders read every mask, and
+    # the search was ~70% of a render that runs on each approval, holding the
+    # GIL the whole time (QA load test, full-stack-qa-and-load-testing).
+    code = qrcode.QRCode(mask_pattern=0)
+    code.add_data(data)
+    code.make(fit=True)
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
+    code.make_image().save(buffer, format="PNG")
     return buffer.getvalue()
 
 

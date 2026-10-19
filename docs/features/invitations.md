@@ -30,18 +30,20 @@ generic required-header `422`. This now matches
 `docs/features/org_structure.md`'s creation endpoints, which resolve their
 branch from the request body via the same `authorize_branch_id` helper.
 | GET | `/api/v1/invitations` | `invitations:view-all`, branch-scoped (or none with `relevantToMe=true`) | — | Paginated listing of invitations for triage/browsing — see "Listing invitations" below. |
+| GET | `/api/v1/invitations/export` | `invitations:export`, branch-scoped | — | Downloads the matching invitations as CSV or XLSX, one row per visitor, filtered by status and date range — see "Exporting invitations" below. |
 | GET | `/api/v1/invitations/lookup-by-email?email=` | `invitations:create`, branch-scoped | — | Staff-authenticated prefill lookup for the create-invitation wizard's Primary Contact fields: returns `fullName`, `phone`, `preferredContactMethod`, `visitorCategoryId`, `idProofType`, `photoUrl`, `idProofUrl` from the most recent non-deleted invitation, among the caller's authorized branches, whose primary contact email matches case-insensitively. `data: null` (not 404) when no match — same "no match is not an error" convention `GET /api/v1/visitor-portal/me` uses. Gated by `invitations:create` rather than `invitations:view` since it only exists to prefill that create flow. `photoUrl` is always resolved when captured (same as every other invitation response); `idProofUrl` is `null` unless the caller additionally holds `documents:view` at the matched invitation's branch — `invitations:create` alone does not grant identity-document visibility, matching `GET /invitations/{id}`'s existing gating. See `openspec/changes/add-invitation-lookup-by-email/`. |
 | GET | `/api/v1/invitations/track?trackingId=` | None (public) | 20/minute per IP | Full status/visit-summary lookup by the human-readable tracking ID — returns `InvitationTrackingOut`, including every visit-detail and carried-item field captured at creation. |
 | GET | `/api/v1/invitations/track?email=` | None (public) | 20/minute per IP | Minimal lookup (tracking ID + status only per matching invitation) by the primary contact's email — returns a `list[InvitationTrackingSummaryOut]`, a narrower shape than the tracking-ID lookup above; see "Minimal disclosure" below. Both shapes are declared on the endpoint's `response_model` as a union, so `/docs`/`/openapi.json` document the email-lookup branch's real (narrower, list) shape instead of the tracking-ID branch's. |
 | GET | `/api/v1/invitations/{id}` | `invitations:view-all` at the invitation's branch, **or** being a participant (same rule as `relevantToMe`) | — | Authenticated, staff-facing single-invitation detail view (`InvitationDetailOut`) — branch/source/creator plus every lifecycle field below. Also includes resolved `branch`/`building`/`department` detail (alongside the existing raw `branchId`) and the primary contact's/each visitor's `idProofType`; `idProofUrl` (the raw document image) is included only when the caller additionally holds `documents:view` — see "Resolved location and permission-gated ID-proof documents" below. 404 unknown id; 404 also for a non-participant who holds only `invitations:view` there (e.g. an uninvolved host — existence is not disclosed); 403 if the caller holds no invitation-viewing grant there at all. See "Who can see an invitation" and "Lifecycle actions" below. |
 | PATCH | `/api/v1/invitations/{id}/deny` | `invitations:deny` at the invitation's branch | — | Transitions a `submitted` invitation to `denied`, with a mandatory `reason`, and dispatches a denial notification. 409 if not currently `submitted`. |
+| PATCH | `/api/v1/invitations/{id}/revert-approval` | `invitations:revert-approval` at the invitation's branch | — | Sends an `approved` invitation whose visitor has never checked in back to `submitted`, with a mandatory `reason` (1–500 chars, trimmed). Resets and restarts its approval workflow from step 1. See [Reverting an approval](#reverting-an-approval). 409 if not `approved` or already checked in. |
 | PATCH | `/api/v2/invitations/{trackingId}/check-in` | None (public) | 20/minute per IP | **The single staff/desk-facing check-in endpoint** — the legacy `PATCH /api/v1/invitations/{id}/check-in` route has been removed outright (`checkin-approval-workflow-improvements`). Public, unauthenticated check-in by the invitation's `tracking_id` (`INV-XXXXXXXX`). Transitions an invitation whose `checkInStatus` is `unused` or `checked_out` to `checked_in` (`allow-multiple-checkins` — `checked_out` is not terminal, mirroring the QR endpoint's cycling rule below); `status` must also show the invitation was validly approved at some point (`approved`, `checked_in`, or `checked_out` — never `submitted`/`denied`). A call while already `checked_in` is a **200 idempotent no-op** (unchanged data, no re-stamped `checkedInAt`) rather than an error — this holds even if the invitation was checked in via the *other* check-in endpoint (QR), since both read/write the same `checkInStatus` column. 409 if never approved ("Invitation is not approved") or if `watchlistFlagged` is set and not yet overridden. Accepts `Idempotency-Key` (optional — the already-checked-in case is idempotent on its own; the header only dedupes two distinct concurrent requests). No branch-authorization check since there's no authenticated caller. Audit entries for this path use `actor_user_id = null` and `action = "invitation_checked_in_public"`. Success response (`InvitationCheckInOut`) matches the public tracking lookup's field set — primary contact name, host display name, purpose of visit, department, preferred visit date/time, expected duration, additional notes, carried items, co-visitors, and vehicles — alongside the id/trackingId/status fields it already carried. It does not carry `branchId`/`createdByUserId`/badge/watchlist-override internals, resolved branch/building/department, or any ID-proof field; those stay exclusive to `GET /invitations/{id}` (branch/building/department also on the QR endpoints below) — this endpoint has no authenticated caller to gate anything by, so it stays exactly as minimally-revealing as before. See "The tracking ID is a plain, human-readable identifier" below for how tenancy resolves with no bearer token. |
 | PATCH | `/api/v2/invitations/qr/{token}/check-in` | None (public) | 20/minute per IP | Public, unauthenticated QR scan check-in — `token` is the encrypted, tamper-evident check-in token encoded in the invitation's QR image (see "QR check-in: encrypted token and the `checkInStatus` lifecycle" below), not the tracking ID. **No longer toggles** (`checkin-approval-workflow-improvements`): entry only, `unused`/`checked_out` → `checked_in`. Scanning while already `checked_in` is a **200 idempotent no-op** (not a silent toggle to checked-out, and not an error) — same "Verification passed" message, unchanged data; use the check-out endpoint below to actually exit. 400 for an invalid/tampered token or a not-yet-approved invitation, 409 for a watchlist block, 425 if scanned before `preferredVisitDate` (`qr-checkin-scheduling-photo-email`), 410 if scanned after `expiresAt` has passed. Audit entries use `action = "invitation_qr_checked_in"`. Accepts `Idempotency-Key` — a scanning client must mint a fresh key per physical scan, not reuse one across scans. Also includes resolved `branch`/`building`/`department` detail and the primary contact's/each visitor's `idProofType` — but never an ID-proof document URL, since there's no authenticated caller to gate one by; see "Resolved location and permission-gated ID-proof documents" below. |
 | PATCH | `/api/v2/invitations/qr/{token}/check-out` | None (public) | 20/minute per IP | Exit counterpart of the QR check-in route above, added by `checkin-approval-workflow-improvements` to replace its old check-in-URL toggle. `checked_in` → `checked_out`; 409 if not currently `checked_in`. Never expiry-blocked — a visit that legitimately continues past `expiresAt` can still be closed out. Audit entries use `action = "invitation_qr_checked_out"`. Accepts `Idempotency-Key`. Same resolved `branch`/`building`/`department`/`idProofType` fields as the check-in endpoint above. |
 | PATCH | `/api/v2/invitations/code/check-in` | None (public) | 10/minute per IP, plus lockout | Check-in with the numeric code sent by SMS instead of a QR (`add-sms-numeric-checkin-code`). Body `{"code": "<8 digits>"}` — in the body, not the path, so it stays out of access logs. Same rules and response (`InvitationQrCheckInOut`) as the QR check-in above: idempotent when already `checked_in`, 400 for an unknown code (generic "invalid code"), 409 watchlist, 425 before `preferredVisitDate`, 410 after `expiresAt`. 422 for a code that isn't exactly 8 digits. After `CHECKIN_CODE_MAX_FAILURES` unknown codes from one IP within `CHECKIN_CODE_LOCKOUT_SECONDS`, that IP gets 429 even for a valid code (503 if Redis is unreachable — it fails closed). Audit `action = "invitation_code_checked_in"`. Accepts `Idempotency-Key`. |
 | PATCH | `/api/v2/invitations/code/check-out` | None (public) | 10/minute per IP, plus lockout | Exit counterpart: `checked_in` → `checked_out`, 409 if not currently `checked_in`, never expiry-blocked. Same body, lockout and response as above. Audit `action = "invitation_code_checked_out"`. |
 | GET | `/api/v1/public/email-assets/{tenantId}/qr/{invitationId}.png?exp=&sig=` | None (public; HMAC-signed URL) | 60/minute per IP | (`serve-email-images-by-url-and-complete-contact`) The check-in QR image that confirmation and approved-reschedule emails reference by URL instead of embedding it. Returns `image/png`, regenerated from the token persisted at approval. The signature covers tenant id, invitation id and `exp` (the invitation's `expiresAt` + 7 days at send time): 403 on a mismatch — including a swapped tenant or invitation id — 410 once expired, 404 for an unknown tenant/invitation/QR row. See `docs/features/notifications.md` "Images load by URL". |
-| PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. |
+| PATCH | `/api/v1/invitations/{id}/check-out` | `invitations:checkout` at the invitation's branch | — | Transitions a `checked_in` invitation to `checked_out`, closing the visit. 409 if not `checked_in`. Accepts `Idempotency-Key`. Standard roles holding `invitations:checkout`: Admin, Security, and Reception (`grant-reception-checkout-permission` — backs the web board's manual Check Out button; existing tenants are backfilled by tenant migration `bff38dfa42e7`). Host does not. |
 | PATCH | `/api/v1/invitations/{id}/reschedule` | `invitations:reschedule` at the invitation's branch | — | Changes `preferredVisitDate`/`preferredVisitTime` while `submitted` or `approved`, and dispatches a reschedule notification to the primary contact. 409 once `checked_in`/`checked_out`/`denied`. |
 | PATCH | `/api/v1/invitations/{id}/edit` | `invitations:edit` at the invitation's branch (**and** `invitations:approve` when `pocUserId`/`pocRoleId` is supplied) | — | (`role-based-invitation-workflow`) Edits any subset of `purposeOfVisit`/`purposeId`, `preferredVisitDate`, `preferredVisitTime`, `expectedDuration`/`durationId`, `departmentToVisit`/`departmentId`, `additionalNotes` while `submitted` or `approved` — the same eligible-status window as reschedule/extend, additive alongside them rather than replacing either. Never accepts the visitor's own personal fields, `visitorCategoryId`, or `hostId`/`hostNameOrEmail` — any of those in the request body is rejected with a validation error (`extra="forbid"`); host reassignment stays exclusively the delegation endpoint's job (see "Every invitation starts owned by a role" below). Also accepts `pocUserId`/`pocRoleId` (`add-invitation-point-of-contact`, see "Point of contact" below) — at most one of the two, never both (422 otherwise). Dispatches an email to the primary contact describing what changed (reflecting the current `pocName`, whether or not it was the field that changed), a push to the resolved host (if any), and — when the point of contact was just (re)set — a push to the new point of contact (a specific user, or every holder of a role at the branch) plus an email when it's a specific user. 409 once ineligible. |
 | PATCH | `/api/v1/invitations/{id}/extend` | `invitations:extend` at the invitation's branch | — | Pushes `expiresAt` forward while `approved` or `checked_in`. 422 if the new expiry isn't strictly later than the current one; 409 if ineligible. |
@@ -633,6 +635,20 @@ submitted ──approve──> approved ──check-in──> checked_in ──c
   `submitted`/`approved` (before check-in); extend only while
   `approved`/`checked_in` (an active visit). Extend also requires the new
   expiry be strictly later than the current one (422 otherwise).
+- **Expiry is the end of the visit day**
+  (`expire-invitation-at-end-of-visit-day`): `expiresAt` is 23:59:59 on
+  `preferredVisitDate` in the **visit timezone**, regardless of when the
+  invitation was submitted (e.g. scheduled 2026-10-02 11:00 IST → expires
+  2026-10-02 23:59:59 IST). The visit timezone is the company's
+  `defaultTimezone`, else the tenant's `timezone`, else UTC; an invalid IANA
+  name is skipped with a `WARNING` (`invitations_invalid_timezone`). It is
+  set at creation and approval, and recalculated whenever the visit date
+  changes — reschedule (`submitted` or `approved`) or an edit that sets a
+  *different* `preferredVisitDate`. Resubmitting the same date on edit does
+  not touch `expiresAt`, so a staff extension survives an unrelated edit.
+  The QR scheduled-date gate uses the same timezone, so the two always
+  agree on which day is "the visit day". Rows created under the old fixed
+  7-day TTL were realigned by tenant migration `a7c3e9f1b2d4`.
 - **Badge** issuance/reprint requires `approved`/`checked_in`. Issuance
   generates a `BDG-XXXXXXXX` number and a rendered PNG (visitor name,
   tracking ID, the expiry, and a QR code — `invitations/badge.py`, reusing
@@ -667,6 +683,190 @@ submitted ──approve──> approved ──check-in──> checked_in ──c
   this endpoint still has no `Idempotency-Key` support, so a client retry
   can trigger more than one notification for what was meant as a single
   reschedule.
+
+## Reverting an approval
+
+`add-invitation-approval-revert`. An approval made by mistake can be undone
+until the visitor first enters:
+
+```
+approved ──revert-approval──> submitted   (only while checkInStatus = unused)
+```
+
+- **Request**: `PATCH /api/v1/invitations/{id}/revert-approval` with body
+  `{"reason": "..."}`. A reason that is missing, empty or whitespace-only,
+  or longer than 500 characters, returns 422.
+- **Eligibility**: `status = approved` **and** `checkInStatus = unused`,
+  checked in one atomic `UPDATE`. Anything else returns 409, and of two
+  concurrent reverts only one succeeds. A caller without the permission at
+  the invitation's branch gets 403, and an unknown id gets 404.
+- **Effect**:
+  - `status` becomes `submitted` and `approvedAt` is cleared.
+  - `approvalRevertedAt`, `approvalRevertedByUserId` and
+    `approvalRevertReason` record the latest revert. They're on
+    `InvitationOut` and the detail view, and every revert is also
+    audit-logged as `invitation_approval_reverted` with the reason in the
+    diff.
+  - `expiresAt`, the host, the visit details and the issued QR row are
+    left unchanged.
+- **Workflow**: every `InvitationApprovalStep` goes back to `pending`, with
+  its actor, delegation and clock cleared. The lowest `stepOrder` step
+  becomes current again (its clock restarts from now) and its approver gets
+  the usual "awaiting approval" push. The step snapshot taken at submission
+  is reused, not re-read from the category's current rules. An
+  auto-approved invitation has no steps, so it goes back to `submitted` and
+  can be approved with `POST /invitations/{id}/approve`.
+- **The pass while reverted**: every check-in path (QR, staff, public
+  tracking ID) refuses a `submitted` invitation, so the visitor's existing
+  QR doesn't admit them. Re-approval re-sends the **same** QR, which then
+  works again.
+- **Notifications**:
+  - The primary contact gets the `approval_reverted` email and SMS
+    (`send_approval_revert_notification`). They are told their approval
+    was withdrawn and the pass is on hold; the reason is not included,
+    since it's an internal note. The task skips sending if the invitation
+    has already been re-approved by the time it runs.
+  - The host gets a push (`action: approval_reverted`).
+  - The host and point of contact also get the staff lifecycle email,
+    which does include the reason. See "Notifying the responsible staff"
+    below.
+- **Permission**: `invitations:revert-approval` is separate from
+  `invitations:approve`. It is granted by default to `admin`, `reception`
+  and `host`, but not `security`. Tenant migration `6054f5200ed1` backfills
+  it to those standard roles in existing tenants.
+
+## Notifying the responsible staff
+
+`staff-lifecycle-emails-and-dashboard-landing`. A denial (direct, or via a
+rejected approval step), an approval revert, or a reschedule (including
+one out of `archived`) also tells the staff who own the visit, not just
+the visitor:
+
+| Who | Email | Push |
+|---|---|---|
+| Visitor (primary contact) | Existing denial / withdrawal / reschedule email or SMS | — |
+| Resolved host (`hostId`) | Staff lifecycle email | Existing host push |
+| Point-of-contact user (`pocUserId`) | Staff lifecycle email | Push, unless they're also the host |
+| Point-of-contact role (`pocRoleId`) | None, because a role POC is push-only | Push to every holder at the branch or company-wide, with `reason: "lifecycle_update"` |
+
+- **Recipients**: the person who performed the action is never emailed or
+  POC-pushed. Someone who is both host and point of contact gets one email
+  and one push. Deactivated users are skipped with a `WARNING`. The
+  existing host push is unchanged, even when the host is the actor.
+- **Email**: `send_staff_lifecycle_notification` sends one Celery task per
+  recipient, so a retry never re-sends to someone already emailed. The
+  template is `staff_lifecycle_update`, and its tone and pill vary by
+  event: red for denied, amber for approval withdrawn, blue for
+  rescheduled. It names the actor (or "A staff member" if that account is
+  gone) and includes the denial or revert reason. It never includes the QR
+  pass.
+- **Redelivery**: the task skips the send once the invitation no longer
+  reflects the event. A denial must still be `denied`. A revert must still
+  be `submitted` with `approvalRevertedAt` set. A reschedule is skipped
+  once the invitation is `denied`, `checked_in` or `checked_out`.
+- **Extend**: `PATCH …/extend` now pushes the host (`action: extended`,
+  plus `expiresAt` in the payload, with the new expiry in the body). It
+  sends no email.
+- **Not covered**: check-in and check-out stay push-only, and the
+  automatic check-out and archive sweep stays silent.
+
+## Staff push coverage
+
+`complete-staff-push-coverage`. Every lifecycle event that pushes the host
+also pushes the point of contact. The POC rules are the same for every
+event: the actor and the host are never POC-pushed (the host already gets
+the host push), a role POC fans out to every holder at the branch or
+company-wide with `reason: "lifecycle_update"`, and an invitation with no
+POC skips the push. QR and kiosk check-in/check-out have no human actor, so
+only the host is excluded there. Staff email is unchanged: only deny,
+revert and reschedule email staff.
+
+| Event (`action`) | Host | Point of contact | Approver(s) |
+|---|---|---|---|
+| Submitted (`step_awaiting_approval`) | — | — | Push to the first step's user or role (not Admin or `host` role) |
+| Next step activated (`step_awaiting_approval`) | — | — | Push to that step's user or role |
+| Host named by delegation (`host_assigned`) | Push + email to the new host | — | — |
+| POC named by edit (`poc_assigned`) | — | Push to the new POC (+ email for a user POC) | — |
+| Approved (`approved`) | Push | Push | — |
+| Denied / reverted / rescheduled | Push + email | Push (+ email for a user POC) | — |
+| Checked in / out (`checked_in`, `checked_out`) | Push | Push | — |
+| Pass extended (`extended`) | Push | Push | — |
+| Details edited (`edited`) | Push | Push to a POC already in place; a POC named by this same edit gets only `poc_assigned` | — |
+
+Not pushed to any staff: auto-approved creation (no host or POC exists yet),
+the visit-lifecycle sweep's auto check-out and no-show archive, watchlist
+flags and kiosk device registrations (no recipient role is defined for
+either).
+
+## Automatic check-out and archived no-shows
+
+`auto-checkout-and-archive-no-shows`. A visit nobody closes by hand is
+closed by the visit-lifecycle sweep. That is a Celery beat task running
+every 15 minutes per tenant; see `docs/features/background-jobs.md`.
+
+```
+checked_in ──expiresAt passes──> checked_out   (checkedOutAutomatically = true)
+approved (checkInStatus unused) ──expiresAt passes──> archived
+archived ──reschedule / edit date──> submitted ──approve──> approved
+```
+
+- **Trigger**: the invitation's live `expiresAt`, which is the end of the
+  visit day in the visit timezone. An extension via `PATCH …/extend`
+  postpones both transitions. No timezone logic lives in the sweep itself.
+- **Auto check-out**:
+  - It applies to any row where `status` or `checkInStatus` is
+    `checked_in`. Both columns become `checked_out`.
+  - `checkedOutAt` is set to the invitation's `expiresAt`, not the sweep
+    time.
+  - `checkedOutByUserId` stays null and `checkedOutAutomatically` is
+    `true`.
+  - Any later manual check-out (staff or QR) writes the flag back to
+    `false`.
+  - A QR check-out of a visit the sweep already closed returns 409.
+- **Archive**:
+  - Only `approved` rows whose `checkInStatus` is still `unused` are
+    archived. `status` becomes `archived` and `archivedAt` is set.
+  - A `submitted` row whose date passed is left alone.
+  - `expiresAt`, the visit details, the approval steps and the QR row are
+    unchanged.
+- **Silent and audited**:
+  - No email, SMS or push is sent for either transition.
+  - Each changed invitation gets one audit row with no actor
+    (`invitation_auto_checked_out` / `invitation_archived`), written in the
+    same transaction as the change.
+  - Re-running the sweep changes nothing.
+- **An archived pass is inert**:
+  - Every check-in path (QR, staff, public tracking ID) returns 409 with
+    "Invitation is archived; reschedule it to admit the visitor".
+  - Extend, badge, revert, approve and deny also return 409.
+- **Leaving `archived`**:
+  - `PATCH …/reschedule` accepts an archived invitation, with a new date
+    of today or later in the visit timezone (otherwise 422). It returns to
+    `submitted`: `approvedAt` is cleared, `expiresAt` is realigned to the
+    new day, and the reschedule history columns are filled as usual.
+  - Every approval step resets and the first is re-activated, with the
+    approver pushed, exactly like a revert.
+  - The Company auto-approve setting does **not** apply, so someone must
+    approve it again. Re-approval re-sends the original QR.
+  - `archivedAt` is kept as history.
+  - The response includes `currentApprovalStep`.
+- **Editing an archived invitation**: `PATCH …/edit` is allowed. If the
+  edit doesn't change `preferredVisitDate`, the invitation stays
+  `archived`. A date change behaves like the reschedule above (past date →
+  422).
+- **Response fields**: `archivedAt` and `checkedOutAutomatically` are on
+  `InvitationOut`, the list row, the detail view, the tracking lookup and
+  both check-in responses. `GET /invitations?status=archived` filters on
+  the new status.
+- **Export**: status label `Archived`, with an `Archived At` column
+  (column 32). `status=archived` keeps Requested At / Approved At /
+  Archived At, and its date range applies to `archivedAt`. Checked Out By
+  reads `System (auto check-out)` for an automatic check-out.
+- **Deploy note**: the first sweep after release processes the backlog.
+  Every old approved no-show is archived, and every stuck check-in is
+  closed with `checkedOutAt` = its old `expiresAt`. Tenant migration
+  `ee5f27776d94` adds the two columns. Its downgrade returns `archived`
+  rows to `approved` first.
 
 ## Resolved location and permission-gated ID-proof documents
 
@@ -732,6 +932,8 @@ Query params:
 | `status` | string | unset | Exact match against the invitation's `status` column. |
 | `registrationType` | `individual` \| `group` | unset | |
 | `source` | `staff_pre_registration` \| `visitor_walk_in` | unset | |
+| `search` | string (max 255) | unset | Case-insensitive substring match against primary contact name **or** tracking ID. |
+| `purposeOfVisit` | string (max 255) | unset | Exact (case-sensitive) match against the invitation's purpose of visit. Used by the paged web board's purpose dropdown so filtering — and `pagination.total` — happens server-side (`add-invitation-purpose-filter`). |
 | `relevantToMe` | bool | `false` | See "Relevant to me" below — a different filter mode entirely, not a narrower branch scope. |
 
 Each row is an `InvitationListItemOut` — tracking ID, registration type,
@@ -744,6 +946,123 @@ expiry/submission timestamps — deliberately narrower than
 `currentApprovalStep` either, so the underlying query never needs to
 eager-load a child collection or run the extra current-step lookup for a
 list view that doesn't render either (`query-performance.md` §1-2).
+
+## Exporting invitations
+
+`GET /invitations/export` (`add-invitation-export`) returns the invitations
+that match the filters as a file download, so staff can take a gate list,
+a security handover or a compliance extract offline — for example "everyone
+who checked in today" or "all approved visitors next week". It is a raw file
+response, not the JSON envelope; every error (403, 404, 422) still uses the
+standard JSON error envelope.
+
+**Permission.** `invitations:export`, branch-scoped exactly like the
+branch-wide listing: `X-Branch-ID` narrows to one branch, and omitting it
+exports across every branch where the caller holds `invitations:export`.
+The standard `admin`, `reception` and `security` roles hold it; `host` does
+not. Existing tenants receive the grant from tenant migration
+`4ea4f6ccffbd`. Custom roles must be granted it by an admin.
+`relevantToMe=true` *narrows* the export to invitations relevant to the
+caller — unlike the list, it never replaces the permission check.
+
+Query params — every filter of [Listing invitations](#listing-invitations)
+with the same meaning (`status`, `registrationType`, `source`, `search`,
+`purposeOfVisit`, `relevantToMe`), plus:
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `format` | `csv` \| `xlsx` | `csv` | Any other value is a 422. |
+| `dateFrom` / `dateTo` | date (`YYYY-MM-DD`) | unset | Inclusive calendar dates in the visit timezone (`Company.defaultTimezone`, then `Tenant.timezone`, then UTC). `dateFrom` later than `dateTo` is a 422. |
+
+**Which date the range applies to.** It follows `status`: `submitted` →
+submitted-at, `approved` → approved-at, `denied` → denied-at, `checked_in`
+→ checked-in-at, `checked_out` → checked-out-at. With no `status`, it
+applies to the invitation's creation time. Rows are sorted by that same
+timestamp, newest first. `status` matches the *current* status, the same as
+the list: `status=approved` does not include visitors who have since checked
+in. To get everyone approved in a period regardless of what happened next,
+export without `status`.
+
+**One row per visitor.** Each invitation produces one row for its primary
+contact, plus one row per co-visitor for a group invitation. All rows of an
+invitation are adjacent, primary contact first, and each repeats the
+invitation's visit-level fields (badge, vehicles, notes, lifecycle times and
+so on).
+
+**Columns** (`improve-invitation-export-readability`), in order: Tracking
+ID, Status, Visitor Name, Visitor Role, Email, Phone Number, ID Proof Type,
+Visitor Category, Registration Type, Source, Branch, Building, Department,
+Host, Point of Contact, Purpose of Visit, Visit Date, Visit Time, Expected
+Duration, Badge Number, Vehicle Number(s) (license plates joined with
+`, `), Carried Items (items joined with `, `, then ` — ` and the
+description if one was given), Additional Notes, Requested At, Approved At,
+Denied At, Denial Reason, Checked In At, Checked In By, Checked Out At,
+Checked Out By. A value that is not recorded is an empty cell. Custom
+form-builder fields are not exported.
+
+**Lifecycle columns follow `status`.** With a `status` filter, only the
+lifecycle columns that can hold a value for it are included. With no
+`status`, all of them are included. Scripts reading the file should look
+columns up by header, not by position.
+
+| `status` | Lifecycle columns included |
+|---|---|
+| `submitted` | Requested At |
+| `approved` | Requested At, Approved At |
+| `denied` | Requested At, Denied At, Denial Reason |
+| `checked_in` | Requested At, Approved At, Checked In At, Checked In By |
+| `checked_out` | Requested At, Approved At, Checked In At, Checked In By, Checked Out At, Checked Out By |
+
+**Labels, not codes.** Status, Source, Registration Type and Visitor Role
+use the same wording as the web invitation board:
+
+- Status: `submitted` → Requested, `approved` → Approved, `denied` →
+  Denied, `checked_in` → Checked-in, `checked_out` → Checked-out.
+- Source: `staff_pre_registration` → Staff Pre-Registration,
+  `visitor_walk_in` → Visitor Walk-in.
+- Registration Type: Individual / Group.
+- Visitor Role: Primary Contact / Co-Visitor.
+
+A code with no label is written in Title Case with spaces, never raw.
+
+**Dates and times.** Timestamps are in the visit timezone. The zone is
+named once, in each timestamp header, for example
+`Checked In At (Asia/Kolkata)`, not in every cell.
+
+- In CSV, timestamps are `YYYY-MM-DD HH:MM` (24-hour), the visit date is
+  `YYYY-MM-DD`, and the visit time is `HH:MM`.
+- In XLSX, the same values are real date/time cells shown in those
+  formats, so they sort and filter as dates.
+
+**Filename.** `invitations-<status|all>-<YYYY-MM-DD>.<csv|xlsx>`, where the
+status uses hyphens (`invitations-checked-in-2026-10-14.xlsx`) and the date
+is in the visit timezone. Browsers on the web portal cannot read this
+header across origins, so the portal names the download itself.
+
+**XLSX layout.** The header row is bold, frozen and auto-filtered, and every
+column has a preset width.
+
+**What is never exported.** ID-proof documents, photos, storage keys and
+signed URLs — whatever the caller's `documents:view` grant. Only the
+ID-proof *type* is included.
+
+**Formula-injection guard.**
+
+- **CSV:** any value starting with `=`, `+`, `-`, `@`, a tab or a carriage
+  return is prefixed with `'`, so a spreadsheet shows it as text instead of
+  evaluating it. Phone numbers stored as `+91…` therefore appear as
+  `'+91…` in CSV.
+- **XLSX:** every text value is stored as a text cell, which is never
+  evaluated, so values keep their original form, for example `+91…`. Use
+  XLSX when the file is for reading in a spreadsheet.
+
+**Size cap.** An export larger than `INVITATION_EXPORT_MAX_ROWS` visitor
+rows (default 10,000) is rejected with 422 and a message to narrow the
+filters. The file is never silently truncated.
+
+**Auditing.** Every successful export writes an `invitations_exported`
+audit entry with the actor, the filters, the format and the row count — no
+visitor data. Rejected exports are not audited as exports.
 
 ## Relevant to me
 
@@ -898,7 +1217,8 @@ never checked `expiresAt`.
   registration/reschedule already captures — a scan attempted before that
   date is rejected `425 Too Early`, distinct from the `410 Gone` expiry
   rejection so a client can branch on status code alone. The comparison is
-  date-only (tenant-local calendar day, via `Tenant.timezone`), so a scan
+  date-only (calendar day in the visit timezone — see "Expiry is the end of
+  the visit day" below), so a scan
   succeeds at any time of day once the scheduled date arrives, up until
   `expiresAt`. An invitation with no `preferredVisitDate` set (still
   possible — the field is optional at registration) skips this check
@@ -1071,10 +1391,10 @@ table for the S3 connection settings.
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `INVITATION_TOKEN_TTL_HOURS` | `168` (7 days) | How long a created invitation's tracking record stays within its validity window. |
 | `INVITATION_MAX_UPLOAD_SIZE_BYTES` | `5242880` (5 MB) | Max ID-proof file size. |
 | `INVITATION_MAX_GROUP_VISITORS` | `20` | Cap on co-visitors in one group submission. |
 | `INVITATION_MAX_PHOTO_SIZE_BYTES` | `2097152` (2 MB) | Max optional profile-photo file size — independent of the ID-proof limit above. |
+| `INVITATION_EXPORT_MAX_ROWS` | `10000` | Max visitor rows per `GET /invitations/export`; an over-cap export is rejected with 422, never truncated. |
 | `STORAGE_ROOT` | `./var/storage` | Local-disk root for uploaded files in dev. |
 | `QR_TOKEN_ENCRYPTION_KEY` | unset | Fernet key encrypting/decrypting QR check-in tokens. Fails loudly the first time a token is generated or scanned without it — never a silent no-op. Generate one the same way as `SSO_ENCRYPTION_KEY`; deliberately a separate key from it. |
 | `MAIL_HOST`/`MAIL_PORT`/`MAIL_USERNAME`/`MAIL_PASSWORD`/`MAIL_USE_TLS`/`MAIL_FROM_ADDRESS` | local dev mail-catcher | Outbound email for visit confirmations. See `docs/features/configuration.md`. |
