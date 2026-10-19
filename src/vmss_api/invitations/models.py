@@ -2,7 +2,18 @@ import uuid
 from datetime import date, datetime, time
 from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Time, Uuid
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Time,
+    Uuid,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -38,6 +49,22 @@ class Invitation(Base, TimestampMixin):
     """
 
     __tablename__ = "invitations"
+    # Dashboard analytics range scans (live-dashboards-and-analytics
+    # design.md D4); mirrors alembic_tenant revision 6791c5e6a421.
+    __table_args__ = (
+        Index(
+            "ix_invitations_branch_visit_date",
+            "branch_id",
+            "preferred_visit_date",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "ix_invitations_branch_checked_in_at",
+            "branch_id",
+            "checked_in_at",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     branch_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("branches.id"), index=True)
@@ -227,6 +254,18 @@ class Invitation(Base, TimestampMixin):
     checked_in_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     checked_out_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+    # True only when the visit-lifecycle sweep closed an expired check-in
+    # (`checked_out_at` is then the invitation's `expires_at`, not an observed
+    # exit); every manual check-out writes it back to False
+    # (auto-checkout-and-archive-no-shows/design.md D3).
+    checked_out_automatically: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # --- Lifecycle: archive (auto-checkout-and-archive-no-shows) ---------------
+    # Set when the sweep moves an approved, never-admitted invitation to
+    # `status="archived"` after its `expires_at`. Kept after a reschedule out
+    # of `archived` as history; overwritten if archived again (design.md D4).
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     # Device that performed the most recent state-changing check-in/out
     # (add-kiosk-device-approval-and-traceability/design.md Decision 7). Null
     # when the caller sent no `device-id` header.

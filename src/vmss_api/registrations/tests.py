@@ -425,6 +425,8 @@ async def test_walk_in_registration_response_has_no_check_in_state(
         "submittedAt",
         "approvedAt",
         "currentApprovalStep",
+        "archivedAt",
+        "checkedOutAutomatically",
     }
 
 

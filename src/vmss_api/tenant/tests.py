@@ -8,6 +8,9 @@ from vmss_api.tenant.repository import TenantRepository
 
 
 async def test_get_my_tenant(client: AsyncClient, user: User, tenant: Tenant) -> None:
+    # Read before any request: `get_tenant` rolls back the registry session,
+    # which this fixture shares with the app, expiring `tenant`.
+    tenant_id = tenant.id
     login = await client.post(
         "/api/v1/auth/login", json={"email": user.email, "password": "correct-password"}
     )
@@ -16,8 +19,9 @@ async def test_get_my_tenant(client: AsyncClient, user: User, tenant: Tenant) ->
     response = await client.get("/api/v1/tenants/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     body = response.json()["data"]
-    assert body["id"] == str(tenant.id)
+    assert body["id"] == str(tenant_id)
     assert body["slug"] == "acme-test"
+    assert body["name"]
 
 
 async def test_get_my_tenant_requires_auth(client: AsyncClient) -> None:

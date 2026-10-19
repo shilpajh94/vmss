@@ -252,6 +252,13 @@ class Settings(BaseSettings):
         default="MAIN", alias="REGISTRATION_DEFAULT_BRANCH_CODE"
     )
 
+    # Per-IP slowapi limits (`core/rate_limit.py`). Only ever switched off
+    # locally, for a load test whose simulated users all share one IP and
+    # would otherwise measure the limiter instead of the API
+    # (docs/features/qa-harness.md). Never disable it in a deployed
+    # environment.
+    rate_limit_enabled: bool = True
+
     # `identity_verification` feature config (API-15, add-identity-verification-otp).
     otp_ttl_seconds: int = 300
     otp_length: int = 6

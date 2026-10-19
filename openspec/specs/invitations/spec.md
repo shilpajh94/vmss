@@ -609,19 +609,25 @@ no terminal state short of the invitation's own expiry.
 invitation whose `checkInStatus` is `checked_in` to `checked_out`,
 recording `checkedOutAt`. This transition SHALL NOT be subject to the
 expiry check that governs check-in, so a visit that legitimately continues
-past `expiresAt` can still be closed out. Calling this endpoint for an
+past `expiresAt` can still be closed out until the automatic check-out
+sweep closes it ("Expired Check-Ins Are Checked Out Automatically" in the
+`visit-lifecycle-sweep` capability). A check-out through this endpoint
+SHALL leave `checkedOutAutomatically` `false`. Calling this endpoint for an
 invitation whose `checkInStatus` is `unused` or `checked_out` SHALL be
-rejected with 409 and SHALL NOT change `checkInStatus`.
+rejected with 409 and SHALL NOT change `checkInStatus`. That includes an
+invitation the sweep has already checked out.
 
 #### Scenario: Checking out a checked-in visitor succeeds
 - **WHEN** this endpoint is called for an invitation whose `checkInStatus`
   is `checked_in`
 - **THEN** `checkInStatus` becomes `checked_out`, `checkedOutAt` is
-  recorded, and the response indicates a successful check-out
+  recorded, `checkedOutAutomatically` is `false`, and the response
+  indicates a successful check-out
 
 #### Scenario: Check-out succeeds even after expiry
 - **WHEN** this endpoint is called for an invitation whose `checkInStatus`
-  is `checked_in` and whose `expires_at` has already passed
+  is `checked_in` and whose `expires_at` has already passed, before the
+  sweep has reached it
 - **THEN** the check-out succeeds exactly as it would before expiry
 
 #### Scenario: Calling check-out on a visitor who isn't checked in is rejected
@@ -629,6 +635,12 @@ rejected with 409 and SHALL NOT change `checkInStatus`.
   is `unused` or `checked_out`
 - **THEN** the request is rejected with 409 and `checkInStatus` is
   unchanged
+
+#### Scenario: Check-out after the sweep already closed the visit is rejected
+- **WHEN** this endpoint is called for an invitation the sweep has already
+  checked out automatically
+- **THEN** the request is rejected with 409 and `checkedOutAt` and
+  `checkedOutAutomatically` are unchanged
 
 ### Requirement: QR Check-In Response Surfaces Full Invitation Detail
 A successful QR check-in response SHALL include everything captured
@@ -976,18 +988,22 @@ sends an email and `sms` sends a text. This is the same channel-routing
 rule the creation, approval, and denial notifications already follow.
 Group registrations are notified the same way as individual ones, since
 only the primary contact is ever notified for any invitation lifecycle
-event today. WHEN the invitation is `approved`, the reschedule email SHALL
-embed the invitation's existing check-in QR inline, in the same "Your
-check-in pass" block as the confirmation email. A reschedule does not
-re-approve the visit or issue a new token, so this is the same QR image
-and token already issued. WHEN the invitation is still `submitted`, the
-email SHALL carry no QR and SHALL state that a pass will be sent once the
-visit is approved. The reschedule email SHALL carry no file attachment.
-Dispatch SHALL happen asynchronously (a background task), never inline in
-the request path, and only after the reschedule is committed. A request
-rejected because the invitation is not in a reschedulable status, or
-because the caller lacks branch access, SHALL NOT dispatch any
-notification.
+event today. The reschedulable statuses SHALL be `submitted`, `approved`
+and `archived`. An `archived` invitation SHALL leave the reschedule as
+`submitted` ("An Archived Invitation Is Rescheduled Back Into Approval").
+WHEN the invitation is `approved`, the reschedule email SHALL embed the
+invitation's existing check-in QR inline, in the same "Your check-in pass"
+block as the confirmation email. A reschedule of an approved invitation
+does not re-approve the visit or issue a new token, so this is the same QR
+image and token already issued. WHEN the invitation is `submitted` after
+the reschedule (including one rescheduled from `archived`), the email SHALL
+carry no QR and SHALL state that a pass will be sent once the visit is
+approved. The reschedule email SHALL carry no file attachment. Dispatch
+SHALL happen asynchronously (a background task), never inline in the
+request path, and only after the reschedule is committed. A request
+rejected because the invitation is not in a reschedulable status, because
+the new date is in the past for an archived invitation, or because the
+caller lacks branch access, SHALL NOT dispatch any notification.
 
 #### Scenario: Successful reschedule notifies the primary contact by email
 - **WHEN** a caller with `invitations:reschedule` at the invitation's branch
@@ -1004,6 +1020,12 @@ notification.
 - **THEN** the email contains no QR and states that a check-in pass will be
   sent once the visit is approved
 
+#### Scenario: Rescheduling an archived visit says the pass comes later
+- **WHEN** an `archived` invitation is rescheduled and its reschedule email
+  is rendered
+- **THEN** the email contains no QR and states that a check-in pass will be
+  sent once the visit is approved
+
 #### Scenario: Successful reschedule notifies the primary contact by SMS when preferred
 - **WHEN** a caller successfully reschedules an invitation whose primary
   contact's `preferredContactMethod` is `sms`
@@ -1013,8 +1035,8 @@ notification.
 
 #### Scenario: Rejected reschedule (ineligible status) dispatches no notification
 - **WHEN** a caller attempts to reschedule an invitation that is not
-  currently `submitted` or `approved` (e.g. already `checked_in`), and the
-  request is rejected with 409
+  currently `submitted`, `approved` or `archived` (e.g. already
+  `checked_in`), and the request is rejected with 409
 - **THEN** no reschedule notification is dispatched
 
 #### Scenario: Rejected reschedule (no branch access) dispatches no notification
@@ -1726,7 +1748,18 @@ permission at the invitation's branch SHALL be able to change, via `PATCH
 /invitations/{id}/edit`, any of: `purposeOfVisit` (and `purposeId`),
 `preferredVisitDate`, `preferredVisitTime`, `expectedDuration` (and
 `durationId`), `departmentToVisit` (and `departmentId`), location/building,
-and `additionalNotes` — on an invitation currently `submitted` or `approved`.
+and `additionalNotes` — on an invitation currently `submitted`, `approved`
+or `archived`. For an `archived` invitation:
+
+- an edit that does not change `preferredVisitDate` SHALL leave it
+  `archived`;
+- an edit that changes `preferredVisitDate` SHALL require a date of today
+  or later in the visit timezone, rejecting an earlier date with 422. On
+  success it SHALL return the invitation to approval exactly as a
+  reschedule from `archived` does: `status` `submitted`, `approvedAt`
+  cleared, approval steps reset with the first re-activated, and
+  `expiresAt` set to the end of the new visit day.
+
 This endpoint SHALL NOT accept or change: the primary contact's or any
 visitor's personal fields (name, email, phone, ID proof, photo),
 `visitorCategoryId` (locked after creation — changing it would require
@@ -1734,15 +1767,16 @@ re-deriving the approval workflow, which this change does not support), or
 the host (`hostId`/`hostNameOrEmail`) — host reassignment stays exclusively
 the job of the `approvals` capability's delegation mechanism, so there is
 exactly one way to change who the host is, not two. A request naming an
-invitation that is not currently `submitted` or `approved` SHALL be rejected
-with 409, following the same atomic-conditional-UPDATE pattern as the
-existing `reschedule`/`extend` endpoints, and SHALL NOT change any field. An
-unknown invitation id SHALL be rejected with 404; a caller without branch
-access to an existing invitation SHALL be rejected with 403. A successful
-edit SHALL dispatch a notification to the primary contact (and, if a host is
-currently resolved, to the host) stating which visit details changed — the
-same channel-routing rule (`preferredContactMethod`) the existing reschedule
-notification already follows.
+invitation that is not currently `submitted`, `approved` or `archived`
+SHALL be rejected with 409, following the same atomic-conditional-UPDATE
+pattern as the existing `reschedule`/`extend` endpoints, and SHALL NOT
+change any field. An unknown invitation id SHALL be rejected with 404; a
+caller without branch access to an existing invitation SHALL be rejected
+with 403. A successful edit SHALL dispatch a notification to the primary
+contact (and, if a host is currently resolved, to the host) stating which
+visit details changed — the same channel-routing rule
+(`preferredContactMethod`) the existing reschedule notification already
+follows.
 
 #### Scenario: Authorized edit changes multiple visit-detail fields at once
 - **WHEN** a caller with `invitations:edit` at the invitation's branch edits
@@ -1751,6 +1785,23 @@ notification already follows.
 - **THEN** all three fields are updated, the invitation's other fields are
   unchanged, and the primary contact receives a notification describing the
   change
+
+#### Scenario: Editing an archived invitation without changing its date
+- **WHEN** a caller with `invitations:edit` changes only the
+  `additionalNotes` of an `archived` invitation
+- **THEN** the notes are updated and the invitation stays `archived`
+
+#### Scenario: Editing an archived invitation's date sends it for re-approval
+- **WHEN** a caller with `invitations:edit` changes an `archived`
+  invitation's `preferredVisitDate` to a future date
+- **THEN** the invitation becomes `submitted` with `approvedAt` cleared, its
+  approval steps restart from the first, and `expiresAt` is the end of the
+  new visit day
+
+#### Scenario: Editing an archived invitation to a past date is rejected
+- **WHEN** a caller changes an `archived` invitation's `preferredVisitDate`
+  to a date before today in the visit timezone
+- **THEN** the request is rejected with 422 and no field is changed
 
 #### Scenario: Visitor personal fields and visitor category are rejected
 - **WHEN** a request to `PATCH /invitations/{id}/edit` includes any of the
@@ -2312,3 +2363,337 @@ pass SHALL admit the visitor again.
 - **WHEN** a reverted invitation is denied with a reason
 - **THEN** it becomes `denied` and the denial notification is dispatched,
   exactly as for any other submitted invitation
+
+### Requirement: An Archived Invitation Is Rescheduled Back Into Approval
+A caller holding `invitations:reschedule` at the invitation's branch SHALL
+be able to reschedule an `archived` invitation through
+`PATCH /invitations/{id}/reschedule`. The new `preferredVisitDate` SHALL be
+today or later in the visit timezone. An earlier date SHALL be rejected
+with 422 and leave the invitation unchanged. On success the system SHALL:
+
+- set `status` to `submitted` and clear `approvedAt`;
+- record the new date and time, the previous date and time,
+  `rescheduledAt` and an incremented `rescheduleCount`, exactly as for any
+  other reschedule;
+- set `expiresAt` to 23:59:59 of the new visit date in the visit timezone;
+- reset every approval step to `pending` and re-activate the first one, so
+  a workflow-backed invitation goes through its whole workflow again. An
+  invitation with no approval steps must be approved through
+  `POST /invitations/{id}/approve`. The Company's auto-approve setting
+  SHALL NOT approve it automatically;
+- keep `archivedAt` as a record of the earlier archive;
+- write an `invitation_rescheduled` audit entry and dispatch the same
+  notifications as rescheduling a `submitted` invitation. The primary
+  contact's email carries no QR and states that a pass will follow
+  approval. The resolved host, if any, gets a push. The newly active
+  step's approver gets a push, as on an approval revert.
+
+The QR pass issued at the original approval SHALL be kept. It SHALL NOT
+admit the visitor while the invitation is `submitted`. When the invitation
+is approved again, the approval notification SHALL carry that same pass.
+The transition SHALL be atomic: of two concurrent reschedules for the same
+archived invitation, exactly one SHALL succeed, and the other SHALL receive
+409.
+
+#### Scenario: Rescheduling an archived invitation sends it for re-approval
+- **WHEN** an authorized caller reschedules an `archived` invitation to a
+  future date
+- **THEN** the response is 200, `status` is `submitted`, `approvedAt` is
+  null, `preferredVisitDate` is the new date, `expiresAt` is the end of that
+  day in the visit timezone, and `archivedAt` is unchanged
+
+#### Scenario: Workflow restarts from the first step
+- **WHEN** an archived invitation whose visitor category has a two-step
+  approval workflow is rescheduled
+- **THEN** both steps are `pending`, the first step is active, and its
+  approver receives a push notification
+
+#### Scenario: Auto-approve tenant still requires re-approval
+- **WHEN** the Company has auto-approve enabled and an archived invitation
+  with no approval steps is rescheduled
+- **THEN** it stays `submitted` until someone approves it
+
+#### Scenario: Past date is rejected
+- **WHEN** a caller reschedules an archived invitation to yesterday's date
+  in the visit timezone
+- **THEN** the request is rejected with 422, the invitation stays
+  `archived`, and no notification is dispatched
+
+#### Scenario: Re-approval restores the original pass
+- **WHEN** a rescheduled-from-archived invitation is approved again
+- **THEN** its `status` is `approved`, and the approval notification
+  carries the same QR token that was issued originally, which now admits
+  the visitor on the new date
+
+#### Scenario: Caller lacks invitations:reschedule
+- **WHEN** a caller without `invitations:reschedule` at the invitation's
+  branch reschedules an archived invitation
+- **THEN** the request is rejected with 403 and the invitation stays
+  `archived`
+
+### Requirement: An Archived Invitation Does Not Admit the Visitor
+Every check-in path SHALL reject an `archived` invitation with 409: QR
+scan, staff check-in, and public tracking-ID check-in. The response detail
+SHALL state that the invitation is archived and must be rescheduled. The
+rejection SHALL leave `status` and `checkInStatus` unchanged. Extending
+expiry, issuing or reprinting a badge, reverting approval, approving and
+denying SHALL each be rejected with 409 for an `archived` invitation. The
+only way to bring a no-show back is to reschedule it (or edit its date).
+
+#### Scenario: QR scan of an archived pass is rejected
+- **WHEN** a visitor scans the QR pass of an `archived` invitation
+- **THEN** check-in is rejected with 409 saying the invitation is archived,
+  and the invitation stays `archived` with `checkInStatus` `unused`
+
+#### Scenario: Staff check-in of an archived invitation is rejected
+- **WHEN** staff check in an `archived` invitation by tracking ID
+- **THEN** the request is rejected with 409 saying the invitation is
+  archived and must be rescheduled
+
+#### Scenario: Expiry cannot be extended on an archived invitation
+- **WHEN** a caller extends the expiry of an `archived` invitation
+- **THEN** the request is rejected with 409 and `expiresAt` is unchanged
+
+### Requirement: Invitation List Filters and Surfaces Archived and Auto Check-Out State
+`archived` SHALL be an accepted value of the `status` filter on
+`GET /invitations`, and the filter SHALL return only archived invitations.
+The invitation list row, the invitation detail, the tracking lookup and
+the check-in and check-out responses SHALL include two fields:
+
+- `archivedAt`: the time of the latest archive, or null;
+- `checkedOutAutomatically`: `true` only when the latest check-out was
+  made by the sweep.
+
+Both fields SHALL be additive. No existing field changes type or meaning.
+
+#### Scenario: Filtering by archived
+- **WHEN** a caller with `invitations:view-all` requests
+  `GET /invitations?status=archived`
+- **THEN** only invitations whose `status` is `archived` are returned, each
+  with a non-null `archivedAt`
+
+#### Scenario: Auto check-out is visible on the detail
+- **WHEN** a caller fetches an invitation that the sweep checked out
+- **THEN** the detail shows `status` `checked_out`,
+  `checkedOutAutomatically` `true` and `checkedOutByUserId` null
+
+#### Scenario: Unknown status value is still rejected
+- **WHEN** a caller requests `GET /invitations?status=expired`
+- **THEN** the request is rejected with a validation error
+
+### Requirement: Denial, Approval Revert, and Reschedule Email the Responsible Staff
+When an invitation is denied (directly, or through a rejected approval
+step), has its approval reverted, or is rescheduled (including a reschedule
+that moves an `archived` invitation back into approval), the system SHALL
+send a staff lifecycle email to each of the invitation's **responsible
+staff**. These are:
+
+- the resolved host (`hostId`), when set;
+- the point-of-contact user (`pocUserId`), when set.
+
+The system SHALL work out the recipient set when the action succeeds, and
+SHALL apply these rules:
+
+- each person receives at most one email per action, even if they are both
+  host and point of contact;
+- the staff member who performed the action SHALL NOT receive the email;
+- a recipient who is deactivated or deleted SHALL be skipped;
+- a role-identified point of contact (`pocRoleId`) SHALL NOT receive an
+  email. It is notified by push only, consistent with the existing rule
+  that a role-identified point of contact never receives email.
+
+These emails SHALL be in addition to the visitor's existing email or SMS and
+the host's existing push for the same action, which are unchanged. They
+SHALL be sent only after the action has been committed, and SHALL NOT delay
+or fail the triggering request. A rejected action (409, 403, 404, 422) SHALL
+NOT send any staff email.
+
+A staff lifecycle email SHALL be skipped if, by the time it is sent, the
+invitation no longer reflects the event:
+
+- for a denial, the invitation is no longer `denied`;
+- for a revert, the invitation is no longer `submitted` with
+  `approvalRevertedAt` set;
+- for a reschedule, the invitation is `denied`, `checked_in` or
+  `checked_out`.
+
+#### Scenario: Revert emails the host and the point of contact
+- **WHEN** a reception user reverts the approval of an invitation whose
+  host is user H and whose point of contact is user P
+- **THEN** H and P each receive one staff lifecycle email stating that the
+  approval was withdrawn, including the revert reason, and the visitor
+  still receives the existing withdrawal email without the reason
+
+#### Scenario: The actor is not emailed about their own action
+- **WHEN** the invitation's host H reschedules it themselves, and its point
+  of contact is user P
+- **THEN** P receives a staff lifecycle email and H does not
+
+#### Scenario: Host who is also point of contact gets one email
+- **WHEN** an invitation is denied whose `hostId` and `pocUserId` are the
+  same user
+- **THEN** that user receives exactly one staff lifecycle email for the
+  denial
+
+#### Scenario: Denial via a rejected approval step emails the staff
+- **WHEN** an approver rejects an invitation's current step, which denies
+  the invitation
+- **THEN** the invitation's host and point-of-contact user, excluding the
+  rejecting approver, each receive a staff lifecycle email that includes
+  the denial reason
+
+#### Scenario: Role-identified point of contact receives no email
+- **WHEN** an invitation whose point of contact is a role (no `pocUserId`)
+  and which has no resolved host is denied
+- **THEN** no staff lifecycle email is sent, and the request still succeeds
+
+#### Scenario: Deactivated recipient is skipped
+- **WHEN** an invitation is rescheduled whose host has been deactivated
+- **THEN** no email is sent to that host, any other recipient is still
+  emailed, and the request still succeeds
+
+#### Scenario: A rejected action sends no staff email
+- **WHEN** a revert is attempted on an invitation that is already
+  `checked_in` and is rejected with 409
+- **THEN** no staff lifecycle email is sent
+
+#### Scenario: A redelivered email after a later change is skipped
+- **WHEN** a revert's staff email is delivered a second time after the
+  invitation has already been re-approved
+- **THEN** no email is sent on that second delivery
+
+### Requirement: Denial, Approval Revert, and Reschedule Push the Point of Contact
+When an invitation is denied, has its approval reverted, or is rescheduled,
+the system SHALL send a push notification to its point of contact:
+
+- to the point-of-contact user, when `pocUserId` is set;
+- to every user holding the point-of-contact role at the invitation's
+  branch or company-wide, when `pocRoleId` is set.
+
+The push SHALL NOT be sent to the staff member who performed the action, or
+to the resolved host, who already receives the host push for the same
+action. The push SHALL follow the existing rule that push payloads exclude
+sensitive visitor data. An invitation with no point of contact SHALL skip
+the push without failing the request.
+
+#### Scenario: Point-of-contact user is pushed on reschedule
+- **WHEN** an invitation with point-of-contact user P is rescheduled by a
+  reception user
+- **THEN** P receives a push stating the visit was rescheduled to the new
+  date and time
+
+#### Scenario: Point-of-contact role holders are pushed on denial
+- **WHEN** an invitation whose point of contact is the "Security" role is
+  denied, and two users hold that role at the invitation's branch
+- **THEN** both users receive a push stating the visit was denied
+
+#### Scenario: Host who is also point of contact is pushed once
+- **WHEN** an invitation is reverted whose `hostId` and `pocUserId` are the
+  same user
+- **THEN** that user receives exactly one push for the revert
+
+### Requirement: Invitation Expiry Extension Notifies the Host via Push
+When `PATCH /invitations/{id}/extend` succeeds for an invitation with a
+resolved host, the system SHALL send that host a push notification stating
+the new expiry. An invitation with no resolved host SHALL skip the push
+without failing the request. A rejected extension (409 or 422) SHALL NOT send
+any push.
+
+#### Scenario: Extension notifies the host
+- **WHEN** a reception user extends the pass of an approved invitation
+  with a resolved host
+- **THEN** the host receives a push stating the visit's pass was extended
+  and naming the new expiry
+
+#### Scenario: Extension without a host still succeeds
+- **WHEN** an invitation with no resolved host is extended
+- **THEN** the extension succeeds and no push is sent
+
+#### Scenario: Rejected extension sends no push
+- **WHEN** an extension is rejected because the new expiry is not later
+  than the current one
+- **THEN** the response is 422 and no push is sent
+
+### Requirement: Approval, Check-In, Check-Out, Extension, and Edit Push the Point of Contact
+When an invitation is approved (directly, or as the final step of a
+multi-step workflow), checked in (by staff, by tracking id, by QR token or by
+a kiosk device), checked out (by staff or by QR token), has its pass
+extended, or has its details edited, the system SHALL send a push
+notification to its point of contact, in addition to the host push already
+sent for the same action:
+
+- to the point-of-contact user, when `pocUserId` is set;
+- to every user holding the point-of-contact role at the invitation's
+  branch or company-wide, when `pocRoleId` is set.
+
+The push SHALL NOT be sent to the staff member who performed the action, or
+to the resolved host, who already receives the host push for the same
+action. An action with no human actor (QR or kiosk check-in or check-out)
+excludes only the host. A role fan-out push SHALL carry `reason:
+"lifecycle_update"`, so a client doesn't label it a new assignment. The
+push SHALL follow the existing rule that push payloads exclude sensitive
+visitor data, and SHALL carry the same `action` value as the host push for
+that action. An invitation with no point of contact SHALL skip the push
+without failing the request. An action that is rejected (409, 410, 422 or
+425), or an idempotent check-in that changes nothing, SHALL NOT send a
+point-of-contact push.
+
+When an edit itself names a new point of contact, that newly named point
+of contact SHALL receive only the existing "named point of contact" push for
+that edit, not an additional "details updated" push. The "details updated"
+push SHALL go only to a point of contact that was already in place before
+the edit.
+
+#### Scenario: Point-of-contact user is pushed on check-in
+- **WHEN** a visitor whose invitation has point-of-contact user P and a
+  different resolved host H is checked in at reception by tracking ID
+- **THEN** P receives a push stating the visitor checked in, and H still
+  receives the existing host push
+
+#### Scenario: Point-of-contact role holders are pushed on QR check-out
+- **WHEN** an invitation whose point of contact is the "Security" role, with
+  two holders at the invitation's branch, is checked out by QR token
+- **THEN** both holders receive a push stating the visitor checked out, with
+  `reason` set to `lifecycle_update`
+
+#### Scenario: Point of contact is pushed on final-step approval
+- **WHEN** an invitation with point-of-contact user P is approved because
+  its last pending approval step was approved
+- **THEN** P receives a push stating the invitation was approved
+
+#### Scenario: Point of contact is pushed when the pass is extended
+- **WHEN** a reception user extends the pass of an approved invitation with
+  point-of-contact user P
+- **THEN** P receives a push stating the pass was extended, naming the new
+  expiry
+
+#### Scenario: Existing point of contact is pushed when details are edited
+- **WHEN** an invitation that already has point-of-contact user P is edited
+  without changing its point of contact
+- **THEN** P receives a push stating the visit details were updated
+
+#### Scenario: Newly named point of contact is pushed once per edit
+- **WHEN** an edit changes an invitation's point of contact from user P to
+  user Q
+- **THEN** Q receives only the "named point of contact" push, and P receives
+  no push for that edit
+
+#### Scenario: Actor who is the point of contact is not pushed
+- **WHEN** point-of-contact user P checks the visitor out themself via the
+  staff check-out endpoint
+- **THEN** P receives no point-of-contact push for that check-out
+
+#### Scenario: Host who is also point of contact is pushed once
+- **WHEN** an invitation whose `hostId` and `pocUserId` are the same user is
+  checked in
+- **THEN** that user receives exactly one push for the check-in
+
+#### Scenario: No point of contact means no push, and the action still succeeds
+- **WHEN** an invitation with no point of contact is approved, checked in,
+  checked out, extended or edited
+- **THEN** the action succeeds and no point-of-contact push is sent
+
+#### Scenario: Rejected action sends no point-of-contact push
+- **WHEN** a check-in attempt for an invitation with a point of contact is
+  rejected because the visit window has expired
+- **THEN** the response is 410 and no point-of-contact push is sent

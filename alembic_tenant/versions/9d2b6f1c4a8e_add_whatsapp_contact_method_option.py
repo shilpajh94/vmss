@@ -57,7 +57,7 @@ def upgrade() -> None:
     drafts = conn.execute(
         text(
             f"""
-            UPDATE {schema}.form_fields
+            UPDATE "{schema}".form_fields
             SET options = COALESCE(options, '[]'::jsonb) || to_jsonb(CAST(:option AS text))
             WHERE key = :key
               AND deleted_at IS NULL
@@ -73,7 +73,7 @@ def upgrade() -> None:
     )
 
     updated_versions = 0
-    for row in conn.execute(text(f"SELECT id, snapshot FROM {schema}.form_config_versions")):
+    for row in conn.execute(text(f'SELECT id, snapshot FROM "{schema}".form_config_versions')):
         snapshot: list[dict[str, Any]] = row.snapshot
         changed = False
         for step in snapshot:
@@ -87,7 +87,8 @@ def upgrade() -> None:
         if changed:
             conn.execute(
                 text(
-                    f"UPDATE {schema}.form_config_versions SET snapshot = :snapshot WHERE id = :id"
+                    f'UPDATE "{schema}".form_config_versions '
+                    "SET snapshot = :snapshot WHERE id = :id"
                 ).bindparams(sa.bindparam("snapshot", type_=JSONB)),
                 {"id": row.id, "snapshot": snapshot},
             )

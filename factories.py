@@ -239,6 +239,11 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     # in a URL path.
     tracking_id = Use(lambda: f"INV-{token_hex(4).upper()}")
     approved_at = None
+    # auto-checkout-and-archive-no-shows: a random True/timestamp here would
+    # make an ordinary row read as swept (e.g. the export's Checked Out By
+    # turning into the system label); tests of the sweep set them explicitly.
+    checked_out_automatically = False
+    archived_at = None
     carried_items: list[str] = []
     consents: dict[str, bool] = {}
     # Same shape rationale as `carried_items`/`consents` above — polyfactory

@@ -1,0 +1,31 @@
+{% extends "base.txt" %}
+{% import "_macros.txt" as m with context %}
+{% block content %}
+{% set visitor = visitor_name | display_name %}
+{% set whose = visitor ~ "'s" if visitor else "a visitor's" %}
+{% set actor = actor_name | display_name or "A staff member" %}
+{% set when = visit_date | visit_datetime(visit_time) %}
+{% if event == "denied" %}
+{{ actor }} denied {{ whose }} visit request{% if when %} for {{ when }}{% endif %}. The visitor has been told, and no check-in pass was issued.
+
+{% if reason %}{{ m.callout("Reason given", reason) }}{% endif %}
+{% elif event == "approval_reverted" %}
+{{ actor }} withdrew the approval for {{ whose }} visit{% if when %} on {{ when }}{% endif %}. The request is back awaiting approval.
+
+{% if reason %}{{ m.callout("Reason given", reason) }}{% endif %}
+
+The visitor's pass won't admit them until the request is approved again.
+{% else %}
+{{ actor }} rescheduled {{ whose }} visit{% if when %} to {{ when }}{% endif %}.
+{% if awaiting_approval %}
+
+The visit is back awaiting approval.
+{% endif %}
+{% endif %}
+
+{{ m.visit_details(before=[("Visitor", visitor), ("Visitor phone", visitor_phone), ("Visitor email", visitor_email), ("Tracking ID", tracking_id)]) }}
+{% if cta %}
+{{ cta.label }}: {{ cta.url }}
+
+{% endif %}To see the full request, open the visitor management portal and search for tracking ID {{ tracking_id }}.
+{% endblock %}

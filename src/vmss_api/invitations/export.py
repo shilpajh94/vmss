@@ -45,11 +45,14 @@ class ExportColumn:
     timestamp: bool = False
 
 
-_APPROVED_ONWARD = frozenset({"approved", "checked_in", "checked_out"})
+_APPROVED_ONWARD = frozenset({"approved", "checked_in", "checked_out", "archived"})
 _CHECKED_IN_ONWARD = frozenset({"checked_in", "checked_out"})
 _DENIED = frozenset({"denied"})
 _CHECKED_OUT = frozenset({"checked_out"})
-_EVERY_STATUS = frozenset({"submitted", "approved", "denied", "checked_in", "checked_out"})
+_ARCHIVED = frozenset({"archived"})
+_EVERY_STATUS = frozenset(
+    {"submitted", "approved", "denied", "checked_in", "checked_out", "archived"}
+)
 
 COLUMNS: tuple[ExportColumn, ...] = (
     ExportColumn("tracking_id", "Tracking ID", 14),
@@ -83,6 +86,7 @@ COLUMNS: tuple[ExportColumn, ...] = (
     ExportColumn("checked_in_by", "Checked In By", 22, _CHECKED_IN_ONWARD),
     ExportColumn("checked_out_at", "Checked Out At", 20, _CHECKED_OUT, timestamp=True),
     ExportColumn("checked_out_by", "Checked Out By", 22, _CHECKED_OUT),
+    ExportColumn("archived_at", "Archived At", 20, _ARCHIVED, timestamp=True),
 )
 
 
@@ -107,6 +111,7 @@ STATUS_LABELS = {
     "denied": "Denied",
     "checked_in": "Checked-in",
     "checked_out": "Checked-out",
+    "archived": "Archived",
 }
 SOURCE_LABELS = {
     "staff_pre_registration": "Staff Pre-Registration",
@@ -155,6 +160,17 @@ def _carried_items(invitation: Invitation) -> str | None:
     return items or description or None
 
 
+# Written where a staff name would be when the visit-lifecycle sweep, not a
+# person, closed the visit (auto-checkout-and-archive-no-shows).
+AUTO_CHECK_OUT = "System (auto check-out)"
+
+
+def _checked_out_by(invitation: Invitation, names: InvitationExportNames) -> str | None:
+    if invitation.checked_out_automatically:
+        return AUTO_CHECK_OUT
+    return _text(names.checked_out_by)
+
+
 def build_rows(
     invitations: Sequence[tuple[Invitation, InvitationExportNames]], tz: tzinfo
 ) -> list[ExportRow]:
@@ -186,7 +202,8 @@ def build_rows(
             "checked_in_at": _local(invitation.checked_in_at, tz),
             "checked_in_by": _text(names.checked_in_by),
             "checked_out_at": _local(invitation.checked_out_at, tz),
-            "checked_out_by": _text(names.checked_out_by),
+            "checked_out_by": _checked_out_by(invitation, names),
+            "archived_at": _local(invitation.archived_at, tz),
         }
         people = [
             (

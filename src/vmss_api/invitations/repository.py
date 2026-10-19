@@ -3,11 +3,11 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, NamedTuple
 
-from sqlalchemy import Select, exists, func, or_, select, update
+from sqlalchemy import Select, exists, func, insert, or_, select, update
 from sqlalchemy.orm import aliased, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
-from vmss_api.auth.models import Role, User, UserBranchRole
+from vmss_api.auth.models import AuditLog, Role, User, UserBranchRole
 from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import BranchScope, SortOrder
@@ -154,6 +154,15 @@ def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) 
     return or_(host_or_delegate_or_actor, current_role_holder, default_host_role_holder)
 
 
+def relevant_to_me_clause(user_id: uuid.UUID, default_host_role_id: uuid.UUID) -> Any:
+    """Public handle on the `relevantToMe` predicate for other features — the
+    personal dashboard counts over exactly this set so it can never disagree
+    with `GET /invitations?relevantToMe=true` (staff-lifecycle-emails-and-
+    dashboard-landing design.md D6).
+    """
+    return _relevant_to_me_filter(user_id, default_host_role_id)
+
+
 def _list_filters(
     *,
     branch_scope: BranchScope | None,
@@ -208,6 +217,7 @@ _EXPORT_DATE_COLUMNS: dict[str | None, Any] = {
     "denied": Invitation.denied_at,
     "checked_in": Invitation.checked_in_at,
     "checked_out": Invitation.checked_out_at,
+    "archived": Invitation.archived_at,
     None: Invitation.created_at,
 }
 
@@ -268,6 +278,21 @@ _ACTIVE_STATUSES = ("approved", "checked_in")
 # excludes an invitation that was never validly approved (`submitted`/
 # `denied`).
 _QR_ENTRY_ELIGIBLE_STATUSES = ("approved", "checked_in", "checked_out")
+
+
+def _reschedule_values(preferred_visit_date: Any, preferred_visit_time: Any) -> dict[str, Any]:
+    """Every `SET` in one Postgres `UPDATE` reads the pre-update row, so the
+    `previous_*` columns reliably capture the immediately-prior schedule
+    (`add-reschedule-history/design.md`).
+    """
+    return {
+        "previous_preferred_visit_date": Invitation.preferred_visit_date,
+        "previous_preferred_visit_time": Invitation.preferred_visit_time,
+        "preferred_visit_date": preferred_visit_date,
+        "preferred_visit_time": preferred_visit_time,
+        "rescheduled_at": datetime.now(UTC),
+        "reschedule_count": Invitation.reschedule_count + 1,
+    }
 
 
 class InvitationRepository(TenantScopedRepository[Invitation]):
@@ -510,6 +535,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 check_in_status="checked_out",
                 status="checked_out",
                 checked_out_at=datetime.now(UTC),
+                checked_out_automatically=False,
                 check_out_device_id=device_pk,
             )
             .returning(Invitation)
@@ -535,11 +561,85 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 check_in_status="checked_out",
                 checked_out_at=datetime.now(UTC),
                 checked_out_by_user_id=user_id,
+                checked_out_automatically=False,
                 check_out_device_id=device_pk,
             )
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def auto_check_out_expired(self, *, now: datetime) -> list[uuid.UUID]:
+        """Visit-lifecycle sweep (auto-checkout-and-archive-no-shows): closes
+        every check-in whose `expires_at` has passed. Matches either status
+        column so a legacy row where only one says `checked_in` is still
+        closed, and writes both. `checked_out_at` is the expiry, not `now` —
+        the real exit time is unknown and sweep lag shouldn't inflate the
+        visit (design.md D3). The conditional `WHERE` is what makes a
+        redelivered or concurrent sweep a no-op for rows already closed
+        (design.md D2).
+        """
+        stmt = (
+            update(Invitation)
+            .where(
+                or_(
+                    Invitation.status == "checked_in",
+                    Invitation.check_in_status == "checked_in",
+                ),
+                Invitation.expires_at <= now,
+                Invitation.deleted_at.is_(None),
+            )
+            .values(
+                status="checked_out",
+                check_in_status="checked_out",
+                checked_out_at=Invitation.expires_at,
+                checked_out_automatically=True,
+            )
+            .returning(Invitation.id)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def archive_expired_no_shows(self, *, now: datetime) -> list[uuid.UUID]:
+        """Visit-lifecycle sweep: an approved invitation never checked in by
+        the end of its (possibly extended) `expires_at` becomes `archived`.
+        `submitted` rows are deliberately left alone (design.md Non-Goals).
+        """
+        stmt = (
+            update(Invitation)
+            .where(
+                Invitation.status == "approved",
+                Invitation.check_in_status == "unused",
+                Invitation.expires_at <= now,
+                Invitation.deleted_at.is_(None),
+            )
+            .values(status="archived", archived_at=now)
+            .returning(Invitation.id)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def record_system_audit(
+        self, invitation_ids: list[uuid.UUID], *, action: str, diff: dict[str, Any]
+    ) -> None:
+        """Bulk audit rows with no actor, written in the caller's transaction
+        so a sweep transition can't commit without its audit entry (design.md
+        D2) — unlike `auth/audit.py::record_audit_log`, which opens its own
+        session because it runs after a request's session has closed.
+        """
+        if not invitation_ids:
+            return
+        await self.session.execute(
+            insert(AuditLog),
+            [
+                {
+                    "id": uuid.uuid4(),
+                    "actor_user_id": None,
+                    "action": action,
+                    "entity_type": "invitation",
+                    "entity_id": invitation_id,
+                    "diff": diff,
+                }
+                for invitation_id in invitation_ids
+            ],
+        )
 
     async def edit_if_eligible(
         self,
@@ -602,20 +702,36 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         approval — the service always supplies it, for `submitted` and
         `approved` alike.
         """
-        values: dict[str, Any] = {
-            "previous_preferred_visit_date": Invitation.preferred_visit_date,
-            "previous_preferred_visit_time": Invitation.preferred_visit_time,
-            "preferred_visit_date": preferred_visit_date,
-            "preferred_visit_time": preferred_visit_time,
-            "rescheduled_at": datetime.now(UTC),
-            "reschedule_count": Invitation.reschedule_count + 1,
-        }
+        values = _reschedule_values(preferred_visit_date, preferred_visit_time)
         if expires_at is not None:
             values["expires_at"] = expires_at
         stmt = (
             update(Invitation)
             .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
             .values(**values)
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def reschedule_archived_if_eligible(
+        self,
+        id_: uuid.UUID,
+        *,
+        preferred_visit_date: Any,
+        preferred_visit_time: Any,
+        expires_at: datetime,
+    ) -> Invitation | None:
+        """The only way out of `archived` (auto-checkout-and-archive-no-shows
+        design.md D6): same reschedule-history `SET`s as
+        `reschedule_if_eligible`, plus a return to `submitted` with
+        `approved_at` cleared, so the visit is reviewed again for its new
+        date. `archived_at` is left as history.
+        """
+        values = _reschedule_values(preferred_visit_date, preferred_visit_time)
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_, Invitation.status == "archived")
+            .values(**values, expires_at=expires_at, status="submitted", approved_at=None)
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()

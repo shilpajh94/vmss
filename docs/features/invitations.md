@@ -725,10 +725,146 @@ approved ──revert-approval──> submitted   (only while checkInStatus = un
     since it's an internal note. The task skips sending if the invitation
     has already been re-approved by the time it runs.
   - The host gets a push (`action: approval_reverted`).
+  - The host and point of contact also get the staff lifecycle email,
+    which does include the reason. See "Notifying the responsible staff"
+    below.
 - **Permission**: `invitations:revert-approval` is separate from
   `invitations:approve`. It is granted by default to `admin`, `reception`
   and `host`, but not `security`. Tenant migration `6054f5200ed1` backfills
   it to those standard roles in existing tenants.
+
+## Notifying the responsible staff
+
+`staff-lifecycle-emails-and-dashboard-landing`. A denial (direct, or via a
+rejected approval step), an approval revert, or a reschedule (including
+one out of `archived`) also tells the staff who own the visit, not just
+the visitor:
+
+| Who | Email | Push |
+|---|---|---|
+| Visitor (primary contact) | Existing denial / withdrawal / reschedule email or SMS | — |
+| Resolved host (`hostId`) | Staff lifecycle email | Existing host push |
+| Point-of-contact user (`pocUserId`) | Staff lifecycle email | Push, unless they're also the host |
+| Point-of-contact role (`pocRoleId`) | None, because a role POC is push-only | Push to every holder at the branch or company-wide, with `reason: "lifecycle_update"` |
+
+- **Recipients**: the person who performed the action is never emailed or
+  POC-pushed. Someone who is both host and point of contact gets one email
+  and one push. Deactivated users are skipped with a `WARNING`. The
+  existing host push is unchanged, even when the host is the actor.
+- **Email**: `send_staff_lifecycle_notification` sends one Celery task per
+  recipient, so a retry never re-sends to someone already emailed. The
+  template is `staff_lifecycle_update`, and its tone and pill vary by
+  event: red for denied, amber for approval withdrawn, blue for
+  rescheduled. It names the actor (or "A staff member" if that account is
+  gone) and includes the denial or revert reason. It never includes the QR
+  pass.
+- **Redelivery**: the task skips the send once the invitation no longer
+  reflects the event. A denial must still be `denied`. A revert must still
+  be `submitted` with `approvalRevertedAt` set. A reschedule is skipped
+  once the invitation is `denied`, `checked_in` or `checked_out`.
+- **Extend**: `PATCH …/extend` now pushes the host (`action: extended`,
+  plus `expiresAt` in the payload, with the new expiry in the body). It
+  sends no email.
+- **Not covered**: check-in and check-out stay push-only, and the
+  automatic check-out and archive sweep stays silent.
+
+## Staff push coverage
+
+`complete-staff-push-coverage`. Every lifecycle event that pushes the host
+also pushes the point of contact. The POC rules are the same for every
+event: the actor and the host are never POC-pushed (the host already gets
+the host push), a role POC fans out to every holder at the branch or
+company-wide with `reason: "lifecycle_update"`, and an invitation with no
+POC skips the push. QR and kiosk check-in/check-out have no human actor, so
+only the host is excluded there. Staff email is unchanged: only deny,
+revert and reschedule email staff.
+
+| Event (`action`) | Host | Point of contact | Approver(s) |
+|---|---|---|---|
+| Submitted (`step_awaiting_approval`) | — | — | Push to the first step's user or role (not Admin or `host` role) |
+| Next step activated (`step_awaiting_approval`) | — | — | Push to that step's user or role |
+| Host named by delegation (`host_assigned`) | Push + email to the new host | — | — |
+| POC named by edit (`poc_assigned`) | — | Push to the new POC (+ email for a user POC) | — |
+| Approved (`approved`) | Push | Push | — |
+| Denied / reverted / rescheduled | Push + email | Push (+ email for a user POC) | — |
+| Checked in / out (`checked_in`, `checked_out`) | Push | Push | — |
+| Pass extended (`extended`) | Push | Push | — |
+| Details edited (`edited`) | Push | Push to a POC already in place; a POC named by this same edit gets only `poc_assigned` | — |
+
+Not pushed to any staff: auto-approved creation (no host or POC exists yet),
+the visit-lifecycle sweep's auto check-out and no-show archive, watchlist
+flags and kiosk device registrations (no recipient role is defined for
+either).
+
+## Automatic check-out and archived no-shows
+
+`auto-checkout-and-archive-no-shows`. A visit nobody closes by hand is
+closed by the visit-lifecycle sweep. That is a Celery beat task running
+every 15 minutes per tenant; see `docs/features/background-jobs.md`.
+
+```
+checked_in ──expiresAt passes──> checked_out   (checkedOutAutomatically = true)
+approved (checkInStatus unused) ──expiresAt passes──> archived
+archived ──reschedule / edit date──> submitted ──approve──> approved
+```
+
+- **Trigger**: the invitation's live `expiresAt`, which is the end of the
+  visit day in the visit timezone. An extension via `PATCH …/extend`
+  postpones both transitions. No timezone logic lives in the sweep itself.
+- **Auto check-out**:
+  - It applies to any row where `status` or `checkInStatus` is
+    `checked_in`. Both columns become `checked_out`.
+  - `checkedOutAt` is set to the invitation's `expiresAt`, not the sweep
+    time.
+  - `checkedOutByUserId` stays null and `checkedOutAutomatically` is
+    `true`.
+  - Any later manual check-out (staff or QR) writes the flag back to
+    `false`.
+  - A QR check-out of a visit the sweep already closed returns 409.
+- **Archive**:
+  - Only `approved` rows whose `checkInStatus` is still `unused` are
+    archived. `status` becomes `archived` and `archivedAt` is set.
+  - A `submitted` row whose date passed is left alone.
+  - `expiresAt`, the visit details, the approval steps and the QR row are
+    unchanged.
+- **Silent and audited**:
+  - No email, SMS or push is sent for either transition.
+  - Each changed invitation gets one audit row with no actor
+    (`invitation_auto_checked_out` / `invitation_archived`), written in the
+    same transaction as the change.
+  - Re-running the sweep changes nothing.
+- **An archived pass is inert**:
+  - Every check-in path (QR, staff, public tracking ID) returns 409 with
+    "Invitation is archived; reschedule it to admit the visitor".
+  - Extend, badge, revert, approve and deny also return 409.
+- **Leaving `archived`**:
+  - `PATCH …/reschedule` accepts an archived invitation, with a new date
+    of today or later in the visit timezone (otherwise 422). It returns to
+    `submitted`: `approvedAt` is cleared, `expiresAt` is realigned to the
+    new day, and the reschedule history columns are filled as usual.
+  - Every approval step resets and the first is re-activated, with the
+    approver pushed, exactly like a revert.
+  - The Company auto-approve setting does **not** apply, so someone must
+    approve it again. Re-approval re-sends the original QR.
+  - `archivedAt` is kept as history.
+  - The response includes `currentApprovalStep`.
+- **Editing an archived invitation**: `PATCH …/edit` is allowed. If the
+  edit doesn't change `preferredVisitDate`, the invitation stays
+  `archived`. A date change behaves like the reschedule above (past date →
+  422).
+- **Response fields**: `archivedAt` and `checkedOutAutomatically` are on
+  `InvitationOut`, the list row, the detail view, the tracking lookup and
+  both check-in responses. `GET /invitations?status=archived` filters on
+  the new status.
+- **Export**: status label `Archived`, with an `Archived At` column
+  (column 32). `status=archived` keeps Requested At / Approved At /
+  Archived At, and its date range applies to `archivedAt`. Checked Out By
+  reads `System (auto check-out)` for an automatic check-out.
+- **Deploy note**: the first sweep after release processes the backlog.
+  Every old approved no-show is archived, and every stuck check-in is
+  closed with `checkedOutAt` = its old `expiresAt`. Tenant migration
+  `ee5f27776d94` adds the two columns. Its downgrade returns `archived`
+  rows to `approved` first.
 
 ## Resolved location and permission-gated ID-proof documents
 

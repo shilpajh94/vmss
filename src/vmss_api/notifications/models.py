@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, Uuid, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, Uuid, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from vmss_api.core.database import Base
@@ -35,3 +37,40 @@ class DeviceToken(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Notification(Base):
+    """One in-app notification for one recipient — the persisted copy of a
+    push dispatch (fix-web-push-and-add-notification-feed design.md D1/D2),
+    written whether or not the recipient has a registered device, so the
+    portal's bell can show it regardless of browser push state.
+
+    `(dispatch_id, user_id)` is unique so a Celery redelivery of the same
+    dispatch is an `ON CONFLICT DO NOTHING`, never a duplicate. Hard-deleted
+    by the 90-day purge, not soft-deleted — disposable UI state with no
+    compliance value, the same posture as `DeviceToken`, hence no
+    `TimestampMixin` (which carries `deleted_at`).
+    """
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        UniqueConstraint("dispatch_id", "user_id", name="uq_notifications_dispatch_user"),
+        Index("ix_notifications_user_created", "user_id", text("created_at DESC")),
+        Index(
+            "ix_notifications_user_unread",
+            "user_id",
+            postgresql_where=text("read_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"))
+    dispatch_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    title: Mapped[str] = mapped_column(String(255))
+    body: Mapped[str] = mapped_column(Text)
+    data: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

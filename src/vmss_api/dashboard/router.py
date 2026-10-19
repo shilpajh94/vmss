@@ -4,16 +4,21 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.core.deps import get_pagination, get_tenant, get_tenant_db
+from vmss_api.auth.models import User
+from vmss_api.core.deps import get_current_user, get_pagination, get_tenant, get_tenant_db
 from vmss_api.core.responses import paginated_response, success_response
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.dashboard import service
 from vmss_api.dashboard.deps import resolve_dashboard_branch_scope
 from vmss_api.dashboard.schemas import (
+    DashboardAnalyticsOut,
     DashboardCheckInListItemOut,
     DashboardCheckInSortableField,
     DashboardOverviewOut,
+    DashboardRange,
     DashboardSearchResultOut,
+    MyDashboardAnalyticsOut,
+    MyDashboardOverviewOut,
 )
 from vmss_api.tenant.models import Tenant
 
@@ -38,6 +43,62 @@ async def get_overview(
     """
     overview = await service.get_overview(tenant_db, tenant, branch_scope)
     return success_response(data=overview)
+
+
+@router.get(
+    "/my-overview",
+    response_model=Envelope[MyDashboardOverviewOut],
+)
+async def get_my_overview(
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> JSONResponse:
+    """spec.md "Personal Dashboard Overview Scoped to the Caller's Relevant
+    Invitations" — the staff landing page. Any authenticated user; no
+    branch-scope dependency, so `X-Branch-ID` is never read. The
+    `/admin/dashboard` prefix is historical — the router already serves
+    reception and security (staff-lifecycle-emails-and-dashboard-landing
+    design.md D6).
+    """
+    overview = await service.get_my_overview(tenant_db, tenant, user)
+    return success_response(data=overview)
+
+
+@router.get(
+    "/analytics",
+    response_model=Envelope[DashboardAnalyticsOut],
+)
+async def get_analytics(
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    branch_scope: Annotated[
+        BranchScope, Depends(resolve_dashboard_branch_scope("invitations:view-all"))
+    ],
+    range_: Annotated[DashboardRange, Query(alias="range")] = "7d",
+) -> JSONResponse:
+    """spec.md "Branch-Wide Dashboard Analytics" — the chart series behind
+    the admin and reception dashboards, same branch scope as `/overview`.
+    """
+    analytics = await service.get_analytics(tenant_db, tenant, branch_scope, range_=range_)
+    return success_response(data=analytics)
+
+
+@router.get(
+    "/my-analytics",
+    response_model=Envelope[MyDashboardAnalyticsOut],
+)
+async def get_my_analytics(
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    range_: Annotated[DashboardRange, Query(alias="range")] = "7d",
+) -> JSONResponse:
+    """spec.md "Personal Dashboard Analytics" — same gate and relevance
+    rule as `/my-overview`; `X-Branch-ID` is never read.
+    """
+    analytics = await service.get_my_analytics(tenant_db, tenant, user, range_=range_)
+    return success_response(data=analytics)
 
 
 @router.get(

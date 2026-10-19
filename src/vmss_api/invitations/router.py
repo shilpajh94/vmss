@@ -338,6 +338,8 @@ def to_invitation_out(
         approval_reverted_at=invitation.approval_reverted_at,
         approval_reverted_by_user_id=invitation.approval_reverted_by_user_id,
         approval_revert_reason=invitation.approval_revert_reason,
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -570,11 +572,12 @@ async def _to_qr_check_in_out(
     form_context: service.InvitationDetailFormContext,
 ) -> InvitationQrCheckInOut:
     """Public, unauthenticated QR check-in/check-out. There is no
-    `documents:view` caller to gate on, but Reception verifies IDs at this
-    step, so the signed QR token is treated as the capability: the primary
-    contact's ID proof and every `file_upload` field (custom fields, group
-    instances, visitors' `idProofUrl`) resolve to signed URLs, same as the
-    staff detail view. Raw storage keys are never returned."""
+    `documents:view` caller to gate on, so no ID-proof document or
+    `file_upload` field resolves to a URL here (spec.md "QR Check-In
+    Response Surfaces Full Invitation Detail": that stays exclusive to the
+    authenticated staff detail view). Visitors use `InvitationVisitorOut`,
+    which has no `idProofUrl` key at all. Raw storage keys are never
+    returned."""
     branch_out, building_out, department_out = _to_location_outs(
         branch, department, building, invitation.department_to_visit
     )
@@ -598,9 +601,6 @@ async def _to_qr_check_in_out(
             invitation.primary_contact_preferred_contact_method
         ),
         primary_contact_id_proof_type=invitation.primary_contact_id_proof_type,
-        primary_contact_id_proof_url=await _resolve_document_url(
-            invitation.primary_contact_id_proof_storage_key
-        ),
         primary_contact_email=invitation.primary_contact_email,
         primary_contact_phone=invitation.primary_contact_phone,
         host_id=invitation.host_id,
@@ -627,19 +627,19 @@ async def _to_qr_check_in_out(
                 **await _resolve_custom_field_file_values(
                     invitation.primary_contact_custom_field_values,
                     form_context.visitor_info_file_ids,
-                    include_documents=True,
+                    include_documents=False,
                 ),
                 **await _resolve_custom_field_file_values(
                     invitation.custom_field_values,
                     form_context.invitation_scope_file_ids,
-                    include_documents=True,
+                    include_documents=False,
                 ),
             },
         ),
         groups=_dict_to_groups(
             form_context.field_meta,
             await _resolve_group_field_values(
-                invitation.group_field_values, form_context.group_file_ids, include_documents=True
+                invitation.group_field_values, form_context.group_file_ids, include_documents=False
             ),
             form_context.group_names,
         ),
@@ -649,18 +649,21 @@ async def _to_qr_check_in_out(
         checked_out_at=invitation.checked_out_at,
         expires_at=invitation.expires_at,
         visitors=[
-            *await _to_visitor_detail_outs(
-                invitation.visitors,
-                include_documents=True,
-                visitor_info_file_ids=form_context.visitor_info_file_ids,
-                field_meta=form_context.field_meta,
-            ),
-            *await _group_collected_visitor_detail_outs(
-                invitation,
-                form_context.visitor_info_groups,
-                include_documents=True,
-                field_meta=form_context.field_meta,
-            ),
+            InvitationVisitorOut(**visitor.model_dump(exclude={"id_proof_url"}))
+            for visitor in [
+                *await _to_visitor_detail_outs(
+                    invitation.visitors,
+                    include_documents=False,
+                    visitor_info_file_ids=form_context.visitor_info_file_ids,
+                    field_meta=form_context.field_meta,
+                ),
+                *await _group_collected_visitor_detail_outs(
+                    invitation,
+                    form_context.visitor_info_groups,
+                    include_documents=False,
+                    field_meta=form_context.field_meta,
+                ),
+            ]
         ],
         vehicles=[
             InvitationVehicleOut(
@@ -674,12 +677,14 @@ async def _to_qr_check_in_out(
                     await _resolve_custom_field_file_values(
                         v.custom_field_values,
                         form_context.vehicle_info_file_ids,
-                        include_documents=True,
+                        include_documents=False,
                     ),
                 ),
             )
             for v in invitation.vehicles
         ],
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -704,6 +709,8 @@ async def _to_list_item_out(invitation) -> InvitationListItemOut:
         expires_at=invitation.expires_at,
         submitted_at=invitation.submitted_at,
         approved_at=invitation.approved_at,
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -784,6 +791,8 @@ async def _to_tracking_out(
             )
             for v in invitation.vehicles
         ],
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -866,6 +875,8 @@ async def _to_check_in_out(
             )
             for v in invitation.vehicles
         ],
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -1092,6 +1103,8 @@ async def _to_invitation_detail_out(
             )
             for v in invitation.vehicles
         ],
+        archived_at=invitation.archived_at,
+        checked_out_automatically=invitation.checked_out_automatically,
     )
 
 
@@ -1380,7 +1393,9 @@ async def approve_invitation(
     """
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:approve", invitation.branch_id)
-    invitation = await service.approve_invitation(tenant_db, invitation, tenant=tenant)
+    invitation = await service.approve_invitation(
+        tenant_db, invitation, tenant=tenant, actor_user_id=user.id
+    )
     background_tasks.add_task(
         record_audit_log,
         tenant.schema_name,
@@ -1414,7 +1429,7 @@ async def deny_invitation(
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:deny", invitation.branch_id)
     invitation = await service.deny_invitation(
-        tenant_db, invitation, reason=payload.reason, tenant=tenant
+        tenant_db, invitation, reason=payload.reason, tenant=tenant, actor_user_id=user.id
     )
     background_tasks.add_task(
         record_audit_log,
@@ -1771,6 +1786,7 @@ async def reschedule_invitation(
         preferred_visit_date=payload.preferred_visit_date,
         preferred_visit_time=payload.preferred_visit_time,
         tenant=tenant,
+        actor_user_id=user.id,
     )
     background_tasks.add_task(
         record_audit_log,
@@ -1806,7 +1822,10 @@ async def reschedule_invitation(
             },
         },
     )
-    return success_response(data=to_invitation_out(invitation))
+    # Leaving `archived` restarts approval, so the response names the step
+    # it now waits on (auto-checkout-and-archive-no-shows).
+    current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
+    return success_response(data=to_invitation_out(invitation, current_approval_step))
 
 
 @router.patch(
@@ -1849,7 +1868,10 @@ async def edit_invitation(
         entity_id=invitation.id,
         diff=payload.model_dump(exclude_unset=True, mode="json"),
     )
-    return success_response(data=to_invitation_out(invitation))
+    # Leaving `archived` restarts approval, so the response names the step
+    # it now waits on (auto-checkout-and-archive-no-shows).
+    current_approval_step = await service.get_current_approval_step(tenant_db, invitation)
+    return success_response(data=to_invitation_out(invitation, current_approval_step))
 
 
 @router.patch(
@@ -1870,7 +1892,11 @@ async def extend_invitation(
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(tenant_db, user, "invitations:extend", invitation.branch_id)
     invitation = await service.extend_invitation(
-        tenant_db, invitation, new_expires_at=payload.expires_at
+        tenant_db,
+        invitation,
+        new_expires_at=payload.expires_at,
+        tenant=tenant,
+        actor_user_id=user.id,
     )
     background_tasks.add_task(
         record_audit_log,

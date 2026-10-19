@@ -10,7 +10,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.core import encryption, storage
-from vmss_api.core.config import settings
+from vmss_api.core.config import Settings, settings
 from vmss_api.core.tenancy import DefaultTenantUnresolved, resolve_default_tenant
 from vmss_api.main import create_app
 from vmss_api.tenant.models import Tenant
@@ -387,3 +387,9 @@ async def test_unhandled_exception_response_still_carries_cors_headers(monkeypat
     assert response.status_code == 500
     assert response.headers["access-control-allow-origin"] == origin
     assert response.headers["access-control-allow-credentials"] == "true"
+
+
+def test_rate_limiting_is_on_unless_explicitly_disabled() -> None:
+    """`RATE_LIMIT_ENABLED` exists only so a local load test can switch the
+    per-IP limiter off; a deployment that omits it must keep it on."""
+    assert Settings.model_fields["rate_limit_enabled"].default is True

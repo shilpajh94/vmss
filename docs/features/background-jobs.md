@@ -27,6 +27,25 @@ beat, a `beat_schedule` entry is configured but nothing ever triggers it —
 see `add-celery-worker-and-demo-seed-script`'s investigation for the
 request-triggered case this exact failure mode was first diagnosed from.
 
+## Deployment requirements
+
+The deployment target is still undecided (`project-rules.md`). Wherever it
+lands, it must run:
+
+- **Exactly one `celery beat` process per environment.** With none,
+  nothing scheduled ever runs. That means no visit-lifecycle sweep (expired
+  check-ins stay "inside" forever, no-shows are never archived) and no
+  daily rollups. With two, every schedule fires twice. Both tasks are
+  idempotent, but it is still wasted work and duplicate audit noise.
+- **At least one worker consuming each queue**, including the cron queue
+  the sweep is routed to and the notifications queue every email and push
+  goes through.
+
+The visit-lifecycle sweep is deliberately silent: it sends no email or
+push. It also leaves `submitted` requests alone even after their date has
+passed. Both were explicit product decisions
+(`auto-checkout-and-archive-no-shows`), not gaps.
+
 ## Scheduled (beat-triggered) tasks
 
 `core/celery_app.py`'s `celery_app.conf.beat_schedule` is the single place
@@ -35,6 +54,7 @@ every recurring task is registered:
 | Schedule name | Cadence | Task |
 |---|---|---|
 | `dispatch-daily-rollup-snapshots` | Daily, 02:00 UTC | `reports.tasks.dispatch_daily_rollup_snapshots` — see `docs/features/reports.md`'s "Scheduled snapshot" section. |
+| `visit-lifecycle-sweep` | Every 15 minutes | `invitations.tasks.dispatch_visit_lifecycle_sweep`. It fans out to `sweep_tenant_visit_lifecycle` per tenant, which auto-checks-out expired check-ins and archives approved no-shows. See `docs/features/invitations.md`'s "Automatic check-out and archived no-shows" section. Both tasks are routed to the cron queue by exact name, ahead of the `vmss_api.invitations.tasks.*` → notifications glob. If beat or the cron worker isn't running, nothing is swept. |
 
 Adding a new scheduled task: register it in `beat_schedule`, add its module
 to `celery_app.autodiscover_tasks([...])` if it's a new feature package, and
@@ -54,8 +74,10 @@ This means one tenant's failure is a separate Celery message from every
 other tenant's — it can't block or delay them, and Celery's own retry
 mechanism applies to that one tenant's task in isolation. `reports/tasks.py`
 (`dispatch_daily_rollup_snapshots` / `send_tenant_rollup_snapshot`) is the
-reference implementation; a single task that loops over every tenant inline
-does not satisfy this.
+reference implementation. `invitations/tasks.py`'s visit-lifecycle sweep
+follows the same shape. It needs no Redis run-marker, because its
+conditional bulk `UPDATE`s already match nothing on a redelivered run.
+A single task that loops over every tenant inline does not satisfy this.
 
 ## Every task's contract
 

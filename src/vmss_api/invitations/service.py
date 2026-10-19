@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from datetime import UTC, date, datetime, time, timedelta
+from functools import partial
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -150,6 +151,106 @@ async def _notify_host(
             body=body,
             data=data,
         )
+
+
+def _staff_email_recipients(
+    invitation: Invitation, *, actor_user_id: uuid.UUID
+) -> tuple[uuid.UUID, ...]:
+    """Who besides the visitor is emailed about a denial, revert or
+    reschedule (staff-lifecycle-emails-and-dashboard-landing design.md D1):
+    the resolved host and the named point-of-contact user — once each,
+    never the actor. A role-identified point of contact is push-only, like
+    everywhere else.
+    """
+    return tuple(
+        dict.fromkeys(
+            user_id
+            for user_id in (invitation.host_id, invitation.poc_user_id)
+            if user_id is not None and user_id != actor_user_id
+        )
+    )
+
+
+async def _push_point_of_contact(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    invitation: Invitation,
+    *,
+    push_builder: Callable[[Invitation], tuple[str, str, dict[str, str]]],
+    actor_user_id: uuid.UUID | None,
+) -> None:
+    """The point-of-contact counterpart of `_notify_host`, for every
+    lifecycle event that pushes the host (complete-staff-push-coverage
+    design.md D1). Never pushes the actor or the host — the host already
+    gets `_notify_host`'s push for the same action. `actor_user_id` is None
+    for a QR/kiosk action with no human actor. A role-identified point of
+    contact fans out as `lifecycle_update`, not a new assignment.
+    """
+    excluded = {user_id for user_id in (actor_user_id, invitation.host_id) if user_id is not None}
+    poc_user_id = invitation.poc_user_id
+    poc_role_id = invitation.poc_role_id
+    if poc_user_id is None and poc_role_id is None:
+        return
+    title, body, data = push_builder(invitation)
+    if poc_user_id is not None and poc_user_id not in excluded:
+        await notifications_service.notify_user(
+            tenant_schema=tenant.schema_name,
+            user_id=poc_user_id,
+            title=title,
+            body=body,
+            data=data,
+        )
+    if poc_role_id is not None and invitation.branch_id is not None:
+        await notifications_service.notify_role_at_branch(
+            tenant_db,
+            tenant_schema=tenant.schema_name,
+            role_id=poc_role_id,
+            branch_id=invitation.branch_id,
+            title=title,
+            body=body,
+            data=data,
+            exclude_user_ids=excluded,
+            reason="lifecycle_update",
+        )
+
+
+_STAFF_EVENT_PUSH_BUILDERS: dict[
+    tasks.StaffLifecycleEvent, Callable[[Invitation], tuple[str, str, dict[str, str]]]
+] = {
+    "denied": push_notifications.denied,
+    "approval_reverted": push_notifications.approval_reverted,
+    "rescheduled": push_notifications.rescheduled,
+}
+
+
+async def _notify_responsible_staff(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    invitation: Invitation,
+    *,
+    event: tasks.StaffLifecycleEvent,
+    actor_user_id: uuid.UUID,
+) -> None:
+    """Called after commit, alongside the visitor dispatch and `_notify_host`
+    (invitations spec "Denial, Approval Revert, and Reschedule Email the
+    Responsible Staff" / "... Push the Point of Contact").
+    """
+    for recipient_user_id in _staff_email_recipients(invitation, actor_user_id=actor_user_id):
+        tasks.send_staff_lifecycle_notification.delay(
+            request_id=_current_request_id(),
+            tenant_schema=tenant.schema_name,
+            invitation_id=str(invitation.id),
+            recipient_user_id=str(recipient_user_id),
+            actor_user_id=str(actor_user_id),
+            event=event,
+        )
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        invitation,
+        push_builder=_STAFF_EVENT_PUSH_BUILDERS[event],
+        actor_user_id=actor_user_id,
+    )
 
 
 async def _issue_qr_code(
@@ -1541,7 +1642,11 @@ async def get_invitation(tenant_db: AsyncSession, invitation_id: uuid.UUID) -> I
 
 
 async def approve_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, tenant: Tenant
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    tenant: Tenant,
+    actor_user_id: uuid.UUID | None = None,
 ) -> Invitation:
     """Transitions a `submitted` invitation to `approved` and enqueues the
     approval notification (`add-invitation-approval-flow-and-role-resync/
@@ -1593,6 +1698,13 @@ async def approve_invitation(
         qr_token=qr_code.qr_token,
     )
     await _notify_host(tenant, updated, push_notifications.approved)
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        updated,
+        push_builder=push_notifications.approved,
+        actor_user_id=actor_user_id,
+    )
     return updated
 
 
@@ -1698,7 +1810,12 @@ async def get_invitation_detail_form_context(
 
 
 async def deny_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, reason: str, tenant: Tenant
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    reason: str,
+    tenant: Tenant,
+    actor_user_id: uuid.UUID,
 ) -> Invitation:
     """Transitions a `submitted` invitation to `denied` and enqueues the
     denial notification — mirrors `approve_invitation`'s own
@@ -1715,6 +1832,9 @@ async def deny_invitation(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.denied)
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="denied", actor_user_id=actor_user_id
+    )
     return updated
 
 
@@ -1771,9 +1891,7 @@ async def revert_invitation_approval(
             "invitation_revert_rejected", invitation_id=str(invitation.id), reason="not_approved"
         )
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
-    step_repo = InvitationApprovalStepRepository(tenant_db)
-    await step_repo.reset_all_for_invitation(updated.id)
-    activated_step = await step_repo.activate_current_pending(updated.id)
+    activated_step = await _restart_approval(tenant_db, updated)
     await tenant_db.commit()
     logger.info(
         "invitation_approval_reverted",
@@ -1786,19 +1904,16 @@ async def revert_invitation_approval(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.approval_reverted)
-    if activated_step is not None:
-        title, body, data = push_notifications.step_awaiting_approval(updated)
-        await notifications_service.notify_step_approver(
-            tenant_db,
-            tenant_schema=tenant.schema_name,
-            approver_user_id=activated_step.approver_user_id,
-            approver_role_id=activated_step.approver_role_id,
-            branch_id=updated.branch_id,
-            title=title,
-            body=body,
-            data=data,
-        )
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="approval_reverted", actor_user_id=user.id
+    )
+    await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
     return updated
+
+
+# An archived no-show's pass is inert until rescheduled (auto-checkout-and-
+# archive-no-shows spec "An Archived Invitation Does Not Admit the Visitor").
+_ARCHIVED_CHECK_IN_DETAIL = "Invitation is archived; reschedule it to admit the visitor"
 
 
 async def _perform_check_in(
@@ -1839,6 +1954,8 @@ async def _perform_check_in(
     await _enforce_device_location(tenant_db, device, invitation)
     if invitation.check_in_status == "checked_in":
         return invitation, False
+    if invitation.status == "archived":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=_ARCHIVED_CHECK_IN_DETAIL)
     if invitation.watchlist_flagged:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -1856,6 +1973,13 @@ async def _perform_check_in(
         )
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_in)
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        updated,
+        push_builder=push_notifications.checked_in,
+        actor_user_id=actor_user_id,
+    )
     return updated, True
 
 
@@ -1928,6 +2052,8 @@ async def check_in_by_qr_token(
     await _enforce_device_location(tenant_db, device, invitation)
     if invitation.check_in_status == "checked_in":
         return invitation, "Verification passed", False
+    if invitation.status == "archived":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=_ARCHIVED_CHECK_IN_DETAIL)
     if invitation.status not in ("approved", "checked_in", "checked_out"):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, detail="Verification failed — invitation not approved"
@@ -1962,6 +2088,9 @@ async def check_in_by_qr_token(
 
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_in)
+    await _push_point_of_contact(
+        tenant_db, tenant, updated, push_builder=push_notifications.checked_in, actor_user_id=None
+    )
     return updated, "Verification passed", True
 
 
@@ -1992,6 +2121,9 @@ async def check_out_by_qr_token(
 
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_out)
+    await _push_point_of_contact(
+        tenant_db, tenant, updated, push_builder=push_notifications.checked_out, actor_user_id=None
+    )
     return updated, "Checked out successfully"
 
 
@@ -2010,12 +2142,108 @@ async def check_out_invitation(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not checked in")
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_out)
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        updated,
+        push_builder=push_notifications.checked_out,
+        actor_user_id=user_id,
+    )
     return updated
 
 
 _RESCHEDULABLE_STATUSES = ("submitted", "approved")
 _ACTIVE_STATUSES = ("approved", "checked_in")
 _LOCATION_EDIT_FIELDS = frozenset({"department_to_visit", "department_id", "building_id"})
+
+
+async def _reject_past_visit_date(
+    tenant_db: AsyncSession, tenant: Tenant, visit_date: date
+) -> ZoneInfo:
+    """Leaving `archived` needs a date the visitor can still make — today or
+    later in the visit timezone (design.md D6). Returns the zone so the
+    caller can realign `expires_at` without resolving it twice.
+    """
+    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    if visit_date < datetime.now(UTC).astimezone(tz).date():
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="New visit date cannot be in the past",
+        )
+    return tz
+
+
+async def _restart_approval(
+    tenant_db: AsyncSession, invitation: Invitation
+) -> InvitationApprovalStep | None:
+    """Same workflow restart as `revert_invitation_approval`: every step back
+    to `pending`, first one re-activated. Both calls are no-ops for an
+    invitation without steps. Caller commits.
+    """
+    step_repo = InvitationApprovalStepRepository(tenant_db)
+    await step_repo.reset_all_for_invitation(invitation.id)
+    return await step_repo.activate_current_pending(invitation.id)
+
+
+async def _notify_activated_approver(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    invitation: Invitation,
+    activated_step: InvitationApprovalStep | None,
+) -> None:
+    if activated_step is None:
+        return
+    title, body, data = push_notifications.step_awaiting_approval(invitation)
+    await notifications_service.notify_step_approver(
+        tenant_db,
+        tenant_schema=tenant.schema_name,
+        approver_user_id=activated_step.approver_user_id,
+        approver_role_id=activated_step.approver_role_id,
+        branch_id=invitation.branch_id,
+        title=title,
+        body=body,
+        data=data,
+    )
+
+
+async def _reschedule_archived(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    preferred_visit_date: date,
+    preferred_visit_time: Any,
+    tenant: Tenant,
+    actor_user_id: uuid.UUID,
+) -> Invitation:
+    """An archived no-show goes back to `submitted` for re-approval on its new
+    date, never straight to `approved` — the Company auto-approve setting is
+    a creation-time rule only (design.md D6). The original QR row is kept;
+    re-approval re-sends that same pass.
+    """
+    tz = await _reject_past_visit_date(tenant_db, tenant, preferred_visit_date)
+    updated = await InvitationRepository(tenant_db).reschedule_archived_if_eligible(
+        invitation.id,
+        preferred_visit_date=preferred_visit_date,
+        preferred_visit_time=preferred_visit_time,
+        expires_at=_end_of_visit_day_utc(preferred_visit_date, tz),
+    )
+    if updated is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
+        )
+    activated_step = await _restart_approval(tenant_db, updated)
+    await tenant_db.commit()
+    tasks.send_reschedule_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(updated.id),
+    )
+    await _notify_host(tenant, updated, push_notifications.rescheduled)
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="rescheduled", actor_user_id=actor_user_id
+    )
+    await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
+    return updated
 
 
 async def reschedule_invitation(
@@ -2025,12 +2253,22 @@ async def reschedule_invitation(
     preferred_visit_date: Any,
     preferred_visit_time: Any,
     tenant: Tenant,
+    actor_user_id: uuid.UUID,
 ) -> Invitation:
     """Notifies the primary contact of the new date/time on success
     (specs/invitations/spec.md "Reschedule Dispatches a Notification to the
     Primary Contact") — enqueued only after the commit below, never for a
     request rejected by either guard.
     """
+    if invitation.status == "archived":
+        return await _reschedule_archived(
+            tenant_db,
+            invitation,
+            preferred_visit_date=preferred_visit_date,
+            preferred_visit_time=preferred_visit_time,
+            tenant=tenant,
+            actor_user_id=actor_user_id,
+        )
     if invitation.status not in _RESCHEDULABLE_STATUSES:
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
@@ -2058,6 +2296,9 @@ async def reschedule_invitation(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.rescheduled)
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="rescheduled", actor_user_id=actor_user_id
+    )
     return updated
 
 
@@ -2200,9 +2441,17 @@ async def edit_invitation(
     # corrected; every other field the client sends is ignored once the visit
     # is underway (the edit modal always submits the whole form).
     checked_in = invitation.status == "checked_in"
-    allowed_statuses = (
-        (*_RESCHEDULABLE_STATUSES, "checked_in") if checked_in else _RESCHEDULABLE_STATUSES
-    )
+    # An archived no-show stays editable; only a date change takes it out of
+    # `archived`, back into approval (auto-checkout-and-archive-no-shows D7).
+    # Gated on exactly `archived` so a concurrent reschedule can't be undone.
+    archived = invitation.status == "archived"
+    allowed_statuses: tuple[str, ...]
+    if checked_in:
+        allowed_statuses = (*_RESCHEDULABLE_STATUSES, "checked_in")
+    elif archived:
+        allowed_statuses = ("archived",)
+    else:
+        allowed_statuses = _RESCHEDULABLE_STATUSES
     if invitation.status not in allowed_statuses:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
     if not checked_in and (payload.poc_user_id is not None or payload.poc_role_id is not None):
@@ -2229,15 +2478,21 @@ async def edit_invitation(
     # the unchanged date on every save, which would otherwise wipe a staff
     # expiry extension (expire-invitation-at-end-of-visit-day/design.md D2).
     new_visit_date = changes.get("preferred_visit_date")
+    leaves_archive = False
     if new_visit_date is not None and new_visit_date != invitation.preferred_visit_date:
-        changes["expires_at"] = _end_of_visit_day_utc(
-            new_visit_date, await _resolve_visit_timezone(tenant_db, tenant)
-        )
+        if archived:
+            tz = await _reject_past_visit_date(tenant_db, tenant, new_visit_date)
+            changes.update(status="submitted", approved_at=None)
+            leaves_archive = True
+        else:
+            tz = await _resolve_visit_timezone(tenant_db, tenant)
+        changes["expires_at"] = _end_of_visit_day_utc(new_visit_date, tz)
     updated = await InvitationRepository(tenant_db).edit_if_eligible(
         invitation.id, allowed_statuses=allowed_statuses, **changes
     )
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
+    activated_step = await _restart_approval(tenant_db, updated) if leaves_archive else None
     await tenant_db.commit()
     tasks.send_edit_notification.delay(
         request_id=_current_request_id(),
@@ -2245,7 +2500,19 @@ async def edit_invitation(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.edited)
-    if "poc_user_id" in changes or "poc_role_id" in changes:
+    await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
+    poc_changed = "poc_user_id" in changes or "poc_role_id" in changes
+    # A newly named point of contact gets `poc_assigned` below instead — one
+    # push per edit, never "details updated" on top (design.md D3).
+    if not poc_changed:
+        await _push_point_of_contact(
+            tenant_db,
+            tenant,
+            updated,
+            push_builder=push_notifications.edited,
+            actor_user_id=user.id,
+        )
+    if poc_changed:
         title, body, data = push_notifications.poc_assigned(updated)
         await notifications_service.notify_step_approver(
             tenant_db,
@@ -2268,7 +2535,12 @@ async def edit_invitation(
 
 
 async def extend_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, new_expires_at: datetime
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    new_expires_at: datetime,
+    tenant: Tenant,
+    actor_user_id: uuid.UUID | None = None,
 ) -> Invitation:
     if invitation.status not in _ACTIVE_STATUSES:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not active")
@@ -2283,6 +2555,12 @@ async def extend_invitation(
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not active")
     await tenant_db.commit()
+    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    extended = partial(push_notifications.extended, tz=tz)
+    await _notify_host(tenant, updated, extended)
+    await _push_point_of_contact(
+        tenant_db, tenant, updated, push_builder=extended, actor_user_id=actor_user_id
+    )
     return updated
 
 

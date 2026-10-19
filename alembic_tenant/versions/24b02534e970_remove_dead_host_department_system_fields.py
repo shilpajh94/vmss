@@ -76,9 +76,9 @@ def upgrade() -> None:
     deleted = conn.execute(
         text(
             f"""
-            UPDATE {schema}.form_fields ff
+            UPDATE "{schema}".form_fields ff
             SET deleted_at = now()
-            FROM {schema}.form_steps fs
+            FROM "{schema}".form_steps fs
             WHERE ff.step_id = fs.id
               AND fs.key = 'visit_details'
               AND ff.key IN :keys
@@ -95,7 +95,7 @@ def upgrade() -> None:
     )
 
     versions = conn.execute(
-        text(f"SELECT id, snapshot FROM {schema}.form_config_versions")
+        text(f'SELECT id, snapshot FROM "{schema}".form_config_versions')
     ).fetchall()
     updated_versions = 0
     for row in versions:
@@ -112,7 +112,8 @@ def upgrade() -> None:
         if changed:
             conn.execute(
                 text(
-                    f"UPDATE {schema}.form_config_versions SET snapshot = :snapshot WHERE id = :id"
+                    f'UPDATE "{schema}".form_config_versions '
+                    "SET snapshot = :snapshot WHERE id = :id"
                 ).bindparams(sa.bindparam("snapshot", type_=sa.dialects.postgresql.JSONB)),
                 {"id": row.id, "snapshot": snapshot},
             )
