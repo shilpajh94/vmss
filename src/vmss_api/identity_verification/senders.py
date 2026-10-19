@@ -5,16 +5,17 @@ near-identical sender abstractions aren't merged into a shared
 `notifications/` package yet.
 """
 
+from collections.abc import Sequence
 from typing import Protocol
 
 import aiosmtplib
-import anyio
-from twilio.base.exceptions import TwilioRestException
-from twilio.rest import Client as TwilioClient
 
 from vmss_api.core.config import settings
 from vmss_api.core.emailing import build_message
 from vmss_api.core.logging import logger
+from vmss_api.core.sms import Fast2SmsSender, SmsNotConfiguredError, SmsTemplate
+from vmss_api.core.sms import SmsDispatchError as SmsDispatchError
+from vmss_api.core.whatsapp import Fast2WhatsAppSender, WhatsAppTemplate
 from vmss_api.identity_verification.masking import mask_identifier
 
 
@@ -25,28 +26,22 @@ class EmailSender(Protocol):
 
 
 class SmsSender(Protocol):
-    async def send(self, *, to: str, body: str) -> None: ...
+    async def send(
+        self, *, to: str, template: SmsTemplate, variables: Sequence[object]
+    ) -> None: ...
 
 
 class WhatsAppSender(Protocol):
-    async def send(self, *, to: str, body: str) -> None: ...
+    async def send(
+        self, *, to: str, template: WhatsAppTemplate, variables: Sequence[object]
+    ) -> None: ...
 
 
-class GatewayNotConfiguredError(RuntimeError):
-    """No gateway is configured for this channel in the current deployment
-    — raised rather than swallowed, so the caller fails loudly instead of a
-    false success (spec.md "OTP delivery over an unconfigured channel
-    fails loudly").
-    """
-
-
-class SmsDispatchError(RuntimeError):
-    """A *configured* SMS gateway (Twilio) rejected or failed to send the
-    message — a transient/operational failure, distinct from
-    `GatewayNotConfiguredError`'s "nothing is set up." design.md's
-    Idempotency-Key refinement treats the two differently: this one is
-    never cached as an idempotent response, so a retry re-attempts dispatch.
-    """
+# "Nothing is set up" (spec "OTP delivery over an unconfigured channel fails
+# loudly") and "a configured gateway failed" (never idempotency-cached) are
+# the shared `core/sms.py` errors, re-exported under the names the router
+# already catches.
+GatewayNotConfiguredError = SmsNotConfiguredError
 
 
 class EmailDispatchError(RuntimeError):
@@ -97,63 +92,6 @@ class SmtpEmailSender:
             raise EmailDispatchError("Email dispatch failed") from exc
 
 
-class UnconfiguredSmsSender:
-    async def send(self, *, to: str, body: str) -> None:
-        raise GatewayNotConfiguredError(
-            "No SMS gateway is configured — set TWILIO_ACCOUNT_SID/"
-            "TWILIO_AUTH_TOKEN/TWILIO_SMS_FROM_NUMBER to enable SMS delivery"
-        )
-
-
-class UnconfiguredWhatsAppSender:
-    async def send(self, *, to: str, body: str) -> None:
-        raise GatewayNotConfiguredError(
-            "No WhatsApp gateway is configured — see design.md's Non-Goals"
-        )
-
-
-class TwilioSmsSender:
-    """Real SMS delivery via Twilio (design.md's Senders decision — chosen
-    as a mainstream, well-documented default since no vendor preference
-    was given).
-    """
-
-    def __init__(self, account_sid: str, auth_token: str, from_number: str) -> None:
-        self._client = TwilioClient(account_sid, auth_token)
-        self._from_number = from_number
-
-    async def send(self, *, to: str, body: str) -> None:
-        def _send_sync() -> None:
-            self._client.messages.create(to=to, from_=self._from_number, body=body)
-
-        try:
-            # `Client.messages.create` is a blocking network call — the
-            # Twilio SDK has no async client, so this runs off the event
-            # loop rather than blocking every concurrent request for the
-            # duration of the round-trip (fastapi-architecture.md §4).
-            await anyio.to_thread.run_sync(_send_sync)
-        except TwilioRestException as exc:
-            logger.warning(
-                "twilio_sms_dispatch_failed",
-                identifier=mask_identifier(to),
-                twilio_error_code=exc.code,
-                twilio_message=exc.msg,
-            )
-            raise SmsDispatchError("SMS dispatch failed") from exc
-
-
 email_sender: EmailSender = SmtpEmailSender()
-whatsapp_sender: WhatsAppSender = UnconfiguredWhatsAppSender()
-
-_twilio_configured = bool(
-    settings.twilio_account_sid and settings.twilio_auth_token and settings.twilio_sms_from_number
-)
-sms_sender: SmsSender = (
-    TwilioSmsSender(
-        settings.twilio_account_sid,  # type: ignore[arg-type]
-        settings.twilio_auth_token,  # type: ignore[arg-type]
-        settings.twilio_sms_from_number,  # type: ignore[arg-type]
-    )
-    if _twilio_configured
-    else UnconfiguredSmsSender()
-)
+sms_sender: SmsSender = Fast2SmsSender()
+whatsapp_sender: WhatsAppSender = Fast2WhatsAppSender()

@@ -1,4 +1,4 @@
-"""Email/SMS dispatch for `invitations` only (design.md's "Non-Goals": this
+"""Email/SMS/WhatsApp dispatch for `invitations` only (design.md's "Non-Goals": this
 is not the general multi-channel `notifications/` package `project-rules.md`
 describes — that gets built once a second feature needs it,
 `background-jobs.md` §1). Only ever called from `invitations/tasks.py`, never
@@ -12,8 +12,6 @@ re-exported here so this module's existing call sites
 to change.
 """
 
-from typing import Protocol
-
 from vmss_api.core.emailing import (
     Attachment,
     EmailSender,
@@ -22,39 +20,20 @@ from vmss_api.core.emailing import (
     make_attachment,
     make_inline_image,
 )
+from vmss_api.core.sms import Fast2SmsSender
+from vmss_api.core.whatsapp import Fast2WhatsAppSender
 
 __all__ = [
     "Attachment",
     "EmailSender",
     "InlineImage",
-    "SmsSender",
     "make_attachment",
     "make_inline_image",
-    "SmsGatewayNotConfiguredError",
-    "UnconfiguredSmsSender",
     "email_sender",
     "sms_sender",
+    "whatsapp_sender",
 ]
 
-
-class SmsSender(Protocol):
-    async def send(self, *, to: str, body: str) -> None: ...
-
-
-class SmsGatewayNotConfiguredError(RuntimeError):
-    """No SMS gateway has been chosen yet (design.md Open Questions). Raised
-    rather than swallowed, so a task dispatching to SMS fails loudly through
-    Celery's normal retry/exhaustion-logging path (`background-jobs.md` §4)
-    instead of silently pretending to succeed.
-    """
-
-
-class UnconfiguredSmsSender:
-    async def send(self, *, to: str, body: str) -> None:
-        raise SmsGatewayNotConfiguredError(
-            "No SMS gateway is configured — see design.md's Open Questions"
-        )
-
-
 email_sender: EmailSender = SmtpEmailSender()
-sms_sender: SmsSender = UnconfiguredSmsSender()
+sms_sender = Fast2SmsSender()
+whatsapp_sender = Fast2WhatsAppSender()
