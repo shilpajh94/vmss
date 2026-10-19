@@ -14,6 +14,7 @@ import {
 } from '../../../components/dynamic-fields/custom-field-files'
 import { findField, findStepFields, findStepGroups, useEffectiveForm } from '../../../hooks/use-effective-form'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
+import { isValidIndianMobileNumber } from '../../../utils/is-valid-indian-mobile-number'
 import { todayAsDateInputValue } from '../../../utils/local-date-input-value'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { Building } from '../../../../domain/entities/building-schema'
@@ -117,13 +118,21 @@ function validateVisitorContact(
       errors.preferredContactMethod = 'Preferred contact method is required.'
     } else if (contact.preferredContactMethod === 'email' && !contact.email) {
       errors.email = 'Email is required.'
-    } else if (contact.preferredContactMethod === 'sms' && !contact.phone) {
+    } else if ((contact.preferredContactMethod === 'sms' || contact.preferredContactMethod === 'whatsapp') && !contact.phone) {
       errors.phone = 'Phone number is required.'
     }
   } else if (!contact.email && !contact.phone) {
     errors.email = 'Either email or phone is required.'
   }
-  if (contact.phone && !isValidPhoneNumber(contact.phone)) errors.phone = 'Enter a valid phone number.'
+  if (contact.phone && !isValidPhoneNumber(contact.phone)) {
+    errors.phone = 'Enter a valid phone number.'
+  } else if (
+    contact.phone &&
+    (contact.preferredContactMethod === 'sms' || contact.preferredContactMethod === 'whatsapp') &&
+    !isValidIndianMobileNumber(contact.phone)
+  ) {
+    errors.phone = 'Enter a valid Indian mobile number for SMS or WhatsApp.'
+  }
   if (!contact.visitorCategory) errors.visitorCategory = 'Visitor category is required.'
   if (visitorInfoFields.idProofActive && visitorInfoFields.idProofRequired) {
     if (!contact.idProofType) errors.idProofType = 'ID proof type is required.'

@@ -1,4 +1,5 @@
 import z from "zod"
+import { PreferredContactMethodSchema } from "./preferred-contact-method"
 
 // Wire shape for `payload.primaryContact` and each `payload.visitors[]` entry on
 // POST /registrations/walk-in. ID-proof images travel as separate multipart file
@@ -11,7 +12,7 @@ export const VisitorSchema = z
     fullName: z.string().min(1),
     email: z.string().email().optional(),
     phone: z.string().min(1).optional(),
-    preferredContactMethod: z.enum(["email", "sms"]).optional(),
+    preferredContactMethod: PreferredContactMethodSchema.optional(),
     // Branch-configurable (form-builder) — not every branch requires or
     // even shows ID Proof Type, so it's omitted rather than sent empty.
     idProofType: z.string().min(1).optional(),

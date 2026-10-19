@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { PreferredContactMethodSchema } from '../../../domain/entities/preferred-contact-method'
 import { FormSkeleton, Skeleton } from '../../components/ui/Skeleton'
 import { GroupErrorsContext } from '../../components/dynamic-fields/group-errors-context'
 import { useNavigate } from 'react-router'
@@ -282,9 +283,7 @@ function buildPrimaryContactPrefill(
   const base = contact.includes('@') ? { email: contact } : { phone: contact }
   if (!prefill) return base
 
-  const preferredContactMethod = prefill.preferredContactMethod === 'email' || prefill.preferredContactMethod === 'sms'
-    ? prefill.preferredContactMethod
-    : undefined
+  const preferredContactMethod = PreferredContactMethodSchema.safeParse(prefill.preferredContactMethod).data
 
   return {
     ...base,
