@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { PendingButton } from '../../../../components/ui/PendingButton'
 import type {
   CarriedItemsFormState,
   ConsentFormState,
@@ -10,7 +11,6 @@ import type {
 } from '../../types'
 import type { EffectiveFormFieldGroup, EffectiveFormStep, FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
-import { Spinner } from '../../../../components/ui/LoadingState'
 import { FileTextIcon } from '../../../../components/icons'
 import { getFilePreviewKind } from '../../../../utils/file-preview-kind'
 import { prettifyKey } from '../../../../utils/prettify-key'
@@ -446,16 +446,15 @@ export function ReviewConfirmStep({
         >
           ← Back
         </button>
-        <button
-          type="button"
+        <PendingButton
           onClick={onSubmit}
-          disabled={status === 'submitting'}
           title="Submit your visit request"
+          pending={status === 'submitting'}
+          pendingLabel="Submitting…"
           className="flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white transition-colors enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {status === 'submitting' && <Spinner className="size-4 border-white/40 border-t-white" />}
-          {status === 'submitting' ? 'Submitting…' : 'Submit Request'}
-        </button>
+          Submit Request
+        </PendingButton>
       </div>
     </div>
   )

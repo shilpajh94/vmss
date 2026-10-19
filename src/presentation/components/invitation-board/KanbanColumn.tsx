@@ -5,11 +5,11 @@ import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-wor
 import { VisitRequestCard } from './VisitRequestCard'
 import { UserIcon } from '../icons'
 import { EmptyState } from '../ui/EmptyState'
-import { Spinner } from '../ui/LoadingState'
+import { Skeleton } from '../ui/Skeleton'
 import { BOARD_PAGE_SIZE } from '../../hooks/use-paged-board-columns'
 import { useInfiniteScrollSentinel } from '../../hooks/use-infinite-scroll-sentinel'
 
-const ACCENT_CLASSES = {
+export const ACCENT_CLASSES = {
   requested: { border: 'border-l-info', tint: 'bg-info/8', text: 'text-info', dragOver: 'border-info bg-info/5 ring-info/40' },
   approved: { border: 'border-l-success', tint: 'bg-success/8', text: 'text-success', dragOver: 'border-success bg-success/5 ring-success/40' },
   checked_in: {
@@ -25,7 +25,11 @@ const ACCENT_CLASSES = {
     dragOver: 'border-text-faint bg-text-faint/5 ring-text-faint/40',
   },
   denied: { border: 'border-l-danger', tint: 'bg-danger/8', text: 'text-danger', dragOver: 'border-danger bg-danger/5 ring-danger/40' },
+  archived: { border: 'border-l-warning', tint: 'bg-warning/8', text: 'text-warning', dragOver: 'border-warning bg-warning/5 ring-warning/40' },
 } as const
+
+// Shared with ClosedStatusesColumn so every desktop column sizes the same way.
+export const BOARD_COLUMN_SIZING = 'flex min-w-0 flex-1 flex-col lg:min-h-0 lg:min-w-[240px] lg:basis-0'
 
 interface KanbanColumnProps {
   status: keyof typeof ACCENT_CLASSES
@@ -38,6 +42,8 @@ interface KanbanColumnProps {
   loadMoreFailed: boolean
   onLoadMore: () => void
   emptyMessage: string
+  /** Rendered inside the Closed column's tab panel, which owns the header and sizing. */
+  embedded?: boolean
   onDrop?: (id: string) => void
   approvingId?: string
   invitationDetails?: Record<string, InvitationDetail>
@@ -66,6 +72,7 @@ export function KanbanColumn({
   loadMoreFailed,
   onLoadMore,
   emptyMessage,
+  embedded = false,
   onDrop,
   approvingId,
   invitationDetails,
@@ -95,7 +102,10 @@ export function KanbanColumn({
 
   return (
     <div
-      className="flex min-w-0 flex-1 flex-col gap-3 lg:min-h-0 lg:min-w-[170px]"
+      // Columns share the board evenly but stop at 240px; past that the board
+      // scrolls sideways instead of truncating cards (staff-dashboard "Board
+      // columns keep a readable minimum width").
+      className={embedded ? 'flex min-h-0 flex-1 flex-col' : `${BOARD_COLUMN_SIZING} gap-3`}
       onDragOver={
         onDrop
           ? (event) => {
@@ -116,11 +126,13 @@ export function KanbanColumn({
           : undefined
       }
     >
-      {/* Outside the scroll area below, so it stays put however far the cards scroll (desktop). */}
-      <div className={`flex w-full shrink-0 items-center justify-between rounded-[10px] border-l-4 px-4 py-2 ${accent.border} ${accent.tint}`}>
-        <p className="font-display text-base font-bold text-text">{label}</p>
-        <span className={`rounded-full border border-border bg-surface px-2 py-0.5 font-body text-xs font-bold ${accent.text}`}>{total}</span>
-      </div>
+      {embedded ? null : (
+        // Outside the scroll area below, so it stays put however far the cards scroll (desktop).
+        <div className={`flex w-full shrink-0 items-center justify-between gap-2 rounded-[10px] border-l-4 px-4 py-2 ${accent.border} ${accent.tint}`}>
+          <p className="min-w-0 truncate font-display text-base font-bold text-text">{label}</p>
+          <span className={`shrink-0 rounded-full border border-border bg-surface px-2 py-0.5 font-body text-xs font-bold ${accent.text}`}>{total}</span>
+        </div>
+      )}
 
       {requests.length === 0 ? (
         <EmptyState
@@ -159,9 +171,17 @@ export function KanbanColumn({
           ))}
           <div ref={sentinelRef} aria-hidden className="h-px shrink-0" />
           {isLoadingMore ? (
-            <div role="status" className="flex shrink-0 items-center justify-center gap-2 py-3 font-body text-xs text-text-muted">
-              <Spinner className="size-4" />
-              Loading more…
+            // A card-shaped placeholder at the column's foot, where the next
+            // page's cards will land (async-ui-states skeletons).
+            <div role="status" aria-label="Loading more…" className="flex shrink-0 flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+              <div className="flex items-center gap-3">
+                <Skeleton className="size-9 shrink-0 rounded-full" />
+                <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <Skeleton className="h-3.5 w-2/3" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+              </div>
+              <Skeleton className="h-3 w-3/5" />
             </div>
           ) : loadMoreFailed ? (
             <div className="flex shrink-0 flex-col items-center gap-2 py-3 text-center">

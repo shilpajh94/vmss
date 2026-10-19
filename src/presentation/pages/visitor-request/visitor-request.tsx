@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
+import { FormSkeleton, Skeleton } from '../../components/ui/Skeleton'
 import { GroupErrorsContext } from '../../components/dynamic-fields/group-errors-context'
 import { useNavigate } from 'react-router'
 import { PortalFooter } from '../../components/PortalFooter'
 import { PortalHeader } from '../../components/PortalHeader'
 import { StepProgressHeader } from './Components/StepProgressHeader'
 import { useAppDependencies } from '../../context/app-dependencies-context'
-import { Spinner } from '../../components/ui/LoadingState'
 import type { Branch } from '../../../domain/entities/branch-schema'
 import type { Building } from '../../../domain/entities/building-schema'
 import type { VisitorPortalMe } from '../../../domain/entities/visitor-portal-schema'
@@ -121,7 +121,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
         <div className="min-w-0 flex-1 overflow-x-clip rounded-2xl border border-border bg-surface p-4 sm:p-6 md:p-8">
           {/* The action bar below stays outside this keyed wrapper, so only the step content slides. */}
           <div key={currentStep} data-direction={stepDirection} className="step-enter">
-            {isFormConfigLoading && <p className="text-body text-text-muted">Loading…</p>}
+            {isFormConfigLoading && <FormSkeleton bare rows={3} label="Loading the registration form…" />}
 
             {!isFormConfigLoading && formConfigError && (
               <p className="text-body text-danger">Something went wrong loading the registration form. Please refresh the page.</p>
@@ -386,9 +386,14 @@ export function VisitorRequestPage() {
       <PortalHeader />
       <OtpScreenLayout onBack={() => navigate('/')}>
         {isLookingUpHistory ? (
-          <div className="flex h-fit w-full max-w-[480px] items-center justify-center gap-2 rounded-2xl border border-border bg-surface p-8 text-body text-text-muted shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
-            <Spinner className="size-4 border-border border-t-secondary-accent" />
-            Looking up your visits…
+          <div
+            role="status"
+            aria-label="Looking up your visits…"
+            className="flex h-fit w-full max-w-[480px] flex-col gap-3 rounded-2xl border border-border bg-surface p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]"
+          >
+            <Skeleton className="h-5 w-48" />
+            <Skeleton className="h-3.5 w-full" />
+            <Skeleton className="h-3.5 w-2/3" />
           </div>
         ) : otp.phase === 'request' ? (
           <OtpRequestScreen

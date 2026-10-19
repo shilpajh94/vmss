@@ -11,6 +11,7 @@ export const STATUS_OPTIONS: DropdownOption[] = [
   { value: 'checked_in', label: 'Checked-in' },
   { value: 'checked_out', label: 'Checked-out' },
   { value: 'denied', label: 'Denied' },
+  { value: 'archived', label: 'Archived' },
 ]
 
 export const SOURCE_OPTIONS: DropdownOption[] = [
@@ -36,6 +37,7 @@ const EXPORT_DATE_LABELS: Record<string, string> = {
   denied: 'Denial date',
   checked_in: 'Check-in date',
   checked_out: 'Check-out date',
+  archived: 'Archived date',
 }
 
 export function exportDateLabel(status: string): string {

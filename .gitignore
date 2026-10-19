@@ -28,3 +28,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Playwright e2e screenshots/traces (npm run e2e)
+e2e-results

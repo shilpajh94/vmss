@@ -10,11 +10,13 @@ interface RescheduleInvitationModalProps {
   visitorName?: string
   trackingId?: string
   isRescheduling?: boolean
+  /** Earliest selectable date (YYYY-MM-DD) — set for an archived no-show, which the API only reschedules to today or later. */
+  minDate?: string
   onConfirm: (preferredVisitDate: string, preferredVisitTime: string) => void
   onCancel: () => void
 }
 
-export function RescheduleInvitationModal({ isOpen, visitorName, trackingId, isRescheduling, onConfirm, onCancel }: RescheduleInvitationModalProps) {
+export function RescheduleInvitationModal({ isOpen, visitorName, trackingId, isRescheduling, minDate, onConfirm, onCancel }: RescheduleInvitationModalProps) {
   const [preferredVisitDate, setPreferredVisitDate] = useState('')
   const [preferredVisitTime, setPreferredVisitTime] = useState('')
   const [isConfirming, setIsConfirming] = useState(false)
@@ -54,6 +56,7 @@ export function RescheduleInvitationModal({ isOpen, visitorName, trackingId, isR
             label="New date"
             labelClassName="font-body text-[13px] font-semibold text-text"
             type="date"
+            min={minDate}
             value={preferredVisitDate}
             onChange={setPreferredVisitDate}
           />

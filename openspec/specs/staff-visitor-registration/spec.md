@@ -18,11 +18,15 @@ The system SHALL check for a staff auth token before rendering the Register Visi
 - **THEN** the system renders the wizard's first step, "Visitor Info"
 
 ### Requirement: Wizard is reachable from the staff dashboard
-The system SHALL render the Register Visitor wizard inside the staff shell (sidebar and workspace header matching the dashboard) when a staff member activates "My actions" from the dashboard sidebar.
+The system SHALL render the Register Visitor wizard inside the staff shell (the same sidebar and shared staff top bar as the staff Invitations page), with its own "Register Visitor" title and subtitle as the page's title row. The page SHALL NOT render its own identity or "Sign out" block; those are in the top bar when a staff member activates "My actions" from the dashboard sidebar.
 
 #### Scenario: Staff opens the wizard from the dashboard
 - **WHEN** an authenticated staff member activates "My actions" in the dashboard sidebar
 - **THEN** the system renders the Register Visitor wizard's "Visitor Info" step inside the staff shell
+
+#### Scenario: Register Visitor uses the shared top bar
+- **WHEN** an authenticated staff member opens the Register Visitor wizard at 1440px wide
+- **THEN** the shared staff top bar shows their name, role and "Sign out", and the page content starts with the "Register Visitor" title row, with no second identity or "Sign out" block
 
 ### Requirement: A progress stepper shows the current step, reflecting the branch's published form-builder configuration
 The system SHALL display a stepper listing the steps present in the branch's published effective form configuration, in that configuration's order, and SHALL visually mark which step is currently active. A step the configuration omits (deactivated by an admin, or never enabled for the branch) SHALL NOT appear in the stepper and SHALL NOT be reachable by navigation. A step present in the configuration whose key is not one of the wizard's built-in steps (Visitor Info, Visit Info, Carried Items, Vehicle Info, Consent Agreement, Review & Confirm) SHALL still render, using its configured fields, rather than being silently omitted. The stepper's total count and "Next"/"Back" transitions SHALL be computed from the number of steps actually present, not a fixed count of six.
@@ -209,7 +213,7 @@ Every other field and step SHALL render as configured.
   renders its supported fields, and no load error is shown
 
 ### Requirement: The wizard's form region scrolls independently of the page header, stepper, and action bar on desktop widths
-At desktop widths, where the navigation sidebar is docked, the staff Register Visitor page SHALL keep its page header (title, subtitle, and identity/sign-out block), the progress stepper, and the Cancel / Next action bar fixed in view. The current step's form region SHALL be the only part of the page that scrolls, filling the vertical space between the stepper and the action bar. When the staff member moves to a different step, the form region SHALL show the top of that step. Below desktop width the whole page SHALL scroll as one, with the action bar kept visible at the bottom of the viewport. On those widths the stacked header and stepper would otherwise leave too little height for the form.
+At desktop widths, where the navigation sidebar is docked, the staff Register Visitor page SHALL keep the staff top bar, its page title row (title and subtitle), the progress stepper, and the Cancel / Next action bar fixed in view. The current step's form region SHALL be the only part of the page that scrolls, filling the vertical space between the stepper and the action bar. When the staff member moves to a different step, the form region SHALL show the top of that step. Below desktop width the whole page SHALL scroll as one, with the action bar kept visible at the bottom of the viewport. On those widths the stacked header and stepper would otherwise leave too little height for the form.
 
 #### Scenario: Scrolling a tall step on desktop keeps the chrome in view
 - **WHEN** the staff member is on a step whose fields are taller than the space available at a desktop viewport width and scrolls down within the form

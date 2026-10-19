@@ -1,4 +1,5 @@
 import { KeyIcon } from '../../../../assets/icons'
+import { PendingButton } from '../../../components/ui/PendingButton'
 import { TextField } from '../../../components/ui/TextField'
 
 interface LoginFormCardProps {
@@ -64,13 +65,14 @@ export function LoginFormCard({
           error={passwordError}
         />
 
-        <button
+        <PendingButton
           type="submit"
-          disabled={loading}
+          pending={loading}
+          pendingLabel="Signing in…"
           className="flex w-full items-center justify-center gap-2.5 rounded-lg bg-secondary-accent px-6 py-3.5 font-body text-[15px] font-semibold text-white drop-shadow-[0_4px_6px_rgba(6,182,212,0.15)] disabled:opacity-60"
         >
-          {loading ? 'Signing in…' : 'Sign In'}
-        </button>
+          Sign In
+        </PendingButton>
         {errorMessage && <p className="font-body text-[13px] text-danger">{errorMessage}</p>}
 
         <div className="flex items-center gap-3">

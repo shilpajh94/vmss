@@ -1,4 +1,4 @@
-import type { DashboardRepository } from '../repositories/dashboard-repository'
+import type { DashboardBranchScope, DashboardRepository } from '../repositories/dashboard-repository'
 import type { DashboardRecentCheckin } from '../../domain/entities/dashboard-checkin-schema'
 
 export class ListRecentCheckinsUseCase {
@@ -8,7 +8,7 @@ export class ListRecentCheckinsUseCase {
     this.dashboardRepository = dashboardRepository
   }
 
-  async execute(): Promise<DashboardRecentCheckin[]> {
-    return this.dashboardRepository.listRecentCheckins()
+  async execute(options?: DashboardBranchScope & { pageSize?: number }): Promise<DashboardRecentCheckin[]> {
+    return this.dashboardRepository.listRecentCheckins(options)
   }
 }

@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import { usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
@@ -28,8 +29,7 @@ export function useAdminBranches() {
   const [branches, setBranches] = useState<Branch[]>([])
   const [total, setTotal] = useState(0)
   const [employees, setEmployees] = useState<HostEmployee[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const { phase, isRefreshing, begin } = useLoadTracker()
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [formState, setFormState] = useState<BranchFormState>(undefined)
@@ -43,14 +43,11 @@ export function useAdminBranches() {
 
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
+  // `user` (default): filter/page/retry/refresh/post-mutation - keeps the
+  // current rows on screen with a progress cue. `background`: the 15s poll.
   const loadBranches = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false
-
-      if (!silent) {
-        setIsLoading(true)
-        setErrorMessage(undefined)
-      }
+    async (mode: LoadMode = 'user') => {
+      const request = begin(mode)
 
       try {
         const [user, page_, employeeList] = await Promise.all([
@@ -62,23 +59,18 @@ export function useAdminBranches() {
           }),
           listHostEmployeesUseCase.execute(),
         ])
+        if (!request.succeed()) return
         setCurrentUser(user)
         setBranches(page_.items)
         setTotal(page_.total)
         setEmployees(employeeList)
         setLastUpdatedAt(new Date())
       } catch {
-        if (!silent) {
-          setErrorMessage('Something went wrong loading the branches. Please try again.')
-        }
+        if (!request.fail()) return
         toast.error('Something went wrong loading the branches. Please try again.')
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
       }
     },
-    [getCurrentStaffUserUseCase, listBranchesPageUseCase, listHostEmployeesUseCase, page, statusFilter, toast],
+    [begin, getCurrentStaffUserUseCase, listBranchesPageUseCase, listHostEmployeesUseCase, page, statusFilter, toast],
   )
 
   useEffect(() => {
@@ -97,9 +89,9 @@ export function useAdminBranches() {
   // Auto-refreshes the register every 15s; skipped while a form/delete dialog
   // is open so a background tick can't replace data underneath it.
   const isActionInProgress = formState !== undefined || isSaving || pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadBranches({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadBranches('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
 
   const openEditForm = useCallback((branch: Branch) => {
     setFormState({ mode: 'edit', branch })
@@ -144,7 +136,7 @@ export function useAdminBranches() {
       await deleteBranchUseCase.execute(pendingDelete.id)
       toast.success('Branch deleted.')
       setPendingDelete(undefined)
-      await loadBranches({ silent: true })
+      await loadBranches()
     } catch {
       toast.error('Something went wrong deleting the branch. Please try again.')
     } finally {
@@ -177,8 +169,8 @@ export function useAdminBranches() {
     goToNextPage,
     goToPrevPage,
     employees,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     isFilterPanelOpen,
     toggleFilterPanel,

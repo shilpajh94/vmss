@@ -1,5 +1,6 @@
 import { ChevronLeftIcon } from '../../components/icons'
-import { LoadingState } from '../../components/ui/LoadingState'
+import { FormSkeleton } from '../../components/ui/Skeleton'
+import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { TextareaField } from '../../components/ui/TextareaField'
@@ -58,7 +59,7 @@ export function AdminDepartmentFormPage() {
             </button>
           </div>
         ) : isLoading ? (
-          <LoadingState label="Loading…" className="py-12" />
+          <FormSkeleton rows={4} columns={1} label="Loading department…" />
         ) : (
           <div className="flex w-full flex-col gap-8 rounded-2xl border border-border bg-surface p-10">
             <div className="flex flex-col gap-6">
@@ -127,14 +128,14 @@ export function AdminDepartmentFormPage() {
               <button type="button" onClick={cancel} className="rounded-full border border-border bg-surface px-6 py-2.5 font-body text-sm font-semibold text-text">
                 Cancel
               </button>
-              <button
-                type="button"
+              <PendingButton
                 onClick={() => void submit()}
-                disabled={isSaving}
+                pending={isSaving}
+                pendingLabel="Saving…"
                 className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-white disabled:opacity-50"
               >
-                {isSaving ? 'Saving…' : isEditMode ? 'Save Changes' : 'Save Department'}
-              </button>
+                {isEditMode ? 'Save Changes' : 'Save Department'}
+              </PendingButton>
             </div>
           </div>
         )}

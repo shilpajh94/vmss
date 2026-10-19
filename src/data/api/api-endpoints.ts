@@ -247,6 +247,21 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  GET_MY_DASHBOARD_OVERVIEW: {
+    endpoint: "/admin/dashboard/my-overview",
+    method: "GET",
+    hasToken: true,
+  },
+  GET_DASHBOARD_ANALYTICS: {
+    endpoint: "/admin/dashboard/analytics",
+    method: "GET",
+    hasToken: true,
+  },
+  GET_MY_DASHBOARD_ANALYTICS: {
+    endpoint: "/admin/dashboard/my-analytics",
+    method: "GET",
+    hasToken: true,
+  },
   LIST_HOST_EMPLOYEES: {
     endpoint: "/auth/employees",
     method: "GET",
@@ -422,6 +437,26 @@ export const API_ENDPOINTS = {
   UNREGISTER_DEVICE: {
     endpoint: "/notifications/devices/:fcmToken",
     method: "DELETE",
+    hasToken: true,
+  },
+  LIST_NOTIFICATIONS: {
+    endpoint: "/notifications",
+    method: "GET",
+    hasToken: true,
+  },
+  NOTIFICATIONS_UNREAD_COUNT: {
+    endpoint: "/notifications/unread-count",
+    method: "GET",
+    hasToken: true,
+  },
+  MARK_NOTIFICATION_READ: {
+    endpoint: "/notifications/:id/read",
+    method: "PATCH",
+    hasToken: true,
+  },
+  MARK_ALL_NOTIFICATIONS_READ: {
+    endpoint: "/notifications/read-all",
+    method: "POST",
     hasToken: true,
   },
   LIST_FORM_STEPS: {

@@ -74,6 +74,9 @@ import { CreateFloorUseCase } from './data/use-cases/create-floor'
 import { UpdateFloorUseCase } from './data/use-cases/update-floor'
 import { DeleteFloorUseCase } from './data/use-cases/delete-floor'
 import { GetDashboardOverviewUseCase } from './data/use-cases/get-dashboard-overview'
+import { GetMyDashboardOverviewUseCase } from './data/use-cases/get-my-dashboard-overview'
+import { GetDashboardAnalyticsUseCase } from './data/use-cases/get-dashboard-analytics'
+import { GetMyDashboardAnalyticsUseCase } from './data/use-cases/get-my-dashboard-analytics'
 import { ListRecentCheckinsUseCase } from './data/use-cases/list-recent-checkins'
 import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
 import { ListHostEmployeesPageUseCase } from './data/use-cases/list-host-employees-page'
@@ -128,6 +131,10 @@ import { SaveWorkflowUseCase } from './data/use-cases/save-workflow'
 import { DeleteWorkflowUseCase } from './data/use-cases/delete-workflow'
 import { RegisterDeviceUseCase } from './data/use-cases/register-device'
 import { UnregisterDeviceUseCase } from './data/use-cases/unregister-device'
+import { ListNotificationsUseCase } from './data/use-cases/list-notifications'
+import { GetUnreadNotificationCountUseCase } from './data/use-cases/get-unread-notification-count'
+import { MarkNotificationReadUseCase } from './data/use-cases/mark-notification-read'
+import { MarkAllNotificationsReadUseCase } from './data/use-cases/mark-all-notifications-read'
 import { HttpVisitRequestRepository } from './infrastructure/visit-request-repository'
 import { HttpVisitRequestSummaryRepository } from './infrastructure/visit-request-summary-repository'
 import { HttpVisitTrackingRepository } from './infrastructure/visit-tracking-repository'
@@ -206,6 +213,9 @@ export interface AppDependencies {
   updateFloorUseCase: UpdateFloorUseCase
   deleteFloorUseCase: DeleteFloorUseCase
   getDashboardOverviewUseCase: GetDashboardOverviewUseCase
+  getMyDashboardOverviewUseCase: GetMyDashboardOverviewUseCase
+  getDashboardAnalyticsUseCase: GetDashboardAnalyticsUseCase
+  getMyDashboardAnalyticsUseCase: GetMyDashboardAnalyticsUseCase
   listRecentCheckinsUseCase: ListRecentCheckinsUseCase
   listHostEmployeesUseCase: ListHostEmployeesUseCase
   listHostEmployeesPageUseCase: ListHostEmployeesPageUseCase
@@ -243,6 +253,10 @@ export interface AppDependencies {
   deleteWorkflowUseCase: DeleteWorkflowUseCase
   registerDeviceUseCase: RegisterDeviceUseCase
   unregisterDeviceUseCase: UnregisterDeviceUseCase
+  listNotificationsUseCase: ListNotificationsUseCase
+  getUnreadNotificationCountUseCase: GetUnreadNotificationCountUseCase
+  markNotificationReadUseCase: MarkNotificationReadUseCase
+  markAllNotificationsReadUseCase: MarkAllNotificationsReadUseCase
   listFormStepsUseCase: ListFormStepsUseCase
   createFormStepUseCase: CreateFormStepUseCase
   updateFormStepUseCase: UpdateFormStepUseCase
@@ -330,6 +344,9 @@ export function createApp(): AppDependencies {
   let deleteFloorUseCase: DeleteFloorUseCase | undefined
   let dashboardRepository: DashboardRepository | undefined
   let getDashboardOverviewUseCase: GetDashboardOverviewUseCase | undefined
+  let getMyDashboardOverviewUseCase: GetMyDashboardOverviewUseCase | undefined
+  let getDashboardAnalyticsUseCase: GetDashboardAnalyticsUseCase | undefined
+  let getMyDashboardAnalyticsUseCase: GetMyDashboardAnalyticsUseCase | undefined
   let listRecentCheckinsUseCase: ListRecentCheckinsUseCase | undefined
   let hostEmployeeRepository: HostEmployeeRepository | undefined
   let listHostEmployeesUseCase: ListHostEmployeesUseCase | undefined
@@ -393,6 +410,10 @@ export function createApp(): AppDependencies {
   let notificationRepository: NotificationRepository | undefined
   let registerDeviceUseCase: RegisterDeviceUseCase | undefined
   let unregisterDeviceUseCase: UnregisterDeviceUseCase | undefined
+  let listNotificationsUseCase: ListNotificationsUseCase | undefined
+  let getUnreadNotificationCountUseCase: GetUnreadNotificationCountUseCase | undefined
+  let markNotificationReadUseCase: MarkNotificationReadUseCase | undefined
+  let markAllNotificationsReadUseCase: MarkAllNotificationsReadUseCase | undefined
 
   const resolveApiClient = (): ApiClient => {
     apiClient ??= new ApiClient(import.meta.env.VITE_API_BASE_URL)
@@ -729,6 +750,21 @@ export function createApp(): AppDependencies {
     return getDashboardOverviewUseCase
   }
 
+  const resolveGetMyDashboardOverviewUseCase = (): GetMyDashboardOverviewUseCase => {
+    getMyDashboardOverviewUseCase ??= new GetMyDashboardOverviewUseCase(resolveDashboardRepository())
+    return getMyDashboardOverviewUseCase
+  }
+
+  const resolveGetDashboardAnalyticsUseCase = (): GetDashboardAnalyticsUseCase => {
+    getDashboardAnalyticsUseCase ??= new GetDashboardAnalyticsUseCase(resolveDashboardRepository())
+    return getDashboardAnalyticsUseCase
+  }
+
+  const resolveGetMyDashboardAnalyticsUseCase = (): GetMyDashboardAnalyticsUseCase => {
+    getMyDashboardAnalyticsUseCase ??= new GetMyDashboardAnalyticsUseCase(resolveDashboardRepository())
+    return getMyDashboardAnalyticsUseCase
+  }
+
   const resolveListRecentCheckinsUseCase = (): ListRecentCheckinsUseCase => {
     listRecentCheckinsUseCase ??= new ListRecentCheckinsUseCase(resolveDashboardRepository())
     return listRecentCheckinsUseCase
@@ -1044,6 +1080,26 @@ export function createApp(): AppDependencies {
     return unregisterDeviceUseCase
   }
 
+  const resolveListNotificationsUseCase = (): ListNotificationsUseCase => {
+    listNotificationsUseCase ??= new ListNotificationsUseCase(resolveNotificationRepository())
+    return listNotificationsUseCase
+  }
+
+  const resolveGetUnreadNotificationCountUseCase = (): GetUnreadNotificationCountUseCase => {
+    getUnreadNotificationCountUseCase ??= new GetUnreadNotificationCountUseCase(resolveNotificationRepository())
+    return getUnreadNotificationCountUseCase
+  }
+
+  const resolveMarkNotificationReadUseCase = (): MarkNotificationReadUseCase => {
+    markNotificationReadUseCase ??= new MarkNotificationReadUseCase(resolveNotificationRepository())
+    return markNotificationReadUseCase
+  }
+
+  const resolveMarkAllNotificationsReadUseCase = (): MarkAllNotificationsReadUseCase => {
+    markAllNotificationsReadUseCase ??= new MarkAllNotificationsReadUseCase(resolveNotificationRepository())
+    return markAllNotificationsReadUseCase
+  }
+
   return {
     get apiClient() {
       return resolveApiClient()
@@ -1198,6 +1254,15 @@ export function createApp(): AppDependencies {
     get getDashboardOverviewUseCase() {
       return resolveGetDashboardOverviewUseCase()
     },
+    get getMyDashboardOverviewUseCase() {
+      return resolveGetMyDashboardOverviewUseCase()
+    },
+    get getDashboardAnalyticsUseCase() {
+      return resolveGetDashboardAnalyticsUseCase()
+    },
+    get getMyDashboardAnalyticsUseCase() {
+      return resolveGetMyDashboardAnalyticsUseCase()
+    },
     get listRecentCheckinsUseCase() {
       return resolveListRecentCheckinsUseCase()
     },
@@ -1308,6 +1373,18 @@ export function createApp(): AppDependencies {
     },
     get unregisterDeviceUseCase() {
       return resolveUnregisterDeviceUseCase()
+    },
+    get listNotificationsUseCase() {
+      return resolveListNotificationsUseCase()
+    },
+    get getUnreadNotificationCountUseCase() {
+      return resolveGetUnreadNotificationCountUseCase()
+    },
+    get markNotificationReadUseCase() {
+      return resolveMarkNotificationReadUseCase()
+    },
+    get markAllNotificationsReadUseCase() {
+      return resolveMarkAllNotificationsReadUseCase()
     },
     get listFormStepsUseCase() {
       return resolveListFormStepsUseCase()

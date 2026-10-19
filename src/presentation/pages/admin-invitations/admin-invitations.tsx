@@ -1,19 +1,21 @@
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
+import { CLOSED_BOARD_STATUSES } from '../../hooks/use-invitations-board'
 import { ApproveInvitationModal } from '../../components/invitation-board/ApproveInvitationModal'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
 import { RevertApprovalModal } from '../../components/invitation-board/RevertApprovalModal'
 import { CheckOutVisitorModal } from '../../components/invitation-board/CheckOutVisitorModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
+import { todayAsDateInputValue } from '../../utils/local-date-input-value'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
-import { LoadingState } from '../../components/ui/LoadingState'
+import { AsyncRegion } from '../../components/AsyncRegion'
+import { BoardSkeleton } from '../../components/ui/Skeleton'
 import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
-import { SOURCE_FILTER_OPTIONS, STATUS_FILTER_OPTIONS } from '../../components/invitation-board/filter-options'
+import { boardExtraFilters } from '../../components/invitation-board/board-extra-filters'
 import { ExportInvitationsButton } from '../../components/invitation-board/ExportInvitationsButton'
 import { ExportInvitationsModal } from '../../components/invitation-board/ExportInvitationsModal'
-import { CircleDotIcon, ClipboardListIcon } from '../../components/icons'
 import { PageContentLayout } from '../../components/PageContentLayout'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminInvitations } from './hooks/use-admin-invitations'
@@ -24,24 +26,28 @@ const EMPTY_MESSAGES: Record<string, string> = {
   checked_in: 'No checked-in visitors today',
   checked_out: 'No checked-out visits',
   denied: 'No denied visits',
+  archived: 'No archived visits',
 }
 
 export function AdminInvitationsPage() {
   const {
     columns,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     search,
     setSearch,
     purposeFilter,
     setPurposeFilter,
     purposeOptions,
     statusFilter,
+    focusClosedStatus,
     setStatusFilter,
     registrationTypeFilter,
     setRegistrationTypeFilter,
     sourceFilter,
     setSourceFilter,
+    isFiltering,
+    clearFilters,
     refresh,
     approvingId,
     findRequest,
@@ -110,15 +116,6 @@ export function AdminInvitationsPage() {
 
   usePageHeader({ description: 'Monitor visitor invitations, approval status, and check-in progress' })
 
-  const isFiltering = purposeFilter !== 'all' || statusFilter !== '' || registrationTypeFilter !== 'all' || sourceFilter !== ''
-  // Leaves the search text alone - only the dropdown filters reset.
-  const clearFilters = () => {
-    setPurposeFilter('all')
-    setStatusFilter('')
-    setRegistrationTypeFilter('all')
-    setSourceFilter('')
-  }
-
   return (
     <PageContentLayout
       header={
@@ -138,10 +135,7 @@ export function AdminInvitationsPage() {
             purposeOptions={purposeOptions}
             registrationTypeFilter={registrationTypeFilter}
             onRegistrationTypeFilterChange={setRegistrationTypeFilter}
-            extraFilters={[
-              { icon: CircleDotIcon, value: statusFilter, options: STATUS_FILTER_OPTIONS, onChange: setStatusFilter, ariaLabel: 'Status' },
-              { icon: ClipboardListIcon, value: sourceFilter, options: SOURCE_FILTER_OPTIONS, onChange: setSourceFilter, ariaLabel: 'Source' },
-            ]}
+            extraFilters={boardExtraFilters({ statusFilter, setStatusFilter, sourceFilter, setSourceFilter })}
             isFiltering={isFiltering}
             onClearFilters={clearFilters}
           />
@@ -149,22 +143,23 @@ export function AdminInvitationsPage() {
         </>
       }
     >
-      {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
-          <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={refresh} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-            Try again
-          </button>
-        </div>
-      ) : isLoading ? (
-        <LoadingState label="Loading invitations…" className="flex-1" />
-      ) : (
-        // PageContentLayout's data region has a definite height on desktop;
-        // filling it lets each column scroll under its own fixed header.
+      <AsyncRegion
+        phase={phase}
+        isRefreshing={isRefreshing}
+        skeleton={<BoardSkeleton />}
+        errorMessage="Something went wrong loading the dashboard. Please try again."
+        onRetry={refresh}
+        className="lg:h-full"
+      >
+        {/* PageContentLayout's data region has a definite height on desktop;
+            filling it lets each column scroll under its own fixed header. */}
         <div className="flex flex-col lg:h-full">
           <ResponsiveBoard
+            boardKey="admin"
             columns={columns}
-            renderColumn={(column) => (
+            closedStatuses={CLOSED_BOARD_STATUSES}
+            focusClosedStatus={focusClosedStatus}
+            renderColumn={(column, { embedded }) => (
               <KanbanColumn
                 key={`${column.status}:${column.resetKey}`}
                 status={column.status}
@@ -176,6 +171,8 @@ export function AdminInvitationsPage() {
                 loadMoreFailed={column.loadMoreFailed}
                 onLoadMore={column.loadMore}
                 emptyMessage={EMPTY_MESSAGES[column.status]}
+                embedded={embedded}
+                onDrop={column.status === 'approved' ? requestApprove : column.status === 'denied' ? requestDeny : undefined}
                 onMoveToApproved={column.status === 'requested' ? requestApprove : undefined}
                 onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
                 approvingId={approvingId}
@@ -195,7 +192,7 @@ export function AdminInvitationsPage() {
             )}
           />
         </div>
-      )}
+      </AsyncRegion>
 
       <ApproveInvitationModal
         isOpen={pendingApproveId !== undefined}
@@ -238,6 +235,7 @@ export function AdminInvitationsPage() {
         visitorName={findRequest(pendingRescheduleId)?.primaryContactFullName}
         trackingId={findRequest(pendingRescheduleId)?.trackingId}
         isRescheduling={reschedulingId !== undefined}
+        minDate={findRequest(pendingRescheduleId)?.status === 'archived' ? todayAsDateInputValue() : undefined}
         onConfirm={(preferredVisitDate, preferredVisitTime) =>
           pendingRescheduleId && reschedule(pendingRescheduleId, preferredVisitDate, preferredVisitTime)
         }

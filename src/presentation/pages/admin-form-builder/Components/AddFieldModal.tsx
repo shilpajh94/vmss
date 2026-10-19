@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Modal } from '../../../components/ui/Modal'
+import { PendingButton } from '../../../components/ui/PendingButton'
 import { TextareaField } from '../../../components/ui/TextareaField'
 import { TextField } from '../../../components/ui/TextField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
@@ -170,14 +171,14 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
         >
           Cancel
         </button>
-        <button
-          type="button"
+        <PendingButton
           onClick={() => void handleCreate()}
-          disabled={isSubmitting}
+          pending={isSubmitting}
+          pendingLabel="Creating…"
           className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isSubmitting ? 'Creating…' : '+ Create Field'}
-        </button>
+          + Create Field
+        </PendingButton>
       </div>
     </Modal>
   )

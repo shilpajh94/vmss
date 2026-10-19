@@ -1,4 +1,5 @@
 import { Modal } from '../ui/Modal'
+import { PendingButton } from '../ui/PendingButton'
 import { confirmSubject } from '../../utils/confirm-subject'
 
 interface CheckOutVisitorModalProps {
@@ -27,14 +28,14 @@ export function CheckOutVisitorModal({ isOpen, visitorName, trackingId, isChecki
           >
             Cancel
           </button>
-          <button
-            type="button"
-            disabled={isCheckingOut}
+          <PendingButton
+            pending={isCheckingOut}
+            pendingLabel="Checking out…"
             onClick={onConfirm}
             className="rounded-full bg-secondary-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
           >
-            {isCheckingOut ? 'Checking out…' : 'Check Out'}
-          </button>
+            Check Out
+          </PendingButton>
         </div>
       </div>
     </Modal>

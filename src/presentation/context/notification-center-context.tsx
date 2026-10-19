@@ -1,64 +1,146 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useLocation } from 'react-router'
+import { useAppDependencies } from './app-dependencies-context'
+import type { NotificationFeedItem } from '../../domain/entities/notification-feed-schema'
 
-// Mirrors the `reason` field the API's push payload carries
-// (role-based-invitation-workflow): `role_assigned` when the recipient was
-// reached via role-at-branch fan-out, `delegated` when reached as one
-// specific named person (a step delegate, or a newly assigned host).
-// Undefined for any push predating this addressing metadata.
-export type NotificationAddressingReason = 'role_assigned' | 'delegated'
-
-export interface NotificationCenterItem {
-  id: string
-  message: string
-  receivedAt: string
-  read: boolean
-  onClick?: () => void
-  reason?: NotificationAddressingReason
-}
-
-interface AddNotificationInput {
-  message: string
-  onClick?: () => void
-  reason?: NotificationAddressingReason
-}
+// Mirrors the `reason` field the API's push payload carries, and therefore
+// each stored notification's `data.reason` (role-based-invitation-workflow):
+// `role_assigned` when the recipient was reached via role-at-branch fan-out,
+// `delegated` when reached as one specific named person (a step delegate, or
+// a newly assigned host). `lifecycle_update` is a point-of-contact role's
+// push about a lifecycle change — deliberately unlabelled, since nothing new
+// was assigned.
+export type NotificationAddressingReason = 'role_assigned' | 'delegated' | 'lifecycle_update'
 
 interface NotificationCenterContextValue {
-  notifications: NotificationCenterItem[]
+  notifications: NotificationFeedItem[]
   unreadCount: number
-  addNotification: (input: AddNotificationInput) => void
+  refresh: () => void
+  markRead: (notificationId: string) => void
   markAllRead: () => void
+  // Subscribes to "new invitation activity arrived" — fired once per feed
+  // load that brings in items carrying an `invitationId`, so a dashboard can
+  // re-fetch at once instead of waiting for its next poll
+  // (live-data-refresh "Dashboards refresh when invitation activity is
+  // notified"). Returns the unsubscribe function.
+  onInvitationActivity: (callback: () => void) => () => void
 }
 
 const NotificationCenterContext = createContext<NotificationCenterContextValue | null>(null)
 
-// Client-side only: there's no backend "list my notifications" endpoint, so this
-// is just the pushes received during the current session/tab, most recent first.
-const MAX_NOTIFICATIONS = 50
+// The bell shows the most recent page; older items stay retrievable through
+// the API's pagination.
+const FEED_PAGE_SIZE = 20
+const POLL_INTERVAL_MS = 60 * 1000
 
+function isSignedIn(): boolean {
+  return Boolean(sessionStorage.getItem('token'))
+}
+
+// Server-backed (fix-web-push-and-add-notification-feed): the API persists
+// every staff notification, so the bell shows them whether or not this
+// browser has push enabled, and survives a reload. A foreground push is only
+// a hint to refetch.
 export function NotificationCenterProvider({ children }: { children: ReactNode }) {
-  const [notifications, setNotifications] = useState<NotificationCenterItem[]>([])
+  const { listNotificationsUseCase, getUnreadNotificationCountUseCase, markNotificationReadUseCase, markAllNotificationsReadUseCase } =
+    useAppDependencies()
+  const location = useLocation()
+  const [notifications, setNotifications] = useState<NotificationFeedItem[]>([])
+  const [unreadCount, setUnreadCount] = useState(0)
+  const wasSignedInRef = useRef(false)
+  // Ids already seen this session; undefined until the first load, which
+  // only primes the set (old items aren't "new activity").
+  const seenIdsRef = useRef<Set<string> | undefined>(undefined)
+  const activityListenersRef = useRef(new Set<() => void>())
 
-  const addNotification = useCallback(({ message, onClick, reason }: AddNotificationInput) => {
-    const item: NotificationCenterItem = {
-      id: crypto.randomUUID(),
-      message,
-      onClick,
-      reason,
-      receivedAt: new Date().toISOString(),
-      read: false,
+  const onInvitationActivity = useCallback((callback: () => void) => {
+    activityListenersRef.current.add(callback)
+    return () => {
+      activityListenersRef.current.delete(callback)
     }
-    setNotifications((previous) => [item, ...previous].slice(0, MAX_NOTIFICATIONS))
   }, [])
+
+  const refresh = useCallback(() => {
+    if (!isSignedIn()) return
+
+    Promise.all([listNotificationsUseCase.execute({ pageSize: FEED_PAGE_SIZE }), getUnreadNotificationCountUseCase.execute()])
+      .then(([page, count]) => {
+        const seenIds = seenIdsRef.current
+        const hasNewInvitationActivity =
+          seenIds !== undefined && page.items.some((item) => !seenIds.has(item.id) && Boolean(item.data.invitationId))
+        seenIdsRef.current = new Set([...(seenIds ?? []), ...page.items.map((item) => item.id)])
+
+        setNotifications(page.items)
+        setUnreadCount(count)
+        if (hasNewInvitationActivity) activityListenersRef.current.forEach((listener) => listener())
+      })
+      .catch((error: unknown) => {
+        console.error('Failed to load notifications', error)
+      })
+  }, [listNotificationsUseCase, getUnreadNotificationCountUseCase])
+
+  // Sign-in and sign-out both navigate, and neither emits an event of its
+  // own — so the route change is where a fresh session is noticed (load) and
+  // an ended one is cleared.
+  useEffect(() => {
+    const signedIn = isSignedIn()
+    if (signedIn && !wasSignedInRef.current) refresh()
+    if (!signedIn && wasSignedInRef.current) {
+      setNotifications([])
+      setUnreadCount(0)
+      seenIdsRef.current = undefined
+    }
+    wasSignedInRef.current = signedIn
+  }, [location.pathname, refresh])
+
+  // Polls only while the tab is visible, and catches up as soon as it
+  // becomes visible again.
+  useEffect(() => {
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+
+    const intervalId = window.setInterval(refreshIfVisible, POLL_INTERVAL_MS)
+    document.addEventListener('visibilitychange', refreshIfVisible)
+
+    return () => {
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', refreshIfVisible)
+    }
+  }, [refresh])
+
+  // Optimistic, reverted by a refetch on failure.
+  const markRead = useCallback(
+    (notificationId: string) => {
+      const target = notifications.find((item) => item.id === notificationId)
+      if (!target || target.readAt) return
+
+      const readAt = new Date().toISOString()
+      setNotifications((previous) => previous.map((item) => (item.id === notificationId ? { ...item, readAt } : item)))
+      setUnreadCount((previous) => Math.max(0, previous - 1))
+
+      markNotificationReadUseCase.execute(notificationId).catch((error: unknown) => {
+        console.error('Failed to mark notification read', error)
+        refresh()
+      })
+    },
+    [notifications, markNotificationReadUseCase, refresh],
+  )
 
   const markAllRead = useCallback(() => {
-    setNotifications((previous) => previous.map((item) => (item.read ? item : { ...item, read: true })))
-  }, [])
+    const readAt = new Date().toISOString()
+    setNotifications((previous) => previous.map((item) => (item.readAt ? item : { ...item, readAt })))
+    setUnreadCount(0)
 
-  const unreadCount = useMemo(() => notifications.filter((item) => !item.read).length, [notifications])
+    markAllNotificationsReadUseCase.execute().catch((error: unknown) => {
+      console.error('Failed to mark all notifications read', error)
+      refresh()
+    })
+  }, [markAllNotificationsReadUseCase, refresh])
 
   const value = useMemo(
-    () => ({ notifications, unreadCount, addNotification, markAllRead }),
-    [notifications, unreadCount, addNotification, markAllRead],
+    () => ({ notifications, unreadCount, refresh, markRead, markAllRead, onInvitationActivity }),
+    [notifications, unreadCount, refresh, markRead, markAllRead, onInvitationActivity],
   )
 
   return <NotificationCenterContext.Provider value={value}>{children}</NotificationCenterContext.Provider>

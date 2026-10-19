@@ -30,6 +30,7 @@ const STATUS_TONE_CLASSES: Record<string, string> = {
   checked_in: 'bg-secondary-accent/10 text-secondary-accent',
   checked_out: 'bg-text-faint/15 text-text-muted',
   denied: 'bg-danger/10 text-danger',
+  archived: 'bg-warning/10 text-warning',
 }
 
 function statusToneClass(status: string): string {
@@ -331,12 +332,28 @@ export function VisitorInfoModal({
               {detail.approvedAt ? <Field label="Approved" value={formatDateTime(detail.approvedAt)} /> : null}
               {detail.checkedInAt ? <Field label="Checked in" value={formatDateTime(detail.checkedInAt)} /> : null}
               {detail.checkInDevice ? <Field label="Checked in via" value={describeDevice(detail.checkInDevice)} /> : null}
-              {detail.checkedOutAt ? <Field label="Checked out" value={formatDateTime(detail.checkedOutAt)} /> : null}
+              {detail.checkedOutAt ? (
+                <Field
+                  label={detail.checkedOutAutomatically ? 'Checked out automatically' : 'Checked out'}
+                  value={formatDateTime(detail.checkedOutAt)}
+                />
+              ) : null}
               {detail.checkOutDevice ? <Field label="Checked out via" value={describeDevice(detail.checkOutDevice)} /> : null}
+              {detail.archivedAt ? <Field label="Archived" value={formatDateTime(detail.archivedAt)} /> : null}
               {detail.deniedAt ? <Field label="Denied" value={formatDateTime(detail.deniedAt)} /> : null}
               {detail.denialReason ? (
                 <div className="col-span-full">
                   <Field label="Denial reason" value={detail.denialReason} />
+                </div>
+              ) : null}
+              {detail.status === 'checked_out' && detail.checkedOutAutomatically ? (
+                <div className="col-span-full rounded-lg border border-border-subtle bg-neutral-subtle px-3 py-2 font-body text-[12px] text-text-muted">
+                  Nobody checked this visitor out, so the system closed the visit when the pass expired.
+                </div>
+              ) : null}
+              {detail.status === 'archived' ? (
+                <div className="col-span-full rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 font-body text-[13px] text-text">
+                  The visitor didn't arrive on the scheduled day. Reschedule or edit the visit date to send it for approval again.
                 </div>
               ) : null}
               {detail.status === 'submitted' && detail.approvalRevertedAt ? (

@@ -4,6 +4,7 @@ import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
 import { ApiError } from '../../data/api/api-error'
 import { usePolling } from './use-polling'
+import { useLoadTracker, type LoadMode } from './use-load-tracker'
 import { useDebouncedValue } from './use-debounced-value'
 import { isReceptionCurrentStep, resolveApproverLabel, resolveCurrentLevel, resolveTotalSteps } from '../utils/approval-step-label'
 import { employeeAtBranch, employeeHasRoleAtBranch } from '../utils/role-name-match'
@@ -16,7 +17,7 @@ import type { ApprovalWorkflowRule } from '../../domain/entities/approval-workfl
 import type { EditInvitationFields } from '../../data/repositories/visit-request-summary-repository'
 import { PURPOSE_OF_VISIT_OPTIONS } from '../utils/purpose-of-visit-options'
 import { saveBlob } from '../utils/save-blob'
-import { REGISTRATION_TYPE_OPTIONS, SOURCE_OPTIONS, exportFilename, optionLabel } from '../components/invitation-board/filter-options'
+import { REGISTRATION_TYPE_OPTIONS, SOURCE_OPTIONS, STATUS_OPTIONS, exportFilename, optionLabel } from '../components/invitation-board/filter-options'
 import type { InvitationExportChoice } from '../components/invitation-board/ExportInvitationsModal'
 import { boardStatusForApiStatus, usePagedBoardColumns, type BoardStatus, type ColumnQuery } from './use-paged-board-columns'
 
@@ -26,9 +27,16 @@ export const BOARD_STATUS_COLUMNS = [
   { status: 'checked_in', label: 'Checked-in' },
   { status: 'checked_out', label: 'Checked-out' },
   { status: 'denied', label: 'Denied' },
+  // Approved visitors who never arrived; the API's visit-lifecycle sweep moves
+  // them here the day after their visit (VMSS_API auto-checkout-and-archive-no-shows).
+  { status: 'archived', label: 'Archived' },
 ] as const satisfies ReadonlyArray<{ status: BoardStatus; label: string }>
 
 const ALL_BOARD_STATUSES: readonly BoardStatus[] = BOARD_STATUS_COLUMNS.map((column) => column.status)
+
+// Mostly look-up statuses, grouped into one Closed column on desktop
+// (staff-dashboard "Closed statuses share one column on desktop").
+export const CLOSED_BOARD_STATUSES: readonly BoardStatus[] = ['checked_out', 'denied', 'archived']
 
 // Toast copy for an approve action: names which level just cleared and,
 // unless this was the final one, who the request is now waiting on.
@@ -86,13 +94,22 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const [roleNameById, setRoleNameById] = useState<Record<string, string>>({})
   const [hostEmployees, setHostEmployees] = useState<HostEmployee[]>([])
   const [employeeNameById, setEmployeeNameById] = useState<Record<string, string>>({})
-  const [isLoading, setIsLoading] = useState(true)
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const { phase, isRefreshing: isReloadingBoard, begin } = useLoadTracker()
+  // Filter/search changes reload only the columns (not the whole board), so
+  // they're tracked separately; a count, since a newer filter change can
+  // start before an older one settles.
+  const [pendingColumnReloads, setPendingColumnReloads] = useState(0)
   const [search, setSearch] = useState('')
   const [purposeFilter, setPurposeFilter] = useState('all')
   const [registrationTypeFilter, setRegistrationTypeFilter] = useState('all')
-  const [statusFilter, setStatusFilter] = useState('')
+  // A dashboard tile or "View all" link opens the board on one status via
+  // ?status=<api status>, applied once as the initial filter; an unknown
+  // value is ignored (staff-dashboard / admin-invitations "opens a status
+  // from a deep link").
+  const [statusFilter, setStatusFilter] = useState(() => {
+    const requested = searchParams.get('status') ?? ''
+    return STATUS_OPTIONS.some((option) => option.value === requested) ? requested : ''
+  })
   const [sourceFilter, setSourceFilter] = useState('')
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   const debouncedSearch = useDebouncedValue(search, 300)
@@ -132,12 +149,28 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     }),
     [scope, registrationTypeFilter, sourceFilter, debouncedSearch, purposeFilter],
   )
-  // A status filter (admin board) narrows loading to that one column; a
-  // status with no column leaves every column empty.
+  // Owned here, not by either page, so the staff and admin bars share one
+  // definition of "a filter is set" and of what Clear filters resets.
+  const isFiltering = purposeFilter !== 'all' || statusFilter !== '' || registrationTypeFilter !== 'all' || sourceFilter !== ''
+  // Leaves the search text alone - only the dropdown filters reset.
+  const clearFilters = useCallback(() => {
+    setPurposeFilter('all')
+    setStatusFilter('')
+    setRegistrationTypeFilter('all')
+    setSourceFilter('')
+  }, [])
+  // A status filter narrows loading to that one column; a status with no
+  // column leaves every column empty.
   const visibleStatuses = useMemo<readonly BoardStatus[]>(() => {
     if (!statusFilter) return ALL_BOARD_STATUSES
     const status = boardStatusForApiStatus(statusFilter)
     return status ? [status] : []
+  }, [statusFilter])
+
+  // A closed status chosen in the filter should be the one the Closed column shows.
+  const focusClosedStatus = useMemo(() => {
+    const status = boardStatusForApiStatus(statusFilter)
+    return status && CLOSED_BOARD_STATUSES.includes(status) ? status : undefined
   }, [statusFilter])
 
   const fetchVisitRequestsPage = useCallback(
@@ -152,17 +185,12 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
 
   // Every reload keeps each column's loaded depth (refresh, polling, and the
   // reload after an action); only a filter/search change resets columns to
-  // their first page (the effect below). `silent` skips the full-board
-  // loading state, which would otherwise unmount the columns and lose their
-  // scroll position.
+  // their first page (the effect below). After the first load the columns
+  // stay mounted through every reload - a `user` reload only adds the
+  // in-progress cue - so they keep their scroll position.
   const loadDashboard = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false
-
-      if (!silent) {
-        setIsLoading(true)
-        setErrorMessage(undefined)
-      }
+    async (mode: LoadMode = 'user') => {
+      const request = begin(mode)
 
       try {
         const [user, , roles, employees] = await Promise.all([
@@ -180,6 +208,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
           }),
           listHostEmployeesUseCase.execute(),
         ])
+        if (!request.succeed()) return
         setCurrentUser(user)
         setRoles(roles)
         setRoleNameById(Object.fromEntries(roles.map((role: RoleOut) => [role.id, role.name])))
@@ -188,17 +217,11 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         setLastUpdatedAt(new Date())
       } catch (error) {
         console.error('Failed to load dashboard', error)
-        if (!silent) {
-          setErrorMessage('Something went wrong loading the dashboard. Please try again.')
-        }
+        if (!request.fail()) return
         toast.error('Something went wrong loading the dashboard. Please try again.')
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
       }
     },
-    [getCurrentStaffUserUseCase, reloadColumns, listRolesUseCase, listHostEmployeesUseCase, toast],
+    [begin, getCurrentStaffUserUseCase, reloadColumns, listRolesUseCase, listHostEmployeesUseCase, toast],
   )
 
   useEffect(() => {
@@ -212,22 +235,29 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
 
   // A changed filter or (debounced) search restarts every column from its
   // first page. Skipped on mount - the initial `loadDashboard` covers that.
+  // The cards on screen stay put, dimmed under the progress bar, until the
+  // filtered columns replace them (async-ui-states "Re-fetching keeps
+  // existing content visible").
   const hasAppliedInitialQueryRef = useRef(false)
   useEffect(() => {
     if (!hasAppliedInitialQueryRef.current) {
       hasAppliedInitialQueryRef.current = true
       return
     }
-    reloadColumns({ keepDepth: false }).catch((error: unknown) => {
-      console.error('Failed to apply board filters', error)
-      toast.error('Something went wrong loading the dashboard. Please try again.')
-    })
+    setPendingColumnReloads((count) => count + 1)
+    reloadColumns({ keepDepth: false })
+      .catch((error: unknown) => {
+        console.error('Failed to apply board filters', error)
+        toast.error('Something went wrong loading the dashboard. Please try again.')
+      })
+      .finally(() => setPendingColumnReloads((count) => count - 1))
   }, [columnQuery, visibleStatuses, reloadColumns, toast])
 
   const refresh = useCallback(() => {
-    setIsRefreshing(true)
-    void loadDashboard({ silent: true }).finally(() => setIsRefreshing(false))
+    void loadDashboard()
   }, [loadDashboard])
+
+  const isRefreshing = isReloadingBoard || pendingColumnReloads > 0
 
   // progress, so the auto-refresh tick can skip a fetch that would otherwise
   // disrupt it.
@@ -249,7 +279,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     editingId !== undefined ||
     approvingAndDelegatingId !== undefined
 
-  usePolling(() => void loadDashboard({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadDashboard('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
 
   // Workflow rules are defined per visitor category, not per invitation, so
   // every card sharing a category reuses one fetch instead of one each. The
@@ -461,7 +491,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
           toast.success('Visit request approved.')
         }
 
-        await loadDashboard({ silent: true })
+        await loadDashboard('background')
       } catch (error) {
         console.error('Failed to approve visit request', error)
         toast.error(error instanceof Error ? error.message : 'Failed to approve the visit request. Please try again.')
@@ -515,12 +545,15 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   const reschedule = useCallback(
     async (id: string, preferredVisitDate: string, preferredVisitTime: string) => {
       setReschedulingId(id)
+      // Rescheduling an archived no-show sends it back for approval rather
+      // than keeping it approved, so the toast says so.
+      const wasArchived = findRequest(id)?.status === 'archived'
 
       try {
         await rescheduleInvitationUseCase.execute(id, preferredVisitDate, preferredVisitTime)
         setPendingRescheduleId(undefined)
-        toast.success('Visit request rescheduled.')
-        await loadDashboard({ silent: true })
+        toast.success(wasArchived ? 'Visit rescheduled — awaiting re-approval.' : 'Visit request rescheduled.')
+        await loadDashboard('background')
       } catch (error) {
         console.error('Failed to reschedule visit request', error)
         toast.error(error instanceof Error ? error.message : 'Failed to reschedule the visit request. Please try again.')
@@ -528,7 +561,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         setReschedulingId(undefined)
       }
     },
-    [rescheduleInvitationUseCase, loadDashboard, toast],
+    [rescheduleInvitationUseCase, findRequest, loadDashboard, toast],
   )
 
   const requestReschedule = useCallback((id: string) => {
@@ -564,7 +597,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         const delegatedLevel = resolveCurrentLevel(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory)
         toast.success(`Delegated level ${delegatedLevel} of ${resolveTotalSteps(detail, workflowRulesByCategory)} to ${approverLabel}.`)
 
-        await loadDashboard({ silent: true })
+        await loadDashboard('background')
       } catch (error) {
         console.error('Failed to delegate approval step', error)
         toast.error(error instanceof Error ? error.message : 'Failed to delegate this approval step. Please try again.')
@@ -705,7 +738,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         console.error('Failed to approve visit request', error)
         toast.error(error instanceof Error ? error.message : 'Failed to approve the visit request. Please try again.')
       } finally {
-        await loadDashboard({ silent: true })
+        await loadDashboard('background')
         setApprovingAndDelegatingId(undefined)
       }
     },
@@ -755,7 +788,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         setInvitationDetails((previous) => ({ ...previous, [id]: updatedDetail }))
         setPendingEditId(undefined)
         toast.success('Visit request updated.')
-        await loadDashboard({ silent: true })
+        await loadDashboard('background')
       } catch (error) {
         console.error('Failed to edit visit request', error)
         toast.error(error instanceof Error ? error.message : 'Failed to update the visit request. Please try again.')
@@ -794,7 +827,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
         }
 
         setPendingDenyId(undefined)
-        await loadDashboard({ silent: true })
+        await loadDashboard('background')
       } catch (error) {
         console.error('Failed to deny visit request', error)
         toast.error(error instanceof Error ? error.message : 'Failed to deny the visit request. Please try again.')
@@ -836,14 +869,14 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
           const { [id]: _stale, ...rest } = previous
           return rest
         })
-        await loadDashboard({ silent: true })
+        await loadDashboard('background')
         return true
       } catch (error) {
         console.error('Failed to revert approval', error)
         toast.error(error instanceof Error ? error.message : 'Failed to revert the approval. Please try again.')
         if (error instanceof ApiError && error.status === 409) {
           setPendingRevertId(undefined)
-          await loadDashboard({ silent: true })
+          await loadDashboard('background')
           return true
         }
         return false
@@ -952,7 +985,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     }
     // Reload on failure too: a 409 usually means a QR exit scan already
     // moved the card, so the board should show where it actually is now.
-    await loadDashboard({ silent: true })
+    await loadDashboard('background')
   }, [pendingCheckOutId, checkingOutId, pendingCheckOutRequest, checkOutInvitationUseCase, loadDashboard, toast])
 
   // Filtered server-side by exact match, and the wizards store the purpose's
@@ -984,8 +1017,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   return {
     currentUser,
     columns,
-    isLoading,
-    errorMessage,
+    phase,
     search,
     setSearch,
     purposeFilter,
@@ -996,6 +1028,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     setStatusFilter,
     sourceFilter,
     setSourceFilter,
+    isFiltering,
+    clearFilters,
     lastUpdatedAt,
     refresh,
     isRefreshing,
@@ -1041,6 +1075,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     exportError,
     exportFilterSummary,
     statusFilter,
+    focusClosedStatus,
     pendingCheckOutId,
     pendingCheckOutRequest,
     requestCheckOut,

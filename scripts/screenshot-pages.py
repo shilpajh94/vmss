@@ -48,6 +48,7 @@ AUTHED = [
     "/admin/form-builder",
     "/admin/audit-trail",
     "/staff/dashboard",
+    "/staff/invitations",
     "/staff/visitors/new",
     "/reception/dashboard",
 ]

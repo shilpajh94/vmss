@@ -1,4 +1,4 @@
-import type { DashboardRepository } from '../repositories/dashboard-repository'
+import type { DashboardBranchScope, DashboardRepository } from '../repositories/dashboard-repository'
 import type { DashboardOverview } from '../../domain/entities/dashboard-overview-schema'
 
 export class GetDashboardOverviewUseCase {
@@ -8,7 +8,7 @@ export class GetDashboardOverviewUseCase {
     this.dashboardRepository = dashboardRepository
   }
 
-  async execute(): Promise<DashboardOverview> {
-    return this.dashboardRepository.getOverview()
+  async execute(scope?: DashboardBranchScope): Promise<DashboardOverview> {
+    return this.dashboardRepository.getOverview(scope)
   }
 }

@@ -13,6 +13,13 @@
   }
 }
 
+/* ---- Motion (smooth-ui-motion-and-loading) -------------------------------
+   Every animation draws its timing from the --motion-* / --ease-motion-*
+   tokens in theme.css. Presence-driven components (Modal, popovers, toasts,
+   the nav drawer) render `data-state="open" | "closing"` via
+   hooks/use-presence.ts, which keeps them mounted until the closing
+   animation below ends. */
+
 @keyframes route-fade-in {
   from {
     opacity: 0;
@@ -25,12 +32,198 @@
 }
 
 .route-transition {
-  animation: route-fade-in 180ms ease-out;
+  animation: route-fade-in var(--motion-standard) var(--ease-motion-out);
 }
 
+@keyframes motion-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes motion-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes motion-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes motion-scale-out {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes motion-sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes motion-sheet-down {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes motion-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+@keyframes motion-slide-in-top {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+/* Backdrop behind a modal or the nav drawer. */
+.motion-backdrop[data-state="open"] {
+  animation: motion-fade-in var(--motion-standard) var(--ease-motion-out);
+}
+
+.motion-backdrop[data-state="closing"] {
+  animation: motion-fade-out var(--motion-standard) var(--ease-motion-in) forwards;
+}
+
+/* Modal panel: a bottom sheet below `sm`, a centered card from `sm` up. */
+.motion-dialog[data-state="open"] {
+  animation: motion-sheet-up var(--motion-standard) var(--ease-motion-out);
+}
+
+.motion-dialog[data-state="closing"] {
+  animation: motion-sheet-down var(--motion-standard) var(--ease-motion-in) forwards;
+}
+
+@media (width >= 40rem) {
+  .motion-dialog[data-state="open"] {
+    animation-name: motion-scale-in;
+  }
+
+  .motion-dialog[data-state="closing"] {
+    animation-name: motion-scale-out;
+  }
+}
+
+/* Anchored floating surfaces. Callers set `origin-*` toward their trigger. */
+.motion-popover[data-state="open"] {
+  animation: motion-scale-in var(--motion-standard) var(--ease-motion-out);
+}
+
+.motion-popover[data-state="closing"] {
+  animation: motion-scale-out var(--motion-standard) var(--ease-motion-in) forwards;
+}
+
+/* Toasts: the outer wrapper collapses its height on exit (grid-rows trick)
+   so the toasts below glide up into the freed space. */
+.motion-toast {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--motion-standard) var(--ease-motion-in);
+}
+
+.motion-toast > * {
+  min-height: 0;
+}
+
+.motion-toast[data-state="open"] > * {
+  animation: motion-slide-in-top var(--motion-standard) var(--ease-motion-out);
+}
+
+@media (width >= 40rem) {
+  .motion-toast[data-state="open"] > * {
+    animation-name: motion-slide-in-right;
+  }
+}
+
+.motion-toast[data-state="closing"] {
+  grid-template-rows: 0fr;
+}
+
+.motion-toast[data-state="closing"] > * {
+  overflow: hidden;
+  animation: motion-fade-out var(--motion-standard) var(--ease-motion-in) forwards;
+}
+
+/* Content swapping in over a skeleton or empty state. */
+.motion-content-in {
+  animation: motion-fade-in var(--motion-standard) var(--ease-motion-out);
+}
+
+/* Skeleton shimmer: a light band sweeping across a neutral block. */
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.skeleton {
+  background-color: var(--color-border-subtle);
+  background-image: linear-gradient(
+    90deg,
+    var(--color-border-subtle) 0%,
+    var(--color-border) 50%,
+    var(--color-border-subtle) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+/* Indeterminate progress bar shown while a loaded view re-fetches. */
+@keyframes progress-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+.progress-indeterminate {
+  animation: progress-indeterminate 1.1s var(--ease-motion-out) infinite;
+}
+
+/* One global reduced-motion rule (ui-motion "Reduced-motion preference is
+   honoured everywhere"), so a new component can't forget it. Animations
+   and transitions finish instantly - still firing animationend, which
+   use-presence relies on - except status indicators: a spinner or the
+   progress bar is information, not decoration, so it keeps looping (the
+   bar more slowly). */
 @media (prefers-reduced-motion: reduce) {
-  .route-transition {
-    animation: none;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .animate-spin {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .progress-indeterminate {
+    animation-duration: 2.5s !important;
+    animation-iteration-count: infinite !important;
+  }
+
+  .skeleton {
+    animation: none !important;
   }
 }
 
@@ -38,7 +231,7 @@
    sidebar and phone progress bar, and the step content). One duration and
    easing for all of them, kept under the specs' ~300ms ceiling. */
 :root {
-  --step-motion-duration: 280ms;
+  --step-motion-duration: var(--motion-slow);
   --step-motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 

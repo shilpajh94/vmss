@@ -20,28 +20,28 @@ The system SHALL render, for an authenticated session, the Admin sidebar with "I
 - **WHEN** an authenticated admin's Invitations page finishes loading
 - **THEN** the sidebar shows "Invitations" marked active and the top bar shows the signed-in staff member's name and role
 
-### Requirement: Invitations are grouped into five status columns with live counts
-The system SHALL group invitations into five columns, in this order: Requested, Approved, Checked-in, Checked-out, Denied. Each column SHALL show a count badge equal to the server's total number of invitations in that status matching the active search and filters, using the same board component as the staff dashboard. The count SHALL NOT be limited to the number of cards currently loaded. When a status filter is selected, only that status's column SHALL load invitations; the other columns SHALL show zero. Every status the status filter offers, including Checked-out, SHALL have a matching column.
+### Requirement: Invitations are grouped by status with live counts
+The system SHALL group invitations by the same six statuses, in the same order, as the staff dashboard's "Visit requests are grouped by status with live counts", using the same board component. At `lg` and wider, that means three working columns followed by the Closed column. Every status SHALL show the server's total of invitations in that status matching the active search and filters, not the number of cards currently loaded. When a status filter is selected, only that status SHALL load invitations, and every other status SHALL show zero. Every status the status filter offers SHALL have a matching column or Closed-column entry.
 
 #### Scenario: Invitations load successfully
-- **WHEN** the invitations list loads successfully
-- **THEN** each invitation appears under the column matching its status, and each column's count badge shows the server's total for that status
+- **WHEN** the invitations list loads successfully at 1536px wide
+- **THEN** the board shows the Requested, Approved, Checked-in, and Closed columns, each invitation appears under its own status, and every status shows the server's total
 
 #### Scenario: Checked-out invitations appear in their own column
 - **WHEN** the invitations list loads and some invitations have the status `checked_out`
-- **THEN** those invitations appear in the Checked-out column, which sits between Checked-in and Denied, and its count badge shows the server's total of checked-out invitations matching the active search and filters
+- **THEN** those invitations are listed when Checked-out is selected in the Closed column, and the Checked-out count shows the server's total matching the active search and filters
 
 #### Scenario: Empty column
-- **WHEN** a status column has zero invitations
-- **THEN** the system shows an empty-state message instead of any cards
+- **WHEN** a status has zero invitations
+- **THEN** its column, or its Closed-column entry when selected, shows an empty-state message instead of any cards
 
 #### Scenario: Status filter limits loading to one column
 - **WHEN** an admin selects the "Approved" status filter
-- **THEN** only the Approved column loads invitations, and the Requested, Checked-in, Checked-out, and Denied columns show a count of zero and their empty state
+- **THEN** only the Approved column loads invitations, and the Requested and Checked-in columns and all three closed statuses show a count of zero
 
 #### Scenario: Checked-out status filter loads the Checked-out column
 - **WHEN** an admin selects the "Checked-out" status filter
-- **THEN** only the Checked-out column loads invitations and shows the server's total, and the other four columns show a count of zero and their empty state
+- **THEN** the Closed column selects Checked-out, only Checked-out loads invitations and shows the server's total, and every other status shows a count of zero
 
 ### Requirement: Search filters visible invitations by visitor name or tracking ID
 The system SHALL, as the admin types in the search field, show only invitations whose visitor name or tracking ID contains the entered text (case-insensitive), across all columns.
@@ -111,7 +111,7 @@ The system SHALL render, above the admin Invitations board, a single bar laid ou
 - a search field the same 40px height as the filters, taking the remaining width
 - a Purpose of Visit filter, defaulting to "All purposes", whose options are the same purposes the staff dashboard offers
 - a Registration Type filter (All types / Individual / Group)
-- a Status filter, defaulting to "All statuses", offering Requested, Approved, Checked-in, Checked-out and Denied
+- a Status filter, defaulting to "All statuses", offering Requested, Approved, Checked-in, Checked-out, Denied and Archived
 - a Source filter, defaulting to "All sources", offering Staff Pre-Registration and Visitor Walk-in
 
 Every filter SHALL always be visible; the page SHALL NOT have a separate "Filters" toggle or pop-open filter panel. On wide screens the controls SHALL sit on one row. On narrow screens they SHALL wrap or stack without horizontal page scroll. Selecting a filter SHALL narrow every column on the server, combined with the search text and other filters, and each column's count SHALL reflect the filtered total. A "Clear filters" action SHALL appear in the bar whenever any filter differs from its default, and SHALL reset all four filters, without clearing the search text.
@@ -139,3 +139,124 @@ Every filter SHALL always be visible; the page SHALL NOT have a separate "Filter
 #### Scenario: Narrow screen layout
 - **WHEN** the Invitations page is viewed at 360px wide
 - **THEN** the search field and filters stack or wrap with no horizontal page scroll
+
+#### Scenario: Archived is a status option
+- **WHEN** an admin opens the Status filter
+- **THEN** "Archived" is listed after "Denied", and selecting it loads only the Archived column
+
+### Requirement: Admins can export invitations from the board
+The admin Invitations page SHALL show an "Export" button at the end of
+the page's title row, directly above the search and filter bar. It SHALL
+NOT be placed inside the filter bar, which keeps the bar on one row at
+1440px wide. Activating the button SHALL open the Export invitations
+dialog. Once the signed-in user has loaded, the button SHALL stay
+available while the board is loading or showing an error, because the
+export does not depend on the cards that are loaded.
+
+#### Scenario: Export button opens the dialog
+- **WHEN** an admin activates "Export" on the Invitations page
+- **THEN** the Export invitations dialog opens and the board stays as it was
+  behind it
+
+### Requirement: The Export invitations dialog is prefilled from the board
+The Export invitations dialog SHALL contain:
+- a Status select offering "All statuses", Requested, Approved,
+  Checked-in, Checked-out and Denied
+- optional From and To date fields
+- a Format choice of CSV or Excel
+
+When the dialog opens, Status SHALL be prefilled from the board's Status
+filter ("All statuses" when the board has none). Format SHALL default to
+CSV, and the dates SHALL be empty. The dialog SHALL show, read-only, the
+board's other active filters that the export will also apply (search
+text, purpose of visit, registration type, source), or "No other filters"
+when none are active. Below the dates, the dialog SHALL explain which
+date the range applies to: the date of the chosen status, for example
+"Check-in date" for Checked-in, or "Created date" for All statuses.
+
+#### Scenario: Status prefilled from the board filter
+- **WHEN** the board's Status filter is "Checked-in" and the admin opens the
+  Export invitations dialog
+- **THEN** the dialog's Status shows "Checked-in", Format shows CSV, both
+  dates are empty, and the hint says the range applies to the check-in date
+
+#### Scenario: Active board filters are summarised
+- **WHEN** the board has search text "Priya" and the Source filter
+  "Visitor Walk-in" and the admin opens the dialog
+- **THEN** the dialog lists both as filters the export will also apply
+
+#### Scenario: Changing the dialog does not change the board
+- **WHEN** the admin changes Status in the dialog and then closes it
+  without exporting
+- **THEN** the board's own Status filter and columns are unchanged
+
+### Requirement: Confirming the dialog downloads the export file
+Confirming the dialog SHALL request the file from the API's invitation
+export with:
+- the dialog's status, From and To dates, and format, and
+- the board's search, purpose of visit, registration type and source
+  filters.
+
+The browser SHALL save the response as
+`invitations-<status or "all">-<YYYYMMDD>.<csv|xlsx>`, using the local
+date. While the request is in flight, the confirm button SHALL show a busy
+state and SHALL NOT start a second export. On success, the dialog SHALL
+close and a success notification SHALL be shown.
+
+#### Scenario: Exporting checked-in visitors for a day as Excel
+- **WHEN** the admin sets Status "Checked-in", From and To to 14 Oct 2026,
+  and Format Excel, and confirms
+- **THEN** the browser downloads `invitations-checked_in-<today>.xlsx`
+  containing that export, the dialog closes, and a success notification is
+  shown
+
+#### Scenario: Double activation exports once
+- **WHEN** the admin activates the confirm button twice in quick succession
+- **THEN** only one export request is made
+
+### Requirement: Export dialog validates dates and reports server rejections
+The dialog SHALL NOT send a request while From is later than To. It SHALL
+show an inline message on the date fields instead. If the API rejects the
+export (for example because there are too many rows, permission is denied
+or the date range is invalid), the dialog SHALL stay open with the user's
+choices intact and SHALL show the server's error message, so the user can
+narrow the filters and try again.
+
+#### Scenario: From later than To
+- **WHEN** the admin sets From to 15 Oct 2026 and To to 14 Oct 2026
+- **THEN** the dialog shows an inline date-range message, the confirm button
+  does not send a request, and no file is downloaded
+
+#### Scenario: Export too large
+- **WHEN** the admin confirms an export that the API rejects because it has
+  too many rows
+- **THEN** the dialog stays open with the same choices and shows the API's
+  message asking to narrow the filters, and no file is downloaded
+
+### Requirement: The board's filter bar wraps instead of clipping controls
+The admin Invitations filter bar SHALL wrap its controls onto another row
+whenever they don't fit on one. No control, including "Clear filters",
+SHALL be cut off or pushed outside the page at any width from 360px to
+1920px, and the page SHALL NOT scroll sideways. When there is room
+(for example at 1440px with no filter active), the search field and all
+four filters SHALL still share one row.
+
+#### Scenario: Filters active at 1280px
+- **WHEN** an admin selects a Status and a Source filter with the page 1280px wide
+- **THEN** every dropdown and the "Clear filters" link are fully visible,
+  with the controls that don't fit wrapping onto a second row
+
+#### Scenario: No filters at 1440px
+- **WHEN** the Invitations page is viewed at 1440px wide with no filter set
+- **THEN** the search field and all four filters sit on one row
+
+### Requirement: Invitations board groups closed statuses and keeps a readable width
+The admin Invitations board SHALL provide the same Closed column and minimum column width that the staff dashboard defines in "Closed statuses share one column on desktop" and "Board columns keep a readable minimum width". The admin board SHALL remember its last-selected closed status separately from the staff board's.
+
+#### Scenario: Switching statuses on the admin board
+- **WHEN** an admin at 1536px wide selects Denied in the Closed column on `/admin/invitations`
+- **THEN** the Closed column lists Denied invitations and the other columns are unchanged
+
+#### Scenario: Admin and staff boards remember independently
+- **WHEN** a user selects Archived on the admin board and then opens the staff Invitations board in the same browser
+- **THEN** the staff board's Closed column selects its own last choice, or Checked-out if it has none

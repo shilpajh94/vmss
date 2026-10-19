@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { FormSkeleton } from '../../components/ui/Skeleton'
 import { GroupErrorsContext } from '../../components/dynamic-fields/group-errors-context'
 import { useNavigate } from 'react-router'
 import { PageContentLayout } from '../../components/PageContentLayout'
 import { useAppDependencies } from '../../context/app-dependencies-context'
+import { usePageHeader } from '../../context/page-header-context'
 import { useIsDesktop } from '../../hooks/use-media-query'
 import { useStepDirection } from '../../hooks/use-step-direction'
 import type { Branch } from '../../../domain/entities/branch-schema'
 import type { Building } from '../../../domain/entities/building-schema'
-import type { StaffUser } from '../../../domain/entities/staff-user-schema'
 import type { VisitorCategory } from '../../../domain/entities/visitor-category-schema'
 import { CarriedItemsStep } from '../visitor-request/Components/steps/CarriedItemsStep'
 import { ConsentStep } from '../visitor-request/Components/steps/ConsentStep'
@@ -23,8 +24,7 @@ import { useStaffVisitorRegistrationWizard } from './hooks/use-staff-visitor-reg
 
 export function StaffVisitorRegistrationPage() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listBranchesUseCase, listBuildingsUseCase, listVisitorCategoriesUseCase } = useAppDependencies()
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const { listBranchesUseCase, listBuildingsUseCase, listVisitorCategoriesUseCase } = useAppDependencies()
   const [branches, setBranches] = useState<Branch[] | undefined>(undefined)
   const [buildings, setBuildings] = useState<Building[] | undefined>(undefined)
   const [visitorCategories, setVisitorCategories] = useState<VisitorCategory[] | undefined>(undefined)
@@ -65,6 +65,8 @@ export function StaffVisitorRegistrationPage() {
     vehicleInfoAllFields,
   } = useStaffVisitorRegistrationWizard(branches, buildings)
 
+  usePageHeader({ description: 'Pre-register visitors for your organization' })
+
   const stepDirection = useStepDirection(currentStep)
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
   const activeStep = activeSteps[currentStep]
@@ -84,14 +86,6 @@ export function StaffVisitorRegistrationPage() {
     if (isDesktop) formRegionRef.current?.scrollTo({ top: 0 })
     else rootRef.current?.scrollIntoView({ block: 'start' })
   }, [currentStep, isDesktop])
-
-  const loadCurrentUser = useCallback(async () => {
-    try {
-      setCurrentUser(await getCurrentStaffUserUseCase.execute())
-    } catch {
-      // The header simply omits the identity block if this fails; the wizard itself still works.
-    }
-  }, [getCurrentStaffUserUseCase])
 
   const loadVisitInfoMasterData = useCallback(async () => {
     try {
@@ -114,18 +108,12 @@ export function StaffVisitorRegistrationPage() {
       navigate('/staff/login', { replace: true })
       return
     }
-    void loadCurrentUser()
     void loadVisitInfoMasterData()
-  }, [navigate, loadCurrentUser, loadVisitInfoMasterData])
-
-  const signOut = () => {
-    sessionStorage.removeItem('token')
-    navigate('/staff/login')
-  }
+  }, [navigate, loadVisitInfoMasterData])
 
   const cancelRegistration = () => {
     reset()
-    navigate('/staff/dashboard')
+    navigate('/staff/invitations')
   }
 
   return (
@@ -136,7 +124,7 @@ export function StaffVisitorRegistrationPage() {
         bodyClassName="scrollbar-thin"
         header={
           <>
-            <RegistrationWorkspaceHeader currentUser={currentUser} onSignOut={signOut} />
+            <RegistrationWorkspaceHeader />
             <RegistrationStepper steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
           </>
         }
@@ -165,7 +153,7 @@ export function StaffVisitorRegistrationPage() {
       >
         <div className="flex flex-col overflow-x-clip rounded-2xl border border-border bg-surface p-4 md:p-6">
           <div key={currentStep} data-direction={stepDirection} className="step-enter flex flex-col gap-6">
-            {isFormConfigLoading && <p className="text-body text-text-muted">Loading…</p>}
+            {isFormConfigLoading && <FormSkeleton bare rows={3} label="Loading the registration form…" />}
 
             {!isFormConfigLoading && formConfigError && (
               <p className="text-body text-danger">Something went wrong loading the registration form. Please refresh the page.</p>

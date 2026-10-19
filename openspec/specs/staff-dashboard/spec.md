@@ -18,15 +18,15 @@ The system SHALL check for a staff auth token before rendering the dashboard, an
 - **THEN** the system renders the dashboard
 
 ### Requirement: Dashboard renders the sidebar, workspace header, and kanban board
-The system SHALL render, for an authenticated non-Reception session, a sidebar (brand mark, "All visitors" / "My actions" navigation with "All visitors" selected, and a "Help & Support" link) and a main workspace containing the header, search bar, and visit-requests kanban board. For an authenticated Reception session, the system SHALL instead render the Reception sidebar (see `reception-dashboard`) with "Visits" marked active, alongside the same main workspace.
+The system SHALL render, for an authenticated non-Reception session, a sidebar (brand mark, "Invitations" / "My actions" navigation with "Invitations" selected, and a "Help & Support" link), the shared staff top bar, and a main workspace containing the "Invitations" title row, the search and filter bar, and the invitations kanban board. For an authenticated Reception session, the system SHALL instead render the Reception sidebar (see `reception-dashboard`) with "Invitations" marked active, alongside the same top bar and main workspace.
 
 #### Scenario: Authenticated staff views the dashboard
 - **WHEN** an authenticated, non-Reception staff member's dashboard finishes loading
-- **THEN** the staff sidebar, the "Visits" workspace header, the search bar, and the kanban board are all visible
+- **THEN** the staff sidebar (with "Invitations" selected), the staff top bar, the "Invitations" title row, the search bar, and the kanban board are all visible
 
 #### Scenario: Authenticated Reception user views the dashboard
 - **WHEN** an authenticated Reception user's dashboard finishes loading
-- **THEN** the Reception sidebar (with "Visits" marked active), the "Visits" workspace header, the search bar, and the kanban board are all visible
+- **THEN** the Reception sidebar (with "Invitations" marked active), the staff top bar, the "Invitations" title row, the search bar, and the kanban board are all visible
 
 ### Requirement: Other sidebar navigation items are visible but not yet functional
 The system SHALL render the "Help & Support" link per the design, but SHALL NOT navigate anywhere when it is activated.
@@ -43,11 +43,19 @@ The system SHALL, when a staff member activates "My actions" in the sidebar, nav
 - **THEN** the system navigates to the Register Visitor wizard, showing the Visitor Info step
 
 ### Requirement: Workspace header shows the signed-in staff member
-The system SHALL display the signed-in staff member's name and role in the workspace header, retrieved from the current-staff-user API.
+The system SHALL display the signed-in staff member's name and role in the staff top bar, retrieved from the current-staff-user API. The top bar SHALL be laid out like the admin top bar: on the left, a section title ("Reception Desk" for a Reception-role session, "Staff Workspace" otherwise) with the page description beneath it from `md` up, or the current page's navigation label ("Invitations", "My actions") below `md`; on the right, the shared refresh control, the notification bell, the user's avatar, name and role, and "Sign out".
 
 #### Scenario: Current user loads successfully
 - **WHEN** the dashboard loads and the current-staff-user request succeeds
-- **THEN** the header displays that staff member's name and role
+- **THEN** the top bar displays that staff member's name and role
+
+#### Scenario: Reception session title
+- **WHEN** a Reception user opens the staff Invitations page at 1440px wide
+- **THEN** the top bar's title reads "Reception Desk" with the page description beneath it
+
+#### Scenario: Phone shows the page name
+- **WHEN** a staff member opens the staff Invitations page at 360px wide
+- **THEN** the top bar shows "Invitations" next to the navigation menu button, and the page has no horizontal scroll
 
 ### Requirement: Sign out ends the session and returns to login
 The system SHALL, when "Sign out" is activated, clear the stored auth token and navigate to `/staff/login`.
@@ -56,12 +64,12 @@ The system SHALL, when "Sign out" is activated, clear the stored auth token and 
 - **WHEN** a staff member activates "Sign out"
 - **THEN** the auth token is cleared and the system navigates to `/staff/login`
 
-### Requirement: Visit requests are grouped into five status columns with live counts
-The system SHALL group visit requests into five columns, in this order: Requested, Approved, Checked-in, Checked-out, Denied. Each column SHALL show a count badge equal to the total number of visit requests in that status that match the active search and filters, as reported by the server. The count SHALL NOT be limited to the number of cards currently loaded in the column.
+### Requirement: Visit requests are grouped by status with live counts
+The system SHALL group visit requests by six statuses, in this order: Requested, Approved, Checked-in, Checked-out, Denied, Archived. Requested, Approved, and Checked-in are the working statuses. Checked-out, Denied, and Archived are the closed statuses. At `lg` and wider, each working status SHALL be its own column, and the three closed statuses SHALL share one Closed column after them (see "Closed statuses share one column on desktop"). Below `lg`, every status SHALL be its own tab (see responsive-layout "Invitation Boards Show One Status Column at a Time Below Desktop"). Every status SHALL show a count equal to the total number of visit requests in that status that match the active search and filters, as reported by the server. The count SHALL NOT be limited to the number of cards currently loaded.
 
 #### Scenario: Requests load successfully
-- **WHEN** the visit-requests list loads successfully
-- **THEN** each request appears under the column matching its status, and each column's count badge shows the server's total for that status
+- **WHEN** the visit-requests list loads successfully at 1536px wide
+- **THEN** the board shows the Requested, Approved, Checked-in, and Closed columns, each request appears under its own status, and every status shows the server's total
 
 #### Scenario: Count reflects the full total, not the loaded cards
 - **WHEN** 250 visit requests are in the Requested status and only the first 20 have been loaded into the Requested column
@@ -69,7 +77,7 @@ The system SHALL group visit requests into five columns, in this order: Requeste
 
 #### Scenario: Checked-out visitors stay visible on the board
 - **WHEN** a visitor on one of the staff member's visit requests checks out
-- **THEN** after the next refresh or poll, that request appears in the Checked-out column instead of disappearing from the board, and the Checked-in and Checked-out counts reflect the move
+- **THEN** after the next refresh or poll, that request appears under Checked-out in the Closed column instead of disappearing from the board, and the Checked-in and Checked-out counts reflect the move
 
 ### Requirement: Visit request cards display identifying details
 The system SHALL render, for each visit request, an avatar showing the visitor's initials, the REQ ID, the visitor's name, the assigned host's name, and the scheduled visit date and time. The scheduled time is the request's current preferred visit date/time, distinct from the timestamp the request was submitted. The visitor's name and REQ ID SHALL appear beside the avatar. Purpose of visit and host SHALL share a single line that truncates with an ellipsis rather than wrapping, with the full text available on hover. The scheduled date/time SHALL appear directly beneath that line, above any card-face buttons.
@@ -94,22 +102,32 @@ The system SHALL, when a status column has no visit requests, show an empty-stat
 - **THEN** the system shows an empty-state message instead of any cards
 
 ### Requirement: Search filters visible requests by visitor, host, or REQ ID
-The system SHALL, as the staff member types in the search field, show only visit requests whose visitor name or REQ ID contains the entered text (case-insensitive), across all columns. The search SHALL be applied by the server to every column's results, so matches beyond the cards already loaded are found, and each column's count badge SHALL reflect the searched total.
+The system SHALL, as the staff member types in the search field, show only visit requests whose visitor name or tracking ID contains the entered text (case-insensitive), across all columns. The search field's placeholder SHALL read "Search visitor, tracking ID...", the same wording as the admin Invitations board, and SHALL NOT suggest that the host is searched. The search SHALL be applied by the server to every column's results, so matches beyond the cards already loaded are found, and each column's count badge SHALL reflect the searched total.
 
 #### Scenario: Search narrows the board
 - **WHEN** a staff member enters text in the search field
-- **THEN** only visit requests whose visitor name or REQ ID contains that text are shown, in their existing columns, and each column's count shows how many matches exist in that status
+- **THEN** only visit requests whose visitor name or tracking ID contains that text are shown, in their existing columns, and each column's count shows how many matches exist in that status
 
 #### Scenario: Search finds a request that was not loaded yet
-- **WHEN** a staff member searches for the REQ ID of a request that is older than every card loaded in its column
+- **WHEN** a staff member searches for the tracking ID of a request that is older than every card loaded in its column
 - **THEN** that request appears in its column
 
 #### Scenario: Search is cleared
 - **WHEN** a staff member clears the search field
 - **THEN** each column reloads from its first page with no search applied
 
+#### Scenario: Placeholder matches the admin board
+- **WHEN** the staff dashboard's search field is empty
+- **THEN** it shows the placeholder "Search visitor, tracking ID..."
+
 ### Requirement: Filters narrow the board by purpose of visit and registration type
-The system SHALL provide a "Filters" control that lets a staff member select a Purpose of Visit and/or a Registration Type (Individual / Group). When one or both are selected, the system SHALL show only visit requests matching all selected criteria, combined with any active search text, across all columns. The filters SHALL be applied by the server to every column's results, and each column's count badge SHALL reflect the filtered total. Clearing a filter SHALL restore requests that only failed to match that criterion.
+The system SHALL show these filters in the staff dashboard's search bar, in this order, each always visible with no separate "Filters" toggle:
+- a Purpose of Visit filter, defaulting to "All purposes"
+- a Registration Type filter (All types / Individual / Group)
+- a Status filter, defaulting to "All statuses", offering Requested, Approved, Checked-in, Checked-out, Denied and Archived
+- a Source filter, defaulting to "All sources", offering Staff Pre-Registration and Visitor Walk-in
+
+The options and labels SHALL be the same as the admin Invitations board's. When any filter is selected, the system SHALL show only visit requests matching all selected criteria, combined with any active search text, across all columns. Purpose, Registration Type and Source SHALL be applied by the server to every column's results, and each column's count badge SHALL reflect the filtered total. Selecting a Status SHALL load only that status's column, and the other columns SHALL show zero, as on the admin board. The filters SHALL only narrow the staff member's own relevant visit requests and SHALL never include visit requests the board would not show without them. A "Clear filters" action SHALL appear in the bar whenever any of the four filters differs from its default. It SHALL reset all four filters and SHALL NOT clear the search text. Clearing a filter SHALL restore requests that only failed to match that criterion.
 
 #### Scenario: Filtering by purpose of visit
 - **WHEN** a staff member selects a Purpose of Visit filter value
@@ -119,6 +137,18 @@ The system SHALL provide a "Filters" control that lets a staff member select a P
 - **WHEN** a staff member selects a Registration Type filter value
 - **THEN** only visit requests whose registration type matches that value are shown, in their existing columns
 
+#### Scenario: Filtering by source
+- **WHEN** a staff member selects "Visitor Walk-in" in the Source filter
+- **THEN** only walk-in visit requests are shown, in their existing columns, and each column's count reflects the filtered total
+
+#### Scenario: Filtering by status loads one column
+- **WHEN** a staff member selects "Archived" in the Status filter
+- **THEN** only the Archived column loads visit requests and the other columns show zero
+
+#### Scenario: Filters stay within the staff member's own requests
+- **WHEN** a host who is not involved in an invitation at their branch selects any Status or Source filter value
+- **THEN** that invitation is still not shown
+
 #### Scenario: Combined with search
 - **WHEN** a staff member has both a search term and a filter active
 - **THEN** only visit requests matching both the search term and the active filter(s) are shown
@@ -127,16 +157,28 @@ The system SHALL provide a "Filters" control that lets a staff member select a P
 - **WHEN** a staff member has scrolled a column past its first page and then changes a filter
 - **THEN** every column reloads from its first page with the new filter applied
 
+#### Scenario: Clear filters resets every filter
+- **WHEN** a staff member has a Purpose and a Source filter selected and a search term entered, and activates "Clear filters"
+- **THEN** all four filters return to their defaults, the search term is kept, and "Clear filters" is no longer shown
+
+#### Scenario: Clear filters hidden at defaults
+- **WHEN** every filter is at its default value
+- **THEN** no "Clear filters" action is shown
+
 #### Scenario: Filters cleared
 - **WHEN** a staff member clears all active filters
 - **THEN** all visit requests matching only the current search text (if any) are shown again
 
+#### Scenario: Export starts from the active status
+- **WHEN** a staff member with export access has "Approved" selected in the Status filter and opens the Export dialog
+- **THEN** the dialog opens with "Approved" preselected as its status
+
 ### Requirement: Refresh reloads the visit-requests list
-The system SHALL present exactly one refresh control on the dashboard. When that control is activated, the system SHALL re-fetch, for every column, the pages that column has already loaded, and re-render the board with the latest data. A column the staff member has scrolled into SHALL keep its loaded depth and scroll position.
+The system SHALL present exactly one refresh control on the staff Invitations page: the shared refresh control in the staff top bar, showing when the board was last updated ("Updated just now", "Updated 2m ago"), as on the admin top bar. The page SHALL NOT render its own Refresh button. When that control is activated, the system SHALL re-fetch, for every column, the pages that column has already loaded, and re-render the board with the latest data. A column the staff member has scrolled into SHALL keep its loaded depth and scroll position.
 
 #### Scenario: Only one refresh control is shown
 - **WHEN** the dashboard finishes loading
-- **THEN** exactly one refresh control is visible on the page
+- **THEN** exactly one refresh control is visible on the page, in the top bar, with an "Updated …" time beside it from `md` up
 
 #### Scenario: Staff refreshes the board
 - **WHEN** a staff member activates the refresh control
@@ -480,12 +522,143 @@ The system SHALL show a "Delegate" icon button on any visit request card whose i
 - **THEN** the system triggers an error notification containing the backend's error message and the modal remains open
 
 ### Requirement: The workspace header and search bar are compact
-The system SHALL render the staff dashboard's "Visits" title and subtitle as a compact block, and the search field at the same 40px height as the purpose and registration-type filters. From `lg` up, the search field and both filters SHALL sit on one row, with the search field taking the remaining width. Below `lg` they SHALL wrap as they do today, with no horizontal overflow.
+The system SHALL render the staff Invitations page's title row as the admin Invitations page does: "Invitations" on the left and, for a Reception session, the "Export" button with its label on the right. The page description SHALL appear in the top bar, not in the title row. The search field SHALL be the same 40px height as the filters. From `lg` up, the search field and the four filters SHALL sit on one row, with the search field taking the remaining width. Below `lg` they SHALL wrap as they do today, with no horizontal overflow.
 
 #### Scenario: Desktop filter row
 - **WHEN** the staff dashboard is viewed at a desktop width (`lg` or wider)
-- **THEN** the search field, purpose filter, and registration-type filter appear on a single row at equal height
+- **THEN** the search field and the Purpose, Registration Type, Status and Source filters appear on a single row at equal height, below the "Invitations" title row
 
 #### Scenario: Narrow screen
 - **WHEN** the staff dashboard is viewed at 360px wide
 - **THEN** the search field and filters stack without horizontal page scroll
+
+### Requirement: Reception can export invitations from the staff dashboard
+The staff dashboard SHALL show an "Export" button at the right of its
+"Invitations" title row, as the admin Invitations page does, but only to a
+signed-in user who holds the Reception role. It
+SHALL NOT be shown to any other staff member, such as a host. Activating
+it SHALL open the same Export invitations dialog the admin-invitations
+capability specifies, with the same prefill, validation, download, and
+error behaviour. The dialog's Status SHALL open on the board's current
+Status filter ("All statuses" when none is set). The export SHALL be
+limited to the invitations this board shows the user (`relevantToMe`),
+combined with the board's search, purpose of visit, registration type and
+source filters.
+
+#### Scenario: Reception sees and uses Export
+- **WHEN** a Reception user opens the staff dashboard, activates "Export",
+  sets Status "Approved", and confirms with Format CSV
+- **THEN** the browser downloads `invitations-approved-<today>.csv` limited
+  to the invitations that user's board shows, filtered to approved ones
+
+#### Scenario: A host does not see Export
+- **WHEN** a staff member without the Reception role (for example a host)
+  opens the staff dashboard
+- **THEN** no "Export" button is shown
+
+#### Scenario: Dialog opens on the board's status
+- **WHEN** a Reception user with no Status filter set opens the Export
+  invitations dialog from the staff dashboard
+- **THEN** the dialog's Status shows "All statuses" and the hint says the
+  date range applies to the created date. With a Status filter set, the
+  dialog opens on that status instead
+
+#### Scenario: Export button at tablet and laptop widths
+- **WHEN** a Reception user views the staff dashboard at any width from
+  360px to 1920px
+- **THEN** the Export button is fully visible in the title row with its
+  "Export" label, and the page has no horizontal scroll
+
+### Requirement: The staff Export button sits in the Invitations title row
+For a signed-in user who holds the Reception role, the staff dashboard SHALL show its "Export" button at the right of the "Invitations" title row, the same placement and full "Export" label (download icon and word) as the admin Invitations page. The Export button SHALL NOT appear inside the search and filter bar, which SHALL contain only the search field, the Purpose of Visit, Registration Type, Status and Source filters, and, when any filter is set, "Clear filters". Staff members without the Reception role SHALL NOT see an Export button anywhere on the dashboard. Activating it SHALL open the same Export invitations dialog as before, preselected with the board's current Status filter.
+
+#### Scenario: Export is in the title row, not the bar
+- **WHEN** a Reception user opens the staff dashboard at 1440px wide
+- **THEN** the Export button appears at the right of the "Invitations" title row, and the filter bar contains no Export button
+
+#### Scenario: Filter bar matches the admin layout
+- **WHEN** a Reception user at 1440px wide selects a Source filter
+- **THEN** the search field and the four filters stay on one row, and "Clear filters" is the only control on the line below them, as on the admin Invitations board
+
+#### Scenario: A host sees no Export button
+- **WHEN** a staff member without the Reception role opens the staff dashboard
+- **THEN** neither the title row nor the filter bar shows an Export button
+
+#### Scenario: Export still opens the dialog with the active status
+- **WHEN** a Reception user with "Approved" selected in the Status filter activates the title row's Export button
+- **THEN** the Export invitations dialog opens with "Approved" preselected
+
+### Requirement: The staff Invitations page uses the admin page layout
+The staff Invitations page (`/staff/dashboard`) SHALL use the same page layout as the admin Invitations page:
+- a persistent top bar above the page content;
+- a title row with "Invitations" and, for a Reception session, the "Export" button with its icon and label at the right end;
+- the search and filter bar;
+- the board, which is the only region that scrolls from `lg` up, each column under its pinned header.
+
+At the same viewport width, the title row, filter bar and board SHALL have the same font sizes, control heights, spacing and alignment on both pages. They SHALL differ only in each section's accent colour and in Export visibility (admins on the admin page, Reception on the staff page). The loading state SHALL read "Loading invitations…" on both pages.
+
+#### Scenario: Same layout at desktop width
+- **WHEN** a Reception user opens `/staff/dashboard` and an admin opens `/admin/invitations`, both at 1440px wide
+- **THEN** both pages show the top bar, then an "Invitations" title row with Export at the right, then the filter bar, then the board, at the same vertical positions
+
+#### Scenario: Export in the title row
+- **WHEN** a Reception user opens the staff Invitations page
+- **THEN** the "Export" button, with its label, is at the right end of the "Invitations" title row, and neither the top bar nor the filter bar contains it
+
+#### Scenario: Host sees no Export
+- **WHEN** a staff member without the Reception role opens the staff Invitations page
+- **THEN** the title row shows only "Invitations"
+
+#### Scenario: Loading text
+- **WHEN** the staff Invitations board is loading
+- **THEN** it shows "Loading invitations…"
+
+### Requirement: Board columns keep a readable minimum width
+At `lg` and wider, a board column SHALL NOT render narrower than 240px. When the columns cannot all fit at that width, the board SHALL scroll horizontally within its own region. The page itself SHALL NOT gain a horizontal scrollbar, and the page header, search field, filters, and every column header SHALL stay in place while the board scrolls vertically. When all columns fit, no horizontal scrollbar SHALL appear.
+
+#### Scenario: Laptop width with the sidebar expanded
+- **WHEN** a staff member views the board at 1366px wide with the sidebar expanded
+- **THEN** all four columns fit side by side, each at least 240px wide, and no horizontal scrollbar appears
+
+#### Scenario: Narrow desktop with the sidebar expanded
+- **WHEN** a staff member views the board at 1280px wide with the sidebar expanded
+- **THEN** each column is at least 240px wide, the board scrolls horizontally within its own area, and the page does not scroll horizontally
+
+#### Scenario: Room freed by collapsing removes the scroll
+- **WHEN** a staff member at 1280px wide collapses the sidebar
+- **THEN** all four columns fit side by side and no horizontal scrollbar appears on the board
+
+### Requirement: Closed statuses share one column on desktop
+At `lg` and wider, the board SHALL show the Checked-out, Denied, and Archived statuses in a single column after the Checked-in column. The column SHALL have no title row and no combined total. Its header SHALL be a segmented switcher listing Checked-out, Denied, and Archived, in that order, each with its own server total. The switcher SHALL sit where the other columns' headers sit and SHALL be the same height as they are, so that the first card in every column starts at the same vertical position. The switcher SHALL show each status's full label at every column width the board allows. It SHALL be exposed to assistive technology as a tab list named "Closed status", and exactly one status SHALL be selected at a time. The column body SHALL show the selected status's cards with the same paging, empty-state message, card actions, and Visitor Info behaviour as that status had as its own column.
+
+Switching statuses SHALL NOT refetch any status, reset any other column's scroll position, or change the search or filters. Statuses that are not selected SHALL NOT request further pages. Every count SHALL keep updating on manual and background refreshes whichever status is selected.
+
+When the status filter is set to Checked-out, Denied, or Archived, the switcher SHALL select that status. Otherwise, the switcher SHALL select the status last chosen on this board in this browser, remembered across reloads and new sessions. If no choice is stored, or stored preferences cannot be read, it SHALL select Checked-out. Status columns SHALL NOT offer any control to collapse or hide them.
+
+#### Scenario: Default view
+- **WHEN** a staff member opens the board for the first time at 1536px wide
+- **THEN** the fourth column's header is the switcher showing Checked-out, Denied, and Archived with their counts, with no "Closed" title or combined total, and Checked-out is selected with its cards listed
+
+#### Scenario: Switcher header lines up with the other headers
+- **WHEN** a staff member views the board at 1366px wide with the sidebar expanded
+- **THEN** the switcher header is the same height as the Requested, Approved, and Checked-in headers, the first card in all four columns starts at the same vertical position, and "Checked-out", "Denied", and "Archived" are each shown in full
+
+#### Scenario: Switching to Denied
+- **WHEN** a staff member selects Denied in the switcher
+- **THEN** the column lists Denied cards, each offering only Visitor info, and the Requested, Approved, and Checked-in columns keep their scroll positions
+
+#### Scenario: Status filter drives the switcher
+- **WHEN** a staff member picks "Archived" in the status filter
+- **THEN** the switcher selects Archived and the column lists the matching archived visits, and the other closed statuses show a count of zero
+
+#### Scenario: Choice is remembered
+- **WHEN** a staff member selects Denied and then reloads the page
+- **THEN** the switcher opens with Denied selected
+
+#### Scenario: Counts update while another status is selected
+- **WHEN** Denied is selected and a background refresh moves a visit from Checked-in to Checked-out
+- **THEN** the Checked-out count in the switcher updates and Denied stays selected
+
+#### Scenario: Phones and tablets keep separate tabs
+- **WHEN** a staff member opens the board at 390px wide
+- **THEN** the status tabs list Requested, Approved, Checked-in, Checked-out, Denied, and Archived as six separate tabs, with no grouping

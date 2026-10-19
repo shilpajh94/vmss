@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { PendingButton } from '../ui/PendingButton'
 import { Modal } from '../ui/Modal'
 import { confirmSubject } from '../../utils/confirm-subject'
 
@@ -48,14 +49,15 @@ export function DenyInvitationModal({ isOpen, visitorName, trackingId, isDenying
           >
             Cancel
           </button>
-          <button
-            type="button"
-            disabled={!reason.trim() || isDenying}
+          <PendingButton
             onClick={handleConfirm}
+            pending={isDenying}
+            pendingLabel="Denying…"
+            disabled={!reason.trim()}
             className="rounded-full bg-danger px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
           >
-            {isDenying ? 'Denying…' : 'Deny Request'}
-          </button>
+            Deny Request
+          </PendingButton>
         </div>
       </div>
     </Modal>

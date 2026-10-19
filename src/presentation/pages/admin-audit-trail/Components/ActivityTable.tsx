@@ -1,5 +1,4 @@
 import type { AuditLogEntry } from '../../../../domain/entities/audit-log-entry-schema'
-import { EmptyState } from '../../../components/ui/EmptyState'
 
 interface ActivityTableProps {
   entries: AuditLogEntry[]
@@ -42,15 +41,7 @@ function formatTimestamp(iso: string): string {
 }
 
 export function ActivityTable({ entries, employeeNameById }: ActivityTableProps) {
-  if (entries.length === 0) {
-    return (
-      <EmptyState
-        message="No activity matches the current filters."
-        className="w-full flex-1 rounded-xl border border-border bg-surface p-6 md:p-12"
-      />
-    )
-  }
-
+  // The empty state is rendered by the page's AsyncRegion.
   return (
     <div className="flex w-full flex-1 flex-col overflow-x-auto rounded-xl border border-border bg-surface">
       <div className="flex w-full min-w-[480px] items-center gap-3 border-b border-border bg-border-subtle px-4 py-3 md:min-w-0">

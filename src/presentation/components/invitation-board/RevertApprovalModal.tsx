@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { PendingButton } from '../ui/PendingButton'
 import { Modal } from '../ui/Modal'
 import { confirmSubject } from '../../utils/confirm-subject'
 
@@ -55,14 +56,15 @@ export function RevertApprovalModal({ isOpen, visitorName, trackingId, isReverti
           >
             Cancel
           </button>
-          <button
-            type="button"
-            disabled={!reason.trim() || isReverting}
+          <PendingButton
             onClick={() => void handleConfirm()}
+            pending={isReverting}
+            pendingLabel="Reverting…"
+            disabled={!reason.trim()}
             className="rounded-full bg-danger px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
           >
-            {isReverting ? 'Reverting…' : 'Revert Approval'}
-          </button>
+            Revert Approval
+          </PendingButton>
         </div>
       </div>
     </Modal>
