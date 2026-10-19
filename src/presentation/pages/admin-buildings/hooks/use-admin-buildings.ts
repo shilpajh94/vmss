@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
@@ -21,7 +21,6 @@ export function useAdminBuildings() {
   const [total, setTotal] = useState(0)
   const [branchOptions, setBranchOptions] = useState<{ value: string; label: string }[]>([])
   const { phase, isRefreshing, begin } = useLoadTracker()
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [pendingDelete, setPendingDelete] = useState<Building | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -54,7 +53,6 @@ export function useAdminBuildings() {
         setBuildings(page_.items)
         setTotal(page_.total)
         setBranchOptions(branches.map((branch) => ({ value: branch.id, label: branch.name })).sort((a, b) => a.label.localeCompare(b.label)))
-        setLastUpdatedAt(new Date())
       } catch {
         if (!request.fail()) return
         toast.error('Something went wrong loading the buildings. Please try again.')
@@ -79,9 +77,9 @@ export function useAdminBuildings() {
   // Auto-refreshes the registry every 15s; skipped while a delete dialog is
   // open so a background tick can't replace data underneath it.
   const isActionInProgress = pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadBuildings('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadBuildings('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const requestDelete = useCallback((building: Building) => {
     setPendingDelete(building)

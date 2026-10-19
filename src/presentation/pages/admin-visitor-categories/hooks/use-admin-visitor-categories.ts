@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
@@ -26,7 +26,6 @@ export function useAdminVisitorCategories() {
   const [visitorCategories, setVisitorCategories] = useState<VisitorCategory[]>([])
   const [total, setTotal] = useState(0)
   const { phase, isRefreshing, begin } = useLoadTracker()
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [pendingDelete, setPendingDelete] = useState<VisitorCategory | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -63,7 +62,6 @@ export function useAdminVisitorCategories() {
         setCurrentUser(user)
         setVisitorCategories(page_.items)
         setTotal(page_.total)
-        setLastUpdatedAt(new Date())
       } catch {
         if (!request.fail()) return
         toast.error('Something went wrong loading the visitor categories. Please try again.')
@@ -86,9 +84,9 @@ export function useAdminVisitorCategories() {
   }, [loadVisitorCategories])
 
   const isActionInProgress = pendingDelete !== undefined || isDeleting || isBulkAddOpen
-  usePolling(() => void loadVisitorCategories('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadVisitorCategories('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const isFiltering = badgeColorFilter !== '' || ndaRequirementFilter !== '' || escortRequirementFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])

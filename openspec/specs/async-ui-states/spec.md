@@ -90,7 +90,7 @@ show the cue.
   the new series replaces it
 
 #### Scenario: Background poll
-- **WHEN** the 15-second automatic refresh runs
+- **WHEN** the 10-second automatic refresh runs
 - **THEN** no progress bar, dimming, or skeleton appears, and changed data
   updates in place
 

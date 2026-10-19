@@ -4,10 +4,21 @@ import { MOTION_MS } from '../../utils/motion'
 
 export type ToastVariant = 'success' | 'error' | 'info'
 
+export interface ToastGroupSummary {
+  message: string
+  onClick?: () => void
+}
+
 export interface ToastOptions {
   // When provided, the toast becomes clickable and invokes this instead of
   // just being a passive message (e.g. a push notification linking to its invitation).
   onClick?: () => void
+  // Toasts sharing a group key collapse into one: showing another while the
+  // first is still open or queued updates that toast in place with
+  // `groupSummary(count)` instead of adding one (notifications "A burst of
+  // push notifications is grouped into one summary").
+  groupKey?: string
+  groupSummary?: (count: number) => ToastGroupSummary
 }
 
 export interface ToastItem {
@@ -15,15 +26,34 @@ export interface ToastItem {
   variant: ToastVariant
   message: string
   onClick?: () => void
+  groupKey?: string
+  groupSummary?: (count: number) => ToastGroupSummary
+  // How many shows this toast stands for, and a counter bumped on each one
+  // so the toast restarts its auto-dismiss without remounting.
+  groupCount: number
+  groupVersion: number
   // Set once dismissed: the toast plays its exit animation (and its slot
-  // collapses so the rest glide up) before it is removed for real.
+  // collapses so the rest glide into it) before it is removed for real.
   isClosing?: boolean
 }
 
 type ToastAction = { type: 'ADD'; toast: ToastItem } | { type: 'CLOSE'; id: string } | { type: 'REMOVE'; id: string }
 
 function toastReducer(state: ToastItem[], action: ToastAction): ToastItem[] {
-  if (action.type === 'ADD') return [...state, action.toast]
+  if (action.type === 'ADD') {
+    const { groupKey } = action.toast
+    const group = groupKey ? state.find((toast) => toast.groupKey === groupKey && !toast.isClosing) : undefined
+    if (!group) return [...state, action.toast]
+
+    const groupCount = group.groupCount + 1
+    const groupSummary = action.toast.groupSummary ?? group.groupSummary
+    const summary = groupSummary?.(groupCount) ?? { message: action.toast.message, onClick: action.toast.onClick }
+    return state.map((toast) =>
+      toast.id === group.id
+        ? { ...toast, ...summary, onClick: summary.onClick, groupSummary, groupCount, groupVersion: toast.groupVersion + 1 }
+        : toast,
+    )
+  }
   if (action.type === 'CLOSE') return state.map((toast) => (toast.id === action.id ? { ...toast, isClosing: true } : toast))
   return state.filter((toast) => toast.id !== action.id)
 }
@@ -32,7 +62,8 @@ function toastReducer(state: ToastItem[], action: ToastAction): ToastItem[] {
 const EXIT_MS = MOTION_MS.standard + 50
 
 // Errors get more reading time than success/info before they auto-dismiss.
-const AUTO_DISMISS_MS: Record<ToastVariant, number> = {
+// Each toast runs its own timer once it is actually visible (see Toast).
+export const AUTO_DISMISS_MS: Record<ToastVariant, number> = {
   success: 4000,
   info: 4000,
   error: 6000,
@@ -56,14 +87,21 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setTimeout(() => dispatch({ type: 'REMOVE', id }), EXIT_MS)
   }, [])
 
-  const show = useCallback(
-    (variant: ToastVariant, message: string, options?: ToastOptions) => {
-      const id = crypto.randomUUID()
-      dispatch({ type: 'ADD', toast: { id, variant, message, onClick: options?.onClick } })
-      setTimeout(() => dismiss(id), AUTO_DISMISS_MS[variant])
-    },
-    [dismiss],
-  )
+  const show = useCallback((variant: ToastVariant, message: string, options?: ToastOptions) => {
+    dispatch({
+      type: 'ADD',
+      toast: {
+        id: crypto.randomUUID(),
+        variant,
+        message,
+        onClick: options?.onClick,
+        groupKey: options?.groupKey,
+        groupSummary: options?.groupSummary,
+        groupCount: 1,
+        groupVersion: 0,
+      },
+    })
+  }, [])
 
   const success = useCallback((message: string, options?: ToastOptions) => show('success', message, options), [show])
   const error = useCallback((message: string, options?: ToastOptions) => show('error', message, options), [show])

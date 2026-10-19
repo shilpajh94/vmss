@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
 import type { PermissionOut } from '../../../../domain/entities/permission-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 
 export function useAdminRolePermissionsForm() {
   const navigate = useNavigate()
@@ -61,6 +62,8 @@ export function useAdminRolePermissionsForm() {
   const retry = useCallback(() => {
     void load()
   }, [load])
+
+  useFormPageRefresh({ values: { permissionCodes: [...selectedCodes].sort() }, isLoading, reload: retry })
 
   const togglePermission = useCallback((code: string, checked: boolean) => {
     setSelectedCodes((current) => {

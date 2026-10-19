@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import type { Building } from '../../../../domain/entities/building-schema'
 import type { FloorInput } from '../../../../domain/entities/floor-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 
 const EMPTY_VALUES: FloorInput = {
   buildingId: '',
@@ -82,6 +83,8 @@ export function useAdminFloorForm() {
   const retry = useCallback(() => {
     void load()
   }, [load])
+
+  useFormPageRefresh({ values: values, isLoading, reload: retry })
 
   const updateField = useCallback(<K extends keyof FloorInput>(key: K, value: FloorInput[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
