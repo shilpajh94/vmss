@@ -26,6 +26,16 @@ export function boardStatusForApiStatus(apiStatus: string): BoardStatus | undefi
 export const BOARD_PAGE_SIZE = 20
 const API_MAX_PAGE_SIZE = 100
 
+// Each column lists what most recently entered its status first (a fresh
+// check-in tops Checked-in even if it was submitted last week), not the
+// API's default submission order. Every column fetch goes through
+// `columnPageParams` so no load path can drop it.
+const BOARD_SORT = { sortBy: 'status_changed_at', sortOrder: 'desc' } as const
+
+function columnPageParams(query: ColumnQuery, status: BoardStatus, page: number, pageSize: number): ListVisitRequestsParams {
+  return { ...query, ...BOARD_SORT, status: API_STATUS_BY_BOARD_STATUS[status], page, pageSize }
+}
+
 export interface BoardColumnPage {
   items: VisitRequestSummary[]
   total: number
@@ -41,7 +51,7 @@ export interface BoardColumnPage {
 type ColumnsState = Record<BoardStatus, BoardColumnPage>
 
 export type FetchVisitRequestsPage = (params: ListVisitRequestsParams) => Promise<VisitRequestsPage>
-export type ColumnQuery = Omit<ListVisitRequestsParams, 'status' | 'page' | 'pageSize'>
+export type ColumnQuery = Omit<ListVisitRequestsParams, 'status' | 'page' | 'pageSize' | 'sortBy' | 'sortOrder'>
 
 const EMPTY_COLUMN: BoardColumnPage = { items: [], total: 0, loadedPages: 0, isLoadingMore: false, loadMoreFailed: false, resetKey: 0 }
 
@@ -53,13 +63,12 @@ function appendUnique(existing: VisitRequestSummary[], incoming: VisitRequestSum
 // Refetches a column's already-loaded window in as few requests as the
 // API's max page size allows: one call up to 100 rows, else 100-row pages.
 async function fetchWindow(fetchPage: FetchVisitRequestsPage, query: ColumnQuery, status: BoardStatus, rows: number): Promise<VisitRequestsPage> {
-  const apiStatus = API_STATUS_BY_BOARD_STATUS[status]
   if (rows <= API_MAX_PAGE_SIZE) {
-    return fetchPage({ ...query, status: apiStatus, page: 1, pageSize: rows })
+    return fetchPage(columnPageParams(query, status, 1, rows))
   }
   const pageCount = Math.ceil(rows / API_MAX_PAGE_SIZE)
   const pages = await Promise.all(
-    Array.from({ length: pageCount }, (_, index) => fetchPage({ ...query, status: apiStatus, page: index + 1, pageSize: API_MAX_PAGE_SIZE })),
+    Array.from({ length: pageCount }, (_, index) => fetchPage(columnPageParams(query, status, index + 1, API_MAX_PAGE_SIZE))),
   )
   return {
     items: pages.reduce<VisitRequestSummary[]>((items, page) => appendUnique(items, page.items), []),
@@ -170,12 +179,7 @@ export function usePagedBoardColumns(fetchPage: FetchVisitRequestsPage, query: C
       setColumns((previous) => ({ ...previous, [status]: { ...previous[status], isLoadingMore: true, loadMoreFailed: false } }))
 
       try {
-        const page = await fetchPage({
-          ...queryRef.current,
-          status: API_STATUS_BY_BOARD_STATUS[status],
-          page: nextPage,
-          pageSize: BOARD_PAGE_SIZE,
-        })
+        const page = await fetchPage(columnPageParams(queryRef.current, status, nextPage, BOARD_PAGE_SIZE))
         if (resultSetGeneration !== resultSetGenerationRef.current) return
         setColumns((previous) => {
           const items = appendUnique(previous[status].items, page.items)

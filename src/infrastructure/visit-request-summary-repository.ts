@@ -38,6 +38,8 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
         purposeOfVisit: params?.purposeOfVisit,
         page: params?.page,
         pageSize: params?.pageSize,
+        sortBy: params?.sortBy,
+        sortOrder: params?.sortOrder,
       },
       parserSchema: VisitRequestSummaryListResponseSchema,
     })
