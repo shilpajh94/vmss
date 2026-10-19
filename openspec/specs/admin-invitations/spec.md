@@ -85,7 +85,7 @@ The system SHALL provide on this page the same card behaviours specified for the
 - **THEN** the Visitor Info modal opens for that invitation, and the card does not expand
 
 ### Requirement: Invitations board pins its column headers and loads columns lazily
-The admin Invitations board SHALL keep each column's header visible while its cards scroll. It SHALL load each column in pages of 20 as the admin scrolls, without duplicates, and SHALL stop requesting pages once a column is fully loaded. This is the same behaviour the staff dashboard defines in "Status column headers stay visible while cards scroll" and "Columns load visit requests lazily in pages".
+The admin Invitations board SHALL keep each column's header visible while its cards scroll. It SHALL load each column in pages of 20 as the admin scrolls, without duplicates, and SHALL stop requesting pages once a column is fully loaded. Each column SHALL be ordered newest first by when each invitation entered that column's status, exactly as the staff dashboard's lazy-load requirement defines, across the whole organisation. This is the same behaviour the staff dashboard defines in "Status column headers stay visible while cards scroll" and "Columns load visit requests lazily in pages".
 
 #### Scenario: Scrolling a long column
 - **WHEN** an admin scrolls to the end of the 20 cards loaded in the Requested column at 1280px wide
@@ -94,6 +94,10 @@ The admin Invitations board SHALL keep each column's header visible while its ca
 #### Scenario: Search change restarts columns
 - **WHEN** an admin has scrolled a column past its first page and then changes the search text
 - **THEN** every column reloads from its first page with the new search applied
+
+#### Scenario: Admin board orders columns by status time
+- **WHEN** an admin opens the Invitations board and an invitation submitted last week was checked in a minute ago
+- **THEN** that invitation appears at the top of the Checked-in column, above invitations that were submitted more recently but checked in earlier
 
 ### Requirement: Checked-in cards on the admin board offer the same manual check-out
 The system SHALL offer, on every card in the admin Invitations board's Checked-in column, the same confirmed "Check Out" action specified for the staff-dashboard capability's board, with the same confirmation, success, conflict, and failure behaviour. Admins SHALL always see the action on Checked-in cards on this page.
