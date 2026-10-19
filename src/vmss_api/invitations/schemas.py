@@ -16,9 +16,12 @@ from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.core.schemas import CamelModel
 from vmss_api.devices.schemas import DeviceBriefOut
 
-InvitationSortableField = Literal["submitted_at", "created_at"]
+InvitationSortableField = Literal["submitted_at", "created_at", "status_changed_at"]
 """Whitelisted `sortBy` values for `GET /invitations` (api-conventions.md
 §1) — mirrors `org_structure/schemas.py`'s `SortableField` pattern.
+`status_changed_at` is computed, not a column: when the invitation entered
+its current status (sort-invitation-board-by-status-date/design.md
+Decision 1).
 """
 
 
@@ -517,6 +520,7 @@ class InvitationListItemOut(CamelModel):
     approved_at: datetime | None
     archived_at: datetime | None = None
     checked_out_automatically: bool = False
+    status_changed_at: datetime | None = None
 
 
 # --- add-invitation-export ---------------------------------------------------

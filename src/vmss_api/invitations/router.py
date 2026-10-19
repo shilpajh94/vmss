@@ -711,6 +711,7 @@ async def _to_list_item_out(invitation) -> InvitationListItemOut:
         approved_at=invitation.approved_at,
         archived_at=invitation.archived_at,
         checked_out_automatically=invitation.checked_out_automatically,
+        status_changed_at=service.status_changed_at(invitation),
     )
 
 
