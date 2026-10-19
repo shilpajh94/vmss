@@ -12042,6 +12042,88 @@ async def test_check_in_by_code_full_lifecycle(
     assert re_entry.json()["data"]["checkInStatus"] == "checked_in"
 
 
+async def _code_device(db_session: AsyncSession, branch: Branch, **overrides):
+    from factories import DeviceFactory
+
+    device = DeviceFactory.build(id=uuid.uuid4(), branch_id=branch.id, **overrides)
+    db_session.add(device)
+    await db_session.commit()
+    return device
+
+
+async def test_code_check_in_and_check_out_record_devices(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    fake_lockout_redis,
+) -> None:
+    entry = await _code_device(db_session, branch, name="Entry")
+    exit_ = await _code_device(db_session, branch, name="Exit")
+    invitation = _sms_invitation(db_session, branch.id, "44445555")
+    db_session.add(invitation)
+    await db_session.commit()
+    body = {"code": "44445555"}
+
+    checked_in = await client.patch(
+        "/api/v2/invitations/code/check-in", json=body, headers={"device-id": entry.device_id}
+    )
+    assert checked_in.status_code == 200
+    assert checked_in.json()["data"]["checkInDevice"]["name"] == "Entry"
+
+    repeat = await client.patch(
+        "/api/v2/invitations/code/check-in", json=body, headers={"device-id": exit_.device_id}
+    )
+    assert repeat.json()["data"]["checkInDevice"]["name"] == "Entry"
+
+    checked_out = await client.patch(
+        "/api/v2/invitations/code/check-out", json=body, headers={"device-id": exit_.device_id}
+    )
+    data = checked_out.json()["data"]
+    assert data["checkInDevice"]["name"] == "Entry"
+    assert data["checkOutDevice"]["name"] == "Exit"
+
+
+async def test_code_check_in_without_device_header_leaves_devices_null(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    fake_lockout_redis,
+) -> None:
+    invitation = _sms_invitation(db_session, branch.id, "55556666")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    response = await client.patch("/api/v2/invitations/code/check-in", json={"code": "55556666"})
+    assert response.status_code == 200
+    assert response.json()["data"]["checkInDevice"] is None
+
+
+async def test_code_check_in_rejects_unusable_device_without_state_change(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    fake_lockout_redis,
+) -> None:
+    pending = await _code_device(db_session, branch, approval_status="pending", is_active=False)
+    invitation = _sms_invitation(db_session, branch.id, "66667777")
+    db_session.add(invitation)
+    await db_session.commit()
+
+    for device_id in (pending.device_id, "never-registered"):
+        for action in ("check-in", "check-out"):
+            response = await client.patch(
+                f"/api/v2/invitations/code/{action}",
+                json={"code": "66667777"},
+                headers={"device-id": device_id},
+            )
+            assert response.status_code == 403
+    await db_session.refresh(invitation)
+    assert invitation.check_in_status == "unused"
+
+
 @pytest.mark.parametrize(
     ("overrides", "expected"),
     [
@@ -14995,3 +15077,210 @@ async def test_rejected_qr_check_in_sends_no_poc_push(
     assert response.status_code == 410, response.text
     assert user_pushes == []
     assert role_pushes == []
+
+
+# --- reception-phone-prefill-lookup ------------------------------------------
+
+
+async def _lookup_by_phone(client: AsyncClient, token: str, phone: str, **headers: str) -> Response:
+    return await client.get(
+        "/api/v1/invitations/lookup-by-phone",
+        params={"phone": phone},
+        headers={"Authorization": f"Bearer {token}", **headers},
+    )
+
+
+async def test_lookup_by_phone_returns_most_recent_invitations_prefill_data(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    older = _build_invitation(
+        db_session,
+        branch.id,
+        primary_contact_phone="9544232271",
+        primary_contact_email="old@example.com",
+        primary_contact_full_name="J Doe",
+        tracking_id="INV-PHONE-OLD1",
+    )
+    newer = _build_invitation(
+        db_session,
+        branch.id,
+        primary_contact_phone="9544232271",
+        primary_contact_email="jane@example.com",
+        primary_contact_full_name="Jane Doe",
+        primary_contact_id_proof_type="passport",
+        tracking_id="INV-PHONE-NEW1",
+    )
+    db_session.add_all([older, newer])
+    await db_session.commit()
+    now = datetime.now(UTC)
+    newer.created_at = now
+    older.created_at = now - timedelta(days=1)
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    response = await _lookup_by_phone(client, issue_token(creator), "9544232271")
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["fullName"] == "Jane Doe"
+    assert data["email"] == "jane@example.com"
+    assert data["idProofType"] == "passport"
+
+
+async def test_lookup_by_phone_ignores_formatting_differences(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    db_session.add(
+        _build_invitation(db_session, branch.id, primary_contact_phone="+91 95442-32271")
+    )
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    response = await _lookup_by_phone(client, issue_token(creator), "919544232271")
+    assert response.status_code == 200
+    assert response.json()["data"] is not None
+
+
+async def test_lookup_by_phone_without_email_returns_null_email(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    db_session.add(
+        _build_invitation(
+            db_session, branch.id, primary_contact_phone="9876543210", primary_contact_email=None
+        )
+    )
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    response = await _lookup_by_phone(client, issue_token(creator), "9876543210")
+    assert response.status_code == 200
+    assert response.json()["data"]["email"] is None
+
+
+async def test_lookup_by_phone_no_match_returns_null_data(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    response = await _lookup_by_phone(client, issue_token(creator), "5550001111")
+    assert response.status_code == 200
+    assert response.json()["data"] is None
+
+
+async def test_lookup_by_phone_too_few_digits_is_rejected(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    response = await _lookup_by_phone(client, issue_token(creator), "12-3")
+    assert response.status_code == 422
+
+
+async def test_lookup_by_phone_match_at_unauthorized_branch_returns_null(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-PHONE-1")
+    db_session.add(other_branch)
+    await db_session.flush()
+    db_session.add(
+        _build_invitation(db_session, other_branch.id, primary_contact_phone="4445556667")
+    )
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    response = await _lookup_by_phone(client, issue_token(creator), "4445556667")
+    assert response.status_code == 200
+    assert response.json()["data"] is None
+
+
+async def test_lookup_by_phone_branch_header_excludes_matching_branch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    other_branch = Branch(id=uuid.uuid4(), name="Other Branch", code="OTHER-PHONE-2")
+    db_session.add(other_branch)
+    await db_session.flush()
+    db_session.add(
+        _build_invitation(db_session, other_branch.id, primary_contact_phone="3334445556")
+    )
+    await db_session.commit()
+
+    creator = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    branch_role = UserBranchRole(
+        id=uuid.uuid4(), role=creator.branch_roles[0].role, branch_id=other_branch.id
+    )
+    creator.branch_roles.append(branch_role)
+    db_session.add(branch_role)
+    await db_session.commit()
+
+    response = await _lookup_by_phone(
+        client, issue_token(creator), "3334445556", **{"X-Branch-ID": str(branch.id)}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"] is None
+
+
+async def test_lookup_by_phone_requires_invitations_create_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    response = await _lookup_by_phone(client, issue_token(viewer), "9544232271")
+    assert response.status_code == 403
+
+
+async def test_lookup_by_phone_id_proof_url_gated_on_documents_view(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    db_session.add(
+        _build_invitation(
+            db_session,
+            branch.id,
+            primary_contact_phone="7778889990",
+            primary_contact_id_proof_storage_key="docs/id.jpg",
+            primary_contact_photo_storage_key="docs/photo.jpg",
+        )
+    )
+    await db_session.commit()
+
+    plain = await _branch_scoped_invitation_creator(db_session, tenant, branch.id)
+    data = (await _lookup_by_phone(client, issue_token(plain), "7778889990")).json()["data"]
+    assert data["photoUrl"] is not None
+    assert data["idProofUrl"] is None
+
+    with_docs = await _branch_scoped_invitation_creator_with_documents(
+        db_session, tenant, branch.id
+    )
+    data = (await _lookup_by_phone(client, issue_token(with_docs), "7778889990")).json()["data"]
+    assert data["idProofUrl"] is not None

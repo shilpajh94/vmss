@@ -64,6 +64,13 @@ class Invitation(Base, TimestampMixin):
             "checked_in_at",
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        # Digits-only phone prefill lookup (reception-phone-prefill-lookup
+        # design.md); mirrors alembic_tenant revision a7c3e1d9b5f2.
+        Index(
+            "ix_invitations_primary_contact_phone_digits",
+            text(r"regexp_replace(primary_contact_phone, '\D', '', 'g')"),
+            postgresql_where=text("deleted_at IS NULL AND primary_contact_phone IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
