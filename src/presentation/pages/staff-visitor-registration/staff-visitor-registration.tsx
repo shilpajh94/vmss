@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { FormSkeleton } from '../../components/ui/Skeleton'
 import { GroupErrorsContext } from '../../components/dynamic-fields/group-errors-context'
 import { useNavigate } from 'react-router'
 import { PageContentLayout } from '../../components/PageContentLayout'
@@ -152,7 +153,7 @@ export function StaffVisitorRegistrationPage() {
       >
         <div className="flex flex-col overflow-x-clip rounded-2xl border border-border bg-surface p-4 md:p-6">
           <div key={currentStep} data-direction={stepDirection} className="step-enter flex flex-col gap-6">
-            {isFormConfigLoading && <p className="text-body text-text-muted">Loading…</p>}
+            {isFormConfigLoading && <FormSkeleton bare rows={3} label="Loading the registration form…" />}
 
             {!isFormConfigLoading && formConfigError && (
               <p className="text-body text-danger">Something went wrong loading the registration form. Please refresh the page.</p>

@@ -3,8 +3,11 @@ import { DndContext, MouseSensor, TouchSensor, closestCenter, useSensor, useSens
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { LayersIcon, LockIcon, PlusIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
-import { LoadingState } from '../../components/ui/LoadingState'
-import { PageContentLayout } from '../../components/PageContentLayout'
+import { PAGE_HEADER_GAP_CANCEL, PageContentLayout } from '../../components/PageContentLayout'
+import { AsyncRegion } from '../../components/AsyncRegion'
+import { Collapsible } from '../../components/ui/Collapsible'
+import { FormSkeleton, ListSkeleton, Skeleton } from '../../components/ui/Skeleton'
+import { PendingButton } from '../../components/ui/PendingButton'
 import { usePageHeader } from '../../context/page-header-context'
 import { AddFieldModal } from './Components/AddFieldModal'
 import { CreateGroupModal } from './Components/CreateGroupModal'
@@ -22,8 +25,8 @@ export function AdminFormBuilderStepEditorPage() {
     selectedField,
     selectField,
     panelScrollRequest,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     toggleFieldRequired,
     saveFieldProperties,
@@ -131,35 +134,49 @@ export function AdminFormBuilderStepEditorPage() {
                 ← Back to Form Builder
               </button>
             </div>
-            <button
-              type="button"
+            <PendingButton
               onClick={() => void publish()}
-              disabled={isPublishing}
-              className="rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white disabled:opacity-60"
+              pending={isPublishing}
+              pendingLabel="Publishing…"
+              className="rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white hover:bg-admin-accent/90 disabled:opacity-60"
             >
-              {isPublishing ? 'Publishing…' : 'Publish Changes'}
-            </button>
+              Publish Changes
+            </PendingButton>
           </div>
 
-          {hasUnpublishedChanges && (
+          <Collapsible open={hasUnpublishedChanges} closedClassName={PAGE_HEADER_GAP_CANCEL}>
             <p className="rounded-lg bg-warning/15 px-4 py-2 font-body text-[13px] font-medium text-warning">
               You have unpublished changes. Visitors won't see them until you publish.
             </p>
-          )}
+          </Collapsible>
         </>
       }
     >
-      <div className="h-full min-h-0 overflow-y-auto scrollbar-thin">
-        {errorMessage ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
-            <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-              Try again
-            </button>
-          </div>
-        ) : isLoading ? (
-          <LoadingState label="Loading step fields…" className="h-full" />
-        ) : (
+      <div className="flex h-full min-h-0 flex-col overflow-y-auto scrollbar-thin">
+        <AsyncRegion
+          phase={phase}
+          isRefreshing={isRefreshing}
+          skeleton={
+            // Same two-column layout as the editor: field groups + field rows
+            // on the left, the properties panel on the right (lg and up).
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr_1fr]">
+              <div className="flex flex-col gap-6">
+                <div className="flex flex-col gap-3">
+                  <Skeleton className="h-4.5 w-28" />
+                  <Skeleton className="h-28 w-full rounded-xl" />
+                  <Skeleton className="h-12 w-full rounded-xl" />
+                </div>
+                <div className="flex flex-col gap-3">
+                  <Skeleton className="h-4.5 w-36" />
+                  <ListSkeleton rows={4} label="Loading step fields…" />
+                </div>
+              </div>
+              <FormSkeleton rows={5} columns={1} className="max-lg:hidden" label="Loading field properties…" />
+            </div>
+          }
+          errorMessage="Something went wrong loading this step. Please try again."
+          onRetry={retry}
+        >
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr_1fr]">
             <div className="flex flex-col gap-6">
               <div className="flex flex-col gap-3">
@@ -296,7 +313,7 @@ export function AdminFormBuilderStepEditorPage() {
               </div>
             )}
           </div>
-        )}
+        </AsyncRegion>
       </div>
 
       <AddFieldModal isOpen={isAddFieldOpen} onClose={closeAddField} onCreate={createField} />

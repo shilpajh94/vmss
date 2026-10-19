@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { LayersIcon, LockIcon, TrashIcon } from '../../../components/icons'
+import { Collapsible } from '../../../components/ui/Collapsible'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
@@ -136,7 +137,7 @@ export function GroupCard({ group, fieldCount, siblingFields, onSaveProperties, 
         </p>
       )}
 
-      {isRepeatable && showInstanceRange && (
+      <Collapsible open={isRepeatable && showInstanceRange} closedClassName="-mt-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <TextField
             label="Min Instances"
@@ -155,7 +156,7 @@ export function GroupCard({ group, fieldCount, siblingFields, onSaveProperties, 
             placeholder="No maximum"
           />
         </div>
-      )}
+      </Collapsible>
 
       <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
         <p className="font-body text-xs font-semibold text-text">Conditional Visibility</p>
@@ -170,30 +171,28 @@ export function GroupCard({ group, fieldCount, siblingFields, onSaveProperties, 
           placeholder="Always shown"
           options={pickableFields.map((f) => ({ value: f.key, label: f.label }))}
         />
-        {conditionFieldKey !== NO_CONDITION_VALUE && (
-          <>
-            <SelectField
-              label="Condition is:"
-              value={conditionOperator}
-              onChange={(value) => {
-                const nextOperator = value as ConditionOperator
-                setConditionOperator(nextOperator)
-                void saveCondition(conditionFieldKey, nextOperator, conditionValue)
-              }}
-              options={[
-                { value: 'equals', label: 'Equals' },
-                { value: 'not_equals', label: 'Not Equals' },
-              ]}
-            />
-            <TextField
-              label="Value"
-              value={conditionValue}
-              onChange={setConditionValue}
-              onBlur={() => void saveCondition(conditionFieldKey, conditionOperator, conditionValue)}
-              placeholder="e.g. group"
-            />
-          </>
-        )}
+        <Collapsible open={conditionFieldKey !== NO_CONDITION_VALUE} closedClassName="-mt-3" className="flex flex-col gap-3">
+          <SelectField
+            label="Condition is:"
+            value={conditionOperator}
+            onChange={(value) => {
+              const nextOperator = value as ConditionOperator
+              setConditionOperator(nextOperator)
+              void saveCondition(conditionFieldKey, nextOperator, conditionValue)
+            }}
+            options={[
+              { value: 'equals', label: 'Equals' },
+              { value: 'not_equals', label: 'Not Equals' },
+            ]}
+          />
+          <TextField
+            label="Value"
+            value={conditionValue}
+            onChange={setConditionValue}
+            onBlur={() => void saveCondition(conditionFieldKey, conditionOperator, conditionValue)}
+            placeholder="e.g. group"
+          />
+        </Collapsible>
       </div>
 
       {saveError && <p className="font-body text-xs text-danger">{saveError}</p>}

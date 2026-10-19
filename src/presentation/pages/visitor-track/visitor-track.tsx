@@ -1,7 +1,7 @@
 import heroImage from '../../../assets/images/lobby-hero.png'
 import { PortalFooter } from '../../components/PortalFooter'
 import { PortalHeader } from '../../components/PortalHeader'
-import { LoadingState } from '../../components/ui/LoadingState'
+import { CardSkeleton } from '../../components/ui/Skeleton'
 import { StatusPanel } from './Components/StatusPanel'
 import { TrackingLookupCard } from './Components/TrackingLookupCard'
 import { useVisitorTrackLookup } from './hooks/use-visitor-track-lookup'
@@ -26,7 +26,11 @@ export function VisitorTrackPage() {
             loading={status === 'loading'}
             error={validationError}
           />
-          {status === 'loading' && <LoadingState label="Looking up your request…" className="w-full max-w-[480px]" />}
+          {status === 'loading' && (
+            <div role="status" aria-label="Looking up your request…" className="w-full max-w-[480px]">
+              <CardSkeleton bodyClassName="h-32" />
+            </div>
+          )}
           {status === 'success' && response && <StatusPanel response={response} />}
           {status === 'error' && (
             <div className="flex w-full max-w-[480px] flex-col gap-3 rounded-2xl border border-danger bg-surface p-5 md:p-8">

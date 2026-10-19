@@ -1,5 +1,9 @@
 import type { ReactNode, Ref } from 'react'
 
+// Cancels the header column's own gap (gap-4 md:gap-6 below) for a closed
+// Collapsible filter panel, so the closed panel takes no space at all.
+export const PAGE_HEADER_GAP_CANCEL = '-mt-4 md:-mt-6'
+
 interface PageContentLayoutProps {
   /** Heading, Filters/Add row, and (when open) the filter panel - stays fixed. */
   header: ReactNode

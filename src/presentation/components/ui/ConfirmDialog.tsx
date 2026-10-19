@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Modal } from './Modal'
+import { PendingButton } from './PendingButton'
 
 type ConfirmTone = 'danger' | 'primary' | 'success'
 
@@ -20,7 +21,8 @@ interface ConfirmDialogProps {
   // pages' delete confirmations.
   tone?: ConfirmTone
   // While true the dialog can't be confirmed again or dismissed, so a
-  // double-click sends one request.
+  // double-click sends one request. The confirm button shows a spinner at
+  // its normal width; `busyLabel` becomes its accessible name.
   isBusy?: boolean
   busyLabel?: string
   cancelLabel?: string
@@ -55,14 +57,14 @@ export function ConfirmDialog({
         >
           {cancelLabel}
         </button>
-        <button
-          type="button"
-          disabled={isBusy}
+        <PendingButton
+          pending={isBusy}
+          pendingLabel={busyLabel}
           onClick={onConfirm}
           className={`rounded-full ${TONE_CLASSES[tone]} px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50`}
         >
-          {isBusy && busyLabel ? busyLabel : confirmLabel}
-        </button>
+          {confirmLabel}
+        </PendingButton>
       </div>
     </Modal>
   )

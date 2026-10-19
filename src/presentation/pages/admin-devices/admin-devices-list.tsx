@@ -1,10 +1,13 @@
 import { SlidersIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
-import { LoadingState } from '../../components/ui/LoadingState'
 import { SelectField } from '../../components/ui/SelectField'
 import { Pagination } from '../../components/Pagination'
-import { PageContentLayout } from '../../components/PageContentLayout'
+import { PAGE_HEADER_GAP_CANCEL, PageContentLayout } from '../../components/PageContentLayout'
+import { AsyncRegion } from '../../components/AsyncRegion'
+import { Collapsible } from '../../components/ui/Collapsible'
+import { TableSkeleton } from '../../components/ui/Skeleton'
+import { PRESS_FEEDBACK_CLASS } from '../../components/ui/interactive'
 import { usePageHeader } from '../../context/page-header-context'
 import type { DeviceOperatingMode } from '../../../domain/entities/managed-device-schema'
 import { DevicesTable } from './Components/DevicesTable'
@@ -31,8 +34,9 @@ export function AdminDevicesList({ operatingMode, title, noun, description }: Ad
     pageSize,
     goToNextPage,
     goToPrevPage,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
+    loadErrorMessage,
     retry,
     isFilterPanelOpen,
     toggleFilterPanel,
@@ -70,14 +74,15 @@ export function AdminDevicesList({ operatingMode, title, noun, description }: Ad
             <button
               type="button"
               onClick={toggleFilterPanel}
-              className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
+              aria-expanded={isFilterPanelOpen}
+              className={`flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text hover:bg-border-subtle ${PRESS_FEEDBACK_CLASS}`}
             >
               <SlidersIcon className="size-3.5" />
               Filters
             </button>
           </div>
 
-          {isFilterPanelOpen && (
+          <Collapsible open={isFilterPanelOpen} closedClassName={PAGE_HEADER_GAP_CANCEL}>
             <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-filter-panel">
               <div className="w-full sm:w-48">
                 <SelectField
@@ -118,25 +123,24 @@ export function AdminDevicesList({ operatingMode, title, noun, description }: Ad
                 </button>
               )}
             </div>
-          )}
+          </Collapsible>
         </>
       }
     >
-      {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
-          <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-            Try again
-          </button>
-        </div>
-      ) : isLoading ? (
-        <LoadingState label={`Loading ${noun}…`} className="flex-1" />
-      ) : devices.length === 0 ? (
-        <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
-          <EmptyState message={isFiltering ? `No ${noun} match these filters.` : `No ${noun} registered yet.`} />
-        </div>
-      ) : (
-        <div className="flex h-full flex-col gap-3">
+      <AsyncRegion
+        phase={phase}
+        isRefreshing={isRefreshing}
+        skeleton={<TableSkeleton columns={7} rows={pageSize} label={`Loading ${noun}…`} />}
+        errorMessage={loadErrorMessage}
+        onRetry={retry}
+        isEmpty={devices.length === 0}
+        empty={
+          <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface py-16">
+            <EmptyState message={isFiltering ? `No ${noun} match these filters.` : `No ${noun} registered yet.`} />
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-3">
           <DevicesTable
             devices={devices}
             canManage={canManage}
@@ -148,13 +152,15 @@ export function AdminDevicesList({ operatingMode, title, noun, description }: Ad
           />
           <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
         </div>
-      )}
+      </AsyncRegion>
 
       <ConfirmDialog
         isOpen={pendingDelete !== undefined}
         title="Delete Device"
         message={`Are you sure you want to delete "${pendingDelete?.name}"? This cannot be undone.`}
-        confirmLabel={isDeleting ? 'Deleting…' : 'Delete'}
+        confirmLabel="Delete"
+        isBusy={isDeleting}
+        busyLabel="Deleting…"
         onConfirm={() => void confirmDelete()}
         onCancel={cancelDelete}
       />

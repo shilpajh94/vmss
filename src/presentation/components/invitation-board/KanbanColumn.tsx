@@ -5,7 +5,7 @@ import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-wor
 import { VisitRequestCard } from './VisitRequestCard'
 import { UserIcon } from '../icons'
 import { EmptyState } from '../ui/EmptyState'
-import { Spinner } from '../ui/LoadingState'
+import { Skeleton } from '../ui/Skeleton'
 import { BOARD_PAGE_SIZE } from '../../hooks/use-paged-board-columns'
 import { useInfiniteScrollSentinel } from '../../hooks/use-infinite-scroll-sentinel'
 
@@ -171,9 +171,17 @@ export function KanbanColumn({
           ))}
           <div ref={sentinelRef} aria-hidden className="h-px shrink-0" />
           {isLoadingMore ? (
-            <div role="status" className="flex shrink-0 items-center justify-center gap-2 py-3 font-body text-xs text-text-muted">
-              <Spinner className="size-4" />
-              Loading more…
+            // A card-shaped placeholder at the column's foot, where the next
+            // page's cards will land (async-ui-states skeletons).
+            <div role="status" aria-label="Loading more…" className="flex shrink-0 flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+              <div className="flex items-center gap-3">
+                <Skeleton className="size-9 shrink-0 rounded-full" />
+                <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <Skeleton className="h-3.5 w-2/3" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+              </div>
+              <Skeleton className="h-3 w-3/5" />
             </div>
           ) : loadMoreFailed ? (
             <div className="flex shrink-0 flex-col items-center gap-2 py-3 text-center">

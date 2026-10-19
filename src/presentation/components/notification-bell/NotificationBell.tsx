@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { usePresence } from '../../hooks/use-presence'
+import { PendingButton } from '../ui/PendingButton'
 import { useNavigate } from 'react-router'
 import { BellIcon } from '../icons'
 import { useNotificationCenter } from '../../context/notification-center-context'
@@ -96,14 +98,14 @@ function PushStatusRow() {
         <p className="mt-1 font-body text-[12px] text-text-faint">You'll still see new notifications here.</p>
       )}
       {pushState.status === 'off' && (
-        <button
-          type="button"
+        <PendingButton
           onClick={handleEnable}
-          disabled={isEnabling}
+          pending={isEnabling}
+          pendingLabel="Enabling…"
           className="mt-2 rounded-md bg-admin-accent px-3 py-1.5 font-body text-[12px] font-semibold text-white disabled:opacity-60"
         >
-          {isEnabling ? 'Enabling…' : 'Enable notifications'}
-        </button>
+          Enable notifications
+        </PendingButton>
       )}
     </div>
   )
@@ -114,6 +116,9 @@ export function NotificationBell() {
   const navigate = useNavigate()
   const [isOpen, setIsOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  // Fades/scales out from the bell before unmounting (ui-motion "Popovers
+  // and menus animate from their anchor").
+  const popover = usePresence(isOpen)
 
   useEffect(() => {
     if (!isOpen) return
@@ -144,7 +149,7 @@ export function NotificationBell() {
         onClick={() => setIsOpen((previous) => !previous)}
         aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
         aria-expanded={isOpen}
-        className="relative flex size-10 items-center justify-center rounded-full bg-border-subtle lg:size-9"
+        className="relative flex size-10 items-center justify-center rounded-full bg-border-subtle transition-colors duration-fast hover:bg-border lg:size-9"
       >
         <BellIcon className="size-4 text-text" />
         {unreadCount > 0 && (
@@ -154,8 +159,13 @@ export function NotificationBell() {
         )}
       </button>
 
-      {isOpen && (
-        <div className="fixed inset-x-2 top-16 z-50 flex max-h-[70dvh] flex-col rounded-lg border border-border bg-surface shadow-[0_8px_24px_rgba(15,23,42,0.12)] md:absolute md:inset-x-auto md:top-11 md:right-0 md:max-h-[460px] md:w-[340px]">
+      {popover.isMounted && (
+        <div
+          data-state={popover.state}
+          inert={popover.state === 'closing'}
+          onAnimationEnd={popover.onAnimationEnd}
+          className="motion-popover fixed inset-x-2 top-16 z-50 flex max-h-[70dvh] origin-top flex-col rounded-lg border border-border bg-surface shadow-[0_8px_24px_rgba(15,23,42,0.12)] md:absolute md:inset-x-auto md:top-11 md:right-0 md:max-h-[460px] md:w-[340px] md:origin-top-right"
+        >
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <p className="font-body text-[13px] font-semibold text-text">Notifications</p>
             {unreadCount > 0 && (

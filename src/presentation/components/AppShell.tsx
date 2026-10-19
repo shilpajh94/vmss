@@ -93,15 +93,19 @@ export function AppShell({ sidebar, topBar, mainClassName, children }: AppShellP
     <NavDrawerContext.Provider value={contextValue}>
       <SidebarCollapseContext.Provider value={collapseValue}>
         <div className={`flex h-dvh w-full items-stretch overflow-hidden bg-bg ${drawerOpen ? 'touch-none' : ''}`}>
-          {drawerOpen && (
-            <button
-              type="button"
-              aria-label="Close navigation menu"
-              tabIndex={-1}
-              onClick={closeNav}
-              className="fixed inset-0 z-40 bg-black/50 lg:hidden"
-            />
-          )}
+          {/* Always mounted below `lg` so it can fade out as well as in
+              (ui-motion "The navigation drawer slides in and out"); while
+              closed it's transparent and lets clicks through. */}
+          <button
+            type="button"
+            aria-label="Close navigation menu"
+            aria-hidden={!drawerOpen || undefined}
+            tabIndex={-1}
+            onClick={closeNav}
+            className={`fixed inset-0 z-40 bg-black/50 transition-opacity duration-standard ease-motion-out lg:hidden ${
+              drawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
+            }`}
+          />
 
           <div
             ref={drawerRef}
@@ -111,7 +115,7 @@ export function AppShell({ sidebar, topBar, mainClassName, children }: AppShellP
             aria-label={isDesktop ? undefined : 'Navigation'}
             aria-hidden={!isDesktop && !drawerOpen ? true : undefined}
             inert={!isDesktop && !drawerOpen}
-            className={`fixed inset-y-0 left-0 z-50 flex max-w-[85vw] transition-transform duration-200 ease-out motion-reduce:transition-none lg:static lg:z-auto lg:max-w-none lg:translate-x-0 lg:transition-none ${
+            className={`fixed inset-y-0 left-0 z-50 flex max-w-[85vw] transition-transform duration-standard ease-motion-out lg:static lg:z-auto lg:max-w-none lg:translate-x-0 lg:transition-none ${
               drawerOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
             }`}
           >
@@ -121,7 +125,7 @@ export function AppShell({ sidebar, topBar, mainClassName, children }: AppShellP
           <div className="flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
             {topBar ?? <MobileNavBar />}
 
-            <main className={mainClassName ?? 'flex flex-1 flex-col gap-page-section overflow-y-auto overflow-x-hidden p-page-content'}>
+            <main className={mainClassName ?? 'flex flex-1 flex-col gap-page-section overflow-y-auto overflow-x-hidden p-page-content [scrollbar-gutter:stable]'}>
               {children}
             </main>
           </div>

@@ -1,10 +1,13 @@
 import { useNavigate } from 'react-router'
 import { PlusIcon, SlidersIcon } from '../../components/icons'
 import { EmptyState } from '../../components/ui/EmptyState'
-import { LoadingState } from '../../components/ui/LoadingState'
 import { SelectField } from '../../components/ui/SelectField'
 import { Pagination } from '../../components/Pagination'
-import { PageContentLayout } from '../../components/PageContentLayout'
+import { PAGE_HEADER_GAP_CANCEL, PageContentLayout } from '../../components/PageContentLayout'
+import { AsyncRegion } from '../../components/AsyncRegion'
+import { Collapsible } from '../../components/ui/Collapsible'
+import { TableSkeleton } from '../../components/ui/Skeleton'
+import { PRESS_FEEDBACK_CLASS } from '../../components/ui/interactive'
 import { usePageHeader } from '../../context/page-header-context'
 import { HostEmployeesTable } from './Components/HostEmployeesTable'
 import { useAdminHostEmployees } from './hooks/use-admin-host-employees'
@@ -19,8 +22,8 @@ export function AdminHostEmployeesPage() {
     goToNextPage,
     goToPrevPage,
     departmentNameById,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     isFilterPanelOpen,
     toggleFilterPanel,
@@ -50,14 +53,15 @@ export function AdminHostEmployeesPage() {
               <button
                 type="button"
                 onClick={toggleFilterPanel}
-                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
+                aria-expanded={isFilterPanelOpen}
+                className={`flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text hover:bg-border-subtle ${PRESS_FEEDBACK_CLASS}`}
               >
                 <SlidersIcon className="size-3.5" />
                 Filters
               </button>
               <button
                 type="button"
-                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
+                className={`flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text hover:bg-border-subtle ${PRESS_FEEDBACK_CLASS}`}
               >
                 <PlusIcon className="size-3.5" />
                 Import Hosts
@@ -65,7 +69,7 @@ export function AdminHostEmployeesPage() {
               <button
                 type="button"
                 onClick={goToAddHostEmployee}
-                className="flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white"
+                className={`flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white hover:bg-admin-accent/90 ${PRESS_FEEDBACK_CLASS}`}
               >
                 <PlusIcon className="size-3.5" />
                 Add Employee
@@ -73,7 +77,7 @@ export function AdminHostEmployeesPage() {
             </div>
           </div>
 
-          {isFilterPanelOpen && (
+          <Collapsible open={isFilterPanelOpen} closedClassName={PAGE_HEADER_GAP_CANCEL}>
             <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-filter-panel">
               <div className="w-full sm:w-48">
                 <SelectField
@@ -111,33 +115,32 @@ export function AdminHostEmployeesPage() {
                 </button>
               )}
             </div>
-          )}
+          </Collapsible>
         </>
       }
     >
-      {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
-          <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-            Try again
-          </button>
-        </div>
-      ) : isLoading ? (
-        <LoadingState label="Loading host employees…" className="flex-1" />
-      ) : hostEmployees.length === 0 ? (
-        <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
-          {isFiltering ? (
-            <EmptyState message="No employees match these filters." />
-          ) : (
-            <EmptyState message="No employees yet." action={{ label: 'Add Employee', onClick: goToAddHostEmployee }} />
-          )}
-        </div>
-      ) : (
-        <div className="flex h-full flex-col gap-3">
+      <AsyncRegion
+        phase={phase}
+        isRefreshing={isRefreshing}
+        skeleton={<TableSkeleton columns={6} rows={pageSize} label="Loading host employees…" />}
+        errorMessage="Something went wrong loading the employees. Please try again."
+        onRetry={retry}
+        isEmpty={hostEmployees.length === 0}
+        empty={
+          <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface py-16">
+            {isFiltering ? (
+              <EmptyState message="No employees match these filters." />
+            ) : (
+              <EmptyState message="No employees yet." action={{ label: 'Add Employee', onClick: goToAddHostEmployee }} />
+            )}
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-3">
           <HostEmployeesTable hostEmployees={hostEmployees} departmentNameById={departmentNameById} />
           <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
         </div>
-      )}
+      </AsyncRegion>
     </PageContentLayout>
   )
 }

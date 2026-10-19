@@ -10,7 +10,8 @@ import { todayAsDateInputValue } from '../../utils/local-date-input-value'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
-import { LoadingState } from '../../components/ui/LoadingState'
+import { AsyncRegion } from '../../components/AsyncRegion'
+import { BoardSkeleton } from '../../components/ui/Skeleton'
 import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
 import { boardExtraFilters } from '../../components/invitation-board/board-extra-filters'
 import { ExportInvitationsButton } from '../../components/invitation-board/ExportInvitationsButton'
@@ -31,8 +32,8 @@ const EMPTY_MESSAGES: Record<string, string> = {
 export function AdminInvitationsPage() {
   const {
     columns,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     search,
     setSearch,
     purposeFilter,
@@ -142,18 +143,16 @@ export function AdminInvitationsPage() {
         </>
       }
     >
-      {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
-          <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={refresh} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-            Try again
-          </button>
-        </div>
-      ) : isLoading ? (
-        <LoadingState label="Loading invitations…" className="flex-1" />
-      ) : (
-        // PageContentLayout's data region has a definite height on desktop;
-        // filling it lets each column scroll under its own fixed header.
+      <AsyncRegion
+        phase={phase}
+        isRefreshing={isRefreshing}
+        skeleton={<BoardSkeleton />}
+        errorMessage="Something went wrong loading the dashboard. Please try again."
+        onRetry={refresh}
+        className="lg:h-full"
+      >
+        {/* PageContentLayout's data region has a definite height on desktop;
+            filling it lets each column scroll under its own fixed header. */}
         <div className="flex flex-col lg:h-full">
           <ResponsiveBoard
             boardKey="admin"
@@ -193,7 +192,7 @@ export function AdminInvitationsPage() {
             )}
           />
         </div>
-      )}
+      </AsyncRegion>
 
       <ApproveInvitationModal
         isOpen={pendingApproveId !== undefined}

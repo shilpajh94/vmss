@@ -16,7 +16,7 @@ export function RangeToggle({ value, onChange }: { value: DashboardRange; onChan
           type="button"
           aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
-          className={`min-h-10 px-3 font-body text-[13px] font-semibold transition-colors lg:min-h-9 ${
+          className={`min-h-10 px-3 font-body text-[13px] font-semibold transition-colors duration-standard lg:min-h-9 ${
             value === option.value ? 'bg-admin-accent text-white' : 'text-text-muted hover:bg-admin-accent/10 hover:text-text'
           }`}
         >

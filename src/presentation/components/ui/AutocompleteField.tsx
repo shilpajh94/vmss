@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { usePresence } from '../../hooks/use-presence'
 
 interface AutocompleteOption {
   value: string
@@ -44,6 +45,9 @@ export function AutocompleteField({
   const [isOpen, setIsOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const requestId = useRef(0)
+  // Fades out under the field before unmounting (ui-motion "Popovers and
+  // menus animate from their anchor").
+  const suggestions = usePresence(isOpen && query.trim().length >= minQueryLength)
 
   useEffect(() => {
     setQuery(value)
@@ -111,10 +115,14 @@ export function AutocompleteField({
           error ? 'border-danger' : 'border-border'
         }`}
       />
-      {isOpen && query.trim().length >= minQueryLength && (
+      {suggestions.isMounted && (
         <ul
           role="listbox"
-          className="absolute top-full z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-border bg-surface py-1 shadow-lg"
+          data-state={suggestions.state}
+          onAnimationEnd={suggestions.onAnimationEnd}
+          className={`motion-popover absolute top-full z-10 mt-1 max-h-60 w-full origin-top overflow-auto rounded-lg border border-border bg-surface py-1 shadow-lg ${
+            suggestions.state === 'closing' ? 'pointer-events-none' : ''
+          }`}
         >
           {isLoading && <li className="px-3 py-2 text-body text-text-muted">Searching…</li>}
           {!isLoading && options.length === 0 && <li className="px-3 py-2 text-body text-text-muted">No matches found</li>}

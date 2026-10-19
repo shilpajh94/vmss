@@ -1,3 +1,5 @@
+import { PendingButton } from '../ui/PendingButton'
+
 export interface ConfirmSummaryRow {
   label: string
   value: string
@@ -39,14 +41,14 @@ export function FormConfirmStep({ message, rows, confirmLabel, busyLabel, isBusy
         >
           Back
         </button>
-        <button
-          type="button"
-          disabled={isBusy}
+        <PendingButton
+          pending={isBusy}
+          pendingLabel={busyLabel}
           onClick={onConfirm}
           className="rounded-full bg-secondary-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
         >
-          {isBusy ? busyLabel : confirmLabel}
-        </button>
+          {confirmLabel}
+        </PendingButton>
       </div>
     </div>
   )

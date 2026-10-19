@@ -25,6 +25,37 @@
 
   --font-display: "Outfit", sans-serif;
   --font-body: "Geist", sans-serif;
+
+  /* Motion easings (ui-motion "Animations use one shared timing scale"):
+     `motion-out` for things entering/settling, `motion-in` for things
+     leaving. Exposed as `ease-motion-out` / `ease-motion-in` utilities. */
+  --ease-motion-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-motion-in: cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* Motion durations. Mirrored in presentation/utils/motion.ts, which the
+   presence hook uses to know how long an exit animation lasts - change
+   both together. Not under @theme because Tailwind v4 has no duration
+   namespace; the `duration-*` utilities below expose them instead. */
+:root {
+  --motion-fast: 100ms; /* hover/press micro-feedback */
+  --motion-standard: 180ms; /* overlays, popovers, panels, content fade-in */
+  --motion-slow: 280ms; /* route and wizard step transitions */
+}
+
+@utility duration-fast {
+  --tw-duration: var(--motion-fast);
+  transition-duration: var(--motion-fast);
+}
+
+@utility duration-standard {
+  --tw-duration: var(--motion-standard);
+  transition-duration: var(--motion-standard);
+}
+
+@utility duration-slow {
+  --tw-duration: var(--motion-slow);
+  transition-duration: var(--motion-slow);
 }
 
 /* Type scale steps, per Figma "Typography Scale" section */

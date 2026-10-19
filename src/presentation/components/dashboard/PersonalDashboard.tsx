@@ -26,7 +26,7 @@ export function PersonalDashboard({ dashboard }: { dashboard: ReturnType<typeof 
   const { overview, analytics, hasInitialError, isInitialLoading, retry } = dashboard
 
   if (hasInitialError) return <DashboardLoadError message="Something went wrong loading your dashboard. Please try again." onRetry={retry} />
-  if (isInitialLoading || !overview || !analytics) return <DashboardLoading />
+  if (isInitialLoading || !overview || !analytics) return <DashboardLoading variant="personal" />
 
   const rangeDays = analytics.dailyTrend.length
 

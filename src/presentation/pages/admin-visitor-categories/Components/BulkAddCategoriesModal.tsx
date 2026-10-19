@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Modal } from '../../../components/ui/Modal'
+import { PendingButton } from '../../../components/ui/PendingButton'
 import { TextareaField } from '../../../components/ui/TextareaField'
 import type { VisitorCategoryBulkCreateOut } from '../../../../domain/entities/visitor-category-out-schema'
 
@@ -57,14 +58,15 @@ export function BulkAddCategoriesModal({ isOpen, onClose, onSubmit, isSubmitting
             >
               Cancel
             </button>
-            <button
-              type="button"
+            <PendingButton
               onClick={handleSubmit}
-              disabled={names.length === 0 || isSubmitting}
+              disabled={names.length === 0}
+              pending={isSubmitting}
+              pendingLabel="Adding…"
               className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-60"
             >
-              {isSubmitting ? 'Adding…' : `Add ${names.length} ${names.length === 1 ? 'Category' : 'Categories'}`}
-            </button>
+              {`Add ${names.length} ${names.length === 1 ? 'Category' : 'Categories'}`}
+            </PendingButton>
           </div>
         </>
       ) : (

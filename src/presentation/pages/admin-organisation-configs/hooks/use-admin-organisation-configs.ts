@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { OrganisationConfig } from '../../../../domain/entities/organisation-config-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
@@ -14,31 +15,31 @@ export function useAdminOrganisationConfigs() {
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [savedConfig, setSavedConfig] = useState<OrganisationConfig | undefined>(undefined)
   const [form, setForm] = useState<OrganisationConfig | undefined>(undefined)
-  const [isLoading, setIsLoading] = useState(true)
+  const { phase, isRefreshing, begin } = useLoadTracker()
   const [isSaving, setIsSaving] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
   // The backend has no endpoint to store an uploaded logo file (only a logoUrl
   // string on /company), so a picked file is a local, unsaved preview only.
   const [logoPreview, setLogoPreviewState] = useState<{ url: string; fileName: string } | undefined>(undefined)
 
-  const loadConfig = useCallback(async () => {
-    setIsLoading(true)
-    setErrorMessage(undefined)
+  const loadConfig = useCallback(
+    async (mode: LoadMode = 'user') => {
+      const request = begin(mode)
 
-    try {
-      const [user, config] = await Promise.all([getCurrentStaffUserUseCase.execute(), getOrganisationConfigUseCase.execute()])
-      setCurrentUser(user)
-      setSavedConfig(config)
-      setForm(config)
-      setLastUpdatedAt(new Date())
-    } catch {
-      setErrorMessage('Something went wrong loading the organisation configuration. Please try again.')
-      toast.error('Something went wrong loading the organisation configuration. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [getCurrentStaffUserUseCase, getOrganisationConfigUseCase, toast])
+      try {
+        const [user, config] = await Promise.all([getCurrentStaffUserUseCase.execute(), getOrganisationConfigUseCase.execute()])
+        if (!request.succeed()) return
+        setCurrentUser(user)
+        setSavedConfig(config)
+        setForm(config)
+        setLastUpdatedAt(new Date())
+      } catch {
+        if (!request.fail()) return
+        toast.error('Something went wrong loading the organisation configuration. Please try again.')
+      }
+    },
+    [begin, getCurrentStaffUserUseCase, getOrganisationConfigUseCase, toast],
+  )
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -53,7 +54,7 @@ export function useAdminOrganisationConfigs() {
     void loadConfig()
   }, [loadConfig])
 
-  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
 
   const updateField = useCallback(<K extends keyof OrganisationConfig>(key: K, value: OrganisationConfig[K]) => {
     setForm((current) => (current ? { ...current, [key]: value } : current))
@@ -92,9 +93,9 @@ export function useAdminOrganisationConfigs() {
   return {
     currentUser,
     form,
-    isLoading,
+    phase,
+    isRefreshing,
     isSaving,
-    errorMessage,
     logoPreview,
     retry,
     updateField,

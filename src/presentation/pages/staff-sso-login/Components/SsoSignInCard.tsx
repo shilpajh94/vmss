@@ -1,4 +1,5 @@
 import { KeyIcon, ShieldIcon } from '../../../../assets/icons'
+import { PendingButton } from '../../../components/ui/PendingButton'
 import type { StaffSsoLoginStatus } from '../hooks/use-staff-sso-login-page'
 
 interface SsoSignInCardProps {
@@ -23,15 +24,15 @@ export function SsoSignInCard({ status, errorMessage, onSignIn }: SsoSignInCardP
       </div>
 
       <div className="flex flex-col gap-4 xshort:gap-3">
-        <button
-          type="button"
+        <PendingButton
           onClick={onSignIn}
-          disabled={isBusy}
+          pending={isBusy}
+          pendingLabel={status === 'completing' ? 'Completing sign-in…' : 'Redirecting…'}
           className="flex w-full items-center justify-center gap-2.5 rounded-lg bg-secondary-accent px-6 py-3.5 font-body text-[15px] font-semibold text-white drop-shadow-[0_4px_6px_rgba(6,182,212,0.15)] disabled:opacity-60"
         >
           <img src={KeyIcon} alt="" className="size-[18px]" />
-          {status === 'completing' ? 'Completing sign-in…' : status === 'redirecting' ? 'Redirecting…' : 'Sign in with SSO'}
-        </button>
+          Sign in with SSO
+        </PendingButton>
         {errorMessage && <p className="font-body text-[13px] text-danger">{errorMessage}</p>}
       </div>
 

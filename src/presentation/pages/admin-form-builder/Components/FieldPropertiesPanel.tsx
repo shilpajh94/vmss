@@ -3,6 +3,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities'
 import { useEffect, useState } from 'react'
 import { GridIcon, LockIcon, PlusIcon, UnlockIcon, XIcon } from '../../../components/icons'
+import { Collapsible } from '../../../components/ui/Collapsible'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
 import { TextareaField } from '../../../components/ui/TextareaField'
@@ -372,20 +373,18 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
           placeholder="Always shown"
           options={siblingFields.filter((f) => f.id !== field.id).map((f) => ({ value: f.key, label: f.label }))}
         />
-        {conditionFieldKey !== NO_CONDITION_VALUE && (
-          <>
-            <SelectField
-              label="Condition is:"
-              value={conditionOperator}
-              onChange={(value) => setConditionOperator(value as ConditionOperator)}
-              options={[
-                { value: 'equals', label: 'Equals' },
-                { value: 'not_equals', label: 'Not Equals' },
-              ]}
-            />
-            <TextField label="Value" value={conditionValue} onChange={setConditionValue} placeholder="e.g. group" />
-          </>
-        )}
+        <Collapsible open={conditionFieldKey !== NO_CONDITION_VALUE} closedClassName="-mt-3" className="flex flex-col gap-3">
+          <SelectField
+            label="Condition is:"
+            value={conditionOperator}
+            onChange={(value) => setConditionOperator(value as ConditionOperator)}
+            options={[
+              { value: 'equals', label: 'Equals' },
+              { value: 'not_equals', label: 'Not Equals' },
+            ]}
+          />
+          <TextField label="Value" value={conditionValue} onChange={setConditionValue} placeholder="e.g. group" />
+        </Collapsible>
       </div>
 
       <div>

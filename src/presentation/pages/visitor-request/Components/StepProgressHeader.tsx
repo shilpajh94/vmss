@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ChevronDownIcon } from '../../../components/icons'
+import { Collapsible } from '../../../components/ui/Collapsible'
 
 interface StepProgressHeaderProps {
   steps: readonly string[]
@@ -30,7 +31,7 @@ export function StepProgressHeader({ steps, currentStep, onStepSelect }: StepPro
           </span>
           <span className="truncate text-body font-semibold text-text">{steps[currentStep]}</span>
         </span>
-        <ChevronDownIcon className={`size-5 shrink-0 text-text-muted transition-transform ${isListOpen ? 'rotate-180' : ''}`} />
+        <ChevronDownIcon className={`size-5 shrink-0 text-text-muted transition-transform duration-standard ${isListOpen ? 'rotate-180' : ''}`} />
       </button>
 
       <div
@@ -44,7 +45,9 @@ export function StepProgressHeader({ steps, currentStep, onStepSelect }: StepPro
         <div className="step-motion h-full rounded-full bg-secondary-accent transition-[width]" style={{ width: `${progressPercent}%` }} />
       </div>
 
-      {isListOpen && (
+      {/* `-mt-3` cancels the card's gap-3 while closed (ui-motion
+          "Collapsible regions expand and collapse smoothly"). */}
+      <Collapsible open={isListOpen} closedClassName="-mt-3">
         <ol className="flex flex-col gap-1 border-t border-border-subtle pt-2">
           {steps.map((label, index) => {
             const isActive = index === currentStep
@@ -73,7 +76,7 @@ export function StepProgressHeader({ steps, currentStep, onStepSelect }: StepPro
             )
           })}
         </ol>
-      )}
+      </Collapsible>
     </div>
   )
 }

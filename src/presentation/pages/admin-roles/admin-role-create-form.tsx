@@ -1,6 +1,7 @@
 import { BackButton } from '../../components/BackButton'
 import { Checkbox } from '../../components/ui/Checkbox'
-import { LoadingState } from '../../components/ui/LoadingState'
+import { FormSkeleton } from '../../components/ui/Skeleton'
+import { PendingButton } from '../../components/ui/PendingButton'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminRoleCreateForm } from './hooks/use-admin-role-create-form'
 
@@ -34,7 +35,7 @@ export function AdminRoleCreateFormPage() {
           </button>
         </div>
       ) : isLoading ? (
-        <LoadingState label="Loading permission catalog…" className="flex-1" />
+        <FormSkeleton rows={6} columns={1} label="Loading permission catalog…" />
       ) : (
         <>
           <div className="flex items-center gap-4">
@@ -95,14 +96,14 @@ export function AdminRoleCreateFormPage() {
             >
               Cancel
             </button>
-            <button
-              type="button"
-              disabled={isSaving}
+            <PendingButton
+              pending={isSaving}
+              pendingLabel="Creating…"
               onClick={() => void submit()}
               className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
             >
-              {isSaving ? 'Creating…' : 'Create Role'}
-            </button>
+              Create Role
+            </PendingButton>
           </div>
         </>
       )}

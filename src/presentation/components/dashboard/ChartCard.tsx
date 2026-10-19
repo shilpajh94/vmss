@@ -1,3 +1,4 @@
+import { ProgressBar } from '../ui/ProgressBar'
 import type { ReactNode } from 'react'
 import { EmptyState } from '../ui/EmptyState'
 
@@ -28,7 +29,17 @@ interface ChartCardProps {
 
 export function ChartCard({ title, subtitle, actions, summary, isEmpty, emptyMessage, table, isUpdating = false, className = '', children }: ChartCardProps) {
   return (
-    <section aria-label={title} className={`flex min-w-0 flex-col gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 ${className}`}>
+    <section
+      aria-label={title}
+      aria-busy={isUpdating}
+      className={`relative flex min-w-0 flex-col gap-4 overflow-hidden rounded-2xl border border-border bg-surface p-4 md:p-6 ${className}`}
+    >
+      {/* Range change in flight: the chart stays, dimmed, under a progress
+          bar along the card's top edge (async-ui-states "Changing a
+          dashboard date range"). Absolutely placed so it takes no space. */}
+      <div className="absolute inset-x-0 top-0">
+        <ProgressBar isActive={isUpdating} className="rounded-none" />
+      </div>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-0.5">
           <h2 className="font-display text-lg font-bold text-text">{title}</h2>
@@ -42,7 +53,7 @@ export function ChartCard({ title, subtitle, actions, summary, isEmpty, emptyMes
       ) : (
         // `relative` anchors the sr-only table; without a positioned ancestor
         // its absolute box escapes <main>'s clipping and widens the page.
-        <figure aria-label={summary} className={`relative m-0 min-w-0 transition-opacity ${isUpdating ? 'opacity-60' : ''}`}>
+        <figure aria-label={summary} className={`relative m-0 min-w-0 transition-opacity duration-standard ${isUpdating ? 'opacity-60' : ''}`}>
           {children}
           {table ? (
             // sr-only on a wrapper: a <table> ignores the 1px width and would
