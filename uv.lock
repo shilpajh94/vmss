@@ -3108,6 +3108,7 @@ dev = [
     { name = "resvg-py" },
     { name = "ruff" },
     { name = "vtracer" },
+    { name = "watchfiles" },
 ]
 
 [package.metadata]
@@ -3154,6 +3155,7 @@ dev = [
     { name = "resvg-py", specifier = ">=0.5.0" },
     { name = "ruff", specifier = ">=0.16.2" },
     { name = "vtracer", specifier = ">=0.6.15" },
+    { name = "watchfiles", specifier = ">=1.2.0" },
 ]
 
 [[package]]

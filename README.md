@@ -325,7 +325,11 @@ ddev config --project-type=generic --webserver-type=generic \
   ddev/ddev-redis`), reachable at `redis:6379` inside the containers — not a
   hand-rolled compose service.
 - **Running the app**: `web_extra_daemons` in `.ddev/config.yaml` runs
-  `uv run uvicorn vmss_api.main:app --reload` inside the web container;
+  `uv run uvicorn vmss_api.main:app --reload` inside the web container,
+  plus the Celery worker and beat, each wrapped in `watchfiles` so they
+  restart on any change under `src/` the way uvicorn's `--reload` does
+  (`supervisorctl restart webextradaemons:vmss-api-celery-worker` is only a
+  fallback if file events ever stop arriving);
   `web_extra_exposed_ports` exposes it through `ddev-router` at
   `https://vmss-new-api.ddev.site:8443`. A `post-start` hook runs `uv sync` so
   the venv is always current after `ddev start`/`ddev restart`.
