@@ -44,3 +44,6 @@ export const DEFAULT_CALENDAR_STATUSES: readonly string[] = CALENDAR_STATUS_FILT
 // then loads more by (improve-calendar-scale-and-theme-switch design.md W2).
 export const PER_DAY_LIMIT = { month: 3, week: 10, day: 20 } as const
 
+// Minimum height of the Week board and the Day card; above it they are as
+// tall as the visible page (calendar-page-scroll-and-taller-panels design.md D2).
+export const PANEL_FLOOR = 420

@@ -1,58 +1,49 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 
 interface FillHeightOptions {
-  /** Smallest height in px; below it the page scrolls instead. */
+  /** Smallest height in px. */
   floor: number
   /** Off: the element sizes to its content and this returns undefined. */
   enabled: boolean
-  /**
-   * The block above the element (page header and toolbar). Its size changes
-   * when it wraps, e.g. when the branch selector appears or the sidebar
-   * collapses, which moves the element's top.
-   */
-  observeRef: RefObject<HTMLElement | null>
-  /** Anything else above the element that comes and goes, e.g. an empty-week notice. */
-  remeasureKey?: unknown
 }
 
-// Sizes a calendar panel (the Week board, the Day card) to the space left
-// in the shell's scrolling <main> below its own top, minus the page's
+// Sizes a calendar panel (the Week board, the Day card) to the visible page
+// area: the shell's scrolling <main> less its top padding and the page's
 // bottom gap (which equals <main>'s side padding, app-shell "Page content
-// keeps a bottom gap"), but never below `floor`.
+// keeps a bottom gap"), but never below `floor`. The title and toolbar above
+// the panel scroll away with the page, so scrolled down, the panel fills the
+// screen while its own body keeps scrolling on its own (staff-calendar "Week
+// board and Day card are as tall as the visible page";
+// calendar-page-scroll-and-taller-panels design.md D1).
 //
-// Measured rather than flexed: a floor on a flex item inside a `min-h-0`
-// parent overflows that parent and strands the shell's end-gap spacer
-// above it, while an explicit height overflows in order, so a window too
-// short for the floor just scrolls <main> with the gap still after the
-// panel (fix-paging-footers-and-calendar-day-scroll design.md D3).
+// The panel's own top isn't part of the sum, so a wrapping toolbar or a
+// notice above it doesn't change its height, only the page's scroll length.
+// An explicit height overflows in order, so the shell's end-gap spacer
+// still follows the panel.
 //
-// <main>'s own content is deliberately not observed: the panel's height
-// changes it, which would loop. Error states replace the whole panel, so
-// nothing else is inserted above it.
-export function useFillHeight<T extends HTMLElement>({
-  floor,
-  enabled,
-  observeRef,
-  remeasureKey,
-}: FillHeightOptions): [RefObject<T | null>, number | undefined] {
+// Observing <main> itself is safe: only its border box is watched, and the
+// panel's height doesn't change that. It catches <main> resizing without a
+// window resize (e.g. the top bar changing height).
+export function useFillHeight<T extends HTMLElement>({ floor, enabled }: FillHeightOptions): [RefObject<T | null>, number | undefined] {
   const ref = useRef<T>(null)
   const [height, setHeight] = useState(floor)
 
   useLayoutEffect(() => {
     if (!enabled) return
+    const scroller = ref.current?.closest('main') ?? null
     const measure = () => {
-      const element = ref.current
-      if (!element) return
-      const scroller = element.closest('main')
-      const scrollerTop = scroller?.getBoundingClientRect().top ?? 0
-      const top = element.getBoundingClientRect().top + (scroller?.scrollTop ?? 0) - scrollerTop
-      const gap = scroller ? parseFloat(getComputedStyle(scroller).paddingLeft) || 0 : 0
-      const visible = (scroller?.clientHeight ?? window.innerHeight) - top - gap
-      setHeight(Math.max(floor, Math.floor(visible)))
+      if (!scroller) {
+        setHeight(Math.max(floor, window.innerHeight))
+        return
+      }
+      const style = getComputedStyle(scroller)
+      const top = parseFloat(style.paddingTop) || 0
+      const gap = parseFloat(style.paddingLeft) || 0
+      setHeight(Math.max(floor, Math.floor(scroller.clientHeight - top - gap)))
     }
     measure()
     const observer = new ResizeObserver(measure)
-    if (observeRef.current) observer.observe(observeRef.current)
+    if (scroller) observer.observe(scroller)
     window.addEventListener('resize', measure)
     window.addEventListener('orientationchange', measure)
     return () => {
@@ -60,7 +51,7 @@ export function useFillHeight<T extends HTMLElement>({
       window.removeEventListener('resize', measure)
       window.removeEventListener('orientationchange', measure)
     }
-  }, [enabled, floor, observeRef, remeasureKey])
+  }, [enabled, floor])
 
   return [ref, enabled ? height : undefined]
 }

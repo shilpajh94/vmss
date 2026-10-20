@@ -1,22 +1,15 @@
-import { useLayoutEffect, useMemo, useRef, type RefObject } from 'react'
+import { useLayoutEffect, useMemo, useRef } from 'react'
 import { PRESS_FEEDBACK_CLASS } from '../../../components/ui/interactive'
-import { useIsDesktop } from '../../../hooks/use-media-query'
 import { dayOfMonth, formatShortDay, formatWeekday } from '../../../utils/calendar-dates'
 import { DayListStatus, PagedDayList } from './PagedDayList'
 import { eventsByDate } from './calendar-grouping'
 import { useDayPages } from '../hooks/use-day-pages'
 import { useFillHeight } from '../hooks/use-fill-height'
-import { PER_DAY_LIMIT } from '../calendar-status'
+import { PANEL_FLOOR, PER_DAY_LIMIT } from '../calendar-status'
 import type { BoardBasePath } from '../../../components/dashboard/dashboard-format'
 import type { CalendarDay, CalendarEvent, CalendarFeed } from '../../../../domain/entities/calendar-feed-schema'
 
 const NO_EVENTS: CalendarEvent[] = []
-// The board's height floor: from `lg` up it still fits a 720px-tall laptop
-// window (header, footer and about four hours per column); below `lg` the
-// page scrolls as a whole anyway (staff-calendar "Week board fits short
-// desktop windows").
-const DESKTOP_BOARD_FLOOR = 240
-const MOBILE_BOARD_FLOOR = 420
 
 interface WeekBoardProps {
   feed: CalendarFeed
@@ -25,26 +18,16 @@ interface WeekBoardProps {
   statuses: readonly string[] | undefined
   boardBasePath: BoardBasePath
   onOpenDay: (date: string) => void
-  /** The page header and toolbar above the board; see useFillHeight. */
-  controlsRef: RefObject<HTMLElement | null>
-  /** Changes when something else above the board comes or goes. */
-  remeasureKey: unknown
 }
 
 // Seven day columns that each scroll on their own, inside a board that
 // fits the screen; sideways snap scrolling below 2xl (1/2/3/5/7 columns per
 // screen) (staff-calendar "Month, week and day views with a working-hours
 // timeline": Week; calendar-working-hours-and-roomier-week design.md D3).
-// Its height is the space left below the toolbar, measured at every width
-// (fix-paging-footers-and-calendar-day-scroll design.md D3).
-export function WeekBoard({ feed, today, branchId, statuses, boardBasePath, onOpenDay, controlsRef, remeasureKey }: WeekBoardProps) {
-  const isDesktop = useIsDesktop()
-  const [boardRef, height] = useFillHeight<HTMLDivElement>({
-    floor: isDesktop ? DESKTOP_BOARD_FLOOR : MOBILE_BOARD_FLOOR,
-    enabled: true,
-    observeRef: controlsRef,
-    remeasureKey,
-  })
+// It is as tall as the visible page at every width; the page scrolls to
+// reach it (calendar-page-scroll-and-taller-panels design.md D1).
+export function WeekBoard({ feed, today, branchId, statuses, boardBasePath, onOpenDay }: WeekBoardProps) {
+  const [boardRef, height] = useFillHeight<HTMLDivElement>({ floor: PANEL_FLOOR, enabled: true })
   // Grouped once per feed, so each column's seed only changes on a refresh.
   const byDate = useMemo(() => eventsByDate(feed.events), [feed])
 
@@ -132,7 +115,10 @@ function DayColumn({ day, seedEvents, isToday, feed, branchId, statuses, boardBa
         </span>
         <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] font-semibold tabular-nums text-text-muted">{pages.total}</span>
       </button>
-      <div ref={bodyRef} className="scrollbar-autohide min-h-0 flex-1 overflow-y-auto overscroll-contain pt-1">
+      {/* No overscroll-contain: at its top or bottom the column hands the
+          scroll over to the page (calendar-page-scroll-and-taller-panels
+          design.md D3). */}
+      <div ref={bodyRef} className="scrollbar-autohide min-h-0 flex-1 overflow-y-auto pt-1">
         <PagedDayList
           events={pages.events}
           total={pages.total}

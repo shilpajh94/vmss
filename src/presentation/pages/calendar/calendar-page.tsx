@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { usePageHeader } from '../../context/page-header-context'
 import { useCurrentUser } from '../../context/current-user-context'
 import { useBranchOptions } from '../../hooks/use-branch-options'
@@ -72,10 +72,6 @@ export function CalendarPage({ loginPath, boardBasePath }: CalendarPageProps) {
 
   const totalVisits = useMemo(() => feed?.days.reduce((sum, day) => sum + day.total, 0) ?? 0, [feed])
 
-  // The Week board and (from `lg` up) the Day card size themselves to the
-  // space left below this block and re-measure when it wraps
-  // (fix-paging-footers-and-calendar-day-scroll design.md D3).
-  const controlsRef = useRef<HTMLDivElement>(null)
   const isEmptyRange = state.view !== 'day' && totalVisits === 0
 
   if (hasInitialError || (hasCurrentError && !feed)) return <DashboardLoadError message={LOAD_ERROR} onRetry={retry} />
@@ -83,25 +79,23 @@ export function CalendarPage({ loginPath, boardBasePath }: CalendarPageProps) {
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4 md:gap-6">
-      <div ref={controlsRef} className="flex flex-col gap-4 md:gap-6">
-        <header className="flex flex-col gap-1">
-          <h1 className="font-display text-2xl font-semibold text-text">Calendar</h1>
-          <p className="font-body text-sm text-text-muted">{scopeSubtitle(feed, state.branchId, branchOptions)}</p>
-        </header>
+      <header className="flex flex-col gap-1">
+        <h1 className="font-display text-2xl font-semibold text-text">Calendar</h1>
+        <p className="font-body text-sm text-text-muted">{scopeSubtitle(feed, state.branchId, branchOptions)}</p>
+      </header>
 
-        <CalendarToolbar
-          view={state.view}
-          date={state.date}
-          onViewChange={state.setView}
-          onShift={state.shift}
-          onToday={state.goToday}
-          branchOptions={feed.scope === 'branch' ? branchOptions : []}
-          branchId={state.branchId}
-          onBranchChange={state.selectBranch}
-          selectedStatuses={state.selectedStatuses}
-          onToggleStatus={state.toggleStatus}
-        />
-      </div>
+      <CalendarToolbar
+        view={state.view}
+        date={state.date}
+        onViewChange={state.setView}
+        onShift={state.shift}
+        onToday={state.goToday}
+        branchOptions={feed.scope === 'branch' ? branchOptions : []}
+        branchId={state.branchId}
+        onBranchChange={state.selectBranch}
+        selectedStatuses={state.selectedStatuses}
+        onToggleStatus={state.toggleStatus}
+      />
 
       {hasCurrentError ? (
         // The newly chosen view, branch or filter failed; the toolbar stays
@@ -131,8 +125,6 @@ export function CalendarPage({ loginPath, boardBasePath }: CalendarPageProps) {
               statuses={state.statuses}
               boardBasePath={boardBasePath}
               onOpenDay={state.openDay}
-              controlsRef={controlsRef}
-              remeasureKey={isEmptyRange}
             />
           ) : (
             <DayAgenda
@@ -140,7 +132,6 @@ export function CalendarPage({ loginPath, boardBasePath }: CalendarPageProps) {
               branchId={state.branchId}
               statuses={state.statuses}
               boardBasePath={boardBasePath}
-              controlsRef={controlsRef}
             />
           )}
         </div>

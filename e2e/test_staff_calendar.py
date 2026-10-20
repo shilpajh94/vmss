@@ -238,6 +238,29 @@ def test_status_filled_events_in_dark_mode(as_role) -> None:
     assert chip.evaluate("el => getComputedStyle(el).color") == "rgb(241, 245, 249)"
 
 
+# The Week board and the Day card are as tall as the visible page: <main>
+# less its top padding and the bottom gap (= its side padding); the page
+# scrolls to reach them (staff-calendar "Week board and Day card are as tall
+# as the visible page").
+PANEL = """(selector) => {
+  const main = document.querySelector('main')
+  const style = getComputedStyle(main)
+  const panel = main.querySelector(selector)
+  const visible = main.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingLeft)
+  const scroll = main.scrollHeight - main.clientHeight
+  main.scrollTop = main.scrollHeight
+  const gap = main.getBoundingClientRect().top + main.clientHeight - panel.getBoundingClientRect().bottom
+  main.scrollTop = 0
+  return {
+    heightOff: Math.abs(Math.round(panel.getBoundingClientRect().height - Math.max(420, visible))),
+    pageScrolls: scroll > 0,
+    gap: Math.round(gap),
+  }
+}"""
+BOARD = "div.snap-x"
+DAY_CARD = ":has(> [data-day-body])"
+
+
 # --- improve-calendar-scale-and-theme-switch: scrolling day columns ------------
 
 BUSY_DAY = "2026-10-19"  # the QA tenant's busy Monday (100+ visits at MAIN)
@@ -279,9 +302,8 @@ def test_busy_day_scrolls_inside_its_column(as_role, api) -> None:
     loaded = _settled_count(monday)
     assert 10 <= loaded < total, loaded
     expect(monday.get_by_text(f"Showing {loaded} of {total}")).to_be_attached()
-    # The page itself doesn't grow with the visits.
-    overflow = page.evaluate("(() => { const m = document.querySelector('main'); return m.scrollHeight - m.clientHeight })()")
-    assert overflow == 0, overflow
+    # The board is as tall as the visible page, not as tall as the visits.
+    assert page.evaluate(PANEL, BOARD)["heightOff"] <= 1
     expect(page.get_by_text("Not every visit in this range is listed")).to_have_count(0)
 
 
@@ -491,24 +513,16 @@ def test_current_week_opens_at_today(as_role) -> None:
     assert column["x"] >= box["x"] - 1 and column["x"] + column["width"] <= box["x"] + box["width"] + 1, (box, column)
 
 
-def test_week_board_leaves_the_page_gap_without_scrolling_the_page(as_role) -> None:
-    """app-shell "Calendar week board fits without scrolling the page"."""
+def test_week_board_is_as_tall_as_the_visible_page(as_role) -> None:
+    """staff-calendar "Week board and Day card are as tall as the visible
+    page": the page scrolls by the title and toolbar, and the bottom gap
+    follows the board."""
     page = as_role("reception")
     page.set_viewport_size({"width": 1920, "height": 1080})
     page.goto(WEEK_URL)
-    expect(_column(page, BUSY_DAY).locator("li")).to_have_count(10)
-    result = page.evaluate(
-        """() => {
-            const main = document.querySelector('main')
-            const board = main.querySelector('div.snap-x')
-            const mainBottom = main.getBoundingClientRect().top + main.clientHeight
-            return {
-              overflow: main.scrollHeight - main.clientHeight,
-              gap: Math.round(mainBottom - board.getBoundingClientRect().bottom),
-            }
-        }"""
-    )
-    assert result == {"overflow": 0, "gap": 32}, result
+    _settled_count(_column(page, BUSY_DAY))
+    result = page.evaluate(PANEL, BOARD)
+    assert result == {"heightOff": 0, "pageScrolls": True, "gap": 32}, result
     expect(page.get_by_role("heading", level=1, name="Calendar")).to_be_in_viewport(ratio=1)
 
 
@@ -521,15 +535,19 @@ def test_day_view_scrolls_inside_its_card(as_role, api) -> None:
     page = as_role("reception")
     page.goto(f"/staff/calendar?view=day&date={BUSY_DAY}")
     expect(page.locator("main ul li")).to_have_count(20)
-    assert page.evaluate("(() => { const m = document.querySelector('main'); return m.scrollHeight - m.clientHeight })()") == 0
+    result = page.evaluate(PANEL, DAY_CARD)
+    assert result == {"heightOff": 0, "pageScrolls": True, "gap": 32}, result
     body = page.locator("main [data-day-body]")
     body.evaluate("el => { el.scrollTop = el.scrollHeight }")
     expect(page.locator("main ul li")).to_have_count(min(40, total))
-    expect(page.get_by_role("heading", level=1, name="Calendar")).to_be_in_viewport(ratio=1)
-    expect(_period_title(page)).to_be_in_viewport(ratio=1)
+    # Scrolled down, the card's footer is on screen; back at the top, so are
+    # the title and toolbar.
+    page.evaluate("document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight")
     status = page.locator("main [role=status]", has_text=f"Showing {min(40, total)} of {total}")
     expect(status).to_be_in_viewport(ratio=1)
-    assert page.evaluate("document.querySelector('main').scrollTop") == 0
+    page.evaluate("document.querySelector('main').scrollTop = 0")
+    expect(page.get_by_role("heading", level=1, name="Calendar")).to_be_in_viewport(ratio=1)
+    expect(_period_title(page)).to_be_in_viewport(ratio=1)
 
 
 def test_phone_day_view_scrolls_with_the_page(as_role) -> None:
@@ -548,6 +566,8 @@ def test_week_column_status_is_in_view_without_scrolling(as_role, api) -> None:
     monday = _column(page, BUSY_DAY)
     loaded = _settled_count(monday)
     assert monday.locator("div.overflow-y-auto").first.evaluate("el => el.scrollTop") == 0
+    # The page scrolls to reach the board's bottom edge; the column doesn't.
+    page.evaluate("document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight")
     expect(monday.get_by_text(f"Showing {loaded} of {total}")).to_be_in_viewport(ratio=1)
     expect(_column(page, QUIET_DAY).get_by_text(re.compile(r"^(Showing \d+ of|All \d+ visit)"))).to_have_count(
         0 if _day_total(api, QUIET_DAY) == 0 else 1
@@ -555,20 +575,37 @@ def test_week_column_status_is_in_view_without_scrolling(as_role, api) -> None:
 
 
 @pytest.mark.parametrize(("width", "height"), [(1280, 720), (1366, 768)])
-def test_week_board_fits_a_laptop_window(as_role, width: int, height: int) -> None:
-    """staff-calendar "Week board fits short desktop windows"."""
+def test_week_board_on_a_laptop_window(as_role, width: int, height: int) -> None:
+    """staff-calendar "Week board and Day card are as tall as the visible
+    page": on a laptop the board is the visible page's height (about 590px
+    at 720px tall), not the ~360px left under the toolbar."""
     page = as_role("reception")
     page.set_viewport_size({"width": width, "height": height})
     page.goto(WEEK_URL)
     expect(_column(page, BUSY_DAY).locator("li").first).to_be_attached()
-    result = page.evaluate(
-        """() => {
-            const main = document.querySelector('main')
-            const board = main.querySelector('div.snap-x')
-            return {
-              overflow: main.scrollHeight - main.clientHeight,
-              inside: board.getBoundingClientRect().bottom <= window.innerHeight,
-            }
-        }"""
-    )
-    assert result == {"overflow": 0, "inside": True}, result
+    result = page.evaluate(PANEL, BOARD)
+    assert result == {"heightOff": 0, "pageScrolls": True, "gap": 32}, result
+
+
+# --- calendar-page-scroll-and-taller-panels ------------------------------------
+
+
+def test_scrolling_past_a_column_end_scrolls_the_page(as_role) -> None:
+    """staff-calendar "Week board and Day card are as tall as the visible
+    page": a column at its end hands the wheel over to the page. Chromium
+    can latch the first gesture to the column, so wheel twice (design D3)."""
+    page = as_role("reception")
+    page.goto(f"/staff/calendar?view=week&date={QUIET_DAY}")
+    column = _column(page, QUIET_DAY)
+    body = column.locator("div.overflow-y-auto").first
+    expect(body).to_be_attached()
+    page.wait_for_timeout(500)
+    body.evaluate("el => { el.scrollTop = el.scrollHeight }")
+    page.wait_for_timeout(500)
+    box = body.bounding_box()
+    assert box
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + 40)
+    for _ in range(2):
+        page.mouse.wheel(0, 150)
+        page.wait_for_timeout(600)
+    assert page.evaluate("document.querySelector('main').scrollTop") > 0

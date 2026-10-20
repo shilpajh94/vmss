@@ -76,12 +76,10 @@ def test_every_route_fits(as_role, width: int, theme: str) -> None:
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(250)
         result = page.evaluate(MEASURE)
-        # The week board and the day card fill the page without scrolling it
-        # from `lg` up (fix-paging-footers-and-calendar-day-scroll).
-        fills = "view=week" in route or "view=day" in route
-        week_scrolls = fills and width >= 1024 and result["mainScroll"] > 0
+        # The week board and day card are as tall as the visible page, so the
+        # page scrolls on Week and Day too (calendar-page-scroll-and-taller-panels).
         gap_short = result["endGap"] is not None and result["endGap"] < result["padding"] - 1
-        if result["document"] > 0 or result["main"] > 0 or result["header"] > 72 or week_scrolls or gap_short:
+        if result["document"] > 0 or result["main"] > 0 or result["header"] > 72 or gap_short:
             failures.append(f"{route}: {result}")
     assert not failures, f"{width}px {theme}:\n" + "\n".join(failures)
 
