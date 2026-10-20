@@ -126,6 +126,25 @@ async def authorize_branch_id_tolerant(
     return _authorize_branch(branch, user, permission_code)
 
 
+async def resolve_branch_scope(
+    tenant_db: AsyncSession, user: User, permission_code: str, x_branch_id: uuid.UUID | None
+) -> BranchScope:
+    """Plain-function body of `require_branch_scope`, for a caller that only
+    decides at runtime whether a branch scope applies at all (the calendar
+    feed's `scope=auto`, add-staff-calendar design.md D2) and so can't gate
+    on the dependency statically.
+    """
+    if x_branch_id is not None:
+        branch = await authorize_branch_id(tenant_db, user, permission_code, x_branch_id)
+        return frozenset({branch.id})
+
+    scope = user.authorized_branch_ids(permission_code)
+    if scope != "all" and not scope:
+        logger.warning("permission_denied", permission_code=permission_code)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permission")
+    return scope
+
+
 def require_branch_scope(permission_code: str):
     """List-endpoint counterpart to `require_branch_permission` with an
     optional `X-Branch-ID`: narrows to that one branch when it's supplied
@@ -140,17 +159,7 @@ def require_branch_scope(permission_code: str):
         tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
         x_branch_id: Annotated[uuid.UUID | None, Header(alias="X-Branch-ID")] = None,
     ) -> BranchScope:
-        if x_branch_id is not None:
-            branch = await authorize_branch_id(tenant_db, user, permission_code, x_branch_id)
-            return frozenset({branch.id})
-
-        scope = user.authorized_branch_ids(permission_code)
-        if scope != "all" and not scope:
-            logger.warning("permission_denied", permission_code=permission_code)
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permission"
-            )
-        return scope
+        return await resolve_branch_scope(tenant_db, user, permission_code, x_branch_id)
 
     return _check
 

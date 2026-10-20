@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, NamedTuple
 
-from sqlalchemy import Select, case, exists, func, insert, or_, select, update
+from sqlalchemy import Date, Select, and_, case, cast, exists, func, insert, or_, select, update
 from sqlalchemy.orm import aliased, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
@@ -205,6 +205,64 @@ def _list_filters(
                 Invitation.tracking_id.ilike(pattern),
             )
         )
+    return filters
+
+
+@dataclass(frozen=True)
+class CalendarCriteria:
+    """`GET /invitations/calendar`'s filters as plain values. Exactly one of
+    `branch_scope` or `relevant_to_user_id` (with `default_host_role_id`)
+    is set; each becomes the same predicate the list and the dashboards
+    use, so the calendar can't disagree with them (add-staff-calendar
+    design.md D2). `starts_at`/`ends_before` are the half-open UTC bounds of
+    the local date range, used only for legacy rows with no visit date (D3).
+    """
+
+    branch_scope: BranchScope | None
+    relevant_to_user_id: uuid.UUID | None
+    default_host_role_id: uuid.UUID | None
+    date_from: date
+    date_to: date
+    starts_at: datetime
+    ends_before: datetime
+    timezone: str
+    statuses: tuple[str, ...]
+
+
+def _calendar_event_date(timezone: str) -> Any:
+    """The visit date, else the visit-timezone date of the check-in."""
+    return func.coalesce(
+        Invitation.preferred_visit_date,
+        cast(func.timezone(timezone, Invitation.checked_in_at), Date),
+    )
+
+
+def _calendar_filters(criteria: CalendarCriteria) -> list[Any]:
+    """Two OR arms rather than `COALESCE(...) BETWEEN`, so the visit-date
+    arm stays on `ix_invitations_branch_visit_date` (design.md D3).
+    """
+    filters: list[Any] = [
+        Invitation.deleted_at.is_(None),
+        Invitation.status.in_(criteria.statuses),
+        or_(
+            Invitation.preferred_visit_date.between(criteria.date_from, criteria.date_to),
+            and_(
+                Invitation.preferred_visit_date.is_(None),
+                Invitation.checked_in_at >= criteria.starts_at,
+                Invitation.checked_in_at < criteria.ends_before,
+            ),
+        ),
+    ]
+    if criteria.relevant_to_user_id is not None:
+        assert criteria.default_host_role_id is not None
+        filters.append(
+            _relevant_to_me_filter(criteria.relevant_to_user_id, criteria.default_host_role_id)
+        )
+    else:
+        assert criteria.branch_scope is not None
+        branch_clause = _branch_filter(criteria.branch_scope)
+        if branch_clause is not None:
+            filters.append(branch_clause)
     return filters
 
 
@@ -974,6 +1032,120 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             order_by=(_order_clause(column, sort_order).nulls_last(), Invitation.id.asc()),
             filters=filters,
         )
+
+    async def calendar_day_totals(self, criteria: CalendarCriteria) -> dict[date, int]:
+        """Exact per-day counts, independent of the event cap (design.md
+        D4). Grouped over a subquery rather than the expression itself:
+        the expression carries the timezone as a bind parameter, and
+        Postgres won't match a SELECT-list parameter to a GROUP BY one.
+        """
+        dated = (
+            select(_calendar_event_date(criteria.timezone).label("event_date"))
+            .where(*_calendar_filters(criteria))
+            .subquery()
+        )
+        stmt = select(dated.c.event_date, func.count()).group_by(dated.c.event_date)
+        return {row[0]: int(row[1]) for row in (await self.session.execute(stmt)).all()}
+
+    @staticmethod
+    def _calendar_rows(criteria: CalendarCriteria) -> Any:
+        """Every matching event as one column-only subquery — display names
+        joined in and the co-visitor count correlated, so no ORM entity can
+        lazy-load and nothing runs per row (query-performance.md §1-2).
+        Ordering, windowing and paging all happen over its columns, which
+        also keeps `event_date`'s bound timezone in one place (Postgres
+        can't match a bound parameter repeated across clauses).
+        """
+        host = aliased(User)
+        co_visitor_count = (
+            select(func.count())
+            .select_from(InvitationVisitor)
+            .where(InvitationVisitor.invitation_id == Invitation.id)
+            .correlate(Invitation)
+            .scalar_subquery()
+        )
+        return (
+            select(
+                Invitation.id,
+                Invitation.tracking_id,
+                Invitation.status,
+                Invitation.source,
+                _calendar_event_date(criteria.timezone).label("event_date"),
+                Invitation.preferred_visit_time.label("event_time"),
+                Invitation.expected_duration,
+                Invitation.checked_in_at,
+                Invitation.checked_out_at,
+                Invitation.primary_contact_full_name,
+                (co_visitor_count + 1).label("visitor_count"),
+                Invitation.host_id,
+                host.full_name.label("host_full_name"),
+                Invitation.branch_id,
+                Branch.name.label("branch_name"),
+                Building.name.label("building_name"),
+                Invitation.purpose_of_visit,
+                VisitorCategory.name.label("visitor_category_name"),
+                VisitorCategory.badge_color.label("visitor_category_badge_color"),
+            )
+            .outerjoin(host, host.id == Invitation.host_id)
+            .outerjoin(Branch, Branch.id == Invitation.branch_id)
+            .outerjoin(Building, Building.id == Invitation.building_id)
+            .outerjoin(VisitorCategory, VisitorCategory.id == Invitation.visitor_category_id)
+            .where(*_calendar_filters(criteria))
+            .subquery("calendar_events")
+        )
+
+    @staticmethod
+    def _within_day_order(rows: Any) -> list[Any]:
+        """The standard event order within one day — time (any-time last),
+        name, then id, so offset paging never repeats or skips a row
+        (improve-calendar-scale-and-theme-switch design.md A4).
+        """
+        return [
+            rows.c.event_time.asc().nulls_last(),
+            rows.c.primary_contact_full_name.asc(),
+            rows.c.id.asc(),
+        ]
+
+    async def calendar_events(
+        self, criteria: CalendarCriteria, *, limit: int, per_day_limit: int | None = None
+    ) -> list[Any]:
+        """The feed's events in the standard order, capped at `limit`. With
+        `per_day_limit`, only each day's first N (a `row_number()` window per
+        event date, design.md A2) — the rest of a day is paged through
+        `calendar_day_page`.
+        """
+        rows = self._calendar_rows(criteria)
+        if per_day_limit is not None:
+            ranked = select(
+                rows,
+                func.row_number()
+                .over(partition_by=rows.c.event_date, order_by=self._within_day_order(rows))
+                .label("day_rank"),
+            ).subquery("ranked_calendar_events")
+            stmt = (
+                select(*[ranked.c[column.name] for column in rows.c])
+                .where(ranked.c.day_rank <= per_day_limit)
+                .order_by(ranked.c.event_date.asc(), *self._within_day_order(ranked))
+                .limit(limit)
+            )
+        else:
+            stmt = (
+                select(rows)
+                .order_by(rows.c.event_date.asc(), *self._within_day_order(rows))
+                .limit(limit)
+            )
+        return list((await self.session.execute(stmt)).mappings().all())
+
+    async def calendar_day_page(
+        self, criteria: CalendarCriteria, *, offset: int, limit: int
+    ) -> list[Any]:
+        """One page of a single day's events (`criteria` spans just that
+        date), in the same order `calendar_events` uses, so page 1 of size N
+        equals the feed's first N for the day (design.md A3).
+        """
+        rows = self._calendar_rows(criteria)
+        stmt = select(rows).order_by(*self._within_day_order(rows)).offset(offset).limit(limit)
+        return list((await self.session.execute(stmt)).mappings().all())
 
     async def count_export_rows(
         self,

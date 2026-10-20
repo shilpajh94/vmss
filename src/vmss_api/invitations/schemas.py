@@ -552,6 +552,85 @@ class InvitationExportDateRange(CamelModel):
         return self
 
 
+# --- add-staff-calendar ------------------------------------------------------
+
+CALENDAR_MAX_RANGE_DAYS = 42
+"""One six-week month grid (add-staff-calendar design.md D1)."""
+
+CALENDAR_DEFAULT_STATUSES: tuple[InvitationStatus, ...] = tuple(
+    s for s in InvitationStatus if s is not InvitationStatus.denied
+)
+"""A denied visit never happened, so it stays off the grid unless asked for
+(design.md D5); a missed (`archived`) one is useful history and stays on.
+"""
+
+
+class CalendarScope(StrEnum):
+    auto = "auto"
+    mine = "mine"
+    branch = "branch"
+
+
+class CalendarDateRange(CamelModel):
+    """`GET /invitations/calendar`'s inclusive visit-timezone date range."""
+
+    date_from: date
+    date_to: date
+
+    @model_validator(mode="after")
+    def _check_range(self) -> Self:
+        if self.date_to < self.date_from:
+            raise ValueError("to must not be earlier than from")
+        if (self.date_to - self.date_from).days + 1 > CALENDAR_MAX_RANGE_DAYS:
+            raise ValueError(f"The range must not span more than {CALENDAR_MAX_RANGE_DAYS} days")
+        return self
+
+
+class CalendarDayOut(CamelModel):
+    day: date = Field(serialization_alias="date")
+    total: int
+
+
+class CalendarEventOut(CamelModel):
+    """Display fields only — no phone, email, ID-proof, photo or custom
+    field data (specs/invitation-calendar "Calendar Events Carry Only
+    Display Fields"); the detail modal is where those live, behind its own
+    visibility and `documents:view` checks.
+    """
+
+    id: uuid.UUID
+    tracking_id: str
+    status: InvitationStatus
+    source: RegistrationSource
+    # Wire names `date`/`time`; the Python names avoid shadowing the types.
+    event_date: date = Field(serialization_alias="date")
+    event_time: time | None = Field(serialization_alias="time")
+    expected_duration: str | None
+    checked_in_at: datetime | None
+    checked_out_at: datetime | None
+    primary_contact_full_name: str
+    visitor_count: int
+    host_id: uuid.UUID | None
+    host_full_name: str | None
+    branch_id: uuid.UUID
+    branch_name: str | None
+    building_name: str | None
+    purpose_of_visit: str | None
+    visitor_category_name: str | None
+    visitor_category_badge_color: str | None
+
+
+class CalendarFeedOut(CamelModel):
+    scope: Literal["mine", "branch"]
+    timezone: str
+    date_from: date = Field(serialization_alias="from")
+    date_to: date = Field(serialization_alias="to")
+    generated_at: datetime
+    days: list[CalendarDayOut]
+    events: list[CalendarEventOut]
+    truncated: bool
+
+
 # --- API-12: public tracking lookup -----------------------------------------
 
 

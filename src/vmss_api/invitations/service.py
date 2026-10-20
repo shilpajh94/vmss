@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from datetime import UTC, date, datetime, time, timedelta
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import anyio
@@ -45,19 +45,31 @@ from vmss_api.invitations.models import (
 )
 from vmss_api.invitations.qr import generate_qr_png
 from vmss_api.invitations.qr_token import decrypt_invitation_token, encrypt_invitation_token
-from vmss_api.invitations.repository import InvitationExportCriteria, InvitationRepository
+from vmss_api.invitations.repository import (
+    CalendarCriteria,
+    InvitationExportCriteria,
+    InvitationRepository,
+)
 from vmss_api.invitations.schemas import (
+    CALENDAR_DEFAULT_STATUSES,
+    CalendarDateRange,
+    CalendarDayOut,
+    CalendarEventOut,
+    CalendarFeedOut,
+    CalendarScope,
     ExportFormat,
     InvitationCreate,
     InvitationEditRequest,
     InvitationExportDateRange,
     InvitationLookupPrefillOut,
     InvitationSortableField,
+    InvitationStatus,
     RegistrationSource,
     RegistrationType,
     VisitDetailsSubmit,
 )
 from vmss_api.notifications import service as notifications_service
+from vmss_api.org_structure.deps import resolve_branch_scope
 from vmss_api.org_structure.models import Branch, Building, Company, Department
 from vmss_api.org_structure.repository import CompanyRepository, DepartmentRepository
 from vmss_api.org_structure.service import get_default_host_role
@@ -2946,6 +2958,150 @@ async def export_invitations(
         filename=filename,
         row_count=len(rows),
     )
+
+
+# --- add-staff-calendar ------------------------------------------------------
+
+CALENDAR_EVENT_LIMIT = 1000
+"""design.md D4 — `days` totals stay exact above it; only `events` is cut."""
+
+
+async def _calendar_criteria(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    user: User,
+    *,
+    date_from: date,
+    date_to: date,
+    scope: CalendarScope,
+    statuses: list[InvitationStatus] | None,
+    x_branch_id: uuid.UUID | None,
+) -> tuple[CalendarCriteria, Literal["mine", "branch"], ZoneInfo]:
+    """Who sees what, for every calendar endpoint — one builder, so the feed
+    and the paged day can't drift (improve-calendar-scale-and-theme-switch
+    design.md A1). `auto` resolves to `branch` for anyone holding
+    `invitations:view-all` anywhere, else `mine` — decided here rather than
+    by the client, which can't see permissions (add-staff-calendar D2).
+    `branch` goes through the same `resolve_branch_scope` the list uses, so
+    its 403/404s are identical.
+    """
+    permission = "invitations:view-all"
+    if scope is CalendarScope.auto:
+        has_branch_view = bool(user.authorized_branch_ids(permission))
+        scope = CalendarScope.branch if has_branch_view else CalendarScope.mine
+
+    branch_scope: BranchScope | None = None
+    default_host_role_id: uuid.UUID | None = None
+    if scope is CalendarScope.branch:
+        branch_scope = await resolve_branch_scope(tenant_db, user, permission, x_branch_id)
+    else:
+        default_host_role_id = (await get_default_host_role(tenant_db)).id
+
+    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    criteria = CalendarCriteria(
+        branch_scope=branch_scope,
+        relevant_to_user_id=user.id if scope is CalendarScope.mine else None,
+        default_host_role_id=default_host_role_id,
+        date_from=date_from,
+        date_to=date_to,
+        starts_at=datetime.combine(date_from, time.min, tzinfo=tz).astimezone(UTC),
+        ends_before=datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=tz).astimezone(
+            UTC
+        ),
+        timezone=tz.key,
+        statuses=tuple(s.value for s in (statuses or CALENDAR_DEFAULT_STATUSES)),
+    )
+    applied: Literal["mine", "branch"] = "branch" if scope is CalendarScope.branch else "mine"
+    return criteria, applied, tz
+
+
+async def get_calendar_feed(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    user: User,
+    *,
+    date_range: CalendarDateRange,
+    scope: CalendarScope,
+    statuses: list[InvitationStatus] | None,
+    x_branch_id: uuid.UUID | None,
+    per_day_limit: int | None = None,
+) -> CalendarFeedOut:
+    """Backs `GET /invitations/calendar` (specs/invitation-calendar).
+    `per_day_limit` keeps only each day's first N events; `days` totals
+    stay exact either way, and the rest of a day is paged through
+    `get_calendar_day_page`.
+    """
+    criteria, applied, tz = await _calendar_criteria(
+        tenant_db,
+        tenant,
+        user,
+        date_from=date_range.date_from,
+        date_to=date_range.date_to,
+        scope=scope,
+        statuses=statuses,
+        x_branch_id=x_branch_id,
+    )
+    repository = InvitationRepository(tenant_db)
+    totals = await repository.calendar_day_totals(criteria)
+    rows = await repository.calendar_events(
+        criteria, limit=CALENDAR_EVENT_LIMIT + 1, per_day_limit=per_day_limit
+    )
+    truncated = len(rows) > CALENDAR_EVENT_LIMIT
+    if truncated:
+        logger.info(
+            "calendar_feed_truncated",
+            date_from=date_range.date_from.isoformat(),
+            date_to=date_range.date_to.isoformat(),
+            total=sum(totals.values()),
+        )
+
+    span = (date_range.date_to - date_range.date_from).days + 1
+    days = [date_range.date_from + timedelta(days=offset) for offset in range(span)]
+    return CalendarFeedOut(
+        scope=applied,
+        timezone=tz.key,
+        date_from=date_range.date_from,
+        date_to=date_range.date_to,
+        generated_at=datetime.now(UTC),
+        days=[CalendarDayOut(day=day, total=totals.get(day, 0)) for day in days],
+        events=[CalendarEventOut.model_validate(dict(row)) for row in rows[:CALENDAR_EVENT_LIMIT]],
+        truncated=truncated,
+    )
+
+
+async def get_calendar_day_page(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    user: User,
+    *,
+    day: date,
+    scope: CalendarScope,
+    statuses: list[InvitationStatus] | None,
+    x_branch_id: uuid.UUID | None,
+    page: int,
+    page_size: int,
+) -> tuple[list[CalendarEventOut], int, Literal["mine", "branch"]]:
+    """Backs `GET /invitations/calendar/day`: one day's events a page at a
+    time, with the feed's exact scope, filters and order — so page 1 of
+    size N is the feed's first N for that day (design.md A3). The total is
+    the same per-day count the feed reports.
+    """
+    criteria, applied, _ = await _calendar_criteria(
+        tenant_db,
+        tenant,
+        user,
+        date_from=day,
+        date_to=day,
+        scope=scope,
+        statuses=statuses,
+        x_branch_id=x_branch_id,
+    )
+    repository = InvitationRepository(tenant_db)
+    total = (await repository.calendar_day_totals(criteria)).get(day, 0)
+    rows = await repository.calendar_day_page(
+        criteria, offset=(page - 1) * page_size, limit=page_size
+    )
+    return [CalendarEventOut.model_validate(dict(row)) for row in rows], total, applied
 
 
 async def is_invitation_relevant_to(

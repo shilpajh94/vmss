@@ -45,6 +45,10 @@ from vmss_api.invitations import service
 from vmss_api.invitations.deps import track_default_tenant, track_default_tenant_db
 from vmss_api.invitations.schemas import (
     BadgeOut,
+    CalendarDateRange,
+    CalendarEventOut,
+    CalendarFeedOut,
+    CalendarScope,
     CarriedItemsSubmit,
     CheckInCodeRequest,
     ConsentValue,
@@ -2306,6 +2310,87 @@ async def export_invitations(
         media_type=export_file.media_type,
         headers={"Content-Disposition": f'attachment; filename="{export_file.filename}"'},
     )
+
+
+# --- add-staff-calendar ------------------------------------------------------
+# Registered before "/{invitation_id}" for the same reason as "/track" below.
+
+
+@router.get(
+    "/calendar",
+    response_model=Envelope[CalendarFeedOut],
+)
+async def get_invitation_calendar(
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    date_from: Annotated[date, Query(alias="from")],
+    date_to: Annotated[date, Query(alias="to")],
+    scope: Annotated[CalendarScope, Query()] = CalendarScope.auto,
+    statuses: Annotated[list[InvitationStatus] | None, Query(alias="status")] = None,
+    per_day_limit: Annotated[int | None, Query(alias="perDayLimit", ge=1, le=100)] = None,
+    x_branch_id: Annotated[uuid.UUID | None, Header(alias="X-Branch-ID")] = None,
+) -> JSONResponse:
+    """specs/invitation-calendar — no `require_permission` here: `mine` is
+    open to any authenticated staff user (like `relevantToMe`), and whether
+    `branch` applies is only known once `scope=auto` is resolved, so the
+    `invitations:view-all` check happens in the service (design.md D2).
+    Bounded by the 42-day range and a 1,000-event cap with exact `days`
+    totals instead of page/pageSize (design.md D1).
+    """
+    try:
+        date_range = CalendarDateRange(date_from=date_from, date_to=date_to)
+    except ValidationError as exc:
+        return error_response(message=str(exc), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+    feed = await service.get_calendar_feed(
+        tenant_db,
+        tenant,
+        user,
+        date_range=date_range,
+        scope=scope,
+        statuses=statuses,
+        x_branch_id=x_branch_id,
+        per_day_limit=per_day_limit,
+    )
+    return success_response(data=feed)
+
+
+@router.get(
+    "/calendar/day",
+    response_model=PaginatedEnvelope[CalendarEventOut],
+)
+async def get_invitation_calendar_day(
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    day: Annotated[date, Query(alias="date")],
+    scope: Annotated[CalendarScope, Query()] = CalendarScope.auto,
+    statuses: Annotated[list[InvitationStatus] | None, Query(alias="status")] = None,
+    x_branch_id: Annotated[uuid.UUID | None, Header(alias="X-Branch-ID")] = None,
+) -> JSONResponse:
+    """specs/invitation-calendar "One Day's Visits Are Available Page by
+    Page" — the same scope, branch, status and order rules as the feed
+    (improve-calendar-scale-and-theme-switch design.md A1/A3). The applied
+    scope rides in `X-Calendar-Scope`, since the standard paginated
+    envelope has no slot for it.
+    """
+    page, page_size = pagination
+    events, total, applied = await service.get_calendar_day_page(
+        tenant_db,
+        tenant,
+        user,
+        day=day,
+        scope=scope,
+        statuses=statuses,
+        x_branch_id=x_branch_id,
+        page=page,
+        page_size=page_size,
+    )
+    result = paginated_response(data=events, page=page, page_size=page_size, total=total)
+    result.headers["X-Calendar-Scope"] = applied
+    return result
 
 
 @router.get(

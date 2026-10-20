@@ -248,6 +248,9 @@ def create_app(environment: str | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Readable by a cross-origin portal: the calendar day endpoint's
+        # applied scope (improve-calendar-scale-and-theme-switch design.md A3).
+        expose_headers=["X-Calendar-Scope"],
     )
 
     app.include_router(api_router, prefix="/api/v1")
