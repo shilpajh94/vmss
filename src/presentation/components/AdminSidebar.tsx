@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router'
 import {
   BuildingIcon,
   CalendarCheckIcon,
+  CalendarIcon,
   ClockIcon,
   GitBranchIcon,
   HomeIcon,
@@ -37,6 +38,7 @@ export type AdminSidebarActiveItem =
   | 'visitor-categories'
   | 'workflows'
   | 'invitations'
+  | 'calendar'
   | 'roles'
   | 'form-builder'
   | 'audit-trail'
@@ -59,6 +61,7 @@ const ADMIN_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: Ad
   ['/admin/visitor-categories', 'visitor-categories'],
   ['/admin/workflows', 'workflows'],
   ['/admin/invitations', 'invitations'],
+  ['/admin/calendar', 'calendar'],
   ['/admin/roles', 'roles'],
   ['/admin/form-builder', 'form-builder'],
   ['/admin/audit-trail', 'audit-trail'],
@@ -85,6 +88,7 @@ const NAV_ITEMS = [
   { key: 'visitor-categories', label: 'Visitor Categories', icon: TagIcon },
   { key: 'workflows', label: 'Workflows', icon: ListChecksIcon },
   { key: 'invitations', label: 'Invitations', icon: CalendarCheckIcon },
+  { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
   { key: 'roles', label: 'Roles & Permissions', icon: ShieldIcon },
   { key: 'form-builder', label: 'Form Builder', icon: PencilIcon },
   { key: 'audit-trail', label: 'Audit Trail', icon: ClockIcon },
@@ -117,6 +121,7 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
     if (key === 'visitor-categories') navigate('/admin/visitor-categories')
     if (key === 'workflows') navigate('/admin/workflows')
     if (key === 'invitations') navigate('/admin/invitations')
+    if (key === 'calendar') navigate('/admin/calendar')
     if (key === 'roles') navigate('/admin/roles')
     if (key === 'form-builder') navigate('/admin/form-builder')
     if (key === 'audit-trail') navigate('/admin/audit-trail')

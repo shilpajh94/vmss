@@ -1,11 +1,11 @@
 import { useNavigate } from 'react-router'
-import { CheckIcon, HomeIcon, UsersIcon } from './icons'
+import { CalendarIcon, CheckIcon, HomeIcon, UsersIcon } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
 import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
 
-export type ReceptionSidebarActiveItem = 'dashboard' | 'visits' | 'my-actions'
+export type ReceptionSidebarActiveItem = 'dashboard' | 'visits' | 'calendar' | 'my-actions'
 
 interface ReceptionSidebarProps {
   activeItem: ReceptionSidebarActiveItem
@@ -14,6 +14,7 @@ interface ReceptionSidebarProps {
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: HomeIcon },
   { key: 'visits', label: 'Invitations', icon: UsersIcon },
+  { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
   { key: 'my-actions', label: 'My actions', icon: CheckIcon },
 ] as const satisfies ReadonlyArray<{
   key: ReceptionSidebarActiveItem
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
 const RECEPTION_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: ReceptionSidebarActiveItem]> = [
   ['/reception/dashboard', 'dashboard'],
   ['/staff/invitations', 'visits'],
+  ['/staff/calendar', 'calendar'],
   ['/staff/visitors/new', 'my-actions'],
 ]
 
@@ -42,6 +44,7 @@ export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
     closeNav()
     if (key === 'dashboard') navigate('/reception/dashboard')
     if (key === 'visits') navigate('/staff/invitations')
+    if (key === 'calendar') navigate('/staff/calendar')
     if (key === 'my-actions') navigate('/staff/visitors/new')
   }
 

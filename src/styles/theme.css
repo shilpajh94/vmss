@@ -183,3 +183,34 @@
     background-color: var(--color-text-faint);
   }
 }
+
+/* scrollbar-thin whose thumb only shows while the area is hovered or holds
+   focus, so a row of scrolling calendar columns doesn't read as a row of
+   scrollbars (calendar-working-hours-and-roomier-week design.md D5). */
+@utility scrollbar-autohide {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border-radius: 9999px;
+  }
+
+  &:hover,
+  &:focus-within {
+    scrollbar-color: var(--color-border) transparent;
+  }
+
+  &:hover::-webkit-scrollbar-thumb,
+  &:focus-within::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
+  }
+}

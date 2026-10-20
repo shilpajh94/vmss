@@ -55,9 +55,11 @@ const ReceptionDashboardPage = lazy(() =>
 const StaffDashboardPage = lazy(() =>
   import('./presentation/pages/staff-dashboard/staff-dashboard').then((module) => ({ default: module.StaffDashboardPage })),
 )
+// add-staff-calendar: one page for both portals (design.md W5).
+const CalendarPage = lazy(() => import('./presentation/pages/calendar/calendar-page').then((module) => ({ default: module.CalendarPage })))
 
-function LazyPage({ children }: { children: ReactNode }) {
-  return <Suspense fallback={<LoadingState label="Loading dashboard…" className="flex-1" />}>{children}</Suspense>
+function LazyPage({ children, label = 'Loading dashboard…' }: { children: ReactNode; label?: string }) {
+  return <Suspense fallback={<LoadingState label={label} className="flex-1" />}>{children}</Suspense>
 }
 
 function RootLayout() {
@@ -114,6 +116,14 @@ function RootLayout() {
                 <Route path="/admin/workflows/new" element={<AdminWorkflowFormPage />} />
                 <Route path="/admin/workflows/:visitorCategoryId/edit" element={<AdminWorkflowFormPage />} />
                 <Route path="/admin/invitations" element={<AdminInvitationsPage />} />
+                <Route
+                  path="/admin/calendar"
+                  element={
+                    <LazyPage label="Loading calendar…">
+                      <CalendarPage loginPath="/admin/login" boardBasePath="/admin/invitations" />
+                    </LazyPage>
+                  }
+                />
                 <Route path="/admin/roles" element={<AdminRolesPage />} />
                 <Route path="/admin/roles/new" element={<AdminRoleCreateFormPage />} />
                 <Route path="/admin/roles/:id/edit" element={<AdminRolePermissionsFormPage />} />
@@ -143,6 +153,14 @@ function RootLayout() {
                   }
                 />
                 <Route path="/staff/invitations" element={<StaffInvitationsPage />} />
+                <Route
+                  path="/staff/calendar"
+                  element={
+                    <LazyPage label="Loading calendar…">
+                      <CalendarPage loginPath="/staff/login" boardBasePath="/staff/invitations" />
+                    </LazyPage>
+                  }
+                />
                 <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
               </Route>
             </Routes>
