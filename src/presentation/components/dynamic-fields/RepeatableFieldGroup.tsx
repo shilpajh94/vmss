@@ -119,7 +119,7 @@ export function RepeatableFieldGroup({
           type="button"
           onClick={startAdd}
           disabled={atMax}
-          className="cursor-pointer rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="cursor-pointer rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
           + Add {groupName}
         </button>
@@ -178,7 +178,7 @@ export function RepeatableFieldGroup({
           )}
           {draftError && <p className="text-caption text-danger">{draftError}</p>}
           <div className="flex gap-3">
-            <button type="button" onClick={commitDraft} className="cursor-pointer rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-white">
+            <button type="button" onClick={commitDraft} className="cursor-pointer rounded-lg bg-secondary-accent px-4 py-2 text-body font-semibold text-on-accent">
               {editingIndex === null ? 'Add to List' : 'Save Changes'}
             </button>
             <button type="button" onClick={cancelDraft} className="cursor-pointer text-body font-semibold text-text-muted">

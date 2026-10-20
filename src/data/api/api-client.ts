@@ -2,7 +2,8 @@ import type { ZodType } from 'zod'
 import { ApiError, extractErrorMessage } from './api-error'
 import type { ApiEndpointDefinition } from './api-endpoints'
 
-type QueryParams = Record<string, string | number | boolean | undefined>
+// An array value is sent as a repeated key (`status=a&status=b`).
+type QueryParams = Record<string, string | number | boolean | readonly string[] | undefined>
 
 // ApiEndpointDefinition is `never` until API_ENDPOINTS has its first entry; this
 // mirrors its shape so the request body below can read endpoint/method/hasToken.
@@ -111,7 +112,9 @@ export class ApiClient {
 
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(queryParams)) {
-      if (value !== undefined) params.append(key, String(value))
+      if (value === undefined) continue
+      if (Array.isArray(value)) value.forEach((item: string) => params.append(key, item))
+      else params.append(key, String(value))
     }
 
     const query = params.toString()

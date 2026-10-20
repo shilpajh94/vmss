@@ -14,10 +14,12 @@ interface FloorsTableProps {
 
 const COLUMN_HEADERS = ['FLOOR NAME/NUMBER', 'BUILDING', 'DEPARTMENT(S)', 'CAPACITY', 'ACCESS LEVEL']
 
+// Tinted badge + coloured dot, label in body text: readable in both themes
+// (a status-coloured label on its own tint fails contrast for amber).
 const ACCESS_LEVEL_STYLES: Record<FloorRow['accessLevel'], { label: string; bg: string; text: string; dot: string }> = {
-  public: { label: 'Public', bg: 'bg-[#dbeafe]', text: 'text-[#1e40af]', dot: 'bg-[#1e40af]' },
-  restricted: { label: 'Restricted', bg: 'bg-[#fef3c7]', text: 'text-[#92400e]', dot: 'bg-[#92400e]' },
-  secure: { label: 'Secure', bg: 'bg-[#fee2e2]', text: 'text-[#991b1b]', dot: 'bg-[#991b1b]' },
+  public: { label: 'Public', bg: 'bg-info/15', text: 'text-text', dot: 'bg-info' },
+  restricted: { label: 'Restricted', bg: 'bg-warning/20', text: 'text-text', dot: 'bg-warning' },
+  secure: { label: 'Secure', bg: 'bg-danger/15', text: 'text-text', dot: 'bg-danger' },
 }
 
 export function FloorsTable({ floors, departmentNamesByFloorId, onDelete }: FloorsTableProps) {

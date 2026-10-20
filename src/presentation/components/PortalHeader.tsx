@@ -1,4 +1,5 @@
 import { Link } from 'react-router'
+import { BRAND_NAME } from '../brand'
 import { BrandLogo } from './BrandLogo'
 
 interface PortalHeaderProps {
@@ -25,7 +26,7 @@ export function PortalHeader({ backTo }: PortalHeaderProps) {
           </svg>
         </Link>
       )}
-      <Link to="/" aria-label="Visimio home" className="flex items-center">
+      <Link to="/" aria-label={`${BRAND_NAME} home`} className="flex items-center">
         <BrandLogo variant="light" className="h-7 md:h-8" decorative />
       </Link>
     </header>

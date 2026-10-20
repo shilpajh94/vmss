@@ -19,7 +19,7 @@ export function StepMarker({ stepNumber, isReached, isComplete, textClassName }:
     <span
       aria-hidden="true"
       className={`step-motion relative flex size-7 shrink-0 items-center justify-center rounded-full transition-colors ${textClassName} ${
-        isReached ? 'bg-secondary-accent text-white' : 'bg-border text-text-muted'
+        isReached ? 'bg-secondary-accent text-on-accent' : 'bg-border text-text-muted'
       }`}
     >
       <span className={`step-motion transition-[opacity,scale] ${isComplete ? 'scale-50 opacity-0' : 'scale-100 opacity-100'}`}>

@@ -43,7 +43,7 @@ function formatTimestamp(iso: string): string {
 export function ActivityTable({ entries, employeeNameById }: ActivityTableProps) {
   // The empty state is rendered by the page's AsyncRegion.
   return (
-    <div className="flex w-full flex-1 flex-col overflow-x-auto rounded-xl border border-border bg-surface">
+    <div className="flex w-full min-w-0 flex-1 flex-col overflow-x-auto rounded-xl border border-border bg-surface">
       <div className="flex w-full min-w-[480px] items-center gap-3 border-b border-border bg-border-subtle px-4 py-3 md:min-w-0">
         <p className="w-[120px] shrink-0 md:w-[160px] font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[0]}</p>
         <p className="w-[150px] shrink-0 md:w-[200px] font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[1]}</p>

@@ -49,8 +49,20 @@ export function AdminBranchesPage() {
 
   const goToCreateBranch = () => navigate('/admin/branches/new')
 
+  // Pinned below the scrolling rows, not inside them, so it never scrolls
+  // out of view (responsive-layout "Paged List Pagination Stays Visible
+  // Below the Data").
+  const pagination =
+    phase === 'ready' && branches.length > 0 ? (
+      <div className="flex-none">
+        <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
+      </div>
+    ) : undefined
+
   return (
     <PageContentLayout
+      fitBody={branches.length > 0}
+      footer={pagination}
       header={
         <>
           <div className="flex w-full flex-wrap items-center justify-between gap-3">
@@ -68,7 +80,7 @@ export function AdminBranchesPage() {
               <button
                 type="button"
                 onClick={goToCreateBranch}
-                className={`flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white hover:bg-admin-accent/90 ${PRESS_FEEDBACK_CLASS}`}
+                className={`flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-on-accent hover:bg-admin-accent/90 ${PRESS_FEEDBACK_CLASS}`}
               >
                 <PlusIcon className="size-3.5" />
                 Add Branch
@@ -117,10 +129,7 @@ export function AdminBranchesPage() {
           </div>
         }
       >
-        <div className="flex flex-col gap-3">
-          <BranchesTable branches={branches} employees={employees} onEdit={openEditForm} onDelete={requestDelete} />
-          <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
-        </div>
+        <BranchesTable branches={branches} employees={employees} onEdit={openEditForm} onDelete={requestDelete} />
       </AsyncRegion>
 
       <BranchFormModal

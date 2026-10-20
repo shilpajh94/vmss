@@ -5,12 +5,38 @@
 /* Height-based breakpoints for screens that must fit one viewport (e.g. /admin/login). */
 @custom-variant short (@media (max-height: 900px));
 @custom-variant xshort (@media (max-height: 800px));
+/* `dark:` for the rare class that genuinely differs in the dark theme;
+   everything else follows the token overrides in theme.css. */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
 @layer base {
   html,
   body {
     overflow-x: hidden;
   }
+
+  /* The canvas follows the theme (white in light, as before; the browser's
+     own dark grey would otherwise show under `color-scheme: dark`). */
+  body {
+    background-color: var(--color-bg);
+  }
+}
+
+/* Theme switch in one frame (theme-mode "Switching theme repaints in one
+   clean step"): while the new tokens land, nothing fades on its own — the
+   ~50 hover/press colour transitions would otherwise recolour the page in
+   staggered waves. Set and cleared by `switchTheme`. */
+[data-theme-switching] *,
+[data-theme-switching] *::before,
+[data-theme-switching] *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* The optional cross-fade where view transitions are supported. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 150ms;
 }
 
 /* ---- Motion (smooth-ui-motion-and-loading) -------------------------------

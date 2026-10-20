@@ -139,7 +139,7 @@ export function KanbanColumn({
           message={emptyMessage}
           icon={<UserIcon className="size-4 text-text-muted" />}
           className={`h-40 w-full rounded-xl border border-dashed p-6 transition-colors ${
-            isDragOver ? accent.dragOver : 'border-[#cbd5e1]'
+            isDragOver ? accent.dragOver : 'border-border-strong'
           }`}
         />
       ) : (

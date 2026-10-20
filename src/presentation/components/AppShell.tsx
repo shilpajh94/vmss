@@ -125,7 +125,7 @@ export function AppShell({ sidebar, topBar, mainClassName, children }: AppShellP
           <div className="flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
             {topBar ?? <MobileNavBar />}
 
-            <main className={mainClassName ?? 'flex flex-1 flex-col gap-page-section overflow-y-auto overflow-x-hidden p-page-content [scrollbar-gutter:stable]'}>
+            <main className={mainClassName ?? 'flex flex-1 flex-col gap-page-section overflow-y-auto overflow-x-hidden p-page-content-open-end [scrollbar-gutter:stable]'}>
               {children}
             </main>
           </div>

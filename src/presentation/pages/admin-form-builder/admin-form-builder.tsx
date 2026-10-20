@@ -127,7 +127,7 @@ export function AdminFormBuilderPage() {
                 onClick={() => void publish()}
                 pending={isPublishing}
                 pendingLabel="Publishing…"
-                className="rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white hover:bg-admin-accent/90 disabled:opacity-60"
+                className="rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-on-accent hover:bg-admin-accent/90 disabled:opacity-60"
               >
                 Publish Changes
               </PendingButton>

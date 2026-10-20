@@ -269,6 +269,18 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  // add-staff-calendar: role-scoped visits in a date range (scope decided by the API).
+  GET_CALENDAR_FEED: {
+    endpoint: "/invitations/calendar",
+    method: "GET",
+    hasToken: true,
+  },
+  // One day's visits, page by page (improve-calendar-scale-and-theme-switch).
+  GET_CALENDAR_DAY: {
+    endpoint: "/invitations/calendar/day",
+    method: "GET",
+    hasToken: true,
+  },
   LIST_HOST_EMPLOYEES: {
     endpoint: "/auth/employees",
     method: "GET",

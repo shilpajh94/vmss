@@ -1,25 +1,29 @@
 import { useNavigate } from 'react-router'
-import { CheckIcon, HomeIcon, UsersIcon } from './icons'
+import { CalendarIcon, CheckIcon, HomeIcon, UsersIcon } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
 import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
 
-export type DashboardSidebarActiveItem = 'dashboard' | 'all-visitors' | 'my-actions'
+export type DashboardSidebarActiveItem = 'dashboard' | 'all-visitors' | 'calendar' | 'my-actions'
 
 interface DashboardSidebarProps {
   activeItem: DashboardSidebarActiveItem
 }
 
+// Most-used first: registering a visitor is the desk's and hosts' most
+// frequent task (app-shell "Sidebar menus are ordered by how often they are used").
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: HomeIcon },
-  { key: 'all-visitors', label: 'Invitations', icon: UsersIcon },
   { key: 'my-actions', label: 'My actions', icon: CheckIcon },
+  { key: 'all-visitors', label: 'Invitations', icon: UsersIcon },
+  { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
 ] as const
 
 const STAFF_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: DashboardSidebarActiveItem]> = [
   ['/staff/dashboard', 'dashboard'],
   ['/staff/invitations', 'all-visitors'],
+  ['/staff/calendar', 'calendar'],
   ['/staff/visitors/new', 'my-actions'],
 ]
 
@@ -46,6 +50,7 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
     closeNav()
     if (key === 'dashboard') navigate('/staff/dashboard')
     if (key === 'all-visitors') navigate('/staff/invitations')
+    if (key === 'calendar') navigate('/staff/calendar')
     if (key === 'my-actions') navigate('/staff/visitors/new')
   }
 
@@ -66,8 +71,8 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
             label={label}
             isActive={activeItem === key}
             onActivate={() => handleActivate(key)}
-            activeClassName="bg-[#1e293b] text-[#f1f5f9]"
-            inactiveClassName="text-[#cbd5e1] hover:bg-[#1e293b]/60"
+            activeClassName="bg-sidebar-raised text-sidebar-text"
+            inactiveClassName="text-sidebar-soft hover:bg-sidebar-raised/60"
           />
         ))}
       </nav>

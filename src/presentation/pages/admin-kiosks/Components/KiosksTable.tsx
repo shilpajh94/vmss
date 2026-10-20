@@ -60,7 +60,7 @@ export function KiosksTable({ kiosks, canManage, busyKioskId, onToggleActive, on
                     >
                       <span className={`relative h-5 w-9 rounded-full transition-colors ${kiosk.isActive ? 'bg-admin-accent' : 'bg-neutral-subtle'}`}>
                         <span
-                          className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow transition-transform ${kiosk.isActive ? 'translate-x-4' : ''}`}
+                          className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-knob shadow transition-transform ${kiosk.isActive ? 'translate-x-4' : ''}`}
                         />
                       </span>
                       <span className="font-body text-[13px] font-semibold text-text-muted">{kiosk.isActive ? 'Active' : 'Inactive'}</span>

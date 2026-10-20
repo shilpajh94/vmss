@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { useThemeMode } from '../../context/theme-mode-context'
 
 // Trend series hues: the dataviz reference palette's first three slots,
 // validated on this app's white surface with every pair checked (worst CVD
@@ -27,12 +28,21 @@ function readToken(styles: CSSStyleDeclaration, [token, fallback]: readonly [str
   return styles.getPropertyValue(token).trim() || fallback
 }
 
+function readChartTheme(): ChartTheme {
+  const styles = getComputedStyle(document.documentElement)
+  const entries = Object.entries({ ...SERIES_TOKENS, ...INK_TOKENS }).map(([name, token]) => [name, readToken(styles, token)])
+  return Object.fromEntries(entries) as ChartTheme
+}
+
 // Recharts needs concrete colours rather than Tailwind classes, so the theme
-// tokens are resolved once from the document.
+// tokens are resolved from the document, again whenever the applied theme
+// changes. Read during render: a switch puts `data-theme` on <html> before
+// React re-renders (theme-mode-context `switchTheme`), so the charts get
+// their new colours in the same frame as everything else
+// (improve-calendar-scale-and-theme-switch design.md W4).
 export function useChartTheme(): ChartTheme {
-  return useMemo(() => {
-    const styles = getComputedStyle(document.documentElement)
-    const entries = Object.entries({ ...SERIES_TOKENS, ...INK_TOKENS }).map(([name, token]) => [name, readToken(styles, token)])
-    return Object.fromEntries(entries) as ChartTheme
-  }, [])
+  const { resolved } = useThemeMode()
+  // `resolved` is the trigger: the values come from the document.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(readChartTheme, [resolved])
 }

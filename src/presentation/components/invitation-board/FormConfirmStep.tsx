@@ -45,7 +45,7 @@ export function FormConfirmStep({ message, rows, confirmLabel, busyLabel, isBusy
           pending={isBusy}
           pendingLabel={busyLabel}
           onClick={onConfirm}
-          className="rounded-full bg-secondary-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
+          className="rounded-full bg-secondary-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent disabled:opacity-50"
         >
           {confirmLabel}
         </PendingButton>
