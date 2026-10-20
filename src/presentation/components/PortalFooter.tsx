@@ -1,4 +1,4 @@
-import { copyrightLine } from '../brand'
+import { SUPPORT_EMAIL, copyrightLine } from '../brand'
 import { BrandLogo } from './BrandLogo'
 
 export function PortalFooter() {
@@ -17,9 +17,11 @@ export function PortalFooter() {
           <a href="#" className="hover:text-text">
             Terms of Service
           </a>
-          <a href="mailto:support@visitorpass.co" className="hover:text-text">
-            Support Contact: support@visitorpass.co
-          </a>
+          {SUPPORT_EMAIL && (
+            <a href={`mailto:${SUPPORT_EMAIL}`} className="hover:text-text">
+              Support Contact: {SUPPORT_EMAIL}
+            </a>
+          )}
         </div>
       </div>
     </footer>

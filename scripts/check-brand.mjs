@@ -1,10 +1,11 @@
-// Fails when the retired product name reappears in shipped code
-// (brand-identity capability: "VisitorPass" SHALL NOT appear in the portal).
+// Fails when a retired product name reappears in shipped code
+// (brand-identity capability: "VisitorPass" and "Visimio" SHALL NOT appear
+// in the portal).
 // Chained into `npm run lint` so a copy-pasted old snippet can't slip back in.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-const RETIRED_NAME = /VisitorPass/
+const RETIRED_NAME = /VisitorPass|Visimio/i
 const ROOTS = ['src', 'public', 'index.html']
 const TEXT_FILE = /\.(tsx?|jsx?|mjs|css|html|json|svg|md)$/
 
@@ -28,6 +29,6 @@ for (const root of ROOTS) {
 }
 
 if (offenders.length > 0) {
-  console.error(`Retired brand name found — use BRAND_NAME from src/presentation/brand.ts:\n${offenders.join('\n')}`)
+  console.error(`Retired brand name (VisitorPass/Visimio) found — use BRAND_NAME from src/presentation/brand.ts:\n${offenders.join('\n')}`)
   process.exit(1)
 }

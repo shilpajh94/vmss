@@ -1,24 +1,25 @@
-import logoLight from '../assets/brand/logo-visimio.png'
-import logoLight2x from '../assets/brand/logo-visimio@2x.png'
-import logoOnDark from '../assets/brand/logo-visimio-on-dark.png'
-import logoOnDark2x from '../assets/brand/logo-visimio-on-dark@2x.png'
-import logoMark from '../assets/brand/logo-visimio-mark.png'
-import logoMark2x from '../assets/brand/logo-visimio-mark@2x.png'
+import logoLight from '../assets/brand/logo-guestify.svg'
+import logoOnDark from '../assets/brand/logo-guestify-on-dark.svg'
+import logoMark from '../assets/brand/logo-guestify-mark.svg'
 
 // The one place the product's name and logo live (brand-identity
-// capability). The PNGs are generated from the supplied logo by
-// VMSS_API/scripts/build_brand_assets.py --web-out; regenerate rather than
-// hand-edit. `public/firebase-messaging-sw.js` can't import this module and
+// capability). The SVGs are generated from the master logo in
+// VMSS_API/brand/ by VMSS_API/scripts/build_brand_assets.py --web-out;
+// regenerate rather than hand-edit. `public/firebase-messaging-sw.js` can't import this module and
 // keeps its own copy of BRAND_NAME.
-export const BRAND_NAME = 'Visimio'
+export const BRAND_NAME = 'Guestify'
+
+// Per-deployment support address; the portal footer hides its support
+// line when this is unset rather than showing a made-up address.
+export const SUPPORT_EMAIL: string | null = import.meta.env.VITE_SUPPORT_EMAIL?.trim() || null
 
 export const BRAND_LOGOS = {
   // Dark wordmark, for light surfaces.
-  light: { src: logoLight, src2x: logoLight2x },
+  light: { src: logoLight },
   // White wordmark, for the navy sidebars and staff headers.
-  'on-dark': { src: logoOnDark, src2x: logoOnDark2x },
-  // The "V" mark alone.
-  mark: { src: logoMark, src2x: logoMark2x },
+  'on-dark': { src: logoOnDark },
+  // The "G" pin mark alone.
+  mark: { src: logoMark },
 } as const
 
 export type BrandLogoVariant = keyof typeof BRAND_LOGOS
