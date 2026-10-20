@@ -39,7 +39,7 @@ export function TopLabelsChart({ purposes, departments, rangeDays, isUpdating, c
               aria-pressed={dimension === option}
               onClick={() => setDimension(option)}
               className={`min-h-10 px-3 font-body text-[13px] font-semibold capitalize transition-colors lg:min-h-9 ${
-                dimension === option ? 'bg-admin-accent text-white' : 'text-text-muted hover:bg-admin-accent/10 hover:text-text'
+                dimension === option ? 'bg-admin-accent text-on-accent' : 'text-text-muted hover:bg-admin-accent/10 hover:text-text'
               }`}
             >
               {option}

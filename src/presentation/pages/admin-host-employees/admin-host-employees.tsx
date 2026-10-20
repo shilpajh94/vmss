@@ -69,7 +69,7 @@ export function AdminHostEmployeesPage() {
               <button
                 type="button"
                 onClick={goToAddHostEmployee}
-                className={`flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white hover:bg-admin-accent/90 ${PRESS_FEEDBACK_CLASS}`}
+                className={`flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-on-accent hover:bg-admin-accent/90 ${PRESS_FEEDBACK_CLASS}`}
               >
                 <PlusIcon className="size-3.5" />
                 Add Employee

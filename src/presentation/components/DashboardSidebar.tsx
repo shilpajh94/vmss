@@ -69,8 +69,8 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
             label={label}
             isActive={activeItem === key}
             onActivate={() => handleActivate(key)}
-            activeClassName="bg-[#1e293b] text-[#f1f5f9]"
-            inactiveClassName="text-[#cbd5e1] hover:bg-[#1e293b]/60"
+            activeClassName="bg-sidebar-raised text-sidebar-text"
+            inactiveClassName="text-sidebar-soft hover:bg-sidebar-raised/60"
           />
         ))}
       </nav>

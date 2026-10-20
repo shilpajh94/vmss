@@ -9,6 +9,24 @@
     <meta name="theme-color" content="#0f172a" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Guestify</title>
+    <script>
+      // Pre-paint theme (theme-mode "No flash of the wrong theme"): apply the
+      // stored Light/Dark/System choice before the first frame, on signed-in
+      // staff/admin pages only. Same page-scope rule as `useApplyTheme` in
+      // src/presentation/context/theme-mode-context.tsx — change both together.
+      ;(function () {
+        try {
+          var path = window.location.pathname
+          var signedIn = /^\/(admin|staff|reception)\//.test(path) && path !== '/admin/login' && path !== '/staff/login'
+          if (!signedIn) return
+          var mode = JSON.parse(window.localStorage.getItem('vmss.themeMode') || '"system"')
+          var dark = mode === 'dark' || (mode !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          if (dark) document.documentElement.setAttribute('data-theme', 'dark')
+        } catch (error) {
+          // Storage blocked or a malformed value: React falls back to System.
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

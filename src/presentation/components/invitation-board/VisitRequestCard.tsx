@@ -156,7 +156,7 @@ export function VisitRequestCard({
         <Avatar
           name={request.primaryContactFullName}
           size="md"
-          toneClassName="text-text"
+          toneClassName="text-ink"
           style={{ backgroundColor: avatarTintFor(request.trackingId) }}
         />
         <div className="flex min-w-0 flex-1 flex-col">

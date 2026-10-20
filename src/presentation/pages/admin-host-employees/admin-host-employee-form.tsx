@@ -6,7 +6,7 @@ import { TextField } from '../../components/ui/TextField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminHostEmployeeForm } from './hooks/use-admin-host-employee-form'
 
-const fieldLabelClassName = 'text-[13px] font-bold uppercase text-[#475569]'
+const fieldLabelClassName = 'text-[13px] font-bold uppercase text-text-secondary'
 
 export function AdminHostEmployeeFormPage() {
   const {
@@ -66,7 +66,7 @@ export function AdminHostEmployeeFormPage() {
         {errorMessage ? (
           <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
             <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
+            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
               Try again
             </button>
           </div>
@@ -164,7 +164,7 @@ export function AdminHostEmployeeFormPage() {
                   disabled={!assignRoleId}
                   pending={isAssigning}
                   pendingLabel="Assigning…"
-                  className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-white disabled:opacity-50"
+                  className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-on-accent disabled:opacity-50"
                 >
                   Assign Role
                 </PendingButton>
@@ -273,7 +273,7 @@ export function AdminHostEmployeeFormPage() {
                 onClick={() => void submitCreate()}
                 pending={isSaving}
                 pendingLabel="Saving…"
-                className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-white disabled:opacity-50"
+                className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-on-accent disabled:opacity-50"
               >
                 Save Employee
               </PendingButton>

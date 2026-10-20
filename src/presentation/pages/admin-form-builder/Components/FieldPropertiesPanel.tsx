@@ -411,7 +411,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
         <button
           type="button"
           onClick={() => void save()}
-          className="flex-1 rounded-lg bg-admin-accent px-4 py-2.5 font-body text-sm font-semibold text-white"
+          className="flex-1 rounded-lg bg-admin-accent px-4 py-2.5 font-body text-sm font-semibold text-on-accent"
         >
           Save Properties
         </button>

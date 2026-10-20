@@ -63,7 +63,7 @@ export function BulkAddCategoriesModal({ isOpen, onClose, onSubmit, isSubmitting
               disabled={names.length === 0}
               pending={isSubmitting}
               pendingLabel="Adding…"
-              className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-60"
+              className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent disabled:opacity-60"
             >
               {`Add ${names.length} ${names.length === 1 ? 'Category' : 'Categories'}`}
             </PendingButton>
@@ -90,7 +90,7 @@ export function BulkAddCategoriesModal({ isOpen, onClose, onSubmit, isSubmitting
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white"
+              className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent"
             >
               Done
             </button>

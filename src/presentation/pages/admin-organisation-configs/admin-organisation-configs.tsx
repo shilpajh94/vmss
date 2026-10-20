@@ -71,7 +71,7 @@ export function AdminOrganisationConfigsPage() {
                 onClick={() => void save()}
                 pending={isSaving}
                 pendingLabel="Saving…"
-                className="rounded-full bg-admin-accent px-[18px] py-2.5 font-body text-[13px] font-semibold text-white disabled:opacity-50"
+                className="rounded-full bg-admin-accent px-[18px] py-2.5 font-body text-[13px] font-semibold text-on-accent disabled:opacity-50"
               >
                 Save Configs
               </PendingButton>

@@ -66,8 +66,8 @@ export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
             label={label}
             isActive={activeItem === key}
             onActivate={() => handleActivate(key)}
-            activeClassName="bg-admin-accent text-white"
-            inactiveClassName="text-text-faint hover:bg-white/5"
+            activeClassName="bg-sidebar-accent text-white"
+            inactiveClassName="text-sidebar-muted hover:bg-white/5"
           />
         ))}
       </nav>

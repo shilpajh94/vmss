@@ -5,9 +5,9 @@ import { PendingButton } from './PendingButton'
 type ConfirmTone = 'danger' | 'primary' | 'success'
 
 const TONE_CLASSES: Record<ConfirmTone, string> = {
-  danger: 'bg-danger',
-  primary: 'bg-primary',
-  success: 'bg-success',
+  danger: 'bg-danger text-on-accent',
+  primary: 'bg-primary text-on-primary',
+  success: 'bg-success text-on-accent',
 }
 
 interface ConfirmDialogProps {
@@ -61,7 +61,7 @@ export function ConfirmDialog({
           pending={isBusy}
           pendingLabel={busyLabel}
           onClick={onConfirm}
-          className={`rounded-full ${TONE_CLASSES[tone]} px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50`}
+          className={`rounded-full ${TONE_CLASSES[tone]} px-4 py-2 font-body text-[13px] font-semibold disabled:opacity-50`}
         >
           {confirmLabel}
         </PendingButton>

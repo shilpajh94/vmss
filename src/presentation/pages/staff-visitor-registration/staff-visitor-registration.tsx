@@ -161,7 +161,7 @@ export function StaffVisitorRegistrationPage() {
                 type="button"
                 onClick={goNext}
                 title="Continue to the next step"
-                className="cursor-pointer rounded-lg bg-primary px-7 py-3 text-body font-semibold text-white transition-colors hover:opacity-90"
+                className="cursor-pointer rounded-lg bg-primary px-7 py-3 text-body font-semibold text-on-primary transition-colors hover:opacity-90"
               >
                 {nextStepLabel ? `Next: ${nextStepLabel} →` : 'Next →'}
               </button>

@@ -5,6 +5,7 @@ import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import { usePushNotifications } from '../hooks/use-push-notifications'
 import { useRefreshContext } from '../context/refresh-context'
 import { NotificationBell } from './notification-bell/NotificationBell'
+import { ThemeModeMenu } from './ThemeModeMenu'
 import { NavMenuButton } from './AppShell'
 import { Avatar } from './ui/Avatar'
 import { useRefreshSpin } from '../hooks/use-refresh-spin'
@@ -182,6 +183,7 @@ export function AppTopBar({ title, description, breadcrumb, currentUser, navLabe
       <div className="flex shrink-0 items-center gap-2 md:gap-6">
         <TopBarClock />
         <RefreshControl />
+        <ThemeModeMenu />
         <NotificationBell />
 
         <div className="flex items-center gap-2">

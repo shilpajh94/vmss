@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint && node scripts/check-brand.mjs && node scripts/check-grid-spans.mjs",
+    "lint": "oxlint && node scripts/check-brand.mjs && node scripts/check-grid-spans.mjs && node scripts/check-theme-colors.mjs",
     "preview": "vite preview",
     "screenshots": "docker run --rm --network host -v \"$PWD\":/w -w /w mcr.microsoft.com/playwright/python:v1.55.0-noble bash -c \"pip install -q playwright==1.55.0 && python scripts/screenshot-pages.py\"",
     "e2e:image": "docker rm -f vmss-e2e-build >/dev/null 2>&1; docker run --name vmss-e2e-build mcr.microsoft.com/playwright/python:v1.55.0-noble pip install -q playwright==1.55.0 pytest==8.4.2 pytest-playwright==0.7.1 && docker commit vmss-e2e-build vmss-e2e:local && docker rm vmss-e2e-build",

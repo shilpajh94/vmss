@@ -108,12 +108,12 @@ export function ResponsiveBoard<TColumn extends BoardColumn>({
               aria-selected={isActive}
               onClick={() => setSelectedStatus(column.status)}
               className={`flex min-h-10 shrink-0 items-center gap-2 rounded-full border px-4 font-body text-[13px] font-semibold whitespace-nowrap transition-colors ${
-                isActive ? 'border-primary bg-primary text-white' : 'border-border bg-surface text-text'
+                isActive ? 'border-primary bg-primary text-on-primary' : 'border-border bg-surface text-text'
               }`}
             >
               {column.label}
               <span
-                className={`rounded-full px-1.5 py-0.5 text-[11px] font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-border-subtle text-text-muted'}`}
+                className={`rounded-full px-1.5 py-0.5 text-[11px] font-bold ${isActive ? 'bg-on-primary/20 text-on-primary' : 'bg-border-subtle text-text-muted'}`}
               >
                 {column.total}
               </span>

@@ -65,7 +65,7 @@ export function DevicesTable({ devices, canManage, busyDeviceId, onApprove, onEn
                 <td className="px-6 py-4">
                   <div className="flex items-center justify-end gap-2">
                     {device.canApprove && (
-                      <button type="button" onClick={() => onApprove(device)} disabled={isBusy} className={`${actionClassName} !bg-admin-accent !text-white`}>
+                      <button type="button" onClick={() => onApprove(device)} disabled={isBusy} className={`${actionClassName} !bg-admin-accent !text-on-accent`}>
                         Approve
                       </button>
                     )}

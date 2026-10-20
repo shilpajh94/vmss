@@ -145,8 +145,8 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
             label={label}
             isActive={activeItem === key}
             onActivate={() => handleActivate(key)}
-            activeClassName="bg-admin-accent text-white"
-            inactiveClassName="text-text-faint hover:bg-white/5"
+            activeClassName="bg-sidebar-accent text-white"
+            inactiveClassName="text-sidebar-muted hover:bg-white/5"
           />
         ))}
       </nav>
@@ -154,8 +154,8 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
       {/* The deployed build, injected at build time (app-shell "The sidebar
           footer shows the real build identifier") — hidden on the rail. */}
       {BUILD_LABEL && !isCollapsed ? (
-        <div className="flex shrink-0 items-center border-t border-[#334155] pt-4">
-          <span className="font-body text-xs font-medium text-text-faint" title="Deployed build">
+        <div className="flex shrink-0 items-center border-t border-sidebar-line pt-4">
+          <span className="font-body text-xs font-medium text-sidebar-muted" title="Deployed build">
             {BUILD_LABEL}
           </span>
         </div>

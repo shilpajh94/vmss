@@ -19,7 +19,7 @@ export function SegmentedToggle({ options, value, onChange, variant = 'inline' }
   if (variant === 'pill') {
     const activeIndex = options.findIndex((option) => option.value === value)
     return (
-      <div className="relative flex h-11 w-full items-center rounded-lg border border-border bg-[#f8fafc] p-1">
+      <div className="relative flex h-11 w-full items-center rounded-lg border border-border bg-surface-muted p-1">
         {/* One pill that glides to the selected segment (ui-motion "Toggling a
             switch"), instead of each button snapping its own background. */}
         {activeIndex >= 0 && (
@@ -35,7 +35,7 @@ export function SegmentedToggle({ options, value, onChange, variant = 'inline' }
             type="button"
             onClick={() => onChange(option.value)}
             className={`relative flex h-full flex-1 cursor-pointer items-center justify-center rounded-md text-sm font-semibold transition-colors duration-standard ${
-              value === option.value ? 'text-white' : 'text-text-muted hover:bg-secondary-accent/10 hover:text-text'
+              value === option.value ? 'text-on-accent' : 'text-text-muted hover:bg-secondary-accent/10 hover:text-text'
             }`}
           >
             {option.label}
@@ -54,7 +54,7 @@ export function SegmentedToggle({ options, value, onChange, variant = 'inline' }
             type="button"
             onClick={() => onChange(option.value)}
             className={`flex h-full flex-1 cursor-pointer items-center justify-center text-[13px] font-semibold transition-colors duration-standard ${index > 0 ? 'border-l border-border' : ''} ${
-              value === option.value ? 'bg-secondary-accent text-white' : 'bg-surface text-text hover:bg-secondary-accent/10'
+              value === option.value ? 'bg-secondary-accent text-on-accent' : 'bg-surface text-text hover:bg-secondary-accent/10'
             }`}
           >
             {option.label}
@@ -72,7 +72,7 @@ export function SegmentedToggle({ options, value, onChange, variant = 'inline' }
           type="button"
           onClick={() => onChange(option.value)}
           className={`cursor-pointer px-4 py-2 text-body font-medium max-lg:min-h-10 transition-colors duration-standard ${
-            value === option.value ? 'bg-secondary-accent text-white' : 'bg-surface text-text hover:bg-secondary-accent/10'
+            value === option.value ? 'bg-secondary-accent text-on-accent' : 'bg-surface text-text hover:bg-secondary-accent/10'
           }`}
         >
           {option.label}
