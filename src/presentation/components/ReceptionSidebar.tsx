@@ -11,11 +11,13 @@ interface ReceptionSidebarProps {
   activeItem: ReceptionSidebarActiveItem
 }
 
+// Most-used first: registering a visitor is the desk's and hosts' most
+// frequent task (app-shell "Sidebar menus are ordered by how often they are used").
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: HomeIcon },
+  { key: 'my-actions', label: 'My actions', icon: CheckIcon },
   { key: 'visits', label: 'Invitations', icon: UsersIcon },
   { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
-  { key: 'my-actions', label: 'My actions', icon: CheckIcon },
 ] as const satisfies ReadonlyArray<{
   key: ReceptionSidebarActiveItem
   label: string
