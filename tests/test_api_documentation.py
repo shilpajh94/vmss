@@ -202,6 +202,21 @@ def test_protected_routes_declare_bearer_security() -> None:
         ("DailyTrendPointOut", {"checkedIn", "noShow"}),
         ("NotificationOut", {"createdAt", "readAt"}),
         ("UnreadCountOut", {"unreadCount"}),
+        ("CalendarFeedOut", {"from", "to", "generatedAt", "days", "events", "truncated"}),
+        (
+            "CalendarEventOut",
+            {
+                "trackingId",
+                "date",
+                "time",
+                "checkedInAt",
+                "primaryContactFullName",
+                "visitorCount",
+                "hostFullName",
+                "branchName",
+                "visitorCategoryBadgeColor",
+            },
+        ),
     ],
 )
 def test_response_schemas_render_camel_case(schema_name: str, expected_camel_props: set) -> None:

@@ -35,16 +35,24 @@ web_extra_daemons:
   # RUNNING. Deployed environments intentionally split these across
   # dedicated worker processes (see `core/celery_app.py`'s own comment); this
   # single local worker instead has to cover all of them at once.
+  # Celery has no `--reload`, so `watchfiles` restarts worker and beat on any
+  # change under `src/`. Without it they keep running the code from container
+  # start: emails kept the pre-rebrand branding, and new tasks were dropped
+  # as "unregistered" (autoreload-local-celery-worker). Default filter, not
+  # `--filter python`: email templates (.html/.txt) and image assets count
+  # too. `src/` rather than the repo root, because beat writes its
+  # `celerybeat-schedule*` files there, which would loop restarts. SIGINT is
+  # Celery's warm shutdown; in-flight tasks get 10 s before SIGKILL.
   - name: "vmss-api-celery-worker"
-    command: "uv run celery -A vmss_api.core.celery_app:celery_app worker --loglevel=info -Q vmss_api,notifications,cron_jobs"
+    command: "uv run watchfiles --sigint-timeout 10 'celery -A vmss_api.core.celery_app:celery_app worker --loglevel=info -Q vmss_api,notifications,cron_jobs' src"
     directory: /var/www/html
   # Beat only enqueues scheduled tasks (e.g. `reports/tasks.py`'s daily
   # rollup-snapshot dispatch, `core/celery_app.py`'s `beat_schedule`) — the
   # worker daemon above still does the actual execution. Without this
   # daemon, `beat_schedule` entries are configured but nothing ever
-  # triggers them.
+  # triggers them. Wrapped in `watchfiles` for the same reason as the worker.
   - name: "vmss-api-celery-beat"
-    command: "uv run celery -A vmss_api.core.celery_app:celery_app beat --loglevel=info"
+    command: "uv run watchfiles --sigint-timeout 10 'celery -A vmss_api.core.celery_app:celery_app beat --loglevel=info' src"
     directory: /var/www/html
 
 # Exposes the FastAPI app at https://vmss-new-api.ddev.site

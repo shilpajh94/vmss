@@ -1,7 +1,7 @@
 ## Why
 
 API-19 (Admin/Platform: SSO integration). Staff (Admin/Reception/Security/Host)
-currently have exactly one way into VisitorPass: email + password
+currently have exactly one way into Guestify: email + password
 (`auth/service.py::authenticate_user`). Per
 `Requirements/staff VMS/staff-sso-login.pdf` and
 `SSO_Login_Requirement_Simple (1).docx`, enterprise customers expect staff to
@@ -24,7 +24,7 @@ specifically requires it.
   returned in plaintext after the initial save (masked as `****1234`
   thereafter). An optional "test connection" endpoint validates the
   discovery document and credentials without persisting anything.
-- New per-tenant IdP-group → VisitorPass-role mapping table
+- New per-tenant IdP-group → Guestify-role mapping table
   (`sso-config:manage`), used to decide a brand-new SSO user's role.
   Unmapped users default to `Host` (never `Admin`) — an Admin upgrades them
   manually afterward, per the docx's Section 7 rule.
