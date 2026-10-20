@@ -52,7 +52,7 @@ function StaffLayoutContent() {
       }
     >
       <CurrentUserProvider user={currentUser}>
-        <RouteTransition>
+        <RouteTransition withEndGap>
           <Outlet />
         </RouteTransition>
       </CurrentUserProvider>

@@ -29,14 +29,16 @@ interface PageContentLayoutProps {
 // level deeper than AppShell's existing sidebar/top-bar-fixed behavior. An
 // optional footer stays pinned below that region the same way. Relies on
 // RouteTransition's wrapper stretching to fill <main>'s available height
-// (see RouteTransition.tsx); a page that doesn't use this layout is
-// unaffected, since only this component's own data region gets overflow.
+// (see RouteTransition.tsx), and flexes into what's left of it rather than
+// taking its full height, so the wrapper's trailing end-gap spacer still
+// fits below; a page that doesn't use this layout is unaffected, since only
+// this component's own data region gets overflow.
 export function PageContentLayout({ header, children, footer, rootRef, bodyRef, bodyClassName = '' }: PageContentLayoutProps) {
   return (
     // Below `lg` the stacked header (title, full-width search and filters) can
     // be taller than the phone's viewport, so the whole page scrolls as one
     // instead of squeezing the data region to a sliver.
-    <div ref={rootRef} className="flex flex-col gap-4 md:gap-6 lg:h-full lg:min-h-0">
+    <div ref={rootRef} className="flex flex-col gap-4 md:gap-6 lg:min-h-0 lg:flex-1">
       <div className="flex flex-none flex-col gap-4 md:gap-6">{header}</div>
       <div ref={bodyRef} className={`lg:min-h-0 lg:flex-1 lg:overflow-y-auto ${bodyClassName}`.trimEnd()}>
         {children}

@@ -59,7 +59,8 @@ export function AdminAuditTrailPage() {
           </div>
         }
       >
-        <div className="flex flex-col gap-6">
+        {/* min-w-0: the table scrolls inside its own box rather than widening the page. */}
+        <div className="flex w-full min-w-0 flex-col gap-6">
           <ActivityTable entries={entries} employeeNameById={employeeNameById} />
           <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
         </div>

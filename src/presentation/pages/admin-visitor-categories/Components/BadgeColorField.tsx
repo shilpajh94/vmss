@@ -17,7 +17,7 @@ export function BadgeColorField({ value, onChange, labelClassName }: BadgeColorF
   return (
     <div className="flex flex-col gap-1.5">
       <span className={labelClassName ?? 'text-body font-medium text-text'}>Badge Color</span>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         {OPTIONS.map((option) => (
           <button
             key={option.value}

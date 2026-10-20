@@ -3,6 +3,7 @@ import { useLocation } from 'react-router'
 
 interface RouteTransitionProps {
   children: ReactNode
+  withEndGap?: boolean
 }
 
 // Plays a brief fade/slide-in on route change instead of an instant
@@ -27,11 +28,18 @@ interface RouteTransitionProps {
 // otherwise render them touching (fix-layout-spacing-and-footer-logo
 // design.md Decision 1). A single-root page has one child, so it's a no-op.
 //
+// `withEndGap` (the staff and admin shells) ends the content with a spacer
+// that makes the page's bottom gap. <main> has no bottom padding: a page
+// taller than this fixed-height wrapper overflows it, and a scroller's end
+// padding doesn't follow overflow, so it would sit behind the content.
+// The spacer overflows along with the page, so the gap is always at the end
+// of the scroll (app-shell "Page content keeps a bottom gap").
+//
 // Every navigation also starts the new page at the top (app-shell "Scroll
 // position resets on navigation"): the shells' scrolling <main>, or the
 // window on the public pages that scroll as a whole. A layout effect, so
 // the reset lands before the first paint of the incoming page.
-export function RouteTransition({ children }: RouteTransitionProps) {
+export function RouteTransition({ children, withEndGap = false }: RouteTransitionProps) {
   const location = useLocation()
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -44,6 +52,7 @@ export function RouteTransition({ children }: RouteTransitionProps) {
   return (
     <div ref={wrapperRef} key={location.pathname} className="route-transition flex h-full min-h-0 flex-col gap-page-section">
       {children}
+      {withEndGap ? <div aria-hidden className="h-page-end-gap flex-none" /> : null}
     </div>
   )
 }

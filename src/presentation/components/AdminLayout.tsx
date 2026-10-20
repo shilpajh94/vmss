@@ -45,7 +45,7 @@ function AdminLayoutContent() {
       }
     >
       <CurrentUserProvider user={currentUser}>
-        <RouteTransition>
+        <RouteTransition withEndGap>
           <Outlet />
         </RouteTransition>
       </CurrentUserProvider>

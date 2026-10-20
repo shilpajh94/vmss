@@ -198,6 +198,30 @@
   }
 }
 
+/* p-page-content without the bottom edge, for the shell's scrolling <main>:
+   a scroll container's end padding follows its children's boxes, not their
+   overflow, so a page taller than its fixed-height route wrapper would bury
+   that padding. The bottom gap comes from h-page-end-gap inside the wrapper
+   instead (fix-page-bottom-gap-and-full-day-calendar design.md D1). */
+@utility p-page-content-open-end {
+  padding: 1rem 1rem 0;
+  @media (width >= 48rem) {
+    padding: 1.5rem 1.5rem 0;
+  }
+  @media (width >= 64rem) {
+    padding: 2rem 2rem 0;
+  }
+}
+
+/* The route wrapper's trailing spacer: added to the gap-page-section before
+   it, this makes the bottom gap equal p-page-content (16/24/32px). */
+@utility h-page-end-gap {
+  height: 0;
+  @media (width >= 64rem) {
+    height: 0.5rem;
+  }
+}
+
 @utility gap-page-section {
   gap: 1rem;
   @media (width >= 48rem) {

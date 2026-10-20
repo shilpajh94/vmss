@@ -82,7 +82,7 @@ export function AdminWorkflowFormPage() {
                     <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary-accent/15 font-body text-xs font-bold text-secondary-accent">
                       {index + 1}
                     </span>
-                    <div className="flex-1">
+                    <div className="min-w-0 flex-1">
                       <SelectField
                         label={`Level ${index + 1} approver`}
                         labelClassName="sr-only"
