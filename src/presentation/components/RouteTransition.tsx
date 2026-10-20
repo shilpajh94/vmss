@@ -33,7 +33,8 @@ interface RouteTransitionProps {
 // taller than this fixed-height wrapper overflows it, and a scroller's end
 // padding doesn't follow overflow, so it would sit behind the content.
 // The spacer overflows along with the page, so the gap is always at the end
-// of the scroll (app-shell "Page content keeps a bottom gap").
+// of the scroll (app-shell "Page content keeps a bottom gap"). It must never
+// be zero-height, or it drops out of the scrollable area (see h-page-end-gap).
 //
 // Every navigation also starts the new page at the top (app-shell "Scroll
 // position resets on navigation"): the shells' scrolling <main>, or the

@@ -311,7 +311,9 @@ restore the previous view and date.
 ### Requirement: Status filter, truncation and empty states
 The page SHALL provide a status filter. By default it SHALL show every
 status except Denied. Changing it SHALL refetch with the chosen statuses and
-SHALL reset every column and the day list to their first page.
+SHALL reset every column and the day list to their first page. Each week
+column and the day list SHALL also return to the top of its scroll, so
+the reset list doesn't immediately load past its first page.
 
 No view SHALL drop visits: every visit of every day SHALL be reachable by
 scrolling a week column or the day list. The page SHALL NOT show a "not
@@ -327,6 +329,12 @@ only.
 - **WHEN** the user adds "Denied" in the status filter
 - **THEN** the feed is refetched including denied invitations, and they are
   shown with the "Denied" label
+
+#### Scenario: Changing the filter after scrolling a column
+- **WHEN** the user has scrolled Monday's week column far enough to load
+  several pages, then turns a status in the filter on or off
+- **THEN** Monday's column shows its top again and holds no more than the
+  first page (plus the one preload a tall column makes on open)
 
 #### Scenario: Truncated month
 - **WHEN** a month has days with more visits than a month cell shows
@@ -384,3 +392,138 @@ vertically on account of the visits.
 - **WHEN** Week view is shown at 820px
 - **THEN** three day columns are visible side by side, and the rest are
   reachable by scrolling the board sideways
+
+### Requirement: Day view scrolls its timeline inside its own panel
+From `lg` (1024px) up, the Day card SHALL be as tall as the visible page
+area (see "Week board and Day card are as tall as the visible page"), and
+only the day's timeline SHALL scroll inside it. The page SHALL scroll to
+bring the whole card into view. The page title, subtitle and toolbar
+scroll away with the page and come back when the page is scrolled to
+the top.
+
+The Day card SHALL have:
+- a fixed header row that shows the day's date and its visit count;
+- a scrolling body with the timeline and its sticky hour headings;
+- a fixed footer row with the day's paging status (see "Each day's
+  paging status stays visible").
+
+The next page of visits SHALL load when the card's body is scrolled near
+the last loaded visit. A refresh SHALL NOT move the card's scroll
+position or the page's scroll position.
+
+Below `lg`, Day view SHALL keep growing with its content and scrolling
+with the page.
+
+#### Scenario: Busy day on a desktop
+- **WHEN** Day view shows a day with 40 visits at 1440×900
+- **THEN** the Day card is as tall as the visible page area, the visits
+  scroll inside the card, and the page can be scrolled until the card
+  fills the visible area
+
+#### Scenario: Header and footer stay put
+- **WHEN** the user scrolls the Day card's body to its end
+- **THEN** the card's header row (date and count) and footer row stay in
+  the same place within the card
+
+#### Scenario: Loading more from the panel
+- **WHEN** the day has more visits than the first page and the user
+  scrolls the Day card's body near the last loaded visit
+- **THEN** the next page loads and is added below without the scroll
+  position jumping
+
+#### Scenario: Toolbar comes back
+- **WHEN** the page has been scrolled so the card fills the visible area
+  and the user scrolls the page back to the top
+- **THEN** the page title and toolbar are fully visible again above the
+  card
+
+#### Scenario: Phone width
+- **WHEN** Day view shows a busy day at 390px wide
+- **THEN** the page scrolls as a whole, as before
+
+### Requirement: Each day's paging status stays visible
+A day's paging status SHALL be shown in a fixed footer at the bottom of
+its scrolling area, outside the list:
+- in Week view, at the bottom of each day column, at every width (the
+  columns always scroll on their own);
+- in Day view from `lg` up, at the bottom of the Day card.
+
+The footer shows:
+- `Showing X of Y` while more visits remain;
+- `All N visits` once all are loaded;
+- a Retry button after a failed load.
+
+The loading row inside the list, right after the last loaded visit,
+SHALL remain. It marks where loading continues, and it shows
+"Loading more…" while a page loads.
+
+The footer SHALL be visible without scrolling the list. On an empty day,
+it SHALL NOT be shown. Below `lg`, Day view's status SHALL follow the
+last loaded visit, since the page scrolls as a whole.
+
+#### Scenario: Partly loaded column
+- **WHEN** a Week column has loaded 10 of 51 visits
+- **THEN** `Showing 10 of 51` is visible at the bottom of the column
+  without scrolling it
+
+#### Scenario: Fully loaded day
+- **WHEN** every visit of a 6-visit day is loaded in Day view
+- **THEN** the Day card's footer reads `All 6 visits`
+
+#### Scenario: Failed page
+- **WHEN** loading the next page of a column fails
+- **THEN** the column footer shows a Retry button, and pressing it loads
+  that page again
+
+#### Scenario: Empty day
+- **WHEN** a Week column has no visits
+- **THEN** it shows "No visits" in its body and no paging footer
+
+### Requirement: Week board and Day card are as tall as the visible page
+The Week board (at every width) and the Day card (from `lg` up) SHALL be
+as tall as the visible page area: the height of the scrolling page
+region under the top bar, less the page's top padding and its bottom
+gap. They SHALL NOT be shorter than 420px. Their height SHALL follow
+window resizes and rotation. It SHALL NOT depend on the height of the
+title and toolbar above them.
+
+The page SHALL scroll vertically by the height of the content above the
+panel, and the page's bottom gap SHALL follow the panel when the page is
+scrolled to the end.
+
+A day column body and the Day card body SHALL hand vertical scrolling over
+to the page: when a body is at its top or bottom, a further scroll in that
+direction SHALL scroll the page. Sideways scrolling of the Week board
+SHALL NOT be handed over to the page or the browser.
+
+#### Scenario: Laptop window
+- **WHEN** Week view is shown at 1280×720
+- **THEN** the board is as tall as the visible page area (about 590px,
+  not about 360px), and scrolling the page to the end shows the whole
+  board with the bottom gap below it
+
+#### Scenario: Large window
+- **WHEN** Week view is shown at 1920×1080
+- **THEN** the board is as tall as the visible page area, and the page
+  scrolls by the height of the title and toolbar
+
+#### Scenario: Short window
+- **WHEN** the visible page area is less than 420px tall
+- **THEN** the board is 420px tall and the page scrolls to reach its
+  bottom edge and the bottom gap
+
+#### Scenario: Scrolling past the end of a column
+- **WHEN** the page is at its top, a Week column is scrolled to its end,
+  and the user scrolls down again over that column
+- **THEN** the page scrolls down
+
+#### Scenario: Scrolling back up over the panel
+- **WHEN** the page is scrolled to its end, the Day card's body is at its
+  top, and the user scrolls up over the card
+- **THEN** the page scrolls up and the toolbar comes back into view
+
+#### Scenario: Toolbar wraps
+- **WHEN** the branch selector appears or the sidebar collapses and the
+  toolbar becomes taller or shorter
+- **THEN** the board's height stays the same and only the page's scroll
+  length changes

@@ -277,6 +277,20 @@ def _column(page: Page, day: str):
     return page.locator(f"section[aria-label^='{label.day} {label.strftime('%b')}']").first
 
 
+def _show_column(page: Page, day: str):
+    """Scrolls the week board sideways so `day`'s column starts at its left
+    edge. Below 2xl the board opens at today's column, so whether a given
+    day is on screen depends on the date the suite runs (fix-e2e-suite-green
+    design.md D3)."""
+    column = _column(page, day)
+    expect(column).to_be_attached()
+    column.evaluate(
+        "el => { const board = el.parentElement;"
+        " board.scrollLeft += el.getBoundingClientRect().left - board.getBoundingClientRect().left - board.clientLeft }"
+    )
+    return column
+
+
 def _scroll_column_to_end(column) -> None:
     column.locator("div.overflow-y-auto").first.evaluate("el => { el.scrollTop = el.scrollHeight }")
 
@@ -446,6 +460,12 @@ def test_week_column_shows_working_hours_and_busy_out_of_hours(as_role, timeline
     page = as_role("reception")
     page.goto(f"/staff/calendar?view=week&date={TIMELINE_DAY}")
     column = _column(page, TIMELINE_DAY)
+    # Every run seeds two more visits on this day, so the late one is past
+    # the first page once earlier runs' visits pile up: load to the end.
+    while column.get_by_text(re.compile(r"^All \d+ visit")).count() == 0:
+        loaded = _settled_count(column)
+        _scroll_column_to_end(column)
+        expect(column.locator("li")).not_to_have_count(loaded)
     expect(column.get_by_role("button", name=re.compile(re.escape(late)))).to_be_attached()
     _assert_timeline(column.evaluate(SLOT_LABELS), {0, 23})
     expect(_hour_section(column, "12:00 AM").get_by_role("button", name=re.compile(re.escape(early)))).to_have_count(1)
@@ -563,7 +583,7 @@ def test_week_column_status_is_in_view_without_scrolling(as_role, api) -> None:
     total = _day_total(api, BUSY_DAY)
     page = as_role("reception")
     page.goto(WEEK_URL)
-    monday = _column(page, BUSY_DAY)
+    monday = _show_column(page, BUSY_DAY)
     loaded = _settled_count(monday)
     assert monday.locator("div.overflow-y-auto").first.evaluate("el => el.scrollTop") == 0
     # The page scrolls to reach the board's bottom edge; the column doesn't.

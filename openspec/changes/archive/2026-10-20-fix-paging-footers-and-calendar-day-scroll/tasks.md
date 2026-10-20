@@ -32,4 +32,4 @@
 - [x] 5.1 `e2e/test_responsive_matrix.py` (or a new paged-list test): at 1280×720 and 1440×900, every paged admin list (including workflows) has its `Showing …` text and Previous/Next buttons inside the viewport without scrolling, and `<main>` doesn't scroll
 - [x] 5.2 `e2e/test_staff_calendar.py`: update `_scroll_day_until` and `test_day_view_pages_by_twenty` to scroll the Day card body at desktop width; update `test_unloaded_hours_sit_below_the_progress_row` to anchor on `[data-load-frontier]`
 - [x] 5.3 `e2e/test_staff_calendar.py`: add tests that Day view at 1440×900 doesn't scroll `<main>` and keeps the toolbar visible after scrolling the card, that a Week column's `Showing X of Y` is in view without scrolling the column, and that the Week board's bottom edge is inside a 1280×720 viewport with `<main>` not scrolling
-- [ ] 5.4 Run `npm run lint`, `npm run build` and `npm run e2e` (never alongside API pytest), and fix anything that fails
+- [x] 5.4 Run `npm run lint`, `npm run build` and `npm run e2e` (never alongside API pytest), and fix anything that fails

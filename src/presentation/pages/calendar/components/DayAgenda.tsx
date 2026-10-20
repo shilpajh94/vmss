@@ -4,6 +4,7 @@ import { formatPeriodTitle } from '../../../utils/calendar-dates'
 import { DayListStatus, PagedDayList } from './PagedDayList'
 import { useDayPages } from '../hooks/use-day-pages'
 import { useFillHeight } from '../hooks/use-fill-height'
+import { useScrollTopOnKey } from '../hooks/use-scroll-top-on-key'
 import { PANEL_FLOOR, PER_DAY_LIMIT } from '../calendar-status'
 import type { BoardBasePath } from '../../../components/dashboard/dashboard-format'
 import type { CalendarFeed } from '../../../../domain/entities/calendar-feed-schema'
@@ -43,6 +44,9 @@ export function DayAgenda({ feed, branchId, statuses, boardBasePath }: DayAgenda
   const isDesktop = useIsDesktop()
   const [cardRef, height] = useFillHeight<HTMLDivElement>({ floor: PANEL_FLOOR, enabled: isDesktop })
   const bodyRef = useRef<HTMLDivElement>(null)
+  // Only the desktop card's body scrolls; below `lg` the list grows with the
+  // page, and the filter is only reachable with the page near its top.
+  useScrollTopOnKey(bodyRef, `${day.date}|${branchId ?? ''}|${statuses?.join(',') ?? ''}`)
 
   return (
     <div

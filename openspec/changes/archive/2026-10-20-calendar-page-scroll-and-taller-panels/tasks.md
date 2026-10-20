@@ -17,4 +17,4 @@
 - [x] 3.4 In `test_week_column_status_is_in_view_without_scrolling`, scroll `main` to the end before asserting that the column footer is in the viewport (the column itself stays at `scrollTop` 0)
 - [x] 3.5 Add a hand-over test: with `main` at the top and a column body scrolled to its end, `page.mouse.wheel` over the column moves `main.scrollTop` (allow the next-gesture behaviour from design D3 by wheeling twice)
 - [x] 3.6 `e2e/test_responsive_matrix.py`: remove `view=day` and `view=week` from the "main does not scroll" check (keep the end-gap check)
-- [ ] 3.7 Run `npm run lint`, `npm run build` and `npm run e2e -- test_staff_calendar.py` (never alongside API pytest), and fix anything that fails
+- [x] 3.7 Run `npm run lint`, `npm run build` and `npm run e2e -- test_staff_calendar.py` (never alongside API pytest), and fix anything that fails

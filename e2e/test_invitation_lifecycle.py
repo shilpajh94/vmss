@@ -69,7 +69,10 @@ def test_staff_invitation_lifecycle(as_role, api: Api) -> None:
     approver = as_role("approver")
     card = open_card(approver, name)
     card.get_by_role("button", name="Approve", exact=True).click()
-    approver.get_by_role("dialog").get_by_role("button", name="Approve Request").click()
+    approver_dialog = approver.get_by_role("dialog")
+    approver_dialog.get_by_role("button", name="Approve Request").click()
+    # The dialog closes once the approval is saved; read the status after that.
+    expect(approver_dialog).to_be_hidden()
 
     invitation = next(
         row
