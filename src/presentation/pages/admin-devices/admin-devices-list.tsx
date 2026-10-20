@@ -65,8 +65,20 @@ export function AdminDevicesList({ operatingMode, title, noun, description }: Ad
 
   usePageHeader({ description })
 
+  // Pinned below the scrolling rows, not inside them, so it never scrolls
+  // out of view (responsive-layout "Paged List Pagination Stays Visible
+  // Below the Data").
+  const pagination =
+    phase === 'ready' && devices.length > 0 ? (
+      <div className="flex-none">
+        <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
+      </div>
+    ) : undefined
+
   return (
     <PageContentLayout
+      fitBody={devices.length > 0}
+      footer={pagination}
       header={
         <>
           <div className="flex w-full flex-wrap items-center justify-between gap-3">
@@ -140,18 +152,15 @@ export function AdminDevicesList({ operatingMode, title, noun, description }: Ad
           </div>
         }
       >
-        <div className="flex flex-col gap-3">
-          <DevicesTable
-            devices={devices}
-            canManage={canManage}
-            busyDeviceId={busyDeviceId}
-            onApprove={(device) => void approve(device)}
-            onEnable={(device) => void enable(device)}
-            onDisable={(device) => void disable(device)}
-            onDelete={requestDelete}
-          />
-          <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
-        </div>
+        <DevicesTable
+          devices={devices}
+          canManage={canManage}
+          busyDeviceId={busyDeviceId}
+          onApprove={(device) => void approve(device)}
+          onEnable={(device) => void enable(device)}
+          onDisable={(device) => void disable(device)}
+          onDelete={requestDelete}
+        />
       </AsyncRegion>
 
       <ConfirmDialog

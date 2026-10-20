@@ -19,8 +19,20 @@ export function AdminRolesPage() {
 
   usePageHeader({ description: 'View roles and manage what each one is permitted to do' })
 
+  // Pinned below the scrolling rows, not inside them, so it never scrolls
+  // out of view (responsive-layout "Paged List Pagination Stays Visible
+  // Below the Data").
+  const pagination =
+    phase === 'ready' && roles.length > 0 ? (
+      <div className="flex-none">
+        <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
+      </div>
+    ) : undefined
+
   return (
     <PageContentLayout
+      fitBody={roles.length > 0}
+      footer={pagination}
       header={
         <>
           <div className="flex w-full flex-wrap items-center justify-between gap-3">
@@ -85,10 +97,7 @@ export function AdminRolesPage() {
           </div>
         }
       >
-        <div className="flex flex-col gap-3">
-          <RolesTable roles={roles} />
-          <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
-        </div>
+        <RolesTable roles={roles} />
       </AsyncRegion>
     </PageContentLayout>
   )

@@ -30,8 +30,20 @@ export function AdminAuditTrailPage() {
 
   usePageHeader({ description: 'Organisation-wide activity log of account and invitation actions' })
 
+  // Pinned below the scrolling rows, not inside them, so it never scrolls
+  // out of view (responsive-layout "Paged List Pagination Stays Visible
+  // Below the Data").
+  const pagination =
+    phase === 'ready' && entries.length > 0 ? (
+      <div className="flex-none">
+        <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
+      </div>
+    ) : undefined
+
   return (
     <PageContentLayout
+      fitBody={entries.length > 0}
+      footer={pagination}
       header={
         <>
           <h1 className="font-display text-xl font-bold md:text-2xl text-text">Audit Trail</h1>
@@ -60,9 +72,8 @@ export function AdminAuditTrailPage() {
         }
       >
         {/* min-w-0: the table scrolls inside its own box rather than widening the page. */}
-        <div className="flex w-full min-w-0 flex-col gap-6">
+        <div className="w-full min-w-0">
           <ActivityTable entries={entries} employeeNameById={employeeNameById} />
-          <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
         </div>
       </AsyncRegion>
     </PageContentLayout>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePageHeader } from '../../context/page-header-context'
 import { useCurrentUser } from '../../context/current-user-context'
 import { useBranchOptions } from '../../hooks/use-branch-options'
@@ -72,34 +72,36 @@ export function CalendarPage({ loginPath, boardBasePath }: CalendarPageProps) {
 
   const totalVisits = useMemo(() => feed?.days.reduce((sum, day) => sum + day.total, 0) ?? 0, [feed])
 
-  // Week view fills the page from `lg` up, so its board ends at the page's
-  // bottom gap without the page scrolling; Month and Day grow with their
-  // content and let the page scroll (fix-page-bottom-gap-and-full-day-calendar
-  // design.md D2).
-  const fillClass = state.view === 'week' ? 'lg:min-h-0 lg:flex-1' : ''
+  // The Week board and (from `lg` up) the Day card size themselves to the
+  // space left below this block and re-measure when it wraps
+  // (fix-paging-footers-and-calendar-day-scroll design.md D3).
+  const controlsRef = useRef<HTMLDivElement>(null)
+  const isEmptyRange = state.view !== 'day' && totalVisits === 0
 
   if (hasInitialError || (hasCurrentError && !feed)) return <DashboardLoadError message={LOAD_ERROR} onRetry={retry} />
   if (isInitialLoading || !feed) return <CalendarSkeleton />
 
   return (
-    <div className={`flex w-full min-w-0 flex-col gap-4 md:gap-6 ${fillClass}`}>
-      <header className="flex flex-col gap-1">
-        <h1 className="font-display text-2xl font-semibold text-text">Calendar</h1>
-        <p className="font-body text-sm text-text-muted">{scopeSubtitle(feed, state.branchId, branchOptions)}</p>
-      </header>
+    <div className="flex w-full min-w-0 flex-col gap-4 md:gap-6">
+      <div ref={controlsRef} className="flex flex-col gap-4 md:gap-6">
+        <header className="flex flex-col gap-1">
+          <h1 className="font-display text-2xl font-semibold text-text">Calendar</h1>
+          <p className="font-body text-sm text-text-muted">{scopeSubtitle(feed, state.branchId, branchOptions)}</p>
+        </header>
 
-      <CalendarToolbar
-        view={state.view}
-        date={state.date}
-        onViewChange={state.setView}
-        onShift={state.shift}
-        onToday={state.goToday}
-        branchOptions={feed.scope === 'branch' ? branchOptions : []}
-        branchId={state.branchId}
-        onBranchChange={state.selectBranch}
-        selectedStatuses={state.selectedStatuses}
-        onToggleStatus={state.toggleStatus}
-      />
+        <CalendarToolbar
+          view={state.view}
+          date={state.date}
+          onViewChange={state.setView}
+          onShift={state.shift}
+          onToday={state.goToday}
+          branchOptions={feed.scope === 'branch' ? branchOptions : []}
+          branchId={state.branchId}
+          onBranchChange={state.selectBranch}
+          selectedStatuses={state.selectedStatuses}
+          onToggleStatus={state.toggleStatus}
+        />
+      </div>
 
       {hasCurrentError ? (
         // The newly chosen view, branch or filter failed; the toolbar stays
@@ -109,8 +111,8 @@ export function CalendarPage({ loginPath, boardBasePath }: CalendarPageProps) {
         // A different range is loading: the old one's days don't fit this view.
         <Skeleton className="h-[480px] w-full rounded-2xl" />
       ) : (
-        <div aria-busy={isStale} className={`flex w-full min-w-0 flex-col gap-4 ${fillClass} transition-opacity duration-fast ${isStale ? 'pointer-events-none opacity-60' : ''}`}>
-          {state.view !== 'day' && totalVisits === 0 ? (
+        <div aria-busy={isStale} className={`flex w-full min-w-0 flex-col gap-4 transition-opacity duration-fast ${isStale ? 'pointer-events-none opacity-60' : ''}`}>
+          {isEmptyRange ? (
             <div className="rounded-2xl border border-border bg-surface">
               <EmptyState
                 message={state.view === 'month' ? 'No visits this month.' : 'No visits this week.'}
@@ -129,9 +131,17 @@ export function CalendarPage({ loginPath, boardBasePath }: CalendarPageProps) {
               statuses={state.statuses}
               boardBasePath={boardBasePath}
               onOpenDay={state.openDay}
+              controlsRef={controlsRef}
+              remeasureKey={isEmptyRange}
             />
           ) : (
-            <DayAgenda feed={feed} branchId={state.branchId} statuses={state.statuses} boardBasePath={boardBasePath} />
+            <DayAgenda
+              feed={feed}
+              branchId={state.branchId}
+              statuses={state.statuses}
+              boardBasePath={boardBasePath}
+              controlsRef={controlsRef}
+            />
           )}
         </div>
       )}

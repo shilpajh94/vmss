@@ -7,6 +7,8 @@ interface PaginationProps {
   total: number
   onPrev: () => void
   onNext: () => void
+  /** Plural noun after the total, e.g. "workflows". */
+  itemLabel?: string
 }
 
 // Shared next/prev pagination control for any server-paged admin list.
@@ -14,7 +16,7 @@ interface PaginationProps {
 // admin list page renders the same control instead of each hand-rolling
 // its own - see design.md's "one shared pattern for paginated, server-
 // filtered list" goal. No page-size selector yet (design.md Non-Goals).
-export function Pagination({ page, pageSize, total, onPrev, onNext }: PaginationProps) {
+export function Pagination({ page, pageSize, total, onPrev, onNext, itemLabel = 'results' }: PaginationProps) {
   const start = total === 0 ? 0 : (page - 1) * pageSize + 1
   const end = Math.min(page * pageSize, total)
   const hasPrev = page > 1
@@ -23,7 +25,7 @@ export function Pagination({ page, pageSize, total, onPrev, onNext }: Pagination
   return (
     <div className="flex w-full flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
       <p className="font-body text-[13px] text-text-muted">
-        Showing {start}-{end} of {total} results
+        Showing {start}-{end} of {total} {itemLabel}
       </p>
 
       <div className="flex items-center gap-2">

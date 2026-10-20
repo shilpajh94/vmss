@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router'
-import { ChevronLeftIcon, ChevronRightIcon, PencilIcon, TrashIcon } from '../../../components/icons'
+import { PencilIcon, TrashIcon } from '../../../components/icons'
 import type { WorkflowGroup } from '../hooks/use-admin-workflows'
 import { responsiveTableClassName } from '../../../components/ui/responsive-table'
 
@@ -9,11 +9,6 @@ const TABLE_CLASS_NAME = responsiveTableClassName([3, 4])
 interface WorkflowListTableProps {
   workflows: WorkflowGroup[]
   pagedWorkflows: WorkflowGroup[]
-  page: number
-  pageSize: number
-  totalPages: number
-  onPreviousPage: () => void
-  onNextPage: () => void
   onDelete: (workflow: WorkflowGroup) => void
 }
 
@@ -22,18 +17,11 @@ const COLUMN_HEADERS = ['Workflow', 'Status', 'Approval Flow', 'Levels']
 export function WorkflowListTable({
   workflows,
   pagedWorkflows,
-  page,
-  pageSize,
-  totalPages,
-  onPreviousPage,
-  onNextPage,
   onDelete,
 }: WorkflowListTableProps) {
   const navigate = useNavigate()
 
   const total = workflows.length
-  const start = total === 0 ? 0 : (page - 1) * pageSize + 1
-  const end = Math.min(page * pageSize, total)
 
   return (
     <div className="flex w-full flex-col gap-6 rounded-2xl border border-border bg-surface p-4 md:p-6">
@@ -96,34 +84,6 @@ export function WorkflowListTable({
             ))}
           </tbody>
         </table>
-      </div>
-
-      <div className="flex w-full items-center justify-between border-t border-border pt-4">
-        <p className="font-body text-[13px] text-text-muted">
-          Showing {start}-{end} of {total} workflows
-        </p>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onPreviousPage}
-            disabled={page <= 1}
-            aria-label="Previous page"
-            className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3.5 py-2 font-body text-[13px] font-semibold text-text disabled:opacity-40"
-          >
-            <ChevronLeftIcon className="size-3.5" />
-            Previous
-          </button>
-          <button
-            type="button"
-            onClick={onNextPage}
-            disabled={page >= totalPages}
-            aria-label="Next page"
-            className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3.5 py-2 font-body text-[13px] font-semibold text-text disabled:opacity-40"
-          >
-            Next
-            <ChevronRightIcon className="size-3.5" />
-          </button>
-        </div>
       </div>
     </div>
   )

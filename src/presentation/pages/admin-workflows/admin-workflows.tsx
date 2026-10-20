@@ -5,6 +5,7 @@ import { EmptyState } from '../../components/ui/EmptyState'
 import { SelectField } from '../../components/ui/SelectField'
 import { PAGE_HEADER_GAP_CANCEL, PageContentLayout } from '../../components/PageContentLayout'
 import { AsyncRegion } from '../../components/AsyncRegion'
+import { Pagination } from '../../components/Pagination'
 import { Collapsible } from '../../components/ui/Collapsible'
 import { TableSkeleton } from '../../components/ui/Skeleton'
 import { PRESS_FEEDBACK_CLASS } from '../../components/ui/interactive'
@@ -19,7 +20,6 @@ export function AdminWorkflowsPage() {
     pagedWorkflows,
     page,
     pageSize,
-    totalPages,
     goToPreviousPage,
     goToNextPage,
     phase,
@@ -45,8 +45,27 @@ export function AdminWorkflowsPage() {
 
   const goToAddWorkflow = () => navigate('/admin/workflows/new')
 
+  // Pinned below the scrolling rows, not inside them, so it never scrolls
+  // out of view (responsive-layout "Paged List Pagination Stays Visible
+  // Below the Data").
+  const pagination =
+    phase === 'ready' && workflows.length > 0 ? (
+      <div className="flex-none">
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={workflows.length}
+          onPrev={goToPreviousPage}
+          onNext={goToNextPage}
+          itemLabel="workflows"
+        />
+      </div>
+    ) : undefined
+
   return (
     <PageContentLayout
+      fitBody={workflows.length > 0}
+      footer={pagination}
       header={
         <>
           <div className="flex w-full flex-wrap items-center justify-between gap-3">
@@ -125,11 +144,6 @@ export function AdminWorkflowsPage() {
         <WorkflowListTable
           workflows={workflows}
           pagedWorkflows={pagedWorkflows}
-          page={page}
-          pageSize={pageSize}
-          totalPages={totalPages}
-          onPreviousPage={goToPreviousPage}
-          onNextPage={goToNextPage}
           onDelete={requestDelete}
         />
       </AsyncRegion>

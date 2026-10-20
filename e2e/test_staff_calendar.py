@@ -37,14 +37,27 @@ def _query(page: Page) -> dict[str, list[str]]:
 
 def _scroll_day_until(page: Page, locator) -> None:
     """Today fills up with other runs' 10:00 visits, so a visit this test
-    just created may be past Day view's first page of 20: scroll the page
-    until it loads."""
+    just created may be past Day view's first page of 20: scroll until it
+    loads."""
     expect(page.locator("main ul li").first).to_be_visible()
     for _ in range(20):
         if locator.count():
             return
-        page.evaluate("document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight")
+        _scroll_day_to_end(page)
         page.wait_for_timeout(400)
+
+
+# Day view scrolls inside its card from `lg` up and with the page below it
+# (staff-calendar "Day view scrolls its timeline inside its own panel").
+SCROLL_DAY_TO_END = """() => {
+  for (const el of [document.querySelector('main'), document.querySelector('main [data-day-body]')]) {
+    if (el) el.scrollTop = el.scrollHeight
+  }
+}"""
+
+
+def _scroll_day_to_end(page: Page) -> None:
+    page.evaluate(SCROLL_DAY_TO_END)
 
 
 def _period_title(page: Page):
@@ -337,7 +350,7 @@ def test_day_view_pages_by_twenty(as_role, api) -> None:
     page.goto(f"/staff/calendar?view=day&date={BUSY_DAY}")
     items = page.locator("main ul li")
     expect(items).to_have_count(20)
-    page.evaluate("document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight")
+    _scroll_day_to_end(page)
     expect(items).to_have_count(min(40, total))
     expect(page.get_by_text(f"Showing {min(40, total)} of {total}")).to_be_visible()
 
@@ -443,7 +456,8 @@ def test_unloaded_hours_sit_below_the_progress_row(as_role, api) -> None:
     page.goto(WEEK_URL)
     monday = _column(page, BUSY_DAY)
     loaded = _settled_count(monday)
-    progress = monday.get_by_text(f"Showing {loaded} of {total}")
+    expect(monday.get_by_text(f"Showing {loaded} of {total}")).to_be_attached()
+    progress = monday.locator("[data-load-frontier]")
     expect(progress).to_be_attached()
     last_working_hour = _hour_section(monday, "6:00 PM")
     assert progress.evaluate("el => el.getBoundingClientRect().top") < last_working_hour.evaluate(
@@ -496,3 +510,65 @@ def test_week_board_leaves_the_page_gap_without_scrolling_the_page(as_role) -> N
     )
     assert result == {"overflow": 0, "gap": 32}, result
     expect(page.get_by_role("heading", level=1, name="Calendar")).to_be_in_viewport(ratio=1)
+
+
+# --- fix-paging-footers-and-calendar-day-scroll ---------------------------------
+
+
+def test_day_view_scrolls_inside_its_card(as_role, api) -> None:
+    """staff-calendar "Day view scrolls its timeline inside its own panel"."""
+    total = _day_total(api, BUSY_DAY)
+    page = as_role("reception")
+    page.goto(f"/staff/calendar?view=day&date={BUSY_DAY}")
+    expect(page.locator("main ul li")).to_have_count(20)
+    assert page.evaluate("(() => { const m = document.querySelector('main'); return m.scrollHeight - m.clientHeight })()") == 0
+    body = page.locator("main [data-day-body]")
+    body.evaluate("el => { el.scrollTop = el.scrollHeight }")
+    expect(page.locator("main ul li")).to_have_count(min(40, total))
+    expect(page.get_by_role("heading", level=1, name="Calendar")).to_be_in_viewport(ratio=1)
+    expect(_period_title(page)).to_be_in_viewport(ratio=1)
+    status = page.locator("main [role=status]", has_text=f"Showing {min(40, total)} of {total}")
+    expect(status).to_be_in_viewport(ratio=1)
+    assert page.evaluate("document.querySelector('main').scrollTop") == 0
+
+
+def test_phone_day_view_scrolls_with_the_page(as_role) -> None:
+    page = as_role("reception")
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(f"/staff/calendar?view=day&date={BUSY_DAY}")
+    expect(page.locator("main ul li")).to_have_count(20)
+    assert page.evaluate("(() => { const m = document.querySelector('main'); return m.scrollHeight - m.clientHeight })()") > 0
+
+
+def test_week_column_status_is_in_view_without_scrolling(as_role, api) -> None:
+    """staff-calendar "Each day's paging status stays visible"."""
+    total = _day_total(api, BUSY_DAY)
+    page = as_role("reception")
+    page.goto(WEEK_URL)
+    monday = _column(page, BUSY_DAY)
+    loaded = _settled_count(monday)
+    assert monday.locator("div.overflow-y-auto").first.evaluate("el => el.scrollTop") == 0
+    expect(monday.get_by_text(f"Showing {loaded} of {total}")).to_be_in_viewport(ratio=1)
+    expect(_column(page, QUIET_DAY).get_by_text(re.compile(r"^(Showing \d+ of|All \d+ visit)"))).to_have_count(
+        0 if _day_total(api, QUIET_DAY) == 0 else 1
+    )
+
+
+@pytest.mark.parametrize(("width", "height"), [(1280, 720), (1366, 768)])
+def test_week_board_fits_a_laptop_window(as_role, width: int, height: int) -> None:
+    """staff-calendar "Week board fits short desktop windows"."""
+    page = as_role("reception")
+    page.set_viewport_size({"width": width, "height": height})
+    page.goto(WEEK_URL)
+    expect(_column(page, BUSY_DAY).locator("li").first).to_be_attached()
+    result = page.evaluate(
+        """() => {
+            const main = document.querySelector('main')
+            const board = main.querySelector('div.snap-x')
+            return {
+              overflow: main.scrollHeight - main.clientHeight,
+              inside: board.getBoundingClientRect().bottom <= window.innerHeight,
+            }
+        }"""
+    )
+    assert result == {"overflow": 0, "inside": True}, result

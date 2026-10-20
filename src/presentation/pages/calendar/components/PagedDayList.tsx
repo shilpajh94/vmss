@@ -20,10 +20,12 @@ interface PagedDayListProps {
 }
 
 // One day's loaded visits on the working-hours timeline under sticky hour
-// headings, with a sentinel right after the last loaded visit that loads the
-// next page as it nears the scroll area, and a row for progress / loading /
-// retry (staff-calendar "Month, week and day views with a working-hours
-// timeline").
+// headings, with a frontier row right after the last loaded visit: its
+// sentinel loads the next page as it nears the scroll area, and it shows
+// "Loading more…" while that page loads (staff-calendar "Month, week and day
+// views with a working-hours timeline"). The count and Retry are not part of
+// the scrolled list: the parent pins DayListStatus below it (staff-calendar
+// "Each day's paging status stays visible").
 export function PagedDayList({
   events,
   total,
@@ -56,10 +58,14 @@ export function PagedDayList({
   }, [canLoad, scrollRootRef, events.length])
 
   const progress = (
-    <>
+    <div data-load-frontier className="flex flex-col">
       <div ref={sentinelRef} aria-hidden className="h-px" />
-      <DayListFooter loaded={events.length} total={total} status={status} onRetry={onLoadMore} />
-    </>
+      {status === 'loading' ? (
+        <p role="status" className="px-2 py-3 text-center font-body text-xs text-text-muted">
+          Loading more…
+        </p>
+      ) : null}
+    </div>
   )
 
   return (
@@ -110,23 +116,31 @@ export function PagedDayList({
           </section>
         )
       })}
-      {complete && total > 0 ? <DayListFooter loaded={events.length} total={total} status={status} onRetry={onLoadMore} /> : null}
     </div>
   )
 }
 
-function DayListFooter({ loaded, total, status, onRetry }: { loaded: number; total: number; status: DayPagesStatus; onRetry: () => void }) {
+interface DayListStatusProps {
+  loaded: number
+  total: number
+  status: DayPagesStatus
+  onRetry: () => void
+}
+
+// The day's paging status for the fixed footer under a Week column or the
+// Day card: how many of the day's visits are loaded, and Retry after a
+// failed page. The parent hides it on an empty day.
+export function DayListStatus({ loaded, total, status, onRetry }: DayListStatusProps) {
   return (
-    <div role="status" className="flex flex-col items-center gap-1.5 px-2 py-3 font-body text-xs text-text-muted">
-      {status === 'loading' ? <span>Loading more…</span> : null}
+    <div role="status" className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-2 py-2 font-body text-xs text-text-muted">
+      <span className="tabular-nums">
+        {loaded >= total ? `All ${total} ${total === 1 ? 'visit' : 'visits'}` : `Showing ${loaded} of ${total}`}
+      </span>
       {status === 'error' ? (
         <button type="button" onClick={onRetry} className="rounded-md border border-border bg-surface px-3 py-1 font-semibold text-text hover:bg-border-subtle">
           Couldn't load more · Retry
         </button>
       ) : null}
-      <span className="tabular-nums">
-        {loaded >= total ? `All ${total} ${total === 1 ? 'visit' : 'visits'}` : `Showing ${loaded} of ${total}`}
-      </span>
     </div>
   )
 }

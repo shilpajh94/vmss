@@ -4,7 +4,9 @@ staff and admin route at each supported width, light and dark — no
 horizontal page scroll, no main content wider than main (it clips, so that
 content would be unreachable), a one-row top bar, and (change
 fix-page-bottom-gap-and-full-day-calendar) the page padding left below the
-last element when main is scrolled to the end. Slow (~620 page loads):
+last element when main is scrolled to the end; (change
+fix-paging-footers-and-calendar-day-scroll) paged lists keep their
+pagination in view. The route sweep is slow (~620 page loads):
 run with the full e2e pass or for any layout change."""
 
 import json
@@ -74,9 +76,51 @@ def test_every_route_fits(as_role, width: int, theme: str) -> None:
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(250)
         result = page.evaluate(MEASURE)
-        # The week board fills the page without scrolling it on desktop.
-        week_scrolls = "view=week" in route and width >= 1280 and result["mainScroll"] > 0
+        # The week board and the day card fill the page without scrolling it
+        # from `lg` up (fix-paging-footers-and-calendar-day-scroll).
+        fills = "view=week" in route or "view=day" in route
+        week_scrolls = fills and width >= 1024 and result["mainScroll"] > 0
         gap_short = result["endGap"] is not None and result["endGap"] < result["padding"] - 1
         if result["document"] > 0 or result["main"] > 0 or result["header"] > 72 or week_scrolls or gap_short:
             failures.append(f"{route}: {result}")
     assert not failures, f"{width}px {theme}:\n" + "\n".join(failures)
+
+
+PAGED_LISTS = [
+    "/admin/branches", "/admin/buildings", "/admin/floors", "/admin/departments", "/admin/roles",
+    "/admin/host-employees", "/admin/visitor-categories", "/admin/kiosks", "/admin/workflows",
+    "/admin/audit-trail",
+]
+
+PAGINATION = """() => {
+  const main = document.querySelector('main')
+  const text = [...main.querySelectorAll('p')].find(p => /^Showing \\d+-\\d+ of \\d+/.test(p.textContent || ''))
+  if (!text) return null
+  const inView = el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= window.innerHeight }
+  return {
+    mainScroll: main.scrollHeight - main.clientHeight,
+    text: inView(text),
+    prev: inView(main.querySelector('[aria-label="Previous page"]')),
+    next: inView(main.querySelector('[aria-label="Next page"]')),
+  }
+}"""
+
+
+@pytest.mark.parametrize(("width", "height"), [(1280, 720), (1440, 900)])
+def test_paged_list_pagination_stays_visible(as_role, width: int, height: int) -> None:
+    """responsive-layout "Paged List Pagination Stays Visible Below the Data":
+    on every paged list that has rows, the pagination is in the window and
+    the page itself doesn't scroll."""
+    page = as_role("admin")
+    page.set_viewport_size({"width": width, "height": height})
+    failures: list[str] = []
+    for route in PAGED_LISTS:
+        page.goto(route)
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(250)
+        result = page.evaluate(PAGINATION)
+        if result is None:  # an empty list has no pagination
+            continue
+        if result != {"mainScroll": 0, "text": True, "prev": True, "next": True}:
+            failures.append(f"{route}: {result}")
+    assert not failures, f"{width}x{height}:\n" + "\n".join(failures)
