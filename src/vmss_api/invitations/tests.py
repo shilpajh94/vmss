@@ -5660,7 +5660,7 @@ async def _assert_url_images_and_fetch_qr(
     assert detail["Inline"] == []
     assert "cid:" not in detail["HTML"]
     srcs = _image_srcs(detail["HTML"])
-    assert f"{_MAILPIT_ASSET_BASE}/api/v1/public/email-assets/visimio-logo.png" in srcs
+    assert f"{_MAILPIT_ASSET_BASE}/api/v1/public/email-assets/guestify-logo.png" in srcs
     [qr_src] = [src for src in srcs if "/qr/" in src]
     assert qr_src.startswith(f"{_MAILPIT_ASSET_BASE}/api/v1/public/email-assets/")
     qr_response = await client.get(qr_src.removeprefix(_MAILPIT_ASSET_BASE))
@@ -5722,7 +5722,7 @@ async def test_send_approval_notification_delivers_email_with_qr_via_mailpit(
     async with AsyncClient() as mailpit:
         detail = await _find_mailpit_message(mailpit, tracking_id, recipient)
     assert detail["Subject"] == "Your visit is confirmed"
-    assert detail["From"]["Name"] == "Visimio"
+    assert detail["From"]["Name"] == "Guestify"
     assert "Your check-in pass" in detail["HTML"]
     for expected in ("Your point of contact", "Priya Nair", "Tower A", "Engineering"):
         assert expected in detail["HTML"], expected
@@ -5768,7 +5768,7 @@ async def test_send_approval_notification_without_asset_base_embeds_only_the_qr(
         detail = await _find_mailpit_message(mailpit, tracking_id, recipient)
         assert detail["Attachments"] == []
         assert [part["ContentID"] for part in detail["Inline"]] == ["visit-qr@vmss"]
-        assert "visimio-logo@vmss" not in detail["HTML"]
+        assert "guestify-logo@vmss" not in detail["HTML"]
         assert 'src="cid:visit-qr@vmss"' in detail["HTML"]
         inline_response = await mailpit.get(
             f"{_MAILPIT_BASE_URL}/message/{detail['ID']}/part/{detail['Inline'][0]['PartID']}"

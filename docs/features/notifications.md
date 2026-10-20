@@ -154,21 +154,25 @@ emails dispatched by `invitations/tasks.py`, the verification-code email
 sent through `core/emailing.py::build_message`.
 
 **Layout** (`base.html`, restyled by
-`refine-email-templates-and-visimio-brand`):
-- a navy (`#0f172a`) header showing the tenant logo, else the Visimio
-  logo image, else (no asset base URL configured) a styled "Visimio" text
-  wordmark;
+`refine-email-templates-and-visimio-brand`, rebranded by
+`rebrand-to-guestify`):
+- a navy (`#0f172a`) header showing the tenant logo, else the Guestify
+  logo image, else (no asset base URL configured) a styled "Guestify" text
+  wordmark ("Gu" teal, "estify" white);
 - a cyan accent rule;
 - a white card with the tone-coloured status pill (when the type has one),
   the heading, the greeting (the OTP email has none), and the per-type
   sections;
-- a footer reading "Sent by {company or Visimio}", the no-reply line,
-  "Powered by Visimio", and "© {year} Visimio. All rights reserved.".
+- a footer reading "Sent by {company or Guestify}", the no-reply line,
+  "Powered by Guestify", and "© {year} Guestify. All rights reserved.".
 
-The Visimio logo is `core/email_assets/visimio-logo-on-dark.png`, generated
-by `scripts/build_brand_assets.py`, and served publicly (see "Images load
-by URL" below). The From header carries the display name `SMTP_FROM_NAME` (default
-"Visimio").
+The product name comes from `core/config.py::BRAND_NAME`, injected into
+every template as `brand_name`. The Guestify logo is
+`core/email_assets/guestify-logo-on-dark.png`, rendered by
+`scripts/build_brand_assets.py` from the SVG masters in `brand/` (see
+`brand/README.md`; never hand-edit the PNG), and served publicly (see
+"Images load by URL" below). The From header carries the display name
+`SMTP_FROM_NAME` (default `BRAND_NAME`, "Guestify").
 
 The layout is table-based with inline styles, 600px wide, and fluid below
 that. One `<style>` block carries only the ≤620px media query and the
@@ -241,9 +245,12 @@ A candidate whose name fails `display_name` is skipped, not shown.
 with `EMAIL_ASSET_BASE_URL` set, every image is an absolute `<img src>`
 and the delivered message is just `multipart/alternative` (text + HTML) —
 no attachment and no inline part, so no client shows an attachment strip.
-- Logo: `GET /api/v1/public/email-assets/visimio-logo.png`
+- Logo: `GET /api/v1/public/email-assets/guestify-logo.png`
   (`core/email_assets_router.py`, `Cache-Control: public, max-age=31536000,
-  immutable`; rename the file to bust caches).
+  immutable`; rename the file to bust caches). The pre-rebrand
+  `visimio-logo.png` URL still answers 200 with the Guestify image
+  (`RETIRED_LOGO_FILENAMES`, hidden from the OpenAPI schema), so emails sent
+  before the rename never show a broken image.
 - Check-in QR: `GET /api/v1/public/email-assets/{tenantId}/qr/{invitationId}.png?exp=&sig=`
   (`invitations/email_assets_router.py`). `sig` is an HMAC-SHA256 over
   `qr:{tenant}:{invitation}:{exp}` (`core/email_assets.py`); `exp` is the
@@ -299,7 +306,7 @@ set, eight emails carry one call-to-action button, plus the same URL as a
 
 **Previewing:** `ddev exec uv run python scripts/send_email_previews.py`
 sends all ten templates, with full sample data and `[Preview]` subjects,
-to `preview@visimio.local` in Mailpit (`ddev mailpit`). The QR previews
+to `preview@guestify.local` in Mailpit (`ddev mailpit`). The QR previews
 use a real signed URL for the tenant's latest invitation with an issued
 QR, or the inline fallback otherwise. `--to` and `--tenant-slug` override
 the defaults. Mailpit's HTML Check tab shows the per-client support

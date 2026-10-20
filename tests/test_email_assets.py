@@ -40,7 +40,7 @@ def _split(url: str) -> tuple[str, int, str]:
 
 
 def test_logo_url_is_absolute_under_the_base(_base_url) -> None:
-    assert email_assets.logo_url() == f"{_BASE}/api/v1/public/email-assets/visimio-logo.png"
+    assert email_assets.logo_url() == f"{_BASE}/api/v1/public/email-assets/guestify-logo.png"
 
 
 def test_urls_are_none_without_a_base(monkeypatch) -> None:
@@ -51,7 +51,7 @@ def test_urls_are_none_without_a_base(monkeypatch) -> None:
 
 def test_trailing_slash_on_base_is_ignored(monkeypatch) -> None:
     monkeypatch.setattr(settings, "email_asset_base_url", f"{_BASE}/")
-    assert email_assets.logo_url() == f"{_BASE}/api/v1/public/email-assets/visimio-logo.png"
+    assert email_assets.logo_url() == f"{_BASE}/api/v1/public/email-assets/guestify-logo.png"
 
 
 def test_signed_qr_url_verifies_and_expires_seven_days_after_the_visit(_base_url) -> None:
@@ -122,12 +122,22 @@ def _relative(url: str | None) -> str:
 
 
 async def test_logo_route_serves_png_with_immutable_caching(client: AsyncClient) -> None:
-    response = await client.get("/api/v1/public/email-assets/visimio-logo.png")
+    response = await client.get("/api/v1/public/email-assets/guestify-logo.png")
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
     assert response.content.startswith(b"\x89PNG")
     assert "immutable" in response.headers["cache-control"]
+
+
+async def test_retired_visimio_logo_url_serves_the_guestify_logo(client: AsyncClient) -> None:
+    current = await client.get("/api/v1/public/email-assets/guestify-logo.png")
+    retired = await client.get("/api/v1/public/email-assets/visimio-logo.png")
+
+    assert retired.status_code == 200
+    assert retired.headers["content-type"] == "image/png"
+    assert "immutable" in retired.headers["cache-control"]
+    assert retired.content == current.content
 
 
 async def test_qr_route_serves_the_persisted_token_png(
@@ -303,9 +313,10 @@ def test_email_asset_routes_are_documented_under_their_tag() -> None:
     schema = app.openapi()
     paths = schema["paths"]
     for path in (
-        "/api/v1/public/email-assets/visimio-logo.png",
+        "/api/v1/public/email-assets/guestify-logo.png",
         "/api/v1/public/email-assets/{tenant_id}/qr/{invitation_id}.png",
     ):
         assert paths[path]["get"]["tags"] == ["email-assets"]
+    assert "/api/v1/public/email-assets/visimio-logo.png" not in paths
     tags = {tag["name"]: tag.get("description") for tag in schema.get("tags", [])}
     assert tags.get("email-assets")

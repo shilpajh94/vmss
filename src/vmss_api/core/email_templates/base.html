@@ -31,13 +31,13 @@
         <tr>
           <td class="vp-pad" style="background-color:#0f172a; padding:22px 36px; border-radius:12px 12px 0 0;">
             {% if logo_url %}
-              <img src="{{ logo_url }}" alt="{{ company_name | default('Visimio', true) }}" height="32" style="display:block; height:32px; width:auto; border:0; outline:none;">
+              <img src="{{ logo_url }}" alt="{{ company_name | default(brand_name, true) }}" height="32" style="display:block; height:32px; width:auto; border:0; outline:none;">
             {% elif logo_src %}
-              <img src="{{ logo_src }}" alt="Visimio" width="150" height="32" style="display:block; width:150px; height:32px; border:0; outline:none; color:#ffffff; font-family:'Outfit','Segoe UI',Arial,sans-serif; font-size:20px; font-weight:800;">
+              <img src="{{ logo_src }}" alt="{{ brand_name }}" width="100" height="32" style="display:block; width:100px; height:32px; border:0; outline:none; color:#ffffff; font-family:'Outfit','Segoe UI',Arial,sans-serif; font-size:20px; font-weight:800;">
             {% else %}
               {# No public asset URL configured: a text wordmark rather than an
                  inline image part, so the message still carries no attachment. #}
-              <span style="display:block; font-family:'Outfit','Segoe UI',Arial,sans-serif; font-size:24px; line-height:32px; font-weight:800; letter-spacing:-0.3px; color:#ffffff;">Visi<span style="color:#22d3ee;">mio</span></span>
+              <span style="display:block; font-family:'Outfit','Segoe UI',Arial,sans-serif; font-size:24px; line-height:32px; font-weight:800; letter-spacing:-0.3px; color:#ffffff;"><span style="color:#14b8c4;">Gu</span>estify</span>
             {% endif %}
           </td>
         </tr>
@@ -67,10 +67,10 @@
         </tr>
         <tr>
           <td class="vp-pad" style="background-color:#f8fafc; border-top:1px solid #e2e8f0; padding:24px 36px; font-family:'Geist','Segoe UI',Arial,sans-serif; font-size:12px; line-height:18px; color:#64748b; border-radius:0 0 12px 12px;">
-            <p style="margin:0 0 6px 0;">Sent by {{ company_name | default('Visimio', true) }}.</p>
+            <p style="margin:0 0 6px 0;">Sent by {{ company_name | default(brand_name, true) }}.</p>
             <p style="margin:0 0 16px 0;">This is an automated message &mdash; please don't reply to this email.</p>
-            <p style="margin:0; font-size:10px; line-height:14px; letter-spacing:0.8px; text-transform:uppercase; color:#94a3b8;">Powered by <span style="font-weight:700; color:#0b7a74;">Visimio</span></p>
-            <p style="margin:6px 0 0 0; font-size:11px; line-height:14px; color:#94a3b8;">&copy; {{ current_year }} Visimio. All rights reserved.</p>
+            <p style="margin:0; font-size:10px; line-height:14px; letter-spacing:0.8px; text-transform:uppercase; color:#94a3b8;">Powered by <span style="font-weight:700; color:#0b7a74;">{{ brand_name }}</span></p>
+            <p style="margin:6px 0 0 0; font-size:11px; line-height:14px; color:#94a3b8;">&copy; {{ current_year }} {{ brand_name }}. All rights reserved.</p>
           </td>
         </tr>
       </table>

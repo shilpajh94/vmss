@@ -43,6 +43,8 @@ TEMPLATES = (
     "poc_assigned",
     "verification_code",
     "daily_snapshot",
+    "approval_reverted",
+    "staff_lifecycle_update",
 )
 
 SAMPLE_CONTEXT: dict[str, Any] = {
@@ -166,7 +168,7 @@ async def send_previews(to: str, tenant_slug: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--to", default="preview@visimio.local")
+    parser.add_argument("--to", default="preview@guestify.local")
     parser.add_argument("--tenant-slug", default=settings.default_tenant_slug)
     args = parser.parse_args()
     asyncio.run(send_previews(args.to, args.tenant_slug))

@@ -1,4 +1,4 @@
-"""Absolute URLs for the images emails show — the Visimio header logo and
+"""Absolute URLs for the images emails show — the Guestify header logo and
 the signed check-in QR (serve-email-images-by-url-and-complete-contact
 design.md Decisions 2–3). Referencing images by URL instead of `cid:`
 parts is what keeps a delivered email free of any attachment strip.
@@ -18,7 +18,10 @@ from urllib.parse import urlencode
 from vmss_api.core.config import settings
 
 EMAIL_ASSETS_PATH = "/api/v1/public/email-assets"
-LOGO_FILENAME = "visimio-logo.png"
+LOGO_FILENAME = "guestify-logo.png"
+# The pre-rebrand logo URL, still served (with the new image) so emails
+# already in inboxes never show a broken image (rebrand-to-guestify).
+RETIRED_LOGO_FILENAMES = ("visimio-logo.png",)
 # How long after the visit window closes the pass stays viewable.
 QR_URL_GRACE = timedelta(days=7)
 _SIGNATURE_LENGTH = 32

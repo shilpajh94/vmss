@@ -13,13 +13,13 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
-from vmss_api.core.email_assets import LOGO_FILENAME
+from vmss_api.core.email_assets import LOGO_FILENAME, RETIRED_LOGO_FILENAMES
 
 router = APIRouter(prefix="/public/email-assets", tags=["email-assets"])
 
 # Versioned by content, not URL: replacing the file means renaming
 # `LOGO_FILENAME`, which is what busts an `immutable` cache.
-_LOGO_PATH = Path(__file__).parent / "email_assets" / "visimio-logo-on-dark.png"
+_LOGO_PATH = Path(__file__).parent / "email_assets" / "guestify-logo-on-dark.png"
 
 
 @router.get(f"/{LOGO_FILENAME}", response_class=FileResponse)
@@ -28,4 +28,18 @@ async def get_email_logo() -> FileResponse:
         _LOGO_PATH,
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+# Retired logo URLs serve the current logo rather than 404, since sent
+# emails still point at them. Clients that cached the old bytes under the
+# `immutable` promise keep them; that's accepted (rebrand-to-guestify
+# design.md Decision 5). Not a redirect: some image proxies won't follow one.
+for _retired in RETIRED_LOGO_FILENAMES:
+    router.add_api_route(
+        f"/{_retired}",
+        get_email_logo,
+        methods=["GET"],
+        response_class=FileResponse,
+        include_in_schema=False,
     )

@@ -182,7 +182,7 @@ _TAGS_METADATA = [
     {
         "name": "email-assets",
         "description": (
-            "Public images that emails load by URL: the Visimio header logo "
+            "Public images that emails load by URL: the Guestify header logo "
             "and each approved visit's HMAC-signed, expiring check-in QR."
         ),
     },
