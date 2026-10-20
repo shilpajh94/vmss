@@ -208,11 +208,21 @@ Below 1024px viewport width, every staff, reception, and admin shell SHALL hide 
 - **THEN** the drawer and backdrop disappear and the sidebar renders docked, as on desktop
 
 ### Requirement: Top bar compacts on small screens
-Below 768px viewport width, the top bar SHALL keep the menu button, the page's breadcrumb or title, which truncates with an ellipsis, and the notification bell and user menu. It SHALL hide the page description text and the top-bar clock, and the refresh control SHALL remain as an icon button. The top bar SHALL NOT wrap to more than one line.
+Below 768px viewport width, the top bar SHALL keep:
+- the menu button;
+- the page's breadcrumb or title, which truncates with an ellipsis;
+- the theme control;
+- the notification bell and user menu.
+
+It SHALL hide the page description text and the top-bar clock. The refresh
+control and the theme control SHALL remain as icon buttons. The top bar
+SHALL NOT wrap to more than one line.
 
 #### Scenario: Top bar at phone width
 - **WHEN** any staff or admin page is viewed at 360px wide
-- **THEN** the top bar is a single row with the menu button, a truncated title, and the bell/user controls, and nothing overflows its right edge
+- **THEN** the top bar is a single row with the menu button, a truncated
+  title, and the theme, bell and user controls, and nothing overflows its
+  right edge
 
 ### Requirement: The reception dashboard uses the shared responsive shell
 The Reception Dashboard SHALL render inside the same shell as the other staff pages, so that it gets the same drawer navigation, fixed top bar, and content-only scrolling behavior. Its content, data, and role gate SHALL be unchanged.
@@ -377,3 +387,81 @@ the clock SHALL be hidden (see "Top bar compacts on small screens").
 - **WHEN** a page is viewed at 360px wide
 - **THEN** no clock is shown, and the top bar stays one row without
   overflowing
+
+### Requirement: Staff and admin pages fit every supported device width
+Every staff and admin page SHALL lay out without clipped or overflowing
+content at each supported viewport width, in both the light and dark
+themes. The supported widths are 320, 360, 390, 414, 768, 820, 1024, 1280,
+1440 and 1920px.
+
+At every supported width:
+- the document SHALL have no horizontal scrollbar;
+- the main content area SHALL NOT be wider than its visible width, so
+  nothing is hidden by its overflow clipping;
+- the top bar SHALL stay a single row.
+
+Wide content (tables, the week board, the invitation board) SHALL scroll
+inside its own container instead. Controls in a row (filters, actions,
+setting toggles) SHALL wrap or stack rather than push past the edge.
+
+#### Scenario: Organisation configs on a phone
+- **WHEN** `/admin/organisation-configs` is viewed at 320px
+- **THEN** each setting's title, description and toggle fit within the
+  screen, with the toggle wrapping below the text if needed, and nothing is
+  clipped
+
+#### Scenario: Audit trail on a phone
+- **WHEN** `/admin/audit-trail` is viewed at 390px
+- **THEN** the activity filter, the CSV/PDF download buttons and the
+  result rows fit within the screen or scroll inside their own container,
+  and nothing is clipped
+
+#### Scenario: Device matrix
+- **WHEN** every staff and admin route is opened at each supported width
+  in both themes
+- **THEN** none shows a horizontal page scrollbar, clipped main content,
+  or a wrapped top bar
+
+### Requirement: Page content keeps a bottom gap
+Every staff and admin page SHALL leave a gap below its last element equal
+to the page's own content padding at that width: 16px below 768px, 24px
+from 768px and 32px from 1024px.
+
+- When the page is taller than the content region and scrolls, the gap
+  SHALL appear after the last element once the region is scrolled to the
+  end. The last element SHALL NOT touch the region's bottom edge.
+- A layout that fills the content region's height (a fixed header with a
+  scrolling data region, or the calendar week board) SHALL end the same
+  gap above the region's bottom edge. It SHALL NOT make the content
+  region scroll, so the page heading stays in view.
+
+This SHALL hold at every supported device width, in both themes.
+
+#### Scenario: Long page scrolled to the end
+- **WHEN** a page taller than the screen is scrolled to the bottom at
+  1440px
+- **THEN** there is 32px of empty space between the last card's bottom
+  edge and the bottom of the content region
+
+#### Scenario: Long page on a phone
+- **WHEN** the same page is scrolled to the bottom at 390px
+- **THEN** there is 16px of empty space below the last card
+
+#### Scenario: Calendar week board fits without scrolling the page
+- **WHEN** `/staff/calendar?view=week` is open at 1920×1080 with a day of
+  181 visits
+- **THEN** the week board ends 32px above the bottom of the content
+  region, the content region itself does not scroll, and the "Calendar"
+  heading is fully visible
+
+#### Scenario: Fixed-header list page
+- **WHEN** a page with a fixed heading and a scrolling data region is
+  open at 1280px
+- **THEN** the data region ends 32px above the bottom of the content
+  region and the content region itself does not scroll
+
+#### Scenario: Device matrix checks the bottom gap
+- **WHEN** every staff and admin route is opened at each supported width
+  in both themes and its content region is scrolled to the end
+- **THEN** none shows its last element closer to the bottom edge than the
+  page padding for that width
