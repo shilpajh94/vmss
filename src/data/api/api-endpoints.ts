@@ -71,6 +71,13 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  // Same prefill as above, keyed on phone (backend strips it to digits, so
+  // any formatting matches; needs >= 7 digits or it 422s).
+  LOOKUP_STAFF_VISITOR_BY_PHONE: {
+    endpoint: "/invitations/lookup-by-phone",
+    method: "GET",
+    hasToken: true,
+  },
   APPROVE_INVITATION: {
     endpoint: "/invitations/:id/approve",
     method: "POST",

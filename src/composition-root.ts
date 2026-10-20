@@ -28,6 +28,7 @@ import type { FormBuilderRepository } from './data/repositories/form-builder-rep
 import { SubmitVisitRequestUseCase } from './data/use-cases/submit-visit-request'
 import { SubmitStaffVisitRequestUseCase } from './data/use-cases/submit-staff-visit-request'
 import { LookupStaffVisitorByEmailUseCase } from './data/use-cases/lookup-staff-visitor-by-email'
+import { LookupStaffVisitorByPhoneUseCase } from './data/use-cases/lookup-staff-visitor-by-phone'
 import { GetAuditTrailUseCase } from './data/use-cases/get-audit-trail'
 import { RequestAuditReportUseCase } from './data/use-cases/request-audit-report'
 import { GetAuditReportUseCase } from './data/use-cases/get-audit-report'
@@ -190,6 +191,7 @@ export interface AppDependencies {
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
   lookupStaffVisitorByEmailUseCase: LookupStaffVisitorByEmailUseCase
+  lookupStaffVisitorByPhoneUseCase: LookupStaffVisitorByPhoneUseCase
   getAuditTrailUseCase: GetAuditTrailUseCase
   requestAuditReportUseCase: RequestAuditReportUseCase
   getAuditReportUseCase: GetAuditReportUseCase
@@ -316,6 +318,7 @@ export function createApp(): AppDependencies {
   let submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase | undefined
   let staffVisitorLookupRepository: StaffVisitorLookupRepository | undefined
   let lookupStaffVisitorByEmailUseCase: LookupStaffVisitorByEmailUseCase | undefined
+  let lookupStaffVisitorByPhoneUseCase: LookupStaffVisitorByPhoneUseCase | undefined
   let auditTrailRepository: AuditTrailRepository | undefined
   let getAuditTrailUseCase: GetAuditTrailUseCase | undefined
   let requestAuditReportUseCase: RequestAuditReportUseCase | undefined
@@ -587,6 +590,11 @@ export function createApp(): AppDependencies {
   const resolveLookupStaffVisitorByEmailUseCase = (): LookupStaffVisitorByEmailUseCase => {
     lookupStaffVisitorByEmailUseCase ??= new LookupStaffVisitorByEmailUseCase(resolveStaffVisitorLookupRepository())
     return lookupStaffVisitorByEmailUseCase
+  }
+
+  const resolveLookupStaffVisitorByPhoneUseCase = (): LookupStaffVisitorByPhoneUseCase => {
+    lookupStaffVisitorByPhoneUseCase ??= new LookupStaffVisitorByPhoneUseCase(resolveStaffVisitorLookupRepository())
+    return lookupStaffVisitorByPhoneUseCase
   }
 
   const resolveAuditTrailRepository = (): AuditTrailRepository => {
@@ -1196,6 +1204,9 @@ export function createApp(): AppDependencies {
     },
     get lookupStaffVisitorByEmailUseCase() {
       return resolveLookupStaffVisitorByEmailUseCase()
+    },
+    get lookupStaffVisitorByPhoneUseCase() {
+      return resolveLookupStaffVisitorByPhoneUseCase()
     },
     get getAuditTrailUseCase() {
       return resolveGetAuditTrailUseCase()

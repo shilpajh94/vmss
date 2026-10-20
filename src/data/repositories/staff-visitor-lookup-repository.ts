@@ -2,4 +2,5 @@ import type { StaffVisitorLookup } from '../../domain/entities/staff-visitor-loo
 
 export interface StaffVisitorLookupRepository {
   lookupByEmail(email: string): Promise<StaffVisitorLookup | null>
+  lookupByPhone(phone: string): Promise<StaffVisitorLookup | null>
 }
