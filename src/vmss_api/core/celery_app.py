@@ -36,6 +36,12 @@ celery_app.conf.task_routes = {
     "vmss_api.invitations.tasks.sweep_tenant_visit_lifecycle": {
         "queue": cron_queue,
     },
+    "vmss_api.invitations.tasks.dispatch_invitation_purge": {
+        "queue": cron_queue,
+    },
+    "vmss_api.invitations.tasks.purge_tenant_invitations": {
+        "queue": cron_queue,
+    },
     "vmss_api.invitations.tasks.*": {
         "queue": notification_queue,
     },
@@ -69,5 +75,11 @@ celery_app.conf.beat_schedule = {
     "visit-lifecycle-sweep": {
         "task": "vmss_api.invitations.tasks.dispatch_visit_lifecycle_sweep",
         "schedule": crontab(minute="*/15"),
+    },
+    "invitation-retention-purge": {
+        "task": "vmss_api.invitations.tasks.dispatch_invitation_purge",
+        "schedule": crontab(
+            hour=settings.invitation_purge_hour, minute=settings.invitation_purge_minute
+        ),
     },
 }

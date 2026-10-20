@@ -76,6 +76,9 @@ class User(Base, TimestampMixin):
     hashed_password: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Set only by the admin disable endpoint, so directory sync can tell a
+    # deliberate disable from one it caused by omission and leave it alone.
+    disabled_by_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     # Employee-directory fields (org_structure/tasks.md's "Employee directory
     # sync") — optional: a company-wide Admin/Security account created via
