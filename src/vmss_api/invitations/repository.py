@@ -3,7 +3,20 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, NamedTuple
 
-from sqlalchemy import Date, Select, and_, case, cast, exists, func, insert, or_, select, update
+from sqlalchemy import (
+    Date,
+    Select,
+    and_,
+    case,
+    cast,
+    exists,
+    func,
+    insert,
+    literal_column,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.orm import aliased, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
@@ -34,6 +47,17 @@ class InvitationExportNames(NamedTuple):
     visitor_category: str | None
     checked_in_by: str | None
     checked_out_by: str | None
+
+
+# Inline literals (not bound params) so Postgres can match the expression to
+# the `ix_invitations_primary_contact_phone_digits` functional index.
+PHONE_DIGITS_SQL = r"regexp_replace(invitations.primary_contact_phone, '\D', '', 'g')"
+
+
+def phone_digits(phone: str) -> str:
+    """Digits-only form compared by the phone prefill lookup — must stay in
+    step with `PHONE_DIGITS_SQL` (and the migration's functional index)."""
+    return "".join(ch for ch in phone if ch.isdigit())
 
 
 def _branch_filter(branch_scope: BranchScope) -> Any | None:
@@ -967,6 +991,25 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         """
         filters = [func.lower(Invitation.primary_contact_email) == email.lower()]
         filters.append(Invitation.deleted_at.is_(None))
+        branch_filter = _branch_filter(branch_scope)
+        if branch_filter is not None:
+            filters.append(branch_filter)
+        stmt = select(Invitation).where(*filters).order_by(Invitation.created_at.desc()).limit(1)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def get_latest_for_prefill_by_phone(
+        self, phone_digits_value: str, branch_scope: BranchScope
+    ) -> Invitation | None:
+        """Phone counterpart of `get_latest_for_prefill_by_email`, comparing
+        digits only (`reception-phone-prefill-lookup/design.md`); the
+        expression matches the `ix_invitations_primary_contact_phone_digits`
+        functional index.
+        """
+        filters = [
+            literal_column(PHONE_DIGITS_SQL) == phone_digits_value,
+            Invitation.primary_contact_phone.is_not(None),
+            Invitation.deleted_at.is_(None),
+        ]
         branch_filter = _branch_filter(branch_scope)
         if branch_filter is not None:
             filters.append(branch_filter)

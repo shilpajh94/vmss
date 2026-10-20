@@ -473,7 +473,9 @@ class InvitationOut(CamelModel):
 
 
 class InvitationLookupPrefillOut(CamelModel):
-    """`GET /invitations/lookup-by-email`'s prefill shape. `photo_url` is
+    """Prefill shape shared by `GET /invitations/lookup-by-email` and
+    `GET /invitations/lookup-by-phone` (`email` is the matched invitation's
+    own, `null` for a phone-only registration). `photo_url` is
     always resolved when captured, same as every other invitation response
     (`InvitationOut`, `InvitationListItemOut`) — a face photo isn't gated
     like an identity document in this codebase. `id_proof_url` is `null`
@@ -484,6 +486,7 @@ class InvitationLookupPrefillOut(CamelModel):
     """
 
     full_name: str
+    email: str | None
     phone: str | None
     preferred_contact_method: str
     visitor_category_id: uuid.UUID | None

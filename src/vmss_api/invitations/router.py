@@ -43,6 +43,7 @@ from vmss_api.devices.deps import make_device_dependency
 from vmss_api.devices.models import Device
 from vmss_api.invitations import service
 from vmss_api.invitations.deps import track_default_tenant, track_default_tenant_db
+from vmss_api.invitations.repository import phone_digits
 from vmss_api.invitations.schemas import (
     BadgeOut,
     CalendarDateRange,
@@ -101,6 +102,8 @@ router = APIRouter(prefix="/invitations", tags=["invitations"])
 # Module-level singleton (ruff B008: a `File(...)` call as a literal argument
 # default is flagged the same as a mutable literal default) — an
 # `individual` registration simply sends no files under this field name.
+_MIN_PHONE_DIGITS = 7
+
 _NO_VISITOR_FILES = File(
     default_factory=list,
     description=(
@@ -1525,6 +1528,7 @@ async def check_in_by_code(
     background_tasks: BackgroundTasks,
     tenant: Annotated[Tenant, Depends(track_default_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    device: Annotated[Device | None, Depends(_public_device)],
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -1547,7 +1551,7 @@ async def check_in_by_code(
         return cached
 
     invitation, message, changed = await service.check_in_by_code(
-        tenant_db, payload.code, tenant=tenant, client_ip=get_remote_address(request)
+        tenant_db, payload.code, tenant=tenant, client_ip=get_remote_address(request), device=device
     )
     if changed:
         background_tasks.add_task(
@@ -1557,20 +1561,21 @@ async def check_in_by_code(
             action="invitation_code_checked_in",
             entity_type="Invitation",
             entity_id=invitation.id,
+            diff=_device_diff(device),
         )
     branch, department, building = await service.get_invitation_location(tenant_db, invitation)
     form_context = await service.get_invitation_detail_form_context(
         tenant_db, tenant, invitation.branch_id
     )
+    out = await _to_qr_check_in_out(
+        invitation,
+        branch=branch,
+        department=department,
+        building=building,
+        form_context=form_context,
+    )
     response = success_response(
-        data=await _to_qr_check_in_out(
-            invitation,
-            branch=branch,
-            department=department,
-            building=building,
-            form_context=form_context,
-        ),
-        message=message,
+        data=await _attach_devices(out, invitation, tenant_db), message=message
     )
     await _cache_response(tenant.id, idempotency_key, response)
     return response
@@ -1587,6 +1592,7 @@ async def check_out_by_code(
     background_tasks: BackgroundTasks,
     tenant: Annotated[Tenant, Depends(track_default_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
+    device: Annotated[Device | None, Depends(_public_device)],
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -1604,7 +1610,7 @@ async def check_out_by_code(
         return cached
 
     invitation, message = await service.check_out_by_code(
-        tenant_db, payload.code, tenant=tenant, client_ip=get_remote_address(request)
+        tenant_db, payload.code, tenant=tenant, client_ip=get_remote_address(request), device=device
     )
     background_tasks.add_task(
         record_audit_log,
@@ -1613,20 +1619,21 @@ async def check_out_by_code(
         action="invitation_code_checked_out",
         entity_type="Invitation",
         entity_id=invitation.id,
+        diff=_device_diff(device),
     )
     branch, department, building = await service.get_invitation_location(tenant_db, invitation)
     form_context = await service.get_invitation_detail_form_context(
         tenant_db, tenant, invitation.branch_id
     )
+    out = await _to_qr_check_in_out(
+        invitation,
+        branch=branch,
+        department=department,
+        building=building,
+        form_context=form_context,
+    )
     response = success_response(
-        data=await _to_qr_check_in_out(
-            invitation,
-            branch=branch,
-            department=department,
-            building=building,
-            form_context=form_context,
-        ),
-        message=message,
+        data=await _attach_devices(out, invitation, tenant_db), message=message
     )
     await _cache_response(tenant.id, idempotency_key, response)
     return response
@@ -2411,6 +2418,31 @@ async def lookup_invitation_by_email(
     at the matched invitation's branch (design.md).
     """
     result = await service.get_prefill_by_email(tenant_db, email, branch_scope, user)
+    return success_response(data=result)
+
+
+@router.get(
+    "/lookup-by-phone",
+    response_model=Envelope[InvitationLookupPrefillOut | None],
+)
+async def lookup_invitation_by_phone(
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    branch_scope: Annotated[BranchScope, Depends(require_branch_scope("invitations:create"))],
+    phone: Annotated[str, Query(min_length=1, max_length=50)],
+) -> JSONResponse:
+    """Phone counterpart of `lookup-by-email`
+    (reception-phone-prefill-lookup/proposal.md) — same permission,
+    branch scoping, and `documents:view` gate on `idProofUrl`; `email` is
+    included so the Reception form can fill it from a phone number.
+    """
+    digits = phone_digits(phone)
+    if len(digits) < _MIN_PHONE_DIGITS:
+        return error_response(
+            message=f"phone must contain at least {_MIN_PHONE_DIGITS} digits",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    result = await service.get_prefill_by_phone(tenant_db, digits, branch_scope, user)
     return success_response(data=result)
 
 
