@@ -29,3 +29,10 @@ export const EmployeeListResponseSchema = z.object({
 })
 
 export type EmployeeListResponse = z.infer<typeof EmployeeListResponseSchema>
+
+// Single-employee envelope returned by the per-employee disable/enable actions.
+export const EmployeeResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: EmployeeOutSchema,
+})

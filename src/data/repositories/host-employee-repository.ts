@@ -29,6 +29,9 @@ export interface HostEmployeeRepository {
   list(): Promise<HostEmployee[]>
   listPage(params: ListHostEmployeesPageParams): Promise<HostEmployeesPage>
   create(input: HostEmployeeCreateInput): Promise<HostEmployee>
+  disable(employeeId: string): Promise<HostEmployee>
+  enable(employeeId: string): Promise<HostEmployee>
+  remove(employeeId: string): Promise<void>
   listRoles(): Promise<RoleOut[]>
   listRolesPage(params: ListRolesPageParams): Promise<RolesPage>
   createRole(input: RoleCreateInput): Promise<RoleOut>
