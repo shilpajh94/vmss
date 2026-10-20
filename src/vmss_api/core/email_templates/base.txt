@@ -12,6 +12,6 @@
 {% block content %}{% endblock %}
 
 --
-Sent by {{ company_name | default('Visimio', true) }}.
+Sent by {{ company_name | default(brand_name, true) }}.
 This is an automated message - please don't reply to this email.
-Powered by Visimio - (c) {{ current_year }} Visimio. All rights reserved.
+Powered by {{ brand_name }} - (c) {{ current_year }} {{ brand_name }}. All rights reserved.

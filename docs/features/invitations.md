@@ -1133,6 +1133,89 @@ pagination/sorting exactly like the branch-scoped mode. A caller who is
 neither host nor delegate on any invitation gets an empty, successfully
 paginated result, not an error.
 
+## Calendar (`add-staff-calendar`)
+
+`GET /invitations/calendar` returns the visits in a date range for the staff
+portal's calendar page: invitations and walk-ins, each placed on the day it
+is scheduled. The server decides what each caller sees; the web renders the
+response as-is.
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `from` / `to` | date (`YYYY-MM-DD`) | required | Inclusive, in the visit timezone (`Company.defaultTimezone`, then `Tenant.timezone`, then UTC — the zone that also decides expiry). `to` before `from`, or a span over **42 days**, is a 422. |
+| `scope` | `auto` \| `mine` \| `branch` | `auto` | See below. The response's `scope` says which one applied. |
+| `status` | repeatable `InvitationStatus` | all but `denied` | `archived` (missed) is shown by default. An unknown value is a 422. |
+| `X-Branch-ID` header | uuid | unset | Narrows `branch` scope to one branch (same 403/404 as the list). Ignored for `mine`. |
+
+**Scope.**
+
+- `mine`: the caller's [Relevant to me](#relevant-to-me) set — the same
+  predicate, so a host's calendar and their `relevantToMe` list always
+  match. Open to any authenticated staff user.
+- `branch`: every invitation at the branches where the caller holds
+  `invitations:view-all`. Without it, the response is a 403.
+- `auto`: `branch` when the caller holds `invitations:view-all` anywhere,
+  otherwise `mine`. With the seeded roles, a host gets `mine`; reception,
+  security and admin get `branch`.
+
+**Which day.** An event is placed on `preferredVisitDate`, so a late check-in
+stays on its scheduled day and a rescheduled visit moves to its new day. A
+legacy row with no visit date falls on the visit-timezone date of its
+check-in. Rows with neither are left out. `time` is the scheduled time
+(`null` means "any time"); `checkedInAt` and `checkedOutAt` are the actual
+times.
+
+**Response.** The response has these top-level fields: `scope`, `timezone`,
+`from`, `to`, `generatedAt`, `days`, `events` and `truncated`.
+
+- `days` has one `{date, total}` per date in the range, zero-filled. The
+  totals are always exact.
+- `events` is ordered by date, then time (any-time last), then name, and is
+  **capped at 1,000**. When more match, the first 1,000 are returned,
+  `truncated` is `true`, and `calendar_feed_truncated` is logged at INFO.
+- Each event carries display fields only: tracking id, status, source,
+  date/time, expected duration, check-in and check-out times, primary
+  contact name, `visitorCount` (contact plus co-visitors), host id and name,
+  branch and building names, purpose, and visitor category name and badge
+  colour. It never carries phone, email, ID-proof, photo or custom-field
+  data; open the detail endpoint for those.
+
+**Deviation from pagination (api-conventions §1).** This endpoint has no
+`page`/`pageSize`. A month grid needs every day's count at once, so the
+response is bounded by the 42-day range and the 1,000-event cap instead,
+and the `days` totals stay exact whatever the cap cuts.
+
+**First N per day (`perDayLimit`, improve-calendar-scale-and-theme-switch).**
+`perDayLimit=1..100` (anything else is a 422) keeps only each day's first N
+events in the standard order. `days[].total` still counts everything, and
+without the parameter the response is unchanged. The portal asks for 3 per
+day in Month view and 10 in Week view.
+
+**Standard event order.** Date, then scheduled time (any time last), then
+primary contact name, then invitation id. The id makes the order total, so
+offset paging never repeats or skips a visit.
+
+### One day, page by page
+
+`GET /invitations/calendar/day?date=YYYY-MM-DD&page=&pageSize=` returns one
+day's events with the standard pagination envelope (`pageSize` defaults to
+20, max 100).
+
+- It uses the same `scope`, repeatable `status` and `X-Branch-ID` rules as
+  the feed, with the same 403/422 behaviour.
+- It uses the same event-date rule and the same display-only fields.
+- The scope it applied is in the `X-Calendar-Scope` response header
+  (`mine` or `branch`). The header is exposed to cross-origin clients
+  through CORS.
+- Page N holds positions `(N-1)·pageSize+1 … N·pageSize` of the standard
+  order. So `page=1&pageSize=10` equals the feed's first 10 for that day
+  with `perDayLimit=10`, and a client continues from `page=2`.
+- `pagination.total` equals the feed's `days[].total` for that date.
+- A page past the end returns empty `data` with the same `total`.
+- Rows can shift by one between page loads if a visit is added earlier in
+  the order meanwhile. Clients de-duplicate by `id` and reconcile on their
+  next refresh.
+
 ## Who can see an invitation
 
 **BREAKING (restrict-delegated-invitation-visibility)**: once Reception
@@ -1318,7 +1401,7 @@ Both send pre-approved templates (`registration_pending`,
 `openspec/changes/integrate-fast2sms-dlt-sms/design.md`. A blank setting or
 unusable phone number is not retried.
 
-**Every email is a branded Visimio HTML template**
+**Every email is a branded Guestify HTML template**
 (`role-based-invitation-workflow`, restyled by
 `redesign-notification-email-templates` and
 `refine-email-templates-and-visimio-brand`). `core/email_rendering.py::render_email`

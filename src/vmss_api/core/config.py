@@ -11,11 +11,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # consistency, not to imply multi-driver support.
 _DB_DRIVERS: dict[str, str] = {"pgsql": "postgresql+asyncpg"}
 
+# The product name shown to people: email From name, footers, alt text.
+# One constant so a rename is a one-line change (rebrand-to-guestify).
+BRAND_NAME = "Guestify"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "Visimio API"
+    app_name: str = f"{BRAND_NAME} API"
     environment: str = Field(default="local", alias="APP_ENV")
     debug: bool = Field(default=True, alias="APP_DEBUG")
 
@@ -186,9 +190,9 @@ class Settings(BaseSettings):
     smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
     smtp_use_tls: bool = Field(default=False, alias="SMTP_USE_TLS")
     smtp_from_address: str = Field(default="no-reply@vmss.local", alias="SMTP_FROM_ADDRESS")
-    # Display name shown in front of `smtp_from_address` ("Visimio <no-reply@…>").
-    smtp_from_name: str = Field(default="Visimio", alias="SMTP_FROM_NAME")
-    # Public origin email `<img src>` URLs are built from — the Visimio logo
+    # Display name shown in front of `smtp_from_address` ("Guestify <no-reply@…>").
+    smtp_from_name: str = Field(default=BRAND_NAME, alias="SMTP_FROM_NAME")
+    # Public origin email `<img src>` URLs are built from — the Guestify logo
     # and the signed check-in QR (`core/email_assets.py`). Unset means
     # emails fall back to a text wordmark and an inline `cid:` QR.
     email_asset_base_url: str | None = Field(default=None, alias="EMAIL_ASSET_BASE_URL")

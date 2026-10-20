@@ -18,14 +18,21 @@ uvicorn daemon:
 
 | Daemon | Command | Job |
 |---|---|---|
-| `vmss-api-celery-worker` | `uv run celery -A vmss_api.core.celery_app:celery_app worker` | Executes tasks — request-triggered (`.delay()`) and scheduled alike. |
-| `vmss-api-celery-beat` | `uv run celery -A vmss_api.core.celery_app:celery_app beat` | Enqueues scheduled tasks on their configured schedule. Enqueues only — never executes a task itself; the worker daemon above does that. |
+| `vmss-api-celery-worker` | `uv run watchfiles '<celery ... worker>' src` | Executes tasks — request-triggered (`.delay()`) and scheduled alike. |
+| `vmss-api-celery-beat` | `uv run watchfiles '<celery ... beat>' src` | Enqueues scheduled tasks on their configured schedule. Enqueues only — never executes a task itself; the worker daemon above does that. |
 
 Without the worker, anything dispatched via `.delay()` (request-triggered or
 beat-enqueued) queues in Redis forever with nothing consuming it. Without
 beat, a `beat_schedule` entry is configured but nothing ever triggers it —
 see `add-celery-worker-and-demo-seed-script`'s investigation for the
 request-triggered case this exact failure mode was first diagnosed from.
+
+Locally, both run under `watchfiles`, which restarts them whenever anything
+under `src/` changes, including email templates and image assets as well as
+`.py` files. Celery has no reload of its own. Before this, a worker started
+before a pull kept running the old code: it dropped newly added tasks as
+"unregistered" and kept sending pre-rebrand emails
+(`autoreload-local-celery-worker`). Deployed workers never watch files.
 
 ## Deployment requirements
 
