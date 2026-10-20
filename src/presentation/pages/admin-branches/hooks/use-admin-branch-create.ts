@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
+import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 
 export type BranchCreateValues = Omit<Branch, 'id'>
 
@@ -44,6 +45,16 @@ export function useAdminBranchCreate() {
   const [isSaving, setIsSaving] = useState(false)
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [employees, setEmployees] = useState<HostEmployee[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  const loadReferenceData = useCallback(async () => {
+    setIsLoading(true)
+    await Promise.all([
+      getCurrentStaffUserUseCase.execute().then(setCurrentUser).catch(() => undefined),
+      listHostEmployeesUseCase.execute().then(setEmployees).catch(() => undefined),
+    ])
+    setIsLoading(false)
+  }, [getCurrentStaffUserUseCase, listHostEmployeesUseCase])
 
   useEffect(() => {
     if (!sessionStorage.getItem('token')) {
@@ -51,9 +62,17 @@ export function useAdminBranchCreate() {
       return
     }
 
-    void getCurrentStaffUserUseCase.execute().then(setCurrentUser).catch(() => undefined)
-    void listHostEmployeesUseCase.execute().then(setEmployees).catch(() => undefined)
-  }, [navigate, getCurrentStaffUserUseCase, listHostEmployeesUseCase])
+    void loadReferenceData()
+  }, [navigate, loadReferenceData])
+
+  // A confirmed top-bar refresh empties the form and re-fetches its lists.
+  const reload = useCallback(() => {
+    setValues(EMPTY_VALUES)
+    setErrors({})
+    void loadReferenceData()
+  }, [loadReferenceData])
+
+  useFormPageRefresh({ values, isLoading, reload })
 
   const updateField = useCallback(<K extends keyof BranchCreateValues>(key: K, value: BranchCreateValues[K]) => {
     setValues((current) => ({ ...current, [key]: value }))

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 import { ApiError } from '../../../../data/api/api-error'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
@@ -35,7 +35,6 @@ export function useAdminHostEmployees() {
   const [pendingDelete, setPendingDelete] = useState<HostEmployee | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
   const [busyEmployeeId, setBusyEmployeeId] = useState<string | undefined>(undefined)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [departmentFilter, setDepartmentFilter] = useState('')
@@ -69,7 +68,6 @@ export function useAdminHostEmployees() {
         setTotal(page_.total)
         setDepartments(departmentList)
         setRoleOptions([...new Set(roles.map((role) => role.name))].sort((a, b) => a.localeCompare(b)))
-        setLastUpdatedAt(new Date())
       } catch {
         if (!request.fail()) return
         toast.error('Something went wrong loading the employees. Please try again.')
@@ -94,7 +92,7 @@ export function useAdminHostEmployees() {
   // Auto-refreshes the directory every 15s; skipped while a delete dialog is
   // open or an action is in flight so a poll can't swap the rows underneath it.
   const isActionInProgress = pendingDelete !== undefined || isDeleting || busyEmployeeId !== undefined
-  usePolling(() => void loadHostEmployees('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadHostEmployees('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
   // 404 = already deleted elsewhere, so the list is stale; 409 (self / last
   // admin) and 403 carry the backend's own message, shown as-is.
@@ -146,7 +144,7 @@ export function useAdminHostEmployees() {
     }
   }, [pendingDelete, deleteHostEmployeeUseCase, toast, loadHostEmployees, reportActionError])
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const departmentNameById = useMemo(() => new Map(departments.map((department) => [department.id, department.name])), [departments])
 

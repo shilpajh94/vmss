@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
+import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 
 interface WorkflowLevelForm {
   approverRoleId: string
@@ -106,6 +107,8 @@ export function useAdminWorkflowForm() {
   const retry = useCallback(() => {
     void load()
   }, [load])
+
+  useFormPageRefresh({ values: { selectedCategoryId, levels }, isLoading, reload: retry })
 
   const updateCategory = useCallback((categoryId: string) => {
     setSelectedCategoryId(categoryId)

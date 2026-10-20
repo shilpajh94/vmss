@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import { ApiError } from '../../../../data/api/api-error'
 import type { KioskInput } from '../../../../domain/entities/kiosk-schema'
 import { canManageKiosks } from '../can-manage-kiosks'
+import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 
 const NAME_MAX = 255
 const DESCRIPTION_MAX = 2000
@@ -68,6 +69,8 @@ export function useAdminKioskForm() {
   const retry = useCallback(() => {
     void load()
   }, [load])
+
+  useFormPageRefresh({ values: values, isLoading, reload: retry })
 
   const updateField = useCallback(<K extends keyof KioskInput>(key: K, value: KioskInput[K]) => {
     setValues((current) => ({ ...current, [key]: value }))

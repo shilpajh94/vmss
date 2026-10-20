@@ -21,6 +21,7 @@ import { RegistrationStepper } from './Components/RegistrationStepper'
 import { RegistrationWorkspaceHeader } from './Components/RegistrationWorkspaceHeader'
 import { VisitorInfoStep } from './Components/VisitorInfoStep'
 import { useStaffVisitorRegistrationWizard } from './hooks/use-staff-visitor-registration-wizard'
+import { useFormPageRefresh } from '../../hooks/use-form-page-refresh'
 
 export function StaffVisitorRegistrationPage() {
   const navigate = useNavigate()
@@ -28,6 +29,7 @@ export function StaffVisitorRegistrationPage() {
   const [branches, setBranches] = useState<Branch[] | undefined>(undefined)
   const [buildings, setBuildings] = useState<Building[] | undefined>(undefined)
   const [visitorCategories, setVisitorCategories] = useState<VisitorCategory[] | undefined>(undefined)
+  const [isMasterDataLoading, setIsMasterDataLoading] = useState(true)
 
   const {
     currentStep,
@@ -88,6 +90,7 @@ export function StaffVisitorRegistrationPage() {
   }, [currentStep, isDesktop])
 
   const loadVisitInfoMasterData = useCallback(async () => {
+    setIsMasterDataLoading(true)
     try {
       const [branchList, buildingList, categoryList] = await Promise.all([
         listBranchesUseCase.execute(),
@@ -100,6 +103,8 @@ export function StaffVisitorRegistrationPage() {
     } catch (error) {
       // Visit Info step falls back to free-text fields if master data can't be loaded.
       console.error('Failed to load visit info master data', error)
+    } finally {
+      setIsMasterDataLoading(false)
     }
   }, [listBranchesUseCase, listBuildingsUseCase, listVisitorCategoriesUseCase])
 
@@ -110,6 +115,19 @@ export function StaffVisitorRegistrationPage() {
     }
     void loadVisitInfoMasterData()
   }, [navigate, loadVisitInfoMasterData])
+
+  // The top-bar refresh starts the registration over from step 1 with fresh
+  // master data; it asks first once anything has been entered.
+  // `reset` is recreated every render; reading it through a ref keeps this
+  // callback stable so the refresh registration doesn't churn.
+  const resetRef = useRef(reset)
+  resetRef.current = reset
+  const reloadRegistration = useCallback(() => {
+    resetRef.current()
+    void loadVisitInfoMasterData()
+  }, [loadVisitInfoMasterData])
+
+  useFormPageRefresh({ values: formState, isLoading: isMasterDataLoading, reload: reloadRegistration })
 
   const cancelRegistration = () => {
     reset()
@@ -143,7 +161,7 @@ export function StaffVisitorRegistrationPage() {
                 type="button"
                 onClick={goNext}
                 title="Continue to the next step"
-                className="cursor-pointer rounded-lg bg-primary px-7 py-3 text-body font-semibold text-white transition-colors hover:opacity-90"
+                className="cursor-pointer rounded-lg bg-primary px-7 py-3 text-body font-semibold text-on-primary transition-colors hover:opacity-90"
               >
                 {nextStepLabel ? `Next: ${nextStepLabel} →` : 'Next →'}
               </button>

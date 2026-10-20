@@ -33,7 +33,7 @@ export function AdminOrganisationConfigsPage() {
         isRefreshing={isRefreshing}
         skeleton={
           // Same two side-by-side cards as the loaded form.
-          <div className="flex w-full items-start gap-6">
+          <div className="flex w-full flex-col gap-6 lg:flex-row lg:items-start">
             <FormSkeleton rows={3} columns={1} className="flex-1" label="Loading organisation configuration…" />
             <FormSkeleton rows={1} columns={1} className="flex-1" label="Loading visitor policy…" />
           </div>
@@ -43,7 +43,10 @@ export function AdminOrganisationConfigsPage() {
       >
         {form && (
           <>
-            <div className="flex w-full items-start gap-6">
+            {/* Side by side from lg; stacked below, so neither card is pushed
+                past a phone's edge (app-shell "Staff and admin pages fit every
+                supported device width"). */}
+            <div className="flex w-full flex-col gap-6 lg:flex-row lg:items-start">
               <GeneralInformationCard
                 form={form}
                 logoPreview={logoPreview}
@@ -71,7 +74,7 @@ export function AdminOrganisationConfigsPage() {
                 onClick={() => void save()}
                 pending={isSaving}
                 pendingLabel="Saving…"
-                className="rounded-full bg-admin-accent px-[18px] py-2.5 font-body text-[13px] font-semibold text-white disabled:opacity-50"
+                className="rounded-full bg-admin-accent px-[18px] py-2.5 font-body text-[13px] font-semibold text-on-accent disabled:opacity-50"
               >
                 Save Configs
               </PendingButton>

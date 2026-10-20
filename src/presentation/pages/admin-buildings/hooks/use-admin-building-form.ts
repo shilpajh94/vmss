@@ -7,6 +7,7 @@ import type { BuildingInput } from '../../../../domain/entities/building-schema'
 import type { Floor, FloorInput } from '../../../../domain/entities/floor-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 
 export type FloorDetailsInput = Omit<FloorInput, 'buildingId'>
 
@@ -119,6 +120,8 @@ export function useAdminBuildingForm() {
   const retry = useCallback(() => {
     void load()
   }, [load])
+
+  useFormPageRefresh({ values: details, isLoading, reload: retry })
 
   const updateField = useCallback(<K extends keyof BuildingInput>(key: K, value: BuildingInput[K]) => {
     setDetails((current) => ({ ...current, [key]: value }))

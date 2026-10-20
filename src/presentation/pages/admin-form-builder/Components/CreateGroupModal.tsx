@@ -74,7 +74,7 @@ export function CreateGroupModal({ isOpen, onClose, onCreate }: CreateGroupModal
         <button
           type="button"
           onClick={handleCreate}
-          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white"
+          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent"
         >
           + Create Group
         </button>

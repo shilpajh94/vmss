@@ -31,6 +31,10 @@ export interface ListVisitRequestsParams {
   purposeOfVisit?: string
   page?: number
   pageSize?: number
+  // `status_changed_at` orders by when each invitation entered its current
+  // status; the API default is `submitted_at`.
+  sortBy?: 'submitted_at' | 'created_at' | 'status_changed_at'
+  sortOrder?: 'asc' | 'desc'
 }
 
 export type InvitationExportFormat = 'csv' | 'xlsx'

@@ -8,6 +8,7 @@ import { RouteTransition } from './RouteTransition'
 import { PageHeaderProvider, usePageHeaderContext } from '../context/page-header-context'
 import { RefreshProvider } from '../context/refresh-context'
 import { CurrentUserProvider } from '../context/current-user-context'
+import { useApplyTheme } from '../context/theme-mode-context'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
 
@@ -16,6 +17,7 @@ import type { StaffUser } from '../../domain/entities/staff-user-schema'
 // unmounting the whole page tree (see persistent-nav-shell's proposal.md).
 // Mirrors AdminLayout so the staff and admin chrome stay the same.
 function StaffLayoutContent() {
+  useApplyTheme()
   const location = useLocation()
   const { header } = usePageHeaderContext()
   const { getCurrentStaffUserUseCase } = useAppDependencies()
@@ -50,7 +52,7 @@ function StaffLayoutContent() {
       }
     >
       <CurrentUserProvider user={currentUser}>
-        <RouteTransition>
+        <RouteTransition withEndGap>
           <Outlet />
         </RouteTransition>
       </CurrentUserProvider>

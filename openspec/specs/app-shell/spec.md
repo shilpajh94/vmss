@@ -208,11 +208,21 @@ Below 1024px viewport width, every staff, reception, and admin shell SHALL hide 
 - **THEN** the drawer and backdrop disappear and the sidebar renders docked, as on desktop
 
 ### Requirement: Top bar compacts on small screens
-Below 768px viewport width, the top bar SHALL keep the menu button, the page's breadcrumb or title, which truncates with an ellipsis, and the notification bell and user menu. It SHALL hide the page description text and the last-refreshed label, and the refresh control SHALL remain as an icon button. The top bar SHALL NOT wrap to more than one line.
+Below 768px viewport width, the top bar SHALL keep:
+- the menu button;
+- the page's breadcrumb or title, which truncates with an ellipsis;
+- the theme control;
+- the notification bell and user menu.
+
+It SHALL hide the page description text and the top-bar clock. The refresh
+control and the theme control SHALL remain as icon buttons. The top bar
+SHALL NOT wrap to more than one line.
 
 #### Scenario: Top bar at phone width
 - **WHEN** any staff or admin page is viewed at 360px wide
-- **THEN** the top bar is a single row with the menu button, a truncated title, and the bell/user controls, and nothing overflows its right edge
+- **THEN** the top bar is a single row with the menu button, a truncated
+  title, and the theme, bell and user controls, and nothing overflows its
+  right edge
 
 ### Requirement: The reception dashboard uses the shared responsive shell
 The Reception Dashboard SHALL render inside the same shell as the other staff pages, so that it gets the same drawer navigation, fixed top bar, and content-only scrolling behavior. Its content, data, and role gate SHALL be unchanged.
@@ -245,3 +255,213 @@ The collapsed/expanded choice SHALL be remembered in the current browser across 
 #### Scenario: Drawer ignores the collapsed choice
 - **WHEN** a user who collapsed the sidebar at 1440px narrows the window to 800px and opens the menu
 - **THEN** the drawer shows the full sidebar with labels, and widening back to 1440px shows the icon rail again
+
+### Requirement: The notification bell always shows the exact unread count
+The notification bell in the shared top bar (admin, staff, and reception)
+SHALL always show an unread badge with the exact number of unread
+notifications the server reports. The badge SHALL NOT be capped or
+abbreviated (no "9+"). When the count is zero, the badge SHALL show "0"
+in a muted, neutral style that does not use the alert colour. When the
+count is above zero, it SHALL use the alert colour. The badge SHALL widen
+to fit its digits. At every supported viewport width, its digits SHALL
+stay fully visible, the bell icon SHALL stay recognisable, and the top
+bar SHALL NOT wrap or overflow. The bell's accessible name
+SHALL state the count in every case, for example "Notifications, 0
+unread" or "Notifications, 143 unread". Reading one notification or using
+"Mark all read" SHALL update the badge immediately.
+
+#### Scenario: Everything is read
+- **WHEN** a signed-in staff member has no unread notifications
+- **THEN** the bell shows a muted "0" badge, and its accessible name is
+  "Notifications, 0 unread"
+
+#### Scenario: More than nine unread
+- **WHEN** a staff member has 12 unread notifications
+- **THEN** the badge shows "12", not "9+", in the alert colour
+
+#### Scenario: A large count still fits
+- **WHEN** a staff member has 143 unread notifications and views the top
+  bar at 360px wide
+- **THEN** the badge shows "143" in full, and the top bar stays on one
+  line with nothing overflowing
+
+#### Scenario: Mark all read drops the badge to zero
+- **WHEN** a staff member with unread notifications activates "Mark all
+  read"
+- **THEN** the badge changes to a muted "0" straight away
+
+### Requirement: The notification bell rings when a new notification arrives
+The system SHALL play a single ring animation on the bell, about 700ms
+long, whenever a refresh of the notification feed returns at least one
+notification the bell had not yet seen in this session. That refresh may
+come from the background poll, a foreground push message, or the tab
+becoming visible again. The first feed load after sign-in SHALL NOT ring,
+and neither SHALL a refresh that returns no unseen notification. Several
+new notifications arriving in one refresh SHALL produce one ring, not one
+per notification. The bell SHALL NOT ring if, after that refresh, the
+unread count is zero (for example, the new notification was already read
+in another tab): with nothing unread there is no animation at all. A ring
+that is triggered while one is still playing
+SHALL restart it rather than queueing a second. When the user's system
+requests reduced motion, the bell SHALL NOT move; the updated badge still
+shows.
+
+#### Scenario: A new notification arrives while the page is open
+- **WHEN** a staff member is on any page and the next poll returns a
+  notification they had not seen
+- **THEN** the bell rings once and the badge shows the new unread count
+
+#### Scenario: Signing in does not ring
+- **WHEN** a staff member signs in and already has unread notifications
+- **THEN** the badge shows the count and the bell does not ring
+
+#### Scenario: Nothing new
+- **WHEN** a background poll returns only notifications already seen
+- **THEN** the bell does not ring
+
+#### Scenario: A new but already-read notification does not ring
+- **WHEN** a refresh brings in a notification the bell had not seen, but
+  it is already read and the unread count is 0
+- **THEN** the bell does not ring, and the badge shows "0"
+
+#### Scenario: Reduced motion
+- **WHEN** reduced motion is requested and a new notification arrives
+- **THEN** the bell does not animate, and the badge shows the new count
+
+### Requirement: The notification bell repeats its ring while notifications stay unread
+While the unread count is above zero and the tab is visible, the
+notification bell SHALL play its ring again every 15 seconds as a
+reminder. This is the same single ring used for a new arrival. The first
+reminder SHALL come 15 seconds after the page loads or after the most
+recent ring, whichever is later, so a new-arrival ring restarts the
+15-second wait. The bell SHALL stop reminding as soon as the unread count
+reaches zero, SHALL NOT remind while its notification popover is open,
+and SHALL NOT remind while the tab is hidden. With reduced motion
+requested, the bell SHALL NOT move.
+
+#### Scenario: Unread notifications left alone
+- **WHEN** a staff member has 3 unread notifications and leaves the page
+  open and visible
+- **THEN** the bell rings once every 15 seconds
+
+#### Scenario: Reading everything stops the reminder
+- **WHEN** the staff member activates "Mark all read"
+- **THEN** the bell stops ringing, and the badge shows "0"
+
+#### Scenario: A new arrival restarts the wait
+- **WHEN** a new notification makes the bell ring 10 seconds after the
+  last reminder
+- **THEN** the next reminder comes 15 seconds after that new-arrival
+  ring, not 5 seconds later
+
+#### Scenario: Popover open or tab hidden
+- **WHEN** the notification popover is open, or the tab is in the
+  background
+- **THEN** no reminder ring plays until it is closed or the tab is visible
+  again
+
+#### Scenario: Nothing unread
+- **WHEN** a staff member has no unread notifications
+- **THEN** the bell never animates, neither as a reminder nor for a
+  refresh
+
+### Requirement: The top bar shows a live clock
+From 768px viewport width up, the admin and staff top bars SHALL show the
+current local time of the user's device in 24-hour `HH:MM:SS` format,
+for example `14:05:09`. It SHALL sit beside the refresh control. The
+clock SHALL tick once per second, stay in step with the device clock,
+and keep a fixed width so its digits changing never shifts the controls
+beside it. Assistive technology SHALL NOT announce each tick. Below 768px
+the clock SHALL be hidden (see "Top bar compacts on small screens").
+
+#### Scenario: Clock on a desktop top bar
+- **WHEN** an admin or staff member views any page at 1440px wide at
+  2:05:09 pm local time
+- **THEN** the top bar shows `14:05:09`, and one second later `14:05:10`
+
+#### Scenario: Leading zeros
+- **WHEN** the local time is 9:03:07 am
+- **THEN** the clock shows `09:03:07`
+
+#### Scenario: Clock hidden on phones
+- **WHEN** a page is viewed at 360px wide
+- **THEN** no clock is shown, and the top bar stays one row without
+  overflowing
+
+### Requirement: Staff and admin pages fit every supported device width
+Every staff and admin page SHALL lay out without clipped or overflowing
+content at each supported viewport width, in both the light and dark
+themes. The supported widths are 320, 360, 390, 414, 768, 820, 1024, 1280,
+1440 and 1920px.
+
+At every supported width:
+- the document SHALL have no horizontal scrollbar;
+- the main content area SHALL NOT be wider than its visible width, so
+  nothing is hidden by its overflow clipping;
+- the top bar SHALL stay a single row.
+
+Wide content (tables, the week board, the invitation board) SHALL scroll
+inside its own container instead. Controls in a row (filters, actions,
+setting toggles) SHALL wrap or stack rather than push past the edge.
+
+#### Scenario: Organisation configs on a phone
+- **WHEN** `/admin/organisation-configs` is viewed at 320px
+- **THEN** each setting's title, description and toggle fit within the
+  screen, with the toggle wrapping below the text if needed, and nothing is
+  clipped
+
+#### Scenario: Audit trail on a phone
+- **WHEN** `/admin/audit-trail` is viewed at 390px
+- **THEN** the activity filter, the CSV/PDF download buttons and the
+  result rows fit within the screen or scroll inside their own container,
+  and nothing is clipped
+
+#### Scenario: Device matrix
+- **WHEN** every staff and admin route is opened at each supported width
+  in both themes
+- **THEN** none shows a horizontal page scrollbar, clipped main content,
+  or a wrapped top bar
+
+### Requirement: Page content keeps a bottom gap
+Every staff and admin page SHALL leave a gap below its last element equal
+to the page's own content padding at that width: 16px below 768px, 24px
+from 768px and 32px from 1024px.
+
+- When the page is taller than the content region and scrolls, the gap
+  SHALL appear after the last element once the region is scrolled to the
+  end. The last element SHALL NOT touch the region's bottom edge.
+- A layout that fills the content region's height (a fixed header with a
+  scrolling data region, or the calendar week board) SHALL end the same
+  gap above the region's bottom edge. It SHALL NOT make the content
+  region scroll, so the page heading stays in view.
+
+This SHALL hold at every supported device width, in both themes.
+
+#### Scenario: Long page scrolled to the end
+- **WHEN** a page taller than the screen is scrolled to the bottom at
+  1440px
+- **THEN** there is 32px of empty space between the last card's bottom
+  edge and the bottom of the content region
+
+#### Scenario: Long page on a phone
+- **WHEN** the same page is scrolled to the bottom at 390px
+- **THEN** there is 16px of empty space below the last card
+
+#### Scenario: Calendar week board fits without scrolling the page
+- **WHEN** `/staff/calendar?view=week` is open at 1920×1080 with a day of
+  181 visits
+- **THEN** the week board ends 32px above the bottom of the content
+  region, the content region itself does not scroll, and the "Calendar"
+  heading is fully visible
+
+#### Scenario: Fixed-header list page
+- **WHEN** a page with a fixed heading and a scrolling data region is
+  open at 1280px
+- **THEN** the data region ends 32px above the bottom of the content
+  region and the content region itself does not scroll
+
+#### Scenario: Device matrix checks the bottom gap
+- **WHEN** every staff and admin route is opened at each supported width
+  in both themes and its content region is scrolled to the end
+- **THEN** none shows its last element closer to the bottom edge than the
+  page padding for that width

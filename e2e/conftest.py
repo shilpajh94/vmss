@@ -141,7 +141,15 @@ class Api:
                     self._buildings[code] = match[0]
         return self._buildings[branch]
 
-    def create_invitation(self, name: str, role: str = "host", category: str = "QA_MULTI") -> dict:
+    def create_invitation(
+        self,
+        name: str,
+        role: str = "host",
+        category: str = "QA_MULTI",
+        *,
+        day: str | None = None,
+        time: str = "10:00:00",
+    ) -> dict:
         if self._form is None:
             self._form = self.call("GET", "/api/v1/form-builder/effective", expect=200)
         fields = {f["key"]: f for step in self._form for f in step.get("fields", [])}
@@ -162,8 +170,8 @@ class Api:
             },
             "visitDetails": {
                 "purposeOfVisit": "QA e2e",
-                "preferredVisitDate": str(datetime.date.today()),
-                "preferredVisitTime": "10:00:00",
+                "preferredVisitDate": day or str(datetime.date.today()),
+                "preferredVisitTime": time,
                 "expectedDuration": "< 1 hour",
             },
             "consents": consents,

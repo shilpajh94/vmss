@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
@@ -32,7 +32,6 @@ export function useAdminKiosks() {
   const { phase, isRefreshing, begin } = useLoadTracker()
   // Only shown when the first load fails; keeps the 403 vs generic wording.
   const [loadErrorMessage, setLoadErrorMessage] = useState<string | undefined>(undefined)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [pendingDelete, setPendingDelete] = useState<Kiosk | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -70,7 +69,6 @@ export function useAdminKiosks() {
         setCurrentUser(user)
         setKiosks(kioskPage.items)
         setTotal(kioskPage.total)
-        setLastUpdatedAt(new Date())
       } catch (error) {
         if (!request.fail()) return
         const message =
@@ -98,9 +96,9 @@ export function useAdminKiosks() {
   }, [loadKiosks])
 
   const isActionInProgress = pendingDelete !== undefined || isDeleting || busyKioskId !== undefined
-  usePolling(() => void loadKiosks('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadKiosks('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const isFiltering = statusFilter !== '' || showHidden
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])

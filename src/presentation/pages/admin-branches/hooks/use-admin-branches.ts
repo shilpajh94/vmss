@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
@@ -30,7 +30,6 @@ export function useAdminBranches() {
   const [total, setTotal] = useState(0)
   const [employees, setEmployees] = useState<HostEmployee[]>([])
   const { phase, isRefreshing, begin } = useLoadTracker()
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const [formState, setFormState] = useState<BranchFormState>(undefined)
   const [isSaving, setIsSaving] = useState(false)
@@ -64,7 +63,6 @@ export function useAdminBranches() {
         setBranches(page_.items)
         setTotal(page_.total)
         setEmployees(employeeList)
-        setLastUpdatedAt(new Date())
       } catch {
         if (!request.fail()) return
         toast.error('Something went wrong loading the branches. Please try again.')
@@ -89,9 +87,9 @@ export function useAdminBranches() {
   // Auto-refreshes the register every 15s; skipped while a form/delete dialog
   // is open so a background tick can't replace data underneath it.
   const isActionInProgress = formState !== undefined || isSaving || pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadBranches('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadBranches('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const openEditForm = useCallback((branch: Branch) => {
     setFormState({ mode: 'edit', branch })

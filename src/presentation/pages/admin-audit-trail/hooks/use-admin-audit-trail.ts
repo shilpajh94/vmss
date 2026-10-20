@@ -9,6 +9,8 @@ import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { AuditReportFormat } from '../../../../data/repositories/audit-trail-repository'
 import { DEFAULT_ACTIVITY_TYPE, DEFAULT_DATE_RANGE, PAGE_SIZE } from '../types'
 import { saveBlob } from '../../../utils/save-blob'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
+import { usePageRefresh } from '../../../context/refresh-context'
 
 const REPORT_POLL_INTERVAL_MS = 1000
 const REPORT_POLL_MAX_ATTEMPTS = 20
@@ -42,8 +44,10 @@ export function useAdminAuditTrail() {
   // Admins only: confirm the signed-in user's admin status before loading any
   // audit data, redirecting a non-admin authenticated user back to their own
   // dashboard instead of rendering this page.
-  // Every caller (initial load, filter/page change, retry) is a `user` load:
-  // once rows exist they stay on screen with a progress cue.
+  // Initial load, filter/page change and retry are `user` loads: once rows
+  // exist they stay on screen with a progress cue. The 10s poll is a
+  // `background` load: no cue, and a failure keeps the last rows without a
+  // toast (the next poll retries).
   const load = useCallback(async (mode: LoadMode = 'user') => {
     const request = begin(mode)
 
@@ -51,7 +55,7 @@ export function useAdminAuditTrail() {
     try {
       user = await getCurrentStaffUserUseCase.execute()
     } catch {
-      if (!request.fail()) return
+      if (!request.fail() || (mode === 'background' && !request.isInitial)) return
       toast.error('Something went wrong loading the audit trail. Please try again.')
       return
     }
@@ -77,7 +81,7 @@ export function useAdminAuditTrail() {
       setTotal(response.total)
       setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
     } catch {
-      if (!request.fail()) return
+      if (!request.fail() || (mode === 'background' && !request.isInitial)) return
       toast.error('Something went wrong loading the audit trail. Please try again.')
     }
   }, [begin, getCurrentStaffUserUseCase, getAuditTrailUseCase, listHostEmployeesUseCase, dateRange, activityType, page, toast, navigate])
@@ -94,6 +98,10 @@ export function useAdminAuditTrail() {
   const retry = useCallback(() => {
     void load()
   }, [load])
+
+  usePolling(() => void load('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: downloadingFormat !== undefined })
+
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const changeDateRange = useCallback((value: string) => {
     setDateRange(value)

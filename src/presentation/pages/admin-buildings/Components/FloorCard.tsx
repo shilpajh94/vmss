@@ -15,7 +15,7 @@ export function FloorCard({ floor, departments, isExpanded, onToggleExpand, onEd
   return (
     <div
       className={`flex w-full flex-col gap-3 rounded-2xl border p-4 ${
-        isExpanded ? 'border-[#99f6e4] bg-[#f0fdfa]' : 'border-border bg-border-subtle'
+        isExpanded ? 'border-admin-accent/30 bg-admin-accent/5' : 'border-border bg-border-subtle'
       }`}
     >
       <div className="flex w-full items-center justify-between">

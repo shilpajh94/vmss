@@ -175,7 +175,7 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
           onClick={() => void handleCreate()}
           pending={isSubmitting}
           pendingLabel="Creating…"
-          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
           + Create Field
         </PendingButton>

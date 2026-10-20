@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
@@ -23,7 +23,6 @@ export function useAdminRoles() {
   const { phase, isRefreshing, begin } = useLoadTracker()
   const [isResyncing, setIsResyncing] = useState(false)
   const [resyncResult, setResyncResult] = useState<RolePermissionResyncEntry[] | undefined>(undefined)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const { page, goToNextPage, goToPrevPage } = usePagedList()
 
@@ -39,7 +38,6 @@ export function useAdminRoles() {
         setCurrentUser(user)
         setRoles(page_.items)
         setTotal(page_.total)
-        setLastUpdatedAt(new Date())
       } catch {
         if (!request.fail()) return
         toast.error('Something went wrong loading the roles. Please try again.')
@@ -62,9 +60,9 @@ export function useAdminRoles() {
   }, [loadRoles])
 
   const isActionInProgress = isResyncing
-  usePolling(() => void loadRoles('background'), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadRoles('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const resyncPermissions = useCallback(async () => {
     setIsResyncing(true)

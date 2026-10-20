@@ -26,7 +26,7 @@ export function AdminVisitorCategoryFormPage() {
   const { isEditMode, isLoading, errorMessage, retry, values, errors, isSaving, updateField, submit, cancel } =
     useAdminVisitorCategoryForm()
 
-  const fieldLabelClassName = 'text-[13px] font-bold uppercase text-[#475569]'
+  const fieldLabelClassName = 'text-[13px] font-bold uppercase text-text-secondary'
 
   usePageHeader({ description: 'Define visitor classifications, compliance procedures, security rules and physical pass designs' })
 
@@ -52,7 +52,7 @@ export function AdminVisitorCategoryFormPage() {
         {errorMessage ? (
           <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
             <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
+            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
               Try again
             </button>
           </div>
@@ -138,7 +138,7 @@ export function AdminVisitorCategoryFormPage() {
                 onClick={() => void submit()}
                 pending={isSaving}
                 pendingLabel="Saving…"
-                className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-white disabled:opacity-50"
+                className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-on-accent disabled:opacity-50"
               >
                 {isEditMode ? 'Save Changes' : 'Save Category'}
               </PendingButton>

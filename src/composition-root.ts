@@ -15,6 +15,7 @@ import type { DepartmentRepository } from './data/repositories/department-reposi
 import type { BuildingRepository } from './data/repositories/building-repository'
 import type { FloorRepository } from './data/repositories/floor-repository'
 import type { DashboardRepository } from './data/repositories/dashboard-repository'
+import type { CalendarRepository } from './data/repositories/calendar-repository'
 import type { HostEmployeeRepository } from './data/repositories/host-employee-repository'
 import type { EmployeeDirectoryRepository } from './data/repositories/employee-directory-repository'
 import type { KioskRepository } from './data/repositories/kiosk-repository'
@@ -78,6 +79,8 @@ import { GetDashboardOverviewUseCase } from './data/use-cases/get-dashboard-over
 import { GetMyDashboardOverviewUseCase } from './data/use-cases/get-my-dashboard-overview'
 import { GetDashboardAnalyticsUseCase } from './data/use-cases/get-dashboard-analytics'
 import { GetMyDashboardAnalyticsUseCase } from './data/use-cases/get-my-dashboard-analytics'
+import { GetCalendarFeedUseCase } from './data/use-cases/get-calendar-feed'
+import { GetCalendarDayPageUseCase } from './data/use-cases/get-calendar-day-page'
 import { ListRecentCheckinsUseCase } from './data/use-cases/list-recent-checkins'
 import { ListHostEmployeesUseCase } from './data/use-cases/list-host-employees'
 import { ListHostEmployeesPageUseCase } from './data/use-cases/list-host-employees-page'
@@ -155,6 +158,7 @@ import { HttpDepartmentRepository } from './infrastructure/department-repository
 import { HttpBuildingRepository } from './infrastructure/building-repository'
 import { HttpFloorRepository } from './infrastructure/floor-repository'
 import { HttpDashboardRepository } from './infrastructure/dashboard-repository'
+import { HttpCalendarRepository } from './infrastructure/calendar-repository'
 import { HttpHostEmployeeRepository } from './infrastructure/host-employee-repository'
 import { HttpEmployeeDirectoryRepository } from './infrastructure/employee-directory-repository'
 import { HttpKioskRepository } from './infrastructure/kiosk-repository'
@@ -221,6 +225,8 @@ export interface AppDependencies {
   getMyDashboardOverviewUseCase: GetMyDashboardOverviewUseCase
   getDashboardAnalyticsUseCase: GetDashboardAnalyticsUseCase
   getMyDashboardAnalyticsUseCase: GetMyDashboardAnalyticsUseCase
+  getCalendarFeedUseCase: GetCalendarFeedUseCase
+  getCalendarDayPageUseCase: GetCalendarDayPageUseCase
   listRecentCheckinsUseCase: ListRecentCheckinsUseCase
   listHostEmployeesUseCase: ListHostEmployeesUseCase
   listHostEmployeesPageUseCase: ListHostEmployeesPageUseCase
@@ -356,6 +362,9 @@ export function createApp(): AppDependencies {
   let getMyDashboardOverviewUseCase: GetMyDashboardOverviewUseCase | undefined
   let getDashboardAnalyticsUseCase: GetDashboardAnalyticsUseCase | undefined
   let getMyDashboardAnalyticsUseCase: GetMyDashboardAnalyticsUseCase | undefined
+  let calendarRepository: CalendarRepository | undefined
+  let getCalendarFeedUseCase: GetCalendarFeedUseCase | undefined
+  let getCalendarDayPageUseCase: GetCalendarDayPageUseCase | undefined
   let listRecentCheckinsUseCase: ListRecentCheckinsUseCase | undefined
   let hostEmployeeRepository: HostEmployeeRepository | undefined
   let listHostEmployeesUseCase: ListHostEmployeesUseCase | undefined
@@ -780,6 +789,21 @@ export function createApp(): AppDependencies {
   const resolveGetMyDashboardAnalyticsUseCase = (): GetMyDashboardAnalyticsUseCase => {
     getMyDashboardAnalyticsUseCase ??= new GetMyDashboardAnalyticsUseCase(resolveDashboardRepository())
     return getMyDashboardAnalyticsUseCase
+  }
+
+  const resolveCalendarRepository = (): CalendarRepository => {
+    calendarRepository ??= new HttpCalendarRepository(resolveApiClient())
+    return calendarRepository
+  }
+
+  const resolveGetCalendarFeedUseCase = (): GetCalendarFeedUseCase => {
+    getCalendarFeedUseCase ??= new GetCalendarFeedUseCase(resolveCalendarRepository())
+    return getCalendarFeedUseCase
+  }
+
+  const resolveGetCalendarDayPageUseCase = (): GetCalendarDayPageUseCase => {
+    getCalendarDayPageUseCase ??= new GetCalendarDayPageUseCase(resolveCalendarRepository())
+    return getCalendarDayPageUseCase
   }
 
   const resolveListRecentCheckinsUseCase = (): ListRecentCheckinsUseCase => {
@@ -1297,6 +1321,12 @@ export function createApp(): AppDependencies {
     },
     get getMyDashboardAnalyticsUseCase() {
       return resolveGetMyDashboardAnalyticsUseCase()
+    },
+    get getCalendarFeedUseCase() {
+      return resolveGetCalendarFeedUseCase()
+    },
+    get getCalendarDayPageUseCase() {
+      return resolveGetCalendarDayPageUseCase()
     },
     get listRecentCheckinsUseCase() {
       return resolveListRecentCheckinsUseCase()
