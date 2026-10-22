@@ -1,4 +1,4 @@
-import heroImage from "../../../assets/images/lobby-hero.png"
+import { HeroImage } from "../../components/HeroImage"
 import { CalendarIcon, SearchIcon } from "../../../assets/icons"
 import { PortalFooter } from "../../components/PortalFooter"
 import { PortalHeader } from "../../components/PortalHeader"
@@ -11,7 +11,7 @@ export function VisitorPortalLandingPage() {
       <PortalHeader />
       <div className="relative flex w-full flex-1 flex-col justify-center">
         <div aria-hidden className="absolute inset-0">
-          <img src={heroImage} alt="" className="size-full object-cover" />
+          <HeroImage />
           <div className="absolute inset-0 bg-primary/55" />
         </div>
         <PortalHero />

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:check": "npm run build && node scripts/check-bundle-budget.mjs",
     "test": "node --import ./scripts/unit-test-loader.mjs --test 'tests/unit/**/*.test.ts'",
     "lint": "oxlint && node scripts/check-brand.mjs && node scripts/check-grid-spans.mjs && node scripts/check-theme-colors.mjs",
     "preview": "vite preview",

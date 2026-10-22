@@ -1,71 +1,66 @@
-import { lazy, Suspense, type ReactNode } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import { createBrowserRouter, Navigate, Route, RouterProvider, Routes } from 'react-router'
 import { LoadingState } from './presentation/components/ui/LoadingState'
+import { lazyPage } from './presentation/components/lazy-page'
+import { RouteErrorPage } from './presentation/pages/not-found/route-error'
 import { AppDependenciesProvider } from './presentation/context/app-dependencies-context'
 import { ToastProvider } from './presentation/components/toast/toast-context'
 import { PushNotificationsProvider } from './presentation/components/push-notifications/PushNotificationsProvider'
 import { SessionExpiryListener } from './presentation/components/session/SessionExpiryListener'
 import { PublicLayout } from './presentation/components/PublicLayout'
-import { AdminLayout } from './presentation/components/AdminLayout'
-import { StaffLayout } from './presentation/components/StaffLayout'
 import { NotificationCenterProvider } from './presentation/context/notification-center-context'
 import { ThemeModeProvider } from './presentation/context/theme-mode-context'
 import { UnsavedChangesProvider } from './presentation/context/unsaved-changes-context'
 import { RequirePermission } from './presentation/components/session/RouteGuards'
 import { PAGE_PERMISSIONS } from './presentation/route-permissions'
 import { VisitorPortalLandingPage } from './presentation/pages/visitor-portal-landing/visitor-portal-landing'
-import { VisitorRequestPage } from './presentation/pages/visitor-request/visitor-request'
-import { VisitorTrackPage } from './presentation/pages/visitor-track/visitor-track'
-import { StaffLoginPage } from './presentation/pages/staff-login/staff-login'
-import { StaffSsoLoginPage } from './presentation/pages/staff-sso-login/staff-sso-login'
-import { StaffInvitationsPage } from './presentation/pages/staff-invitations/staff-invitations'
-import { StaffVisitorRegistrationPage } from './presentation/pages/staff-visitor-registration/staff-visitor-registration'
-import { AdminOrganisationConfigsPage } from './presentation/pages/admin-organisation-configs/admin-organisation-configs'
-import { AdminBranchesPage } from './presentation/pages/admin-branches/admin-branches'
-import { AdminBranchCreatePage } from './presentation/pages/admin-branches/admin-branch-create'
-import { AdminDepartmentsPage } from './presentation/pages/admin-departments/admin-departments'
-import { AdminDepartmentFormPage } from './presentation/pages/admin-departments/admin-department-form'
-import { AdminBuildingsPage } from './presentation/pages/admin-buildings/admin-buildings'
-import { AdminBuildingFormPage } from './presentation/pages/admin-buildings/admin-building-form'
-import { AdminFloorsPage } from './presentation/pages/admin-floors/admin-floors'
-import { AdminFloorFormPage } from './presentation/pages/admin-floors/admin-floor-form'
-import { AdminHostEmployeesPage } from './presentation/pages/admin-host-employees/admin-host-employees'
-import { AdminHostEmployeeFormPage } from './presentation/pages/admin-host-employees/admin-host-employee-form'
-import { AdminReceptionDesksPage } from './presentation/pages/admin-reception-desks/admin-reception-desks'
-import { AdminSecurityGatesPage } from './presentation/pages/admin-security-gates/admin-security-gates'
-import { AdminKiosksPage } from './presentation/pages/admin-kiosks/admin-kiosks'
-import { AdminKioskFormPage } from './presentation/pages/admin-kiosks/admin-kiosk-form'
-import { AdminVisitorCategoriesPage } from './presentation/pages/admin-visitor-categories/admin-visitor-categories'
-import { AdminVisitorCategoryFormPage } from './presentation/pages/admin-visitor-categories/admin-visitor-category-form'
-import { AdminWorkflowsPage } from './presentation/pages/admin-workflows/admin-workflows'
-import { AdminWorkflowFormPage } from './presentation/pages/admin-workflows/admin-workflow-form'
-import { AdminInvitationsPage } from './presentation/pages/admin-invitations/admin-invitations'
-import { AdminRolesPage } from './presentation/pages/admin-roles/admin-roles'
-import { AdminRolePermissionsFormPage } from './presentation/pages/admin-roles/admin-role-permissions-form'
-import { AdminRoleCreateFormPage } from './presentation/pages/admin-roles/admin-role-create-form'
-import { AdminFormBuilderPage } from './presentation/pages/admin-form-builder/admin-form-builder'
-import { AdminFormBuilderStepEditorPage } from './presentation/pages/admin-form-builder/admin-form-builder-step-editor'
-import { AdminAuditTrailPage } from './presentation/pages/admin-audit-trail/admin-audit-trail'
 import { NotFoundPage } from './presentation/pages/not-found/not-found'
 
-// The dashboards are the only pages that render charts; loading them lazily
-// keeps the chart library out of the public portal and login bundles
-// (live-dashboards-and-analytics design.md W5).
-const AdminDashboardPage = lazy(() =>
-  import('./presentation/pages/admin-dashboard/admin-dashboard').then((module) => ({ default: module.AdminDashboardPage })),
-)
-const ReceptionDashboardPage = lazy(() =>
-  import('./presentation/pages/reception-dashboard/reception-dashboard').then((module) => ({ default: module.ReceptionDashboardPage })),
-)
-const StaffDashboardPage = lazy(() =>
-  import('./presentation/pages/staff-dashboard/staff-dashboard').then((module) => ({ default: module.StaffDashboardPage })),
-)
+// Every page but the visitor landing page (and the not-found page) is its
+// own chunk, loaded the first time its route opens, so a visitor on a phone
+// downloads only the public pages (design D13). The layouts' Suspense shows
+// their loading state meanwhile.
+const VisitorRequestPage = lazyPage(() => import('./presentation/pages/visitor-request/visitor-request'), 'VisitorRequestPage')
+const VisitorTrackPage = lazyPage(() => import('./presentation/pages/visitor-track/visitor-track'), 'VisitorTrackPage')
+const StaffLoginPage = lazyPage(() => import('./presentation/pages/staff-login/staff-login'), 'StaffLoginPage')
+const StaffSsoLoginPage = lazyPage(() => import('./presentation/pages/staff-sso-login/staff-sso-login'), 'StaffSsoLoginPage')
+const StaffInvitationsPage = lazyPage(() => import('./presentation/pages/staff-invitations/staff-invitations'), 'StaffInvitationsPage')
+const StaffVisitorRegistrationPage = lazyPage(() => import('./presentation/pages/staff-visitor-registration/staff-visitor-registration'), 'StaffVisitorRegistrationPage')
+const AdminOrganisationConfigsPage = lazyPage(() => import('./presentation/pages/admin-organisation-configs/admin-organisation-configs'), 'AdminOrganisationConfigsPage')
+const AdminBranchesPage = lazyPage(() => import('./presentation/pages/admin-branches/admin-branches'), 'AdminBranchesPage')
+const AdminBranchCreatePage = lazyPage(() => import('./presentation/pages/admin-branches/admin-branch-create'), 'AdminBranchCreatePage')
+const AdminDepartmentsPage = lazyPage(() => import('./presentation/pages/admin-departments/admin-departments'), 'AdminDepartmentsPage')
+const AdminDepartmentFormPage = lazyPage(() => import('./presentation/pages/admin-departments/admin-department-form'), 'AdminDepartmentFormPage')
+const AdminBuildingsPage = lazyPage(() => import('./presentation/pages/admin-buildings/admin-buildings'), 'AdminBuildingsPage')
+const AdminBuildingFormPage = lazyPage(() => import('./presentation/pages/admin-buildings/admin-building-form'), 'AdminBuildingFormPage')
+const AdminFloorsPage = lazyPage(() => import('./presentation/pages/admin-floors/admin-floors'), 'AdminFloorsPage')
+const AdminFloorFormPage = lazyPage(() => import('./presentation/pages/admin-floors/admin-floor-form'), 'AdminFloorFormPage')
+const AdminHostEmployeesPage = lazyPage(() => import('./presentation/pages/admin-host-employees/admin-host-employees'), 'AdminHostEmployeesPage')
+const AdminHostEmployeeFormPage = lazyPage(() => import('./presentation/pages/admin-host-employees/admin-host-employee-form'), 'AdminHostEmployeeFormPage')
+const AdminReceptionDesksPage = lazyPage(() => import('./presentation/pages/admin-reception-desks/admin-reception-desks'), 'AdminReceptionDesksPage')
+const AdminSecurityGatesPage = lazyPage(() => import('./presentation/pages/admin-security-gates/admin-security-gates'), 'AdminSecurityGatesPage')
+const AdminKiosksPage = lazyPage(() => import('./presentation/pages/admin-kiosks/admin-kiosks'), 'AdminKiosksPage')
+const AdminKioskFormPage = lazyPage(() => import('./presentation/pages/admin-kiosks/admin-kiosk-form'), 'AdminKioskFormPage')
+const AdminVisitorCategoriesPage = lazyPage(() => import('./presentation/pages/admin-visitor-categories/admin-visitor-categories'), 'AdminVisitorCategoriesPage')
+const AdminVisitorCategoryFormPage = lazyPage(() => import('./presentation/pages/admin-visitor-categories/admin-visitor-category-form'), 'AdminVisitorCategoryFormPage')
+const AdminWorkflowsPage = lazyPage(() => import('./presentation/pages/admin-workflows/admin-workflows'), 'AdminWorkflowsPage')
+const AdminWorkflowFormPage = lazyPage(() => import('./presentation/pages/admin-workflows/admin-workflow-form'), 'AdminWorkflowFormPage')
+const AdminInvitationsPage = lazyPage(() => import('./presentation/pages/admin-invitations/admin-invitations'), 'AdminInvitationsPage')
+const AdminRolesPage = lazyPage(() => import('./presentation/pages/admin-roles/admin-roles'), 'AdminRolesPage')
+const AdminRolePermissionsFormPage = lazyPage(() => import('./presentation/pages/admin-roles/admin-role-permissions-form'), 'AdminRolePermissionsFormPage')
+const AdminRoleCreateFormPage = lazyPage(() => import('./presentation/pages/admin-roles/admin-role-create-form'), 'AdminRoleCreateFormPage')
+const AdminFormBuilderPage = lazyPage(() => import('./presentation/pages/admin-form-builder/admin-form-builder'), 'AdminFormBuilderPage')
+const AdminFormBuilderStepEditorPage = lazyPage(() => import('./presentation/pages/admin-form-builder/admin-form-builder-step-editor'), 'AdminFormBuilderStepEditorPage')
+const AdminAuditTrailPage = lazyPage(() => import('./presentation/pages/admin-audit-trail/admin-audit-trail'), 'AdminAuditTrailPage')
+// The staff shells (sidebar, top bar, notification bell) are only for
+// signed-in users, so they are chunks too.
+const AdminLayout = lazyPage(() => import('./presentation/components/AdminLayout'), 'AdminLayout')
+const StaffLayout = lazyPage(() => import('./presentation/components/StaffLayout'), 'StaffLayout')
+const AdminDashboardPage = lazyPage(() => import('./presentation/pages/admin-dashboard/admin-dashboard'), 'AdminDashboardPage')
+const ReceptionDashboardPage = lazyPage(() => import('./presentation/pages/reception-dashboard/reception-dashboard'), 'ReceptionDashboardPage')
+const StaffDashboardPage = lazyPage(() => import('./presentation/pages/staff-dashboard/staff-dashboard'), 'StaffDashboardPage')
 // add-staff-calendar: one page for both portals (design.md W5).
-const CalendarPage = lazy(() => import('./presentation/pages/calendar/calendar-page').then((module) => ({ default: module.CalendarPage })))
-
-function LazyPage({ children, label = 'Loading dashboard…' }: { children: ReactNode; label?: string }) {
-  return <Suspense fallback={<LoadingState label={label} className="flex-1" />}>{children}</Suspense>
-}
+const CalendarPage = lazyPage(() => import('./presentation/pages/calendar/calendar-page'), 'CalendarPage')
 
 interface PageRoute {
   path: string
@@ -79,11 +74,7 @@ const ADMIN_ROUTES: PageRoute[] = [
   {
     path: '/admin/dashboard',
     requires: PAGE_PERMISSIONS.adminDashboard,
-    element: (
-      <LazyPage>
-        <AdminDashboardPage />
-      </LazyPage>
-    ),
+    element: <AdminDashboardPage />,
   },
   { path: '/admin/organisation-configs', requires: PAGE_PERMISSIONS.organisationConfigs, element: <AdminOrganisationConfigsPage /> },
   { path: '/admin/branches', requires: PAGE_PERMISSIONS.branches, element: <AdminBranchesPage /> },
@@ -117,11 +108,7 @@ const ADMIN_ROUTES: PageRoute[] = [
   {
     path: '/admin/calendar',
     requires: PAGE_PERMISSIONS.calendar,
-    element: (
-      <LazyPage label="Loading calendar…">
-        <CalendarPage boardBasePath="/admin/invitations" />
-      </LazyPage>
-    ),
+    element: <CalendarPage boardBasePath="/admin/invitations" />,
   },
   { path: '/admin/roles', requires: PAGE_PERMISSIONS.roles, element: <AdminRolesPage /> },
   { path: '/admin/roles/new', requires: PAGE_PERMISSIONS.roles, element: <AdminRoleCreateFormPage /> },
@@ -134,31 +121,19 @@ const ADMIN_ROUTES: PageRoute[] = [
 const STAFF_ROUTES: PageRoute[] = [
   {
     path: '/staff/dashboard',
-    element: (
-      <LazyPage>
-        <StaffDashboardPage />
-      </LazyPage>
-    ),
+    element: <StaffDashboardPage />,
   },
   // Under the staff layout so reception shares its top bar, refresh control
   // and current-user context; the page keeps its own Reception-role guard.
   {
     path: '/reception/dashboard',
-    element: (
-      <LazyPage>
-        <ReceptionDashboardPage />
-      </LazyPage>
-    ),
+    element: <ReceptionDashboardPage />,
   },
   { path: '/staff/invitations', requires: PAGE_PERMISSIONS.staffInvitations, element: <StaffInvitationsPage /> },
   {
     path: '/staff/calendar',
     requires: PAGE_PERMISSIONS.calendar,
-    element: (
-      <LazyPage label="Loading calendar…">
-        <CalendarPage boardBasePath="/staff/invitations" />
-      </LazyPage>
-    ),
+    element: <CalendarPage boardBasePath="/staff/invitations" />,
   },
   { path: '/staff/visitors/new', requires: PAGE_PERMISSIONS.registerVisitor, element: <StaffVisitorRegistrationPage /> },
 ]
@@ -178,20 +153,24 @@ function RootLayout() {
             <NotificationCenterProvider>
               <SessionExpiryListener />
               <PushNotificationsProvider>
-                <Routes>
-                  <Route element={<PublicLayout />}>
-                    <Route path="/" element={<VisitorPortalLandingPage />} />
-                    <Route path="/visitor/request" element={<VisitorRequestPage />} />
-                    <Route path="/visitor/track" element={<VisitorTrackPage />} />
-                    <Route path="/admin/login" element={<StaffLoginPage />} />
-                    <Route path="/staff/login" element={<StaffSsoLoginPage />} />
-                    <Route path="*" element={<NotFoundPage />} />
-                  </Route>
+                {/* Covers a lazy layout's own first load; once a layout is
+                    mounted, its Suspense covers its pages. */}
+                <Suspense fallback={<LoadingState label="Loading…" className="min-h-dvh" />}>
+                  <Routes>
+                    <Route element={<PublicLayout />}>
+                      <Route path="/" element={<VisitorPortalLandingPage />} />
+                      <Route path="/visitor/request" element={<VisitorRequestPage />} />
+                      <Route path="/visitor/track" element={<VisitorTrackPage />} />
+                      <Route path="/admin/login" element={<StaffLoginPage />} />
+                      <Route path="/staff/login" element={<StaffSsoLoginPage />} />
+                      <Route path="*" element={<NotFoundPage />} />
+                    </Route>
 
-                  <Route element={<AdminLayout />}>{renderPageRoutes(ADMIN_ROUTES)}</Route>
+                    <Route element={<AdminLayout />}>{renderPageRoutes(ADMIN_ROUTES)}</Route>
 
-                  <Route element={<StaffLayout />}>{renderPageRoutes(STAFF_ROUTES)}</Route>
-                </Routes>
+                    <Route element={<StaffLayout />}>{renderPageRoutes(STAFF_ROUTES)}</Route>
+                  </Routes>
+                </Suspense>
               </PushNotificationsProvider>
             </NotificationCenterProvider>
           </UnsavedChangesProvider>
@@ -204,7 +183,7 @@ function RootLayout() {
 // A data router, so forms can block navigation while they hold unsaved
 // input (`useBlocker`, design D-W6). The route tree itself stays in
 // `RootLayout`'s <Routes>, under one splat route.
-const router = createBrowserRouter([{ path: '*', element: <RootLayout /> }])
+const router = createBrowserRouter([{ path: '*', element: <RootLayout />, errorElement: <RouteErrorPage /> }])
 
 function App() {
   return <RouterProvider router={router} />

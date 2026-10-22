@@ -1,6 +1,5 @@
 import { useCallback } from 'react'
-import { getToken } from 'firebase/messaging'
-import { getFirebaseMessaging } from '../../infrastructure/firebase/firebase-app'
+import { hasFirebaseFailed, isPushSupported, loadFirebaseMessaging } from '../../infrastructure/firebase/firebase-app'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
 
@@ -25,7 +24,7 @@ export function getPushState(): PushState {
   if (typeof window === 'undefined' || !window.isSecureContext) {
     return { status: 'unavailable', reason: 'insecure-context' }
   }
-  if (!('Notification' in window) || !('serviceWorker' in navigator) || !getFirebaseMessaging()) {
+  if (!isPushSupported() || hasFirebaseFailed()) {
     return { status: 'unavailable', reason: 'unsupported' }
   }
   if (Notification.permission === 'denied') return { status: 'blocked' }
@@ -46,10 +45,10 @@ export function usePushNotifications() {
   const toast = useToast()
 
   const registerWithGrantedPermission = useCallback(async (): Promise<void> => {
-    const messaging = getFirebaseMessaging()
-    if (!messaging) return
+    const firebase = await loadFirebaseMessaging()
+    if (!firebase) return
 
-    const token = await getToken(messaging, { vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY })
+    const token = await firebase.getToken(firebase.messaging, { vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY })
     if (!token) throw new Error('Firebase returned no registration token')
 
     await registerDeviceUseCase.execute(token)

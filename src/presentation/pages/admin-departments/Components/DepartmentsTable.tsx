@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router'
 import { PencilIcon, TrashIcon } from '../../../components/icons'
 import type { Department } from '../../../../domain/entities/department-schema'
@@ -17,7 +18,9 @@ const COLUMN_HEADERS = ['DEPARTMENT NAME', 'CODE', 'BRANCH', 'HEAD OF DEPARTMENT
 
 export function DepartmentsTable({ departments, employees, onDelete }: DepartmentsTableProps) {
   const navigate = useNavigate()
-  const employeesById = new Map(employees.map((employee) => [employee.id, employee]))
+  // The employee list is reference data that rarely changes; the table
+  // re-renders on every poll.
+  const employeesById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees])
 
   return (
     <div className="w-full overflow-x-auto rounded-2xl border border-border bg-surface">

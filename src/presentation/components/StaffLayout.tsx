@@ -1,9 +1,11 @@
+import { Suspense } from 'react'
 import { Outlet, useLocation } from 'react-router'
 import { DashboardSidebar, resolveStaffActiveItem, staffNavLabelFor } from './DashboardSidebar'
 import { ReceptionSidebar, resolveReceptionActiveItem } from './ReceptionSidebar'
 import { AppShell } from './AppShell'
 import { AppTopBar } from './AppTopBar'
 import { RouteTransition } from './RouteTransition'
+import { LoadingState } from './ui/LoadingState'
 import { SignInRedirect } from './session/RouteGuards'
 import { SessionGateContent } from './session/SessionGateContent'
 import { useStaffSession } from './session/use-staff-session'
@@ -49,7 +51,10 @@ function StaffLayoutContent() {
       >
         <SessionGateContent session={session} onRetry={retry}>
           <RouteTransition withEndGap>
-            <Outlet />
+            {/* A page's chunk loads on its first visit (design D13). */}
+            <Suspense fallback={<LoadingState label="Loading…" className="flex-1" />}>
+              <Outlet />
+            </Suspense>
           </RouteTransition>
         </SessionGateContent>
       </AppShell>

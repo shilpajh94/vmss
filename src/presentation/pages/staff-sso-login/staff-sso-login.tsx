@@ -1,4 +1,4 @@
-import heroImage from '../../../assets/images/lobby-hero.png'
+import { HeroImage } from '../../components/HeroImage'
 import { SsoSignInCard } from './Components/SsoSignInCard'
 import { StaffPortalHeader } from './Components/StaffPortalHeader'
 import { StaffSsoLoginFooter } from './Components/StaffSsoLoginFooter'
@@ -11,7 +11,7 @@ export function StaffSsoLoginPage() {
   return (
     <div className="relative flex h-dvh w-full flex-col overflow-hidden">
       <div aria-hidden className="absolute inset-0">
-        <img src={heroImage} alt="" className="size-full object-cover" />
+        <HeroImage />
         <div className="absolute inset-0 bg-primary/55" />
       </div>
 

@@ -1,4 +1,4 @@
-import heroImage from '../../../assets/images/lobby-hero.png'
+import { HeroImage } from '../../components/HeroImage'
 import { PortalFooter } from '../../components/PortalFooter'
 import { PortalHeader } from '../../components/PortalHeader'
 import { CardSkeleton } from '../../components/ui/Skeleton'
@@ -14,7 +14,7 @@ export function VisitorTrackPage() {
       <PortalHeader backTo="/" />
       <div className="relative flex w-full flex-1 flex-col">
         <div aria-hidden className="absolute inset-0">
-          <img src={heroImage} alt="" className="size-full object-cover" />
+          <HeroImage />
           <div className="absolute inset-0 bg-primary/55" />
         </div>
         <h1 className="text-h1 relative px-4 md:px-12 pt-6 pb-6 md:pt-10 md:pb-8 text-white">Track Your Visit</h1>

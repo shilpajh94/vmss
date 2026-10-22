@@ -1,4 +1,4 @@
-import heroImage from '../../../assets/images/lobby-hero.png'
+import { HeroImage } from '../../components/HeroImage'
 import { LoginFormCard } from './Components/LoginFormCard'
 import { StaffGatewayHeader } from './Components/StaffGatewayHeader'
 import { StaffLoginFooter } from './Components/StaffLoginFooter'
@@ -22,7 +22,7 @@ export function StaffLoginPage() {
   return (
     <div className="relative flex h-dvh w-full flex-col overflow-hidden">
       <div aria-hidden className="absolute inset-0">
-        <img src={heroImage} alt="" className="size-full object-cover" />
+        <HeroImage />
         <div className="absolute inset-0 bg-primary/55" />
       </div>
 

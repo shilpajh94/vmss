@@ -1,5 +1,7 @@
+import { Suspense } from 'react'
 import { Outlet } from 'react-router'
 import { RouteTransition } from './RouteTransition'
+import { LoadingState } from './ui/LoadingState'
 import { useApplyTheme } from '../context/theme-mode-context'
 
 // Hosts the ungrouped, chrome-less routes (visitor portal, visitor request/track,
@@ -11,7 +13,10 @@ export function PublicLayout() {
   useApplyTheme('light')
   return (
     <RouteTransition>
-      <Outlet />
+      {/* The wizard, tracking and sign-in pages are chunks of their own. */}
+      <Suspense fallback={<LoadingState label="Loading…" className="min-h-dvh bg-bg" />}>
+        <Outlet />
+      </Suspense>
     </RouteTransition>
   )
 }

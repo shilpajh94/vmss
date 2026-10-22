@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import heroImage from '../../../../../assets/images/lobby-hero.png'
+import { HeroImage } from '../../../../components/HeroImage'
 
 interface OtpScreenLayoutProps {
   onBack: () => void
@@ -10,7 +10,7 @@ export function OtpScreenLayout({ onBack, children }: OtpScreenLayoutProps) {
   return (
     <div className="relative flex w-full flex-1 flex-col">
       <div aria-hidden className="absolute inset-0">
-        <img src={heroImage} alt="" className="size-full object-cover" />
+        <HeroImage />
         <div className="absolute inset-0 bg-primary/55" />
       </div>
       <div className="relative flex items-center gap-4 px-4 md:px-12 pt-6 pb-6 md:pt-10 md:pb-8">

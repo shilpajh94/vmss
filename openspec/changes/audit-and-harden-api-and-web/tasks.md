@@ -71,12 +71,12 @@ These tasks follow the shared design in `VMSS_API/openspec/changes/audit-and-har
 
 ## 5. P2 — Bundle and asset performance
 
-- [ ] 5.1 Lazy-load every admin, staff, form-builder and wizard route in `src/App.tsx:13-45`. Add a lazy wrapper that reloads once on a chunk-load error, and use the layouts' skeletons as the Suspense fallback.
-- [ ] 5.2 Load `firebase/messaging` with a dynamic `import()` after login (`components/push-notifications/PushNotificationsProvider.tsx:3`, `hooks/use-push-notifications.ts:2`).
-- [ ] 5.3 Convert `src/assets/images/lobby-hero.png` to AVIF and WebP, with the PNG as fallback. Use `<picture>`/`srcset` with `fetchpriority="high"` on the landing, login, track and OTP pages.
-- [ ] 5.4 In `src/styles/fonts.css`, add the Geist 600 import and drop any font weight nothing uses.
-- [ ] 5.5 Add `scripts/check-bundle-budget.mjs` and `npm run build:check` (D-W10). Record the landing-page JS before and after; the target is ≤ 350 KB gzipped.
-- [ ] 5.6 Memoise the `Map` in `DepartmentsTable.tsx:20`.
+- [x] 5.1 *(Every page except the landing and not-found pages is lazy, and so are the admin and staff layouts. `components/lazy-page.ts` reloads once on a stale-chunk error, with a sessionStorage flag so it can't loop. The layouts' `Suspense` shows their loading state, and a second failure reaches a new router `errorElement` (`RouteErrorPage`) with a Reload button.)* Lazy-load every admin, staff, form-builder and wizard route in `src/App.tsx:13-45`. Add a lazy wrapper that reloads once on a chunk-load error, and use the layouts' skeletons as the Suspense fallback.
+- [x] 5.2 *(`loadFirebaseMessaging()` imports `firebase/app` and `firebase/messaging` on first use. The foreground listener waits on `whenFirebaseMessagingReady()` rather than loading the SDK. The background service worker, which pulls Firebase from gstatic, is registered only once a session exists.)* Load `firebase/messaging` with a dynamic `import()` after login (`components/push-notifications/PushNotificationsProvider.tsx:3`, `hooks/use-push-notifications.ts:2`).
+- [x] 5.3 *(768 and 1536 px AVIF (15/41 kB) and WebP (21/53 kB) variants, against the 1.3 MB PNG, in a shared `HeroImage` (`<picture>`, `sizes=100vw`, `fetchpriority=high`). Pillow here has no AVIF, so AVIF was encoded with Pillow 12 inside the local e2e container. No dependency was added.)* Convert `src/assets/images/lobby-hero.png` to AVIF and WebP, with the PNG as fallback. Use `<picture>`/`srcset` with `fetchpriority="high"` on the landing, login, track and OTP pages.
+- [x] 5.4 *(Geist 600 added: `font-semibold` is used about 290 times, mostly on Geist body text, and was being synthesised. Nothing was dropped: Outfit 400/600/700/800 and Geist 400/500/700 are all in use (`text-display` is 800, and an Outfit heading with no weight class renders at 400).)* In `src/styles/fonts.css`, add the Geist 600 import and drop any font weight nothing uses.
+- [x] 5.5 *(Deviation: D-W10 reads the build manifest, but enabling one means editing the skip-worktree `vite.config.ts`, so the script reads `dist/index.html`'s entry and modulepreload links and follows static imports. Landing-page JS before: 289.63 kB gzipped (`index-*.js`, §0). After: 184.26 kB (gzip level 6), against a 350 kB budget.)* Add `scripts/check-bundle-budget.mjs` and `npm run build:check` (D-W10). Record the landing-page JS before and after; the target is ≤ 350 KB gzipped.
+- [x] 5.6 Memoise the `Map` in `DepartmentsTable.tsx:20`.
 
 ## 6. P2 — Accessibility
 
