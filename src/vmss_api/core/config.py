@@ -261,6 +261,18 @@ class Settings(BaseSettings):
     # User profile picture upload (add-avatar-upload-and-verify-image-storage).
     avatar_max_upload_size_bytes: int = 2 * 1024 * 1024
 
+    # Invitation retention purge (invitations/tasks.py). `0` disables the job
+    # outright — the safe default until the window is signed off. Invitations
+    # whose visit date (or creation date) is older than this many days are
+    # backed up, then permanently deleted, `invitation_purge_batch_size` at a
+    # time, daily at `invitation_purge_hour:invitation_purge_minute` UTC.
+    invitation_retention_days: int = Field(default=0, ge=0, alias="INVITATION_RETENTION_DAYS")
+    invitation_purge_batch_size: int = Field(
+        default=500, ge=1, le=5000, alias="INVITATION_PURGE_BATCH_SIZE"
+    )
+    invitation_purge_hour: int = Field(default=3, ge=0, le=23, alias="INVITATION_PURGE_HOUR")
+    invitation_purge_minute: int = Field(default=0, ge=0, le=59, alias="INVITATION_PURGE_MINUTE")
+
     # QR check-in token encryption (add-qr-checkin-security) — a dedicated
     # key, deliberately not shared with `sso_encryption_key` even though
     # both go through `core/encryption.py`'s Fernet pattern: rotating one

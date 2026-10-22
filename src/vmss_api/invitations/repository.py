@@ -9,6 +9,7 @@ from sqlalchemy import (
     and_,
     case,
     cast,
+    delete,
     exists,
     func,
     insert,
@@ -33,6 +34,16 @@ from vmss_api.invitations.models import (
 )
 from vmss_api.org_structure.models import Branch, Building, Department, Floor
 from vmss_api.visitors.models import VisitorCategory
+
+# Tables the retention purge backs up and deletes, parents before children,
+# each paired with the column that ties it to the invitation ids in play.
+_PURGE_TABLES_PARENT_FIRST: list[tuple[Any, Any]] = [
+    (Invitation, Invitation.id),
+    (InvitationApprovalStep, InvitationApprovalStep.invitation_id),
+    (InvitationVisitor, InvitationVisitor.invitation_id),
+    (InvitationQRCode, InvitationQRCode.invitation_id),
+    (InvitationVehicle, InvitationVehicle.invitation_id),
+]
 
 
 class InvitationExportNames(NamedTuple):
@@ -729,6 +740,61 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             .returning(Invitation.id)
         )
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_expired_ids(self, *, cutoff: date, limit: int) -> list[uuid.UUID]:
+        """Retention purge: ids of invitations whose reference date (visit
+        date, else creation date) is before `cutoff`, oldest first. Includes
+        soft-deleted rows — retention bounds how long the data exists, not
+        just what's visible. A visitor still inside (checked in, not checked
+        out) is never eligible however old the row is.
+        """
+        reference_date = func.coalesce(
+            Invitation.preferred_visit_date, cast(Invitation.created_at, Date)
+        )
+        stmt = (
+            select(Invitation.id)
+            .where(
+                reference_date < cutoff,
+                Invitation.status != "checked_in",
+                Invitation.check_in_status != "checked_in",
+            )
+            .order_by(reference_date.asc(), Invitation.id.asc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def load_rows_for_backup(self, ids: list[uuid.UUID]) -> list[tuple[str, dict[str, Any]]]:
+        """Retention purge: every row about to be deleted — the invitations
+        and each dependent table — as `(table_name, column_values)`. One
+        `IN (...)` query per table (never per invitation), selecting plain
+        rows rather than ORM objects so the `lazy="raise"` relationships on
+        `Invitation` never come into play.
+        """
+        records: list[tuple[str, dict[str, Any]]] = []
+        for model, key in _PURGE_TABLES_PARENT_FIRST:
+            stmt = select(model).where(key.in_(ids))
+            for row in (await self.session.execute(stmt)).scalars().all():
+                records.append(
+                    (
+                        model.__tablename__,
+                        {c.name: getattr(row, c.key) for c in model.__table__.columns},
+                    )
+                )
+        return records
+
+    async def delete_with_children(self, ids: list[uuid.UUID]) -> int:
+        """Retention purge: hard-deletes `ids` and every dependent row,
+        children first (the FKs have no `ON DELETE CASCADE`), one statement
+        per table. Returns the number of invitations deleted. Dependent
+        tables are exactly the four with an FK to `invitations.id`; audit
+        entries only store the id and are deliberately left in place.
+        """
+        deleted = 0
+        for model, key in reversed(_PURGE_TABLES_PARENT_FIRST):
+            result = await self.session.execute(delete(model).where(key.in_(ids)))
+            if model is Invitation:
+                deleted = result.rowcount  # type: ignore[attr-defined]
+        return deleted
 
     async def record_system_audit(
         self, invitation_ids: list[uuid.UUID], *, action: str, diff: dict[str, Any]

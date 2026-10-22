@@ -62,6 +62,7 @@ every recurring task is registered:
 |---|---|---|
 | `dispatch-daily-rollup-snapshots` | Daily, 02:00 UTC | `reports.tasks.dispatch_daily_rollup_snapshots` — see `docs/features/reports.md`'s "Scheduled snapshot" section. |
 | `visit-lifecycle-sweep` | Every 15 minutes | `invitations.tasks.dispatch_visit_lifecycle_sweep`. It fans out to `sweep_tenant_visit_lifecycle` per tenant, which auto-checks-out expired check-ins and archives approved no-shows. See `docs/features/invitations.md`'s "Automatic check-out and archived no-shows" section. Both tasks are routed to the cron queue by exact name, ahead of the `vmss_api.invitations.tasks.*` → notifications glob. If beat or the cron worker isn't running, nothing is swept. |
+| `invitation-retention-purge` | Daily, `INVITATION_PURGE_HOUR:INVITATION_PURGE_MINUTE` UTC (default 03:00) | `invitations.tasks.dispatch_invitation_purge` fans out to `purge_tenant_invitations` per tenant (cron queue, exact-name routes). Backs up, verifies, then deletes invitations past `INVITATION_RETENTION_DAYS`; a no-op when that is `0`. A per-tenant Redis lock (`vmss:{tenant_id}:invitations:purge:lock`) prevents concurrent runs. See `docs/features/invitations.md`'s "Retention purge" section. |
 
 Adding a new scheduled task: register it in `beat_schedule`, add its module
 to `celery_app.autodiscover_tasks([...])` if it's a new feature package, and

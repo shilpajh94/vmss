@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
@@ -48,6 +48,7 @@ from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.core.storage import url_for as storage_url_for
+from vmss_api.core.tenancy import get_token_payload
 from vmss_api.org_structure.deps import public_branch_scope, public_tenant_db
 from vmss_api.tenant.models import Tenant
 
@@ -249,6 +250,18 @@ async def _to_employee_out(user: User) -> EmployeeOut:
     )
 
 
+async def _caller_user_id(
+    payload: Annotated[dict[str, Any], Depends(get_token_payload)],
+) -> uuid.UUID:
+    """The caller's id straight from the verified token. Used instead of
+    `get_current_user` where the handler only needs the id (to guard
+    self-targeting and to attribute the audit entry) — it avoids touching an
+    ORM attribute that a rollback elsewhere in the request may have expired.
+    `require_permission` on the route already authenticates the caller.
+    """
+    return uuid.UUID(payload["sub"])
+
+
 @router.post(
     "/employees/sync",
     response_model=Envelope[EmployeeSyncResult],
@@ -259,7 +272,7 @@ async def sync_employee_directory(
     background_tasks: BackgroundTasks,
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
-    actor: Annotated[User, Depends(get_current_user)],
+    actor_id: Annotated[uuid.UUID, Depends(_caller_user_id)],
 ) -> JSONResponse:
     """Company-wide only, not branch-scoped: a directory sync batch spans
     every employee across every department/branch in one call by design —
@@ -271,7 +284,7 @@ async def sync_employee_directory(
     background_tasks.add_task(
         record_audit_log,
         tenant.schema_name,
-        actor_user_id=actor.id,
+        actor_user_id=actor_id,
         action="employee_directory_synced",
         entity_type="User",
         entity_id=None,
@@ -313,6 +326,90 @@ async def create_employee(
     return success_response(data=await _to_employee_out(new_employee), status_code=201)
 
 
+@router.post(
+    "/employees/{employee_id}/disable",
+    response_model=Envelope[EmployeeOut],
+    dependencies=[Depends(require_permission("employees:manage"))],
+)
+async def disable_employee(
+    employee_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor_id: Annotated[uuid.UUID, Depends(_caller_user_id)],
+) -> JSONResponse:
+    """Reversible; the employee can no longer sign in and existing tokens
+    stop working. See `auth/service.py::disable_employee`.
+    """
+    employee, changed = await service.disable_employee(
+        tenant_db, employee_id=employee_id, actor_id=actor_id
+    )
+    if changed:
+        background_tasks.add_task(
+            record_audit_log,
+            tenant.schema_name,
+            actor_user_id=actor_id,
+            action="employee_disabled",
+            entity_type="User",
+            entity_id=employee.id,
+        )
+    return success_response(data=await _to_employee_out(employee))
+
+
+@router.post(
+    "/employees/{employee_id}/enable",
+    response_model=Envelope[EmployeeOut],
+    dependencies=[Depends(require_permission("employees:manage"))],
+)
+async def enable_employee(
+    employee_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor_id: Annotated[uuid.UUID, Depends(_caller_user_id)],
+) -> JSONResponse:
+    employee, changed = await service.enable_employee(tenant_db, employee_id=employee_id)
+    if changed:
+        background_tasks.add_task(
+            record_audit_log,
+            tenant.schema_name,
+            actor_user_id=actor_id,
+            action="employee_enabled",
+            entity_type="User",
+            entity_id=employee.id,
+        )
+    return success_response(data=await _to_employee_out(employee))
+
+
+@router.delete(
+    "/employees/{employee_id}",
+    dependencies=[Depends(require_permission("employees:manage"))],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_employee(
+    employee_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
+    actor_id: Annotated[uuid.UUID, Depends(_caller_user_id)],
+) -> None:
+    """Soft delete; frees the email and employee code for reuse. See
+    `auth/service.py::delete_employee`.
+    """
+    original_email = await service.delete_employee(
+        tenant_db, employee_id=employee_id, actor_id=actor_id
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=actor_id,
+        action="employee_deleted",
+        entity_type="User",
+        entity_id=employee_id,
+        diff={"email": original_email},
+    )
+
+
 @router.get(
     "/employees",
     response_model=PaginatedEnvelope[EmployeeOut],
@@ -343,8 +440,9 @@ async def list_employees(
     Branch" role grant) — so a delegate-candidate lookup
     (`?role=host&X-Branch-ID=...`) still surfaces a host whose role grant
     is company-wide even if they have no department set at that branch. An
-    employee with neither a matching department nor a matching/company-wide
-    role grant is not visible in a branch-scoped call — see
+    employee with no department and no branch-specific role grant belongs
+    to every branch and is included in every branch-scoped call; one tied
+    only to other branches is not — see
     `auth/repository.py::UserRepository.list_employees_page`.
     """
     page, page_size = pagination

@@ -461,7 +461,8 @@ async def sync_employee_directory(
                 existing.designation = item.designation
                 existing.phone_number = item.phone_number
                 existing.department_id = item.department_id
-                existing.is_active = True
+                if not existing.disabled_by_admin:
+                    existing.is_active = True
                 updated.append(item.email)
 
         await tenant_db.flush()
@@ -511,6 +512,86 @@ async def create_employee(
     )
     await tenant_db.commit()
     return user
+
+
+async def _get_employee_for_removal(
+    tenant_db: AsyncSession, *, employee_id: uuid.UUID, actor_id: uuid.UUID
+) -> User:
+    """Shared guard for disable/delete: 404 on unknown, 409 when the actor
+    targets themself or the target is the tenant's last active admin.
+    """
+    repo = UserRepository(tenant_db)
+    employee = await repo.get_by_id(employee_id)
+    if employee is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Employee not found")
+    if employee.id == actor_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="You cannot disable or delete your own account"
+        )
+    if employee.is_active and has_admin_role(employee):
+        active_admins = await repo.lock_active_admin_ids()
+        if active_admins <= {employee.id}:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail="At least one active admin must remain",
+            )
+    return employee
+
+
+async def disable_employee(
+    tenant_db: AsyncSession, *, employee_id: uuid.UUID, actor_id: uuid.UUID
+) -> tuple[User, bool]:
+    """Reversible disable: `is_active=False` plus `disabled_by_admin` so a
+    later directory sync leaves it alone. Returns `(employee, changed)`;
+    disabling an already-disabled employee is a no-op (`changed=False`), so
+    the caller can skip the audit entry. Existing tokens stop working
+    because `get_current_user` rejects inactive users on every request.
+    """
+    employee = await _get_employee_for_removal(
+        tenant_db, employee_id=employee_id, actor_id=actor_id
+    )
+    if employee.disabled_by_admin and not employee.is_active:
+        return employee, False
+    employee.is_active = False
+    employee.disabled_by_admin = True
+    await tenant_db.commit()
+    await tenant_db.refresh(employee)
+    logger.info("employee_disabled", target_user_id=str(employee.id))
+    return employee, True
+
+
+async def enable_employee(tenant_db: AsyncSession, *, employee_id: uuid.UUID) -> tuple[User, bool]:
+    employee = await UserRepository(tenant_db).get_by_id(employee_id)
+    if employee is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Employee not found")
+    if employee.is_active and not employee.disabled_by_admin:
+        return employee, False
+    employee.is_active = True
+    employee.disabled_by_admin = False
+    await tenant_db.commit()
+    await tenant_db.refresh(employee)
+    logger.info("employee_enabled", target_user_id=str(employee.id))
+    return employee, True
+
+
+async def delete_employee(
+    tenant_db: AsyncSession, *, employee_id: uuid.UUID, actor_id: uuid.UUID
+) -> str:
+    """Soft-deletes an employee and frees their email/employee code. The
+    global `tenant_user_index` row is removed in the same transaction as the
+    tombstone (both share one connection), so login's first hop and the
+    `users` table can't disagree. Returns the original email for the audit
+    diff, since the row itself no longer holds it.
+    """
+    employee = await _get_employee_for_removal(
+        tenant_db, employee_id=employee_id, actor_id=actor_id
+    )
+    original_email = employee.email
+    await TenantUserIndexRepository(tenant_db).delete_by_email(original_email)
+    await UserRepository(tenant_db).tombstone(employee)
+    await tenant_db.commit()
+    logger.info("employee_deleted", target_user_id=str(employee_id))
+    return original_email
 
 
 async def list_employees(

@@ -1495,6 +1495,31 @@ implemented behind the same two functions and selected by setting
 `storage_backend` to `"s3"` — see `docs/features/registrations.md`'s config
 table for the S3 connection settings.
 
+## Retention purge (`invitations/tasks.py`, `invitations/retention.py`)
+
+A daily beat task (`dispatch_invitation_purge`, `INVITATION_PURGE_HOUR`/
+`INVITATION_PURGE_MINUTE` UTC) fans out to `purge_tenant_invitations` per
+active tenant (cron queue). For each tenant, in batches of
+`INVITATION_PURGE_BATCH_SIZE`:
+
+1. Select invitations whose reference date (`preferred_visit_date`, else the
+   creation date) is older than `INVITATION_RETENTION_DAYS`, excluding any
+   still checked in (`status` or `check_in_status` = `checked_in`).
+2. Write a gzipped JSONL backup of those rows plus their dependent rows
+   (`invitation_visitors`, `invitation_qr_codes`, `invitation_vehicles`,
+   `invitation_approval_steps`) under
+   `vmss:{tenant_id}:backups/invitations/<run-date>:<uuid>.gz`, then read it
+   back and compare the record count. Failure raises (Celery retries with
+   backoff) and nothing is deleted.
+3. Hard-delete the children, then the invitations, and commit.
+
+`audit_logs` rows are never removed. One `invitations_purged` audit entry per
+run records the cutoff, count and backup keys. `INVITATION_RETENTION_DAYS=0`
+(the default) disables the job. Backups contain visitor PII: they stay in the
+storage tier, are never exposed through a presigned URL, and have no expiry job
+yet. Stored files (ID proofs, photos, QR images) of purged invitations are not
+deleted. Restoring a backup is a manual ops task.
+
 ## Config knobs
 
 | Setting | Default | Purpose |
@@ -1503,6 +1528,9 @@ table for the S3 connection settings.
 | `INVITATION_MAX_GROUP_VISITORS` | `20` | Cap on co-visitors in one group submission. |
 | `INVITATION_MAX_PHOTO_SIZE_BYTES` | `2097152` (2 MB) | Max optional profile-photo file size — independent of the ID-proof limit above. |
 | `INVITATION_EXPORT_MAX_ROWS` | `10000` | Max visitor rows per `GET /invitations/export`; an over-cap export is rejected with 422, never truncated. |
+| `INVITATION_RETENTION_DAYS` | `0` (off) | Age in days after which invitations are backed up and purged. |
+| `INVITATION_PURGE_BATCH_SIZE` | `500` | Invitations backed up and deleted per batch. |
+| `INVITATION_PURGE_HOUR` / `INVITATION_PURGE_MINUTE` | `3` / `0` | Daily run time (UTC). |
 | `STORAGE_ROOT` | `./var/storage` | Local-disk root for uploaded files in dev. |
 | `QR_TOKEN_ENCRYPTION_KEY` | unset | Fernet key encrypting/decrypting QR check-in tokens. Fails loudly the first time a token is generated or scanned without it — never a silent no-op. Generate one the same way as `SSO_ENCRYPTION_KEY`; deliberately a separate key from it. |
 | `MAIL_HOST`/`MAIL_PORT`/`MAIL_USERNAME`/`MAIL_PASSWORD`/`MAIL_USE_TLS`/`MAIL_FROM_ADDRESS` | local dev mail-catcher | Outbound email for visit confirmations. See `docs/features/configuration.md`. |

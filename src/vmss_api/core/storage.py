@@ -44,6 +44,8 @@ _ALLOWED_CONTENT_TYPES = {
 # `save()`'s extension lookup is widened, not what `validate_upload` accepts.
 _GENERATED_FILE_EXTENSIONS = {
     "text/csv": ".csv",
+    # Gzipped JSONL invitation-retention backups (invitations/retention.py).
+    "application/gzip": ".gz",
 }
 
 

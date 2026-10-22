@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,9 @@ class TenantUserIndexRepository:
     async def get_by_email(self, email: str) -> TenantUserIndex | None:
         stmt = select(TenantUserIndex).where(TenantUserIndex.email == email)
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def delete_by_email(self, email: str) -> None:
+        await self.session.execute(delete(TenantUserIndex).where(TenantUserIndex.email == email))
 
     async def create(self, *, email: str, tenant_id: uuid.UUID, user_id: uuid.UUID) -> None:
         self.session.add(TenantUserIndex(email=email, tenant_id=tenant_id, user_id=user_id))

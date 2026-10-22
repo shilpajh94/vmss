@@ -29,16 +29,19 @@ inline only as the fallback.
 import asyncio
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Literal
 
 import structlog
+from redis.asyncio import from_url as redis_from_url
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.auth.models import AuditLog
 from vmss_api.auth.repository import UserRepository
 from vmss_api.core import portal_links
 from vmss_api.core.celery_app import celery_app
+from vmss_api.core.config import settings
 from vmss_api.core.database import AsyncSessionLocal, engine, tenant_session_scope
 from vmss_api.core.email_assets import base_url as email_asset_base_url
 from vmss_api.core.email_assets import sign_qr_url
@@ -46,7 +49,7 @@ from vmss_api.core.email_rendering import TemplateRenderError, display_name, ren
 from vmss_api.core.logging import logger
 from vmss_api.core.sms import SmsInvalidNumberError, SmsNotConfiguredError, SmsTemplate
 from vmss_api.core.whatsapp import WhatsAppTemplate
-from vmss_api.invitations import notifications
+from vmss_api.invitations import notifications, retention
 from vmss_api.invitations.models import Invitation
 from vmss_api.invitations.qr import generate_qr_png, generate_qr_png_rgb
 from vmss_api.invitations.repository import InvitationRepository
@@ -1156,3 +1159,138 @@ async def sweep_visit_lifecycle(session: AsyncSession, *, now: datetime) -> tupl
     )
     await session.commit()
     return len(checked_out_ids), len(archived_ids)
+
+
+# --- Invitation retention purge -------------------------------------------
+# Daily beat -> one task per tenant, same dispatcher/worker split as the
+# lifecycle sweep above. Idempotent by construction: eligibility is
+# re-evaluated from the database on every run and each batch's backup holds
+# exactly that batch's delete ids, so a redelivery either finds nothing or
+# re-backs-up and deletes only rows that still exist. The Redis key is a
+# per-tenant run lock (released when the run ends, success or failure so a
+# retry can proceed), preventing two workers purging the same tenant at once.
+
+_PURGE_LOCK_TTL_SECONDS = 60 * 60
+
+
+@celery_app.task(bind=True)
+def dispatch_invitation_purge(self) -> None:
+    structlog.contextvars.bind_contextvars(task="dispatch_invitation_purge")
+    if settings.invitation_retention_days <= 0:
+        return
+    asyncio.run(_dispatch_invitation_purge())
+
+
+async def _dispatch_invitation_purge() -> None:
+    try:
+        async with AsyncSessionLocal() as session:
+            stmt = select(Tenant).where(Tenant.is_active.is_(True), Tenant.deleted_at.is_(None))
+            tenants = list((await session.execute(stmt)).scalars().all())
+    finally:
+        await engine.dispose()
+    for tenant in tenants:
+        try:
+            purge_tenant_invitations.delay(
+                tenant_id=str(tenant.id), tenant_schema=tenant.schema_name
+            )
+        except Exception:
+            logger.error(
+                "invitation_purge_enqueue_failed",
+                tenant_id=str(tenant.id),
+                tenant_schema=tenant.schema_name,
+            )
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def purge_tenant_invitations(self, *, tenant_id: str, tenant_schema: str) -> None:
+    structlog.contextvars.bind_contextvars(tenant_id=tenant_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(_purge_tenant_invitations(tenant_id, tenant_schema))
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "invitation_purge_exhausted",
+                tenant_id=tenant_id,
+                tenant_schema=tenant_schema,
+                exc_info=True,
+            )
+        raise
+
+
+async def _purge_tenant_invitations(tenant_id: str, tenant_schema: str) -> None:
+    if settings.invitation_retention_days <= 0:
+        return
+    lock_key = f"vmss:{tenant_id}:invitations:purge:lock"
+    # Dedicated client, not the shared module-level one — same cross-event-loop
+    # hazard `reports/tasks.py` documents.
+    redis = redis_from_url(settings.redis_url, decode_responses=True)
+    try:
+        if not await redis.set(lock_key, "1", nx=True, ex=_PURGE_LOCK_TTL_SECONDS):
+            return
+        try:
+            await purge_expired_invitations(uuid.UUID(tenant_id), tenant_schema)
+        finally:
+            await redis.delete(lock_key)
+    finally:
+        await redis.aclose()
+        await engine.dispose()
+
+
+async def purge_expired_invitations(
+    tenant_id: uuid.UUID, tenant_schema: str, *, now: datetime | None = None
+) -> int:
+    """Backs up, verifies, then hard-deletes one tenant's expired invitations
+    in batches. A backup that can't be written or verified raises *before*
+    anything in that batch is deleted. Writes one audit entry for the run
+    (even if a later batch raised, so what was already deleted is recorded).
+    Returns the number of invitations purged.
+    """
+    now = now or datetime.now(UTC)
+    cutoff = now.date() - timedelta(days=settings.invitation_retention_days)
+    purged = 0
+    backup_keys: list[str] = []
+    try:
+        async with tenant_session_scope(tenant_schema) as session:
+            repo = InvitationRepository(session)
+            while True:
+                ids = await repo.list_expired_ids(
+                    cutoff=cutoff, limit=settings.invitation_purge_batch_size
+                )
+                if not ids:
+                    break
+                records = await repo.load_rows_for_backup(ids)
+                backup_keys.append(
+                    await retention.write_verified_backup(tenant_id, records, run_date=now)
+                )
+                deleted = await repo.delete_with_children(ids)
+                await session.commit()
+                purged += deleted
+                if deleted == 0:
+                    break
+    finally:
+        if purged:
+            async with tenant_session_scope(tenant_schema) as session:
+                session.add(
+                    AuditLog(
+                        id=uuid.uuid4(),
+                        actor_user_id=None,
+                        action="invitations_purged",
+                        entity_type="invitation",
+                        entity_id=None,
+                        diff={
+                            "cutoff": cutoff.isoformat(),
+                            "count": purged,
+                            "backup_keys": backup_keys,
+                        },
+                    )
+                )
+                await session.commit()
+    if purged:
+        logger.info(
+            "invitations_purged",
+            tenant_id=str(tenant_id),
+            count=purged,
+            cutoff=cutoff.isoformat(),
+            backup_keys=backup_keys,
+        )
+    return purged
