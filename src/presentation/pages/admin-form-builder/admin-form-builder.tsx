@@ -3,9 +3,13 @@ import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
 import { PlusIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
-import { LoadingState } from '../../components/ui/LoadingState'
 import { SelectField } from '../../components/ui/SelectField'
-import { PageContentLayout } from '../../components/PageContentLayout'
+import { PAGE_HEADER_GAP_CANCEL, PageContentLayout } from '../../components/PageContentLayout'
+import { AsyncRegion } from '../../components/AsyncRegion'
+import { Collapsible } from '../../components/ui/Collapsible'
+import { CardGridSkeleton } from '../../components/ui/Skeleton'
+import { PendingButton } from '../../components/ui/PendingButton'
+import { PRESS_FEEDBACK_CLASS } from '../../components/ui/interactive'
 import { usePageHeader } from '../../context/page-header-context'
 import { CreateStepModal } from './Components/CreateStepModal'
 import { SortableStepCard } from './Components/SortableStepCard'
@@ -50,8 +54,8 @@ export function AdminFormBuilderPage() {
     selectedBranchId,
     selectWorkspace,
     steps,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     toggleStepActive,
     pendingDelete,
@@ -108,64 +112,52 @@ export function AdminFormBuilderPage() {
                   onChange={selectWorkspace}
                   placeholderSelectable
                   placeholder="Tenant Default"
-                  options={[
-                    { value: DEFAULT_WORKSPACE_VALUE, label: 'Tenant Default' },
-                    ...branches.map((branch) => ({ value: branch.id, label: branch.name })),
-                  ]}
+                  options={branches.map((branch) => ({ value: branch.id, label: branch.name }))}
                 />
               </div>
               <button
                 type="button"
                 onClick={openCreateStep}
-                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-admin-accent"
+                className={`flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-admin-accent hover:bg-border-subtle ${PRESS_FEEDBACK_CLASS}`}
               >
                 <PlusIcon className="size-3.5" />
                 Create Registration Step
               </button>
-              <button
-                type="button"
-                disabled
-                title="Coming soon"
-                className="cursor-not-allowed rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text-faint opacity-60"
-              >
-                Form Preview
-              </button>
-              <button
-                type="button"
+              <PendingButton
                 onClick={() => void publish()}
-                disabled={isPublishing}
-                className="rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white disabled:opacity-60"
+                pending={isPublishing}
+                pendingLabel="Publishing…"
+                className="rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-on-accent hover:bg-admin-accent/90 disabled:opacity-60"
               >
-                {isPublishing ? 'Publishing…' : 'Publish Changes'}
-              </button>
+                Publish Changes
+              </PendingButton>
             </div>
           </div>
 
-          {hasUnpublishedChanges && (
+          <Collapsible open={hasUnpublishedChanges} closedClassName={PAGE_HEADER_GAP_CANCEL}>
             <p className="rounded-lg bg-warning/15 px-4 py-2 font-body text-[13px] font-medium text-warning">
               You have unpublished changes. Visitors won't see them until you publish.
             </p>
-          )}
+          </Collapsible>
 
           <h2 className="font-display text-lg font-bold text-text">Registration Steps</h2>
         </>
       }
     >
-      <div className="h-full min-h-0 overflow-y-auto scrollbar-thin">
-        {errorMessage ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
-            <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-              Try again
-            </button>
-          </div>
-        ) : isLoading ? (
-          <LoadingState label="Loading registration steps…" className="h-full" />
-        ) : steps.length === 0 ? (
-          <div className="flex h-full w-full items-center justify-center rounded-2xl border border-border bg-surface">
-            <EmptyState message="No registration steps yet." />
-          </div>
-        ) : (
+      <div className="flex h-full min-h-0 flex-col overflow-y-auto scrollbar-thin">
+        <AsyncRegion
+          phase={phase}
+          isRefreshing={isRefreshing}
+          skeleton={<CardGridSkeleton count={6} className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3" cardClassName="h-14" label="Loading registration steps…" />}
+          errorMessage="Something went wrong loading the registration steps. Please try again."
+          onRetry={retry}
+          isEmpty={steps.length === 0}
+          empty={
+            <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface py-16">
+              <EmptyState message="No registration steps yet." />
+            </div>
+          }
+        >
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
             {leading.map((step, index) => (
               <StepCard
@@ -202,7 +194,7 @@ export function AdminFormBuilderPage() {
               />
             ))}
           </div>
-        )}
+        </AsyncRegion>
       </div>
 
       <CreateStepModal isOpen={isCreateOpen} onClose={closeCreateStep} onCreate={(name) => void createStep(name)} />

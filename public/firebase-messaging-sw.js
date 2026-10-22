@@ -18,17 +18,20 @@ const messaging = firebase.messaging()
 
 // The real push payload's `data` carries `invitationId` (and `trackingId`/`action`),
 // not a recipient-role field, so admin vs. staff is inferred from whichever area
-// an already-open tab (if any) is in rather than from the payload itself.
+// an already-open tab (if any) is in rather than from the payload itself. Keep in
+// sync with `buildInvitationPath` in src/presentation/utils/notification-links.ts
+// (a service worker can't import app modules) — staff land on the invitations
+// board, not `/staff/dashboard`, which is the KPI dashboard.
 function buildInvitationUrl(data, isAdminContext) {
   const invitationId = data && data.invitationId
-  const basePath = isAdminContext ? '/admin/invitations' : '/staff/dashboard'
+  const basePath = isAdminContext ? '/admin/invitations' : '/staff/invitations'
   return invitationId ? `${basePath}?invitationId=${encodeURIComponent(invitationId)}` : basePath
 }
 
 messaging.onBackgroundMessage((payload) => {
   // Keep in sync with BRAND_NAME in src/presentation/brand.ts (a service
   // worker can't import app modules).
-  const notificationTitle = (payload.notification && payload.notification.title) || 'Visimio'
+  const notificationTitle = (payload.notification && payload.notification.title) || 'Guestify'
   const notificationBody = (payload.notification && payload.notification.body) || ''
 
   self.registration.showNotification(notificationTitle, {

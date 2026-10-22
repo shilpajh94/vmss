@@ -11,16 +11,17 @@ changes so they take effect for new registrations.
 
 ### Requirement: Page heading and primary controls stay fixed while step cards scroll
 The system SHALL render the Form Builder page's title/description, tenant
-selector, "Create Registration Step" action, and "Form Preview"/"Publish
-Changes" controls in a fixed region that does not scroll, and SHALL render
-the Registration Steps card grid in a separate, independently scrollable
-region beneath it.
+selector, "Create Registration Step" action, and "Publish Changes" control
+in a fixed region that does not scroll, and SHALL render the Registration
+Steps card grid in a separate, independently scrollable region beneath it.
+The heading region SHALL NOT contain a "Form Preview" control, or any other
+control that is permanently disabled with no working behaviour behind it.
 
 #### Scenario: Scrolling the step list does not move the heading controls
 - **WHEN** a tenant admin scrolls the Registration Steps card grid on the
   Form Builder page
 - **THEN** the title, tenant selector, "Create Registration Step" button,
-  "Form Preview", and "Publish Changes" controls remain visible in place
+  and "Publish Changes" control remain visible in place
 
 #### Scenario: A tenant with many registration steps can still act on any of them
 - **WHEN** a tenant has enough registration steps that the card grid exceeds
@@ -28,11 +29,16 @@ region beneath it.
 - **THEN** the admin can scroll the card grid to reach every step's card
   without losing access to "Create Registration Step" or "Publish Changes"
 
+#### Scenario: No placeholder preview control is shown
+- **WHEN** a tenant admin opens the Form Builder page
+- **THEN** the heading row shows no "Form Preview" button, enabled or
+  disabled
+
 ### Requirement: "Create Registration Step" is a compact action beside Publish Changes
 The system SHALL render "Create Registration Step" as a compact button in
-the fixed heading region, positioned alongside "Form Preview" and "Publish
-Changes", rather than as a full-width control competing with the step-card
-grid for vertical space.
+the fixed heading region, positioned alongside "Publish Changes", rather
+than as a full-width control competing with the step-card grid for vertical
+space.
 
 #### Scenario: Create action is reachable without scrolling
 - **WHEN** the Form Builder page loads with any number of registration steps
@@ -62,3 +68,49 @@ as the Form Builder list page.
   page
 - **THEN** the step editor's heading and save/publish-related controls
   remain visible in place
+
+### Requirement: Workspace selector lists "Tenant Default" exactly once
+
+The Form Builder workspace selector SHALL list the "Tenant Default" choice
+exactly once, followed by exactly one entry per branch, and selecting
+"Tenant Default" SHALL load the tenant-default (non-branch) registration steps.
+
+#### Scenario: Opening the workspace dropdown
+- **WHEN** a tenant admin opens the workspace dropdown on `/admin/form-builder`
+  for a tenant with branches "Main Branch" and "QA Form Builder Branch"
+- **THEN** the dropdown lists exactly three entries, in order: "Tenant Default",
+  "Main Branch", "QA Form Builder Branch"
+
+#### Scenario: Initial selection
+- **WHEN** the Form Builder page first loads
+- **THEN** the selector shows "Tenant Default" as the current selection and the
+  tenant-default steps are displayed
+
+#### Scenario: Switching back to Tenant Default
+- **WHEN** the admin selects a branch and then selects "Tenant Default"
+- **THEN** the tenant-default steps are loaded and "Tenant Default" is shown as
+  the current selection
+
+### Requirement: Conditional-visibility selectors list "Always shown" exactly once
+
+The "Show this field when:" selector in the field properties panel and the
+"Show this group when:" selector on a group card SHALL each list the
+"Always shown" choice exactly once, followed by the pickable fields. Selecting
+"Always shown" SHALL clear the visibility condition: the operator and value
+inputs are hidden and the saved condition is empty.
+
+#### Scenario: Opening a conditional-visibility dropdown
+- **WHEN** the admin opens the "Show this field when:" or "Show this group when:"
+  dropdown
+- **THEN** "Always shown" appears exactly once, as the first entry
+
+#### Scenario: Clearing an existing condition
+- **WHEN** a field or group has a visibility condition and the admin selects
+  "Always shown"
+- **THEN** the operator and value inputs are hidden
+- **AND** saving persists no visibility condition for that field or group
+
+#### Scenario: Element with no condition
+- **WHEN** the admin opens a field or group that has no visibility condition
+- **THEN** the selector shows "Always shown" and no operator/value inputs are
+  displayed

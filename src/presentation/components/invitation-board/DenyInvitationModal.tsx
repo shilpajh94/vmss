@@ -1,14 +1,18 @@
 import { useState } from 'react'
+import { PendingButton } from '../ui/PendingButton'
 import { Modal } from '../ui/Modal'
+import { confirmSubject } from '../../utils/confirm-subject'
 
 interface DenyInvitationModalProps {
   isOpen: boolean
+  visitorName?: string
+  trackingId?: string
   isDenying?: boolean
   onConfirm: (reason: string) => void
   onCancel: () => void
 }
 
-export function DenyInvitationModal({ isOpen, isDenying, onConfirm, onCancel }: DenyInvitationModalProps) {
+export function DenyInvitationModal({ isOpen, visitorName, trackingId, isDenying, onConfirm, onCancel }: DenyInvitationModalProps) {
   const [reason, setReason] = useState('')
 
   const handleCancel = () => {
@@ -24,6 +28,7 @@ export function DenyInvitationModal({ isOpen, isDenying, onConfirm, onCancel }: 
   return (
     <Modal isOpen={isOpen} onClose={handleCancel} title="Deny Visit Request">
       <div className="flex flex-col gap-3">
+        <p className="font-body text-sm text-text-muted">Deny the visit request for {confirmSubject(visitorName, trackingId)}?</p>
         <label className="flex flex-col gap-1.5">
           <span className="font-body text-[13px] font-semibold text-text">Reason for denial</span>
           <textarea
@@ -44,14 +49,15 @@ export function DenyInvitationModal({ isOpen, isDenying, onConfirm, onCancel }: 
           >
             Cancel
           </button>
-          <button
-            type="button"
-            disabled={!reason.trim() || isDenying}
+          <PendingButton
             onClick={handleConfirm}
-            className="rounded-full bg-danger px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
+            pending={isDenying}
+            pendingLabel="Denying…"
+            disabled={!reason.trim()}
+            className="rounded-full bg-danger px-4 py-2 font-body text-[13px] font-semibold text-on-accent disabled:opacity-50"
           >
-            {isDenying ? 'Denying…' : 'Deny Request'}
-          </button>
+            Deny Request
+          </PendingButton>
         </div>
       </div>
     </Modal>

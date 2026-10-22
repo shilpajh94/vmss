@@ -4,6 +4,7 @@ import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { PermissionOut } from '../../../../domain/entities/permission-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 
 export function useAdminRoleCreateForm() {
   const navigate = useNavigate()
@@ -49,6 +50,18 @@ export function useAdminRoleCreateForm() {
   const retry = useCallback(() => {
     void load()
   }, [load])
+
+  // A confirmed top-bar refresh starts the role over: load() itself leaves
+  // the typed name, description and picked permissions alone.
+  const reload = useCallback(() => {
+    setName('')
+    setDescription('')
+    setSelectedCodes(new Set())
+    setNameError(undefined)
+    void load()
+  }, [load])
+
+  useFormPageRefresh({ values: { name, description, permissionCodes: [...selectedCodes].sort() }, isLoading, reload })
 
   const togglePermission = useCallback((code: string, checked: boolean) => {
     setSelectedCodes((current) => {

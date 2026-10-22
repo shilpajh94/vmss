@@ -47,6 +47,11 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  EXPORT_INVITATIONS: {
+    endpoint: "/invitations/export",
+    method: "GET",
+    hasToken: true,
+  },
   GET_CURRENT_STAFF_USER: {
     endpoint: "/auth/me",
     method: "GET",
@@ -63,6 +68,13 @@ export const API_ENDPOINTS = {
   // self-service GET_VISITOR_PORTAL_ME flow above.
   LOOKUP_STAFF_VISITOR_BY_EMAIL: {
     endpoint: "/invitations/lookup-by-email",
+    method: "GET",
+    hasToken: true,
+  },
+  // Same prefill as above, keyed on phone (backend strips it to digits, so
+  // any formatting matches; needs >= 7 digits or it 422s).
+  LOOKUP_STAFF_VISITOR_BY_PHONE: {
+    endpoint: "/invitations/lookup-by-phone",
     method: "GET",
     hasToken: true,
   },
@@ -88,6 +100,16 @@ export const API_ENDPOINTS = {
   },
   DENY_INVITATION: {
     endpoint: "/invitations/:id/deny",
+    method: "PATCH",
+    hasToken: true,
+  },
+  REVERT_INVITATION_APPROVAL: {
+    endpoint: "/invitations/:id/revert-approval",
+    method: "PATCH",
+    hasToken: true,
+  },
+  CHECK_OUT_INVITATION: {
+    endpoint: "/invitations/:id/check-out",
     method: "PATCH",
     hasToken: true,
   },
@@ -232,6 +254,33 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  GET_MY_DASHBOARD_OVERVIEW: {
+    endpoint: "/admin/dashboard/my-overview",
+    method: "GET",
+    hasToken: true,
+  },
+  GET_DASHBOARD_ANALYTICS: {
+    endpoint: "/admin/dashboard/analytics",
+    method: "GET",
+    hasToken: true,
+  },
+  GET_MY_DASHBOARD_ANALYTICS: {
+    endpoint: "/admin/dashboard/my-analytics",
+    method: "GET",
+    hasToken: true,
+  },
+  // add-staff-calendar: role-scoped visits in a date range (scope decided by the API).
+  GET_CALENDAR_FEED: {
+    endpoint: "/invitations/calendar",
+    method: "GET",
+    hasToken: true,
+  },
+  // One day's visits, page by page (improve-calendar-scale-and-theme-switch).
+  GET_CALENDAR_DAY: {
+    endpoint: "/invitations/calendar/day",
+    method: "GET",
+    hasToken: true,
+  },
   LIST_HOST_EMPLOYEES: {
     endpoint: "/auth/employees",
     method: "GET",
@@ -243,6 +292,21 @@ export const API_ENDPOINTS = {
     endpoint: "/auth/employees/directory",
     method: "GET",
     hasToken: false,
+  },
+  DISABLE_HOST_EMPLOYEE: {
+    endpoint: "/auth/employees/:employeeId/disable",
+    method: "POST",
+    hasToken: true,
+  },
+  ENABLE_HOST_EMPLOYEE: {
+    endpoint: "/auth/employees/:employeeId/enable",
+    method: "POST",
+    hasToken: true,
+  },
+  DELETE_HOST_EMPLOYEE: {
+    endpoint: "/auth/employees/:employeeId",
+    method: "DELETE",
+    hasToken: true,
   },
   SYNC_EMPLOYEES: {
     endpoint: "/auth/employees/sync",
@@ -284,46 +348,6 @@ export const API_ENDPOINTS = {
     method: "DELETE",
     hasToken: true,
   },
-  LIST_RECEPTION_DESKS: {
-    endpoint: "/reception-desks",
-    method: "GET",
-    hasToken: true,
-  },
-  CREATE_RECEPTION_DESK: {
-    endpoint: "/reception-desks",
-    method: "POST",
-    hasToken: true,
-  },
-  UPDATE_RECEPTION_DESK: {
-    endpoint: "/reception-desks/:id",
-    method: "PUT",
-    hasToken: true,
-  },
-  DELETE_RECEPTION_DESK: {
-    endpoint: "/reception-desks/:id",
-    method: "DELETE",
-    hasToken: true,
-  },
-  LIST_SECURITY_GATES: {
-    endpoint: "/security-gates",
-    method: "GET",
-    hasToken: true,
-  },
-  CREATE_SECURITY_GATE: {
-    endpoint: "/security-gates",
-    method: "POST",
-    hasToken: true,
-  },
-  UPDATE_SECURITY_GATE: {
-    endpoint: "/security-gates/:id",
-    method: "PUT",
-    hasToken: true,
-  },
-  DELETE_SECURITY_GATE: {
-    endpoint: "/security-gates/:id",
-    method: "DELETE",
-    hasToken: true,
-  },
   // Kiosks are company-wide: no X-Branch-ID header.
   LIST_KIOSKS: {
     endpoint: "/kiosks",
@@ -353,6 +377,43 @@ export const API_ENDPOINTS = {
   DELETE_KIOSK: {
     endpoint: "/kiosks/:id",
     method: "DELETE",
+    hasToken: true,
+  },
+  // Registered kiosk / security devices. Reception Desks and Security Gates both
+  // read LIST_DEVICES, differing only by the `operatingMode` filter.
+  LIST_DEVICES: {
+    endpoint: "/devices",
+    method: "GET",
+    hasToken: true,
+  },
+  APPROVE_DEVICE: {
+    endpoint: "/devices/:id/approve",
+    method: "POST",
+    hasToken: true,
+  },
+  ENABLE_DEVICE: {
+    endpoint: "/devices/:id/enable",
+    method: "POST",
+    hasToken: true,
+  },
+  DISABLE_DEVICE: {
+    endpoint: "/devices/:id/disable",
+    method: "POST",
+    hasToken: true,
+  },
+  DELETE_DEVICE: {
+    endpoint: "/devices/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  GET_KIOSK_LOCATION_VALIDATION: {
+    endpoint: "/admin/settings/kiosk-location-validation",
+    method: "GET",
+    hasToken: true,
+  },
+  UPDATE_KIOSK_LOCATION_VALIDATION: {
+    endpoint: "/admin/settings/kiosk-location-validation",
+    method: "PUT",
     hasToken: true,
   },
   // Public for the pre-authentication visitor portal, same as LIST_EMPLOYEE_DIRECTORY —
@@ -410,6 +471,26 @@ export const API_ENDPOINTS = {
   UNREGISTER_DEVICE: {
     endpoint: "/notifications/devices/:fcmToken",
     method: "DELETE",
+    hasToken: true,
+  },
+  LIST_NOTIFICATIONS: {
+    endpoint: "/notifications",
+    method: "GET",
+    hasToken: true,
+  },
+  NOTIFICATIONS_UNREAD_COUNT: {
+    endpoint: "/notifications/unread-count",
+    method: "GET",
+    hasToken: true,
+  },
+  MARK_NOTIFICATION_READ: {
+    endpoint: "/notifications/:id/read",
+    method: "PATCH",
+    hasToken: true,
+  },
+  MARK_ALL_NOTIFICATIONS_READ: {
+    endpoint: "/notifications/read-all",
+    method: "POST",
     hasToken: true,
   },
   LIST_FORM_STEPS: {

@@ -184,7 +184,7 @@
       too if that literal reading is actually wanted.
 - [x] 6.3 Placed `logo-mark.svg` in `StaffGatewayHeader.tsx` (`/admin/login`)
       and `StaffPortalHeader.tsx` (`/staff/login`), alongside each page's
-      existing "VisitorPass" wordmark/gateway-badge header.
+      existing brand-logo/gateway-badge header.
 - [x] 6.4 Manual verification: **not performed as an interactive browser
       click-through** — no browser automation tool available this
       session. Verified via `npx tsc -b --noEmit` (exit 0) that every

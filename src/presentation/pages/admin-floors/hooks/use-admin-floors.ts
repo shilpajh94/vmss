@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { Floor } from '../../../../domain/entities/floor-schema'
 import type { Building } from '../../../../domain/entities/building-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
@@ -27,9 +28,7 @@ export function useAdminFloors() {
   const [total, setTotal] = useState(0)
   const [buildings, setBuildings] = useState<Building[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
+  const { phase, isRefreshing, begin } = useLoadTracker()
 
   const [pendingDelete, setPendingDelete] = useState<FloorRow | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -41,14 +40,11 @@ export function useAdminFloors() {
 
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
+  // `user` (default): filter/page/retry/refresh/post-mutation - keeps the
+  // current rows on screen with a progress cue. `background`: the 15s poll.
   const loadFloors = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false
-
-      if (!silent) {
-        setIsLoading(true)
-        setErrorMessage(undefined)
-      }
+    async (mode: LoadMode = 'user') => {
+      const request = begin(mode)
 
       try {
         const [user, floorResult, buildingList, departmentList] = await Promise.all([
@@ -66,24 +62,18 @@ export function useAdminFloors() {
           listBuildingsUseCase.execute(),
           listDepartmentsUseCase.execute(),
         ])
+        if (!request.succeed()) return
         setCurrentUser(user)
         setFloorList(floorResult.items)
         setTotal(floorResult.total)
         setBuildings(buildingList)
         setDepartments(departmentList)
-        setLastUpdatedAt(new Date())
       } catch {
-        if (!silent) {
-          setErrorMessage('Something went wrong loading the floors. Please try again.')
-        }
+        if (!request.fail()) return
         toast.error('Something went wrong loading the floors. Please try again.')
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
       }
     },
-    [getCurrentStaffUserUseCase, listFloorsPageUseCase, listBuildingsUseCase, listDepartmentsUseCase, page, buildingFilter, statusFilter, accessLevelFilter, toast],
+    [begin, getCurrentStaffUserUseCase, listFloorsPageUseCase, listBuildingsUseCase, listDepartmentsUseCase, page, buildingFilter, statusFilter, accessLevelFilter, toast],
   )
 
   useEffect(() => {
@@ -102,9 +92,9 @@ export function useAdminFloors() {
   // Auto-refreshes the inventory every 15s; skipped while a delete dialog is
   // open so a background tick can't replace data underneath it.
   const isActionInProgress = pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadFloors({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadFloors('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const buildingNameById = useMemo(() => new Map(buildings.map((building) => [building.id, building.name])), [buildings])
 
@@ -172,7 +162,7 @@ export function useAdminFloors() {
       await deleteFloorUseCase.execute(pendingDelete.id)
       toast.success('Floor deleted.')
       setPendingDelete(undefined)
-      await loadFloors({ silent: true })
+      await loadFloors()
     } catch {
       toast.error('Something went wrong deleting the floor. Please try again.')
     } finally {
@@ -189,8 +179,8 @@ export function useAdminFloors() {
     goToNextPage,
     goToPrevPage,
     departmentNamesByFloorId,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     isFilterPanelOpen,
     toggleFilterPanel,

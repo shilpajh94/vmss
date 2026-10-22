@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { ApprovalWorkflowRule } from '../../../../domain/entities/approval-workflow-rule-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
@@ -36,9 +37,7 @@ export function useAdminWorkflows() {
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [workflows, setWorkflows] = useState<WorkflowGroup[]>([])
   const [categoryOptions, setCategoryOptions] = useState<{ value: string; label: string }[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
+  const { phase, isRefreshing, begin } = useLoadTracker()
 
   const [pendingDelete, setPendingDelete] = useState<WorkflowGroup | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -49,14 +48,11 @@ export function useAdminWorkflows() {
 
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
+  // `user` (default): filter/retry/refresh/post-delete - keeps the current
+  // rows on screen with a progress cue. `background`: the 15s poll.
   const loadWorkflows = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false
-
-      if (!silent) {
-        setIsLoading(true)
-        setErrorMessage(undefined)
-      }
+    async (mode: LoadMode = 'user') => {
+      const request = begin(mode)
 
       try {
         const [user, rules, categories, roles] = await Promise.all([
@@ -68,6 +64,7 @@ export function useAdminWorkflows() {
           listVisitorCategoriesUseCase.execute(),
           listRolesUseCase.execute(),
         ])
+        if (!request.succeed()) return
         setCurrentUser(user)
 
         const categoryNameById = new Map(categories.map((category) => [category.id, category.name]))
@@ -101,19 +98,13 @@ export function useAdminWorkflows() {
         })
 
         setWorkflows(groups)
-        setLastUpdatedAt(new Date())
       } catch {
-        if (!silent) {
-          setErrorMessage('Something went wrong loading the workflows. Please try again.')
-        }
+        if (!request.fail()) return
         toast.error('Something went wrong loading the workflows. Please try again.')
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
       }
     },
     [
+      begin,
       getCurrentStaffUserUseCase,
       listApprovalWorkflowRulesUseCase,
       listVisitorCategoriesUseCase,
@@ -138,9 +129,9 @@ export function useAdminWorkflows() {
   }, [loadWorkflows])
 
   const isActionInProgress = pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadWorkflows({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadWorkflows('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const isFiltering = categoryFilter !== '' || statusFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
@@ -184,7 +175,7 @@ export function useAdminWorkflows() {
       toast.success('Workflow deleted.')
       setPendingDelete(undefined)
       resetToFirstPage()
-      await loadWorkflows({ silent: true })
+      await loadWorkflows()
     } catch {
       toast.error('Something went wrong deleting the workflow. Please try again.')
     } finally {
@@ -204,8 +195,8 @@ export function useAdminWorkflows() {
     totalPages,
     goToPreviousPage: goToPrevPage,
     goToNextPage,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     isFilterPanelOpen,
     toggleFilterPanel,

@@ -6,6 +6,7 @@ import { useToast } from '../toast/toast-context'
 import { useNotificationCenter, type NotificationAddressingReason } from '../../context/notification-center-context'
 import { usePushNotifications } from '../../hooks/use-push-notifications'
 import { useAppDependencies } from '../../context/app-dependencies-context'
+import { buildInvitationPath } from '../../utils/notification-links'
 
 // role-based-invitation-workflow: the push payload's `data` carries
 // `assignedRoleId`/`assignedUserId`/`reason` so a role-addressed
@@ -20,14 +21,6 @@ function buildAddressingLabel(reason: NotificationAddressingReason | undefined, 
   if (reason === 'role_assigned') return `New invitation for ${roleName ?? 'your role'}`
   if (reason === 'delegated') return 'Delegated to you'
   return undefined
-}
-
-// The real push payload's `data` carries `invitationId` (and `trackingId`/`action`),
-// not a recipient-role field, so admin vs. staff is inferred from which area this
-// tab is currently in.
-function buildInvitationPath(invitationId: string): string {
-  const basePath = window.location.pathname.startsWith('/admin') ? '/admin/invitations' : '/staff/dashboard'
-  return `${basePath}?invitationId=${encodeURIComponent(invitationId)}`
 }
 
 // Firebase can rotate the FCM token at any point during a long-lived session
@@ -50,7 +43,7 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
   const toast = useToast()
   const navigate = useNavigate()
   const notificationCenter = useNotificationCenter()
-  const { registerCurrentDevice } = usePushNotifications()
+  const { refreshRegistrationIfGranted } = usePushNotifications()
   const { listRolesUseCase } = useAppDependencies()
   const lastRegisteredAtRef = useRef(0)
   // Populated once, lazily, the first time a role-addressed push actually
@@ -79,7 +72,8 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
 
   // A signed-in device re-registers on mount, on an interval, and whenever the
   // tab regains focus, so a rotated FCM token gets picked up without waiting for
-  // the host to log out and back in.
+  // the host to log out and back in. This never prompts for permission — only
+  // the bell's "Enable notifications" button does, from a click.
   useEffect(() => {
     const reRegisterIfSignedIn = () => {
       if (document.visibilityState !== 'visible') return
@@ -89,7 +83,7 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
       if (now - lastRegisteredAtRef.current < MIN_RE_REGISTER_GAP_MS) return
       lastRegisteredAtRef.current = now
 
-      void registerCurrentDevice()
+      void refreshRegistrationIfGranted()
     }
 
     reRegisterIfSignedIn()
@@ -101,7 +95,7 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
       window.clearInterval(intervalId)
       document.removeEventListener('visibilitychange', reRegisterIfSignedIn)
     }
-  }, [registerCurrentDevice])
+  }, [refreshRegistrationIfGranted])
 
   useEffect(() => {
     const messaging = getFirebaseMessaging()
@@ -118,8 +112,18 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
       const dispatch = (roleName: string | undefined) => {
         const addressingLabel = buildAddressingLabel(reason, roleName)
         const displayMessage = addressingLabel ? `${addressingLabel}: ${message}` : message
-        toast.info(displayMessage, { onClick })
-        notificationCenter.addNotification({ message: displayMessage, onClick, reason })
+        // A push arriving while another push toast is still up joins it as
+        // one "N new notifications" summary that opens the bell, so a burst
+        // never floods the screen (notifications "A burst of push
+        // notifications is grouped into one summary").
+        toast.info(displayMessage, {
+          onClick,
+          groupKey: 'push',
+          groupSummary: (count) => ({ message: `${count} new notifications`, onClick: () => latestRef.current.notificationCenter.openPanel() }),
+        })
+        // The API recorded this push before sending it, so a refetch finds
+        // it — the bell never shows a client-only item the server lacks.
+        notificationCenter.refresh()
       }
 
       if (reason === 'role_assigned' && assignedRoleId && !roleNameByIdRef.current) {

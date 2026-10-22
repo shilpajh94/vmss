@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { RolePermissionResyncEntry } from '../../../../domain/entities/permission-out-schema'
@@ -19,41 +20,30 @@ export function useAdminRoles() {
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [roles, setRoles] = useState<RoleOut[]>([])
   const [total, setTotal] = useState(0)
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
+  const { phase, isRefreshing, begin } = useLoadTracker()
   const [isResyncing, setIsResyncing] = useState(false)
   const [resyncResult, setResyncResult] = useState<RolePermissionResyncEntry[] | undefined>(undefined)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
 
   const { page, goToNextPage, goToPrevPage } = usePagedList()
 
+  // `user` (default): page/retry/refresh/post-resync - keeps the current
+  // rows on screen with a progress cue. `background`: the 15s poll.
   const loadRoles = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false
-
-      if (!silent) {
-        setIsLoading(true)
-        setErrorMessage(undefined)
-      }
+    async (mode: LoadMode = 'user') => {
+      const request = begin(mode)
 
       try {
         const [user, page_] = await Promise.all([getCurrentStaffUserUseCase.execute(), listRolesPageUseCase.execute({ page, pageSize: PAGE_SIZE })])
+        if (!request.succeed()) return
         setCurrentUser(user)
         setRoles(page_.items)
         setTotal(page_.total)
-        setLastUpdatedAt(new Date())
       } catch {
-        if (!silent) {
-          setErrorMessage('Something went wrong loading the roles. Please try again.')
-        }
+        if (!request.fail()) return
         toast.error('Something went wrong loading the roles. Please try again.')
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
       }
     },
-    [getCurrentStaffUserUseCase, listRolesPageUseCase, page, toast],
+    [begin, getCurrentStaffUserUseCase, listRolesPageUseCase, page, toast],
   )
 
   useEffect(() => {
@@ -70,9 +60,9 @@ export function useAdminRoles() {
   }, [loadRoles])
 
   const isActionInProgress = isResyncing
-  usePolling(() => void loadRoles({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadRoles('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const resyncPermissions = useCallback(async () => {
     setIsResyncing(true)
@@ -99,8 +89,8 @@ export function useAdminRoles() {
     pageSize: PAGE_SIZE,
     goToNextPage,
     goToPrevPage,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     isResyncing,
     resyncResult,

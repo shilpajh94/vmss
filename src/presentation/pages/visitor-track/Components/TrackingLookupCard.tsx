@@ -1,4 +1,5 @@
 import { SearchIcon } from '../../../../assets/icons'
+import { PendingButton } from '../../../components/ui/PendingButton'
 
 interface TrackingLookupCardProps {
   trackingId: string
@@ -28,15 +29,15 @@ export function TrackingLookupCard({ trackingId, onTrackingIdChange, onSubmit, l
         }`}
       />
       {error && <p className="text-caption text-danger">{error}</p>}
-      <button
-        type="button"
+      <PendingButton
         onClick={onSubmit}
-        disabled={loading}
         title="Look up the status of your visit using your tracking ID"
+        pending={loading}
+        pendingLabel="Tracking…"
         className="cursor-pointer rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white transition-colors enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {loading ? 'Tracking…' : 'Track Request'}
-      </button>
+        Track Request
+      </PendingButton>
       <div className="flex items-center gap-3 text-caption text-text-muted">
         <span className="h-px flex-1 bg-border" />
         <span>or</span>

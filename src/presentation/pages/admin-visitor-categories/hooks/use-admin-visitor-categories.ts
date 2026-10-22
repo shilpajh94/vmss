@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { VisitorCategoryBulkCreateOut } from '../../../../domain/entities/visitor-category-out-schema'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
@@ -24,9 +25,7 @@ export function useAdminVisitorCategories() {
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [visitorCategories, setVisitorCategories] = useState<VisitorCategory[]>([])
   const [total, setTotal] = useState(0)
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
+  const { phase, isRefreshing, begin } = useLoadTracker()
 
   const [pendingDelete, setPendingDelete] = useState<VisitorCategory | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -42,14 +41,11 @@ export function useAdminVisitorCategories() {
 
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
+  // `user` (default): filter/page/retry/refresh/post-mutation - keeps the
+  // current rows on screen with a progress cue. `background`: the 15s poll.
   const loadVisitorCategories = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false
-
-      if (!silent) {
-        setIsLoading(true)
-        setErrorMessage(undefined)
-      }
+    async (mode: LoadMode = 'user') => {
+      const request = begin(mode)
 
       try {
         const [user, page_] = await Promise.all([
@@ -62,22 +58,16 @@ export function useAdminVisitorCategories() {
             escortRequirement: escortRequirementFilter || undefined,
           }),
         ])
+        if (!request.succeed()) return
         setCurrentUser(user)
         setVisitorCategories(page_.items)
         setTotal(page_.total)
-        setLastUpdatedAt(new Date())
       } catch {
-        if (!silent) {
-          setErrorMessage('Something went wrong loading the visitor categories. Please try again.')
-        }
+        if (!request.fail()) return
         toast.error('Something went wrong loading the visitor categories. Please try again.')
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
       }
     },
-    [getCurrentStaffUserUseCase, listVisitorCategoriesPageUseCase, page, badgeColorFilter, ndaRequirementFilter, escortRequirementFilter, toast],
+    [begin, getCurrentStaffUserUseCase, listVisitorCategoriesPageUseCase, page, badgeColorFilter, ndaRequirementFilter, escortRequirementFilter, toast],
   )
 
   useEffect(() => {
@@ -94,9 +84,9 @@ export function useAdminVisitorCategories() {
   }, [loadVisitorCategories])
 
   const isActionInProgress = pendingDelete !== undefined || isDeleting || isBulkAddOpen
-  usePolling(() => void loadVisitorCategories({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadVisitorCategories('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const isFiltering = badgeColorFilter !== '' || ndaRequirementFilter !== '' || escortRequirementFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
@@ -146,7 +136,7 @@ export function useAdminVisitorCategories() {
       await deleteVisitorCategoryUseCase.execute(pendingDelete.id)
       toast.success('Visitor category deleted.')
       setPendingDelete(undefined)
-      await loadVisitorCategories({ silent: true })
+      await loadVisitorCategories()
     } catch {
       toast.error('Something went wrong deleting the visitor category. Please try again.')
     } finally {
@@ -171,7 +161,7 @@ export function useAdminVisitorCategories() {
         const result = await bulkCreateVisitorCategoriesUseCase.execute({ names })
         setBulkCreateResult(result)
         if (result.createdCount > 0) {
-          await loadVisitorCategories({ silent: true })
+          await loadVisitorCategories()
         }
       } catch {
         toast.error('Something went wrong adding these categories. Please try again.')
@@ -190,8 +180,8 @@ export function useAdminVisitorCategories() {
     pageSize: PAGE_SIZE,
     goToNextPage,
     goToPrevPage,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     isFilterPanelOpen,
     toggleFilterPanel,

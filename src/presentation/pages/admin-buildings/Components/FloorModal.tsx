@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { PendingButton } from '../../../components/ui/PendingButton'
 import { Modal } from '../../../components/ui/Modal'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
@@ -102,14 +103,14 @@ export function FloorModal({ isOpen, initialFloor, isSaving, onSave, onClose }: 
         <button type="button" onClick={onClose} className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text">
           Cancel
         </button>
-        <button
-          type="button"
+        <PendingButton
           onClick={handleSave}
-          disabled={isSaving}
-          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
+          pending={isSaving}
+          pendingLabel="Saving…"
+          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent disabled:opacity-50"
         >
-          {isSaving ? 'Saving…' : isEditMode ? 'Save Changes' : 'Add Floor'}
-        </button>
+          {isEditMode ? 'Save Changes' : 'Add Floor'}
+        </PendingButton>
       </div>
     </Modal>
   )

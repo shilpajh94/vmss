@@ -7,6 +7,7 @@ import type { Department } from '../../../../domain/entities/department-schema'
 import type { BranchRoleAssignment, HostEmployee, HostEmployeeCreateInput } from '../../../../domain/entities/host-employee-schema'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 
 const EMPTY_CREATE_VALUES: HostEmployeeCreateInput = {
   fullName: '',
@@ -100,6 +101,15 @@ export function useAdminHostEmployeeForm() {
   const retry = useCallback(() => {
     void load()
   }, [load])
+
+  // load() resets the create form but not the role-assignment pickers.
+  const reload = useCallback(() => {
+    setAssignRoleId('')
+    setAssignBranchId('')
+    void load()
+  }, [load])
+
+  useFormPageRefresh({ values: { createValues, assignRoleId, assignBranchId }, isLoading, reload })
 
   const departmentName = useMemo(
     () => (employee?.departmentId ? departments.find((department) => department.id === employee.departmentId)?.name : undefined),

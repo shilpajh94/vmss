@@ -1,7 +1,8 @@
 import { useNavigate } from 'react-router'
-import { PencilIcon } from '../../../components/icons'
+import { LockIcon, PencilIcon, TrashIcon, UnlockIcon } from '../../../components/icons'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+import { Avatar } from '../../../components/ui/Avatar'
 
 // Below `md`: only the identifying, status, and actions columns stay visible.
 const TABLE_CLASS_NAME = responsiveTableClassName([2, 3, 4])
@@ -9,11 +10,14 @@ const TABLE_CLASS_NAME = responsiveTableClassName([2, 3, 4])
 interface HostEmployeesTableProps {
   hostEmployees: HostEmployee[]
   departmentNameById: Map<string, string>
+  busyEmployeeId?: string
+  onSetActive: (employee: HostEmployee, active: boolean) => void
+  onDelete: (employee: HostEmployee) => void
 }
 
 const COLUMN_HEADERS = ['EMPLOYEE NAME', 'DEPARTMENT', 'EMAIL ADDRESS', 'ROLES', 'STATUS']
 
-export function HostEmployeesTable({ hostEmployees, departmentNameById }: HostEmployeesTableProps) {
+export function HostEmployeesTable({ hostEmployees, departmentNameById, busyEmployeeId, onSetActive, onDelete }: HostEmployeesTableProps) {
   const navigate = useNavigate()
 
   return (
@@ -34,7 +38,7 @@ export function HostEmployeesTable({ hostEmployees, departmentNameById }: HostEm
             <tr key={hostEmployee.id} className="border-b border-border-subtle">
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="flex items-center gap-3">
-                  <span className="size-9 shrink-0 rounded-full bg-neutral-subtle" />
+                  <Avatar name={hostEmployee.fullName} photoUrl={hostEmployee.avatarUrl} size="lg" />
                   <span className="font-body text-sm font-semibold text-text">{hostEmployee.fullName}</span>
                 </div>
               </td>
@@ -77,6 +81,26 @@ export function HostEmployeesTable({ hostEmployees, departmentNameById }: HostEm
                     className="flex items-center justify-center rounded-lg bg-border-subtle p-2 max-lg:p-3 text-text"
                   >
                     <PencilIcon className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyEmployeeId === hostEmployee.id}
+                    onClick={() => onSetActive(hostEmployee, !hostEmployee.isActive)}
+                    aria-label={`${hostEmployee.isActive ? 'Disable' : 'Enable'} ${hostEmployee.fullName}`}
+                    title={hostEmployee.isActive ? 'Disable' : 'Enable'}
+                    className="flex items-center justify-center rounded-lg bg-border-subtle p-2 max-lg:p-3 text-text disabled:opacity-50"
+                  >
+                    {hostEmployee.isActive ? <LockIcon className="size-3.5" /> : <UnlockIcon className="size-3.5" />}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyEmployeeId === hostEmployee.id}
+                    onClick={() => onDelete(hostEmployee)}
+                    aria-label={`Delete ${hostEmployee.fullName}`}
+                    title="Delete"
+                    className="flex items-center justify-center rounded-lg bg-border-subtle p-2 max-lg:p-3 text-danger disabled:opacity-50"
+                  >
+                    <TrashIcon className="size-3.5" />
                   </button>
                 </div>
               </td>

@@ -1,6 +1,7 @@
 import { BackButton } from '../../components/BackButton'
 import { Checkbox } from '../../components/ui/Checkbox'
-import { LoadingState } from '../../components/ui/LoadingState'
+import { FormSkeleton } from '../../components/ui/Skeleton'
+import { PendingButton } from '../../components/ui/PendingButton'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminRoleCreateForm } from './hooks/use-admin-role-create-form'
 
@@ -29,12 +30,12 @@ export function AdminRoleCreateFormPage() {
       {errorMessage ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
+          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
             Try again
           </button>
         </div>
       ) : isLoading ? (
-        <LoadingState label="Loading permission catalog…" className="flex-1" />
+        <FormSkeleton rows={6} columns={1} label="Loading permission catalog…" />
       ) : (
         <>
           <div className="flex items-center gap-4">
@@ -95,14 +96,14 @@ export function AdminRoleCreateFormPage() {
             >
               Cancel
             </button>
-            <button
-              type="button"
-              disabled={isSaving}
+            <PendingButton
+              pending={isSaving}
+              pendingLabel="Creating…"
               onClick={() => void submit()}
-              className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
+              className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent disabled:opacity-50"
             >
-              {isSaving ? 'Creating…' : 'Create Role'}
-            </button>
+              Create Role
+            </PendingButton>
           </div>
         </>
       )}

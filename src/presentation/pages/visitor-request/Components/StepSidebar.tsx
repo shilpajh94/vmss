@@ -1,3 +1,6 @@
+import { Fragment } from 'react'
+import { StepMarker } from '../../../components/StepMarker'
+
 interface StepSidebarProps {
   steps: readonly string[]
   currentStep: number
@@ -6,29 +9,35 @@ interface StepSidebarProps {
 
 export function StepSidebar({ steps, currentStep, onStepSelect }: StepSidebarProps) {
   return (
-    <nav className="hidden w-[220px] shrink-0 flex-col gap-4 md:flex">
+    <nav className="hidden w-[220px] shrink-0 flex-col md:flex">
       {steps.map((label, index) => {
-        const stepNumber = index + 1
         const isActive = index === currentStep
         const isComplete = index < currentStep
 
         return (
-          <button
-            key={label}
-            type="button"
-            onClick={() => onStepSelect(index)}
-            disabled={!isComplete}
-            className={`flex items-center gap-3 text-left ${isComplete ? 'cursor-pointer' : 'cursor-default'}`}
-          >
-            <span
-              className={`flex size-7 shrink-0 items-center justify-center rounded-full text-caption font-semibold ${
-                isActive || isComplete ? 'bg-secondary-accent text-white' : 'bg-border text-text-muted'
-              }`}
+          <Fragment key={label}>
+            <button
+              type="button"
+              onClick={() => onStepSelect(index)}
+              disabled={!isComplete}
+              className={`flex items-center gap-3 text-left ${isComplete ? 'cursor-pointer' : 'cursor-default'}`}
             >
-              {stepNumber}
-            </span>
-            <span className={`text-body ${isActive ? 'font-semibold text-text' : 'text-text-muted'}`}>{label}</span>
-          </button>
+              <StepMarker stepNumber={index + 1} isReached={isActive || isComplete} isComplete={isComplete} textClassName="text-caption font-semibold" />
+              <span className={`text-body ${isActive ? 'font-semibold text-text' : 'text-text-muted'}`}>{label}</span>
+            </button>
+            {index < steps.length - 1 && (
+              // Centred under the 28px marker; fills downward once this step
+              // is completed (visitor-request-wizard "Moving between steps is
+              // animated"). Its height replaces the rail's former 16px gap.
+              <div aria-hidden="true" className="relative my-1 ml-[13px] h-2 w-0.5 overflow-hidden rounded-full bg-border">
+                <div
+                  className={`step-motion absolute inset-0 origin-top bg-secondary-accent transition-transform ${
+                    isComplete ? 'scale-y-100' : 'scale-y-0'
+                  }`}
+                />
+              </div>
+            )}
+          </Fragment>
         )
       })}
     </nav>

@@ -1,4 +1,5 @@
 import z from "zod"
+import { DeviceSummarySchema } from "./managed-device-schema"
 import { FieldAnswerSchema, GroupAnswerSchema } from "./form-field-answer-schema"
 
 export const CurrentApprovalStepSchema = z.object({
@@ -104,10 +105,21 @@ export const InvitationDetailSchema = z.object({
   currentApprovalStep: CurrentApprovalStepSchema.nullable(),
   denialReason: z.string().nullable(),
   deniedAt: z.string().nullable(),
+  // Latest approval revert (add-invitation-approval-revert). Nullish so an
+  // API without the revert endpoint still parses.
+  approvalRevertedAt: z.string().nullish(),
+  approvalRevertedByUserId: z.string().nullish(),
+  approvalRevertReason: z.string().nullish(),
   checkedInAt: z.string().nullable(),
   checkedInByUserId: z.string().nullable(),
   checkedOutAt: z.string().nullable(),
   checkedOutByUserId: z.string().nullable(),
+  // VMSS_API auto-checkout-and-archive-no-shows. Optional so an API without
+  // the visit-lifecycle sweep still parses.
+  checkedOutAutomatically: z.boolean().default(false),
+  archivedAt: z.string().nullish(),
+  checkInDevice: DeviceSummarySchema.nullish(),
+  checkOutDevice: DeviceSummarySchema.nullish(),
   badgeNumber: z.string().nullable(),
   badgeIssuedAt: z.string().nullable(),
   badgeReprintCount: z.number(),

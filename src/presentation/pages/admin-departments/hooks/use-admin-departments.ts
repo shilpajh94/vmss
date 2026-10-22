@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
@@ -22,9 +23,7 @@ export function useAdminDepartments() {
   const [total, setTotal] = useState(0)
   const [branchOptions, setBranchOptions] = useState<{ value: string; label: string }[]>([])
   const [employees, setEmployees] = useState<HostEmployee[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
+  const { phase, isRefreshing, begin } = useLoadTracker()
 
   const [pendingDelete, setPendingDelete] = useState<Department | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -35,14 +34,11 @@ export function useAdminDepartments() {
 
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
+  // `user` (default): filter/page/retry/refresh/post-mutation - keeps the
+  // current rows on screen with a progress cue. `background`: the 15s poll.
   const loadDepartments = useCallback(
-    async (options?: { silent?: boolean }) => {
-      const silent = options?.silent ?? false
-
-      if (!silent) {
-        setIsLoading(true)
-        setErrorMessage(undefined)
-      }
+    async (mode: LoadMode = 'user') => {
+      const request = begin(mode)
 
       try {
         const [user, page_, employeeList, branches] = await Promise.all([
@@ -56,24 +52,18 @@ export function useAdminDepartments() {
           listHostEmployeesUseCase.execute(),
           listBranchesUseCase.execute(),
         ])
+        if (!request.succeed()) return
         setCurrentUser(user)
         setDepartments(page_.items)
         setTotal(page_.total)
         setEmployees(employeeList)
         setBranchOptions(branches.map((branch) => ({ value: branch.id, label: branch.name })).sort((a, b) => a.label.localeCompare(b.label)))
-        setLastUpdatedAt(new Date())
       } catch {
-        if (!silent) {
-          setErrorMessage('Something went wrong loading the departments. Please try again.')
-        }
+        if (!request.fail()) return
         toast.error('Something went wrong loading the departments. Please try again.')
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
       }
     },
-    [getCurrentStaffUserUseCase, listDepartmentsPageUseCase, listHostEmployeesUseCase, listBranchesUseCase, page, statusFilter, branchFilter, toast],
+    [begin, getCurrentStaffUserUseCase, listDepartmentsPageUseCase, listHostEmployeesUseCase, listBranchesUseCase, page, statusFilter, branchFilter, toast],
   )
 
   useEffect(() => {
@@ -92,9 +82,9 @@ export function useAdminDepartments() {
   // Auto-refreshes the register every 15s; skipped while a delete dialog is
   // open so a background tick can't replace data underneath it.
   const isActionInProgress = pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadDepartments({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void loadDepartments('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   const requestDelete = useCallback((department: Department) => {
     setPendingDelete(department)
@@ -112,7 +102,7 @@ export function useAdminDepartments() {
       await deleteDepartmentUseCase.execute(pendingDelete.id)
       toast.success('Department deleted.')
       setPendingDelete(undefined)
-      await loadDepartments({ silent: true })
+      await loadDepartments()
     } catch {
       toast.error('Something went wrong deleting the department. Please try again.')
     } finally {
@@ -154,8 +144,8 @@ export function useAdminDepartments() {
     goToNextPage,
     goToPrevPage,
     employees,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     isFilterPanelOpen,
     toggleFilterPanel,

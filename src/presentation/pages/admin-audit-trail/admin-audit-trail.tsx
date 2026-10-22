@@ -1,4 +1,6 @@
-import { LoadingState } from '../../components/ui/LoadingState'
+import { AsyncRegion } from '../../components/AsyncRegion'
+import { EmptyState } from '../../components/ui/EmptyState'
+import { TableSkeleton } from '../../components/ui/Skeleton'
 import { Pagination } from '../../components/Pagination'
 import { PageContentLayout } from '../../components/PageContentLayout'
 import { usePageHeader } from '../../context/page-header-context'
@@ -15,8 +17,8 @@ export function AdminAuditTrailPage() {
     entries,
     total,
     employeeNameById,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     changeDateRange,
     changeActivityType,
     goToNextPage,
@@ -28,8 +30,20 @@ export function AdminAuditTrailPage() {
 
   usePageHeader({ description: 'Organisation-wide activity log of account and invitation actions' })
 
+  // Pinned below the scrolling rows, not inside them, so it never scrolls
+  // out of view (responsive-layout "Paged List Pagination Stays Visible
+  // Below the Data").
+  const pagination =
+    phase === 'ready' && entries.length > 0 ? (
+      <div className="flex-none">
+        <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
+      </div>
+    ) : undefined
+
   return (
     <PageContentLayout
+      fitBody={entries.length > 0}
+      footer={pagination}
       header={
         <>
           <h1 className="font-display text-xl font-bold md:text-2xl text-text">Audit Trail</h1>
@@ -44,21 +58,24 @@ export function AdminAuditTrailPage() {
         </>
       }
     >
-      {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
-          <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-            Try again
-          </button>
-        </div>
-      ) : isLoading ? (
-        <LoadingState label="Loading audit trail…" className="flex-1" />
-      ) : (
-        <div className="flex flex-col gap-6">
+      <AsyncRegion
+        phase={phase}
+        isRefreshing={isRefreshing}
+        skeleton={<TableSkeleton columns={4} rows={PAGE_SIZE} label="Loading audit trail…" />}
+        errorMessage="Something went wrong loading the audit trail. Please try again."
+        onRetry={retry}
+        isEmpty={entries.length === 0}
+        empty={
+          <div className="flex w-full flex-1 items-center justify-center rounded-xl border border-border bg-surface py-16">
+            <EmptyState message="No activity matches the current filters." />
+          </div>
+        }
+      >
+        {/* min-w-0: the table scrolls inside its own box rather than widening the page. */}
+        <div className="w-full min-w-0">
           <ActivityTable entries={entries} employeeNameById={employeeNameById} />
-          <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
         </div>
-      )}
+      </AsyncRegion>
     </PageContentLayout>
   )
 }

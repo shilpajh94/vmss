@@ -1,5 +1,6 @@
 import { ChevronLeftIcon, PlusIcon } from '../../components/icons'
-import { LoadingState } from '../../components/ui/LoadingState'
+import { FormSkeleton } from '../../components/ui/Skeleton'
+import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
@@ -42,7 +43,7 @@ export function AdminBuildingFormPage() {
   usePageHeader({ description: 'Administer branch premises, building access policies, and reception configurations' })
 
   const branchOptions = branches.map((branch) => ({ value: branch.id, label: branch.name }))
-  const fieldLabelClassName = 'text-[13px] font-semibold text-[#475569]'
+  const fieldLabelClassName = 'text-[13px] font-semibold text-text-secondary'
 
   return (
     <>
@@ -62,12 +63,12 @@ export function AdminBuildingFormPage() {
         {errorMessage ? (
           <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
             <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
+            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
               Try again
             </button>
           </div>
         ) : isLoading ? (
-          <LoadingState label="Loading…" className="py-12" />
+          <FormSkeleton rows={3} columns={2} label="Loading building…" />
         ) : (
           <div className="flex w-full flex-col gap-7 rounded-2xl border border-border bg-surface px-6 py-8">
             <div className="flex flex-col gap-4">
@@ -166,14 +167,14 @@ export function AdminBuildingFormPage() {
               <button type="button" onClick={cancel} className="rounded-full border border-border bg-surface px-6 py-2.5 font-body text-sm font-semibold text-text">
                 Cancel
               </button>
-              <button
-                type="button"
+              <PendingButton
                 onClick={() => void submit()}
-                disabled={isSaving}
-                className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-white disabled:opacity-50"
+                pending={isSaving}
+                pendingLabel="Saving…"
+                className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-on-accent disabled:opacity-50"
               >
-                {isSaving ? 'Saving…' : isEditMode ? 'Save Changes' : 'Save Building'}
-              </button>
+                {isEditMode ? 'Save Changes' : 'Save Building'}
+              </PendingButton>
             </div>
           </div>
         )}
@@ -191,7 +192,9 @@ export function AdminBuildingFormPage() {
         isOpen={pendingDeleteFloor !== undefined}
         title="Delete Floor"
         message={`Are you sure you want to delete "${pendingDeleteFloor?.name}"? This cannot be undone.`}
-        confirmLabel={isDeletingFloor ? 'Deleting…' : 'Delete'}
+        confirmLabel="Delete"
+        isBusy={isDeletingFloor}
+        busyLabel="Deleting…"
         onConfirm={() => void confirmDeleteFloor()}
         onCancel={cancelDeleteFloor}
       />

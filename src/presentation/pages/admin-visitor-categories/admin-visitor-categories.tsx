@@ -2,10 +2,13 @@ import { useNavigate } from 'react-router'
 import { PlusIcon, SlidersIcon, UploadIcon } from '../../components/icons'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { EmptyState } from '../../components/ui/EmptyState'
-import { LoadingState } from '../../components/ui/LoadingState'
 import { SelectField } from '../../components/ui/SelectField'
 import { Pagination } from '../../components/Pagination'
-import { PageContentLayout } from '../../components/PageContentLayout'
+import { PAGE_HEADER_GAP_CANCEL, PageContentLayout } from '../../components/PageContentLayout'
+import { AsyncRegion } from '../../components/AsyncRegion'
+import { Collapsible } from '../../components/ui/Collapsible'
+import { TableSkeleton } from '../../components/ui/Skeleton'
+import { PRESS_FEEDBACK_CLASS } from '../../components/ui/interactive'
 import { usePageHeader } from '../../context/page-header-context'
 import { BulkAddCategoriesModal } from './Components/BulkAddCategoriesModal'
 import { VisitorCategoriesTable } from './Components/VisitorCategoriesTable'
@@ -20,8 +23,8 @@ export function AdminVisitorCategoriesPage() {
     pageSize,
     goToNextPage,
     goToPrevPage,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     isFilterPanelOpen,
     toggleFilterPanel,
@@ -50,8 +53,20 @@ export function AdminVisitorCategoriesPage() {
 
   const goToAddCategory = () => navigate('/admin/visitor-categories/new')
 
+  // Pinned below the scrolling rows, not inside them, so it never scrolls
+  // out of view (responsive-layout "Paged List Pagination Stays Visible
+  // Below the Data").
+  const pagination =
+    phase === 'ready' && visitorCategories.length > 0 ? (
+      <div className="flex-none">
+        <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
+      </div>
+    ) : undefined
+
   return (
     <PageContentLayout
+      fitBody={visitorCategories.length > 0}
+      footer={pagination}
       header={
         <>
           <div className="flex w-full flex-wrap items-center justify-between gap-3">
@@ -60,7 +75,8 @@ export function AdminVisitorCategoriesPage() {
               <button
                 type="button"
                 onClick={toggleFilterPanel}
-                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
+                aria-expanded={isFilterPanelOpen}
+                className={`flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text hover:bg-border-subtle ${PRESS_FEEDBACK_CLASS}`}
               >
                 <SlidersIcon className="size-3.5" />
                 Filters
@@ -68,7 +84,7 @@ export function AdminVisitorCategoriesPage() {
               <button
                 type="button"
                 onClick={openBulkAdd}
-                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
+                className={`flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text hover:bg-border-subtle ${PRESS_FEEDBACK_CLASS}`}
               >
                 <UploadIcon className="size-3.5" />
                 Bulk Add
@@ -76,7 +92,7 @@ export function AdminVisitorCategoriesPage() {
               <button
                 type="button"
                 onClick={goToAddCategory}
-                className="flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-white"
+                className={`flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-on-accent hover:bg-admin-accent/90 ${PRESS_FEEDBACK_CLASS}`}
               >
                 <PlusIcon className="size-3.5" />
                 Add Category
@@ -84,7 +100,7 @@ export function AdminVisitorCategoriesPage() {
             </div>
           </div>
 
-          {isFilterPanelOpen && (
+          <Collapsible open={isFilterPanelOpen} closedClassName={PAGE_HEADER_GAP_CANCEL}>
             <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-filter-panel">
               <div className="w-full sm:w-48">
                 <SelectField
@@ -134,39 +150,37 @@ export function AdminVisitorCategoriesPage() {
                 </button>
               )}
             </div>
-          )}
+          </Collapsible>
         </>
       }
     >
-      {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
-          <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-            Try again
-          </button>
-        </div>
-      ) : isLoading ? (
-        <LoadingState label="Loading visitor categories…" className="flex-1" />
-      ) : visitorCategories.length === 0 ? (
-        <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface">
-          {isFiltering ? (
-            <EmptyState message="No visitor categories match these filters." />
-          ) : (
-            <EmptyState message="No visitor categories yet." action={{ label: 'Add Category', onClick: goToAddCategory }} />
-          )}
-        </div>
-      ) : (
-        <div className="flex h-full flex-col gap-3">
-          <VisitorCategoriesTable visitorCategories={visitorCategories} onDelete={requestDelete} />
-          <Pagination page={page} pageSize={pageSize} total={total} onPrev={goToPrevPage} onNext={goToNextPage} />
-        </div>
-      )}
+      <AsyncRegion
+        phase={phase}
+        isRefreshing={isRefreshing}
+        skeleton={<TableSkeleton columns={8} rows={pageSize} label="Loading visitor categories…" />}
+        errorMessage="Something went wrong loading the visitor categories. Please try again."
+        onRetry={retry}
+        isEmpty={visitorCategories.length === 0}
+        empty={
+          <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface py-16">
+            {isFiltering ? (
+              <EmptyState message="No visitor categories match these filters." />
+            ) : (
+              <EmptyState message="No visitor categories yet." action={{ label: 'Add Category', onClick: goToAddCategory }} />
+            )}
+          </div>
+        }
+      >
+        <VisitorCategoriesTable visitorCategories={visitorCategories} onDelete={requestDelete} />
+      </AsyncRegion>
 
       <ConfirmDialog
         isOpen={pendingDelete !== undefined}
         title="Delete Visitor Category"
         message={`Are you sure you want to delete "${pendingDelete?.name}"? This cannot be undone.`}
-        confirmLabel={isDeleting ? 'Deleting…' : 'Delete'}
+        confirmLabel="Delete"
+        isBusy={isDeleting}
+        busyLabel="Deleting…"
         onConfirm={() => void confirmDelete()}
         onCancel={cancelDelete}
       />

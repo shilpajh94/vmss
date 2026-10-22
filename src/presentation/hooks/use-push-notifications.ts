@@ -2,38 +2,96 @@ import { useCallback } from 'react'
 import { getToken } from 'firebase/messaging'
 import { getFirebaseMessaging } from '../../infrastructure/firebase/firebase-app'
 import { useAppDependencies } from '../context/app-dependencies-context'
+import { useToast } from '../components/toast/toast-context'
 
-// Session-scoped: a fresh registration/permission prompt happens on the next login
-// in a new tab/session rather than persisting across browser restarts.
+// Session-scoped: a fresh registration happens on the next login in a new
+// tab/session rather than persisting across browser restarts. Its presence
+// is also what distinguishes "permission granted and registered" from
+// "permission granted but not registered yet".
 export const FCM_TOKEN_STORAGE_KEY = 'fcmToken'
 
-// Register is also re-run on mount, on an interval, and on tab focus for an
-// already-signed-in device (see PushNotificationsProvider) so a rotated FCM
-// token gets re-registered without a full reload, since there is no persistent
-// onTokenRefresh-equivalent listener. Unregister is only called explicitly from
-// the sign-out call site.
+export type PushUnavailableReason = 'insecure-context' | 'unsupported'
+
+export type PushState =
+  | { status: 'enabled' }
+  | { status: 'off' }
+  | { status: 'blocked' }
+  | { status: 'unavailable'; reason: PushUnavailableReason }
+
+// Browsers quiet or auto-block a permission prompt that isn't a direct
+// response to a click, and a `denied` permission can never be re-prompted by
+// the page — so only `enablePush` (wired to a button's onClick) ever prompts.
+export function getPushState(): PushState {
+  if (typeof window === 'undefined' || !window.isSecureContext) {
+    return { status: 'unavailable', reason: 'insecure-context' }
+  }
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !getFirebaseMessaging()) {
+    return { status: 'unavailable', reason: 'unsupported' }
+  }
+  if (Notification.permission === 'denied') return { status: 'blocked' }
+  if (Notification.permission === 'granted' && sessionStorage.getItem(FCM_TOKEN_STORAGE_KEY)) {
+    return { status: 'enabled' }
+  }
+  return { status: 'off' }
+}
+
+// The automatic refresh runs on sign-in, tab focus and a timer; toast only
+// its first failure per page load so a persistent problem can't spam.
+let hasReportedRefreshFailure = false
+
+const REGISTRATION_FAILED_MESSAGE = "Couldn't turn on push notifications for this browser. You'll still see them in the bell."
+
 export function usePushNotifications() {
   const { registerDeviceUseCase, unregisterDeviceUseCase } = useAppDependencies()
+  const toast = useToast()
 
-  const registerCurrentDevice = useCallback(async () => {
+  const registerWithGrantedPermission = useCallback(async (): Promise<void> => {
+    const messaging = getFirebaseMessaging()
+    if (!messaging) return
+
+    const token = await getToken(messaging, { vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY })
+    if (!token) throw new Error('Firebase returned no registration token')
+
+    await registerDeviceUseCase.execute(token)
+    sessionStorage.setItem(FCM_TOKEN_STORAGE_KEY, token)
+  }, [registerDeviceUseCase])
+
+  // Must only be called from a click handler — it may show the browser's
+  // permission prompt. Returns the resulting state for the caller to render.
+  const enablePush = useCallback(async (): Promise<PushState> => {
+    const before = getPushState()
+    if (before.status === 'unavailable' || before.status === 'blocked') return before
+
     try {
-      const messaging = getFirebaseMessaging()
-      if (!messaging) return
-
       if (Notification.permission === 'default') {
         await Notification.requestPermission()
       }
-      if (Notification.permission !== 'granted') return
-
-      const token = await getToken(messaging, { vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY })
-      if (!token) return
-
-      await registerDeviceUseCase.execute(token)
-      sessionStorage.setItem(FCM_TOKEN_STORAGE_KEY, token)
+      if (Notification.permission === 'granted') {
+        await registerWithGrantedPermission()
+      }
     } catch (error) {
       console.error('Failed to register device for push notifications', error)
+      toast.error(REGISTRATION_FAILED_MESSAGE)
     }
-  }, [registerDeviceUseCase])
+    return getPushState()
+  }, [registerWithGrantedPermission, toast])
+
+  // Never prompts: re-registers (picking up a rotated FCM token) only when
+  // the user already granted permission.
+  const refreshRegistrationIfGranted = useCallback(async (): Promise<void> => {
+    const state = getPushState()
+    if (state.status === 'unavailable' || Notification.permission !== 'granted') return
+
+    try {
+      await registerWithGrantedPermission()
+    } catch (error) {
+      console.error('Failed to refresh push notification registration', error)
+      if (!hasReportedRefreshFailure) {
+        hasReportedRefreshFailure = true
+        toast.error(REGISTRATION_FAILED_MESSAGE)
+      }
+    }
+  }, [registerWithGrantedPermission, toast])
 
   const unregisterCurrentDevice = useCallback(async () => {
     const token = sessionStorage.getItem(FCM_TOKEN_STORAGE_KEY)
@@ -48,5 +106,5 @@ export function usePushNotifications() {
     }
   }, [unregisterDeviceUseCase])
 
-  return { registerCurrentDevice, unregisterCurrentDevice }
+  return { enablePush, refreshRegistrationIfGranted, unregisterCurrentDevice }
 }

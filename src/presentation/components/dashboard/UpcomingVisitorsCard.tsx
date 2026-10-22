@@ -1,50 +1,71 @@
+import { Link } from 'react-router'
+import { Avatar } from '../ui/Avatar'
 import { EmptyState } from '../ui/EmptyState'
-import { formatDate } from '../../utils/format-time'
-import type { DashboardUpcomingVisitor } from '../../../domain/entities/dashboard-overview-schema'
+import { formatDate, formatTime } from '../../utils/format-time'
+import { CardHeader } from './CardHeader'
+import { boardInvitationPath, boardStatusPath, scheduledLocal, type BoardBasePath } from './dashboard-format'
 
-interface UpcomingVisitorsCardProps {
-  visitors: DashboardUpcomingVisitor[]
-  employeeNameById: Record<string, string>
+export interface UpcomingVisitorRow {
+  id: string
+  trackingId: string
+  primaryContactFullName: string
+  // Omitted on the personal dashboard, where the reader is (one of) the hosts.
+  hostFullName?: string | null
+  purposeOfVisit: string | null
+  preferredVisitDate: string | null
+  preferredVisitTime: string | null
+  expiresAt: string
 }
 
-export function UpcomingVisitorsCard({ visitors, employeeNameById }: UpcomingVisitorsCardProps) {
+interface UpcomingVisitorsCardProps {
+  title: string
+  subtitle: string
+  visitors: UpcomingVisitorRow[]
+  boardBasePath: BoardBasePath
+  showHost: boolean
+  className?: string
+}
+
+// Approved visitors not yet admitted. Each row shows the scheduled visit
+// (falling back to the pass's expiry when no visit date is set) and opens the
+// visit; "View all" opens the board on approved invitations.
+export function UpcomingVisitorsCard({ title, subtitle, visitors, boardBasePath, showHost, className = '' }: UpcomingVisitorsCardProps) {
   return (
-    <div className="flex w-full flex-col gap-5 rounded-2xl border border-border bg-surface p-4 md:p-6">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="font-display text-lg font-bold text-text">Upcoming Pre-Registered Visitors</h2>
-        <p className="font-body text-sm text-text-faint">Pre-registered visitors awaiting check-in</p>
-      </div>
+    <section aria-label={title} className={`flex min-w-0 flex-col gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 ${className}`}>
+      <CardHeader title={title} subtitle={subtitle} viewAllHref={boardStatusPath(boardBasePath, 'approved')} viewAllLabel="View all approved visits" />
 
       {visitors.length === 0 ? (
         <EmptyState message="No upcoming visitors scheduled." className="py-12" />
       ) : (
-        <div className="flex flex-col">
+        <ul className="flex flex-col">
           {visitors.map((visitor) => {
-            const hostName = visitor.hostId ? (employeeNameById[visitor.hostId] ?? 'Unassigned') : 'Unassigned'
+            const scheduled = scheduledLocal(visitor.preferredVisitDate, visitor.preferredVisitTime)
 
             return (
-              <div key={visitor.id} className="flex flex-wrap items-center gap-4 border-t border-border-subtle py-4 first:border-t-0">
-                <div className="w-24 shrink-0 font-body text-sm font-semibold text-text">{formatDate(visitor.expiresAt)}</div>
-
-                <div className="flex flex-1 items-center gap-3 basis-56">
-                  <span className="size-7 shrink-0 rounded-full bg-neutral-subtle" />
-                  <span className="font-body text-sm font-semibold text-text">{visitor.primaryContactFullName}</span>
-                </div>
-
-                <div className="flex basis-44 items-center gap-1 font-body text-sm text-text-muted">
-                  <span>Host:</span>
-                  <span className="font-semibold text-text">{hostName}</span>
-                </div>
-
-                <div className="ml-auto flex basis-52 items-center gap-2 font-body text-sm text-text-muted">
-                  <span className="size-1.5 rounded-full bg-admin-accent" />
-                  {visitor.purposeOfVisit ?? 'Not specified'}
-                </div>
-              </div>
+              <li key={visitor.id} className="border-t border-border-subtle first:border-t-0">
+                <Link
+                  to={boardInvitationPath(boardBasePath, visitor.id)}
+                  className="flex min-h-14 items-center gap-3 rounded-lg px-2 py-2.5 hover:bg-border-subtle focus-visible:outline-2 focus-visible:outline-admin-accent"
+                >
+                  <div className="flex w-16 shrink-0 flex-col font-body text-sm">
+                    <span className="font-semibold text-text">{formatDate(scheduled ?? visitor.expiresAt)}</span>
+                    <span className="text-xs text-text-muted">{visitor.preferredVisitTime ? formatTime(scheduled) : scheduled ? 'Any time' : 'Valid until'}</span>
+                  </div>
+                  <Avatar name={visitor.primaryContactFullName} size="sm" />
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate font-body text-sm font-semibold text-text">{visitor.primaryContactFullName}</span>
+                    <span className="truncate font-body text-xs text-text-faint">
+                      {showHost ? `Host: ${visitor.hostFullName ?? 'Unassigned'} · ` : ''}
+                      {visitor.purposeOfVisit ?? 'Not specified'}
+                    </span>
+                  </div>
+                  <span className="hidden shrink-0 font-body text-xs text-text-faint sm:inline">{visitor.trackingId}</span>
+                </Link>
+              </li>
             )
           })}
-        </div>
+        </ul>
       )}
-    </div>
+    </section>
   )
 }

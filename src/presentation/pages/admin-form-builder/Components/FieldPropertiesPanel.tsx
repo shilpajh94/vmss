@@ -3,6 +3,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities'
 import { useEffect, useState } from 'react'
 import { GridIcon, LockIcon, PlusIcon, UnlockIcon, XIcon } from '../../../components/icons'
+import { Collapsible } from '../../../components/ui/Collapsible'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
 import { TextareaField } from '../../../components/ui/TextareaField'
@@ -29,7 +30,7 @@ interface FieldPropertiesPanelProps {
   onSave: (input: FormFieldUpdateInput) => Promise<string | undefined>
 }
 
-const NO_CONDITION_VALUE = '__none__'
+const NO_CONDITION_VALUE = ''
 
 interface OptionDraftRow {
   id: string
@@ -370,25 +371,20 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
           onChange={setConditionFieldKey}
           placeholderSelectable
           placeholder="Always shown"
-          options={[
-            { value: NO_CONDITION_VALUE, label: 'Always shown' },
-            ...siblingFields.filter((f) => f.id !== field.id).map((f) => ({ value: f.key, label: f.label })),
-          ]}
+          options={siblingFields.filter((f) => f.id !== field.id).map((f) => ({ value: f.key, label: f.label }))}
         />
-        {conditionFieldKey !== NO_CONDITION_VALUE && (
-          <>
-            <SelectField
-              label="Condition is:"
-              value={conditionOperator}
-              onChange={(value) => setConditionOperator(value as ConditionOperator)}
-              options={[
-                { value: 'equals', label: 'Equals' },
-                { value: 'not_equals', label: 'Not Equals' },
-              ]}
-            />
-            <TextField label="Value" value={conditionValue} onChange={setConditionValue} placeholder="e.g. group" />
-          </>
-        )}
+        <Collapsible open={conditionFieldKey !== NO_CONDITION_VALUE} closedClassName="-mt-3" className="flex flex-col gap-3">
+          <SelectField
+            label="Condition is:"
+            value={conditionOperator}
+            onChange={(value) => setConditionOperator(value as ConditionOperator)}
+            options={[
+              { value: 'equals', label: 'Equals' },
+              { value: 'not_equals', label: 'Not Equals' },
+            ]}
+          />
+          <TextField label="Value" value={conditionValue} onChange={setConditionValue} placeholder="e.g. group" />
+        </Collapsible>
       </div>
 
       <div>
@@ -415,7 +411,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
         <button
           type="button"
           onClick={() => void save()}
-          className="flex-1 rounded-lg bg-admin-accent px-4 py-2.5 font-body text-sm font-semibold text-white"
+          className="flex-1 rounded-lg bg-admin-accent px-4 py-2.5 font-body text-sm font-semibold text-on-accent"
         >
           Save Properties
         </button>

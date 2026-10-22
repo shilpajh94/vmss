@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router'
 import {
   BuildingIcon,
   CalendarCheckIcon,
+  CalendarIcon,
   ClockIcon,
   GitBranchIcon,
   HomeIcon,
@@ -14,10 +15,14 @@ import {
   TagIcon,
   UserCheckIcon,
   UsersIcon,
-  XIcon,
 } from './icons'
-import { BrandLogo } from './BrandLogo'
 import { useNavDrawer } from '../context/nav-drawer-context'
+import { useSidebarCollapse } from '../context/sidebar-collapse-context'
+import { SidebarFrame } from './sidebar/SidebarFrame'
+import { SidebarHeader } from './sidebar/SidebarHeader'
+import { SidebarNavItem } from './sidebar/SidebarNavItem'
+
+const BUILD_LABEL = [__APP_VERSION__ ? `v${__APP_VERSION__}` : '', __BUILD_SHA__].filter(Boolean).join(' · ')
 
 export type AdminSidebarActiveItem =
   | 'dashboard'
@@ -33,6 +38,7 @@ export type AdminSidebarActiveItem =
   | 'visitor-categories'
   | 'workflows'
   | 'invitations'
+  | 'calendar'
   | 'roles'
   | 'form-builder'
   | 'audit-trail'
@@ -55,6 +61,7 @@ const ADMIN_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: Ad
   ['/admin/visitor-categories', 'visitor-categories'],
   ['/admin/workflows', 'workflows'],
   ['/admin/invitations', 'invitations'],
+  ['/admin/calendar', 'calendar'],
   ['/admin/roles', 'roles'],
   ['/admin/form-builder', 'form-builder'],
   ['/admin/audit-trail', 'audit-trail'],
@@ -67,24 +74,55 @@ export function resolveAdminActiveItem(pathname: string): AdminSidebarActiveItem
   return ADMIN_ROUTE_ACTIVE_ITEMS.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? 'dashboard'
 }
 
-const NAV_ITEMS = [
-  { key: 'dashboard', label: 'Dashboard', icon: HomeIcon },
-  { key: 'organisation-configs', label: 'Organisation Configs', icon: SettingsIcon },
-  { key: 'branches', label: 'Branches', icon: GitBranchIcon },
-  { key: 'departments', label: 'Departments', icon: UsersIcon },
-  { key: 'buildings', label: 'Buildings', icon: BuildingIcon },
-  { key: 'floors', label: 'Floors', icon: LayersIcon },
-  { key: 'reception-desks', label: 'Reception Desks', icon: MonitorIcon },
-  { key: 'security-gates', label: 'Security Gates', icon: ShieldIcon },
-  { key: 'kiosks', label: 'Kiosks', icon: MonitorIcon },
-  { key: 'host-employees', label: 'Employees', icon: UserCheckIcon },
-  { key: 'visitor-categories', label: 'Visitor Categories', icon: TagIcon },
-  { key: 'workflows', label: 'Workflows', icon: ListChecksIcon },
-  { key: 'invitations', label: 'Invitations', icon: CalendarCheckIcon },
-  { key: 'roles', label: 'Roles & Permissions', icon: ShieldIcon },
-  { key: 'form-builder', label: 'Form Builder', icon: PencilIcon },
-  { key: 'audit-trail', label: 'Audit Trail', icon: ClockIcon },
-] as const satisfies ReadonlyArray<{ key: AdminSidebarActiveItem; label: string; icon: unknown }>
+// Ordered by how often admins use each page, daily operations first and
+// one-time organisation setup last, in labelled sections (app-shell
+// "Sidebar menus are ordered by how often they are used").
+const NAV_SECTIONS = [
+  {
+    label: 'Operations',
+    items: [
+      { key: 'dashboard', label: 'Dashboard', icon: HomeIcon },
+      { key: 'invitations', label: 'Invitations', icon: CalendarCheckIcon },
+      { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
+      { key: 'audit-trail', label: 'Audit Trail', icon: ClockIcon },
+    ],
+  },
+  {
+    label: 'People & Access',
+    items: [
+      { key: 'host-employees', label: 'Employees', icon: UserCheckIcon },
+      { key: 'roles', label: 'Roles & Permissions', icon: ShieldIcon },
+    ],
+  },
+  {
+    label: 'Visitor Setup',
+    items: [
+      { key: 'visitor-categories', label: 'Visitor Categories', icon: TagIcon },
+      { key: 'workflows', label: 'Workflows', icon: ListChecksIcon },
+      { key: 'form-builder', label: 'Form Builder', icon: PencilIcon },
+    ],
+  },
+  {
+    label: 'Organisation',
+    items: [
+      { key: 'branches', label: 'Branches', icon: GitBranchIcon },
+      { key: 'buildings', label: 'Buildings', icon: BuildingIcon },
+      { key: 'floors', label: 'Floors', icon: LayersIcon },
+      { key: 'departments', label: 'Departments', icon: UsersIcon },
+      { key: 'reception-desks', label: 'Reception Desks', icon: MonitorIcon },
+      { key: 'security-gates', label: 'Security Gates', icon: ShieldIcon },
+      { key: 'kiosks', label: 'Kiosks', icon: MonitorIcon },
+      { key: 'organisation-configs', label: 'Organisation Configs', icon: SettingsIcon },
+    ],
+  },
+] as const satisfies ReadonlyArray<{
+  label: string
+  items: ReadonlyArray<{ key: AdminSidebarActiveItem; label: string; icon: unknown }>
+}>
+
+type NavItem = (typeof NAV_SECTIONS)[number]['items'][number]
+
+const NAV_ITEMS: readonly NavItem[] = NAV_SECTIONS.flatMap((section): readonly NavItem[] => section.items)
 
 // The nav label for the current admin route, e.g. "Branches" — what the
 // phone top bar shows as the page name when the page has no breadcrumb.
@@ -96,6 +134,7 @@ export function adminNavLabelFor(pathname: string): string {
 export function AdminSidebar({ activeItem }: AdminSidebarProps) {
   const navigate = useNavigate()
   const { closeNav } = useNavDrawer()
+  const { isCollapsed } = useSidebarCollapse()
 
   const handleActivate = (key: AdminSidebarActiveItem) => {
     closeNav()
@@ -112,55 +151,62 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
     if (key === 'visitor-categories') navigate('/admin/visitor-categories')
     if (key === 'workflows') navigate('/admin/workflows')
     if (key === 'invitations') navigate('/admin/invitations')
+    if (key === 'calendar') navigate('/admin/calendar')
     if (key === 'roles') navigate('/admin/roles')
     if (key === 'form-builder') navigate('/admin/form-builder')
     if (key === 'audit-trail') navigate('/admin/audit-trail')
   }
 
   return (
-    <aside className="flex h-full w-[min(280px,85vw)] shrink-0 lg:h-auto lg:w-[280px] flex-col gap-4 self-stretch bg-primary p-6">
-      <div className="flex shrink-0 items-center justify-between gap-2 pb-4">
-        <button
-          type="button"
-          onClick={() => {
-            closeNav()
-            navigate('/admin/dashboard')
-          }}
-          aria-label="Visimio home"
-          className="flex shrink-0 items-center gap-2 text-left"
-        >
-          <BrandLogo variant="on-dark" decorative />
-        </button>
-        <button
-          type="button"
-          onClick={closeNav}
-          aria-label="Close navigation menu"
-          className="flex size-10 shrink-0 items-center justify-center rounded-lg text-text-faint hover:bg-white/5 lg:hidden"
-        >
-          <XIcon className="size-5" />
-        </button>
-      </div>
+    <SidebarFrame expandedWidthClassName="w-[min(280px,85vw)] lg:w-[280px]" gapClassName="gap-4">
+      <SidebarHeader
+        className="pb-4"
+        onHome={() => {
+          closeNav()
+          navigate('/admin/dashboard')
+        }}
+      />
 
       <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
-        {NAV_ITEMS.map(({ key, label, icon: ItemIcon }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => handleActivate(key)}
-            className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left font-body text-sm font-semibold whitespace-nowrap ${
-              activeItem === key ? 'bg-admin-accent text-white' : 'text-text-faint hover:bg-white/5'
-            }`}
-          >
-            <ItemIcon className="size-[18px] shrink-0" />
-            {label}
-          </button>
+        {NAV_SECTIONS.map((section, index) => (
+          // The group's aria-label names the section for screen readers, so
+          // the visible label is aria-hidden; on the icon rail a thin divider
+          // stands in for it.
+          <div key={section.label} role="group" aria-label={section.label} className="flex flex-col gap-1.5">
+            {isCollapsed ? (
+              index > 0 ? <div aria-hidden className="mx-2 my-2 h-px bg-sidebar-line" /> : null
+            ) : (
+              <p
+                aria-hidden
+                className={`px-3 pb-1 font-body text-[11px] font-semibold uppercase tracking-wide text-sidebar-muted ${index > 0 ? 'pt-3' : ''}`}
+              >
+                {section.label}
+              </p>
+            )}
+            {section.items.map(({ key, label, icon }) => (
+              <SidebarNavItem
+                key={key}
+                icon={icon}
+                label={label}
+                isActive={activeItem === key}
+                onActivate={() => handleActivate(key)}
+                activeClassName="bg-sidebar-accent text-white"
+                inactiveClassName="text-sidebar-muted hover:bg-white/5"
+              />
+            ))}
+          </div>
         ))}
       </nav>
 
-      <div className="flex shrink-0 items-center gap-2 border-t border-[#334155] pt-4">
-        <span className="size-2 rounded-full bg-success" />
-        <span className="font-body text-xs font-medium text-text-faint">v1.2 Active</span>
-      </div>
-    </aside>
+      {/* The deployed build, injected at build time (app-shell "The sidebar
+          footer shows the real build identifier") — hidden on the rail. */}
+      {BUILD_LABEL && !isCollapsed ? (
+        <div className="flex shrink-0 items-center border-t border-sidebar-line pt-4">
+          <span className="font-body text-xs font-medium text-sidebar-muted" title="Deployed build">
+            {BUILD_LABEL}
+          </span>
+        </div>
+      ) : null}
+    </SidebarFrame>
   )
 }

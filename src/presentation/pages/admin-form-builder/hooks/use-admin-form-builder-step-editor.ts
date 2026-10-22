@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { usePolling } from '../../../hooks/use-polling'
+import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type {
   FormField,
   FormFieldCreateInput,
@@ -44,9 +45,7 @@ export function useAdminFormBuilderStepEditor() {
   const [fields, setFields] = useState<FormField[]>([])
   const [groups, setGroups] = useState<FormFieldGroup[]>([])
   const [selectedFieldId, setSelectedFieldId] = useState<string | undefined>(undefined)
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | undefined>(undefined)
+  const { phase, isRefreshing, begin } = useLoadTracker()
   const [isAddFieldOpen, setIsAddFieldOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<FormField | undefined>(undefined)
   const [isAddGroupOpen, setIsAddGroupOpen] = useState(false)
@@ -55,39 +54,29 @@ export function useAdminFormBuilderStepEditor() {
   const { hasUnpublishedChanges, markDirty, markPublished } = useFormBuilderPublishState(branchId)
 
   const load = useCallback(
-    async (options?: { silent?: boolean }) => {
+    async (mode: LoadMode = 'user') => {
       if (!stepId) return
-      const silent = options?.silent ?? false
+      const request = begin(mode)
 
-      if (!silent) {
-        setIsLoading(true)
-        setErrorMessage(undefined)
-      }
       try {
         const [steps, stepFields, stepGroups] = await Promise.all([
           listFormStepsUseCase.execute(branchId),
           listFormFieldsUseCase.execute(stepId, branchId),
           listFormFieldGroupsUseCase.execute(stepId, branchId),
         ])
+        if (!request.succeed()) return
         const foundStep = steps.find((s) => s.id === stepId)
         setStep(foundStep)
         const sortedFields = [...stepFields].sort((a, b) => a.orderIndex - b.orderIndex)
         setFields(sortedFields)
         setGroups([...stepGroups].sort((a, b) => a.orderIndex - b.orderIndex))
         setSelectedFieldId((current) => current ?? sortedFields[0]?.id)
-        setLastUpdatedAt(new Date())
       } catch {
-        if (!silent) {
-          setErrorMessage('Something went wrong loading this step. Please try again.')
-        }
+        if (!request.fail()) return
         toast.error('Something went wrong loading this step. Please try again.')
-      } finally {
-        if (!silent) {
-          setIsLoading(false)
-        }
       }
     },
-    [stepId, branchId, listFormStepsUseCase, listFormFieldsUseCase, listFormFieldGroupsUseCase, toast],
+    [begin, stepId, branchId, listFormStepsUseCase, listFormFieldsUseCase, listFormFieldGroupsUseCase, toast],
   )
 
   useEffect(() => {
@@ -106,9 +95,9 @@ export function useAdminFormBuilderStepEditor() {
   // action is in progress (same convention as use-admin-form-builder.ts).
   const isActionInProgress =
     isAddFieldOpen || pendingDelete !== undefined || isAddGroupOpen || pendingDeleteGroup !== undefined || isPublishing
-  usePolling(() => void load({ silent: true }), { intervalMs: 15_000, isBusy: isActionInProgress })
+  usePolling(() => void load('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
 
-  usePageRefresh({ refresh: retry, isRefreshing: isLoading, lastUpdatedAt })
+  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
   // Bumped only on an explicit Edit/select click (not the auto-select on
   // load) so the page can scroll the properties panel into view.
@@ -390,8 +379,8 @@ export function useAdminFormBuilderStepEditor() {
     selectedField,
     selectField,
     panelScrollRequest,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     retry,
     toggleFieldRequired,
     saveFieldProperties,

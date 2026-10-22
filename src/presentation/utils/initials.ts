@@ -1,10 +1,12 @@
-// Up to two initials from a display name ("Meera Krishnan" -> "MK"), for the
-// signed-in user's avatar in the staff, admin and reception top bars.
+// The app-wide initials rule for person avatars (person-avatars spec): the
+// first letters of the first two words of a name ("Aadarsh S Kumar" -> "AS",
+// "  priya  " -> "P", "" -> ""), so a person reads the same on every surface.
 export function initialsFor(name: string): string {
   return name
-    .split(' ')
+    .trim()
+    .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
+    .map((part) => part[0].toUpperCase())
     .join('')
 }

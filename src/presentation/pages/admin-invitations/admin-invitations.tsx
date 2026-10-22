@@ -1,67 +1,66 @@
-import { useState } from 'react'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
+import { CLOSED_BOARD_STATUSES } from '../../hooks/use-invitations-board'
 import { ApproveInvitationModal } from '../../components/invitation-board/ApproveInvitationModal'
 import { DenyInvitationModal } from '../../components/invitation-board/DenyInvitationModal'
+import { RevertApprovalModal } from '../../components/invitation-board/RevertApprovalModal'
+import { CheckOutVisitorModal } from '../../components/invitation-board/CheckOutVisitorModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
+import { todayAsDateInputValue } from '../../utils/local-date-input-value'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
-import { LoadingState } from '../../components/ui/LoadingState'
-import { SelectField } from '../../components/ui/SelectField'
-import { SearchGlyphIcon, SlidersIcon } from '../../components/icons'
+import { AsyncRegion } from '../../components/AsyncRegion'
+import { BoardSkeleton } from '../../components/ui/Skeleton'
+import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
+import { boardExtraFilters } from '../../components/invitation-board/board-extra-filters'
+import { ExportInvitationsButton } from '../../components/invitation-board/ExportInvitationsButton'
+import { ExportInvitationsModal } from '../../components/invitation-board/ExportInvitationsModal'
 import { PageContentLayout } from '../../components/PageContentLayout'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminInvitations } from './hooks/use-admin-invitations'
-
-const STATUS_OPTIONS = [
-  { value: 'submitted', label: 'Requested' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'checked_in', label: 'Checked-in' },
-  { value: 'checked_out', label: 'Checked-out' },
-  { value: 'denied', label: 'Denied' },
-]
-
-const REGISTRATION_TYPE_OPTIONS = [
-  { value: 'all', label: 'All types' },
-  { value: 'individual', label: 'Individual' },
-  { value: 'group', label: 'Group' },
-]
-
-const SOURCE_OPTIONS = [
-  { value: 'staff_pre_registration', label: 'Staff Pre-Registration' },
-  { value: 'visitor_walk_in', label: 'Visitor Walk-in' },
-]
 
 const EMPTY_MESSAGES: Record<string, string> = {
   requested: 'No requested visits',
   approved: 'No approved visits',
   checked_in: 'No checked-in visitors today',
+  checked_out: 'No checked-out visits',
   denied: 'No denied visits',
+  archived: 'No archived visits',
 }
 
 export function AdminInvitationsPage() {
-  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
-  const [pendingApproveId, setPendingApproveId] = useState<string | undefined>(undefined)
   const {
     columns,
-    isLoading,
-    errorMessage,
+    phase,
+    isRefreshing,
     search,
     setSearch,
+    purposeFilter,
+    setPurposeFilter,
+    purposeOptions,
     statusFilter,
+    focusClosedStatus,
     setStatusFilter,
     registrationTypeFilter,
     setRegistrationTypeFilter,
     sourceFilter,
     setSourceFilter,
+    isFiltering,
+    clearFilters,
     refresh,
-    approve,
     approvingId,
-    expandedId,
-    toggleExpand,
+    findRequest,
+    pendingApproveId,
+    requestApprove,
+    cancelApprove,
+    confirmApprove,
+    pendingRevertId,
+    requestRevert,
+    cancelRevert,
+    confirmRevert,
+    revertingId,
     invitationDetails,
-    loadingDetailId,
     roleNameById,
     hostEmployees,
     employeeNameById,
@@ -80,6 +79,21 @@ export function AdminInvitationsPage() {
     cancelDeny,
     confirmDeny,
     denyingId,
+    canCheckOut,
+    canExport,
+    isExportOpen,
+    openExport,
+    closeExport,
+    exportInvitations,
+    isExporting,
+    exportError,
+    exportFilterSummary,
+    pendingCheckOutId,
+    pendingCheckOutRequest,
+    requestCheckOut,
+    cancelCheckOut,
+    confirmCheckOut,
+    checkingOutId,
     pendingRescheduleId,
     requestReschedule,
     cancelReschedule,
@@ -102,123 +116,126 @@ export function AdminInvitationsPage() {
 
   usePageHeader({ description: 'Monitor visitor invitations, approval status, and check-in progress' })
 
-  const isFiltering = statusFilter !== '' || registrationTypeFilter !== 'all' || sourceFilter !== ''
-  const clearFilters = () => {
-    setStatusFilter('')
-    setRegistrationTypeFilter('all')
-    setSourceFilter('')
-  }
-
   return (
     <PageContentLayout
       header={
         <>
-          <div className="flex w-full flex-wrap items-center justify-between gap-3">
+          {/* In the title row, not the filter bar: the bar's search + four
+              dropdowns already need the full row on wide screens. */}
+          <div className="flex items-center justify-between gap-3">
             <h1 className="font-display text-xl font-bold md:text-2xl text-text">Invitations</h1>
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary">
-                <SearchGlyphIcon className="size-3.5 shrink-0 text-text-faint" />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search visitor, tracking ID..."
-                  className="w-56 bg-transparent font-body text-[13px] text-text placeholder:text-text-faint focus:outline-none"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsFilterPanelOpen((current) => !current)}
-                className="flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text"
-              >
-                <SlidersIcon className="size-3.5" />
-                Filters
-              </button>
-            </div>
+            {canExport ? <ExportInvitationsButton onClick={openExport} /> : null}
           </div>
+          <BoardFilterBar
+            search={search}
+            onSearchChange={setSearch}
+            searchPlaceholder="Search visitor, tracking ID..."
+            purposeFilter={purposeFilter}
+            onPurposeFilterChange={setPurposeFilter}
+            purposeOptions={purposeOptions}
+            registrationTypeFilter={registrationTypeFilter}
+            onRegistrationTypeFilterChange={setRegistrationTypeFilter}
+            extraFilters={boardExtraFilters({ statusFilter, setStatusFilter, sourceFilter, setSourceFilter })}
+            isFiltering={isFiltering}
+            onClearFilters={clearFilters}
+          />
 
-          {isFilterPanelOpen && (
-            <div className="flex w-full flex-wrap items-end gap-4 rounded-2xl border border-border bg-surface p-filter-panel">
-              <div className="w-full sm:w-48">
-                <SelectField label="Status" value={statusFilter} onChange={setStatusFilter} placeholder="All" options={STATUS_OPTIONS} />
-              </div>
-              <div className="w-full sm:w-48">
-                <SelectField
-                  label="Registration Type"
-                  value={registrationTypeFilter}
-                  onChange={setRegistrationTypeFilter}
-                  options={REGISTRATION_TYPE_OPTIONS}
-                />
-              </div>
-              <div className="w-full sm:w-48">
-                <SelectField label="Source" value={sourceFilter} onChange={setSourceFilter} placeholder="All" options={SOURCE_OPTIONS} />
-              </div>
-              {isFiltering && (
-                <button type="button" onClick={clearFilters} className="font-body text-[13px] font-semibold text-admin-accent">
-                  Clear filters
-                </button>
-              )}
-            </div>
-          )}
         </>
       }
     >
-      {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
-          <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={refresh} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
-            Try again
-          </button>
+      <AsyncRegion
+        phase={phase}
+        isRefreshing={isRefreshing}
+        skeleton={<BoardSkeleton />}
+        errorMessage="Something went wrong loading the dashboard. Please try again."
+        onRetry={refresh}
+        className="lg:h-full"
+      >
+        {/* PageContentLayout's data region has a definite height on desktop;
+            filling it lets each column scroll under its own fixed header. */}
+        <div className="flex flex-col lg:h-full">
+          <ResponsiveBoard
+            boardKey="admin"
+            columns={columns}
+            closedStatuses={CLOSED_BOARD_STATUSES}
+            focusClosedStatus={focusClosedStatus}
+            renderColumn={(column, { embedded }) => (
+              <KanbanColumn
+                key={`${column.status}:${column.resetKey}`}
+                status={column.status}
+                label={column.label}
+                requests={column.requests}
+                total={column.total}
+                hasMore={column.hasMore}
+                isLoadingMore={column.isLoadingMore}
+                loadMoreFailed={column.loadMoreFailed}
+                onLoadMore={column.loadMore}
+                emptyMessage={EMPTY_MESSAGES[column.status]}
+                embedded={embedded}
+                onDrop={column.status === 'approved' ? requestApprove : column.status === 'denied' ? requestDeny : undefined}
+                onMoveToApproved={column.status === 'requested' ? requestApprove : undefined}
+                onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
+                approvingId={approvingId}
+                invitationDetails={invitationDetails}
+                roleNameById={roleNameById}
+                employeeNameById={employeeNameById}
+                workflowRulesByCategory={workflowRulesByCategory}
+                onRescheduleClick={requestReschedule}
+                onDelegateClick={requestDelegate}
+                onApproveAndDelegateClick={requestApproveAndDelegate}
+                onApproveClick={requestApprove}
+                onEditClick={requestEdit}
+                onVisitorInfoClick={viewVisitorInfo}
+                onCheckOutClick={column.status === 'checked_in' && canCheckOut ? requestCheckOut : undefined}
+                onRevertClick={column.status === 'approved' ? requestRevert : undefined}
+              />
+            )}
+          />
         </div>
-      ) : isLoading ? (
-        <LoadingState label="Loading invitations…" className="flex-1" />
-      ) : (
-        <ResponsiveBoard
-          columns={columns}
-          renderColumn={(column) => (
-            <KanbanColumn
-              key={column.status}
-              status={column.status}
-              label={column.label}
-              requests={column.requests}
-              emptyMessage={EMPTY_MESSAGES[column.status]}
-              onMoveToApproved={column.status === 'requested' ? setPendingApproveId : undefined}
-              onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
-              approvingId={approvingId}
-              expandedId={expandedId}
-              onToggleExpand={toggleExpand}
-              invitationDetails={invitationDetails}
-              loadingDetailId={loadingDetailId}
-              roleNameById={roleNameById}
-              employeeNameById={employeeNameById}
-              workflowRulesByCategory={workflowRulesByCategory}
-              onRescheduleClick={requestReschedule}
-              onDelegateClick={requestDelegate}
-              onApproveAndDelegateClick={requestApproveAndDelegate}
-              onApproveClick={setPendingApproveId}
-              onEditClick={requestEdit}
-              onVisitorInfoClick={viewVisitorInfo}
-            />
-          )}
-        />
-      )}
+      </AsyncRegion>
 
       <ApproveInvitationModal
         isOpen={pendingApproveId !== undefined}
+        visitorName={findRequest(pendingApproveId)?.primaryContactFullName}
+        trackingId={findRequest(pendingApproveId)?.trackingId}
         isApproving={approvingId !== undefined}
-        onCancel={() => setPendingApproveId(undefined)}
-        onConfirm={() => {
-          const id = pendingApproveId
-          setPendingApproveId(undefined)
-          if (id) void approve(id)
-        }}
+        onConfirm={() => void confirmApprove()}
+        onCancel={cancelApprove}
       />
 
-      <DenyInvitationModal isOpen={pendingDenyId !== undefined} isDenying={denyingId !== undefined} onConfirm={confirmDeny} onCancel={cancelDeny} />
+      <RevertApprovalModal
+        isOpen={pendingRevertId !== undefined}
+        visitorName={findRequest(pendingRevertId)?.primaryContactFullName}
+        trackingId={findRequest(pendingRevertId)?.trackingId}
+        isReverting={revertingId !== undefined}
+        onConfirm={confirmRevert}
+        onCancel={cancelRevert}
+      />
+
+      <DenyInvitationModal
+        isOpen={pendingDenyId !== undefined}
+        visitorName={findRequest(pendingDenyId)?.primaryContactFullName}
+        trackingId={findRequest(pendingDenyId)?.trackingId}
+        isDenying={denyingId !== undefined}
+        onConfirm={confirmDeny}
+        onCancel={cancelDeny}
+      />
+
+      <CheckOutVisitorModal
+        isOpen={pendingCheckOutId !== undefined}
+        visitorName={pendingCheckOutRequest?.primaryContactFullName}
+        trackingId={pendingCheckOutRequest?.trackingId}
+        isCheckingOut={checkingOutId !== undefined}
+        onConfirm={() => void confirmCheckOut()}
+        onCancel={cancelCheckOut}
+      />
 
       <RescheduleInvitationModal
         isOpen={pendingRescheduleId !== undefined}
+        visitorName={findRequest(pendingRescheduleId)?.primaryContactFullName}
+        trackingId={findRequest(pendingRescheduleId)?.trackingId}
         isRescheduling={reschedulingId !== undefined}
+        minDate={findRequest(pendingRescheduleId)?.status === 'archived' ? todayAsDateInputValue() : undefined}
         onConfirm={(preferredVisitDate, preferredVisitTime) =>
           pendingRescheduleId && reschedule(pendingRescheduleId, preferredVisitDate, preferredVisitTime)
         }
@@ -227,6 +244,8 @@ export function AdminInvitationsPage() {
 
       <DelegateInvitationModal
         isOpen={pendingDelegateId !== undefined}
+        visitorName={findRequest(pendingDelegateId)?.primaryContactFullName}
+        trackingId={findRequest(pendingDelegateId)?.trackingId}
         isDelegating={delegatingId !== undefined}
         approverRoleId={pendingDelegateDetail?.currentApprovalStep?.approverRoleId}
         stepOrder={pendingDelegateDetail?.currentApprovalStep?.stepOrder}
@@ -239,6 +258,8 @@ export function AdminInvitationsPage() {
 
       <DelegateInvitationModal
         isOpen={pendingApproveAndDelegateId !== undefined}
+        visitorName={findRequest(pendingApproveAndDelegateId)?.primaryContactFullName}
+        trackingId={findRequest(pendingApproveAndDelegateId)?.trackingId}
         isDelegating={approvingAndDelegatingId !== undefined}
         mode="approve-and-delegate"
         isLoadingCandidates={isLoadingNextStepCandidates}
@@ -257,11 +278,22 @@ export function AdminInvitationsPage() {
         onCancel={cancelEdit}
       />
 
+      <ExportInvitationsModal
+        isOpen={isExportOpen}
+        initialStatus={statusFilter}
+        appliedFilters={exportFilterSummary}
+        isExporting={isExporting}
+        errorMessage={exportError}
+        onConfirm={(choice) => void exportInvitations(choice)}
+        onClose={closeExport}
+      />
+
       <VisitorInfoModal
         isOpen={visitorInfoId !== undefined}
         isLoading={visitorInfoId !== undefined && !invitationDetails[visitorInfoId]}
         detail={visitorInfoId ? invitationDetails[visitorInfoId] : undefined}
         workflowRulesByCategory={workflowRulesByCategory}
+        employeeNameById={employeeNameById}
         onClose={closeVisitorInfo}
       />
     </PageContentLayout>

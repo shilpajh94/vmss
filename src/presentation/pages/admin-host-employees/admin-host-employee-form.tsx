@@ -1,11 +1,12 @@
 import { ChevronLeftIcon } from '../../components/icons'
-import { LoadingState } from '../../components/ui/LoadingState'
+import { FormSkeleton } from '../../components/ui/Skeleton'
+import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminHostEmployeeForm } from './hooks/use-admin-host-employee-form'
 
-const fieldLabelClassName = 'text-[13px] font-bold uppercase text-[#475569]'
+const fieldLabelClassName = 'text-[13px] font-bold uppercase text-text-secondary'
 
 export function AdminHostEmployeeFormPage() {
   const {
@@ -65,12 +66,12 @@ export function AdminHostEmployeeFormPage() {
         {errorMessage ? (
           <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
             <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
+            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
               Try again
             </button>
           </div>
         ) : isLoading ? (
-          <LoadingState label="Loading…" className="py-12" />
+          <FormSkeleton rows={isEditMode ? 3 : 4} label="Loading…" />
         ) : isEditMode && employee ? (
           <div className="flex w-full flex-col gap-8 rounded-2xl border border-border bg-surface p-10">
             <div className="flex flex-col gap-4">
@@ -116,14 +117,14 @@ export function AdminHostEmployeeFormPage() {
                           {role.branchId ? branchNameById.get(role.branchId) ?? role.branchId : 'All branches'}
                         </span>
                       </div>
-                      <button
-                        type="button"
+                      <PendingButton
                         onClick={() => void revokeRole(role.id)}
-                        disabled={revokingAssignmentId === role.id}
+                        pending={revokingAssignmentId === role.id}
+                        pendingLabel="Revoking…"
                         className="rounded-full border border-danger/30 bg-danger/10 px-3.5 py-1.5 font-body text-xs font-semibold text-danger disabled:opacity-50"
                       >
-                        {revokingAssignmentId === role.id ? 'Revoking…' : 'Revoke'}
-                      </button>
+                        Revoke
+                      </PendingButton>
                     </div>
                   ))}
                 </div>
@@ -158,14 +159,15 @@ export function AdminHostEmployeeFormPage() {
                 </div>
               </div>
               <div className="flex justify-end">
-                <button
-                  type="button"
+                <PendingButton
                   onClick={() => void assignRole()}
-                  disabled={!assignRoleId || isAssigning}
-                  className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-white disabled:opacity-50"
+                  disabled={!assignRoleId}
+                  pending={isAssigning}
+                  pendingLabel="Assigning…"
+                  className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-on-accent disabled:opacity-50"
                 >
-                  {isAssigning ? 'Assigning…' : 'Assign Role'}
-                </button>
+                  Assign Role
+                </PendingButton>
               </div>
             </div>
 
@@ -267,14 +269,14 @@ export function AdminHostEmployeeFormPage() {
               <button type="button" onClick={cancel} className="rounded-full border border-border bg-surface px-6 py-2.5 font-body text-sm font-semibold text-text">
                 Cancel
               </button>
-              <button
-                type="button"
+              <PendingButton
                 onClick={() => void submitCreate()}
-                disabled={isSaving}
-                className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-white disabled:opacity-50"
+                pending={isSaving}
+                pendingLabel="Saving…"
+                className="rounded-full bg-admin-accent px-6 py-2.5 font-body text-sm font-semibold text-on-accent disabled:opacity-50"
               >
-                {isSaving ? 'Saving…' : 'Save Employee'}
-              </button>
+                Save Employee
+              </PendingButton>
             </div>
           </div>
         )}

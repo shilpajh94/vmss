@@ -1,6 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GridIcon } from '../../../components/icons'
+import { GripVerticalIcon } from '../../../components/icons'
 import { StepCard } from './StepCard'
 import type { FormStep } from '../../../../domain/entities/form-builder-schema'
 
@@ -41,7 +41,7 @@ export function SortableStepCard({ step, order, onToggleActive, onEditFields, on
             aria-label="Drag to reorder"
             className="flex cursor-grab items-center justify-center text-text-faint active:cursor-grabbing max-lg:-m-3 max-lg:size-10"
           >
-            <GridIcon className="size-4" />
+            <GripVerticalIcon className="size-4" />
           </button>
         }
       />

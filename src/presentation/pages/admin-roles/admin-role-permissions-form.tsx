@@ -1,6 +1,7 @@
 import { BackButton } from '../../components/BackButton'
 import { Checkbox } from '../../components/ui/Checkbox'
-import { LoadingState } from '../../components/ui/LoadingState'
+import { FormSkeleton } from '../../components/ui/Skeleton'
+import { PendingButton } from '../../components/ui/PendingButton'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminRolePermissionsForm } from './hooks/use-admin-role-permissions-form'
 
@@ -15,12 +16,12 @@ export function AdminRolePermissionsFormPage() {
       {errorMessage ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-white">
+          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
             Try again
           </button>
         </div>
       ) : isLoading ? (
-        <LoadingState label="Loading role…" className="flex-1" />
+        <FormSkeleton rows={6} columns={1} label="Loading role…" />
       ) : (
         <>
           <div className="flex items-center gap-4">
@@ -50,14 +51,14 @@ export function AdminRolePermissionsFormPage() {
             >
               Cancel
             </button>
-            <button
-              type="button"
-              disabled={isSaving}
+            <PendingButton
+              pending={isSaving}
+              pendingLabel="Saving…"
               onClick={() => void submit()}
-              className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-white disabled:opacity-50"
+              className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent disabled:opacity-50"
             >
-              {isSaving ? 'Saving…' : 'Save Permissions'}
-            </button>
+              Save Permissions
+            </PendingButton>
           </div>
         </>
       )}

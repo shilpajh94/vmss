@@ -1,4 +1,5 @@
-import { Spinner } from '../../../../components/ui/LoadingState'
+import { Skeleton } from '../../../../components/ui/Skeleton'
+import { PendingButton } from '../../../../components/ui/PendingButton'
 import type { VisitHistoryEntry } from '../../../../../domain/entities/visitor-portal-schema'
 import type { ReturningVisitorPortalStatus } from '../../hooks/use-returning-visitor-portal'
 
@@ -51,9 +52,18 @@ export function ReturnVisitHistoryScreen({
       )}
 
       {status === 'loading' && history.length === 0 && (
-        <div className="flex items-center justify-center gap-2 py-8 text-body text-text-muted">
-          <Spinner className="size-4 border-border border-t-secondary-accent" />
-          Loading your visits…
+        // Shaped like the visit cards below, so they fill in place.
+        <div role="status" aria-label="Loading your visits…" className="flex flex-col gap-3">
+          {[0, 1, 2].map((row) => (
+            <div key={row} className="flex flex-col gap-2 rounded-lg border border-border px-4 py-3">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-5 w-20 rounded-full" />
+              </div>
+              <Skeleton className="h-3 w-40" />
+              <Skeleton className="h-3 w-24" />
+            </div>
+          ))}
         </div>
       )}
 
@@ -77,14 +87,14 @@ export function ReturnVisitHistoryScreen({
       )}
 
       {hasMore && !isRetryableError && (
-        <button
-          type="button"
+        <PendingButton
           onClick={onLoadMore}
-          disabled={status === 'loading'}
+          pending={status === 'loading'}
+          pendingLabel="Loading…"
           className="cursor-pointer self-center text-body font-semibold text-secondary-accent hover:underline disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {status === 'loading' ? 'Loading…' : 'Load more'}
-        </button>
+          Load more
+        </PendingButton>
       )}
 
       <button

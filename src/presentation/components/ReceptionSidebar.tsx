@@ -1,18 +1,23 @@
 import { useNavigate } from 'react-router'
-import { CheckIcon, HomeIcon, UsersIcon, XIcon } from './icons'
-import { BrandLogo } from './BrandLogo'
+import { CalendarIcon, CheckIcon, HomeIcon, UsersIcon } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
+import { SidebarFrame } from './sidebar/SidebarFrame'
+import { SidebarHeader } from './sidebar/SidebarHeader'
+import { SidebarNavItem } from './sidebar/SidebarNavItem'
 
-export type ReceptionSidebarActiveItem = 'dashboard' | 'visits' | 'my-actions'
+export type ReceptionSidebarActiveItem = 'dashboard' | 'visits' | 'calendar' | 'my-actions'
 
 interface ReceptionSidebarProps {
   activeItem: ReceptionSidebarActiveItem
 }
 
+// Most-used first: registering a visitor is the desk's and hosts' most
+// frequent task (app-shell "Sidebar menus are ordered by how often they are used").
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: HomeIcon },
-  { key: 'visits', label: 'Visits', icon: UsersIcon },
   { key: 'my-actions', label: 'My actions', icon: CheckIcon },
+  { key: 'visits', label: 'Invitations', icon: UsersIcon },
+  { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
 ] as const satisfies ReadonlyArray<{
   key: ReceptionSidebarActiveItem
   label: string
@@ -21,7 +26,8 @@ const NAV_ITEMS = [
 
 const RECEPTION_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: ReceptionSidebarActiveItem]> = [
   ['/reception/dashboard', 'dashboard'],
-  ['/staff/dashboard', 'visits'],
+  ['/staff/invitations', 'visits'],
+  ['/staff/calendar', 'calendar'],
   ['/staff/visitors/new', 'my-actions'],
 ]
 
@@ -39,49 +45,34 @@ export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
   const handleActivate = (key: ReceptionSidebarActiveItem) => {
     closeNav()
     if (key === 'dashboard') navigate('/reception/dashboard')
-    if (key === 'visits') navigate('/staff/dashboard')
+    if (key === 'visits') navigate('/staff/invitations')
+    if (key === 'calendar') navigate('/staff/calendar')
     if (key === 'my-actions') navigate('/staff/visitors/new')
   }
 
   return (
-    <aside className="flex h-full w-[min(280px,85vw)] shrink-0 lg:h-auto lg:w-[280px] flex-col gap-4 self-stretch bg-primary p-6">
-      <div className="flex shrink-0 items-center justify-between gap-2 pb-4">
-        <button
-          type="button"
-          onClick={() => {
-            closeNav()
-            navigate('/reception/dashboard')
-          }}
-          aria-label="Visimio home"
-          className="flex items-center gap-2 text-left"
-        >
-          <BrandLogo variant="on-dark" decorative />
-        </button>
-        <button
-          type="button"
-          onClick={closeNav}
-          aria-label="Close navigation menu"
-          className="flex size-10 shrink-0 items-center justify-center rounded-lg text-text-faint hover:bg-white/5 lg:hidden"
-        >
-          <XIcon className="size-5" />
-        </button>
-      </div>
+    <SidebarFrame expandedWidthClassName="w-[min(280px,85vw)] lg:w-[280px]" gapClassName="gap-4">
+      <SidebarHeader
+        className="pb-4"
+        onHome={() => {
+          closeNav()
+          navigate('/reception/dashboard')
+        }}
+      />
 
       <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
-        {NAV_ITEMS.map(({ key, label, icon: ItemIcon }) => (
-          <button
+        {NAV_ITEMS.map(({ key, label, icon }) => (
+          <SidebarNavItem
             key={key}
-            type="button"
-            onClick={() => handleActivate(key)}
-            className={`flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left font-body text-sm font-semibold whitespace-nowrap ${
-              activeItem === key ? 'bg-admin-accent text-white' : 'text-text-faint hover:bg-white/5'
-            }`}
-          >
-            <ItemIcon className="size-[18px] shrink-0" />
-            {label}
-          </button>
+            icon={icon}
+            label={label}
+            isActive={activeItem === key}
+            onActivate={() => handleActivate(key)}
+            activeClassName="bg-sidebar-accent text-white"
+            inactiveClassName="text-sidebar-muted hover:bg-white/5"
+          />
         ))}
       </nav>
-    </aside>
+    </SidebarFrame>
   )
 }

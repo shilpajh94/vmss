@@ -4,6 +4,7 @@ import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { VisitorCategoryInput } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 
 const EMPTY_VALUES: VisitorCategoryInput = {
   name: '',
@@ -85,6 +86,8 @@ export function useAdminVisitorCategoryForm() {
   const retry = useCallback(() => {
     void load()
   }, [load])
+
+  useFormPageRefresh({ values: values, isLoading, reload: retry })
 
   const updateField = useCallback(<K extends keyof VisitorCategoryInput>(key: K, value: VisitorCategoryInput[K]) => {
     setValues((current) => ({ ...current, [key]: value }))

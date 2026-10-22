@@ -18,7 +18,7 @@ export function EmptyState({ message, icon, action, className = '' }: EmptyState
       {icon && <span className="flex size-8 items-center justify-center rounded-full bg-bg">{icon}</span>}
       <p className="font-body text-sm font-medium text-text-muted">{message}</p>
       {action && (
-        <button type="button" onClick={action.onClick} className="rounded-lg bg-secondary-accent px-4 py-2 font-body text-sm font-semibold text-white">
+        <button type="button" onClick={action.onClick} className="rounded-lg bg-secondary-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
           {action.label}
         </button>
       )}

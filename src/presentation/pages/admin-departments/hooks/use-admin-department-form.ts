@@ -6,6 +6,7 @@ import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
+import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 
 type DepartmentInput = Omit<Department, 'id' | 'branchName'>
 
@@ -97,6 +98,8 @@ export function useAdminDepartmentForm() {
   const retry = useCallback(() => {
     void load()
   }, [load])
+
+  useFormPageRefresh({ values: values, isLoading, reload: retry })
 
   const updateField = useCallback(<K extends keyof DepartmentInput>(key: K, value: DepartmentInput[K]) => {
     setValues((current) => ({ ...current, [key]: value }))

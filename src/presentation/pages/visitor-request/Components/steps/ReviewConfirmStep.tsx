@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import { PREFERRED_CONTACT_METHOD_LABELS, type PreferredContactMethod } from '../../../../../domain/entities/preferred-contact-method'
+import { PendingButton } from '../../../../components/ui/PendingButton'
 import type {
   CarriedItemsFormState,
   ConsentFormState,
@@ -10,7 +12,6 @@ import type {
 } from '../../types'
 import type { EffectiveFormFieldGroup, EffectiveFormStep, FormField } from '../../../../../domain/entities/form-builder-schema'
 import type { VisitorCategory } from '../../../../../domain/entities/visitor-category-schema'
-import { Spinner } from '../../../../components/ui/LoadingState'
 import { FileTextIcon } from '../../../../components/icons'
 import { getFilePreviewKind } from '../../../../utils/file-preview-kind'
 import { prettifyKey } from '../../../../utils/prettify-key'
@@ -26,7 +27,7 @@ export interface ReviewVisitorSummary {
   email: string
   phone: string
   visitorCategory?: string
-  preferredContactMethod?: 'email' | 'sms'
+  preferredContactMethod?: PreferredContactMethod
   idProofType: string
   idProofFileRef?: string
   idProofFileName?: string
@@ -248,7 +249,7 @@ export function ReviewConfirmStep({
   const customSteps = steps.filter((step) => !isCanonicalStepKey(step.key))
 
   const visitorCategoryName = (id: string) => visitorCategories?.find((category) => category.id === id)?.name ?? id
-  const preferredContactMethodLabel = (method?: 'email' | 'sms') => (method === 'sms' ? 'SMS' : method === 'email' ? 'Email' : '')
+  const preferredContactMethodLabel = (method?: PreferredContactMethod) => (method ? PREFERRED_CONTACT_METHOD_LABELS[method] : '')
 
   // Matches the seed values each step itself resolves group conditions
   // against (see VisitorInfoStep/VehicleInfoStep) — a group's condition can
@@ -446,16 +447,15 @@ export function ReviewConfirmStep({
         >
           ← Back
         </button>
-        <button
-          type="button"
+        <PendingButton
           onClick={onSubmit}
-          disabled={status === 'submitting'}
           title="Submit your visit request"
+          pending={status === 'submitting'}
+          pendingLabel="Submitting…"
           className="flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white transition-colors enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {status === 'submitting' && <Spinner className="size-4 border-white/40 border-t-white" />}
-          {status === 'submitting' ? 'Submitting…' : 'Submit Request'}
-        </button>
+          Submit Request
+        </PendingButton>
       </div>
     </div>
   )
