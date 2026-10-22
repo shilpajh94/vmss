@@ -1859,17 +1859,12 @@ async def check_out_invitation(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
     device: Annotated[Device | None, Depends(_staff_device)],
-    idempotency_key: Annotated[
-        str | None, Header(alias="Idempotency-Key", description="Optional — see check-in.")
-    ] = None,
 ) -> JSONResponse:
     """Transitions a `checked_in` invitation to `checked_out`, closing the
-    visit (spec.md "A Checked-In Invitation Can Be Checked Out").
+    visit (spec.md "A Checked-In Invitation Can Be Checked Out"). Re-running
+    it on an already checked-out invitation is rejected by the service, so no
+    `Idempotency-Key` is needed here.
     """
-    cached = await _cached_response(tenant.id, idempotency_key)
-    if cached is not None:
-        return cached
-
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(
         tenant_db, user, "invitations:checkout", invitation.branch_id
@@ -1887,9 +1882,7 @@ async def check_out_invitation(
         diff=_device_diff(device),
     )
     out = await _attach_devices(to_invitation_out(invitation), invitation, tenant_db)
-    response = success_response(data=out)
-    await _cache_response(tenant.id, idempotency_key, response)
-    return response
+    return success_response(data=out)
 
 
 @router.patch(
