@@ -10,7 +10,7 @@ import { useInfiniteScrollSentinel } from '../../hooks/use-infinite-scroll-senti
 
 export const ACCENT_CLASSES = {
   requested: { border: 'border-l-info', tint: 'bg-info/8', text: 'text-info', dragOver: 'border-info bg-info/5 ring-info/40' },
-  approved: { border: 'border-l-success', tint: 'bg-success/8', text: 'text-success', dragOver: 'border-success bg-success/5 ring-success/40' },
+  approved: { border: 'border-l-success', tint: 'bg-success/8', text: 'text-success-text', dragOver: 'border-success bg-success/5 ring-success/40' },
   checked_in: {
     border: 'border-l-secondary-accent',
     tint: 'bg-secondary-accent/8',

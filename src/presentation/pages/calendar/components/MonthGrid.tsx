@@ -52,7 +52,7 @@ export function MonthGrid({ feed, anchorDate, today, boardBasePath, onOpenDay }:
                 <button
                   type="button"
                   onClick={() => onOpenDay(day.date)}
-                  aria-label={`Open ${formatShortDay(day.date)}`}
+                  aria-label={`Open ${formatShortDay(day.date)}, ${day.total} ${day.total === 1 ? 'visit' : 'visits'}`}
                   aria-current={isToday ? 'date' : undefined}
                   className={`flex size-7 items-center justify-center rounded-full font-body text-xs font-semibold ${PRESS_FEEDBACK_CLASS} ${
                     isToday ? 'bg-admin-accent text-on-accent' : inMonth ? 'text-text hover:bg-border-subtle' : 'text-text-faint hover:bg-border-subtle'

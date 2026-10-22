@@ -13,7 +13,9 @@ interface LoadingStateProps {
 
 export function LoadingState({ label = 'Loading…', className = '' }: LoadingStateProps) {
   return (
-    <div className={`flex flex-col items-center justify-center gap-3 ${className}`}>
+    // `role="status"` announces the wait to a screen reader (accessibility
+    // "Async Errors and Loading States Are Announced").
+    <div role="status" className={`flex flex-col items-center justify-center gap-3 ${className}`}>
       <Spinner className="size-6" />
       <p className="font-body text-sm text-text-muted">{label}</p>
     </div>

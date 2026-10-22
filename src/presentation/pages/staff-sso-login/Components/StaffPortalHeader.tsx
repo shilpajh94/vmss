@@ -2,10 +2,10 @@ import { BrandLogo } from '../../../components/BrandLogo'
 
 export function StaffPortalHeader() {
   return (
-    <header className="relative flex shrink-0 w-full flex-wrap items-center justify-between gap-3 border-b border-[#1e293b] bg-primary px-4 md:px-12 py-5 xshort:py-3">
+    <header className="relative flex shrink-0 w-full flex-wrap items-center justify-between gap-3 border-b border-sidebar-raised bg-primary px-4 md:px-12 py-5 xshort:py-3">
       <div className="flex items-center gap-3">
         <BrandLogo variant="on-dark" className="h-7 md:h-8" />
-        <span className="rounded-md border border-[#334155] bg-[#1e293b] px-2.5 py-1 font-body text-[11px] font-bold tracking-[1px] text-secondary-accent">
+        <span className="rounded-md border border-sidebar-line bg-sidebar-raised px-2.5 py-1 font-body text-[11px] font-bold tracking-[1px] text-secondary-accent">
           STAFF GATEWAY
         </span>
       </div>

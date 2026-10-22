@@ -134,24 +134,13 @@ export const VisitRequestCard = memo(function VisitRequestCard({
   const hasSchedule = Boolean(request.preferredVisitDate && request.preferredVisitTime)
 
   return (
+    // The visitor's name is the one control that opens Visitor Info; its
+    // `::after` stretches over the card so a click anywhere still opens it,
+    // while the action buttons sit above that overlay as separate controls
+    // (accessibility "Interactive Elements Are Not Nested").
     <div
-      role={onVisitorInfoClick ? 'button' : undefined}
-      tabIndex={onVisitorInfoClick ? 0 : undefined}
-      aria-label={onVisitorInfoClick ? `Open visitor info for ${request.primaryContactFullName}, ${request.trackingId}` : undefined}
-      onClick={() => onVisitorInfoClick?.(request.id)}
-      onKeyDown={(event) => {
-        // Only the card itself — keys pressed on its buttons or menu items
-        // bubble up here too and must not also open Visitor Info.
-        if (event.target !== event.currentTarget || !onVisitorInfoClick) return
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          onVisitorInfoClick(request.id)
-        }
-      }}
       className={`relative flex w-full flex-col gap-2 rounded-xl border border-border bg-surface p-3 drop-shadow-[0px_4px_4px_rgba(15,23,42,0.03)] ${
-        onVisitorInfoClick
-          ? 'cursor-pointer transition-colors hover:border-secondary-accent/40 focus-visible:ring-2 focus-visible:ring-secondary-accent/40 focus-visible:outline-none'
-          : ''
+        onVisitorInfoClick ? 'cursor-pointer transition-colors hover:border-secondary-accent/40' : ''
       } ${isApproving ? 'opacity-60' : ''}`}
     >
       <div className="flex w-full items-center gap-2.5">
@@ -162,7 +151,18 @@ export const VisitRequestCard = memo(function VisitRequestCard({
           style={{ backgroundColor: avatarTintFor(request.trackingId) }}
         />
         <div className="flex min-w-0 flex-1 flex-col">
-          <p className="truncate font-body text-sm font-bold text-text">{request.primaryContactFullName}</p>
+          {onVisitorInfoClick ? (
+            <button
+              type="button"
+              onClick={() => onVisitorInfoClick(request.id)}
+              aria-label={`Open visitor info for ${request.primaryContactFullName}, ${request.trackingId}`}
+              className="truncate text-left font-body text-sm font-bold text-text after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-secondary-accent"
+            >
+              {request.primaryContactFullName}
+            </button>
+          ) : (
+            <p className="truncate font-body text-sm font-bold text-text">{request.primaryContactFullName}</p>
+          )}
           <span className="truncate font-body text-[11px] font-semibold text-text-faint">{request.trackingId}</span>
         </div>
       </div>
@@ -195,12 +195,12 @@ export const VisitRequestCard = memo(function VisitRequestCard({
           Approving…
         </p>
       ) : hasPrimaryActions ? (
-        <div className="grid w-full grid-cols-2 gap-2" onClick={(event) => event.stopPropagation()}>
+        <div className="relative z-10 grid w-full grid-cols-2 gap-2">
           {approveAction ? (
             <button
               type="button"
               onClick={approveAction.onClick}
-              className={`truncate rounded-lg border border-success/40 bg-success/10 px-2 py-1.5 font-body text-[11px] font-semibold text-success transition-colors hover:bg-success/15 max-lg:min-h-10 max-lg:text-xs ${
+              className={`truncate rounded-lg border border-success/40 bg-success/10 px-2 py-1.5 font-body text-[11px] font-semibold text-success-text transition-colors hover:bg-success/15 max-lg:min-h-10 max-lg:text-xs ${
                 canTapDeny ? '' : 'col-span-full'
               }`}
             >
@@ -231,7 +231,7 @@ export const VisitRequestCard = memo(function VisitRequestCard({
       ) : null}
 
       {iconActions.length > 0 ? (
-        <div className="-mx-1 -mb-1 flex w-full items-center gap-1" onClick={(event) => event.stopPropagation()}>
+        <div className="relative z-10 -mx-1 -mb-1 flex w-full items-center gap-1">
           {iconActions.map((action) => (
             <IconActionButton
               key={action.label}

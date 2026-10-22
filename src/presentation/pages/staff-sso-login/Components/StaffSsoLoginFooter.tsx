@@ -7,7 +7,7 @@ const LINKS = footerLinks([
 
 export function StaffSsoLoginFooter() {
   return (
-    <footer className="relative flex shrink-0 w-full flex-col items-start gap-3 border-t sm:flex-row sm:items-center sm:justify-between border-border px-4 md:px-12 py-6 xshort:py-3 font-body text-[12px] text-[#cbd5e1]">
+    <footer className="relative flex shrink-0 w-full flex-col items-start gap-3 border-t sm:flex-row sm:items-center sm:justify-between border-border px-4 md:px-12 py-6 xshort:py-3 font-body text-[12px] text-sidebar-soft">
       <p>{copyrightLine()}</p>
       {LINKS.length > 0 && (
         <div className="flex items-start gap-6">

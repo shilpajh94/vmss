@@ -62,7 +62,7 @@ export function HostEmployeesTable({ hostEmployees, departmentNameById }: HostEm
               <td className="px-6 py-4 whitespace-nowrap">
                 <span
                   className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                    hostEmployee.isActive ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
+                    hostEmployee.isActive ? 'bg-success/15 text-success-text' : 'bg-border-subtle text-text-muted'
                   }`}
                 >
                   <span className={`size-1.5 rounded-full ${hostEmployee.isActive ? 'bg-success' : 'bg-text-faint'}`} />

@@ -18,7 +18,7 @@ interface DevicesTableProps {
 
 function statusBadge(device: Device): { label: string; className: string } {
   if (device.approvalStatus === 'pending') return { label: 'Pending Approval', className: 'bg-warning/15 text-warning' }
-  if (device.isActive) return { label: 'Approved', className: 'bg-success/15 text-success' }
+  if (device.isActive) return { label: 'Approved', className: 'bg-success/15 text-success-text' }
   return { label: 'Disabled', className: 'bg-neutral-subtle text-text-muted' }
 }
 

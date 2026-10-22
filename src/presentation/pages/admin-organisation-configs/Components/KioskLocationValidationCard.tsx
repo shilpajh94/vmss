@@ -14,14 +14,16 @@ export function KioskLocationValidationCard() {
       </p>
 
       {errorMessage ? (
-        <div className="flex items-center gap-3">
+        <div role="alert" className="flex items-center gap-3">
           <p className="font-body text-sm text-danger">{errorMessage}</p>
           <button type="button" onClick={() => void retry()} className="font-body text-[13px] font-semibold text-admin-accent">
             Try again
           </button>
         </div>
       ) : isLoading || enforce === undefined ? (
-        <p className="font-body text-sm text-text-muted">Loading…</p>
+        <p role="status" className="font-body text-sm text-text-muted">
+          Loading…
+        </p>
       ) : canManage ? (
         <div className={isSaving ? 'pointer-events-none opacity-60' : undefined}>
           <ToggleSwitch label="Enforce kiosk location validation" checked={enforce} onChange={(next) => void change(next)} />

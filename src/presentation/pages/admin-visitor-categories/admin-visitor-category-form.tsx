@@ -8,6 +8,7 @@ import { WholeNumberField } from '../../components/ui/WholeNumberField'
 import { usePageHeader } from '../../context/page-header-context'
 import { BadgeColorField } from './Components/BadgeColorField'
 import { useAdminVisitorCategoryForm } from './hooks/use-admin-visitor-category-form'
+import { ErrorState } from '../../components/ui/ErrorState'
 
 const NDA_REQUIREMENT_OPTIONS = [
   { value: 'digital', label: 'Yes (Digital)' },
@@ -51,12 +52,7 @@ export function AdminVisitorCategoryFormPage() {
         </div>
 
         {errorMessage ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
-            <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
-              Try again
-            </button>
-          </div>
+          <ErrorState message={errorMessage} onRetry={retry} />
         ) : isLoading ? (
           <FormSkeleton rows={4} columns={2} label="Loading visitor category…" />
         ) : (

@@ -59,7 +59,7 @@ export function DepartmentsTable({ departments, employees, onDelete }: Departmen
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                      department.isActive ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
+                      department.isActive ? 'bg-success/15 text-success-text' : 'bg-border-subtle text-text-muted'
                     }`}
                   >
                     <span className={`size-1.5 rounded-full ${department.isActive ? 'bg-success' : 'bg-text-faint'}`} />

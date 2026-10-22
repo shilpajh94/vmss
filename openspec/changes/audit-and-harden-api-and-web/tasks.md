@@ -80,15 +80,15 @@ These tasks follow the shared design in `VMSS_API/openspec/changes/audit-and-har
 
 ## 6. P2 — Accessibility
 
-- [ ] 6.1 Add visible focus rings:
+- [x] 6.1 *(The board search's accessible name is "Search invitations by visitor or tracking ID". The Deny, Revert and Delegate fields also got their 7.2 phone sizing here.)* Add visible focus rings:
   - `focus-within:` rings on `ui/DropdownFilter.tsx:25` and the board search (`BoardFilterBar.tsx:57-62`, which also gets an `aria-label`);
   - focus rings on `DelegateInvitationModal.tsx:147`, `DenyInvitationModal.tsx:40` and `RevertApprovalModal.tsx:46`;
   - `peer-focus-visible:` on `ui/ToggleSwitch.tsx:28`.
-- [ ] 6.2 Contrast tokens (D-W11): `--color-text-faint` in light and dark mode, plus the new `--color-success-text` used by the Active badges. Check every changed pair with a contrast tool, and get the user's approval on before/after screenshots.
-- [ ] 6.3 Add a shared `ui/ErrorState` with `role="alert"`, adopted by `AsyncRegion`, `DashboardLoadError` and the 9 inline "Try again" blocks in the admin `*-form.tsx` files. Add `role="status"` to `ui/LoadingState.tsx`.
-- [ ] 6.4 Make the `VisitRequestCard.tsx:135-140` title the one button that opens the detail, so the card stops being `role="button"` with nested buttons and the stopPropagation wrappers at :196 and :232 can go.
-- [ ] 6.5 In `TrackingLookupCard.tsx:22`, add a label and `aria-describedby` for the error, and wrap it in a `<form>` so Enter submits. Add the visit count to the day button `aria-label` in `calendar/components/MonthGrid.tsx:63-71`.
-- [ ] 6.6 Move the hard-coded hex colours on the public and login pages to tokens. The files are listed in the responsiveness audit B30. These pages stay light-only.
+- [x] 6.2 *(Values as in D-W11. WCAG ratios, computed with a node script: light faint goes from 2.56 to 4.76 on white and from 2.45 to 4.55 on `surface-muted`; dark faint goes from 3.75 to 6.96 on the surface, 4.24 to 7.87 on `bg` and 3.07 to 5.71 on `surface-muted`. `success-text` on its 15% tint is 4.77 (was 2.21) in light and 6.96 in dark. It replaces `text-success` on every badge, the Approved column, the approve button and the public status panel; the toast icon is decorative. One residual: faint (and the existing muted) text on `border-subtle` (#f1f5f9) is 4.34. The inactive badges move to `text-secondary` in 8.1. **The user's approval of before/after screenshots is still pending.**)* Contrast tokens (D-W11): `--color-text-faint` in light and dark mode, plus the new `--color-success-text` used by the Active badges. Check every changed pair with a contrast tool, and get the user's approval on before/after screenshots.
+- [x] 6.3 *(`ui/ErrorState` is used by `AsyncRegion`, `DashboardLoadError` and the 9 form pages. The Visitor Info error and the kiosk-location card's inline error also got `role="alert"`.)* Add a shared `ui/ErrorState` with `role="alert"`, adopted by `AsyncRegion`, `DashboardLoadError` and the 9 inline "Try again" blocks in the admin `*-form.tsx` files. Add `role="status"` to `ui/LoadingState.tsx`.
+- [x] 6.4 *(The name is the button. Its `::after` stretches over the card, so a click anywhere still opens it, and the action rows sit above it (`relative z-10`). The accessible name is unchanged, so the e2e selectors still match.)* Make the `VisitRequestCard.tsx:135-140` title the one button that opens the detail, so the card stops being `role="button"` with nested buttons and the stopPropagation wrappers at :196 and :232 can go.
+- [x] 6.5 *(Visible "Tracking ID" label. The field also got 7.2's 16px/40px phone sizing.)* In `TrackingLookupCard.tsx:22`, add a label and `aria-describedby` for the error, and wrap it in a `<form>` so Enter submits. Add the visit count to the day button `aria-label` in `calendar/components/MonthGrid.tsx:63-71`.
+- [x] 6.6 *(Mapped to existing tokens (`surface-muted`, and the `sidebar-*` tokens for the navy sign-in chrome), plus a new `--color-secondary-accent-soft` (#ecfeff). No hex colour classes remain on the public, sign-in or not-found pages.)* Move the hard-coded hex colours on the public and login pages to tokens. The files are listed in the responsiveness audit B30. These pages stay light-only.
 
 ## 7. P3 — Responsive fixes
 

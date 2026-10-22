@@ -39,7 +39,7 @@ export function BuildingsTable({ buildings, onDelete }: BuildingsTableProps) {
               <td className="px-6 py-4 whitespace-nowrap">
                 <span
                   className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                    building.isActive ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
+                    building.isActive ? 'bg-success/15 text-success-text' : 'bg-border-subtle text-text-muted'
                   }`}
                 >
                   <span className={`size-1.5 rounded-full ${building.isActive ? 'bg-success' : 'bg-text-faint'}`} />

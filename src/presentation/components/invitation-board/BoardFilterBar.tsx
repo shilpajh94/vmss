@@ -52,10 +52,11 @@ export function BoardFilterBar({
   // 240px minimum means the controls still share one row whenever they fit.
   return (
     <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-      <div className="flex h-10 min-w-0 flex-none items-center gap-3 rounded-lg sm:flex-1 border border-border bg-surface px-3 sm:min-w-[240px]">
+      <div className="flex h-10 min-w-0 flex-none items-center gap-3 rounded-lg sm:flex-1 border border-border bg-surface px-3 sm:min-w-[240px] focus-within:ring-2 focus-within:ring-secondary-accent">
         <SearchGlyphIcon className="size-4 shrink-0 text-text-faint" />
         <input
           type="text"
+          aria-label="Search invitations by visitor or tracking ID"
           value={search}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder={searchPlaceholder}

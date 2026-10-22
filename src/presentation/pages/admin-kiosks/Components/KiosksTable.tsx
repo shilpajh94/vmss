@@ -68,7 +68,7 @@ export function KiosksTable({ kiosks, canManage, busyKioskId, onToggleActive, on
                   ) : (
                     <span
                       className={`inline-flex items-center rounded px-2.5 py-1 font-body text-[11px] font-bold ${
-                        kiosk.isActive ? 'bg-success/15 text-success' : 'bg-neutral-subtle text-text-muted'
+                        kiosk.isActive ? 'bg-success/15 text-success-text' : 'bg-neutral-subtle text-text-muted'
                       }`}
                     >
                       {kiosk.isActive ? 'Active' : 'Inactive'}

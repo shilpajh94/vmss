@@ -23,7 +23,7 @@ export function OtpVerifyScreen({
     <div className="flex h-fit w-full max-w-[480px] flex-col gap-6 rounded-2xl border border-border bg-surface p-5 md:p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
       <h3 className="font-display text-[22px] font-bold text-text">Request a visit</h3>
 
-      <div className="flex items-start gap-2 rounded-lg bg-[#ecfeff] px-4 py-3 text-body text-text">
+      <div className="flex items-start gap-2 rounded-lg bg-secondary-accent-soft px-4 py-3 text-body text-text">
         <svg
           width="18"
           height="18"

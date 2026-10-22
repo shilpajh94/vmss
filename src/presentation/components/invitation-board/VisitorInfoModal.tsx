@@ -30,7 +30,7 @@ interface VisitorInfoModalProps {
 const STATUS_TONE_CLASSES: Record<string, string> = {
   submitted: 'bg-info/10 text-info',
   requested: 'bg-info/10 text-info',
-  approved: 'bg-success/10 text-success',
+  approved: 'bg-success/10 text-success-text',
   checked_in: 'bg-secondary-accent/10 text-secondary-accent',
   checked_out: 'bg-text-faint/15 text-text-muted',
   denied: 'bg-danger/10 text-danger',

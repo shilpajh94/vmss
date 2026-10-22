@@ -7,6 +7,7 @@ import { TextareaField } from '../../components/ui/TextareaField'
 import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminKioskForm } from './hooks/use-admin-kiosk-form'
+import { ErrorState } from '../../components/ui/ErrorState'
 
 export function AdminKioskFormPage() {
   const { isEditMode, isLoading, errorMessage, retry, values, errors, isSaving, updateField, submit, cancel } = useAdminKioskForm()
@@ -38,12 +39,7 @@ export function AdminKioskFormPage() {
       </div>
 
       {errorMessage ? (
-        <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
-          <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
-            Try again
-          </button>
-        </div>
+        <ErrorState message={errorMessage} onRetry={retry} />
       ) : isLoading ? (
         <FormSkeleton rows={3} columns={1} label="Loading kiosk…" />
       ) : (

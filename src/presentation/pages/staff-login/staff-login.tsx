@@ -44,7 +44,7 @@ export function StaffLoginPage() {
           />
           {SUPPORT_EMAIL && (
             <div className="flex items-center gap-4 font-body text-[13px]">
-              <span className="font-medium text-[#cbd5e1]">Need help?</span>
+              <span className="font-medium text-sidebar-soft">Need help?</span>
               <a href={`mailto:${SUPPORT_EMAIL}`} className="font-semibold text-secondary-accent underline">
                 Contact System Administrator
               </a>

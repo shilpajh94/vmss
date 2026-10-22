@@ -7,7 +7,7 @@ import { PortalHero } from "./Components/PortalHero"
 
 export function VisitorPortalLandingPage() {
   return (
-    <div className="flex min-h-dvh w-full flex-col bg-[#f8fafc]">
+    <div className="flex min-h-dvh w-full flex-col bg-surface-muted">
       <PortalHeader />
       <div className="relative flex w-full flex-1 flex-col justify-center">
         <div aria-hidden className="absolute inset-0">

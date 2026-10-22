@@ -5,6 +5,7 @@ import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminHostEmployeeForm } from './hooks/use-admin-host-employee-form'
+import { ErrorState } from '../../components/ui/ErrorState'
 
 const fieldLabelClassName = 'text-[13px] font-bold uppercase text-text-secondary'
 
@@ -64,12 +65,7 @@ export function AdminHostEmployeeFormPage() {
         </div>
 
         {errorMessage ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
-            <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
-              Try again
-            </button>
-          </div>
+          <ErrorState message={errorMessage} onRetry={retry} />
         ) : isLoading ? (
           <FormSkeleton rows={isEditMode ? 3 : 4} label="Loading…" />
         ) : isEditMode && employee ? (

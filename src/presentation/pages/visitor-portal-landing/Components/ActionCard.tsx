@@ -13,7 +13,7 @@ interface ActionCardProps {
 export function ActionCard({ icon, title, description, to, buttonLabel, variant }: ActionCardProps): ReactNode {
   return (
     <div className="flex w-full max-w-[480px] flex-col gap-6 rounded-2xl border border-border bg-surface p-5 md:p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
-      <div className="flex size-14 items-center justify-center rounded-xl bg-[#ecfeff]">
+      <div className="flex size-14 items-center justify-center rounded-xl bg-secondary-accent-soft">
         <img src={icon} alt="" className="size-7" />
       </div>
       <div className="flex flex-col gap-2">

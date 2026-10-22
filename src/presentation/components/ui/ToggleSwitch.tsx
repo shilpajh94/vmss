@@ -27,7 +27,12 @@ function SwitchControl({ id, checked, onChange, labelledBy }: SwitchControlProps
         onChange={(event) => onChange(event.target.checked)}
         className="peer sr-only"
       />
-      <span className={`h-6 w-11 rounded-full transition-colors duration-standard ${checked ? 'bg-admin-accent' : 'bg-neutral-subtle'}`} />
+      {/* The input is visually hidden, so the track carries its focus ring. */}
+      <span
+        className={`h-6 w-11 rounded-full transition-colors duration-standard peer-focus-visible:ring-2 peer-focus-visible:ring-secondary-accent peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-surface ${
+          checked ? 'bg-admin-accent' : 'bg-neutral-subtle'
+        }`}
+      />
       <span
         className={`absolute top-0.5 left-0.5 size-5 rounded-full bg-knob shadow transition-transform duration-standard ease-motion-out ${
           checked ? 'translate-x-5' : ''
