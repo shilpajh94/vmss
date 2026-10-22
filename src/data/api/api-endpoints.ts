@@ -293,6 +293,21 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: false,
   },
+  DISABLE_HOST_EMPLOYEE: {
+    endpoint: "/auth/employees/:employeeId/disable",
+    method: "POST",
+    hasToken: true,
+  },
+  ENABLE_HOST_EMPLOYEE: {
+    endpoint: "/auth/employees/:employeeId/enable",
+    method: "POST",
+    hasToken: true,
+  },
+  DELETE_HOST_EMPLOYEE: {
+    endpoint: "/auth/employees/:employeeId",
+    method: "DELETE",
+    hasToken: true,
+  },
   SYNC_EMPLOYEES: {
     endpoint: "/auth/employees/sync",
     method: "POST",

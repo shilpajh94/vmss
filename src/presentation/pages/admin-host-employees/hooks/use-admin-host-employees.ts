@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { ApiError } from '../../../../data/api/api-error'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
@@ -14,7 +15,15 @@ const PAGE_SIZE = 20
 
 export function useAdminHostEmployees() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase } = useAppDependencies()
+  const {
+    getCurrentStaffUserUseCase,
+    listHostEmployeesPageUseCase,
+    listDepartmentsUseCase,
+    listRolesUseCase,
+    disableHostEmployeeUseCase,
+    enableHostEmployeeUseCase,
+    deleteHostEmployeeUseCase,
+  } = useAppDependencies()
   const toast = useToast()
 
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
@@ -23,6 +32,9 @@ export function useAdminHostEmployees() {
   const [departments, setDepartments] = useState<Department[]>([])
   const [roleOptions, setRoleOptions] = useState<string[]>([])
   const { phase, isRefreshing, begin } = useLoadTracker()
+  const [pendingDelete, setPendingDelete] = useState<HostEmployee | undefined>(undefined)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [busyEmployeeId, setBusyEmployeeId] = useState<string | undefined>(undefined)
 
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [departmentFilter, setDepartmentFilter] = useState('')
@@ -77,9 +89,60 @@ export function useAdminHostEmployees() {
     void loadHostEmployees()
   }, [loadHostEmployees])
 
-  // Auto-refreshes the directory every 15s; there's no form/delete dialog
-  // state on this page to protect, so polling is never suppressed.
-  usePolling(() => void loadHostEmployees('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: false })
+  // Auto-refreshes the directory every 15s; skipped while a delete dialog is
+  // open or an action is in flight so a poll can't swap the rows underneath it.
+  const isActionInProgress = pendingDelete !== undefined || isDeleting || busyEmployeeId !== undefined
+  usePolling(() => void loadHostEmployees('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
+
+  // 404 = already deleted elsewhere, so the list is stale; 409 (self / last
+  // admin) and 403 carry the backend's own message, shown as-is.
+  const reportActionError = useCallback(
+    (error: unknown, fallback: string) => {
+      if (error instanceof ApiError && error.status === 404) {
+        toast.error('This employee no longer exists. The list has been refreshed.')
+        void loadHostEmployees()
+        return
+      }
+      toast.error(error instanceof ApiError ? error.message : fallback)
+    },
+    [toast, loadHostEmployees],
+  )
+
+  const setEmployeeActive = useCallback(
+    async (employee: HostEmployee, active: boolean) => {
+      setBusyEmployeeId(employee.id)
+      try {
+        await (active ? enableHostEmployeeUseCase : disableHostEmployeeUseCase).execute(employee.id)
+        toast.success(active ? `${employee.fullName} enabled.` : `${employee.fullName} disabled.`)
+        await loadHostEmployees()
+      } catch (error) {
+        reportActionError(error, `Something went wrong ${active ? 'enabling' : 'disabling'} the employee. Please try again.`)
+      } finally {
+        setBusyEmployeeId(undefined)
+      }
+    },
+    [enableHostEmployeeUseCase, disableHostEmployeeUseCase, toast, loadHostEmployees, reportActionError],
+  )
+
+  const requestDelete = useCallback((employee: HostEmployee) => setPendingDelete(employee), [])
+  const cancelDelete = useCallback(() => setPendingDelete(undefined), [])
+
+  const confirmDelete = useCallback(async () => {
+    if (!pendingDelete) return
+
+    setIsDeleting(true)
+    try {
+      await deleteHostEmployeeUseCase.execute(pendingDelete.id)
+      toast.success('Employee deleted.')
+      setPendingDelete(undefined)
+      await loadHostEmployees()
+    } catch (error) {
+      setPendingDelete(undefined)
+      reportActionError(error, 'Something went wrong deleting the employee. Please try again.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }, [pendingDelete, deleteHostEmployeeUseCase, toast, loadHostEmployees, reportActionError])
 
   usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
 
@@ -120,6 +183,13 @@ export function useAdminHostEmployees() {
 
   return {
     currentUser,
+    pendingDelete,
+    isDeleting,
+    busyEmployeeId,
+    setEmployeeActive,
+    requestDelete,
+    cancelDelete,
+    confirmDelete,
     hostEmployees,
     total,
     page,
