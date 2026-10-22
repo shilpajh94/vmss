@@ -1,3 +1,5 @@
+> **Superseded by `audit-and-harden-api-and-web`** (2026-10-20). Its still-valid items moved into that change's web tasks §8 (design D15). Do not apply this change. It will be deleted, not archived.
+
 ## Why
 
 A full audit of `src/` found that the 11 admin CRUD pages (buildings,
