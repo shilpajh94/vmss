@@ -134,11 +134,12 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
     }
   }
 
-  async checkOut(id: string, idempotencyKey: string): Promise<void> {
+  // TODO: re-send `Idempotency-Key` once the API's CORS Access-Control-Allow-Headers allows it
+  // (the preflight currently rejects it, blocking check-out from the browser).
+  async checkOut(id: string, _idempotencyKey: string): Promise<void> {
     const response = await this.apiClient.makeRequest<InvitationActionResult>({
       endpointConfig: API_ENDPOINTS.CHECK_OUT_INVITATION,
       pathParams: { id },
-      headers: { 'Idempotency-Key': idempotencyKey },
       parserSchema: InvitationActionResultSchema,
     })
 
