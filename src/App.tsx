@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
+import { createBrowserRouter, Navigate, Route, RouterProvider, Routes } from 'react-router'
 import { LoadingState } from './presentation/components/ui/LoadingState'
 import { AppDependenciesProvider } from './presentation/context/app-dependencies-context'
 import { ToastProvider } from './presentation/components/toast/toast-context'
@@ -10,6 +10,7 @@ import { AdminLayout } from './presentation/components/AdminLayout'
 import { StaffLayout } from './presentation/components/StaffLayout'
 import { NotificationCenterProvider } from './presentation/context/notification-center-context'
 import { ThemeModeProvider } from './presentation/context/theme-mode-context'
+import { UnsavedChangesProvider } from './presentation/context/unsaved-changes-context'
 import { VisitorPortalLandingPage } from './presentation/pages/visitor-portal-landing/visitor-portal-landing'
 import { VisitorRequestPage } from './presentation/pages/visitor-request/visitor-request'
 import { VisitorTrackPage } from './presentation/pages/visitor-track/visitor-track'
@@ -68,118 +69,121 @@ function RootLayout() {
     <ThemeModeProvider>
       <ToastProvider>
         <AppDependenciesProvider>
-          <NotificationCenterProvider>
-            <SessionExpiryListener />
-            <PushNotificationsProvider>
-              <Routes>
-                <Route element={<PublicLayout />}>
-                  <Route path="/" element={<VisitorPortalLandingPage />} />
-                  <Route path="/visitor/request" element={<VisitorRequestPage />} />
-                  <Route path="/visitor/track" element={<VisitorTrackPage />} />
-                  <Route path="/admin/login" element={<StaffLoginPage />} />
-                  <Route path="/staff/login" element={<StaffSsoLoginPage />} />
-                </Route>
+          <UnsavedChangesProvider>
+            <NotificationCenterProvider>
+              <SessionExpiryListener />
+              <PushNotificationsProvider>
+                <Routes>
+                  <Route element={<PublicLayout />}>
+                    <Route path="/" element={<VisitorPortalLandingPage />} />
+                    <Route path="/visitor/request" element={<VisitorRequestPage />} />
+                    <Route path="/visitor/track" element={<VisitorTrackPage />} />
+                    <Route path="/admin/login" element={<StaffLoginPage />} />
+                    <Route path="/staff/login" element={<StaffSsoLoginPage />} />
+                  </Route>
 
-                <Route element={<AdminLayout />}>
-                  <Route
-                    path="/admin/dashboard"
-                    element={
-                      <LazyPage>
-                        <AdminDashboardPage />
-                      </LazyPage>
-                    }
-                  />
-                  <Route path="/admin/organisation-configs" element={<AdminOrganisationConfigsPage />} />
-                  <Route path="/admin/branches" element={<AdminBranchesPage />} />
-                  <Route path="/admin/branches/new" element={<AdminBranchCreatePage />} />
-                  <Route path="/admin/departments" element={<AdminDepartmentsPage />} />
-                  <Route path="/admin/departments/new" element={<AdminDepartmentFormPage />} />
-                  <Route path="/admin/departments/:id/edit" element={<AdminDepartmentFormPage />} />
-                  <Route path="/admin/buildings" element={<AdminBuildingsPage />} />
-                  <Route path="/admin/buildings/new" element={<AdminBuildingFormPage />} />
-                  <Route path="/admin/buildings/:id/edit" element={<AdminBuildingFormPage />} />
-                  <Route path="/admin/floors" element={<AdminFloorsPage />} />
-                  <Route path="/admin/floors/new" element={<AdminFloorFormPage />} />
-                  <Route path="/admin/floors/:id/edit" element={<AdminFloorFormPage />} />
-                  <Route path="/admin/host-employees" element={<AdminHostEmployeesPage />} />
-                  <Route path="/admin/host-employees/new" element={<AdminHostEmployeeFormPage />} />
-                  <Route path="/admin/host-employees/:id/edit" element={<AdminHostEmployeeFormPage />} />
-                  <Route path="/admin/reception-desks" element={<AdminReceptionDesksPage />} />
-                  <Route path="/admin/reception-desks/*" element={<Navigate to="/admin/reception-desks" replace />} />
-                  <Route path="/admin/security-gates" element={<AdminSecurityGatesPage />} />
-                  <Route path="/admin/security-gates/*" element={<Navigate to="/admin/security-gates" replace />} />
-                  <Route path="/admin/kiosks" element={<AdminKiosksPage />} />
-                  <Route path="/admin/kiosks/new" element={<AdminKioskFormPage />} />
-                  <Route path="/admin/kiosks/:id/edit" element={<AdminKioskFormPage />} />
-                  <Route path="/admin/visitor-categories" element={<AdminVisitorCategoriesPage />} />
-                  <Route path="/admin/visitor-categories/new" element={<AdminVisitorCategoryFormPage />} />
-                  <Route path="/admin/visitor-categories/:id/edit" element={<AdminVisitorCategoryFormPage />} />
-                  <Route path="/admin/workflows" element={<AdminWorkflowsPage />} />
-                  <Route path="/admin/workflows/new" element={<AdminWorkflowFormPage />} />
-                  <Route path="/admin/workflows/:visitorCategoryId/edit" element={<AdminWorkflowFormPage />} />
-                  <Route path="/admin/invitations" element={<AdminInvitationsPage />} />
-                  <Route
-                    path="/admin/calendar"
-                    element={
-                      <LazyPage label="Loading calendar…">
-                        <CalendarPage loginPath="/admin/login" boardBasePath="/admin/invitations" />
-                      </LazyPage>
-                    }
-                  />
-                  <Route path="/admin/roles" element={<AdminRolesPage />} />
-                  <Route path="/admin/roles/new" element={<AdminRoleCreateFormPage />} />
-                  <Route path="/admin/roles/:id/edit" element={<AdminRolePermissionsFormPage />} />
-                  <Route path="/admin/form-builder" element={<AdminFormBuilderPage />} />
-                  <Route path="/admin/form-builder/steps/:stepId" element={<AdminFormBuilderStepEditorPage />} />
-                  <Route path="/admin/audit-trail" element={<AdminAuditTrailPage />} />
-                </Route>
+                  <Route element={<AdminLayout />}>
+                    <Route
+                      path="/admin/dashboard"
+                      element={
+                        <LazyPage>
+                          <AdminDashboardPage />
+                        </LazyPage>
+                      }
+                    />
+                    <Route path="/admin/organisation-configs" element={<AdminOrganisationConfigsPage />} />
+                    <Route path="/admin/branches" element={<AdminBranchesPage />} />
+                    <Route path="/admin/branches/new" element={<AdminBranchCreatePage />} />
+                    <Route path="/admin/departments" element={<AdminDepartmentsPage />} />
+                    <Route path="/admin/departments/new" element={<AdminDepartmentFormPage />} />
+                    <Route path="/admin/departments/:id/edit" element={<AdminDepartmentFormPage />} />
+                    <Route path="/admin/buildings" element={<AdminBuildingsPage />} />
+                    <Route path="/admin/buildings/new" element={<AdminBuildingFormPage />} />
+                    <Route path="/admin/buildings/:id/edit" element={<AdminBuildingFormPage />} />
+                    <Route path="/admin/floors" element={<AdminFloorsPage />} />
+                    <Route path="/admin/floors/new" element={<AdminFloorFormPage />} />
+                    <Route path="/admin/floors/:id/edit" element={<AdminFloorFormPage />} />
+                    <Route path="/admin/host-employees" element={<AdminHostEmployeesPage />} />
+                    <Route path="/admin/host-employees/new" element={<AdminHostEmployeeFormPage />} />
+                    <Route path="/admin/host-employees/:id/edit" element={<AdminHostEmployeeFormPage />} />
+                    <Route path="/admin/reception-desks" element={<AdminReceptionDesksPage />} />
+                    <Route path="/admin/reception-desks/*" element={<Navigate to="/admin/reception-desks" replace />} />
+                    <Route path="/admin/security-gates" element={<AdminSecurityGatesPage />} />
+                    <Route path="/admin/security-gates/*" element={<Navigate to="/admin/security-gates" replace />} />
+                    <Route path="/admin/kiosks" element={<AdminKiosksPage />} />
+                    <Route path="/admin/kiosks/new" element={<AdminKioskFormPage />} />
+                    <Route path="/admin/kiosks/:id/edit" element={<AdminKioskFormPage />} />
+                    <Route path="/admin/visitor-categories" element={<AdminVisitorCategoriesPage />} />
+                    <Route path="/admin/visitor-categories/new" element={<AdminVisitorCategoryFormPage />} />
+                    <Route path="/admin/visitor-categories/:id/edit" element={<AdminVisitorCategoryFormPage />} />
+                    <Route path="/admin/workflows" element={<AdminWorkflowsPage />} />
+                    <Route path="/admin/workflows/new" element={<AdminWorkflowFormPage />} />
+                    <Route path="/admin/workflows/:visitorCategoryId/edit" element={<AdminWorkflowFormPage />} />
+                    <Route path="/admin/invitations" element={<AdminInvitationsPage />} />
+                    <Route
+                      path="/admin/calendar"
+                      element={
+                        <LazyPage label="Loading calendar…">
+                          <CalendarPage loginPath="/admin/login" boardBasePath="/admin/invitations" />
+                        </LazyPage>
+                      }
+                    />
+                    <Route path="/admin/roles" element={<AdminRolesPage />} />
+                    <Route path="/admin/roles/new" element={<AdminRoleCreateFormPage />} />
+                    <Route path="/admin/roles/:id/edit" element={<AdminRolePermissionsFormPage />} />
+                    <Route path="/admin/form-builder" element={<AdminFormBuilderPage />} />
+                    <Route path="/admin/form-builder/steps/:stepId" element={<AdminFormBuilderStepEditorPage />} />
+                    <Route path="/admin/audit-trail" element={<AdminAuditTrailPage />} />
+                  </Route>
 
-                <Route element={<StaffLayout />}>
-                  <Route
-                    path="/staff/dashboard"
-                    element={
-                      <LazyPage>
-                        <StaffDashboardPage />
-                      </LazyPage>
-                    }
-                  />
-                  {/* Under the staff layout so reception shares its top bar,
-                      refresh control and current-user context; the page
-                      keeps its own Reception-role guard. */}
-                  <Route
-                    path="/reception/dashboard"
-                    element={
-                      <LazyPage>
-                        <ReceptionDashboardPage />
-                      </LazyPage>
-                    }
-                  />
-                  <Route path="/staff/invitations" element={<StaffInvitationsPage />} />
-                  <Route
-                    path="/staff/calendar"
-                    element={
-                      <LazyPage label="Loading calendar…">
-                        <CalendarPage loginPath="/staff/login" boardBasePath="/staff/invitations" />
-                      </LazyPage>
-                    }
-                  />
-                  <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
-                </Route>
-              </Routes>
-            </PushNotificationsProvider>
-          </NotificationCenterProvider>
+                  <Route element={<StaffLayout />}>
+                    <Route
+                      path="/staff/dashboard"
+                      element={
+                        <LazyPage>
+                          <StaffDashboardPage />
+                        </LazyPage>
+                      }
+                    />
+                    {/* Under the staff layout so reception shares its top bar,
+                        refresh control and current-user context; the page
+                        keeps its own Reception-role guard. */}
+                    <Route
+                      path="/reception/dashboard"
+                      element={
+                        <LazyPage>
+                          <ReceptionDashboardPage />
+                        </LazyPage>
+                      }
+                    />
+                    <Route path="/staff/invitations" element={<StaffInvitationsPage />} />
+                    <Route
+                      path="/staff/calendar"
+                      element={
+                        <LazyPage label="Loading calendar…">
+                          <CalendarPage loginPath="/staff/login" boardBasePath="/staff/invitations" />
+                        </LazyPage>
+                      }
+                    />
+                    <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
+                  </Route>
+                </Routes>
+              </PushNotificationsProvider>
+            </NotificationCenterProvider>
+          </UnsavedChangesProvider>
         </AppDependenciesProvider>
       </ToastProvider>
     </ThemeModeProvider>
   )
 }
 
+// A data router, so forms can block navigation while they hold unsaved
+// input (`useBlocker`, design D-W6). The route tree itself stays in
+// `RootLayout`'s <Routes>, under one splat route.
+const router = createBrowserRouter([{ path: '*', element: <RootLayout /> }])
+
 function App() {
-  return (
-    <BrowserRouter>
-      <RootLayout />
-    </BrowserRouter>
-  )
+  return <RouterProvider router={router} />
 }
 
 export default App

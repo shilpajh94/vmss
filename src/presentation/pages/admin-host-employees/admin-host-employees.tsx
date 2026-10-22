@@ -73,13 +73,6 @@ export function AdminHostEmployeesPage() {
               </button>
               <button
                 type="button"
-                className={`flex items-center gap-2 rounded-full border border-border bg-surface p-btn-secondary font-body text-[13px] font-semibold text-text hover:bg-border-subtle ${PRESS_FEEDBACK_CLASS}`}
-              >
-                <PlusIcon className="size-3.5" />
-                Import Hosts
-              </button>
-              <button
-                type="button"
                 onClick={goToAddHostEmployee}
                 className={`flex items-center gap-2 rounded-full bg-admin-accent p-btn-primary font-body text-[13px] font-semibold text-on-accent hover:bg-admin-accent/90 ${PRESS_FEEDBACK_CLASS}`}
               >

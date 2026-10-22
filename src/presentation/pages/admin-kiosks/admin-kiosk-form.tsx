@@ -51,6 +51,7 @@ export function AdminKioskFormPage() {
           <div className="flex flex-col gap-6">
             <TextField
               label="Name"
+              maxLength={255}
               required
               value={values.name}
               onChange={(name) => updateField('name', name)}
@@ -59,6 +60,7 @@ export function AdminKioskFormPage() {
             />
             <TextareaField
               label="Description"
+              maxLength={2000}
               value={values.description ?? ''}
               onChange={(description) => updateField('description', description)}
               error={errors.description}

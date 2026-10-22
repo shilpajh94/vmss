@@ -9,6 +9,7 @@ import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 export type BranchFormState = { mode: 'edit'; branch: Branch } | undefined
 
@@ -109,8 +110,8 @@ export function useAdminBranches() {
         setBranches((current) => current.map((branch) => (branch.id === updated.id ? updated : branch)))
         toast.success('Branch updated.')
         setFormState(undefined)
-      } catch {
-        toast.error('Something went wrong saving the branch. Please try again.')
+      } catch (error) {
+        toast.error(toUserMessage(error, 'Something went wrong saving the branch. Please try again.'))
       } finally {
         setIsSaving(false)
       }
@@ -135,8 +136,8 @@ export function useAdminBranches() {
       toast.success('Branch deleted.')
       setPendingDelete(undefined)
       await loadBranches()
-    } catch {
-      toast.error('Something went wrong deleting the branch. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong deleting the branch. Please try again.'))
     } finally {
       setIsDeleting(false)
     }

@@ -6,6 +6,7 @@ import { TextareaField } from '../../components/ui/TextareaField'
 import { SwitchField } from '../../components/ui/ToggleSwitch'
 import { usePageHeader } from '../../context/page-header-context'
 import { COUNTRY_OPTIONS, OPERATING_HOURS_OPTIONS } from './branch-form-options'
+import { BRANCH_LIMITS } from './branch-form-validation'
 import { useAdminBranchCreate } from './hooks/use-admin-branch-create'
 
 const BREADCRUMB = [{ label: 'Organisation Admin' }, { label: 'Branches' }, { label: 'Create New Branch', isActive: true }]
@@ -33,7 +34,14 @@ export function AdminBranchCreatePage() {
           <h2 className="font-display text-base font-semibold text-text">Branch Identity &amp; Geography</h2>
           <div className="flex flex-col gap-4 md:flex-row md:gap-6">
             <div className="flex-1">
-              <TextField label="Branch Name" required value={values.name} onChange={(name) => updateField('name', name)} error={errors.name} />
+              <TextField
+                label="Branch Name"
+                required
+                value={values.name}
+                onChange={(name) => updateField('name', name)}
+                error={errors.name}
+                maxLength={BRANCH_LIMITS.name}
+              />
             </div>
             <div className="flex-1">
               <TextField
@@ -42,6 +50,7 @@ export function AdminBranchCreatePage() {
                 value={values.code}
                 onChange={(code) => updateField('code', code)}
                 error={errors.code}
+                maxLength={BRANCH_LIMITS.code}
               />
             </div>
           </div>
@@ -53,6 +62,7 @@ export function AdminBranchCreatePage() {
                 value={values.city}
                 onChange={(city) => updateField('city', city)}
                 error={errors.city}
+                maxLength={BRANCH_LIMITS.city}
               />
             </div>
             <div className="flex-1">
@@ -66,16 +76,16 @@ export function AdminBranchCreatePage() {
               />
             </div>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <TextareaField
-              label="Physical Address"
-              value={values.address}
-              onChange={(address) => updateField('address', address)}
-              placeholder="Enter complete postal street address, landmarks, and area code..."
-              rows={2}
-            />
-            {errors.address && <p className="text-caption text-danger">{errors.address}</p>}
-          </div>
+          <TextareaField
+            label="Physical Address"
+            required
+            value={values.address}
+            onChange={(address) => updateField('address', address)}
+            placeholder="Enter complete postal street address, landmarks, and area code..."
+            rows={2}
+            error={errors.address}
+            maxLength={BRANCH_LIMITS.address}
+          />
         </div>
 
         <div className="h-px w-full bg-border" />
@@ -102,6 +112,7 @@ export function AdminBranchCreatePage() {
                 value={values.contactEmail}
                 onChange={(contactEmail) => updateField('contactEmail', contactEmail)}
                 error={errors.contactEmail}
+                maxLength={BRANCH_LIMITS.contactEmail}
               />
             </div>
           </div>
@@ -111,8 +122,10 @@ export function AdminBranchCreatePage() {
                 label="Contact Phone"
                 required
                 value={values.contactPhone}
+                type="tel"
                 onChange={(contactPhone) => updateField('contactPhone', contactPhone)}
                 error={errors.contactPhone}
+                maxLength={BRANCH_LIMITS.contactPhone}
               />
             </div>
             <div className="flex flex-1 gap-3">
@@ -148,6 +161,7 @@ export function AdminBranchCreatePage() {
                 label="Internal Administration Notes / Directives"
                 value={values.notes ?? ''}
                 onChange={(notes) => updateField('notes', notes)}
+                maxLength={BRANCH_LIMITS.notes}
                 placeholder="Specify any branch level specific watchlist configurations, guest-escort overrides, or safety rules..."
                 rows={2}
               />

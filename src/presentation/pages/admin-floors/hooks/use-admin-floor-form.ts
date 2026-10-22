@@ -6,8 +6,13 @@ import type { Building } from '../../../../domain/entities/building-schema'
 import type { FloorInput } from '../../../../domain/entities/floor-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
+import { toFloorNumbers, validateFloorNumbers, type FloorNumberDrafts } from '../floor-form-validation'
 
-const EMPTY_VALUES: FloorInput = {
+type FloorFormValues = Omit<FloorInput, 'floorNumber' | 'capacity'> & FloorNumberDrafts
+type FloorFormErrors = Partial<Record<'name' | 'buildingId' | 'floorNumber' | 'capacity', string>>
+
+const EMPTY_VALUES: FloorFormValues = {
   buildingId: '',
   name: '',
   floorNumber: 0,
@@ -31,8 +36,8 @@ export function useAdminFloorForm() {
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
-  const [values, setValues] = useState<FloorInput>(EMPTY_VALUES)
-  const [errors, setErrors] = useState<Partial<Record<'name' | 'buildingId', string>>>({})
+  const [values, setValues] = useState<FloorFormValues>(EMPTY_VALUES)
+  const [errors, setErrors] = useState<FloorFormErrors>({})
   const [isSaving, setIsSaving] = useState(false)
 
   const load = useCallback(async () => {
@@ -84,14 +89,14 @@ export function useAdminFloorForm() {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: values, isLoading, reload: retry })
+  const { release } = useFormPageRefresh({ values: values, isLoading, reload: retry })
 
-  const updateField = useCallback(<K extends keyof FloorInput>(key: K, value: FloorInput[K]) => {
+  const updateField = useCallback(<K extends keyof FloorFormValues>(key: K, value: FloorFormValues[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
   }, [])
 
   const submit = useCallback(async () => {
-    const nextErrors: Partial<Record<'name' | 'buildingId', string>> = {}
+    const nextErrors: FloorFormErrors = validateFloorNumbers(values)
     if (!values.name.trim()) nextErrors.name = 'Floor name is required.'
     if (!values.buildingId.trim()) nextErrors.buildingId = 'Building is required.'
 
@@ -101,22 +106,24 @@ export function useAdminFloorForm() {
     }
     setErrors({})
 
+    const input: FloorInput = { ...values, ...toFloorNumbers(values) }
     setIsSaving(true)
     try {
       if (isEditMode) {
-        await updateFloorUseCase.execute(id, values)
+        await updateFloorUseCase.execute(id, input)
         toast.success('Floor updated.')
       } else {
-        await createFloorUseCase.execute(values)
+        await createFloorUseCase.execute(input)
         toast.success('Floor created.')
       }
+      release()
       navigate('/admin/floors')
-    } catch {
-      toast.error(`Something went wrong ${isEditMode ? 'updating' : 'creating'} the floor. Please try again.`)
+    } catch (error) {
+      toast.error(toUserMessage(error, `Something went wrong ${isEditMode ? 'updating' : 'creating'} the floor. Please try again.`))
     } finally {
       setIsSaving(false)
     }
-  }, [values, isEditMode, id, createFloorUseCase, updateFloorUseCase, navigate, toast])
+  }, [values, isEditMode, id, createFloorUseCase, updateFloorUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/floors')

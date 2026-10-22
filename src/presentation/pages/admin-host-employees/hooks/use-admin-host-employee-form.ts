@@ -8,6 +8,9 @@ import type { BranchRoleAssignment, HostEmployee, HostEmployeeCreateInput } from
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
+import { isValidEmail } from '../../../utils/is-valid-email'
+import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 
 const EMPTY_CREATE_VALUES: HostEmployeeCreateInput = {
   fullName: '',
@@ -109,7 +112,7 @@ export function useAdminHostEmployeeForm() {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: { createValues, assignRoleId, assignBranchId }, isLoading, reload })
+  const { release } = useFormPageRefresh({ values: { createValues, assignRoleId, assignBranchId }, isLoading, reload })
 
   const departmentName = useMemo(
     () => (employee?.departmentId ? departments.find((department) => department.id === employee.departmentId)?.name : undefined),
@@ -126,6 +129,10 @@ export function useAdminHostEmployeeForm() {
     const nextErrors: Partial<Record<keyof HostEmployeeCreateInput, string>> = {}
     if (!createValues.fullName.trim()) nextErrors.fullName = 'Employee name is required.'
     if (!createValues.email.trim()) nextErrors.email = 'Email address is required.'
+    else if (!isValidEmail(createValues.email)) nextErrors.email = 'Enter a valid email address.'
+    if (createValues.phoneNumber?.trim() && !isValidPhoneNumber(createValues.phoneNumber)) {
+      nextErrors.phoneNumber = 'Enter a valid phone number.'
+    }
     if (!createValues.employeeCode.trim()) nextErrors.employeeCode = 'Employee code is required.'
     if (!createValues.departmentId) nextErrors.departmentId = 'Department is required.'
 
@@ -144,13 +151,14 @@ export function useAdminHostEmployeeForm() {
         employeeCode: createValues.employeeCode.trim(),
       })
       toast.success('Employee created.')
+      release()
       navigate('/admin/host-employees')
-    } catch {
-      toast.error('Something went wrong creating the employee. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong creating the employee. Please try again.'))
     } finally {
       setIsSaving(false)
     }
-  }, [createValues, createHostEmployeeUseCase, navigate, toast])
+  }, [createValues, createHostEmployeeUseCase, navigate, toast, release])
 
   // Edit mode: role/branch assignment management
 
@@ -168,8 +176,8 @@ export function useAdminHostEmployeeForm() {
       setAssignRoleId('')
       setAssignBranchId('')
       toast.success('Role assigned.')
-    } catch {
-      toast.error('Something went wrong assigning the role. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong assigning the role. Please try again.'))
     } finally {
       setIsAssigning(false)
     }
@@ -186,8 +194,8 @@ export function useAdminHostEmployeeForm() {
           current ? { ...current, branchRoles: current.branchRoles.filter((role) => role.id !== assignmentId) } : current,
         )
         toast.success('Role revoked.')
-      } catch {
-        toast.error('Something went wrong revoking the role. Please try again.')
+      } catch (error) {
+        toast.error(toUserMessage(error, 'Something went wrong revoking the role. Please try again.'))
       } finally {
         setRevokingAssignmentId(undefined)
       }

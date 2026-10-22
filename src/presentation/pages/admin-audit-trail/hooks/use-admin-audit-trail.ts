@@ -11,6 +11,7 @@ import { DEFAULT_ACTIVITY_TYPE, DEFAULT_DATE_RANGE, PAGE_SIZE } from '../types'
 import { saveBlob } from '../../../utils/save-blob'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 const REPORT_POLL_INTERVAL_MS = 1000
 const REPORT_POLL_MAX_ATTEMPTS = 20
@@ -139,15 +140,15 @@ export function useAdminAuditTrail() {
             const blob = await downloadAuditReportUseCase.execute(job.id, format)
             saveBlob(blob, `audit-report.${format}`)
           } catch (error) {
-            toast.error(error instanceof Error ? error.message : 'Something went wrong downloading the report. Please try again.')
+            toast.error(toUserMessage(error, 'Something went wrong downloading the report. Please try again.'))
           }
         } else if (job.status === 'failed') {
           toast.error(job.errorMessage ?? 'The report could not be generated. Please try again.')
         } else {
           toast.error('The report is taking longer than expected. Please try again shortly.')
         }
-      } catch {
-        toast.error('Something went wrong generating the report. Please try again.')
+      } catch (error) {
+        toast.error(toUserMessage(error, 'Something went wrong generating the report. Please try again.'))
       } finally {
         setDownloadingFormat(undefined)
       }

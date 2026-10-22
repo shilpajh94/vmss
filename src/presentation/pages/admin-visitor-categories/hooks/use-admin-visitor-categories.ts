@@ -9,6 +9,7 @@ import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { VisitorCategoryBulkCreateOut } from '../../../../domain/entities/visitor-category-out-schema'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 const PAGE_SIZE = 20
 
@@ -137,8 +138,8 @@ export function useAdminVisitorCategories() {
       toast.success('Visitor category deleted.')
       setPendingDelete(undefined)
       await loadVisitorCategories()
-    } catch {
-      toast.error('Something went wrong deleting the visitor category. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong deleting the visitor category. Please try again.'))
     } finally {
       setIsDeleting(false)
     }
@@ -163,8 +164,8 @@ export function useAdminVisitorCategories() {
         if (result.createdCount > 0) {
           await loadVisitorCategories()
         }
-      } catch {
-        toast.error('Something went wrong adding these categories. Please try again.')
+      } catch (error) {
+        toast.error(toUserMessage(error, 'Something went wrong adding these categories. Please try again.'))
       } finally {
         setIsBulkCreating(false)
       }

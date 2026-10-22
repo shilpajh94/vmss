@@ -10,6 +10,7 @@ import type { Floor } from '../../../../domain/entities/floor-schema'
 import type { Building } from '../../../../domain/entities/building-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 export interface FloorRow extends Floor {
   buildingName: string
@@ -163,8 +164,8 @@ export function useAdminFloors() {
       toast.success('Floor deleted.')
       setPendingDelete(undefined)
       await loadFloors()
-    } catch {
-      toast.error('Something went wrong deleting the floor. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong deleting the floor. Please try again.'))
     } finally {
       setIsDeleting(false)
     }

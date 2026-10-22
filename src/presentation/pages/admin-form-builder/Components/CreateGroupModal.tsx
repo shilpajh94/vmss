@@ -3,20 +3,16 @@ import { Collapsible } from '../../../components/ui/Collapsible'
 import { Modal } from '../../../components/ui/Modal'
 import { TextField } from '../../../components/ui/TextField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
+import { PendingButton } from '../../../components/ui/PendingButton'
 import type { FormFieldGroupCreateInput } from '../../../../domain/entities/form-builder-schema'
+import { FORM_BUILDER_NAME_MAX, formBuilderKeyError, slugifyKey } from '../form-builder-key'
 
 interface CreateGroupModalProps {
   isOpen: boolean
   onClose: () => void
-  onCreate: (input: FormFieldGroupCreateInput) => void
-}
-
-function slugify(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
+  /** Resolves to `undefined` on success or the failure message, so the
+   * input is only cleared once the group actually exists. */
+  onCreate: (input: FormFieldGroupCreateInput) => Promise<string | undefined>
 }
 
 /** Creates a new admin-defined field group on the currently-open step
@@ -28,25 +24,32 @@ export function CreateGroupModal({ isOpen, onClose, onCreate }: CreateGroupModal
   const [isRepeatable, setIsRepeatable] = useState(false)
   const [minInstances, setMinInstances] = useState('')
   const [maxInstances, setMaxInstances] = useState('')
+  const [nameError, setNameError] = useState<string | undefined>(undefined)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const reset = () => {
     setName('')
     setIsRepeatable(false)
     setMinInstances('')
     setMaxInstances('')
+    setNameError(undefined)
   }
 
-  const handleCreate = () => {
-    const key = slugify(name)
-    if (!key) return
-    onCreate({
-      key,
+  const handleCreate = async () => {
+    const error = formBuilderKeyError(name, 'Group name')
+    setNameError(error)
+    if (error) return
+    setIsSubmitting(true)
+    const failure = await onCreate({
+      key: slugifyKey(name),
       name: name.trim(),
       isRepeatable,
       minInstances: isRepeatable && minInstances.trim() ? Number(minInstances) : undefined,
       maxInstances: isRepeatable && maxInstances.trim() ? Number(maxInstances) : undefined,
     })
-    reset()
+    setIsSubmitting(false)
+    // A failed save keeps what was typed so it can be fixed and retried.
+    if (!failure) reset()
   }
 
   return (
@@ -54,7 +57,15 @@ export function CreateGroupModal({ isOpen, onClose, onCreate }: CreateGroupModal
       <p className="-mt-3 font-body text-sm text-text-muted">
         Group related fields together — optionally letting visitors add multiple instances (e.g. "Parcels").
       </p>
-      <TextField label="Group Name" value={name} onChange={setName} placeholder="e.g. Parcels" required />
+      <TextField
+        label="Group Name"
+        value={name}
+        onChange={setName}
+        placeholder="e.g. Parcels"
+        required
+        error={nameError}
+        maxLength={FORM_BUILDER_NAME_MAX}
+      />
       <ToggleSwitch checked={isRepeatable} onChange={setIsRepeatable} label="Repeatable (visitors can add multiple)" />
       {/* -mt-5 cancels the Modal body's gap-5 while closed. */}
       <Collapsible open={isRepeatable} closedClassName="-mt-5">
@@ -71,13 +82,14 @@ export function CreateGroupModal({ isOpen, onClose, onCreate }: CreateGroupModal
         >
           Cancel
         </button>
-        <button
-          type="button"
-          onClick={handleCreate}
-          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent"
+        <PendingButton
+          onClick={() => void handleCreate()}
+          pending={isSubmitting}
+          pendingLabel="Creating…"
+          className="rounded-full bg-admin-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent disabled:opacity-50"
         >
           + Create Group
-        </button>
+        </PendingButton>
       </div>
     </Modal>
   )

@@ -8,6 +8,7 @@ import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { ApprovalWorkflowRule } from '../../../../domain/entities/approval-workflow-rule-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 export interface WorkflowLevelView {
   ruleId: string
@@ -176,8 +177,8 @@ export function useAdminWorkflows() {
       setPendingDelete(undefined)
       resetToFirstPage()
       await loadWorkflows()
-    } catch {
-      toast.error('Something went wrong deleting the workflow. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong deleting the workflow. Please try again.'))
     } finally {
       setIsDeleting(false)
     }

@@ -6,6 +6,7 @@ import type { RoleOut } from '../../../../domain/entities/role-out-schema'
 import type { PermissionOut } from '../../../../domain/entities/permission-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 export function useAdminRolePermissionsForm() {
   const navigate = useNavigate()
@@ -63,7 +64,7 @@ export function useAdminRolePermissionsForm() {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: { permissionCodes: [...selectedCodes].sort() }, isLoading, reload: retry })
+  const { release } = useFormPageRefresh({ values: { permissionCodes: [...selectedCodes].sort() }, isLoading, reload: retry })
 
   const togglePermission = useCallback((code: string, checked: boolean) => {
     setSelectedCodes((current) => {
@@ -84,13 +85,14 @@ export function useAdminRolePermissionsForm() {
     try {
       await updateRolePermissionsUseCase.execute(role.id, Array.from(selectedCodes))
       toast.success('Role permissions updated.')
+      release()
       navigate('/admin/roles')
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Something went wrong updating this role. Please try again.')
+      toast.error(toUserMessage(error, 'Something went wrong updating this role. Please try again.'))
     } finally {
       setIsSaving(false)
     }
-  }, [role, selectedCodes, updateRolePermissionsUseCase, navigate, toast])
+  }, [role, selectedCodes, updateRolePermissionsUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/roles')

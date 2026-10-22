@@ -7,6 +7,8 @@ import { Modal } from '../ui/Modal'
 import { SelectField } from '../ui/SelectField'
 import { TextField } from '../ui/TextField'
 import { TextareaField } from '../ui/TextareaField'
+import { todayAsDateInputValue } from '../../utils/local-date-input-value'
+import { useDiscardConfirm } from '../../hooks/use-unsaved-changes-guard'
 import { EXPECTED_DURATION_OPTIONS } from '../../utils/expected-duration-options'
 import { PURPOSE_OF_VISIT_OPTIONS, purposeLabel } from '../../utils/purpose-of-visit-options'
 import { canEditPointOfContact, resolvePointOfContactLabel } from '../../utils/approval-step-label'
@@ -111,10 +113,12 @@ export function EditInvitationModal({
   }, [isOpen, detail])
 
   const changedRows = changedFieldRows(toFormState(detail), fields, hostEmployees ?? [])
+  const { confirmDiscard } = useDiscardConfirm(isOpen && changedRows.length > 0)
 
+  // Closing asks before dropping edits (D-W6).
   const handleCancel = () => {
     if (isSaving) return
-    onCancel()
+    confirmDiscard(onCancel)
   }
 
   const handleConfirm = () => {
@@ -179,6 +183,7 @@ export function EditInvitationModal({
               <TextField
                 label="Preferred Visit Date"
                 type="date"
+                min={todayAsDateInputValue()}
                 value={fields.preferredVisitDate ?? ''}
                 onChange={(preferredVisitDate) => setFields({ ...fields, preferredVisitDate })}
               />
@@ -190,6 +195,7 @@ export function EditInvitationModal({
               />
               <TextField
                 label="Department to Visit"
+                maxLength={255}
                 placeholder="Enter department name"
                 value={fields.departmentToVisit ?? ''}
                 onChange={(departmentToVisit) => setFields({ ...fields, departmentToVisit })}
@@ -197,6 +203,7 @@ export function EditInvitationModal({
             </div>
             <TextareaField
               label="Additional Notes / Special Requirements"
+              maxLength={2000}
               placeholder="Any special requirements, accessibility needs, or notes for the host…"
               value={fields.additionalNotes ?? ''}
               onChange={(additionalNotes) => setFields({ ...fields, additionalNotes })}

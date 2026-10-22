@@ -99,7 +99,14 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
       // when the invitation has no POC yet, and an empty string fails the
       // backend's UUID parser ("expected length 32... found 0") instead of
       // being treated as "unchanged". Omit it entirely unless one was picked.
-      body: { ...fields, pocUserId: fields.pocUserId || undefined },
+      // An empty date or time is sent as `null` (cleared): `''` isn't a
+      // date, so the API answered it with a 422.
+      body: {
+        ...fields,
+        preferredVisitDate: fields.preferredVisitDate || null,
+        preferredVisitTime: fields.preferredVisitTime || null,
+        pocUserId: fields.pocUserId || undefined,
+      },
       parserSchema: InvitationActionResultSchema,
     })
 

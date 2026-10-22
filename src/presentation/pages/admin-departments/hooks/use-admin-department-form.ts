@@ -7,6 +7,7 @@ import type { Department } from '../../../../domain/entities/department-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 type DepartmentInput = Omit<Department, 'id' | 'branchName'>
 
@@ -99,7 +100,7 @@ export function useAdminDepartmentForm() {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: values, isLoading, reload: retry })
+  const { release } = useFormPageRefresh({ values: values, isLoading, reload: retry })
 
   const updateField = useCallback(<K extends keyof DepartmentInput>(key: K, value: DepartmentInput[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
@@ -126,13 +127,14 @@ export function useAdminDepartmentForm() {
         await createDepartmentUseCase.execute(values)
         toast.success('Department created.')
       }
+      release()
       navigate('/admin/departments')
-    } catch {
-      toast.error(`Something went wrong ${isEditMode ? 'updating' : 'creating'} the department. Please try again.`)
+    } catch (error) {
+      toast.error(toUserMessage(error, `Something went wrong ${isEditMode ? 'updating' : 'creating'} the department. Please try again.`))
     } finally {
       setIsSaving(false)
     }
-  }, [values, isEditMode, id, createDepartmentUseCase, updateDepartmentUseCase, navigate, toast])
+  }, [values, isEditMode, id, createDepartmentUseCase, updateDepartmentUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/departments')

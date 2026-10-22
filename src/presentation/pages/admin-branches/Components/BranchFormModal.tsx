@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { useDiscardConfirm } from '../../../hooks/use-unsaved-changes-guard'
+import { useUnsavedChanges } from '../../../hooks/use-unsaved-changes'
 import { PendingButton } from '../../../components/ui/PendingButton'
 import { Modal } from '../../../components/ui/Modal'
 import { SelectField } from '../../../components/ui/SelectField'
@@ -7,10 +9,9 @@ import { TextareaField } from '../../../components/ui/TextareaField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
 import { COUNTRY_OPTIONS, OPERATING_HOURS_OPTIONS } from '../branch-form-options'
 import type { Branch } from '../../../../domain/entities/branch-schema'
+import { BRANCH_LIMITS, validateBranchValues, type BranchFormErrors, type BranchFormValues } from '../branch-form-validation'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import type { BranchFormState } from '../hooks/use-admin-branches'
-
-type BranchFormValues = Omit<Branch, 'id'>
 
 const EMPTY_VALUES: BranchFormValues = {
   name: '',
@@ -27,17 +28,6 @@ const EMPTY_VALUES: BranchFormValues = {
   isActive: true,
 }
 
-const REQUIRED_FIELDS: Array<{ key: keyof BranchFormValues; message: string }> = [
-  { key: 'name', message: 'Branch name is required.' },
-  { key: 'code', message: 'Branch code is required.' },
-  { key: 'city', message: 'Location/city is required.' },
-  { key: 'country', message: 'Country is required.' },
-  { key: 'address', message: 'Physical address is required.' },
-  { key: 'contactPersonUserId', message: 'Contact person is required.' },
-  { key: 'contactEmail', message: 'Contact email is required.' },
-  { key: 'contactPhone', message: 'Contact phone is required.' },
-]
-
 interface BranchFormModalProps {
   formState: BranchFormState
   employees: HostEmployee[]
@@ -48,8 +38,15 @@ interface BranchFormModalProps {
 
 export function BranchFormModal({ formState, employees, isSaving, onSubmit, onClose }: BranchFormModalProps) {
   const [values, setValues] = useState<BranchFormValues>(EMPTY_VALUES)
-  const [errors, setErrors] = useState<Partial<Record<keyof BranchFormValues, string>>>({})
+  const [errors, setErrors] = useState<BranchFormErrors>({})
   const employeeOptions = employees.map((employee) => ({ value: employee.id, label: employee.fullName }))
+  const isDirty = useUnsavedChanges(formState ? { ...formState.branch } : EMPTY_VALUES, values) && formState !== undefined
+  const { confirmDiscard } = useDiscardConfirm(isDirty)
+  // Closing (backdrop, Escape, Cancel) asks before dropping edits.
+  const handleClose = () => {
+    if (isSaving) return
+    confirmDiscard(onClose)
+  }
 
   useEffect(() => {
     if (!formState) return
@@ -62,14 +59,7 @@ export function BranchFormModal({ formState, employees, isSaving, onSubmit, onCl
   }
 
   const handleSubmit = () => {
-    const nextErrors: Partial<Record<keyof BranchFormValues, string>> = {}
-    for (const field of REQUIRED_FIELDS) {
-      const value = values[field.key]
-      if (!value || (typeof value === 'string' && !value.trim())) {
-        nextErrors[field.key] = field.message
-      }
-    }
-
+    const nextErrors = validateBranchValues(values)
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors)
       return
@@ -80,9 +70,16 @@ export function BranchFormModal({ formState, employees, isSaving, onSubmit, onCl
   }
 
   return (
-    <Modal isOpen={formState !== undefined} onClose={onClose} title="Edit Branch">
+    <Modal isOpen={formState !== undefined} onClose={handleClose} title="Edit Branch">
       <div className="flex flex-col gap-4">
-        <TextField label="Branch Name" value={values.name} onChange={(name) => updateField('name', name)} error={errors.name} required />
+        <TextField
+          label="Branch Name"
+          value={values.name}
+          onChange={(name) => updateField('name', name)}
+          error={errors.name}
+          required
+          maxLength={BRANCH_LIMITS.name}
+        />
         <TextField
           label="Branch Code"
           value={values.code}
@@ -96,6 +93,7 @@ export function BranchFormModal({ formState, employees, isSaving, onSubmit, onCl
           value={values.city}
           onChange={(city) => updateField('city', city)}
           error={errors.city}
+          maxLength={BRANCH_LIMITS.city}
           required
         />
         <SelectField
@@ -106,15 +104,15 @@ export function BranchFormModal({ formState, employees, isSaving, onSubmit, onCl
           error={errors.country}
           required
         />
-        <div className="flex flex-col gap-1.5">
-          <TextareaField
-            label="Physical Address"
-            value={values.address}
-            onChange={(address) => updateField('address', address)}
-            rows={2}
-          />
-          {errors.address && <p className="text-caption text-danger">{errors.address}</p>}
-        </div>
+        <TextareaField
+          label="Physical Address"
+          required
+          value={values.address}
+          onChange={(address) => updateField('address', address)}
+          rows={2}
+          error={errors.address}
+          maxLength={BRANCH_LIMITS.address}
+        />
         <SelectField
           label="Contact Person"
           value={values.contactPersonUserId}
@@ -130,13 +128,16 @@ export function BranchFormModal({ formState, employees, isSaving, onSubmit, onCl
           value={values.contactEmail}
           onChange={(contactEmail) => updateField('contactEmail', contactEmail)}
           error={errors.contactEmail}
+          maxLength={BRANCH_LIMITS.contactEmail}
           required
         />
         <TextField
           label="Contact Phone"
+          type="tel"
           value={values.contactPhone}
           onChange={(contactPhone) => updateField('contactPhone', contactPhone)}
           error={errors.contactPhone}
+          maxLength={BRANCH_LIMITS.contactPhone}
           required
         />
         <div className="flex flex-col gap-4 sm:flex-row">
@@ -162,12 +163,13 @@ export function BranchFormModal({ formState, employees, isSaving, onSubmit, onCl
           value={values.notes ?? ''}
           onChange={(notes) => updateField('notes', notes)}
           rows={2}
+          maxLength={BRANCH_LIMITS.notes}
         />
         <ToggleSwitch label="Active" checked={values.isActive} onChange={(checked) => updateField('isActive', checked)} />
       </div>
 
       <div className="flex items-center justify-end gap-3 pt-2">
-        <button type="button" onClick={onClose} className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text">
+        <button type="button" onClick={handleClose} className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text">
           Cancel
         </button>
         <PendingButton

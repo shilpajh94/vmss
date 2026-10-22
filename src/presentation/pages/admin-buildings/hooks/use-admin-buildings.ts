@@ -8,6 +8,7 @@ import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { Building } from '../../../../domain/entities/building-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 const PAGE_SIZE = 20
 
@@ -98,8 +99,8 @@ export function useAdminBuildings() {
       toast.success('Building deleted.')
       setPendingDelete(undefined)
       await loadBuildings()
-    } catch {
-      toast.error('Something went wrong deleting the building. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong deleting the building. Please try again.'))
     } finally {
       setIsDeleting(false)
     }

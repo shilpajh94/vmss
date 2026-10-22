@@ -38,17 +38,6 @@ export function TrackingLookupCard({ trackingId, onTrackingIdChange, onSubmit, l
       >
         Track Request
       </PendingButton>
-      <div className="flex items-center gap-3 text-caption text-text-muted">
-        <span className="h-px flex-1 bg-border" />
-        <span>or</span>
-        <span className="h-px flex-1 bg-border" />
-      </div>
-      <p className="text-center text-body text-text-muted">
-        Forgot Tracking ID?{' '}
-        <span className="cursor-not-allowed font-semibold text-secondary-accent" aria-disabled="true">
-          Track via Email
-        </span>
-      </p>
     </div>
   )
 }

@@ -32,6 +32,7 @@ export function SelectField({
   placeholderSelectable,
 }: SelectFieldProps) {
   const selectId = useId()
+  const errorId = `${selectId}-error`
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -44,6 +45,8 @@ export function SelectField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         aria-required={required}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
         disabled={disabled}
         className={`rounded-lg border bg-surface px-3 py-2 text-body text-text max-sm:text-base max-lg:min-h-10 focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60 ${
           error ? 'border-danger' : 'border-border'
@@ -58,7 +61,11 @@ export function SelectField({
           </option>
         ))}
       </select>
-      {error && <p className="text-caption text-danger">{error}</p>}
+      {error && (
+        <p id={errorId} className="text-caption text-danger">
+          {error}
+        </p>
+      )}
     </div>
   )
 }

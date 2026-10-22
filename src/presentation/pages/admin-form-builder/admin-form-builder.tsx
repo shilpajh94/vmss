@@ -197,7 +197,7 @@ export function AdminFormBuilderPage() {
         </AsyncRegion>
       </div>
 
-      <CreateStepModal isOpen={isCreateOpen} onClose={closeCreateStep} onCreate={(name) => void createStep(name)} />
+      <CreateStepModal isOpen={isCreateOpen} onClose={closeCreateStep} onCreate={createStep} />
 
       <ConfirmDialog
         isOpen={pendingDelete !== undefined}

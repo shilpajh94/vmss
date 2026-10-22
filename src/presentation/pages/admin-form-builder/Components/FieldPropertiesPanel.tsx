@@ -2,6 +2,7 @@ import { DndContext, MouseSensor, TouchSensor, closestCenter, useSensor, useSens
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useEffect, useState } from 'react'
+import { useUnsavedChanges } from '../../../hooks/use-unsaved-changes'
 import { GridIcon, LockIcon, PlusIcon, UnlockIcon, XIcon } from '../../../components/icons'
 import { Collapsible } from '../../../components/ui/Collapsible'
 import { SelectField } from '../../../components/ui/SelectField'
@@ -28,6 +29,8 @@ interface FieldPropertiesPanelProps {
   field: FormField
   siblingFields: FormField[]
   onSave: (input: FormFieldUpdateInput) => Promise<string | undefined>
+  // Whether the panel holds edits not yet saved to `field`.
+  onDirtyChange?: (isDirty: boolean) => void
 }
 
 const NO_CONDITION_VALUE = ''
@@ -78,6 +81,8 @@ function OptionRow({ row, disabled, onChange, onRemove }: OptionRowProps) {
         value={row.value}
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}
+        maxLength={100}
+        aria-label="Option"
         className="flex-1 rounded-lg border border-border px-3 py-2 text-body text-text focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60"
       />
       {!disabled && (
@@ -89,7 +94,7 @@ function OptionRow({ row, disabled, onChange, onRemove }: OptionRowProps) {
   )
 }
 
-export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldPropertiesPanelProps) {
+export function FieldPropertiesPanel({ field, siblingFields, onSave, onDirtyChange }: FieldPropertiesPanelProps) {
   const [fieldType, setFieldType] = useState<FormFieldType>(field.fieldType)
   const [label, setLabel] = useState(field.label)
   const [placeholder, setPlaceholder] = useState(field.placeholder ?? '')
@@ -107,11 +112,53 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
   const [width, setWidth] = useState(field.width)
   const [optionRows, setOptionRows] = useState<OptionDraftRow[]>(() => toOptionDraftRows(field.options))
   const [saveError, setSaveError] = useState<string | undefined>(undefined)
+  const [labelError, setLabelError] = useState<string | undefined>(undefined)
   // Session-scoped only — never persisted, never sent to the backend. A
   // locked field's `isLocked` never changes; this just lifts the frontend's
   // own disabled-input guard for label/placeholder/description/options
   // while the admin is actively editing this field.
   const [isUnlockedForEditing, setIsUnlockedForEditing] = useState(false)
+
+  // Compared trimmed, as `save` sends them, so a saved field reads as clean
+  // even though the panel only re-seeds when a different field is selected.
+  const isDirty = useUnsavedChanges(
+    {
+      fieldType: field.fieldType,
+      label: field.label.trim(),
+      placeholder: (field.placeholder ?? '').trim(),
+      description: (field.helpText ?? '').trim(),
+      isRequired: field.isRequired,
+      hideLabel: field.hideLabel,
+      isActive: field.isActive,
+      minLength: field.validationRules?.minLength?.toString() ?? '',
+      maxLength: field.validationRules?.maxLength?.toString() ?? '',
+      conditionFieldKey: field.visibilityCondition?.fieldKey ?? NO_CONDITION_VALUE,
+      conditionOperator: field.visibilityCondition?.operator ?? 'equals',
+      conditionValue: field.visibilityCondition?.value ?? '',
+      width: field.width,
+      options: (field.options ?? []).map((option) => option.trim()).filter(Boolean),
+    },
+    {
+      fieldType,
+      label: label.trim(),
+      placeholder: placeholder.trim(),
+      description: description.trim(),
+      isRequired,
+      hideLabel,
+      isActive,
+      minLength: minLength.trim(),
+      maxLength: maxLength.trim(),
+      conditionFieldKey,
+      conditionOperator,
+      conditionValue,
+      width,
+      options: optionRows.map((row) => row.value.trim()).filter(Boolean),
+    },
+  )
+  useEffect(() => {
+    onDirtyChange?.(isDirty)
+  }, [isDirty, onDirtyChange])
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
 
   const optionSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
@@ -161,6 +208,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
     setWidth(field.width)
     setOptionRows(toOptionDraftRows(field.options))
     setSaveError(undefined)
+    setLabelError(undefined)
     setIsUnlockedForEditing(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [field.id])
@@ -181,6 +229,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
     setWidth(field.width)
     setOptionRows(toOptionDraftRows(field.options))
     setSaveError(undefined)
+    setLabelError(undefined)
   }
 
   const relock = () => {
@@ -217,6 +266,11 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
   const save = async () => {
     const trimmedMin = minLength.trim()
     const trimmedMax = maxLength.trim()
+
+    // The key is fixed once created, so only the label itself is checked.
+    const nextLabelError = label.trim() ? undefined : `${isContentOnly ? 'Title' : 'Field label'} is required.`
+    setLabelError(nextLabelError)
+    if (nextLabelError) return
 
     setSaveError(undefined)
     const errorMessage = await onSave({
@@ -284,9 +338,23 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
         )}
       </div>
 
-      <TextField label={isContentOnly ? 'Title' : 'Field Label'} value={label} onChange={setLabel} required disabled={editableFieldsDisabled} />
+      <TextField
+        label={isContentOnly ? 'Title' : 'Field Label'}
+        value={label}
+        onChange={setLabel}
+        required
+        disabled={editableFieldsDisabled}
+        error={labelError}
+        maxLength={255}
+      />
       {!isContentOnly && (
-        <TextField label="Placeholder Text" value={placeholder} onChange={setPlaceholder} disabled={editableFieldsDisabled} />
+        <TextField
+          label="Placeholder Text"
+          value={placeholder}
+          onChange={setPlaceholder}
+          disabled={editableFieldsDisabled}
+          maxLength={255}
+        />
       )}
       <TextareaField
         label={isContentOnly ? 'Content' : 'Description'}
@@ -295,6 +363,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave }: FieldProp
         placeholder="Static text shown to the visitor alongside this field"
         rows={3}
         disabled={editableFieldsDisabled}
+        maxLength={1000}
       />
 
       <div>

@@ -77,9 +77,10 @@ export function createInitialStaffFormState(): StaffVisitRequestFormState {
 // `customFields` — see visitor-request/types.ts's matching `toVisitor`.
 function toStaffVisitor(entry: StaffVisitorFormEntry) {
   return {
-    fullName: entry.fullName,
-    email: entry.email,
-    phone: entry.phone,
+    // Trimmed so a stray space can't create a second "different" contact.
+    fullName: entry.fullName.trim(),
+    email: entry.email.trim(),
+    phone: entry.phone.trim(),
     preferredContactMethod: entry.preferredContactMethod,
     // See visitor-request/types.ts's matching comment.
     idProofType: entry.idProofType || undefined,

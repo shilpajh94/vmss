@@ -5,6 +5,7 @@ import { useToast } from '../../../components/toast/toast-context'
 import type { PermissionOut } from '../../../../domain/entities/permission-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 export function useAdminRoleCreateForm() {
   const navigate = useNavigate()
@@ -61,7 +62,7 @@ export function useAdminRoleCreateForm() {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: { name, description, permissionCodes: [...selectedCodes].sort() }, isLoading, reload })
+  const { release } = useFormPageRefresh({ values: { name, description, permissionCodes: [...selectedCodes].sort() }, isLoading, reload })
 
   const togglePermission = useCallback((code: string, checked: boolean) => {
     setSelectedCodes((current) => {
@@ -91,13 +92,14 @@ export function useAdminRoleCreateForm() {
         permissionCodes: Array.from(selectedCodes),
       })
       toast.success('Role created.')
+      release()
       navigate('/admin/roles')
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Something went wrong creating this role. Please try again.')
+      toast.error(toUserMessage(error, 'Something went wrong creating this role. Please try again.'))
     } finally {
       setIsSaving(false)
     }
-  }, [name, description, selectedCodes, createRoleUseCase, navigate, toast])
+  }, [name, description, selectedCodes, createRoleUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/roles')

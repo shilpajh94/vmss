@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { apiFieldErrors, toUserMessage } from '../../../utils/to-user-message'
 
-export type BranchCreateValues = Omit<Branch, 'id'>
+import { validateBranchValues, type BranchFormErrors, type BranchFormValues } from '../branch-form-validation'
+
+export type BranchCreateValues = BranchFormValues
 
 const EMPTY_VALUES: BranchCreateValues = {
   name: '',
@@ -24,16 +26,15 @@ const EMPTY_VALUES: BranchCreateValues = {
   isActive: true,
 }
 
-const REQUIRED_FIELDS: Array<{ key: keyof BranchCreateValues; message: string }> = [
-  { key: 'name', message: 'Branch name is required.' },
-  { key: 'code', message: 'Branch code is required.' },
-  { key: 'city', message: 'Location/city is required.' },
-  { key: 'country', message: 'Country is required.' },
-  { key: 'address', message: 'Physical address is required.' },
-  { key: 'contactPersonUserId', message: 'Contact person is required.' },
-  { key: 'contactEmail', message: 'Contact email is required.' },
-  { key: 'contactPhone', message: 'Contact phone is required.' },
-]
+// The API's per-field 422 messages for the fields this form shows.
+function pickBranchFieldErrors(error: unknown): BranchFormErrors {
+  const fieldErrors = apiFieldErrors(error)
+  const errors: BranchFormErrors = {}
+  for (const key of Object.keys(EMPTY_VALUES) as Array<keyof BranchFormValues>) {
+    if (fieldErrors[key]) errors[key] = fieldErrors[key]
+  }
+  return errors
+}
 
 export function useAdminBranchCreate() {
   const navigate = useNavigate()
@@ -41,7 +42,7 @@ export function useAdminBranchCreate() {
   const toast = useToast()
 
   const [values, setValues] = useState<BranchCreateValues>(EMPTY_VALUES)
-  const [errors, setErrors] = useState<Partial<Record<keyof BranchCreateValues, string>>>({})
+  const [errors, setErrors] = useState<BranchFormErrors>({})
   const [isSaving, setIsSaving] = useState(false)
   const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [employees, setEmployees] = useState<HostEmployee[]>([])
@@ -72,21 +73,14 @@ export function useAdminBranchCreate() {
     void loadReferenceData()
   }, [loadReferenceData])
 
-  useFormPageRefresh({ values, isLoading, reload })
+  const { release } = useFormPageRefresh({ values, isLoading, reload, baseline: EMPTY_VALUES })
 
   const updateField = useCallback(<K extends keyof BranchCreateValues>(key: K, value: BranchCreateValues[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
   }, [])
 
   const submit = useCallback(async () => {
-    const nextErrors: Partial<Record<keyof BranchCreateValues, string>> = {}
-    for (const field of REQUIRED_FIELDS) {
-      const value = values[field.key]
-      if (!value || (typeof value === 'string' && !value.trim())) {
-        nextErrors[field.key] = field.message
-      }
-    }
-
+    const nextErrors = validateBranchValues(values)
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors)
       return
@@ -96,14 +90,16 @@ export function useAdminBranchCreate() {
     setIsSaving(true)
     try {
       await createBranchUseCase.execute(values)
+      release()
       navigate('/admin/branches')
       toast.success('Branch created.')
-    } catch {
-      toast.error('Something went wrong creating the branch. Please try again.')
+    } catch (error) {
+      setErrors(pickBranchFieldErrors(error))
+      toast.error(toUserMessage(error, 'Something went wrong creating the branch. Please try again.'))
     } finally {
       setIsSaving(false)
     }
-  }, [values, createBranchUseCase, navigate, toast])
+  }, [values, createBranchUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/branches')

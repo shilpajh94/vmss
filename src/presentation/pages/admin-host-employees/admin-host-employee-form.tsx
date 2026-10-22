@@ -186,6 +186,7 @@ export function AdminHostEmployeeFormPage() {
                 value={createValues.fullName}
                 onChange={(fullName) => updateCreateField('fullName', fullName)}
                 error={createErrors.fullName}
+                maxLength={255}
                 labelClassName={fieldLabelClassName}
               />
               <TextField
@@ -195,6 +196,7 @@ export function AdminHostEmployeeFormPage() {
                 value={createValues.email}
                 onChange={(email) => updateCreateField('email', email)}
                 error={createErrors.email}
+                maxLength={255}
                 labelClassName={fieldLabelClassName}
               />
               <div className="flex flex-col gap-4 md:flex-row md:gap-6">
@@ -206,6 +208,7 @@ export function AdminHostEmployeeFormPage() {
                     value={createValues.employeeCode}
                     onChange={(employeeCode) => updateCreateField('employeeCode', employeeCode)}
                     error={createErrors.employeeCode}
+                    maxLength={50}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
@@ -214,6 +217,7 @@ export function AdminHostEmployeeFormPage() {
                     label="Designation"
                     value={createValues.designation ?? ''}
                     onChange={(designation) => updateCreateField('designation', designation || undefined)}
+                    maxLength={100}
                     placeholder="e.g. Facilities Manager"
                     labelClassName={fieldLabelClassName}
                   />
@@ -223,8 +227,11 @@ export function AdminHostEmployeeFormPage() {
                 <div className="flex-1">
                   <TextField
                     label="Phone Number"
+                    type="tel"
                     value={createValues.phoneNumber ?? ''}
                     onChange={(phoneNumber) => updateCreateField('phoneNumber', phoneNumber || undefined)}
+                    error={createErrors.phoneNumber}
+                    maxLength={50}
                     placeholder="e.g. +1 555 000 1234"
                     labelClassName={fieldLabelClassName}
                   />

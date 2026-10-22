@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
+import { isValidEmail } from '../../../utils/is-valid-email'
 import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 import type { RegistrationType } from '../types'
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export type OtpPhase = 'request' | 'verify'
 export type OtpRequestStatus = 'idle' | 'requesting' | 'requested' | 'error'
@@ -39,7 +38,7 @@ export function useVisitorOtp({ onVerified }: UseVisitorOtpOptions) {
     }
 
     const looksLikeEmail = trimmedContact.includes('@')
-    const isValid = looksLikeEmail ? EMAIL_PATTERN.test(trimmedContact) : isValidPhoneNumber(trimmedContact)
+    const isValid = looksLikeEmail ? isValidEmail(trimmedContact) : isValidPhoneNumber(trimmedContact)
     if (!isValid) {
       setContactError(looksLikeEmail ? 'Enter a valid email address.' : 'Enter a valid mobile number.')
       return

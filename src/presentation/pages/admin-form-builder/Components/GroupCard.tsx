@@ -191,6 +191,7 @@ export function GroupCard({ group, fieldCount, siblingFields, onSaveProperties, 
             onChange={setConditionValue}
             onBlur={() => void saveCondition(conditionFieldKey, conditionOperator, conditionValue)}
             placeholder="e.g. group"
+            maxLength={255}
           />
         </Collapsible>
       </div>

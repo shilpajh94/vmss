@@ -1,11 +1,11 @@
 import { useNavigate } from 'react-router'
-import { CalendarIcon, CheckIcon, HomeIcon, UsersIcon } from './icons'
+import { CalendarIcon, HomeIcon, PlusIcon, UsersIcon } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
 import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
 
-export type DashboardSidebarActiveItem = 'dashboard' | 'all-visitors' | 'calendar' | 'my-actions'
+export type DashboardSidebarActiveItem = 'dashboard' | 'all-visitors' | 'calendar' | 'register-visitor'
 
 interface DashboardSidebarProps {
   activeItem: DashboardSidebarActiveItem
@@ -15,7 +15,7 @@ interface DashboardSidebarProps {
 // frequent task (app-shell "Sidebar menus are ordered by how often they are used").
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: HomeIcon },
-  { key: 'my-actions', label: 'My actions', icon: CheckIcon },
+  { key: 'register-visitor', label: 'Register Visitor', icon: PlusIcon },
   { key: 'all-visitors', label: 'Invitations', icon: UsersIcon },
   { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
 ] as const
@@ -24,7 +24,7 @@ const STAFF_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: Da
   ['/staff/dashboard', 'dashboard'],
   ['/staff/invitations', 'all-visitors'],
   ['/staff/calendar', 'calendar'],
-  ['/staff/visitors/new', 'my-actions'],
+  ['/staff/visitors/new', 'register-visitor'],
 ]
 
 // Derives which sidebar entry highlights from the current URL, so the active
@@ -51,7 +51,7 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
     if (key === 'dashboard') navigate('/staff/dashboard')
     if (key === 'all-visitors') navigate('/staff/invitations')
     if (key === 'calendar') navigate('/staff/calendar')
-    if (key === 'my-actions') navigate('/staff/visitors/new')
+    if (key === 'register-visitor') navigate('/staff/visitors/new')
   }
 
   return (

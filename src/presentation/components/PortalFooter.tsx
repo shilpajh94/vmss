@@ -1,5 +1,10 @@
-import { SUPPORT_EMAIL, copyrightLine } from '../brand'
+import { PRIVACY_POLICY_URL, SUPPORT_EMAIL, TERMS_URL, copyrightLine, footerLinks } from '../brand'
 import { BrandLogo } from './BrandLogo'
+
+const LINKS = footerLinks([
+  { label: 'Privacy Policy', href: PRIVACY_POLICY_URL },
+  { label: 'Terms of Service', href: TERMS_URL },
+])
 
 export function PortalFooter() {
   return (
@@ -11,12 +16,11 @@ export function PortalFooter() {
           <p className="font-body text-[12px] text-text-faint">{copyrightLine()}</p>
         </div>
         <div className="flex flex-col items-start gap-3 font-body text-[13px] text-text-muted sm:flex-row sm:flex-wrap sm:gap-6 lg:whitespace-nowrap">
-          <a href="#" className="hover:text-text">
-            Privacy Policy
-          </a>
-          <a href="#" className="hover:text-text">
-            Terms of Service
-          </a>
+          {LINKS.map((link) => (
+            <a key={link.label} href={link.href} className="hover:text-text">
+              {link.label}
+            </a>
+          ))}
           {SUPPORT_EMAIL && (
             <a href={`mailto:${SUPPORT_EMAIL}`} className="hover:text-text">
               Support Contact: {SUPPORT_EMAIL}

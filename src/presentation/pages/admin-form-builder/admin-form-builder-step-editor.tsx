@@ -24,6 +24,7 @@ export function AdminFormBuilderStepEditorPage() {
     groups,
     selectedField,
     selectField,
+    setIsPanelDirty,
     panelScrollRequest,
     phase,
     isRefreshing,
@@ -309,6 +310,7 @@ export function AdminFormBuilderStepEditorPage() {
                   field={selectedField}
                   siblingFields={fields}
                   onSave={(input) => saveFieldProperties(selectedField.id, input)}
+                  onDirtyChange={setIsPanelDirty}
                 />
               </div>
             )}
@@ -317,7 +319,7 @@ export function AdminFormBuilderStepEditorPage() {
       </div>
 
       <AddFieldModal isOpen={isAddFieldOpen} onClose={closeAddField} onCreate={createField} />
-      <CreateGroupModal isOpen={isAddGroupOpen} onClose={closeAddGroup} onCreate={(input) => void createGroup(input)} />
+      <CreateGroupModal isOpen={isAddGroupOpen} onClose={closeAddGroup} onCreate={createGroup} />
 
       <ConfirmDialog
         isOpen={pendingDelete !== undefined}

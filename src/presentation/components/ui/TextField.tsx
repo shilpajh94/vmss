@@ -18,6 +18,11 @@ interface TextFieldProps {
   labelClassName?: string
   min?: string
   max?: string
+  // The API's column limit, so an over-long value is stopped at the keyboard
+  // rather than rejected by a 422 after submit.
+  maxLength?: number
+  inputMode?: 'text' | 'email' | 'tel' | 'numeric' | 'decimal' | 'url' | 'search'
+  autoComplete?: string
 }
 
 export function TextField({
@@ -35,8 +40,13 @@ export function TextField({
   labelClassName,
   min,
   max,
+  maxLength,
+  inputMode,
+  autoComplete,
 }: TextFieldProps) {
   const inputId = useId()
+  const messageId = `${inputId}-message`
+  const hasMessage = Boolean(error || helperText)
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -64,16 +74,29 @@ export function TextField({
         }}
         placeholder={placeholder}
         aria-required={required}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={hasMessage ? messageId : undefined}
         disabled={disabled}
         readOnly={readOnly}
         min={min}
         max={max}
+        maxLength={maxLength}
+        inputMode={inputMode}
+        autoComplete={autoComplete}
         className={`rounded-lg border px-3 py-2 text-body text-text max-sm:text-base max-lg:min-h-10 placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60 ${
           readOnly ? 'cursor-default bg-border-subtle text-text-muted' : ''
         } ${error ? 'border-danger' : 'border-border'}`}
       />
-      {helperText && !error && <p className="text-caption text-text-muted">{helperText}</p>}
-      {error && <p className="text-caption text-danger">{error}</p>}
+      {helperText && !error && (
+        <p id={messageId} className="text-caption text-text-muted">
+          {helperText}
+        </p>
+      )}
+      {error && (
+        <p id={messageId} className="text-caption text-danger">
+          {error}
+        </p>
+      )}
     </div>
   )
 }

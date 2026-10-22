@@ -6,6 +6,7 @@ import type { RoleOut } from '../../../../domain/entities/role-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 interface WorkflowLevelForm {
   approverRoleId: string
@@ -108,7 +109,7 @@ export function useAdminWorkflowForm() {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: { selectedCategoryId, levels }, isLoading, reload: retry })
+  const { release } = useFormPageRefresh({ values: { selectedCategoryId, levels }, isLoading, reload: retry })
 
   const updateCategory = useCallback((categoryId: string) => {
     setSelectedCategoryId(categoryId)
@@ -155,13 +156,14 @@ export function useAdminWorkflowForm() {
     try {
       await saveWorkflowUseCase.execute(selectedCategoryId, levels)
       toast.success(isEditMode ? 'Workflow updated.' : 'Workflow created.')
+      release()
       navigate('/admin/workflows')
-    } catch {
-      toast.error(`Something went wrong ${isEditMode ? 'updating' : 'creating'} the workflow. Please try again.`)
+    } catch (error) {
+      toast.error(toUserMessage(error, `Something went wrong ${isEditMode ? 'updating' : 'creating'} the workflow. Please try again.`))
     } finally {
       setIsSaving(false)
     }
-  }, [levels, selectedCategoryId, isEditMode, saveWorkflowUseCase, navigate, toast])
+  }, [levels, selectedCategoryId, isEditMode, saveWorkflowUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/workflows')

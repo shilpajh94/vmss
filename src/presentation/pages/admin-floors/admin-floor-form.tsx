@@ -4,6 +4,8 @@ import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
+import { WholeNumberField } from '../../components/ui/WholeNumberField'
+import { FLOOR_LIMITS } from './floor-form-validation'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminFloorForm } from './hooks/use-admin-floor-form'
 
@@ -64,7 +66,14 @@ export function AdminFloorFormPage() {
           <div className="flex w-full flex-col gap-6 rounded-2xl border border-border bg-surface px-6 py-8">
             <div className="flex flex-col gap-4 md:flex-row md:gap-6">
               <div className="flex-1">
-                <TextField label="Floor Name" required value={values.name} onChange={(name) => updateField('name', name)} error={errors.name} />
+                <TextField
+                  label="Floor Name"
+                  required
+                  value={values.name}
+                  onChange={(name) => updateField('name', name)}
+                  error={errors.name}
+                  maxLength={FLOOR_LIMITS.name}
+                />
               </div>
               <div className="flex-1">
                 <SelectField
@@ -81,19 +90,22 @@ export function AdminFloorFormPage() {
             </div>
             <div className="flex flex-col gap-4 md:flex-row md:gap-6">
               <div className="flex-1">
-                <TextField
+                <WholeNumberField
                   label="Floor Number"
-                  type="number"
-                  value={String(values.floorNumber)}
-                  onChange={(value) => updateField('floorNumber', Number(value) || 0)}
+                  required
+                  allowNegative
+                  value={values.floorNumber}
+                  onChange={(floorNumber) => updateField('floorNumber', floorNumber)}
+                  error={errors.floorNumber}
+                  helperText="0 is the ground floor; basements are negative."
                 />
               </div>
               <div className="flex-1">
-                <TextField
+                <WholeNumberField
                   label="Capacity"
-                  type="number"
-                  value={String(values.capacity)}
-                  onChange={(value) => updateField('capacity', Number(value) || 0)}
+                  value={values.capacity}
+                  onChange={(capacity) => updateField('capacity', capacity)}
+                  error={errors.capacity}
                 />
               </div>
               <div className="flex-1">

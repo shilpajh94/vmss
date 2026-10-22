@@ -9,6 +9,7 @@ import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 const PAGE_SIZE = 20
 
@@ -103,8 +104,8 @@ export function useAdminDepartments() {
       toast.success('Department deleted.')
       setPendingDelete(undefined)
       await loadDepartments()
-    } catch {
-      toast.error('Something went wrong deleting the department. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong deleting the department. Please try again.'))
     } finally {
       setIsDeleting(false)
     }

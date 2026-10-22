@@ -9,6 +9,8 @@ import type { FormStep } from '../../../../domain/entities/form-builder-schema'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormBuilderPublishState } from './use-form-builder-publish-state'
+import { toUserMessage } from '../../../utils/to-user-message'
+import { slugifyKey } from '../form-builder-key'
 
 /** Sentinel used in the workspace `<select>` for the tenant-wide default
  * scope — `undefined` (a real branch id otherwise) is what every
@@ -104,11 +106,11 @@ export function useAdminFormBuilder() {
         const updated = await updateFormStepUseCase.execute(step.id, { isActive: !step.isActive }, selectedBranchId)
         setSteps((current) => current.map((s) => (s.id === updated.id ? updated : s)))
         markDirty()
-      } catch {
+      } catch (error) {
         toast.error(
           step.isLocked
             ? 'This step is locked and cannot be deactivated.'
-            : 'Something went wrong updating the step. Please try again.',
+            : toUserMessage(error, 'Something went wrong updating the step. Please try again.'),
         )
       }
     },
@@ -125,8 +127,8 @@ export function useAdminFormBuilder() {
       setSteps((current) => current.filter((s) => s.id !== pendingDelete.id))
       markDirty()
       toast.success('Step removed.')
-    } catch {
-      toast.error('Something went wrong removing the step. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong removing the step. Please try again.'))
     } finally {
       setPendingDelete(undefined)
     }
@@ -136,21 +138,18 @@ export function useAdminFormBuilder() {
   const closeCreateStep = useCallback(() => setIsCreateOpen(false), [])
 
   const createStep = useCallback(
-    async (name: string) => {
-      const key = name
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '')
-      if (!key) return
+    async (name: string): Promise<string | undefined> => {
       try {
-        const created = await createFormStepUseCase.execute({ key, name: name.trim() }, selectedBranchId)
+        const created = await createFormStepUseCase.execute({ key: slugifyKey(name), name: name.trim() }, selectedBranchId)
         setSteps((current) => [...current, created].sort((a, b) => a.orderIndex - b.orderIndex))
         markDirty()
         toast.success('Registration step created.')
         setIsCreateOpen(false)
-      } catch {
-        toast.error('Something went wrong creating the step. Please try again.')
+        return undefined
+      } catch (error) {
+        const message = toUserMessage(error, 'Something went wrong creating the step. Please try again.')
+        toast.error(message)
+        return message
       }
     },
     [createFormStepUseCase, selectedBranchId, toast, markDirty],
@@ -167,9 +166,9 @@ export function useAdminFormBuilder() {
         const updated = await reorderFormStepsUseCase.execute(orderedIds, selectedBranchId)
         setSteps([...updated].sort((a, b) => a.orderIndex - b.orderIndex))
         markDirty()
-      } catch {
+      } catch (error) {
         setSteps(previous)
-        toast.error('Something went wrong reordering steps. Please try again.')
+        toast.error(toUserMessage(error, 'Something went wrong reordering steps. Please try again.'))
       }
     },
     [steps, reorderFormStepsUseCase, selectedBranchId, toast, markDirty],
@@ -189,8 +188,8 @@ export function useAdminFormBuilder() {
       const result = await publishFormConfigUseCase.execute(selectedBranchId)
       markPublished()
       toast.success(`Published — now live as v${result.version}.`)
-    } catch {
-      toast.error('Something went wrong publishing. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong publishing. Please try again.'))
     } finally {
       setIsPublishing(false)
     }

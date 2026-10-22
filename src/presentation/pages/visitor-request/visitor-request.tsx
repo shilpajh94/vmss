@@ -16,6 +16,7 @@ import { OtpScreenLayout } from './Components/otp/OtpScreenLayout'
 import { OtpVerifyScreen } from './Components/otp/OtpVerifyScreen'
 import { StepSidebar } from './Components/StepSidebar'
 import { useStepDirection } from '../../hooks/use-step-direction'
+import { useUnsavedChangesGuard } from '../../hooks/use-unsaved-changes-guard'
 import { CarriedItemsStep } from './Components/steps/CarriedItemsStep'
 import { ConsentStep } from './Components/steps/ConsentStep'
 import { GenericConfiguredStep } from './Components/steps/GenericConfiguredStep'
@@ -50,6 +51,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     uploadFile,
     getFilePreviewUrl,
     submissionStatus,
+    hasUnsavedInput,
     trackingId,
     confirmedFullName,
     submissionError,
@@ -74,6 +76,8 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
     vehicleInfoGroups,
     vehicleInfoAllFields,
   } = useVisitorRequestWizard(initial, branches, buildings)
+
+  useUnsavedChangesGuard(hasUnsavedInput)
 
   const stepLabels = isFormConfigLoading ? getSkeletonStepLabels() : activeSteps.map(resolveStepLabel)
   const activeStep = activeSteps[currentStep]

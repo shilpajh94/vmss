@@ -70,7 +70,7 @@ export function useAdminKioskForm() {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: values, isLoading, reload: retry })
+  const { release } = useFormPageRefresh({ values: values, isLoading, reload: retry })
 
   const updateField = useCallback(<K extends keyof KioskInput>(key: K, value: KioskInput[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
@@ -102,12 +102,14 @@ export function useAdminKioskForm() {
         await createKioskUseCase.execute(input)
         toast.success('Kiosk created.')
       }
+      release()
       navigate('/admin/kiosks')
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setErrors({ name: 'A kiosk with this name already exists.' })
       } else if (error instanceof ApiError && error.status === 404) {
         toast.error('That kiosk no longer exists.')
+        release()
         navigate('/admin/kiosks', { replace: true })
       } else if (error instanceof ApiError && (error.status === 403 || error.status === 422)) {
         toast.error(error.message)
@@ -117,7 +119,7 @@ export function useAdminKioskForm() {
     } finally {
       setIsSaving(false)
     }
-  }, [values, isEditMode, id, createKioskUseCase, updateKioskUseCase, navigate, toast])
+  }, [values, isEditMode, id, createKioskUseCase, updateKioskUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/kiosks')

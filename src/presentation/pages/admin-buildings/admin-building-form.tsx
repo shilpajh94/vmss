@@ -77,15 +77,18 @@ export function AdminBuildingFormPage() {
                 <div className="flex-1">
                   <TextField
                     label="Building Name"
+                    required
                     value={details.name}
                     onChange={(name) => updateField('name', name)}
                     error={errors.name}
+                    maxLength={255}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
                 <div className="flex-1">
                   <SelectField
                     label="Branch"
+                    required
                     value={details.branchId}
                     onChange={(branchId) => updateField('branchId', branchId)}
                     options={branchOptions}
@@ -100,9 +103,11 @@ export function AdminBuildingFormPage() {
                 <div className="flex-1">
                   <TextField
                     label="Building Code"
+                    required
                     value={details.code}
                     onChange={(code) => updateField('code', code)}
                     error={errors.code}
+                    maxLength={50}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
@@ -111,6 +116,7 @@ export function AdminBuildingFormPage() {
                     label="Street Address"
                     value={details.address}
                     onChange={(address) => updateField('address', address)}
+                    maxLength={500}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>

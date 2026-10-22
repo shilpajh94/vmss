@@ -71,6 +71,7 @@ export function AdminDepartmentFormPage() {
                     value={values.name}
                     onChange={(name) => updateField('name', name)}
                     error={errors.name}
+                    maxLength={255}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
@@ -94,6 +95,7 @@ export function AdminDepartmentFormPage() {
                 value={values.code}
                 onChange={(code) => updateField('code', code)}
                 error={errors.code}
+                maxLength={50}
                 labelClassName={fieldLabelClassName}
               />
               <SelectField
@@ -108,6 +110,7 @@ export function AdminDepartmentFormPage() {
                 label="Description"
                 value={values.description ?? ''}
                 onChange={(description) => updateField('description', description)}
+                maxLength={2000}
                 placeholder="Brief summary of this department's function, coverage, and workspace rules..."
                 rows={3}
                 labelClassName={fieldLabelClassName}

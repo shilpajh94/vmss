@@ -199,6 +199,7 @@ export function VehicleInfoStep({
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <TextField
               label="License Plate"
+              maxLength={50}
               placeholder="Enter plate number"
               value={draftVehicle.licensePlate}
               onChange={(licensePlate) => setDraftVehicle({ ...draftVehicle, licensePlate })}
@@ -208,6 +209,7 @@ export function VehicleInfoStep({
             {vehicleInfoFields.makeModelActive && (
               <TextField
                 label="Make / Model"
+                maxLength={255}
                 placeholder="e.g. Honda City"
                 value={draftVehicle.makeModel}
                 onChange={(makeModel) => setDraftVehicle({ ...draftVehicle, makeModel })}
@@ -218,6 +220,7 @@ export function VehicleInfoStep({
             {vehicleInfoFields.colorActive && (
               <TextField
                 label="Color"
+                maxLength={50}
                 placeholder="e.g. White"
                 value={draftVehicle.color}
                 onChange={(color) => setDraftVehicle({ ...draftVehicle, color })}

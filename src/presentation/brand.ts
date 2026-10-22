@@ -13,6 +13,22 @@ export const BRAND_NAME = 'Guestify'
 // line when this is unset rather than showing a made-up address.
 export const SUPPORT_EMAIL: string | null = import.meta.env.VITE_SUPPORT_EMAIL?.trim() || null
 
+// Per-deployment policy pages, linked from the portal and sign-in footers.
+// Each link is hidden while its URL is unset, never pointed at `#`.
+export const PRIVACY_POLICY_URL: string | null = import.meta.env.VITE_PRIVACY_URL?.trim() || null
+export const TERMS_URL: string | null = import.meta.env.VITE_TERMS_URL?.trim() || null
+export const SECURITY_POLICY_URL: string | null = import.meta.env.VITE_SECURITY_URL?.trim() || null
+
+export interface FooterLink {
+  label: string
+  href: string
+}
+
+// The footer links that have a URL configured, in display order.
+export function footerLinks(links: Array<{ label: string; href: string | null }>): FooterLink[] {
+  return links.filter((link): link is FooterLink => link.href !== null)
+}
+
 export const BRAND_LOGOS = {
   // Dark wordmark, for light surfaces.
   light: { src: logoLight },

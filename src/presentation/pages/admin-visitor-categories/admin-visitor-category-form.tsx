@@ -4,6 +4,7 @@ import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { TextareaField } from '../../components/ui/TextareaField'
+import { WholeNumberField } from '../../components/ui/WholeNumberField'
 import { usePageHeader } from '../../context/page-header-context'
 import { BadgeColorField } from './Components/BadgeColorField'
 import { useAdminVisitorCategoryForm } from './hooks/use-admin-visitor-category-form'
@@ -69,6 +70,7 @@ export function AdminVisitorCategoryFormPage() {
                     value={values.name}
                     onChange={(name) => updateField('name', name)}
                     error={errors.name}
+                    maxLength={100}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
@@ -79,6 +81,7 @@ export function AdminVisitorCategoryFormPage() {
                     value={values.code}
                     onChange={(code) => updateField('code', code)}
                     error={errors.code}
+                    maxLength={50}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
@@ -87,6 +90,7 @@ export function AdminVisitorCategoryFormPage() {
                 label="Description"
                 value={values.description ?? ''}
                 onChange={(description) => updateField('description', description || undefined)}
+                maxLength={500}
                 placeholder="Brief summary of who this category covers..."
                 rows={3}
                 labelClassName={fieldLabelClassName}
@@ -120,12 +124,12 @@ export function AdminVisitorCategoryFormPage() {
                   />
                 </div>
               </div>
-              <TextField
+              <WholeNumberField
                 label="Max Duration (minutes)"
-                type="number"
-                value={values.maxDurationMinutes !== undefined ? String(values.maxDurationMinutes) : ''}
-                onChange={(value) => updateField('maxDurationMinutes', value ? Number(value) : undefined)}
+                value={values.maxDurationMinutes}
+                onChange={(maxDurationMinutes) => updateField('maxDurationMinutes', maxDurationMinutes)}
                 placeholder="e.g. 480"
+                error={errors.maxDurationMinutes}
                 labelClassName={fieldLabelClassName}
               />
             </div>

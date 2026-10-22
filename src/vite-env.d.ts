@@ -16,4 +16,7 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_MEASUREMENT_ID: string
   readonly VITE_FIREBASE_VAPID_KEY: string
   readonly VITE_SUPPORT_EMAIL?: string
+  readonly VITE_PRIVACY_URL?: string
+  readonly VITE_TERMS_URL?: string
+  readonly VITE_SECURITY_URL?: string
 }

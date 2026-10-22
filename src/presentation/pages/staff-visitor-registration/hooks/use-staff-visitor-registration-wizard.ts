@@ -29,10 +29,8 @@ import {
   type StaffVisitorFormEntry,
   type StaffVisitRequestFormState,
 } from '../types'
-
-// Matches the input's own `type="email"` validation closely enough to gate
-// a lookup request without firing on every keystroke of a half-typed address.
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+import { toUserMessage } from '../../../utils/to-user-message'
+import { isValidEmail } from '../../../utils/is-valid-email'
 
 // The backend rejects phone lookups with fewer than 7 digits (422) or more
 // than 50 characters, so those are gated client-side instead of sent.
@@ -59,7 +57,7 @@ async function fetchExistingStaffFile(url: string, baseName: string): Promise<Fi
 
 function validateStaffVisitorContact(contact: StaffVisitorFormEntry, visitorInfoFields: VisitorInfoFieldState): Record<string, string> {
   const errors: Record<string, string> = {}
-  if (!contact.fullName) errors.fullName = 'Full name is required.'
+  if (!contact.fullName.trim()) errors.fullName = 'Full name is required.'
   // Only the contact field matching the chosen preferred contact method is
   // mandatory (mirrors the API's `_require_contact_for_method`) — the other
   // field is optional, not both unconditionally.
@@ -69,6 +67,9 @@ function validateStaffVisitorContact(contact: StaffVisitorFormEntry, visitorInfo
     errors.email = 'Email is required.'
   } else if ((contact.preferredContactMethod === 'sms' || contact.preferredContactMethod === 'whatsapp') && !contact.phone) {
     errors.phone = 'Phone number is required.'
+  }
+  if (!errors.email && contact.email.trim() && !isValidEmail(contact.email)) {
+    errors.email = 'Enter a valid email address.'
   }
   if (contact.phone && !isValidPhoneNumber(contact.phone)) {
     errors.phone = 'Enter a valid phone number.'
@@ -230,7 +231,7 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[], buildings
 
   useEffect(() => {
     const email = formState.primaryContact.email.trim().toLowerCase()
-    if (!EMAIL_PATTERN.test(email) || lastLookedUpEmailRef.current === email) return
+    if (!isValidEmail(email) || lastLookedUpEmailRef.current === email) return
 
     const timeoutId = setTimeout(() => {
       lastLookedUpEmailRef.current = email
@@ -596,7 +597,7 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[], buildings
           // Leave confirmedFullName unset — the success screen just omits it.
         })
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Something went wrong submitting your request. Please try again.'
+      const message = toUserMessage(error, 'Something went wrong submitting your request. Please try again.')
       setSubmissionError(message)
       setSubmissionStatus('error')
       toast.error(message)

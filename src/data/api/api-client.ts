@@ -1,5 +1,5 @@
 import type { ZodType } from 'zod'
-import { ApiError, extractErrorMessage } from './api-error'
+import { ApiError, extractErrorMessage, extractFieldErrors } from './api-error'
 import type { ApiEndpointDefinition } from './api-endpoints'
 
 // An array value is sent as a repeated key (`status=a&status=b`).
@@ -100,7 +100,7 @@ export class ApiClient {
     if (response.ok) return
 
     const body: unknown = await response.json().catch(() => undefined)
-    throw new ApiError(extractErrorMessage(body, response.status), response.status)
+    throw new ApiError(extractErrorMessage(body, response.status), response.status, extractFieldErrors(body))
   }
 
   // `hasToken: true` means the endpoint requires the staff session token;

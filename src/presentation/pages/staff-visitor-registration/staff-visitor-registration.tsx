@@ -21,6 +21,7 @@ import { RegistrationStepper } from './Components/RegistrationStepper'
 import { RegistrationWorkspaceHeader } from './Components/RegistrationWorkspaceHeader'
 import { VisitorInfoStep } from './Components/VisitorInfoStep'
 import { useStaffVisitorRegistrationWizard } from './hooks/use-staff-visitor-registration-wizard'
+import { createInitialStaffFormState } from './types'
 import { useFormPageRefresh } from '../../hooks/use-form-page-refresh'
 
 export function StaffVisitorRegistrationPage() {
@@ -127,11 +128,25 @@ export function StaffVisitorRegistrationPage() {
     void loadVisitInfoMasterData()
   }, [loadVisitInfoMasterData])
 
-  useFormPageRefresh({ values: formState, isLoading: isMasterDataLoading, reload: reloadRegistration })
+  // The baseline is the empty form: the wizard can be typed into while its
+  // option lists load. A submitted registration has nothing left unsaved.
+  const [initialFormState] = useState(createInitialStaffFormState)
+  const { release, confirmDiscard } = useFormPageRefresh({
+    values: formState,
+    isLoading: isMasterDataLoading,
+    reload: reloadRegistration,
+    baseline: initialFormState,
+    isComplete: submissionStatus === 'success',
+  })
 
+  // Cancel asks first once anything has been entered (QA: it used to
+  // discard silently).
   const cancelRegistration = () => {
-    reset()
-    navigate('/staff/invitations')
+    confirmDiscard(() => {
+      release()
+      reset()
+      navigate('/staff/invitations')
+    })
   }
 
   return (

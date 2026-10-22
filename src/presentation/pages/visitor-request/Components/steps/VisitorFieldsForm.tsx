@@ -68,6 +68,7 @@ export function VisitorFieldsForm({
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <TextField
         label="Full Name"
+        maxLength={255}
         placeholder="Full name"
         value={value.fullName}
         onChange={(fullName) => onChange({ ...value, fullName })}
@@ -78,6 +79,7 @@ export function VisitorFieldsForm({
       />
       <TextField
         label="Email Address"
+        maxLength={320}
         placeholder="Email address"
         type="email"
         value={value.email}
@@ -87,6 +89,7 @@ export function VisitorFieldsForm({
       />
       <TextField
         label="Phone Number"
+        maxLength={50}
         placeholder="Phone number"
         type="tel"
         value={value.phone}

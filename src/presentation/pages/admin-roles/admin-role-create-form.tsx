@@ -2,6 +2,8 @@ import { BackButton } from '../../components/BackButton'
 import { Checkbox } from '../../components/ui/Checkbox'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
+import { TextField } from '../../components/ui/TextField'
+import { TextareaField } from '../../components/ui/TextareaField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminRoleCreateForm } from './hooks/use-admin-role-create-form'
 
@@ -47,34 +49,16 @@ export function AdminRoleCreateFormPage() {
           </div>
 
           <div className="flex w-full flex-col gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="role-name" className="font-body text-sm font-semibold text-text">
-                Role name
-              </label>
-              <input
-                id="role-name"
-                type="text"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className="rounded-lg border border-border bg-bg px-3 py-2 font-body text-sm text-text"
-                placeholder="e.g. Front Desk Supervisor"
-              />
-              {nameError ? <p className="font-body text-xs text-danger">{nameError}</p> : null}
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="role-description" className="font-body text-sm font-semibold text-text">
-                Description
-              </label>
-              <textarea
-                id="role-description"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                className="rounded-lg border border-border bg-bg px-3 py-2 font-body text-sm text-text"
-                placeholder="Optional"
-                rows={2}
-              />
-            </div>
+            <TextField
+              label="Role name"
+              required
+              value={name}
+              onChange={setName}
+              error={nameError}
+              placeholder="e.g. Front Desk Supervisor"
+              maxLength={100}
+            />
+            <TextareaField label="Description" value={description} onChange={setDescription} placeholder="Optional" rows={2} maxLength={255} />
           </div>
 
           <div className="flex w-full flex-1 flex-col gap-3 rounded-2xl border border-border bg-surface p-4 md:p-6">

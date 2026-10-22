@@ -9,6 +9,7 @@ import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { RolePermissionResyncEntry } from '../../../../domain/entities/permission-out-schema'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 const PAGE_SIZE = 20
 
@@ -75,7 +76,7 @@ export function useAdminRoles() {
       toast.success(grantedCount > 0 ? `Granted ${grantedCount} missing permission(s).` : 'All roles already have every catalog permission.')
       await loadRoles()
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Something went wrong resyncing permissions. Please try again.')
+      toast.error(toUserMessage(error, 'Something went wrong resyncing permissions. Please try again.'))
     } finally {
       setIsResyncing(false)
     }

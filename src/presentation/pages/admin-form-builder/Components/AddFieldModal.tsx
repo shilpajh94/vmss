@@ -6,6 +6,7 @@ import { TextField } from '../../../components/ui/TextField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
 import { FIELD_TYPE_CATALOG, OPTION_OPTIONAL_FIELD_TYPES, OPTION_REQUIRED_FIELD_TYPES } from '../field-type-catalog'
 import type { FormFieldCreateInput, FormFieldType } from '../../../../domain/entities/form-builder-schema'
+import { FORM_BUILDER_NAME_MAX, formBuilderKeyError, slugifyKey } from '../form-builder-key'
 
 interface AddFieldModalProps {
   isOpen: boolean
@@ -17,14 +18,6 @@ interface AddFieldModalProps {
   onCreate: (input: FormFieldCreateInput) => Promise<string | undefined>
 }
 
-function slugify(label: string): string {
-  return label
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-}
-
 export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps) {
   const [fieldType, setFieldType] = useState<FormFieldType>('text')
   const [label, setLabel] = useState('')
@@ -34,6 +27,9 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
   const [optionsText, setOptionsText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [createError, setCreateError] = useState<string | undefined>(undefined)
+  const [labelError, setLabelError] = useState<string | undefined>(undefined)
+  const [optionsError, setOptionsError] = useState<string | undefined>(undefined)
+  const [contentError, setContentError] = useState<string | undefined>(undefined)
 
   const requiresOptions = OPTION_REQUIRED_FIELD_TYPES.includes(fieldType)
   const acceptsOptions = requiresOptions || OPTION_OPTIONAL_FIELD_TYPES.includes(fieldType)
@@ -51,13 +47,20 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
     setIsRequired(true)
     setOptionsText('')
     setCreateError(undefined)
+    setLabelError(undefined)
+    setOptionsError(undefined)
+    setContentError(undefined)
   }
 
   const handleCreate = async () => {
-    const key = slugify(label)
-    if (!key) return
-    if (requiresOptions && options.length === 0) return
-    if (isContentOnly && !description.trim()) return
+    const nextLabelError = formBuilderKeyError(label, isContentOnly ? 'Title' : 'Field label')
+    const nextOptionsError = requiresOptions && options.length === 0 ? 'Add at least one option.' : undefined
+    const nextContentError = isContentOnly && !description.trim() ? 'Content is required.' : undefined
+    setLabelError(nextLabelError)
+    setOptionsError(nextOptionsError)
+    setContentError(nextContentError)
+    if (nextLabelError || nextOptionsError || nextContentError) return
+    const key = slugifyKey(label)
 
     setIsSubmitting(true)
     setCreateError(undefined)
@@ -121,9 +124,17 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
             onChange={setLabel}
             placeholder={isContentOnly ? 'e.g. Terms & Conditions' : 'e.g. Company Name'}
             required
+            error={labelError}
+            maxLength={FORM_BUILDER_NAME_MAX}
           />
           {!isContentOnly && (
-            <TextField label="Placeholder Text" value={placeholder} onChange={setPlaceholder} placeholder="e.g. Enter your company" />
+            <TextField
+              label="Placeholder Text"
+              value={placeholder}
+              onChange={setPlaceholder}
+              placeholder="e.g. Enter your company"
+              maxLength={255}
+            />
           )}
         </div>
         <div className="mt-4">
@@ -137,6 +148,9 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
                 : 'Static text shown to the visitor alongside this field, e.g. the terms & conditions body'
             }
             rows={3}
+            required={isContentOnly}
+            error={contentError}
+            maxLength={1000}
           />
         </div>
         {acceptsOptions && (
@@ -147,6 +161,7 @@ export function AddFieldModal({ isOpen, onClose, onCreate }: AddFieldModalProps)
               onChange={setOptionsText}
               placeholder="e.g. Yes, No, Maybe"
               required={requiresOptions}
+              error={optionsError}
             />
           </div>
         )}

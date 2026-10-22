@@ -3,6 +3,7 @@ import { LoginFormCard } from './Components/LoginFormCard'
 import { StaffGatewayHeader } from './Components/StaffGatewayHeader'
 import { StaffLoginFooter } from './Components/StaffLoginFooter'
 import { useStaffLoginPage } from './hooks/use-staff-login-page'
+import { SUPPORT_EMAIL } from '../../brand'
 
 export function StaffLoginPage() {
   const {
@@ -41,12 +42,14 @@ export function StaffLoginPage() {
             emailError={emailError}
             passwordError={passwordError}
           />
-          <div className="flex items-center gap-4 font-body text-[13px]">
-            <span className="font-medium text-[#cbd5e1]">Need help?</span>
-            <a href="#" className="font-semibold text-secondary-accent underline">
-              Contact System Administrator
-            </a>
-          </div>
+          {SUPPORT_EMAIL && (
+            <div className="flex items-center gap-4 font-body text-[13px]">
+              <span className="font-medium text-[#cbd5e1]">Need help?</span>
+              <a href={`mailto:${SUPPORT_EMAIL}`} className="font-semibold text-secondary-accent underline">
+                Contact System Administrator
+              </a>
+            </div>
+          )}
         </div>
       </main>
 
