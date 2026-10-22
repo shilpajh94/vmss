@@ -232,10 +232,12 @@ export function AdminHostEmployeeFormPage() {
                 <div className="flex-1">
                   <SelectField
                     label="Department"
-                    value={createValues.departmentId ?? ''}
-                    onChange={(departmentId) => updateCreateField('departmentId', departmentId || undefined)}
+                    required
+                    value={createValues.departmentId}
+                    onChange={(departmentId) => updateCreateField('departmentId', departmentId)}
                     options={departmentOptions}
-                    placeholder="Select department (optional)..."
+                    error={createErrors.departmentId}
+                    placeholder="Select department..."
                     labelClassName={fieldLabelClassName}
                   />
                 </div>

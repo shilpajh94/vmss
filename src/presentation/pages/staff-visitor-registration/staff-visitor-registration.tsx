@@ -93,9 +93,9 @@ export function StaffVisitorRegistrationPage() {
     setIsMasterDataLoading(true)
     try {
       const [branchList, buildingList, categoryList] = await Promise.all([
-        listBranchesUseCase.execute(),
-        listBuildingsUseCase.execute(),
-        listVisitorCategoriesUseCase.execute(),
+        listBranchesUseCase.execute({ activeOnly: true }),
+        listBuildingsUseCase.execute({ activeOnly: true }),
+        listVisitorCategoriesUseCase.execute({ activeOnly: true }),
       ])
       setBranches(branchList)
       setBuildings(buildingList)

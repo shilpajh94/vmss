@@ -4,6 +4,7 @@ import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePushNotifications } from '../../../hooks/use-push-notifications'
 import { landingPathFor } from '../../../utils/landing-path'
+import { loginErrorMessage } from '../../../utils/login-error-message'
 
 export type StaffLoginStatus = 'idle' | 'submitting' | 'error'
 
@@ -21,13 +22,13 @@ export function useStaffLoginPage() {
   const [passwordError, setPasswordError] = useState<string | undefined>(undefined)
 
   const submitLogin = async () => {
+    // The password is sent exactly as typed: spaces can be part of it.
     const trimmedEmail = email.trim()
-    const trimmedPassword = password.trim()
 
     setEmailError(trimmedEmail ? undefined : 'Email is required')
-    setPasswordError(trimmedPassword ? undefined : 'Password is required')
+    setPasswordError(password ? undefined : 'Password is required')
 
-    if (!trimmedEmail || !trimmedPassword) {
+    if (!trimmedEmail || !password) {
       return
     }
 
@@ -35,16 +36,17 @@ export function useStaffLoginPage() {
     setErrorMessage(undefined)
 
     try {
-      const { token } = await loginStaffUseCase.execute(trimmedEmail, trimmedPassword)
+      const { token } = await loginStaffUseCase.execute(trimmedEmail, password)
       sessionStorage.setItem('token', token)
       void refreshRegistrationIfGranted()
 
       const user = await getCurrentStaffUserUseCase.execute()
       navigate(landingPathFor(user))
-    } catch {
-      setErrorMessage('Invalid email or password. Please try again.')
+    } catch (error) {
+      const message = loginErrorMessage(error, 'Invalid email or password. Please try again.')
+      setErrorMessage(message)
       setStatus('error')
-      toast.error('Invalid email or password. Please try again.')
+      toast.error(message)
     }
   }
 

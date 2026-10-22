@@ -1,5 +1,6 @@
 import type { VisitorCategoryRepository } from '../repositories/visitor-category-repository'
 import type { VisitorCategory } from '../../domain/entities/visitor-category-schema'
+import type { ListOptions } from '../repositories/list-options'
 
 export class ListVisitorCategoriesUseCase {
   private readonly visitorCategoryRepository: VisitorCategoryRepository
@@ -8,7 +9,7 @@ export class ListVisitorCategoriesUseCase {
     this.visitorCategoryRepository = visitorCategoryRepository
   }
 
-  async execute(): Promise<VisitorCategory[]> {
-    return this.visitorCategoryRepository.list()
+  async execute(options?: ListOptions): Promise<VisitorCategory[]> {
+    return this.visitorCategoryRepository.list(options)
   }
 }

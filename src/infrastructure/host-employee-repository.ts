@@ -8,8 +8,7 @@ import type {
   ListRolesPageParams,
   RolesPage,
 } from '../data/repositories/host-employee-repository'
-import { EmployeeListResponseSchema, type EmployeeOut } from '../domain/entities/employee-out-schema'
-import { EmployeeSyncResponseSchema, type EmployeeSyncItem } from '../domain/entities/employee-sync-schema'
+import { EmployeeListResponseSchema, EmployeeResponseSchema, type EmployeeOut } from '../domain/entities/employee-out-schema'
 import type { BranchRoleAssignment, HostEmployee, HostEmployeeCreateInput } from '../domain/entities/host-employee-schema'
 import { RoleListResponseSchema, RoleResponseSchema, type RoleCreateInput, type RoleOut } from '../domain/entities/role-out-schema'
 import {
@@ -19,6 +18,7 @@ import {
   type RolePermissionResyncEntry,
 } from '../domain/entities/permission-out-schema'
 import { BranchRoleResponseSchema } from '../domain/entities/user-out-schema'
+import { fetchAllPages } from '../data/api/fetch-all-pages'
 
 function toHostEmployee(employee: EmployeeOut): HostEmployee {
   return {
@@ -43,13 +43,15 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
   }
 
   async list(): Promise<HostEmployee[]> {
-    const response = await this.apiClient.makeRequest({
-      endpointConfig: API_ENDPOINTS.LIST_HOST_EMPLOYEES,
-      queryParams: { pageSize: 100 },
-      parserSchema: EmployeeListResponseSchema,
-    })
+    const employees = await fetchAllPages((page, pageSize) =>
+      this.apiClient.makeRequest({
+        endpointConfig: API_ENDPOINTS.LIST_HOST_EMPLOYEES,
+        queryParams: { page, pageSize },
+        parserSchema: EmployeeListResponseSchema,
+      }),
+    )
 
-    return response.data.map(toHostEmployee)
+    return employees.map(toHostEmployee)
   }
 
   async listPage({ page, pageSize, departmentId, role, status }: ListHostEmployeesPageParams): Promise<HostEmployeesPage> {
@@ -62,46 +64,20 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
     return { items: response.data.map(toHostEmployee), total: response.pagination.total }
   }
 
-  // The backend has no per-employee create endpoint — the employee directory
-  // (what `list()` reads) is populated only via a company-wide sync that
-  // replaces the whole roster. To add one employee without deactivating
-  // everyone else, we re-send the full current roster plus the new entry.
   async create(input: HostEmployeeCreateInput): Promise<HostEmployee> {
-    const existing = await this.list()
-
-    // Employees synced in before employee codes were required may have no
-    // code at all. Defaulting every one of them to the same '' would collide
-    // in the batch (the backend rejects duplicate codes within one sync), so
-    // fall back to a per-employee value derived from their unique id instead.
-    const existingItems: EmployeeSyncItem[] = existing.map((employee) => ({
-      email: employee.email,
-      fullName: employee.fullName,
-      employeeCode: employee.employeeCode ?? `EMP-${employee.id}`,
-      phoneNumber: employee.phoneNumber ?? null,
-      designation: employee.designation ?? null,
-      departmentId: employee.departmentId ?? null,
-    }))
-
-    const newItem: EmployeeSyncItem = {
-      email: input.email,
-      fullName: input.fullName,
-      employeeCode: input.employeeCode,
-      phoneNumber: input.phoneNumber ?? null,
-      designation: input.designation ?? null,
-      departmentId: input.departmentId ?? null,
-    }
-
-    await this.apiClient.makeRequest({
-      endpointConfig: API_ENDPOINTS.SYNC_EMPLOYEES,
-      body: { employees: [...existingItems, newItem] },
-      parserSchema: EmployeeSyncResponseSchema,
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.CREATE_HOST_EMPLOYEE,
+      body: {
+        email: input.email,
+        fullName: input.fullName,
+        employeeCode: input.employeeCode,
+        departmentId: input.departmentId,
+        phoneNumber: input.phoneNumber ?? null,
+        designation: input.designation ?? null,
+      },
+      parserSchema: EmployeeResponseSchema,
     })
-
-    const refreshed = await this.list()
-    const created = refreshed.find((employee) => employee.email === input.email)
-    if (!created) {
-      throw new Error('Employee directory sync completed but the new employee could not be found afterward.')
-    }
+    const created = toHostEmployee(response.data)
 
     if (input.roleId) {
       const assigned = await this.assignRole(created.id, input.roleId, input.branchId)
@@ -112,13 +88,13 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
   }
 
   async listRoles(): Promise<RoleOut[]> {
-    const response = await this.apiClient.makeRequest({
-      endpointConfig: API_ENDPOINTS.LIST_ROLES,
-      queryParams: { pageSize: 100 },
-      parserSchema: RoleListResponseSchema,
-    })
-
-    return response.data
+    return fetchAllPages((page, pageSize) =>
+      this.apiClient.makeRequest({
+        endpointConfig: API_ENDPOINTS.LIST_ROLES,
+        queryParams: { page, pageSize },
+        parserSchema: RoleListResponseSchema,
+      }),
+    )
   }
 
   async listRolesPage({ page, pageSize }: ListRolesPageParams): Promise<RolesPage> {

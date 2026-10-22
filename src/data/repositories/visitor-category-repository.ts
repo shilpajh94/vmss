@@ -4,6 +4,7 @@ import type {
   VisitorCategoryBulkCreateInput,
   VisitorCategoryInput,
 } from '../../domain/entities/visitor-category-schema'
+import type { ListOptions } from './list-options'
 
 export interface ListVisitorCategoriesPageParams {
   page: number
@@ -19,7 +20,7 @@ export interface VisitorCategoriesPage {
 }
 
 export interface VisitorCategoryRepository {
-  list(): Promise<VisitorCategory[]>
+  list(options?: ListOptions): Promise<VisitorCategory[]>
   listPage(params: ListVisitorCategoriesPageParams): Promise<VisitorCategoriesPage>
   create(input: VisitorCategoryInput): Promise<VisitorCategory>
   bulkCreate(input: VisitorCategoryBulkCreateInput): Promise<VisitorCategoryBulkCreateOut>

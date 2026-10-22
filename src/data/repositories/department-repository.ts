@@ -1,4 +1,5 @@
 import type { Department } from '../../domain/entities/department-schema'
+import type { ListOptions } from './list-options'
 
 export interface ListDepartmentsPageParams {
   page: number
@@ -14,7 +15,7 @@ export interface DepartmentsPage {
 }
 
 export interface DepartmentRepository {
-  list(): Promise<Department[]>
+  list(options?: ListOptions): Promise<Department[]>
   listPage(params: ListDepartmentsPageParams): Promise<DepartmentsPage>
   create(input: Omit<Department, 'id' | 'branchName'>): Promise<Department>
   update(id: string, input: Omit<Department, 'id' | 'branchName'>): Promise<Department>

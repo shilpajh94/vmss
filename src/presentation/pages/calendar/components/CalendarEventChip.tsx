@@ -4,6 +4,7 @@ import { boardInvitationPath, type BoardBasePath } from '../../../components/das
 import { formatInstantTime, formatScheduledTime } from '../../../utils/calendar-dates'
 import { calendarStatusStyle } from '../calendar-status'
 import type { CalendarEvent } from '../../../../domain/entities/calendar-feed-schema'
+import { purposeLabel } from '../../../utils/purpose-of-visit-options'
 
 // Visitor-category badge colour as a left accent, mirroring the category
 // table's swatches.
@@ -48,7 +49,7 @@ export function CalendarEventChip({ event, boardBasePath, timezone, showHostAndB
   const summary = [
     `${scheduledLabel(event)} · ${visitorLabel(event)}`,
     status.label,
-    event.purposeOfVisit,
+    purposeLabel(event.purposeOfVisit),
     showHostAndBranch ? `Host: ${hostLabel(event)}` : null,
     showHostAndBranch ? event.branchName : null,
   ]
@@ -113,7 +114,7 @@ export function CalendarEventChip({ event, boardBasePath, timezone, showHostAndB
         <span className="text-xs">
           <span className="font-semibold">{scheduledLabel(event)}</span>
           {event.expectedDuration ? ` · ${event.expectedDuration}` : ''}
-          {event.purposeOfVisit ? ` · ${event.purposeOfVisit}` : ''}
+          {event.purposeOfVisit ? ` · ${purposeLabel(event.purposeOfVisit)}` : ''}
         </span>
         {showHostAndBranch ? (
           <span className="text-xs">

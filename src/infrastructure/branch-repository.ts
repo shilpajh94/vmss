@@ -4,6 +4,8 @@ import type { ApiClient } from '../data/api/api-client'
 import type { BranchesPage, BranchRepository, ListBranchesPageParams } from '../data/repositories/branch-repository'
 import { BranchListResponseSchema, BranchResponseSchema, type BranchOut } from '../domain/entities/branch-out-schema'
 import type { Branch } from '../domain/entities/branch-schema'
+import { fetchAllPages } from '../data/api/fetch-all-pages'
+import type { ListOptions } from '../data/repositories/list-options'
 
 function toBranch(branchOut: BranchOut): Branch {
   return {
@@ -30,14 +32,16 @@ export class HttpBranchRepository implements BranchRepository {
     this.apiClient = apiClient
   }
 
-  async list(): Promise<Branch[]> {
-    const response = await this.apiClient.makeRequest({
-      endpointConfig: API_ENDPOINTS.LIST_BRANCHES,
-      queryParams: { pageSize: 100 },
-      parserSchema: BranchListResponseSchema,
-    })
+  async list(options?: ListOptions): Promise<Branch[]> {
+    const branches = await fetchAllPages((page, pageSize) =>
+      this.apiClient.makeRequest({
+        endpointConfig: API_ENDPOINTS.LIST_BRANCHES,
+        queryParams: { page, pageSize, status: options?.activeOnly ? 'active' : undefined },
+        parserSchema: BranchListResponseSchema,
+      }),
+    )
 
-    return response.data.map(toBranch)
+    return branches.map(toBranch)
   }
 
   async listPage({ page, pageSize, status }: ListBranchesPageParams): Promise<BranchesPage> {

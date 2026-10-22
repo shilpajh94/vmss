@@ -1,17 +1,25 @@
 import type { TrackingLookupResponse } from '../../../../domain/entities/tracking-lookup-response-schema'
 
-const TIMELINE_STAGES: { value: TrackingLookupResponse['timelineStage']; label: string }[] = [
+// `submitted` is always done once there is a request to look up.
+const TIMELINE_STAGES = [
   { value: 'submitted', label: 'Submitted' },
-  { value: 'under-review', label: 'Under Review' },
   { value: 'approved', label: 'Approved' },
-  { value: 'visit-day', label: 'Visit Day' },
-]
+  { value: 'checked-in', label: 'Checked In' },
+  { value: 'checked-out', label: 'Checked Out' },
+] as const
+
+function currentStageIndex(stage: TrackingLookupResponse['timelineStage']): number {
+  if (stage === 'complete') return TIMELINE_STAGES.length
+  if (stage === 'unknown') return -1
+  return TIMELINE_STAGES.findIndex((candidate) => candidate.value === stage)
+}
 
 const STATUS_TONE_CLASSES: Record<TrackingLookupResponse['statusTone'], string> = {
   success: 'bg-success/10 text-success',
   warning: 'bg-warning/10 text-warning',
   danger: 'bg-danger/10 text-danger',
   info: 'bg-info/10 text-info',
+  neutral: 'bg-border-subtle text-text-muted',
 }
 
 interface StatusPanelProps {
@@ -19,7 +27,7 @@ interface StatusPanelProps {
 }
 
 export function StatusPanel({ response }: StatusPanelProps) {
-  const currentIndex = TIMELINE_STAGES.findIndex((stage) => stage.value === response.timelineStage)
+  const currentIndex = currentStageIndex(response.timelineStage)
 
   return (
     <div className="flex w-full max-w-[480px] flex-col gap-4 rounded-2xl border border-border bg-surface p-5 shadow-[0_4px_8px_rgba(15,23,42,0.03)] md:p-8">
@@ -54,7 +62,7 @@ export function StatusPanel({ response }: StatusPanelProps) {
         <h4 className="text-body font-semibold text-text">Request Timeline Status</h4>
         <div className="flex items-center">
           {TIMELINE_STAGES.map((stage, index) => {
-            const isComplete = index < currentIndex
+            const isComplete = currentIndex >= 0 ? index < currentIndex : index === 0
             const isCurrent = index === currentIndex
             const dotClass = isComplete ? 'bg-success' : isCurrent ? 'bg-warning' : 'border border-border bg-surface'
 

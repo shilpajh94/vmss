@@ -1,5 +1,6 @@
 import type { BuildingRepository } from '../repositories/building-repository'
 import type { Building } from '../../domain/entities/building-schema'
+import type { ListOptions } from '../repositories/list-options'
 
 export class ListBuildingsUseCase {
   private readonly buildingRepository: BuildingRepository
@@ -8,7 +9,7 @@ export class ListBuildingsUseCase {
     this.buildingRepository = buildingRepository
   }
 
-  async execute(): Promise<Building[]> {
-    return this.buildingRepository.list()
+  async execute(options?: ListOptions): Promise<Building[]> {
+    return this.buildingRepository.list(options)
   }
 }

@@ -11,6 +11,7 @@ import {
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { CalendarClockIcon, InfoIcon, PencilIcon, UndoIcon, UserCheckIcon } from '../icons'
 import { IconActionButton } from '../ui/IconActionButton'
+import { purposeLabel } from '../../utils/purpose-of-visit-options'
 
 // An archived no-show can be rescheduled or edited; the API sends it back for
 // re-approval when its date changes.
@@ -128,7 +129,8 @@ export function VisitRequestCard({
   ].filter((action): action is IconAction => Boolean(action))
 
   const hostLabel = detail ? (detail.hostNameOrEmail ?? 'Unassigned — Front Office') : undefined
-  const metaLine = hostLabel ? `${request.purposeOfVisit} · ${hostLabel}` : request.purposeOfVisit
+  const purpose = purposeLabel(request.purposeOfVisit) ?? 'No purpose given'
+  const metaLine = hostLabel ? `${purpose} · ${hostLabel}` : purpose
   const hasSchedule = Boolean(request.preferredVisitDate && request.preferredVisitTime)
 
   return (

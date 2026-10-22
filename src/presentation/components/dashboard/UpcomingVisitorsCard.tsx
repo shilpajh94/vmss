@@ -4,6 +4,7 @@ import { EmptyState } from '../ui/EmptyState'
 import { formatDate, formatTime } from '../../utils/format-time'
 import { CardHeader } from './CardHeader'
 import { boardInvitationPath, boardStatusPath, scheduledLocal, type BoardBasePath } from './dashboard-format'
+import { purposeLabel } from '../../utils/purpose-of-visit-options'
 
 export interface UpcomingVisitorRow {
   id: string
@@ -56,7 +57,7 @@ export function UpcomingVisitorsCard({ title, subtitle, visitors, boardBasePath,
                     <span className="truncate font-body text-sm font-semibold text-text">{visitor.primaryContactFullName}</span>
                     <span className="truncate font-body text-xs text-text-faint">
                       {showHost ? `Host: ${visitor.hostFullName ?? 'Unassigned'} · ` : ''}
-                      {visitor.purposeOfVisit ?? 'Not specified'}
+                      {purposeLabel(visitor.purposeOfVisit) ?? 'Not specified'}
                     </span>
                   </div>
                   <span className="hidden shrink-0 font-body text-xs text-text-faint sm:inline">{visitor.trackingId}</span>

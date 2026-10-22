@@ -10,6 +10,7 @@ import { formatDateTime } from '../../utils/format-time'
 import { resolvePointOfContactLabel } from '../../utils/approval-step-label'
 import { prettifyKey } from '../../utils/prettify-key'
 import { useEffectiveForm, findFieldById, findGroupById } from '../../hooks/use-effective-form'
+import { purposeLabel } from '../../utils/purpose-of-visit-options'
 
 interface VisitorInfoModalProps {
   isOpen: boolean
@@ -146,8 +147,7 @@ function formatRawFieldValue(value: unknown, field?: FormField): string {
   return field?.options && field.options.length > 0 ? prettifyKey(stringValue) : stringValue
 }
 
-/** Renders a fieldId-addressed custom-field answer list (`customFields` /
- * `primaryContactCustomFields`) as `Field` rows, labeling each answer via
+/** Renders a fieldId-addressed custom-field answer list (`customFields`) as `Field` rows, labeling each answer via
  * the branch's published form-builder config when a match exists and
  * falling back to a prettified fieldId otherwise. Dynamic by construction:
  * it has no fixed list of fields, so it stays correct as admins add/remove
@@ -254,7 +254,7 @@ export function VisitorInfoModal({
             <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
               <Field label="Email" value={detail.primaryContactEmail ?? '—'} />
               <Field label="Phone" value={detail.primaryContactPhone ?? '—'} />
-              <Field label="Purpose" value={detail.purposeOfVisit} />
+              <Field label="Purpose" value={purposeLabel(detail.purposeOfVisit) ?? '—'} />
               <Field label="Host" value={detail.hostNameOrEmail ?? '—'} />
               <Field label="Point of Contact" value={pointOfContact ?? '—'} />
               <Field label="Department" value={detail.departmentToVisit ?? '—'} />
@@ -287,7 +287,6 @@ export function VisitorInfoModal({
                 </div>
               ) : null}
               <IdProofField label="ID proof" type={detail.primaryContactIdProofType} url={detail.primaryContactIdProofUrl} />
-              <CustomFieldValueFields values={detail.primaryContactCustomFields} steps={formSteps} />
               {detail.additionalNotes ? (
                 <div className="col-span-full">
                   <Field label="Notes" value={detail.additionalNotes} />
@@ -327,7 +326,7 @@ export function VisitorInfoModal({
           <div className="flex flex-col gap-3">
             <SectionLabel>Timeline</SectionLabel>
             <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
-              <Field label="Submitted" value={formatDateTime(detail.submittedAt)} />
+              <Field label="Submitted" value={detail.submittedAt ? formatDateTime(detail.submittedAt) : '—'} />
               <Field label="Expires" value={formatDateTime(detail.expiresAt)} />
               {detail.approvedAt ? <Field label="Approved" value={formatDateTime(detail.approvedAt)} /> : null}
               {detail.checkedInAt ? <Field label="Checked in" value={formatDateTime(detail.checkedInAt)} /> : null}

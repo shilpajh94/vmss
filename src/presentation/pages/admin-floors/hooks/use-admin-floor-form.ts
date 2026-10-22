@@ -40,7 +40,7 @@ export function useAdminFloorForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, buildingList] = await Promise.all([getCurrentStaffUserUseCase.execute(), listBuildingsUseCase.execute()])
+      const [user, buildingList] = await Promise.all([getCurrentStaffUserUseCase.execute(), listBuildingsUseCase.execute({ activeOnly: !isEditMode })])
       setCurrentUser(user)
       setBuildings(buildingList)
 

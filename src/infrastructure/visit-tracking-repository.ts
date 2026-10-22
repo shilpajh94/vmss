@@ -4,40 +4,17 @@ import type { VisitTrackingRepository } from '../data/repositories/visit-trackin
 import { InvitationTrackResponseSchema, type InvitationTrackOut } from '../domain/entities/invitation-track-out-schema'
 import type { TrackingLookupResponse } from '../domain/entities/tracking-lookup-response-schema'
 
-const STATUS_LABELS: Record<string, string> = {
-  submitted: 'Submitted',
-  under_review: 'Under Review',
-  approved: 'Approved',
-  rejected: 'Rejected',
-  visit_day: 'Visit Day',
-  checked_in: 'Checked In',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  expired: 'Expired',
-}
-
-const STATUS_TONE: Record<string, TrackingLookupResponse['statusTone']> = {
-  submitted: 'info',
-  under_review: 'warning',
-  approved: 'success',
-  rejected: 'danger',
-  visit_day: 'success',
-  checked_in: 'success',
-  completed: 'success',
-  cancelled: 'danger',
-  expired: 'danger',
-}
-
-const STATUS_TIMELINE_STAGE: Record<string, TrackingLookupResponse['timelineStage']> = {
-  submitted: 'submitted',
-  under_review: 'under-review',
-  approved: 'approved',
-  visit_day: 'visit-day',
-  checked_in: 'visit-day',
-  completed: 'visit-day',
-  rejected: 'submitted',
-  cancelled: 'submitted',
-  expired: 'submitted',
+// The statuses the API writes (`InvitationStatus`), each with its label,
+// tone and the timeline step it leaves in progress. `submitted` waits on
+// approval; `denied` stops there; `archived` is an approved visit that
+// never happened.
+const STATUSES: Record<string, Pick<TrackingLookupResponse, 'statusLabel' | 'statusTone' | 'timelineStage'>> = {
+  submitted: { statusLabel: 'Under Review', statusTone: 'info', timelineStage: 'approved' },
+  approved: { statusLabel: 'Approved', statusTone: 'success', timelineStage: 'checked-in' },
+  denied: { statusLabel: 'Denied', statusTone: 'danger', timelineStage: 'approved' },
+  checked_in: { statusLabel: 'Checked In', statusTone: 'success', timelineStage: 'checked-out' },
+  checked_out: { statusLabel: 'Checked Out', statusTone: 'success', timelineStage: 'complete' },
+  archived: { statusLabel: 'Expired', statusTone: 'neutral', timelineStage: 'checked-in' },
 }
 
 function humanizeStatus(status: string): string {
@@ -48,17 +25,19 @@ function humanizeStatus(status: string): string {
     .join(' ')
 }
 
-function toTrackingLookupResponse(invitationOut: InvitationTrackOut): TrackingLookupResponse {
+export function toTrackingLookupResponse(invitationOut: InvitationTrackOut): TrackingLookupResponse {
   const normalizedStatus = invitationOut.status.toLowerCase()
 
   return {
     trackingId: invitationOut.trackingId,
-    statusLabel: STATUS_LABELS[normalizedStatus] ?? humanizeStatus(invitationOut.status),
-    statusTone: STATUS_TONE[normalizedStatus] ?? 'info',
+    ...(STATUSES[normalizedStatus] ?? {
+      statusLabel: humanizeStatus(invitationOut.status),
+      statusTone: 'neutral',
+      timelineStage: 'unknown',
+    }),
     requestedDate: invitationOut.preferredVisitDate ?? invitationOut.submittedAt ?? '—',
     assignedHost: invitationOut.hostNameOrEmail ?? 'Unassigned',
     totalVisitors: 1 + (invitationOut.visitors?.length ?? 0),
-    timelineStage: STATUS_TIMELINE_STAGE[normalizedStatus] ?? 'submitted',
     primaryContactFullName: invitationOut.primaryContactFullName,
   }
 }

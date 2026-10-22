@@ -15,7 +15,7 @@ const EMPTY_CREATE_VALUES: HostEmployeeCreateInput = {
   employeeCode: '',
   phoneNumber: undefined,
   designation: undefined,
-  departmentId: undefined,
+  departmentId: '',
   roleId: undefined,
   branchId: undefined,
 }
@@ -61,8 +61,8 @@ export function useAdminHostEmployeeForm() {
     try {
       const [user, departmentList, branchList, roleList] = await Promise.all([
         getCurrentStaffUserUseCase.execute(),
-        listDepartmentsUseCase.execute(),
-        listBranchesUseCase.execute(),
+        listDepartmentsUseCase.execute({ activeOnly: !isEditMode }),
+        listBranchesUseCase.execute({ activeOnly: !isEditMode }),
         listRolesUseCase.execute(),
       ])
       setCurrentUser(user)
@@ -127,6 +127,7 @@ export function useAdminHostEmployeeForm() {
     if (!createValues.fullName.trim()) nextErrors.fullName = 'Employee name is required.'
     if (!createValues.email.trim()) nextErrors.email = 'Email address is required.'
     if (!createValues.employeeCode.trim()) nextErrors.employeeCode = 'Employee code is required.'
+    if (!createValues.departmentId) nextErrors.departmentId = 'Department is required.'
 
     if (Object.keys(nextErrors).length > 0) {
       setCreateErrors(nextErrors)

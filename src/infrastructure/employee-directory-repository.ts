@@ -3,6 +3,7 @@ import type { ApiClient } from '../data/api/api-client'
 import type { EmployeeDirectoryRepository } from '../data/repositories/employee-directory-repository'
 import { EmployeeDirectoryListResponseSchema, type EmployeeDirectoryOut } from '../domain/entities/employee-directory-out-schema'
 import type { EmployeeDirectoryEntry } from '../domain/entities/employee-directory-schema'
+import { fetchAllPages } from '../data/api/fetch-all-pages'
 
 function toEmployeeDirectoryEntry(employee: EmployeeDirectoryOut): EmployeeDirectoryEntry {
   return {
@@ -21,12 +22,14 @@ export class HttpEmployeeDirectoryRepository implements EmployeeDirectoryReposit
   }
 
   async list(): Promise<EmployeeDirectoryEntry[]> {
-    const response = await this.apiClient.makeRequest({
-      endpointConfig: API_ENDPOINTS.LIST_EMPLOYEE_DIRECTORY,
-      queryParams: { pageSize: 100 },
-      parserSchema: EmployeeDirectoryListResponseSchema,
-    })
+    const entries = await fetchAllPages((page, pageSize) =>
+      this.apiClient.makeRequest({
+        endpointConfig: API_ENDPOINTS.LIST_EMPLOYEE_DIRECTORY,
+        queryParams: { page, pageSize },
+        parserSchema: EmployeeDirectoryListResponseSchema,
+      }),
+    )
 
-    return response.data.map(toEmployeeDirectoryEntry)
+    return entries.map(toEmployeeDirectoryEntry)
   }
 }

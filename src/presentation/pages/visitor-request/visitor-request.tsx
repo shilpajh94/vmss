@@ -84,7 +84,7 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
   const loadVisitorCategories = useCallback(async () => {
     setVisitorCategoriesState((previous) => ({ status: 'loading', categories: previous.categories }))
     try {
-      const categories = await listVisitorCategoriesUseCase.execute()
+      const categories = await listVisitorCategoriesUseCase.execute({ activeOnly: true })
       setVisitorCategoriesState({ status: 'loaded', categories })
     } catch (error) {
       console.error('Failed to load visitor categories', error)

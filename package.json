@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test": "node --import ./scripts/unit-test-loader.mjs --test 'tests/unit/**/*.test.ts'",
     "lint": "oxlint && node scripts/check-brand.mjs && node scripts/check-grid-spans.mjs && node scripts/check-theme-colors.mjs",
     "preview": "vite preview",
     "screenshots": "docker run --rm --network host -v \"$PWD\":/w -w /w mcr.microsoft.com/playwright/python:v1.55.0-noble bash -c \"pip install -q playwright==1.55.0 && python scripts/screenshot-pages.py\"",

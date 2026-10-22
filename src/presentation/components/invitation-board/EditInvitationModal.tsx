@@ -8,7 +8,7 @@ import { SelectField } from '../ui/SelectField'
 import { TextField } from '../ui/TextField'
 import { TextareaField } from '../ui/TextareaField'
 import { EXPECTED_DURATION_OPTIONS } from '../../utils/expected-duration-options'
-import { PURPOSE_OF_VISIT_OPTIONS } from '../../utils/purpose-of-visit-options'
+import { PURPOSE_OF_VISIT_OPTIONS, purposeLabel } from '../../utils/purpose-of-visit-options'
 import { canEditPointOfContact, resolvePointOfContactLabel } from '../../utils/approval-step-label'
 import { confirmSubject } from '../../utils/confirm-subject'
 import { FormConfirmStep, type ConfirmSummaryRow } from './FormConfirmStep'
@@ -66,7 +66,7 @@ function changedFieldRows(initial: EditInvitationFields, fields: EditInvitationF
 
 function toFormState(detail?: InvitationDetail): EditInvitationFields {
   return {
-    purposeOfVisit: detail?.purposeOfVisit ?? '',
+    purposeOfVisit: purposeLabel(detail?.purposeOfVisit) ?? '',
     preferredVisitDate: detail?.preferredVisitDate ?? '',
     preferredVisitTime: detail?.preferredVisitTime ?? '',
     expectedDuration: detail?.expectedDuration ?? '',

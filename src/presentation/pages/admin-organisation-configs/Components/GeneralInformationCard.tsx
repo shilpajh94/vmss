@@ -1,18 +1,11 @@
+import { useMemo } from 'react'
 import { FileUploadField } from '../../../components/ui/FileUploadField'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
 import type { OrganisationConfig } from '../../../../domain/entities/organisation-config-schema'
+import { timezoneOptions } from '../../../utils/timezones'
 
 const LOGO_ALLOWED_TYPES = ['image/png', 'image/jpeg']
-
-const TIMEZONE_OPTIONS = [
-  { value: 'GMT+00:00', label: 'GMT+00:00 (London, Lisbon)' },
-  { value: 'GMT-05:00', label: 'GMT-05:00 (New York, Toronto)' },
-  { value: 'GMT-08:00', label: 'GMT-08:00 (Los Angeles, Vancouver)' },
-  { value: 'GMT+01:00', label: 'GMT+01:00 (Paris, Berlin)' },
-  { value: 'GMT+05:30', label: 'GMT+05:30 (Mumbai, Colombo)' },
-  { value: 'GMT+08:00', label: 'GMT+08:00 (Singapore, Hong Kong)' },
-]
 
 interface LogoPreview {
   url: string
@@ -21,6 +14,7 @@ interface LogoPreview {
 
 interface GeneralInformationCardProps {
   form: OrganisationConfig
+  nameError?: string
   logoPreview: LogoPreview | undefined
   onNameChange: (organisationName: string) => void
   onTimezoneChange: (defaultTimezone: string) => void
@@ -30,17 +24,20 @@ interface GeneralInformationCardProps {
 
 export function GeneralInformationCard({
   form,
+  nameError,
   logoPreview,
   onNameChange,
   onTimezoneChange,
   onPreviewLogo,
   onLogoPreviewChange,
 }: GeneralInformationCardProps) {
+  const timezones = useMemo(() => timezoneOptions(form.defaultTimezone), [form.defaultTimezone])
+
   return (
     <section className="flex flex-1 flex-col gap-5 rounded-2xl border border-border bg-surface p-4 md:p-6">
       <h2 className="font-display text-lg font-bold text-text">General Information</h2>
 
-      <TextField label="Organisation Name" value={form.organisationName} onChange={onNameChange} />
+      <TextField label="Organisation Name" required value={form.organisationName} onChange={onNameChange} error={nameError} />
 
       <FileUploadField
         label="Organisation Logo"
@@ -56,7 +53,7 @@ export function GeneralInformationCard({
         label="Default Timezone"
         value={form.defaultTimezone}
         onChange={onTimezoneChange}
-        options={TIMEZONE_OPTIONS}
+        options={timezones}
       />
     </section>
   )

@@ -51,6 +51,9 @@ def test_admin_creates_and_edits_org_structure(as_role, api: Api) -> None:
         row(admin, branch_code).get_by_role("button", name=f"Edit {branch_name}").click()
         admin.get_by_label("Location / City").fill("QA City Edited")
         admin.get_by_role("button", name=re.compile("Save|Update")).last.click()
+        # The modal closes once the PUT has succeeded; navigating before then
+        # cancels the request.
+        expect(admin.get_by_role("dialog", name="Edit Branch")).to_be_hidden()
         admin.goto("/admin/branches")
         expect(row(admin, branch_code)).to_contain_text("QA City Edited")
 

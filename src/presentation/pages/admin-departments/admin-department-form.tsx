@@ -81,6 +81,7 @@ export function AdminDepartmentFormPage() {
                     value={values.branchId}
                     onChange={(branchId) => updateField('branchId', branchId)}
                     options={branchOptions}
+                    disabled={isEditMode}
                     placeholder="Select target branch..."
                     error={errors.branchId}
                     labelClassName={fieldLabelClassName}

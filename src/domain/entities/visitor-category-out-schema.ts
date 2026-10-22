@@ -12,6 +12,7 @@ export const VisitorCategoryOutSchema = z.object({
   ndaRequirement: z.enum(["digital", "signed_pdf", "optional", "none"]).nullable(),
   escortRequirement: z.enum(["self_escort", "access_logs_only", "always_required", "gate_check_in_only"]).nullable(),
   maxDurationMinutes: z.number().nullable(),
+  isActive: z.boolean().default(true),
 })
 
 export type VisitorCategoryOut = z.infer<typeof VisitorCategoryOutSchema>

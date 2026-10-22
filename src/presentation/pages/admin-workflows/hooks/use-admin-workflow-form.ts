@@ -40,7 +40,7 @@ export function useAdminWorkflowForm() {
     try {
       const [user, categories, roleList, allRules] = await Promise.all([
         getCurrentStaffUserUseCase.execute(),
-        listVisitorCategoriesUseCase.execute(),
+        listVisitorCategoriesUseCase.execute({ activeOnly: !isEditMode }),
         listRolesUseCase.execute(),
         listApprovalWorkflowRulesUseCase.execute(),
       ])

@@ -4,6 +4,7 @@ import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePushNotifications } from '../../../hooks/use-push-notifications'
 import { landingPathFor } from '../../../utils/landing-path'
+import { loginErrorMessage } from '../../../utils/login-error-message'
 
 export type StaffSsoLoginStatus = 'idle' | 'redirecting' | 'completing' | 'error'
 
@@ -28,10 +29,11 @@ export function useStaffSsoLoginPage() {
         void refreshRegistrationIfGranted()
         const user = await getCurrentStaffUserUseCase.execute()
         navigate(landingPathFor(user))
-      } catch {
-        setErrorMessage('Sign-in could not be completed. Please try again.')
+      } catch (error) {
+        const message = loginErrorMessage(error, 'Sign-in could not be completed. Please try again.')
+        setErrorMessage(message)
         setStatus('error')
-        toast.error('Sign-in could not be completed. Please try again.')
+        toast.error(message)
       }
     },
     [exchangeSsoCodeUseCase, getCurrentStaffUserUseCase, navigate, toast, refreshRegistrationIfGranted],

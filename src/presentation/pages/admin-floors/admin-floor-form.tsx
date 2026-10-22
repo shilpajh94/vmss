@@ -73,6 +73,7 @@ export function AdminFloorFormPage() {
                   value={values.buildingId}
                   onChange={(buildingId) => updateField('buildingId', buildingId)}
                   options={buildingOptions}
+                  disabled={isEditMode}
                   placeholder="Select building..."
                   error={errors.buildingId}
                 />

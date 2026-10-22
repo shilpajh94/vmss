@@ -28,4 +28,10 @@ export const EmployeeListResponseSchema = z.object({
   }),
 })
 
+export const EmployeeResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: EmployeeOutSchema,
+})
+
 export type EmployeeListResponse = z.infer<typeof EmployeeListResponseSchema>

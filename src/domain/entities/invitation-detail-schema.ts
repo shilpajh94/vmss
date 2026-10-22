@@ -27,8 +27,7 @@ export const InvitationVisitorSchema = z.object({
   // fieldId-addressed, same wire shape as the submission-side `customFields`
   // (`InvitationVisitorDetailOut.custom_fields: list[CustomFieldValue]`) —
   // NOT a flat key-based map. Backend resolves `file_upload` answers here to
-  // signed URLs the same way it does for `customFields`/
-  // `primaryContactCustomFields`, gated by the caller's `documents:view`
+  // signed URLs the same way it does for `customFields`, gated by the caller's `documents:view`
   // grant (InvitationVisitorDetailOut).
   customFields: z.array(FieldAnswerSchema).default([]),
 })
@@ -73,16 +72,16 @@ export const InvitationDetailSchema = z.object({
   primaryContactIdProofType: z.string().nullish(),
   primaryContactIdProofUrl: z.string().nullish(),
   // Admin-configured (form-builder) field answers — fieldId/groupId-addressed,
-  // matching `InvitationDetailOut`'s `primary_contact_custom_fields`/
-  // `custom_fields`/`groups` (VMSS_API `invitations/schemas.py`), the same
+  // matching `InvitationDetailOut`'s `custom_fields`/`groups` (VMSS_API
+  // `invitations/schemas.py`; the primary contact's answers are
+  // `custom_fields` — there is no separate per-contact list), the same
   // wire shape the submission side uses (`VisitRequestSchema`'s
   // `customFields`/`groups`). Rendered generically in VisitorInfoModal via
   // `findFieldById`/`findGroupById` rather than typed field-by-field, since
   // the field set varies per branch/publish.
-  primaryContactCustomFields: z.array(FieldAnswerSchema).default([]),
   customFields: z.array(FieldAnswerSchema).default([]),
   groups: z.array(GroupAnswerSchema).default([]),
-  purposeOfVisit: z.string().min(1),
+  purposeOfVisit: z.string().nullable(),
   hostNameOrEmail: z.string().nullable(),
   hostId: z.string().nullable(),
   pocUserId: z.string().nullable(),
@@ -100,7 +99,7 @@ export const InvitationDetailSchema = z.object({
   carriedItems: z.array(z.string()),
   carriedItemsDescription: z.string().nullable(),
   expiresAt: z.string().min(1),
-  submittedAt: z.string().min(1),
+  submittedAt: z.string().nullable(),
   approvedAt: z.string().nullable(),
   currentApprovalStep: CurrentApprovalStepSchema.nullable(),
   denialReason: z.string().nullable(),

@@ -7,6 +7,14 @@ import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import { useUnsavedChanges } from '../../../hooks/use-unsaved-changes'
 import type { OrganisationConfig } from '../../../../domain/entities/organisation-config-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { toIanaTimezone } from '../../../utils/timezones'
+
+// A legacy `GMT±HH:MM` value is shown, and saved next time, as its IANA zone
+// (design D-W8). Applied to the saved copy too, so the upgrade alone doesn't
+// count as an unsaved change.
+function withIanaTimezone(config: OrganisationConfig): OrganisationConfig {
+  return { ...config, defaultTimezone: toIanaTimezone(config.defaultTimezone) }
+}
 
 export function useAdminOrganisationConfigs() {
   const navigate = useNavigate()
@@ -18,6 +26,7 @@ export function useAdminOrganisationConfigs() {
   const [form, setForm] = useState<OrganisationConfig | undefined>(undefined)
   const { phase, isRefreshing, begin } = useLoadTracker()
   const [isSaving, setIsSaving] = useState(false)
+  const [nameError, setNameError] = useState<string | undefined>(undefined)
   // The backend has no endpoint to store an uploaded logo file (only a logoUrl
   // string on /company), so a picked file is a local, unsaved preview only.
   const [logoPreview, setLogoPreviewState] = useState<{ url: string; fileName: string } | undefined>(undefined)
@@ -30,8 +39,8 @@ export function useAdminOrganisationConfigs() {
         const [user, config] = await Promise.all([getCurrentStaffUserUseCase.execute(), getOrganisationConfigUseCase.execute()])
         if (!request.succeed()) return
         setCurrentUser(user)
-        setSavedConfig(config)
-        setForm(config)
+        setSavedConfig(withIanaTimezone(config))
+        setForm(withIanaTimezone(config))
       } catch {
         if (!request.fail()) return
         toast.error('Something went wrong loading the organisation configuration. Please try again.')
@@ -54,6 +63,7 @@ export function useAdminOrganisationConfigs() {
   }, [loadConfig])
 
   const updateField = useCallback(<K extends keyof OrganisationConfig>(key: K, value: OrganisationConfig[K]) => {
+    if (key === 'organisationName') setNameError(undefined)
     setForm((current) => (current ? { ...current, [key]: value } : current))
   }, [])
 
@@ -79,15 +89,21 @@ export function useAdminOrganisationConfigs() {
 
   const cancel = useCallback(() => {
     setForm(savedConfig)
+    setNameError(undefined)
     setLogoPreview(undefined, undefined)
   }, [savedConfig, setLogoPreview])
 
   const save = useCallback(async () => {
     if (!form) return
+    const organisationName = form.organisationName.trim()
+    if (!organisationName) {
+      setNameError('Organisation name is required.')
+      return
+    }
 
     setIsSaving(true)
     try {
-      const updated = await updateOrganisationConfigUseCase.execute(form)
+      const updated = withIanaTimezone(await updateOrganisationConfigUseCase.execute({ ...form, organisationName }))
       setSavedConfig(updated)
       setForm(updated)
       toast.success('Organisation configuration saved.')
@@ -104,6 +120,7 @@ export function useAdminOrganisationConfigs() {
     phase,
     isRefreshing,
     isSaving,
+    nameError,
     logoPreview,
     retry,
     updateField,

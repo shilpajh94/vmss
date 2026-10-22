@@ -64,7 +64,7 @@ export function useAdminBuildingForm() {
     try {
       const [user, branchList, departmentList] = await Promise.all([
         getCurrentStaffUserUseCase.execute(),
-        listBranchesUseCase.execute(),
+        listBranchesUseCase.execute({ activeOnly: !isEditMode }),
         listDepartmentsUseCase.execute(),
       ])
       setCurrentUser(user)

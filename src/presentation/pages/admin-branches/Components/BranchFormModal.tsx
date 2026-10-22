@@ -89,6 +89,7 @@ export function BranchFormModal({ formState, employees, isSaving, onSubmit, onCl
           onChange={(code) => updateField('code', code)}
           error={errors.code}
           required
+          readOnly
         />
         <TextField
           label="Location / City"

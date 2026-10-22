@@ -293,8 +293,8 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: false,
   },
-  SYNC_EMPLOYEES: {
-    endpoint: "/auth/employees/sync",
+  CREATE_HOST_EMPLOYEE: {
+    endpoint: "/auth/employees",
     method: "POST",
     hasToken: true,
   },

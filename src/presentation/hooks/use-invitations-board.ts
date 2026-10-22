@@ -986,13 +986,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     await loadDashboard('background')
   }, [pendingCheckOutId, checkingOutId, pendingCheckOutRequest, checkOutInvitationUseCase, loadDashboard, toast])
 
-  // Filtered server-side by exact match, and the wizards store the purpose's
-  // display name ("Interview"), not the option slug ("interview") - so the
-  // label is what gets sent.
-  const purposeOptions = useMemo(
-    () => [{ value: 'all', label: 'All purposes' }, ...PURPOSE_OF_VISIT_OPTIONS.map(({ label }) => ({ value: label, label }))],
-    [],
-  )
+  // Filtered server-side by exact match on the stored label (QA F11).
+  const purposeOptions = useMemo(() => [{ value: 'all', label: 'All purposes' }, ...PURPOSE_OF_VISIT_OPTIONS], [])
 
   const columns = useMemo(
     () =>
