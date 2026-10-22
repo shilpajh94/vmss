@@ -16,6 +16,9 @@ interface VisitorInfoModalProps {
   isOpen: boolean
   isLoading?: boolean
   detail?: InvitationDetail
+  // The detail couldn't be loaded for this open; offered with a retry.
+  hasError?: boolean
+  onRetry?: () => void
   workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
   // Names the user who reverted an approval, when the board already knows
   // them; otherwise the note shows only the time and reason.
@@ -204,6 +207,8 @@ export function VisitorInfoModal({
   isOpen,
   isLoading,
   detail,
+  hasError,
+  onRetry,
   workflowRulesByCategory,
   employeeNameById,
   onClose,
@@ -217,7 +222,16 @@ export function VisitorInfoModal({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Visitor Info" maxWidthClassName="max-w-lg">
-      {isLoading || !detail ? (
+      {hasError ? (
+        <div role="alert" className="flex flex-col items-center gap-3 py-8 text-center">
+          <p className="font-body text-sm text-danger">We couldn't load this visitor's details.</p>
+          {onRetry && (
+            <button type="button" onClick={onRetry} className="min-h-10 rounded-lg bg-secondary-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
+              Try again
+            </button>
+          )}
+        </div>
+      ) : isLoading || !detail ? (
         <div className="flex flex-col items-center gap-2 py-8">
           <div className="size-6 animate-spin rounded-full border-2 border-border-subtle border-t-secondary-accent" />
           <p className="font-body text-sm text-text-muted">Loading visitor info…</p>

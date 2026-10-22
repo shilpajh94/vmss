@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
-import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { VisitRequestCard } from './VisitRequestCard'
 import { UserIcon } from '../icons'
@@ -46,7 +45,6 @@ interface KanbanColumnProps {
   embedded?: boolean
   onDrop?: (id: string) => void
   approvingId?: string
-  invitationDetails?: Record<string, InvitationDetail>
   roleNameById?: Record<string, string>
   employeeNameById?: Record<string, string>
   workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
@@ -75,7 +73,6 @@ export function KanbanColumn({
   embedded = false,
   onDrop,
   approvingId,
-  invitationDetails,
   roleNameById,
   employeeNameById,
   workflowRulesByCategory,
@@ -153,7 +150,6 @@ export function KanbanColumn({
               request={request}
               isDraggable={status === 'requested'}
               isApproving={approvingId === request.id}
-              detail={invitationDetails?.[request.id]}
               roleNameById={roleNameById}
               employeeNameById={employeeNameById}
               workflowRulesByCategory={workflowRulesByCategory}

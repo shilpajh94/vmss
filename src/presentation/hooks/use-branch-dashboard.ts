@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useCurrentUser } from '../context/current-user-context'
 import { useBranchOptions } from './use-branch-options'
-import { useLiveDashboard, useLiveResource } from './use-live-dashboard'
+import { useLiveDashboard, useDashboardResource } from './use-live-dashboard'
 import type { DashboardRange } from '../../domain/entities/dashboard-analytics-schema'
 
 const LOAD_ERROR = 'Something went wrong loading the dashboard. Please try again.'
@@ -26,13 +26,13 @@ export function useBranchDashboard({ allowed = true }: UseBranchDashboardOptions
 
   const enabled = allowed
 
-  const overview = useLiveResource(() => getDashboardOverviewUseCase.execute({ branchId }), `overview:${branchId ?? 'all'}`, enabled)
-  const recentCheckins = useLiveResource(
+  const overview = useDashboardResource(() => getDashboardOverviewUseCase.execute({ branchId }), `overview:${branchId ?? 'all'}`, enabled)
+  const recentCheckins = useDashboardResource(
     () => listRecentCheckinsUseCase.execute({ branchId, pageSize: RECENT_CHECKINS_PAGE_SIZE }),
     `checkins:${branchId ?? 'all'}`,
     enabled,
   )
-  const analytics = useLiveResource(
+  const analytics = useDashboardResource(
     () => getDashboardAnalyticsUseCase.execute({ branchId, range }),
     `analytics:${branchId ?? 'all'}:${range}`,
     enabled,

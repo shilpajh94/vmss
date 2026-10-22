@@ -1,4 +1,5 @@
 import z from "zod"
+import { CurrentApprovalStepSchema } from "./invitation-detail-schema"
 
 export const VisitRequestSummarySchema = z.object({
   id: z.string().min(1),
@@ -14,6 +15,9 @@ export const VisitRequestSummarySchema = z.object({
   expiresAt: z.string().min(1),
   preferredVisitDate: z.string().nullish(),
   preferredVisitTime: z.string().nullish(),
+  // Lets a board card show its approval level without a per-card detail
+  // request (design D12). Absent from an API that predates it.
+  currentApprovalStep: CurrentApprovalStepSchema.nullish(),
 })
 
 export type VisitRequestSummary = z.infer<typeof VisitRequestSummarySchema>

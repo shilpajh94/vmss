@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { Building } from '../../../../domain/entities/building-schema'
 import type { FloorInput } from '../../../../domain/entities/floor-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 import { toUserMessage } from '../../../utils/to-user-message'
 import { toFloorNumbers, validateFloorNumbers, type FloorNumberDrafts } from '../floor-form-validation'
@@ -27,11 +27,11 @@ export function useAdminFloorForm() {
   const { id } = useParams<{ id: string }>()
   const isEditMode = id !== undefined
 
-  const { getCurrentStaffUserUseCase, listBuildingsUseCase, listFloorsUseCase, createFloorUseCase, updateFloorUseCase } =
+  const { listBuildingsUseCase, listFloorsUseCase, createFloorUseCase, updateFloorUseCase } =
     useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [buildings, setBuildings] = useState<Building[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
@@ -45,8 +45,7 @@ export function useAdminFloorForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, buildingList] = await Promise.all([getCurrentStaffUserUseCase.execute(), listBuildingsUseCase.execute({ activeOnly: !isEditMode })])
-      setCurrentUser(user)
+      const buildingList = await listBuildingsUseCase.execute({ activeOnly: !isEditMode })
       setBuildings(buildingList)
 
       if (isEditMode) {
@@ -74,7 +73,7 @@ export function useAdminFloorForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listBuildingsUseCase, listFloorsUseCase, isEditMode, id, toast])
+  }, [listBuildingsUseCase, listFloorsUseCase, isEditMode, id, toast])
 
   useEffect(() => {
     void load()

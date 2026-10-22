@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { ApiError } from '../../../../data/api/api-error'
 import type { KioskInput } from '../../../../domain/entities/kiosk-schema'
@@ -17,8 +18,9 @@ export function useAdminKioskForm() {
   const { id } = useParams<{ id: string }>()
   const isEditMode = id !== undefined
 
-  const { getCurrentStaffUserUseCase, getKioskUseCase, createKioskUseCase, updateKioskUseCase } = useAppDependencies()
+  const { getKioskUseCase, createKioskUseCase, updateKioskUseCase } = useAppDependencies()
   const toast = useToast()
+  const currentUser = useCurrentUser()
 
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
@@ -31,8 +33,7 @@ export function useAdminKioskForm() {
     setErrorMessage(undefined)
 
     try {
-      const user = await getCurrentStaffUserUseCase.execute()
-      if (!canManageKiosks(user)) {
+      if (!canManageKiosks(currentUser)) {
         toast.error('You do not have permission to manage kiosks.')
         navigate('/admin/kiosks', { replace: true })
         return
@@ -55,7 +56,7 @@ export function useAdminKioskForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, getKioskUseCase, isEditMode, id, navigate, toast])
+  }, [currentUser, getKioskUseCase, isEditMode, id, navigate, toast])
 
   useEffect(() => {
     void load()

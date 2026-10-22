@@ -1,6 +1,12 @@
 import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entities/invitation-detail-schema'
 import type { ApprovalWorkflowRule } from '../../domain/entities/approval-workflow-rule-schema'
 
+// What the level/approver helpers read: an invitation's detail, or a board
+// list item, which carries the same two fields.
+export type ApprovalProgress = Pick<InvitationDetail, 'visitorCategoryId'> & {
+  currentApprovalStep?: CurrentApprovalStep | null
+}
+
 // `CurrentApprovalStep.stepOrder` is 0-indexed (Reception's own step is
 // `stepOrder: 0`) — confirmed 2026-09-14 against the live API across several
 // real invitations. `ApprovalWorkflowRule.stepOrder` (the category's
@@ -92,7 +98,7 @@ export function resolveApproverLabel(
 // result at the current step's own (role-matched, see `resolveCurrentLevel`)
 // display level.
 export function resolveTotalSteps(
-  detail: InvitationDetail,
+  detail: ApprovalProgress,
   workflowRulesByCategory: Record<string, ApprovalWorkflowRule[]>,
 ): number {
   const rules = detail.visitorCategoryId ? workflowRulesByCategory[detail.visitorCategoryId] : undefined
@@ -108,7 +114,7 @@ export function resolveTotalSteps(
 // with which invitations actually get the plain-Approve action instead of
 // "Approve & Delegate".
 export function resolvePointOfContactLabel(
-  detail: InvitationDetail,
+  detail: ApprovalProgress,
   workflowRulesByCategory: Record<string, ApprovalWorkflowRule[]>,
 ): string | undefined {
   if (!isReceptionCurrentStep(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory)) {
@@ -127,7 +133,7 @@ export function resolvePointOfContactLabel(
 // currently sitting at its final approval level, where pinning down the
 // eventual point of contact matters most.
 export function canEditPointOfContact(
-  detail: InvitationDetail,
+  detail: ApprovalProgress,
   workflowRulesByCategory: Record<string, ApprovalWorkflowRule[]>,
 ): boolean {
   const totalSteps = resolveTotalSteps(detail, workflowRulesByCategory)
@@ -145,7 +151,7 @@ export function canEditPointOfContact(
 // not yet cached for that category, or no resolvable next-step role — so the
 // caller falls back to `resolveApproverLabel` unchanged.
 export function resolveNextStepPreviewLabel(
-  detail: InvitationDetail,
+  detail: ApprovalProgress,
   workflowRulesByCategory: Record<string, ApprovalWorkflowRule[]>,
   roleNameById: Record<string, string>,
 ): string | undefined {

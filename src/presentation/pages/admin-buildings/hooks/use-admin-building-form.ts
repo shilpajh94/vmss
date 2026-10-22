@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { BuildingInput } from '../../../../domain/entities/building-schema'
 import type { Floor, FloorInput } from '../../../../domain/entities/floor-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 import { toUserMessage } from '../../../utils/to-user-message'
 
@@ -28,7 +28,6 @@ export function useAdminBuildingForm() {
   const isEditMode = id !== undefined
 
   const {
-    getCurrentStaffUserUseCase,
     listBranchesUseCase,
     listBuildingsUseCase,
     createBuildingUseCase,
@@ -41,7 +40,7 @@ export function useAdminBuildingForm() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [branches, setBranches] = useState<Branch[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -63,12 +62,10 @@ export function useAdminBuildingForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, branchList, departmentList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
+      const [branchList, departmentList] = await Promise.all([
         listBranchesUseCase.execute({ activeOnly: !isEditMode }),
         listDepartmentsUseCase.execute(),
       ])
-      setCurrentUser(user)
       setBranches(branchList)
       setDepartments(departmentList)
 
@@ -99,7 +96,6 @@ export function useAdminBuildingForm() {
       setIsLoading(false)
     }
   }, [
-    getCurrentStaffUserUseCase,
     listBranchesUseCase,
     listBuildingsUseCase,
     listDepartmentsUseCase,

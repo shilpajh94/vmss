@@ -1,5 +1,5 @@
 import { useAppDependencies } from '../../../context/app-dependencies-context'
-import { useLiveDashboard, useLiveResource } from '../../../hooks/use-live-dashboard'
+import { useLiveDashboard, useDashboardResource } from '../../../hooks/use-live-dashboard'
 import type { CalendarFeed } from '../../../../domain/entities/calendar-feed-schema'
 import type { DateRange } from '../../../utils/calendar-dates'
 
@@ -28,7 +28,7 @@ export function useCalendarFeed({ range, branchId, statuses, perDayLimit }: UseC
   const { getCalendarFeedUseCase } = useAppDependencies()
 
   const key = `${range.from}:${range.to}:${branchId ?? 'all'}:${statuses?.join(',') ?? 'default'}:${perDayLimit}`
-  const resource = useLiveResource<KeyedFeed>(
+  const resource = useDashboardResource<KeyedFeed>(
     async () => ({ key, feed: await getCalendarFeedUseCase.execute({ from: range.from, to: range.to, branchId, statuses, perDayLimit }) }),
     key,
     true,

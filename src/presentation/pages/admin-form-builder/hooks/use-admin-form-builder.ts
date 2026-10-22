@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
-import { usePageRefresh } from '../../../context/refresh-context'
-import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
+import { useLiveResource } from '../../../hooks/use-live-resource'
 import type { FormStep } from '../../../../domain/entities/form-builder-schema'
 import type { Branch } from '../../../../domain/entities/branch-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormBuilderPublishState } from './use-form-builder-publish-state'
 import { toUserMessage } from '../../../utils/to-user-message'
 import { slugifyKey } from '../form-builder-key'
@@ -18,10 +16,12 @@ import { slugifyKey } from '../form-builder-key'
  */
 export const DEFAULT_WORKSPACE_VALUE = ''
 
+const EMPTY_STEPS: FormStep[] = []
+const EMPTY_BRANCHES: Branch[] = []
+
 export function useAdminFormBuilder() {
   const navigate = useNavigate()
   const {
-    getCurrentStaffUserUseCase,
     listBranchesUseCase,
     listFormStepsUseCase,
     createFormStepUseCase,
@@ -32,69 +32,36 @@ export function useAdminFormBuilder() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [branches, setBranches] = useState<Branch[]>([])
+  const currentUser = useCurrentUser()
   const [selectedBranchId, setSelectedBranchId] = useState<string | undefined>(undefined)
-  const [steps, setSteps] = useState<FormStep[]>([])
-  const { phase, isRefreshing, begin } = useLoadTracker()
   const [isPublishing, setIsPublishing] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<FormStep | undefined>(undefined)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const { hasUnpublishedChanges, markDirty, markPublished } = useFormBuilderPublishState(selectedBranchId)
 
-  const loadBranches = useCallback(async () => {
-    try {
-      const list = await listBranchesUseCase.execute()
-      setBranches(list)
-    } catch {
-      // Non-fatal: the workspace selector just shows the default scope only.
-    }
-  }, [listBranchesUseCase])
-
-  const loadSteps = useCallback(
-    async (branchId: string | undefined, mode: LoadMode = 'user') => {
-      const request = begin(mode)
-
-      try {
-        const list = await listFormStepsUseCase.execute(branchId)
-        if (!request.succeed()) return
-        setSteps([...list].sort((a, b) => a.orderIndex - b.orderIndex))
-      } catch {
-        if (!request.fail()) return
-        toast.error('Something went wrong loading the registration steps. Please try again.')
-      }
-    },
-    [begin, listFormStepsUseCase, toast],
-  )
-
-  useEffect(() => {
-    void getCurrentStaffUserUseCase.execute().then(setCurrentUser)
-    void loadBranches()
-    void loadSteps(undefined)
-    // Runs once on mount — selectedBranchId changes are handled by selectWorkspace below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const selectWorkspace = useCallback(
-    (value: string) => {
-      const branchId = value === DEFAULT_WORKSPACE_VALUE ? undefined : value
-      setSelectedBranchId(branchId)
-      void loadSteps(branchId)
-    },
-    [loadSteps],
-  )
-
-  const retry = useCallback(() => {
-    void loadSteps(selectedBranchId)
-  }, [loadSteps, selectedBranchId])
-
-  // Auto-refreshes steps every 15s; skipped while a create/delete/publish
-  // action is in progress so a background tick can't replace data underneath
-  // an in-progress user action (same convention as use-admin-branches.ts).
+  // The workspace's steps are the live data; the branch list (the workspace
+  // selector) loads once, and a failure there just leaves the default scope.
+  // Polls skip while a create/delete/publish is in progress.
   const isActionInProgress = isCreateOpen || pendingDelete !== undefined || isPublishing
-  usePolling(() => void loadSteps(selectedBranchId, 'background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
+  const resource = useLiveResource({
+    load: async () => [...(await listFormStepsUseCase.execute(selectedBranchId))].sort((a, b) => a.orderIndex - b.orderIndex),
+    query: { selectedBranchId },
+    reference: () => listBranchesUseCase.execute(),
+    errorMessage: 'Something went wrong loading the registration steps. Please try again.',
+    isBusy: isActionInProgress,
+  })
+  const { phase, isRefreshing, retry, setData } = resource
+  const steps = resource.data ?? EMPTY_STEPS
+  const branches = resource.reference ?? EMPTY_BRANCHES
+  const setSteps = useCallback(
+    (next: FormStep[] | ((current: FormStep[]) => FormStep[])) =>
+      setData((current) => (typeof next === 'function' ? next(current ?? []) : next)),
+    [setData],
+  )
 
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
+  const selectWorkspace = useCallback((value: string) => {
+    setSelectedBranchId(value === DEFAULT_WORKSPACE_VALUE ? undefined : value)
+  }, [])
 
   const toggleStepActive = useCallback(
     async (step: FormStep) => {
@@ -110,7 +77,7 @@ export function useAdminFormBuilder() {
         )
       }
     },
-    [updateFormStepUseCase, selectedBranchId, toast, markDirty],
+    [updateFormStepUseCase, selectedBranchId, toast, markDirty, setSteps],
   )
 
   const requestDeleteStep = useCallback((step: FormStep) => setPendingDelete(step), [])
@@ -128,7 +95,7 @@ export function useAdminFormBuilder() {
     } finally {
       setPendingDelete(undefined)
     }
-  }, [pendingDelete, deleteFormStepUseCase, selectedBranchId, toast, markDirty])
+  }, [pendingDelete, deleteFormStepUseCase, selectedBranchId, toast, markDirty, setSteps])
 
   const openCreateStep = useCallback(() => setIsCreateOpen(true), [])
   const closeCreateStep = useCallback(() => setIsCreateOpen(false), [])
@@ -148,7 +115,7 @@ export function useAdminFormBuilder() {
         return message
       }
     },
-    [createFormStepUseCase, selectedBranchId, toast, markDirty],
+    [createFormStepUseCase, selectedBranchId, toast, markDirty, setSteps],
   )
 
   const reorderSteps = useCallback(
@@ -167,7 +134,7 @@ export function useAdminFormBuilder() {
         toast.error(toUserMessage(error, 'Something went wrong reordering steps. Please try again.'))
       }
     },
-    [steps, reorderFormStepsUseCase, selectedBranchId, toast, markDirty],
+    [steps, reorderFormStepsUseCase, selectedBranchId, toast, markDirty, setSteps],
   )
 
   const goToEditFields = useCallback(

@@ -59,7 +59,8 @@ export function AdminInvitationsPage() {
     cancelRevert,
     confirmRevert,
     revertingId,
-    invitationDetails,
+    visitorInfo,
+    retryVisitorInfo,
     roleNameById,
     hostEmployees,
     employeeNameById,
@@ -182,7 +183,6 @@ export function AdminInvitationsPage() {
                 onMoveToApproved={column.status === 'requested' && actionPermissions.approve ? requestApprove : undefined}
                 onMoveToDenied={column.status === 'requested' && actionPermissions.deny ? requestDeny : undefined}
                 approvingId={approvingId}
-                invitationDetails={invitationDetails}
                 roleNameById={roleNameById}
                 employeeNameById={employeeNameById}
                 workflowRulesByCategory={workflowRulesByCategory}
@@ -295,8 +295,10 @@ export function AdminInvitationsPage() {
 
       <VisitorInfoModal
         isOpen={visitorInfoId !== undefined}
-        isLoading={visitorInfoId !== undefined && !invitationDetails[visitorInfoId]}
-        detail={visitorInfoId ? invitationDetails[visitorInfoId] : undefined}
+        isLoading={visitorInfo.status === 'loading'}
+        hasError={visitorInfo.status === 'error'}
+        onRetry={retryVisitorInfo}
+        detail={visitorInfo.detail}
         workflowRulesByCategory={workflowRulesByCategory}
         employeeNameById={employeeNameById}
         onClose={closeVisitorInfo}

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { BranchRoleAssignment, HostEmployee, HostEmployeeCreateInput } from '../../../../domain/entities/host-employee-schema'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 import { toUserMessage } from '../../../utils/to-user-message'
 import { isValidEmail } from '../../../utils/is-valid-email'
@@ -29,7 +29,6 @@ export function useAdminHostEmployeeForm() {
   const isEditMode = id !== undefined
 
   const {
-    getCurrentStaffUserUseCase,
     listDepartmentsUseCase,
     listBranchesUseCase,
     listHostEmployeesUseCase,
@@ -40,7 +39,7 @@ export function useAdminHostEmployeeForm() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [departments, setDepartments] = useState<Department[]>([])
   const [branches, setBranches] = useState<Branch[]>([])
   const [roles, setRoles] = useState<RoleOut[]>([])
@@ -62,13 +61,11 @@ export function useAdminHostEmployeeForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, departmentList, branchList, roleList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
+      const [departmentList, branchList, roleList] = await Promise.all([
         listDepartmentsUseCase.execute({ activeOnly: !isEditMode }),
         listBranchesUseCase.execute({ activeOnly: !isEditMode }),
         listRolesUseCase.execute(),
       ])
-      setCurrentUser(user)
       setDepartments(departmentList)
       setBranches(branchList)
       setRoles(roleList)
@@ -90,7 +87,7 @@ export function useAdminHostEmployeeForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listDepartmentsUseCase, listBranchesUseCase, listRolesUseCase, listHostEmployeesUseCase, isEditMode, id, toast])
+  }, [listDepartmentsUseCase, listBranchesUseCase, listRolesUseCase, listHostEmployeesUseCase, isEditMode, id, toast])
 
   useEffect(() => {
     void load()

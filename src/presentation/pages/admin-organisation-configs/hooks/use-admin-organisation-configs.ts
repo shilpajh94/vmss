@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import { useUnsavedChanges } from '../../../hooks/use-unsaved-changes'
 import { useUnsavedChangesGuard } from '../../../hooks/use-unsaved-changes-guard'
 import type { OrganisationConfig } from '../../../../domain/entities/organisation-config-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { toIanaTimezone } from '../../../utils/timezones'
 import { toUserMessage } from '../../../utils/to-user-message'
 
@@ -18,10 +18,10 @@ function withIanaTimezone(config: OrganisationConfig): OrganisationConfig {
 }
 
 export function useAdminOrganisationConfigs() {
-  const { getCurrentStaffUserUseCase, getOrganisationConfigUseCase, updateOrganisationConfigUseCase } = useAppDependencies()
+  const { getOrganisationConfigUseCase, updateOrganisationConfigUseCase } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [savedConfig, setSavedConfig] = useState<OrganisationConfig | undefined>(undefined)
   const [form, setForm] = useState<OrganisationConfig | undefined>(undefined)
   const { phase, isRefreshing, begin } = useLoadTracker()
@@ -33,9 +33,8 @@ export function useAdminOrganisationConfigs() {
       const request = begin(mode)
 
       try {
-        const [user, config] = await Promise.all([getCurrentStaffUserUseCase.execute(), getOrganisationConfigUseCase.execute()])
+        const config = await getOrganisationConfigUseCase.execute()
         if (!request.succeed()) return
-        setCurrentUser(user)
         setSavedConfig(withIanaTimezone(config))
         setForm(withIanaTimezone(config))
       } catch {
@@ -43,7 +42,7 @@ export function useAdminOrganisationConfigs() {
         toast.error('Something went wrong loading the organisation configuration. Please try again.')
       }
     },
-    [begin, getCurrentStaffUserUseCase, getOrganisationConfigUseCase, toast],
+    [begin, getOrganisationConfigUseCase, toast],
   )
 
   useEffect(() => {

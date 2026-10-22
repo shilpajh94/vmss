@@ -1,26 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
-import { useToast } from '../../../components/toast/toast-context'
-import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { usePagedList } from '../../../hooks/use-paged-list'
-import { usePageRefresh } from '../../../context/refresh-context'
-import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
+import { useLiveResource } from '../../../hooks/use-live-resource'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
 const PAGE_SIZE = 20
+const EMPTY_EMPLOYEES: HostEmployee[] = []
+const EMPTY_DEPARTMENTS: Department[] = []
+const EMPTY_ROLE_OPTIONS: string[] = []
 
 export function useAdminHostEmployees() {
-  const { getCurrentStaffUserUseCase, listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase } = useAppDependencies()
-  const toast = useToast()
+  const { listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase } = useAppDependencies()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [hostEmployees, setHostEmployees] = useState<HostEmployee[]>([])
-  const [total, setTotal] = useState(0)
-  const [departments, setDepartments] = useState<Department[]>([])
-  const [roleOptions, setRoleOptions] = useState<string[]>([])
-  const { phase, isRefreshing, begin } = useLoadTracker()
+  const currentUser = useCurrentUser()
 
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [departmentFilter, setDepartmentFilter] = useState('')
@@ -29,52 +23,29 @@ export function useAdminHostEmployees() {
 
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
-  // `user` (default): filter/page/retry/refresh - keeps the current rows on
-  // screen with a progress cue. `background`: the 15s poll.
-  const loadHostEmployees = useCallback(
-    async (mode: LoadMode = 'user') => {
-      const request = begin(mode)
-
-      try {
-        const [user, page_, departmentList, roles] = await Promise.all([
-          getCurrentStaffUserUseCase.execute(),
-          listHostEmployeesPageUseCase.execute({
-            page,
-            pageSize: PAGE_SIZE,
-            departmentId: departmentFilter || undefined,
-            role: roleFilter || undefined,
-            status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
-          }),
-          listDepartmentsUseCase.execute(),
-          listRolesUseCase.execute(),
-        ])
-        if (!request.succeed()) return
-        setCurrentUser(user)
-        setHostEmployees(page_.items)
-        setTotal(page_.total)
-        setDepartments(departmentList)
-        setRoleOptions([...new Set(roles.map((role) => role.name))].sort((a, b) => a.localeCompare(b)))
-      } catch {
-        if (!request.fail()) return
-        toast.error('Something went wrong loading the employees. Please try again.')
-      }
+  // No dialog on this page to protect, so polling is never suppressed.
+  // Departments and role names (the filters) load once.
+  const resource = useLiveResource({
+    load: () =>
+      listHostEmployeesPageUseCase.execute({
+        page,
+        pageSize: PAGE_SIZE,
+        departmentId: departmentFilter || undefined,
+        role: roleFilter || undefined,
+        status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+      }),
+    query: { page, departmentFilter, roleFilter, statusFilter },
+    reference: async () => {
+      const [departments, roles] = await Promise.all([listDepartmentsUseCase.execute(), listRolesUseCase.execute()])
+      return { departments, roleOptions: [...new Set(roles.map((role) => role.name))].sort((a, b) => a.localeCompare(b)) }
     },
-    [begin, getCurrentStaffUserUseCase, listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase, page, departmentFilter, roleFilter, statusFilter, toast],
-  )
-
-  useEffect(() => {
-    void loadHostEmployees()
-  }, [loadHostEmployees])
-
-  const retry = useCallback(() => {
-    void loadHostEmployees()
-  }, [loadHostEmployees])
-
-  // Auto-refreshes the directory every 15s; there's no form/delete dialog
-  // state on this page to protect, so polling is never suppressed.
-  usePolling(() => void loadHostEmployees('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: false })
-
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
+    errorMessage: 'Something went wrong loading the employees. Please try again.',
+  })
+  const { phase, isRefreshing, retry } = resource
+  const hostEmployees = resource.data?.items ?? EMPTY_EMPLOYEES
+  const total = resource.data?.total ?? 0
+  const departments = resource.reference?.departments ?? EMPTY_DEPARTMENTS
+  const roleOptions = resource.reference?.roleOptions ?? EMPTY_ROLE_OPTIONS
 
   const departmentNameById = useMemo(() => new Map(departments.map((department) => [department.id, department.name])), [departments])
 

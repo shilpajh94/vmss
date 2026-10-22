@@ -1,22 +1,26 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
-import { usePageRefresh } from '../../../context/refresh-context'
-import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
+import { useLiveResource } from '../../../hooks/use-live-resource'
 import { ApiError } from '../../../../data/api/api-error'
 import type { Kiosk } from '../../../../domain/entities/kiosk-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { canManageKiosks } from '../can-manage-kiosks'
 
 const PAGE_SIZE = 20
+const EMPTY_KIOSKS: Kiosk[] = []
+
+function loadErrorText(error: unknown): string {
+  return error instanceof ApiError && error.status === 403
+    ? 'You do not have permission to view kiosks.'
+    : 'Something went wrong loading the kiosks. Please try again.'
+}
 
 export type KioskSort = 'name:asc' | 'name:desc' | 'created_at:asc' | 'created_at:desc'
 
 export function useAdminKiosks() {
   const {
-    getCurrentStaffUserUseCase,
     listKiosksPageUseCase,
     updateKioskUseCase,
     setKioskVisibilityUseCase,
@@ -24,12 +28,7 @@ export function useAdminKiosks() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [kiosks, setKiosks] = useState<Kiosk[]>([])
-  const [total, setTotal] = useState(0)
-  const { phase, isRefreshing, begin } = useLoadTracker()
-  // Only shown when the first load fails; keeps the 403 vs generic wording.
-  const [loadErrorMessage, setLoadErrorMessage] = useState<string | undefined>(undefined)
+  const currentUser = useCurrentUser()
 
   const [pendingDelete, setPendingDelete] = useState<Kiosk | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -44,54 +43,28 @@ export function useAdminKiosks() {
 
   const canManage = canManageKiosks(currentUser)
 
-  // `user` (default): filter/page/sort/retry/refresh/post-mutation - keeps the
-  // current rows on screen with a progress cue. `background`: the 15s poll.
-  const loadKiosks = useCallback(
-    async (mode: LoadMode = 'user') => {
-      const request = begin(mode)
-
-      try {
-        const [sortBy, sortOrder] = sort.split(':') as ['name' | 'created_at', 'asc' | 'desc']
-        const [user, kioskPage] = await Promise.all([
-          getCurrentStaffUserUseCase.execute(),
-          listKiosksPageUseCase.execute({
-            page,
-            pageSize: PAGE_SIZE,
-            status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
-            includeHidden: showHidden,
-            sortBy,
-            sortOrder,
-          }),
-        ])
-        if (!request.succeed()) return
-        setCurrentUser(user)
-        setKiosks(kioskPage.items)
-        setTotal(kioskPage.total)
-      } catch (error) {
-        if (!request.fail()) return
-        const message =
-          error instanceof ApiError && error.status === 403
-            ? 'You do not have permission to view kiosks.'
-            : 'Something went wrong loading the kiosks. Please try again.'
-        setLoadErrorMessage(message)
-        toast.error(message)
-      }
-    },
-    [begin, getCurrentStaffUserUseCase, listKiosksPageUseCase, page, statusFilter, showHidden, sort, toast],
-  )
-
-  useEffect(() => {
-    void loadKiosks()
-  }, [loadKiosks])
-
-  const retry = useCallback(() => {
-    void loadKiosks()
-  }, [loadKiosks])
-
   const isActionInProgress = pendingDelete !== undefined || isDeleting || busyKioskId !== undefined
-  usePolling(() => void loadKiosks('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
-
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
+  const resource = useLiveResource({
+    load: () => {
+      const [sortBy, sortOrder] = sort.split(':') as ['name' | 'created_at', 'asc' | 'desc']
+      return listKiosksPageUseCase.execute({
+        page,
+        pageSize: PAGE_SIZE,
+        status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+        includeHidden: showHidden,
+        sortBy,
+        sortOrder,
+      })
+    },
+    query: { page, statusFilter, showHidden, sort },
+    errorMessage: loadErrorText,
+    isBusy: isActionInProgress,
+  })
+  const { phase, isRefreshing, retry, reload } = resource
+  const kiosks = resource.data?.items ?? EMPTY_KIOSKS
+  const total = resource.data?.total ?? 0
+  // Only shown when the first load fails; keeps the 403 vs generic wording.
+  const loadErrorMessage = phase === 'error' ? loadErrorText(resource.error) : undefined
 
   const isFiltering = statusFilter !== '' || showHidden
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
@@ -128,14 +101,14 @@ export function useAdminKiosks() {
     (error: unknown, fallback: string) => {
       if (error instanceof ApiError && error.status === 404) {
         toast.error('That kiosk no longer exists.')
-        void loadKiosks()
+        void reload()
       } else if (error instanceof ApiError && (error.status === 403 || error.status === 409 || error.status === 422)) {
         toast.error(error.message)
       } else {
         toast.error(fallback)
       }
     },
-    [toast, loadKiosks],
+    [toast, reload],
   )
 
   const toggleActive = useCallback(
@@ -143,14 +116,14 @@ export function useAdminKiosks() {
       setBusyKioskId(kiosk.id)
       try {
         await updateKioskUseCase.execute(kiosk.id, { isActive: !kiosk.isActive })
-        await loadKiosks()
+        await reload()
       } catch (error) {
         reportMutationError(error, 'Something went wrong updating the kiosk. Please try again.')
       } finally {
         setBusyKioskId(undefined)
       }
     },
-    [updateKioskUseCase, loadKiosks, reportMutationError],
+    [updateKioskUseCase, reload, reportMutationError],
   )
 
   const toggleHidden = useCallback(
@@ -159,14 +132,14 @@ export function useAdminKiosks() {
       try {
         await setKioskVisibilityUseCase.execute(kiosk.id, !kiosk.isHidden)
         toast.success(kiosk.isHidden ? 'Kiosk unhidden.' : 'Kiosk hidden.')
-        await loadKiosks()
+        await reload()
       } catch (error) {
         reportMutationError(error, 'Something went wrong updating the kiosk. Please try again.')
       } finally {
         setBusyKioskId(undefined)
       }
     },
-    [setKioskVisibilityUseCase, toast, loadKiosks, reportMutationError],
+    [setKioskVisibilityUseCase, toast, reload, reportMutationError],
   )
 
   const requestDelete = useCallback((kiosk: Kiosk) => setPendingDelete(kiosk), [])
@@ -180,14 +153,14 @@ export function useAdminKiosks() {
       await deleteKioskUseCase.execute(pendingDelete.id)
       toast.success('Kiosk deleted.')
       setPendingDelete(undefined)
-      await loadKiosks()
+      await reload()
     } catch (error) {
       setPendingDelete(undefined)
       reportMutationError(error, 'Something went wrong deleting the kiosk. Please try again.')
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, deleteKioskUseCase, toast, loadKiosks, reportMutationError])
+  }, [pendingDelete, deleteKioskUseCase, toast, reload, reportMutationError])
 
   return {
     canManage,

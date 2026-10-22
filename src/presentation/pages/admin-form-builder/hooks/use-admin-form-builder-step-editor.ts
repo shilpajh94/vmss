@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePageRefresh } from '../../../context/refresh-context'
@@ -14,7 +15,6 @@ import type {
   FormFieldUpdateInput,
   FormStep,
 } from '../../../../domain/entities/form-builder-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormBuilderPublishState } from './use-form-builder-publish-state'
 import { toUserMessage } from '../../../utils/to-user-message'
 import { useUnsavedChangesGuard } from '../../../hooks/use-unsaved-changes-guard'
@@ -26,7 +26,6 @@ export function useAdminFormBuilderStepEditor() {
   const branchId = searchParams.get('branchId') ?? undefined
 
   const {
-    getCurrentStaffUserUseCase,
     listFormStepsUseCase,
     listFormFieldsUseCase,
     createFormFieldUseCase,
@@ -42,7 +41,7 @@ export function useAdminFormBuilderStepEditor() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [step, setStep] = useState<FormStep | undefined>(undefined)
   const [fields, setFields] = useState<FormField[]>([])
   const [groups, setGroups] = useState<FormFieldGroup[]>([])
@@ -74,7 +73,9 @@ export function useAdminFormBuilderStepEditor() {
         setGroups([...stepGroups].sort((a, b) => a.orderIndex - b.orderIndex))
         setSelectedFieldId((current) => current ?? sortedFields[0]?.id)
       } catch {
-        if (!request.fail()) return
+        // A failing poll keeps the last fields without a toast; the next
+        // tick retries (live-data-refresh).
+        if (!request.fail() || (mode === 'background' && !request.isInitial)) return
         toast.error('Something went wrong loading this step. Please try again.')
       }
     },
@@ -82,7 +83,6 @@ export function useAdminFormBuilderStepEditor() {
   )
 
   useEffect(() => {
-    void getCurrentStaffUserUseCase.execute().then(setCurrentUser)
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepId, branchId])

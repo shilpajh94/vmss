@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
+import { useCurrentUser } from '../context/current-user-context'
 import { useToast } from '../components/toast/toast-context'
 import { ApiError } from '../../data/api/api-error'
-import { LIVE_REFRESH_INTERVAL_MS, usePolling } from './use-polling'
-import { useLoadTracker, type LoadMode } from './use-load-tracker'
+import { useLiveResource } from './use-live-resource'
 import { useDebouncedValue } from './use-debounced-value'
 import { isReceptionCurrentStep, resolveApproverLabel, resolveCurrentLevel, resolveTotalSteps } from '../utils/approval-step-label'
 import { employeeAtBranch, employeeHasRoleAtBranch } from '../utils/role-name-match'
-import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entities/invitation-detail-schema'
 import type { RoleOut } from '../../domain/entities/role-out-schema'
@@ -21,6 +20,9 @@ import { REGISTRATION_TYPE_OPTIONS, SOURCE_OPTIONS, STATUS_OPTIONS, exportFilena
 import type { InvitationExportChoice } from '../components/invitation-board/ExportInvitationsModal'
 import { boardStatusForApiStatus, usePagedBoardColumns, type BoardStatus, type ColumnQuery } from './use-paged-board-columns'
 import { permissionsFor } from '../utils/permissions'
+
+const EMPTY_ROLES: RoleOut[] = []
+const EMPTY_EMPLOYEES: HostEmployee[] = []
 
 export const BOARD_STATUS_COLUMNS = [
   { status: 'requested', label: 'Requested' },
@@ -71,7 +73,6 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
   const {
     listVisitRequestsUseCase,
     approveInvitationUseCase,
-    getCurrentStaffUserUseCase,
     getInvitationDetailUseCase,
     listRolesUseCase,
     listHostEmployeesUseCase,
@@ -88,12 +89,7 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [roles, setRoles] = useState<RoleOut[]>([])
-  const [roleNameById, setRoleNameById] = useState<Record<string, string>>({})
-  const [hostEmployees, setHostEmployees] = useState<HostEmployee[]>([])
-  const [employeeNameById, setEmployeeNameById] = useState<Record<string, string>>({})
-  const { phase, isRefreshing: isReloadingBoard, begin } = useLoadTracker()
+  const currentUser = useCurrentUser()
   // Filter/search changes reload only the columns (not the whole board), so
   // they're tracked separately; a count, since a newer filter change can
   // start before an older one settles.
@@ -132,6 +128,7 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
   const [isLoadingNextStepCandidates, setIsLoadingNextStepCandidates] = useState(false)
   const [pendingEditId, setPendingEditId] = useState<string | undefined>(undefined)
   const [visitorInfoId, setVisitorInfoId] = useState<string | undefined>(undefined)
+  const [visitorInfo, setVisitorInfo] = useState<{ status: 'loading' | 'ready' | 'error'; detail?: InvitationDetail }>({ status: 'loading' })
   const [isExportOpen, setIsExportOpen] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [exportError, setExportError] = useState<string | undefined>(undefined)
@@ -181,76 +178,6 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
     loadMore,
   } = usePagedBoardColumns(fetchVisitRequestsPage, columnQuery, visibleStatuses)
 
-  // Every reload keeps each column's loaded depth (refresh, polling, and the
-  // reload after an action); only a filter/search change resets columns to
-  // their first page (the effect below). After the first load the columns
-  // stay mounted through every reload - a `user` reload only adds the
-  // in-progress cue - so they keep their scroll position.
-  const loadDashboard = useCallback(
-    async (mode: LoadMode = 'user') => {
-      const request = begin(mode)
-
-      try {
-        const [user, , roles, employees] = await Promise.all([
-          getCurrentStaffUserUseCase.execute(),
-          reloadColumns({ keepDepth: true }),
-          // Listing roles is admin-scoped and 403s for other staff roles
-          // (e.g. host, reception). Every consumer of roleNameById already
-          // falls back gracefully when a name is missing (see
-          // resolveApproverLabel), so degrade to an empty list here instead
-          // of failing the whole dashboard load over a permission the
-          // current user was never going to have.
-          listRolesUseCase.execute().catch((error: unknown) => {
-            console.error('Failed to load roles', error)
-            return []
-          }),
-          listHostEmployeesUseCase.execute(),
-        ])
-        if (!request.succeed()) return
-        setCurrentUser(user)
-        setRoles(roles)
-        setRoleNameById(Object.fromEntries(roles.map((role: RoleOut) => [role.id, role.name])))
-        setHostEmployees(employees)
-        setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
-      } catch (error) {
-        console.error('Failed to load dashboard', error)
-        if (!request.fail()) return
-        toast.error('Something went wrong loading the dashboard. Please try again.')
-      }
-    },
-    [begin, getCurrentStaffUserUseCase, reloadColumns, listRolesUseCase, listHostEmployeesUseCase, toast],
-  )
-
-  useEffect(() => {
-    void loadDashboard()
-  }, [loadDashboard])
-
-  // A changed filter or (debounced) search restarts every column from its
-  // first page. Skipped on mount - the initial `loadDashboard` covers that.
-  // The cards on screen stay put, dimmed under the progress bar, until the
-  // filtered columns replace them (async-ui-states "Re-fetching keeps
-  // existing content visible").
-  const hasAppliedInitialQueryRef = useRef(false)
-  useEffect(() => {
-    if (!hasAppliedInitialQueryRef.current) {
-      hasAppliedInitialQueryRef.current = true
-      return
-    }
-    setPendingColumnReloads((count) => count + 1)
-    reloadColumns({ keepDepth: false })
-      .catch((error: unknown) => {
-        console.error('Failed to apply board filters', error)
-        toast.error('Something went wrong loading the dashboard. Please try again.')
-      })
-      .finally(() => setPendingColumnReloads((count) => count - 1))
-  }, [columnQuery, visibleStatuses, reloadColumns, toast])
-
-  const refresh = useCallback(() => {
-    void loadDashboard()
-  }, [loadDashboard])
-
-  const isRefreshing = isReloadingBoard || pendingColumnReloads > 0
-
   // progress, so the auto-refresh tick can skip a fetch that would otherwise
   // disrupt it.
   const isActionInProgress =
@@ -271,7 +198,64 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
     editingId !== undefined ||
     approvingAndDelegatingId !== undefined
 
-  usePolling(() => void loadDashboard('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
+  // Every reload keeps each column's loaded depth (refresh, polling, and the
+  // reload after an action); only a filter/search change resets columns to
+  // their first page (the effect below). After the first load the columns
+  // stay mounted through every reload - a `user` reload only adds the
+  // in-progress cue - so they keep their scroll position. Roles and host
+  // employees (names, pickers) load once per visit, not on every poll, and
+  // only a failed first load or manual refresh toasts (design D-W4).
+  const board = useLiveResource({
+    load: () => reloadColumns({ keepDepth: true }),
+    reference: async () => {
+      const [roles, employees] = await Promise.all([
+        // Listing roles is admin-scoped and 403s for other staff roles
+        // (e.g. host, reception). Every consumer of roleNameById already
+        // falls back gracefully when a name is missing (see
+        // resolveApproverLabel), so degrade to an empty list here instead
+        // of failing the whole reference load over a permission the
+        // current user was never going to have.
+        listRolesUseCase.execute().catch(() => [] as RoleOut[]),
+        listHostEmployeesUseCase.execute(),
+      ])
+      return { roles, employees }
+    },
+    errorMessage: 'Something went wrong loading the dashboard. Please try again.',
+    isBusy: isActionInProgress,
+    // The pages register the top-bar refresh, with the filter reloads folded
+    // into `isRefreshing`.
+    registerRefresh: false,
+  })
+  const { phase, isRefreshing: isReloadingBoard, hasFailed, retry: refresh, reload: loadDashboard } = board
+  const roles = board.reference?.roles ?? EMPTY_ROLES
+  const hostEmployees = board.reference?.employees ?? EMPTY_EMPLOYEES
+  const roleNameById = useMemo(() => Object.fromEntries(roles.map((role) => [role.id, role.name])) as Record<string, string>, [roles])
+  const employeeNameById = useMemo(
+    () => Object.fromEntries(hostEmployees.map((employee) => [employee.id, employee.fullName])) as Record<string, string>,
+    [hostEmployees],
+  )
+
+  // A changed filter or (debounced) search restarts every column from its
+  // first page. Skipped on mount - the initial board load covers that.
+  // The cards on screen stay put, dimmed under the progress bar, until the
+  // filtered columns replace them (async-ui-states "Re-fetching keeps
+  // existing content visible").
+  const hasAppliedInitialQueryRef = useRef(false)
+  useEffect(() => {
+    if (!hasAppliedInitialQueryRef.current) {
+      hasAppliedInitialQueryRef.current = true
+      return
+    }
+    setPendingColumnReloads((count) => count + 1)
+    reloadColumns({ keepDepth: false })
+      .catch((error: unknown) => {
+        console.error('Failed to apply board filters', error)
+        toast.error('Something went wrong loading the dashboard. Please try again.')
+      })
+      .finally(() => setPendingColumnReloads((count) => count - 1))
+  }, [columnQuery, visibleStatuses, reloadColumns, toast])
+
+  const isRefreshing = isReloadingBoard || pendingColumnReloads > 0
 
   // Workflow rules are defined per visitor category, not per invitation, so
   // every card sharing a category reuses one fetch instead of one each. The
@@ -324,44 +308,6 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
     [listApprovalWorkflowRulesUseCase],
   )
 
-  // Preloads approval-step detail for pending requests so the "Level X/Y"
-  // badge is visible on the collapsed card, not just after expanding it.
-  // Runs only for cards actually loaded into the Requested/Approved columns,
-  // so lazy loading caps it at one page's worth per scroll.
-  //
-  // Kicks off the category's workflow-rules fetch (below) in parallel with
-  // the detail fetch, keyed off the summary's own `visitorCategoryId` rather
-  // than waiting for the detail to resolve first: chaining them was exactly
-  // what caused the card to render once with the stale `stepOrder`/`totalSteps`
-  // snapshot and then "blink" to the correct level 2-3s later once the
-  // category's live rules arrived on their own separate round trip.
-  const pendingDetailFetchesRef = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    const requestsNeedingDetail = [...columnPages.requested.items, ...columnPages.approved.items].filter(
-      (request) => !invitationDetails[request.id] && !pendingDetailFetchesRef.current.has(request.id),
-    )
-
-    requestsNeedingDetail.forEach((request) => {
-      const id = request.id
-      pendingDetailFetchesRef.current.add(id)
-      getInvitationDetailUseCase
-        .execute(id)
-        .then((detail) => {
-          setInvitationDetails((previous) => ({ ...previous, [id]: detail }))
-        })
-        .catch((error: unknown) => {
-          console.error('Failed to preload approval progress', error)
-        })
-        .finally(() => {
-          pendingDetailFetchesRef.current.delete(id)
-        })
-
-      if (request.visitorCategoryId) {
-        ensureWorkflowRulesLoaded(request.visitorCategoryId).catch(() => {})
-      }
-    })
-  }, [columnPages.requested.items, columnPages.approved.items, invitationDetails, getInvitationDetailUseCase, ensureWorkflowRulesLoaded])
-
   // Preloads workflow rules for every visible card with a live approval step,
   // so "Pending:" can preview the next level and the level/total badges can
   // use the category's *current* rules instead of the step's own possibly
@@ -370,19 +316,15 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
   // workflow). Deliberately not gated on `step.stepOrder === 0` (Reception) —
   // that raw value is exactly what can be stale — nor on `step.totalSteps > 1`:
   // a single-level category can still snapshot a non-zero `stepOrder` for its
-  // one (Reception) step, and `totalSteps` claiming "1" was exactly what
-  // used to skip this preload, leaving `resolveCurrentLevel` stuck on that
-  // stale `stepOrder` fallback forever (confirmed live: shows "Level 2/2" on
-  // a freshly-created, never-edited single-level category). Every step needs
-  // the live rules to display correctly, not just ones whose snapshot
-  // happens to already look ambiguous.
+  // one (Reception) step. The cards read the step from their list item, so
+  // this is one rules request per visitor category, never one per card
+  // (design D12).
   useEffect(() => {
     const categoryIdsNeedingRules = new Set<string>()
 
-    for (const detail of Object.values(invitationDetails)) {
-      const step = detail.currentApprovalStep
-      if (step && detail.visitorCategoryId && !workflowRulesPromiseCacheRef.current[detail.visitorCategoryId]) {
-        categoryIdsNeedingRules.add(detail.visitorCategoryId)
+    for (const request of [...columnPages.requested.items, ...columnPages.approved.items]) {
+      if (request.currentApprovalStep && request.visitorCategoryId && !workflowRulesPromiseCacheRef.current[request.visitorCategoryId]) {
+        categoryIdsNeedingRules.add(request.visitorCategoryId)
       }
     }
 
@@ -393,37 +335,55 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
       // here instead of leaving an unhandled rejection in the console.
       ensureWorkflowRulesLoaded(categoryId).catch(() => {})
     })
-  }, [invitationDetails, ensureWorkflowRulesLoaded])
+  }, [columnPages.requested.items, columnPages.approved.items, ensureWorkflowRulesLoaded])
 
+  // The full detail is fetched only when an action or dialog needs it, and
+  // always fresh: the board moves on between polls, and cards no longer
+  // preload it (design D12).
   const loadDetail = useCallback(
-    async (id: string, options?: { forceRefresh?: boolean }): Promise<InvitationDetail> => {
-      if (!options?.forceRefresh && invitationDetails[id]) return invitationDetails[id]
-
+    async (id: string): Promise<InvitationDetail> => {
       const detail = await getInvitationDetailUseCase.execute(id)
       setInvitationDetails((previous) => ({ ...previous, [id]: detail }))
       return detail
     },
-    [invitationDetails, getInvitationDetailUseCase],
+    [getInvitationDetailUseCase],
   )
 
-  // Opens the "Visitor Info" popup for a card, fetching the full invitation
-  // detail (GET /invitations/:id). Always forces a fresh fetch (unlike the
-  // approval-progress preload above, which is fine reusing a cached detail):
-  // the response's primary/visitor photo URLs are short-lived signed links
-  // (see visit-tracking-repository.ts's backend counterpart), so a detail
-  // fetched more than a few minutes ago would render broken images if reused.
+  // Opens the "Visitor Info" popup for a card with its own loading and error
+  // state per open. It never shows an earlier fetch of the same invitation:
+  // the photo URLs are short-lived signed links, so a detail fetched minutes
+  // ago would render broken images.
+  const visitorInfoRequestRef = useRef(0)
+  const fetchVisitorInfo = useCallback(
+    (id: string) => {
+      const requestId = ++visitorInfoRequestRef.current
+      setVisitorInfo({ status: 'loading' })
+      loadDetail(id)
+        .then((detail) => {
+          if (requestId === visitorInfoRequestRef.current) setVisitorInfo({ status: 'ready', detail })
+        })
+        .catch((error: unknown) => {
+          console.error('Failed to load visitor info', error)
+          if (requestId === visitorInfoRequestRef.current) setVisitorInfo({ status: 'error' })
+        })
+    },
+    [loadDetail],
+  )
+
   const viewVisitorInfo = useCallback(
     (id: string) => {
       setVisitorInfoId(id)
-      void loadDetail(id, { forceRefresh: true }).catch((error: unknown) => {
-        console.error('Failed to load visitor info', error)
-        toast.error('Could not load visitor info for this request.')
-      })
+      fetchVisitorInfo(id)
     },
-    [loadDetail, toast],
+    [fetchVisitorInfo],
   )
 
+  const retryVisitorInfo = useCallback(() => {
+    if (visitorInfoId) fetchVisitorInfo(visitorInfoId)
+  }, [visitorInfoId, fetchVisitorInfo])
+
   const closeVisitorInfo = useCallback(() => {
+    visitorInfoRequestRef.current += 1
     setVisitorInfoId(undefined)
   }, [])
 
@@ -600,9 +560,19 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
     [delegateInvitationStepUseCase, getInvitationDetailUseCase, loadDashboard, loadDetail, employeeNameById, workflowRulesByCategory, toast],
   )
 
-  const requestDelegate = useCallback((id: string) => {
-    setPendingDelegateId(id)
-  }, [])
+  // The dialog filters candidates by the current step's role and branch, so
+  // it needs the detail, fetched fresh on open (cards no longer preload it).
+  const requestDelegate = useCallback(
+    (id: string) => {
+      setPendingDelegateId(id)
+      void loadDetail(id).catch((error: unknown) => {
+        console.error('Failed to load invitation detail for delegate', error)
+        toast.error('Could not load this request for delegating.')
+        setPendingDelegateId(undefined)
+      })
+    },
+    [loadDetail, toast],
+  )
 
   const cancelDelegate = useCallback(() => {
     setPendingDelegateId(undefined)
@@ -746,12 +716,8 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
     ],
   )
 
-  // Unlike Delegate (only offered once a card's detail is already loaded,
-  // since `canDelegate` depends on `detail.currentApprovalStep`), Edit is
-  // offered purely by status — a card whose detail was never fetched (e.g.
-  // an "approved" column card never expanded) can still show the button.
-  // So opening the modal has to fetch detail itself rather than assume it's
-  // already in `invitationDetails`.
+  // Opening the modal fetches the detail itself, like Delegate: cards don't
+  // preload it.
   const requestEdit = useCallback(
     (id: string) => {
       setPendingEditId(id)
@@ -1040,6 +1006,9 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
     confirmRevert,
     revertingId,
     invitationDetails,
+    visitorInfo,
+    retryVisitorInfo,
+    hasFailed,
     roles,
     roleNameById,
     hostEmployees,

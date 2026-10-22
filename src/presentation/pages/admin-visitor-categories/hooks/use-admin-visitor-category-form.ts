@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { VisitorCategoryInput } from '../../../../domain/entities/visitor-category-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 import { toUserMessage } from '../../../utils/to-user-message'
 import { wholeNumberRangeError } from '../../../utils/whole-number-range'
@@ -24,7 +24,6 @@ export function useAdminVisitorCategoryForm() {
   const isEditMode = id !== undefined
 
   const {
-    getCurrentStaffUserUseCase,
     listVisitorCategoriesUseCase,
     createVisitorCategoryUseCase,
     updateVisitorCategoryUseCase,
@@ -33,7 +32,7 @@ export function useAdminVisitorCategoryForm() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
@@ -46,8 +45,6 @@ export function useAdminVisitorCategoryForm() {
     setErrorMessage(undefined)
 
     try {
-      const user = await getCurrentStaffUserUseCase.execute()
-      setCurrentUser(user)
 
       if (isEditMode) {
         const visitorCategories = await listVisitorCategoriesUseCase.execute()
@@ -74,7 +71,7 @@ export function useAdminVisitorCategoryForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listVisitorCategoriesUseCase, isEditMode, id, toast])
+  }, [listVisitorCategoriesUseCase, isEditMode, id, toast])
 
   useEffect(() => {
     void load()

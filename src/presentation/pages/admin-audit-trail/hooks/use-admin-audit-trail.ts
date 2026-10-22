@@ -1,106 +1,53 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
-import { landingPathFor } from '../../../utils/landing-path'
+import { useCallback, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
+import { useLiveResource } from '../../../hooks/use-live-resource'
 import type { AuditLogEntry } from '../../../../domain/entities/audit-log-entry-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { AuditReportFormat } from '../../../../data/repositories/audit-trail-repository'
 import { DEFAULT_ACTIVITY_TYPE, DEFAULT_DATE_RANGE, PAGE_SIZE } from '../types'
 import { saveBlob } from '../../../utils/save-blob'
-import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
-import { usePageRefresh } from '../../../context/refresh-context'
 import { toUserMessage } from '../../../utils/to-user-message'
-import { permissionsFor } from '../../../utils/permissions'
 
 const REPORT_POLL_INTERVAL_MS = 1000
 const REPORT_POLL_MAX_ATTEMPTS = 20
+const EMPTY_ENTRIES: AuditLogEntry[] = []
+const EMPTY_NAMES: Record<string, string> = {}
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 export function useAdminAuditTrail() {
-  const navigate = useNavigate()
   const {
     getAuditTrailUseCase,
-    getCurrentStaffUserUseCase,
     listHostEmployeesUseCase,
     requestAuditReportUseCase,
     getAuditReportUseCase,
     downloadAuditReportUseCase,
   } = useAppDependencies()
   const toast = useToast()
+  const currentUser = useCurrentUser()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
   const [dateRange, setDateRange] = useState(DEFAULT_DATE_RANGE)
   const [activityType, setActivityType] = useState(DEFAULT_ACTIVITY_TYPE)
   const [page, setPage] = useState(1)
-  const [entries, setEntries] = useState<AuditLogEntry[]>([])
-  const [total, setTotal] = useState(0)
-  const [employeeNameById, setEmployeeNameById] = useState<Record<string, string>>({})
-  const { phase, isRefreshing, begin } = useLoadTracker()
   const [downloadingFormat, setDownloadingFormat] = useState<AuditReportFormat | undefined>(undefined)
 
-  // Admins only: confirm the signed-in user's admin status before loading any
-  // audit data, redirecting a non-admin authenticated user back to their own
-  // dashboard instead of rendering this page.
-  // Initial load, filter/page change and retry are `user` loads: once rows
-  // exist they stay on screen with a progress cue. The 10s poll is a
-  // `background` load: no cue, and a failure keeps the last rows without a
-  // toast (the next poll retries).
-  const load = useCallback(async (mode: LoadMode = 'user') => {
-    const request = begin(mode)
-
-    let user: StaffUser
-    try {
-      user = await getCurrentStaffUserUseCase.execute()
-    } catch {
-      if (!request.fail() || (mode === 'background' && !request.isInitial)) return
-      toast.error('Something went wrong loading the audit trail. Please try again.')
-      return
-    }
-
-    // The route already requires `audit-logs:view`; this only covers a
-    // permission revoked while the page is open.
-    if (!permissionsFor(user).can('audit-logs:view')) {
-      navigate(landingPathFor(user), { replace: true })
-      return
-    }
-    setCurrentUser(user)
-
-    try {
-      const [response, employees] = await Promise.all([
-        getAuditTrailUseCase.execute({
-          dateRange,
-          activityType,
-          page,
-          pageSize: PAGE_SIZE,
-        }),
-        listHostEmployeesUseCase.execute(),
-      ])
-      if (!request.succeed()) return
-      setEntries(response.items)
-      setTotal(response.total)
-      setEmployeeNameById(Object.fromEntries(employees.map((employee) => [employee.id, employee.fullName])))
-    } catch {
-      if (!request.fail() || (mode === 'background' && !request.isInitial)) return
-      toast.error('Something went wrong loading the audit trail. Please try again.')
-    }
-  }, [begin, getCurrentStaffUserUseCase, getAuditTrailUseCase, listHostEmployeesUseCase, dateRange, activityType, page, toast, navigate])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  const retry = useCallback(() => {
-    void load()
-  }, [load])
-
-  usePolling(() => void load('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: downloadingFormat !== undefined })
-
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
+  // The route already requires `audit-logs:view`. The entries are the live
+  // data; employee names (for actors) load once.
+  const resource = useLiveResource({
+    load: () => getAuditTrailUseCase.execute({ dateRange, activityType, page, pageSize: PAGE_SIZE }),
+    query: { dateRange, activityType, page },
+    reference: async () =>
+      Object.fromEntries((await listHostEmployeesUseCase.execute()).map((employee) => [employee.id, employee.fullName])) as Record<string, string>,
+    errorMessage: 'Something went wrong loading the audit trail. Please try again.',
+    isBusy: downloadingFormat !== undefined,
+  })
+  const { phase, isRefreshing, retry } = resource
+  const entries = resource.data?.items ?? EMPTY_ENTRIES
+  const total = resource.data?.total ?? 0
+  const employeeNameById = resource.reference ?? EMPTY_NAMES
 
   const changeDateRange = useCallback((value: string) => {
     setDateRange(value)

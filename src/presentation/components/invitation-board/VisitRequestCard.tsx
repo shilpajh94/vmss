@@ -1,6 +1,6 @@
+import { memo } from 'react'
 import { Avatar } from '../ui/Avatar'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
-import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import {
   isReceptionCurrentStep,
   resolveApproverLabel,
@@ -34,7 +34,6 @@ interface VisitRequestCardProps {
   request: VisitRequestSummary
   isDraggable?: boolean
   isApproving?: boolean
-  detail?: InvitationDetail
   roleNameById?: Record<string, string>
   employeeNameById?: Record<string, string>
   workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
@@ -54,11 +53,13 @@ interface VisitRequestCardProps {
   onMoveToDenied?: (id: string) => void
 }
 
-export function VisitRequestCard({
+// Memoised: a board re-renders on every poll, filter keystroke and dialog
+// toggle, and most cards' props (the row, the hook's stable callbacks, the
+// memoised name maps) haven't changed.
+export const VisitRequestCard = memo(function VisitRequestCard({
   request,
   isDraggable,
   isApproving,
-  detail,
   roleNameById,
   employeeNameById,
   workflowRulesByCategory,
@@ -73,36 +74,36 @@ export function VisitRequestCard({
   onMoveToApproved,
   onMoveToDenied,
 }: VisitRequestCardProps) {
-  const isReceptionStep = isReceptionCurrentStep(detail?.currentApprovalStep, detail?.visitorCategoryId, workflowRulesByCategory ?? {})
-  const pendingApproverLabel = detail?.currentApprovalStep
-    ? (resolveNextStepPreviewLabel(detail, workflowRulesByCategory ?? {}, roleNameById ?? {}) ??
-      resolveApproverLabel(detail.currentApprovalStep, roleNameById, employeeNameById))
+  // The list item carries the approval step (design D12), so a card never
+  // needs its own detail request.
+  const progress = request
+  const isReceptionStep = isReceptionCurrentStep(progress.currentApprovalStep, progress.visitorCategoryId, workflowRulesByCategory ?? {})
+  const pendingApproverLabel = progress.currentApprovalStep
+    ? (resolveNextStepPreviewLabel(progress, workflowRulesByCategory ?? {}, roleNameById ?? {}) ??
+      resolveApproverLabel(progress.currentApprovalStep, roleNameById, employeeNameById))
     : undefined
-  const totalSteps = detail?.currentApprovalStep ? resolveTotalSteps(detail, workflowRulesByCategory ?? {}) : undefined
+  const totalSteps = progress.currentApprovalStep ? resolveTotalSteps(progress, workflowRulesByCategory ?? {}) : undefined
   const canReschedule = Boolean(onRescheduleClick) && RESCHEDULABLE_STATUSES.has(request.status)
-  const canDelegate = Boolean(onDelegateClick) && Boolean(detail?.currentApprovalStep) && !isReceptionStep
+  const canDelegate = Boolean(onDelegateClick) && Boolean(progress.currentApprovalStep) && !isReceptionStep
   // Reception never uses drag-and-drop to approve — it always acts through an
   // explicit button, either "Approve & Delegate" (another level follows) or
   // plain "Approve" (Reception is the only/last level), so the outcome is
   // deliberate rather than an accidental card drag.
-  const isReceptionApprovalStep = isReceptionStep && Boolean(detail?.currentApprovalStep)
+  const isReceptionApprovalStep = isReceptionStep && Boolean(progress.currentApprovalStep)
   const isLockedToApproveAndDelegate = isReceptionApprovalStep && (totalSteps ?? 0) > 1
   const canApproveAndDelegate = Boolean(onApproveAndDelegateClick) && isLockedToApproveAndDelegate
   const canApprove = Boolean(onApproveClick) && isReceptionApprovalStep && (totalSteps ?? 0) <= 1
   const canEdit = Boolean(onEditClick) && RESCHEDULABLE_STATUSES.has(request.status)
   const canRevert = Boolean(onRevertClick) && request.status === 'approved'
-  // Before this card's detail has loaded, we don't yet know whether it's
-  // Reception's own step — default to not draggable rather than briefly
-  // allowing a drag that would then be blocked once the detail arrives.
-  // Same for the category's live workflow rules: until they've loaded,
+  // Until the category's live workflow rules have loaded,
   // `isReceptionStep`/`totalSteps` fall back to the step's own possibly-stale
   // `stepOrder`/`totalSteps` snapshot, which can misidentify Reception's step
   // as a later, freely-draggable one (`approve()` still hard-blocks this
   // case regardless — this just avoids the card visibly allowing a drag that
   // would immediately be rejected).
   const workflowRulesLoaded =
-    !detail?.currentApprovalStep || !detail.visitorCategoryId || workflowRulesByCategory?.[detail.visitorCategoryId] !== undefined
-  const isActionable = isDraggable && !isApproving && detail !== undefined && workflowRulesLoaded
+    !progress.currentApprovalStep || !progress.visitorCategoryId || workflowRulesByCategory?.[progress.visitorCategoryId] !== undefined
+  const isActionable = isDraggable && !isApproving && workflowRulesLoaded
   // Reception's own step approves through its dedicated buttons, but it can
   // still deny.
   const canTapApprove = isActionable && !isReceptionApprovalStep && Boolean(onMoveToApproved)
@@ -128,9 +129,8 @@ export function VisitRequestCard({
     canRevert && { label: 'Revert approval', icon: UndoIcon, onClick: () => onRevertClick?.(request.id) },
   ].filter((action): action is IconAction => Boolean(action))
 
-  const hostLabel = detail ? (detail.hostNameOrEmail ?? 'Unassigned — Front Office') : undefined
-  const purpose = purposeLabel(request.purposeOfVisit) ?? 'No purpose given'
-  const metaLine = hostLabel ? `${purpose} · ${hostLabel}` : purpose
+  // The list item doesn't carry the host; Visitor Info shows it.
+  const metaLine = purposeLabel(request.purposeOfVisit) ?? 'No purpose given'
   const hasSchedule = Boolean(request.preferredVisitDate && request.preferredVisitTime)
 
   return (
@@ -181,10 +181,10 @@ export function VisitRequestCard({
         ) : null}
       </div>
 
-      {detail?.currentApprovalStep ? (
+      {progress.currentApprovalStep ? (
         <div className="flex w-full items-center gap-1.5">
           <span className="flex shrink-0 items-center gap-1 rounded-full border border-info/30 bg-info/8 px-2 py-0.5 font-body text-[10px] font-bold whitespace-nowrap text-info">
-            Level {resolveCurrentLevel(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory ?? {})}/{totalSteps}
+            Level {resolveCurrentLevel(progress.currentApprovalStep, progress.visitorCategoryId, workflowRulesByCategory ?? {})}/{totalSteps}
           </span>
           <span className="truncate font-body text-[10px] text-text-faint">Pending: {pendingApproverLabel}</span>
         </div>
@@ -245,4 +245,4 @@ export function VisitRequestCard({
       ) : null}
     </div>
   )
-}
+})

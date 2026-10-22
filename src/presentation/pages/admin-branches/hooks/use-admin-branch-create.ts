@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 import { apiFieldErrors, toUserMessage } from '../../../utils/to-user-message'
@@ -38,24 +38,31 @@ function pickBranchFieldErrors(error: unknown): BranchFormErrors {
 
 export function useAdminBranchCreate() {
   const navigate = useNavigate()
-  const { createBranchUseCase, getCurrentStaffUserUseCase, listHostEmployeesUseCase } = useAppDependencies()
+  const { createBranchUseCase, listHostEmployeesUseCase } = useAppDependencies()
   const toast = useToast()
 
   const [values, setValues] = useState<BranchCreateValues>(EMPTY_VALUES)
   const [errors, setErrors] = useState<BranchFormErrors>({})
   const [isSaving, setIsSaving] = useState(false)
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [employees, setEmployees] = useState<HostEmployee[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [loadErrorMessage, setLoadErrorMessage] = useState<string | undefined>(undefined)
 
+  // The contact-person picker needs the employee list; without it the form
+  // can't be completed, so a failure shows an error with retry instead of
+  // an empty picker.
   const loadReferenceData = useCallback(async () => {
     setIsLoading(true)
-    await Promise.all([
-      getCurrentStaffUserUseCase.execute().then(setCurrentUser).catch(() => undefined),
-      listHostEmployeesUseCase.execute().then(setEmployees).catch(() => undefined),
-    ])
-    setIsLoading(false)
-  }, [getCurrentStaffUserUseCase, listHostEmployeesUseCase])
+    setLoadErrorMessage(undefined)
+    try {
+      setEmployees(await listHostEmployeesUseCase.execute())
+    } catch {
+      setLoadErrorMessage('Something went wrong loading the employee list. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [listHostEmployeesUseCase])
 
   useEffect(() => {
     void loadReferenceData()
@@ -100,9 +107,16 @@ export function useAdminBranchCreate() {
     navigate('/admin/branches')
   }, [navigate])
 
+  const retry = useCallback(() => {
+    void loadReferenceData()
+  }, [loadReferenceData])
+
   return {
     currentUser,
     employees,
+    isLoading,
+    loadErrorMessage,
+    retry,
     values,
     errors,
     isSaving,

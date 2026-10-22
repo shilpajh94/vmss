@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 import { toUserMessage } from '../../../utils/to-user-message'
@@ -19,11 +19,11 @@ export function useAdminWorkflowForm() {
   const { visitorCategoryId } = useParams<{ visitorCategoryId: string }>()
   const isEditMode = visitorCategoryId !== undefined
 
-  const { getCurrentStaffUserUseCase, listVisitorCategoriesUseCase, listRolesUseCase, listApprovalWorkflowRulesUseCase, saveWorkflowUseCase } =
+  const { listVisitorCategoriesUseCase, listRolesUseCase, listApprovalWorkflowRulesUseCase, saveWorkflowUseCase } =
     useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [categoryOptions, setCategoryOptions] = useState<VisitorCategory[]>([])
   const [roles, setRoles] = useState<RoleOut[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -39,13 +39,11 @@ export function useAdminWorkflowForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, categories, roleList, allRules] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
+      const [categories, roleList, allRules] = await Promise.all([
         listVisitorCategoriesUseCase.execute({ activeOnly: !isEditMode }),
         listRolesUseCase.execute(),
         listApprovalWorkflowRulesUseCase.execute(),
       ])
-      setCurrentUser(user)
       setRoles(roleList)
 
       // Level 1 is always Reception's step (stepOrder 0) throughout the rest
@@ -87,7 +85,6 @@ export function useAdminWorkflowForm() {
       setIsLoading(false)
     }
   }, [
-    getCurrentStaffUserUseCase,
     listVisitorCategoriesUseCase,
     listRolesUseCase,
     listApprovalWorkflowRulesUseCase,
