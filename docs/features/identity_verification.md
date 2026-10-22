@@ -24,25 +24,19 @@ no durable audit/business value once it expires or is consumed.
 
 | Channel | Status | Provider |
 |---|---|---|
-| `email` | Real | SMTP, via the same `aiosmtplib`/`settings.smtp_*` config `invitations` uses. The email is rendered from the branded `verification_code` template: code box, expiry in minutes, "Keep it private" note, and the Visimio logo (`refine-email-templates-and-visimio-brand`). The message is built with `core/emailing.build_message`. If the template fails, the email falls back to the one-line text, and the code is never logged. |
-| `sms` | Real, if configured | Twilio (`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_SMS_FROM_NUMBER`). Falls back to a loud "not configured" error if any of the three is unset — never a false success. |
-| `whatsapp` | Not implemented | No provider chosen yet; every request over this channel returns a 503. |
+| `email` | Real | SMTP, via the same `aiosmtplib`/`settings.smtp_*` config `invitations` uses. The email is rendered from the branded `verification_code` template: code box, expiry in minutes, "Keep it private" note, and the Guestify logo (`refine-email-templates-and-visimio-brand`, rebranded by `rebrand-to-guestify`). The message is built with `core/emailing.build_message`. If the template fails, the email falls back to the one-line text, and the code is never logged. |
+| `sms` | Real, if configured | Fast2SMS DLT route (`core/sms.py`), using the DLT-approved OTP template with the code and expiry minutes as variables. Needs `FAST2SMS_API_KEY`, `FAST2SMS_SENDER_ID` and `FAST2SMS_TEMPLATE_OTP`; any blank is a loud "not configured" error — never a false success. |
+| `whatsapp` | Real, if configured | Fast2SMS WhatsApp template API (`core/whatsapp.py`), using the approved authentication template (code sent as the body and `url` button parameter). Needs `FAST2SMS_API_KEY`, `FAST2SMS_WHATSAPP_PHONE_NUMBER_ID` and `FAST2SMS_WHATSAPP_TEMPLATE_OTP`; otherwise 503. |
 
-`identity_verification/senders.py` defines its own `EmailSender`/
-`SmsSender`/`WhatsAppSender` abstractions — deliberately not shared with
-`invitations/notifications.py`'s near-identical ones yet (see design.md's
-Non-Goals on why that extraction is a separate, later change).
+`identity_verification/senders.py` keeps its own email sender, while SMS and
+WhatsApp use the shared Fast2SMS clients in `core/` (also used by
+`invitations`). Recipients are normalised to Indian mobile numbers
+(`+91…`, `91…`, `0…` or 10 digits); an unusable number is a non-retryable
+failure and returns the same generic 503.
 
-### Twilio trial-account restriction
-
-A Twilio **trial** account (the default before the account is upgraded to
-paid) can only send SMS to phone numbers that have been individually
-verified in the Twilio console. Until the account is upgraded, SMS to any
-other number will fail at the Twilio API level — surfaced here as the same
-generic 503 a Twilio outage would produce, not a distinct error, since the
-client-facing response never carries Twilio-specific detail
-(`security-architecture.md` §4). Check the Twilio console/error logs
-server-side if SMS unexpectedly fails in a fresh deployment.
+SMS and WhatsApp send only pre-approved templates. Template wording and the
+variable order are in
+`openspec/changes/integrate-fast2sms-dlt-sms/design.md`.
 
 ## OTP lifecycle
 
@@ -68,8 +62,8 @@ Both endpoints accept an `Idempotency-Key` header (`api-conventions.md`
 §3), cached in Redis for 24h, same pattern `invitations` already uses for
 `POST /invitations`. One refinement for the request endpoint: only a
 *definitive* outcome is cached (success, a validation error, or a
-gateway-not-configured error) — a *transient* SMS dispatch failure (a
-Twilio-side error while properly configured) is deliberately **not**
+gateway-not-configured error) — a *transient* SMS/WhatsApp dispatch failure (a
+Fast2SMS-side error while properly configured) is deliberately **not**
 cached, so a retry with the same key re-attempts dispatch instead of
 replaying the same transient failure forever.
 
@@ -111,13 +105,11 @@ unchanged — still 404 `"Tenant not found or inactive"`.
 | `OTP_MAX_ATTEMPTS` | `5` | Consecutive wrong guesses allowed per code before it's invalidated. |
 | `OTP_RATE_LIMIT_PER_IDENTIFIER` | `5` | Max OTP requests per identifier within the rate-limit window. |
 | `OTP_RATE_LIMIT_WINDOW_SECONDS` | `3600` | Window for the per-identifier rate limit. |
-| `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_SMS_FROM_NUMBER` | unset | Required for real SMS delivery. Leave unset to keep SMS in its loud "not configured" state. |
-| `WHATSAPP_GATEWAY_BASE_URL`/`WHATSAPP_GATEWAY_API_KEY` | unset | Placeholders — no WhatsApp gateway has been chosen yet. |
+| `FAST2SMS_API_KEY`, `FAST2SMS_SENDER_ID`, `FAST2SMS_TEMPLATE_OTP` | unset | Required for SMS delivery. Leave unset to keep SMS in its loud "not configured" state. |
+| `FAST2SMS_WHATSAPP_PHONE_NUMBER_ID`, `FAST2SMS_WHATSAPP_TEMPLATE_OTP` (plus `FAST2SMS_WHATSAPP_API_VERSION`, `FAST2SMS_WHATSAPP_LANGUAGE_CODE`) | unset / `v26.0` / `en` | Required for WhatsApp delivery. |
 
 ## Not yet built (flagged, not silently dropped)
 
-- **WhatsApp delivery.** No provider chosen; every `whatsapp`-channel
-  request returns 503.
 - **Gating `POST /invitations` / `POST /registrations/walk-in` on a
   verified-contact proof.** This feature produces the `proofToken`; no
   endpoint in this codebase requires or consumes it yet. Wiring that gate

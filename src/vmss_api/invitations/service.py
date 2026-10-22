@@ -4,9 +4,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Any
+from functools import partial
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import anyio
 import structlog
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
@@ -30,9 +32,11 @@ from vmss_api.core.storage import (
 )
 from vmss_api.core.storage import save as storage_save
 from vmss_api.core.storage import url_for as storage_url_for
+from vmss_api.devices import service as device_service
+from vmss_api.devices.models import Device
 from vmss_api.form_builder import service as form_builder_service
 from vmss_api.form_builder import validation as form_builder_validation
-from vmss_api.invitations import badge, push_notifications, tasks
+from vmss_api.invitations import badge, code_lockout, export, push_notifications, tasks
 from vmss_api.invitations.models import (
     Invitation,
     InvitationQRCode,
@@ -41,23 +45,39 @@ from vmss_api.invitations.models import (
 )
 from vmss_api.invitations.qr import generate_qr_png
 from vmss_api.invitations.qr_token import decrypt_invitation_token, encrypt_invitation_token
-from vmss_api.invitations.repository import InvitationRepository
+from vmss_api.invitations.repository import (
+    CalendarCriteria,
+    InvitationExportCriteria,
+    InvitationRepository,
+)
 from vmss_api.invitations.schemas import (
+    CALENDAR_DEFAULT_STATUSES,
+    CalendarDateRange,
+    CalendarDayOut,
+    CalendarEventOut,
+    CalendarFeedOut,
+    CalendarScope,
+    ExportFormat,
     InvitationCreate,
     InvitationEditRequest,
+    InvitationExportDateRange,
     InvitationLookupPrefillOut,
     InvitationSortableField,
+    InvitationStatus,
     RegistrationSource,
     RegistrationType,
     VisitDetailsSubmit,
 )
 from vmss_api.notifications import service as notifications_service
-from vmss_api.org_structure.models import Branch, Building, Department
+from vmss_api.org_structure.deps import resolve_branch_scope
+from vmss_api.org_structure.models import Branch, Building, Company, Department
 from vmss_api.org_structure.repository import CompanyRepository, DepartmentRepository
 from vmss_api.org_structure.service import get_default_host_role
 from vmss_api.tenant.models import Tenant
 from vmss_api.visit_info.repository import VisitDurationRepository, VisitPurposeRepository
 from vmss_api.visitors.repository import ApprovalWorkflowRuleRepository, VisitorCategoryRepository
+
+_CHECKIN_CODE_LENGTH = 8
 
 
 async def _generate_unique_tracking_id(repo: InvitationRepository) -> str:
@@ -71,6 +91,31 @@ async def _generate_unique_tracking_id(repo: InvitationRepository) -> str:
         if await repo.get_by_tracking_id(candidate) is None:
             return candidate
     raise RuntimeError("Could not generate a unique invitation tracking id")
+
+
+async def _generate_unique_checkin_code(repo: InvitationRepository) -> str:
+    """8 digits from a CSPRNG, retried against uniqueness (same shape as
+    `_generate_unique_tracking_id`). Low entropy by design (typed on a kiosk),
+    so the public endpoints that accept it are rate limited and locked out.
+    """
+    for _ in range(10):
+        candidate = f"{secrets.randbelow(10**_CHECKIN_CODE_LENGTH):0{_CHECKIN_CODE_LENGTH}d}"
+        if await repo.get_by_checkin_code(candidate) is None:
+            return candidate
+    raise RuntimeError("Could not generate a unique invitation check-in code")
+
+
+async def _issue_checkin_code(tenant_db: AsyncSession, invitation: Invitation) -> None:
+    """Get-or-create, only for contacts preferring `sms` (spec.md "SMS-Preferred
+    Approved Invitation Gets a Numeric Check-In Code"). Called next to
+    `_issue_qr_code` at every approval point; a no-op once a code exists so a
+    repeated approval path never rotates it.
+    """
+    if invitation.primary_contact_preferred_contact_method != "sms":
+        return
+    if invitation.checkin_code is not None:
+        return
+    invitation.checkin_code = await _generate_unique_checkin_code(InvitationRepository(tenant_db))
 
 
 async def _generate_unique_badge_number(repo: InvitationRepository) -> str:
@@ -88,29 +133,38 @@ def _current_request_id() -> str:
     return structlog.contextvars.get_contextvars().get("request_id", "")
 
 
-def _resolve_tenant_timezone(tenant: Tenant) -> ZoneInfo:
-    """Mirrors `dashboard/service.py::_resolve_tenant_timezone` — falls back
-    to UTC (logged at `WARNING`) rather than raising when `Tenant.timezone`
-    isn't a real IANA zone name. Kept as a small local duplicate rather than
-    a cross-feature import (qr-checkin-scheduling-photo-email/design.md
-    Decision 1 — no existing import between `invitations` and `dashboard`,
-    and one two-line helper doesn't justify introducing one).
+def _visit_timezone(company: Company | None, tenant: Tenant) -> ZoneInfo:
+    """The zone "the visit day" is measured in — `Company.default_timezone`
+    (the value an admin actually edits in org setup), then `Tenant.timezone`
+    (a provisioning default), then UTC. Neither column has a DB-level
+    `CHECK`, so an invalid name is skipped with a `WARNING` rather than a
+    500 (expire-invitation-at-end-of-visit-day/design.md D1).
     """
-    try:
-        return ZoneInfo(tenant.timezone)
-    except ZoneInfoNotFoundError:
-        logger.warning("invitations_invalid_tenant_timezone", tenant_timezone=tenant.timezone)
-        return ZoneInfo("UTC")
+    candidates = (
+        ("company", company.default_timezone if company is not None else None),
+        ("tenant", tenant.timezone),
+    )
+    for source, name in candidates:
+        if not name:
+            continue
+        try:
+            return ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError, OSError):
+            logger.warning("invitations_invalid_timezone", source=source, timezone=name)
+    return ZoneInfo("UTC")
 
 
-def _end_of_visit_day_utc(visit_date: date, tenant: Tenant) -> datetime:
-    """Access for an approved visit is valid through the end of the visit
-    day itself, not the fixed creation-time TTL `expires_at` starts out
-    with — computed in the tenant's local timezone (the same zone
-    `check_in_by_qr_token`'s same-day gate uses) and converted to UTC for
-    storage.
+async def _resolve_visit_timezone(tenant_db: AsyncSession, tenant: Tenant) -> ZoneInfo:
+    company = await CompanyRepository(tenant_db).get_singleton()
+    return _visit_timezone(company, tenant)
+
+
+def _end_of_visit_day_utc(visit_date: date, tz: ZoneInfo) -> datetime:
+    """Access is valid through the end of the visit day itself, regardless
+    of when the invitation was submitted — 23:59:59 in the visit timezone
+    (the same zone `check_in_by_qr_token`'s same-day gate uses), converted
+    to UTC for storage.
     """
-    tz = _resolve_tenant_timezone(tenant)
     local_end = datetime.combine(visit_date, time(23, 59, 59), tzinfo=tz)
     return local_end.astimezone(UTC)
 
@@ -136,6 +190,106 @@ async def _notify_host(
             body=body,
             data=data,
         )
+
+
+def _staff_email_recipients(
+    invitation: Invitation, *, actor_user_id: uuid.UUID
+) -> tuple[uuid.UUID, ...]:
+    """Who besides the visitor is emailed about a denial, revert or
+    reschedule (staff-lifecycle-emails-and-dashboard-landing design.md D1):
+    the resolved host and the named point-of-contact user — once each,
+    never the actor. A role-identified point of contact is push-only, like
+    everywhere else.
+    """
+    return tuple(
+        dict.fromkeys(
+            user_id
+            for user_id in (invitation.host_id, invitation.poc_user_id)
+            if user_id is not None and user_id != actor_user_id
+        )
+    )
+
+
+async def _push_point_of_contact(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    invitation: Invitation,
+    *,
+    push_builder: Callable[[Invitation], tuple[str, str, dict[str, str]]],
+    actor_user_id: uuid.UUID | None,
+) -> None:
+    """The point-of-contact counterpart of `_notify_host`, for every
+    lifecycle event that pushes the host (complete-staff-push-coverage
+    design.md D1). Never pushes the actor or the host — the host already
+    gets `_notify_host`'s push for the same action. `actor_user_id` is None
+    for a QR/kiosk action with no human actor. A role-identified point of
+    contact fans out as `lifecycle_update`, not a new assignment.
+    """
+    excluded = {user_id for user_id in (actor_user_id, invitation.host_id) if user_id is not None}
+    poc_user_id = invitation.poc_user_id
+    poc_role_id = invitation.poc_role_id
+    if poc_user_id is None and poc_role_id is None:
+        return
+    title, body, data = push_builder(invitation)
+    if poc_user_id is not None and poc_user_id not in excluded:
+        await notifications_service.notify_user(
+            tenant_schema=tenant.schema_name,
+            user_id=poc_user_id,
+            title=title,
+            body=body,
+            data=data,
+        )
+    if poc_role_id is not None and invitation.branch_id is not None:
+        await notifications_service.notify_role_at_branch(
+            tenant_db,
+            tenant_schema=tenant.schema_name,
+            role_id=poc_role_id,
+            branch_id=invitation.branch_id,
+            title=title,
+            body=body,
+            data=data,
+            exclude_user_ids=excluded,
+            reason="lifecycle_update",
+        )
+
+
+_STAFF_EVENT_PUSH_BUILDERS: dict[
+    tasks.StaffLifecycleEvent, Callable[[Invitation], tuple[str, str, dict[str, str]]]
+] = {
+    "denied": push_notifications.denied,
+    "approval_reverted": push_notifications.approval_reverted,
+    "rescheduled": push_notifications.rescheduled,
+}
+
+
+async def _notify_responsible_staff(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    invitation: Invitation,
+    *,
+    event: tasks.StaffLifecycleEvent,
+    actor_user_id: uuid.UUID,
+) -> None:
+    """Called after commit, alongside the visitor dispatch and `_notify_host`
+    (invitations spec "Denial, Approval Revert, and Reschedule Email the
+    Responsible Staff" / "... Push the Point of Contact").
+    """
+    for recipient_user_id in _staff_email_recipients(invitation, actor_user_id=actor_user_id):
+        tasks.send_staff_lifecycle_notification.delay(
+            request_id=_current_request_id(),
+            tenant_schema=tenant.schema_name,
+            invitation_id=str(invitation.id),
+            recipient_user_id=str(recipient_user_id),
+            actor_user_id=str(actor_user_id),
+            event=event,
+        )
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        invitation,
+        push_builder=_STAFF_EVENT_PUSH_BUILDERS[event],
+        actor_user_id=actor_user_id,
+    )
 
 
 async def _issue_qr_code(
@@ -1127,7 +1281,6 @@ async def create_invitation(
 
     tracking_id = await _generate_unique_tracking_id(repo)
     now = datetime.now(UTC)
-    expires_at = _end_of_visit_day_utc(payload.visit_details.preferred_visit_date, tenant)
     max_size = settings.invitation_max_upload_size_bytes
 
     # Resolved once, at creation, rather than recomputed later — an
@@ -1137,6 +1290,9 @@ async def create_invitation(
     # configured yet, matching the column's own default.
     company = await CompanyRepository(tenant_db).get_singleton()
     auto_approved = company is not None and company.auto_approve_pre_registered_visitors
+    expires_at = _end_of_visit_day_utc(
+        payload.visit_details.preferred_visit_date, _visit_timezone(company, tenant)
+    )
     initial_status = "approved" if auto_approved else "submitted"
     approved_at = now if auto_approved else None
 
@@ -1453,6 +1609,8 @@ async def create_invitation(
     # time, persisted") — never for a `submitted` invitation, matching
     # "a QR code is never included until the invitation is approved".
     qr_code = await _issue_qr_code(tenant_db, invitation, tenant=tenant) if auto_approved else None
+    if auto_approved:
+        await _issue_checkin_code(tenant_db, invitation)
 
     await tenant_db.commit()
 
@@ -1525,7 +1683,11 @@ async def get_invitation(tenant_db: AsyncSession, invitation_id: uuid.UUID) -> I
 
 
 async def approve_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, tenant: Tenant
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    tenant: Tenant,
+    actor_user_id: uuid.UUID | None = None,
 ) -> Invitation:
     """Transitions a `submitted` invitation to `approved` and enqueues the
     approval notification (`add-invitation-approval-flow-and-role-resync/
@@ -1557,7 +1719,9 @@ async def approve_invitation(
             detail="Invitation has a configured approval workflow; approve its steps instead",
         )
     expires_at = (
-        _end_of_visit_day_utc(invitation.preferred_visit_date, tenant)
+        _end_of_visit_day_utc(
+            invitation.preferred_visit_date, await _resolve_visit_timezone(tenant_db, tenant)
+        )
         if invitation.preferred_visit_date is not None
         else None
     )
@@ -1567,6 +1731,7 @@ async def approve_invitation(
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not awaiting approval")
     qr_code = await _issue_qr_code(tenant_db, updated, tenant=tenant)
+    await _issue_checkin_code(tenant_db, updated)
     await tenant_db.commit()
     tasks.send_approval_notification.delay(
         request_id=_current_request_id(),
@@ -1575,6 +1740,13 @@ async def approve_invitation(
         qr_token=qr_code.qr_token,
     )
     await _notify_host(tenant, updated, push_notifications.approved)
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        updated,
+        push_builder=push_notifications.approved,
+        actor_user_id=actor_user_id,
+    )
     return updated
 
 
@@ -1680,7 +1852,12 @@ async def get_invitation_detail_form_context(
 
 
 async def deny_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, reason: str, tenant: Tenant
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    reason: str,
+    tenant: Tenant,
+    actor_user_id: uuid.UUID,
 ) -> Invitation:
     """Transitions a `submitted` invitation to `denied` and enqueues the
     denial notification — mirrors `approve_invitation`'s own
@@ -1697,7 +1874,88 @@ async def deny_invitation(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.denied)
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="denied", actor_user_id=actor_user_id
+    )
     return updated
+
+
+async def _enforce_device_location(
+    tenant_db: AsyncSession, device: Device | None, invitation: Invitation
+) -> None:
+    """Branch/building mismatch guard (devices spec "Check-In Validates
+    Device Branch and Building"). Runs before the state change so a
+    rejection leaves no trace. No-op without a device or with the tenant
+    setting off."""
+    if device is None or not await device_service.get_enforce_location_validation(tenant_db):
+        return
+    device_service.check_device_location(
+        device,
+        invitation_branch_id=invitation.branch_id,
+        invitation_building_id=invitation.building_id,
+    )
+
+
+async def revert_invitation_approval(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    user: User,
+    reason: str,
+    tenant: Tenant,
+) -> Invitation:
+    """Sends an `approved`, never-admitted invitation back to `submitted`
+    (spec.md "An Approved, Not-Yet-Checked-In Invitation Can Have Its
+    Approval Reverted"). The pre-read only picks a specific 409 message;
+    `revert_approval_if_eligible`'s atomic `WHERE` is the real gate, same
+    as `approve_invitation`.
+
+    A workflow-backed invitation has every step reset to `pending` and the
+    first step re-activated in the same transaction (approvals spec "Reverting
+    an Approval Restarts the Invitation's Workflow From Its First Step") —
+    both calls are no-ops for an invitation without steps (auto-approved).
+    The QR row is kept: every check-in path already refuses a `submitted`
+    invitation, and re-approval re-sends the same pass (design.md
+    Decision 3).
+    """
+    if invitation.status == "approved" and invitation.check_in_status != "unused":
+        logger.warning(
+            "invitation_revert_rejected", invitation_id=str(invitation.id), reason="checked_in"
+        )
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Visitor has already checked in on this invitation"
+        )
+    updated = await InvitationRepository(tenant_db).revert_approval_if_eligible(
+        invitation.id, user_id=user.id, reason=reason
+    )
+    if updated is None:
+        logger.warning(
+            "invitation_revert_rejected", invitation_id=str(invitation.id), reason="not_approved"
+        )
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
+    activated_step = await _restart_approval(tenant_db, updated)
+    await tenant_db.commit()
+    logger.info(
+        "invitation_approval_reverted",
+        invitation_id=str(updated.id),
+        workflow_restarted=activated_step is not None,
+    )
+    tasks.send_approval_revert_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(updated.id),
+    )
+    await _notify_host(tenant, updated, push_notifications.approval_reverted)
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="approval_reverted", actor_user_id=user.id
+    )
+    await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
+    return updated
+
+
+# An archived no-show's pass is inert until rescheduled (auto-checkout-and-
+# archive-no-shows spec "An Archived Invitation Does Not Admit the Visitor").
+_ARCHIVED_CHECK_IN_DETAIL = "Invitation is archived; reschedule it to admit the visitor"
 
 
 async def _perform_check_in(
@@ -1706,6 +1964,7 @@ async def _perform_check_in(
     *,
     actor_user_id: uuid.UUID | None,
     tenant: Tenant,
+    device: Device | None = None,
 ) -> tuple[Invitation, bool]:
     """spec.md "An Approved Invitation Can Be Checked In" /
     "A Watchlist-Flagged Invitation Blocks Check-In Until Overridden" /
@@ -1732,8 +1991,13 @@ async def _perform_check_in(
     below: a flag added after a visitor already entered must not turn their
     repeat/duplicate check-in call into an error.
     """
+    # Before the idempotent early return, so a repeat call from a device at the
+    # wrong branch/building is rejected rather than silently succeeding.
+    await _enforce_device_location(tenant_db, device, invitation)
     if invitation.check_in_status == "checked_in":
         return invitation, False
+    if invitation.status == "archived":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=_ARCHIVED_CHECK_IN_DETAIL)
     if invitation.watchlist_flagged:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -1742,7 +2006,7 @@ async def _perform_check_in(
     if invitation.status not in ("approved", "checked_in", "checked_out"):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
     updated = await InvitationRepository(tenant_db).check_in_if_eligible(
-        invitation.id, user_id=actor_user_id
+        invitation.id, user_id=actor_user_id, device_pk=device.id if device else None
     )
     if updated is None:
         raise HTTPException(
@@ -1751,11 +2015,18 @@ async def _perform_check_in(
         )
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_in)
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        updated,
+        push_builder=push_notifications.checked_in,
+        actor_user_id=actor_user_id,
+    )
     return updated, True
 
 
 async def check_in_invitation_by_tracking_id(
-    tenant_db: AsyncSession, tracking_id: str, *, tenant: Tenant
+    tenant_db: AsyncSession, tracking_id: str, *, tenant: Tenant, device: Device | None = None
 ) -> tuple[Invitation, bool]:
     """`PATCH /api/v2/invitations/{trackingId}/check-in` — public,
     unauthenticated, tracking-ID-keyed (spec.md "An Approved Invitation Can
@@ -1765,7 +2036,9 @@ async def check_in_invitation_by_tracking_id(
     invitation = await InvitationRepository(tenant_db).get_by_tracking_id(tracking_id)
     if invitation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Invitation not found")
-    return await _perform_check_in(tenant_db, invitation, actor_user_id=None, tenant=tenant)
+    return await _perform_check_in(
+        tenant_db, invitation, actor_user_id=None, tenant=tenant, device=device
+    )
 
 
 async def _get_invitation_by_qr_token_or_400(
@@ -1791,7 +2064,7 @@ async def _get_invitation_by_qr_token_or_400(
 
 
 async def check_in_by_qr_token(
-    tenant_db: AsyncSession, token: str, *, tenant: Tenant
+    tenant_db: AsyncSession, token: str, *, tenant: Tenant, device: Device | None = None
 ) -> tuple[Invitation, str, bool]:
     """`PATCH /api/v2/invitations/qr/{token}/check-in` — public,
     unauthenticated, driven by the encrypted QR token rather than the
@@ -1816,9 +2089,25 @@ async def check_in_by_qr_token(
     audit entry for a scan that performed no actual transition.
     """
     invitation = await _get_invitation_by_qr_token_or_400(tenant_db, token, tenant=tenant)
+    return await _check_in_resolved(tenant_db, invitation, tenant=tenant, device=device)
 
+
+async def _check_in_resolved(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    tenant: Tenant,
+    device: Device | None = None,
+) -> tuple[Invitation, str, bool]:
+    """Entry rules shared by the QR-token and check-in-code endpoints — only
+    how the invitation is resolved differs between them.
+    """
+    # Before the idempotent early return — see `_perform_check_in`.
+    await _enforce_device_location(tenant_db, device, invitation)
     if invitation.check_in_status == "checked_in":
         return invitation, "Verification passed", False
+    if invitation.status == "archived":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=_ARCHIVED_CHECK_IN_DETAIL)
     if invitation.status not in ("approved", "checked_in", "checked_out"):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, detail="Verification failed — invitation not approved"
@@ -1828,7 +2117,9 @@ async def check_in_by_qr_token(
             status.HTTP_409_CONFLICT,
             detail="Invitation is watchlist-flagged; override required before check-in",
         )
-    today_local = datetime.now(UTC).astimezone(_resolve_tenant_timezone(tenant)).date()
+    today_local = (
+        datetime.now(UTC).astimezone(await _resolve_visit_timezone(tenant_db, tenant)).date()
+    )
     if (
         invitation.preferred_visit_date is not None
         and invitation.preferred_visit_date > today_local
@@ -1842,7 +2133,7 @@ async def check_in_by_qr_token(
             status.HTTP_410_GONE, detail="Verification failed — visit window expired"
         )
     updated = await InvitationRepository(tenant_db).check_in_by_qr_if_eligible(
-        invitation.id, today_local=today_local
+        invitation.id, today_local=today_local, device_pk=device.id if device else None
     )
     if updated is None:
         raise HTTPException(
@@ -1851,11 +2142,14 @@ async def check_in_by_qr_token(
 
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_in)
+    await _push_point_of_contact(
+        tenant_db, tenant, updated, push_builder=push_notifications.checked_in, actor_user_id=None
+    )
     return updated, "Verification passed", True
 
 
 async def check_out_by_qr_token(
-    tenant_db: AsyncSession, token: str, *, tenant: Tenant
+    tenant_db: AsyncSession, token: str, *, tenant: Tenant, device: Device | None = None
 ) -> tuple[Invitation, str]:
     """`PATCH /api/v2/invitations/qr/{token}/check-out` — public,
     unauthenticated exit counterpart of `check_in_by_qr_token` (spec.md "QR
@@ -1866,12 +2160,24 @@ async def check_out_by_qr_token(
     `checked_in`.
     """
     invitation = await _get_invitation_by_qr_token_or_400(tenant_db, token, tenant=tenant)
+    return await _check_out_resolved(tenant_db, invitation, tenant=tenant, device=device)
 
+
+async def _check_out_resolved(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    tenant: Tenant,
+    device: Device | None = None,
+) -> tuple[Invitation, str]:
+    """Exit rules shared by the QR-token and check-in-code endpoints."""
     if invitation.check_in_status != "checked_in":
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Invitation is not currently checked in"
         )
-    updated = await InvitationRepository(tenant_db).check_out_by_qr_if_eligible(invitation.id)
+    updated = await InvitationRepository(tenant_db).check_out_by_qr_if_eligible(
+        invitation.id, device_pk=device.id if device else None
+    )
     if updated is None:
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Invitation is no longer eligible for check-out"
@@ -1879,25 +2185,181 @@ async def check_out_by_qr_token(
 
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_out)
+    await _push_point_of_contact(
+        tenant_db, tenant, updated, push_builder=push_notifications.checked_out, actor_user_id=None
+    )
     return updated, "Checked out successfully"
 
 
+async def _get_invitation_by_checkin_code_or_400(
+    tenant_db: AsyncSession, code: str, *, tenant: Tenant, client_ip: str
+) -> Invitation:
+    """Unknown codes get the same generic rejection as a bad QR token, and the
+    submitted code is never logged. A locked-out IP is refused before any
+    lookup, so a valid guess after lockout can't succeed.
+    """
+    await code_lockout.ensure_not_locked_out(tenant.id, client_ip)
+    invitation = await InvitationRepository(tenant_db).get_by_checkin_code(code)
+    if invitation is None:
+        await code_lockout.record_failure(tenant.id, client_ip)
+        logger.warning("checkin_code_invalid", tenant_id=str(tenant.id), ip=client_ip)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="Verification failed — invalid code"
+        )
+    return invitation
+
+
+async def check_in_by_code(
+    tenant_db: AsyncSession,
+    code: str,
+    *,
+    tenant: Tenant,
+    client_ip: str,
+    device: Device | None = None,
+) -> tuple[Invitation, str, bool]:
+    """`PATCH /api/v2/invitations/code/check-in` (spec.md "Public Check-In by
+    Code") — identical to `check_in_by_qr_token` apart from resolution.
+    """
+    invitation = await _get_invitation_by_checkin_code_or_400(
+        tenant_db, code, tenant=tenant, client_ip=client_ip
+    )
+    return await _check_in_resolved(tenant_db, invitation, tenant=tenant, device=device)
+
+
+async def check_out_by_code(
+    tenant_db: AsyncSession,
+    code: str,
+    *,
+    tenant: Tenant,
+    client_ip: str,
+    device: Device | None = None,
+) -> tuple[Invitation, str]:
+    """`PATCH /api/v2/invitations/code/check-out` (spec.md "Public Check-Out
+    by Code") — identical to `check_out_by_qr_token` apart from resolution.
+    """
+    invitation = await _get_invitation_by_checkin_code_or_400(
+        tenant_db, code, tenant=tenant, client_ip=client_ip
+    )
+    return await _check_out_resolved(tenant_db, invitation, tenant=tenant, device=device)
+
+
 async def check_out_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, user_id: uuid.UUID, tenant: Tenant
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    user_id: uuid.UUID,
+    tenant: Tenant,
+    device: Device | None = None,
 ) -> Invitation:
     updated = await InvitationRepository(tenant_db).check_out_if_checked_in(
-        invitation.id, user_id=user_id
+        invitation.id, user_id=user_id, device_pk=device.id if device else None
     )
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not checked in")
     await tenant_db.commit()
     await _notify_host(tenant, updated, push_notifications.checked_out)
+    await _push_point_of_contact(
+        tenant_db,
+        tenant,
+        updated,
+        push_builder=push_notifications.checked_out,
+        actor_user_id=user_id,
+    )
     return updated
 
 
 _RESCHEDULABLE_STATUSES = ("submitted", "approved")
 _ACTIVE_STATUSES = ("approved", "checked_in")
 _LOCATION_EDIT_FIELDS = frozenset({"department_to_visit", "department_id", "building_id"})
+
+
+async def _reject_past_visit_date(
+    tenant_db: AsyncSession, tenant: Tenant, visit_date: date
+) -> ZoneInfo:
+    """Leaving `archived` needs a date the visitor can still make — today or
+    later in the visit timezone (design.md D6). Returns the zone so the
+    caller can realign `expires_at` without resolving it twice.
+    """
+    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    if visit_date < datetime.now(UTC).astimezone(tz).date():
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="New visit date cannot be in the past",
+        )
+    return tz
+
+
+async def _restart_approval(
+    tenant_db: AsyncSession, invitation: Invitation
+) -> InvitationApprovalStep | None:
+    """Same workflow restart as `revert_invitation_approval`: every step back
+    to `pending`, first one re-activated. Both calls are no-ops for an
+    invitation without steps. Caller commits.
+    """
+    step_repo = InvitationApprovalStepRepository(tenant_db)
+    await step_repo.reset_all_for_invitation(invitation.id)
+    return await step_repo.activate_current_pending(invitation.id)
+
+
+async def _notify_activated_approver(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    invitation: Invitation,
+    activated_step: InvitationApprovalStep | None,
+) -> None:
+    if activated_step is None:
+        return
+    title, body, data = push_notifications.step_awaiting_approval(invitation)
+    await notifications_service.notify_step_approver(
+        tenant_db,
+        tenant_schema=tenant.schema_name,
+        approver_user_id=activated_step.approver_user_id,
+        approver_role_id=activated_step.approver_role_id,
+        branch_id=invitation.branch_id,
+        title=title,
+        body=body,
+        data=data,
+    )
+
+
+async def _reschedule_archived(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    preferred_visit_date: date,
+    preferred_visit_time: Any,
+    tenant: Tenant,
+    actor_user_id: uuid.UUID,
+) -> Invitation:
+    """An archived no-show goes back to `submitted` for re-approval on its new
+    date, never straight to `approved` — the Company auto-approve setting is
+    a creation-time rule only (design.md D6). The original QR row is kept;
+    re-approval re-sends that same pass.
+    """
+    tz = await _reject_past_visit_date(tenant_db, tenant, preferred_visit_date)
+    updated = await InvitationRepository(tenant_db).reschedule_archived_if_eligible(
+        invitation.id,
+        preferred_visit_date=preferred_visit_date,
+        preferred_visit_time=preferred_visit_time,
+        expires_at=_end_of_visit_day_utc(preferred_visit_date, tz),
+    )
+    if updated is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
+        )
+    activated_step = await _restart_approval(tenant_db, updated)
+    await tenant_db.commit()
+    tasks.send_reschedule_notification.delay(
+        request_id=_current_request_id(),
+        tenant_schema=tenant.schema_name,
+        invitation_id=str(updated.id),
+    )
+    await _notify_host(tenant, updated, push_notifications.rescheduled)
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="rescheduled", actor_user_id=actor_user_id
+    )
+    await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
+    return updated
 
 
 async def reschedule_invitation(
@@ -1907,20 +2369,31 @@ async def reschedule_invitation(
     preferred_visit_date: Any,
     preferred_visit_time: Any,
     tenant: Tenant,
+    actor_user_id: uuid.UUID,
 ) -> Invitation:
     """Notifies the primary contact of the new date/time on success
     (specs/invitations/spec.md "Reschedule Dispatches a Notification to the
     Primary Contact") — enqueued only after the commit below, never for a
     request rejected by either guard.
     """
+    if invitation.status == "archived":
+        return await _reschedule_archived(
+            tenant_db,
+            invitation,
+            preferred_visit_date=preferred_visit_date,
+            preferred_visit_time=preferred_visit_time,
+            tenant=tenant,
+            actor_user_id=actor_user_id,
+        )
     if invitation.status not in _RESCHEDULABLE_STATUSES:
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Invitation can no longer be rescheduled"
         )
-    expires_at = (
-        _end_of_visit_day_utc(preferred_visit_date, tenant)
-        if invitation.status == "approved"
-        else None
+    # Realigned for `submitted` too, not just `approved` — otherwise a
+    # pending invitation moved to a later day keeps the old day's expiry
+    # (expire-invitation-at-end-of-visit-day/design.md D2).
+    expires_at = _end_of_visit_day_utc(
+        preferred_visit_date, await _resolve_visit_timezone(tenant_db, tenant)
     )
     updated = await InvitationRepository(tenant_db).reschedule_if_eligible(
         invitation.id,
@@ -1939,6 +2412,9 @@ async def reschedule_invitation(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.rescheduled)
+    await _notify_responsible_staff(
+        tenant_db, tenant, updated, event="rescheduled", actor_user_id=actor_user_id
+    )
     return updated
 
 
@@ -2081,9 +2557,17 @@ async def edit_invitation(
     # corrected; every other field the client sends is ignored once the visit
     # is underway (the edit modal always submits the whole form).
     checked_in = invitation.status == "checked_in"
-    allowed_statuses = (
-        (*_RESCHEDULABLE_STATUSES, "checked_in") if checked_in else _RESCHEDULABLE_STATUSES
-    )
+    # An archived no-show stays editable; only a date change takes it out of
+    # `archived`, back into approval (auto-checkout-and-archive-no-shows D7).
+    # Gated on exactly `archived` so a concurrent reschedule can't be undone.
+    archived = invitation.status == "archived"
+    allowed_statuses: tuple[str, ...]
+    if checked_in:
+        allowed_statuses = (*_RESCHEDULABLE_STATUSES, "checked_in")
+    elif archived:
+        allowed_statuses = ("archived",)
+    else:
+        allowed_statuses = _RESCHEDULABLE_STATUSES
     if invitation.status not in allowed_statuses:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
     if not checked_in and (payload.poc_user_id is not None or payload.poc_role_id is not None):
@@ -2106,11 +2590,25 @@ async def edit_invitation(
         changes = {k: v for k, v in changes.items() if k in _LOCATION_EDIT_FIELDS}
     if not changes:
         return invitation
+    # Only an actual date change realigns expiry: the edit modal resubmits
+    # the unchanged date on every save, which would otherwise wipe a staff
+    # expiry extension (expire-invitation-at-end-of-visit-day/design.md D2).
+    new_visit_date = changes.get("preferred_visit_date")
+    leaves_archive = False
+    if new_visit_date is not None and new_visit_date != invitation.preferred_visit_date:
+        if archived:
+            tz = await _reject_past_visit_date(tenant_db, tenant, new_visit_date)
+            changes.update(status="submitted", approved_at=None)
+            leaves_archive = True
+        else:
+            tz = await _resolve_visit_timezone(tenant_db, tenant)
+        changes["expires_at"] = _end_of_visit_day_utc(new_visit_date, tz)
     updated = await InvitationRepository(tenant_db).edit_if_eligible(
         invitation.id, allowed_statuses=allowed_statuses, **changes
     )
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
+    activated_step = await _restart_approval(tenant_db, updated) if leaves_archive else None
     await tenant_db.commit()
     tasks.send_edit_notification.delay(
         request_id=_current_request_id(),
@@ -2118,7 +2616,19 @@ async def edit_invitation(
         invitation_id=str(updated.id),
     )
     await _notify_host(tenant, updated, push_notifications.edited)
-    if "poc_user_id" in changes or "poc_role_id" in changes:
+    await _notify_activated_approver(tenant_db, tenant, updated, activated_step)
+    poc_changed = "poc_user_id" in changes or "poc_role_id" in changes
+    # A newly named point of contact gets `poc_assigned` below instead — one
+    # push per edit, never "details updated" on top (design.md D3).
+    if not poc_changed:
+        await _push_point_of_contact(
+            tenant_db,
+            tenant,
+            updated,
+            push_builder=push_notifications.edited,
+            actor_user_id=user.id,
+        )
+    if poc_changed:
         title, body, data = push_notifications.poc_assigned(updated)
         await notifications_service.notify_step_approver(
             tenant_db,
@@ -2141,7 +2651,12 @@ async def edit_invitation(
 
 
 async def extend_invitation(
-    tenant_db: AsyncSession, invitation: Invitation, *, new_expires_at: datetime
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    new_expires_at: datetime,
+    tenant: Tenant,
+    actor_user_id: uuid.UUID | None = None,
 ) -> Invitation:
     if invitation.status not in _ACTIVE_STATUSES:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not active")
@@ -2156,6 +2671,12 @@ async def extend_invitation(
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not active")
     await tenant_db.commit()
+    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    extended = partial(push_notifications.extended, tz=tz)
+    await _notify_host(tenant, updated, extended)
+    await _push_point_of_contact(
+        tenant_db, tenant, updated, push_builder=extended, actor_user_id=actor_user_id
+    )
     return updated
 
 
@@ -2304,6 +2825,31 @@ async def track_by_email(tenant_db: AsyncSession, email: str) -> list[Invitation
     return await InvitationRepository(tenant_db).list_by_primary_contact_email(email)
 
 
+def status_changed_at(invitation: Invitation) -> datetime:
+    """Python mirror of `repository._status_changed_at_expr`, so the list
+    row's `statusChangedAt` is exactly the value `sortBy=status_changed_at`
+    ordered by (sort-invitation-board-by-status-date/design.md Decision 2).
+    Keep the two in step — `test_status_changed_at_matches_sql_ordering`
+    checks it.
+    """
+    by_status: datetime | None
+    if invitation.status == "submitted":
+        candidates = [invitation.submitted_at, invitation.approval_reverted_at]
+        if invitation.archived_at is not None:
+            candidates.append(invitation.rescheduled_at)
+        present = [value for value in candidates if value is not None]
+        by_status = max(present) if present else None
+    else:
+        by_status = {
+            "approved": invitation.approved_at,
+            "checked_in": invitation.checked_in_at,
+            "checked_out": invitation.checked_out_at,
+            "denied": invitation.denied_at,
+            "archived": invitation.archived_at,
+        }.get(invitation.status)
+    return by_status or invitation.submitted_at or invitation.created_at
+
+
 async def list_invitations_page(
     tenant_db: AsyncSession,
     *,
@@ -2318,6 +2864,7 @@ async def list_invitations_page(
     page_size: int,
     sort_by: InvitationSortableField,
     sort_order: SortOrder,
+    purpose_of_visit: str | None = None,
 ) -> tuple[list[Invitation], int]:
     return await InvitationRepository(tenant_db).list_page(
         branch_scope=branch_scope,
@@ -2331,7 +2878,240 @@ async def list_invitations_page(
         page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
+        purpose_of_visit=purpose_of_visit,
     )
+
+
+class ExportTooLargeError(Exception):
+    """`GET /invitations/export` would exceed
+    `settings.invitation_export_max_rows` — rejected rather than truncated
+    (add-invitation-export/design.md Decision 1).
+    """
+
+    def __init__(self, row_count: int, max_rows: int) -> None:
+        super().__init__(
+            f"This export would contain {row_count} rows, more than the maximum of "
+            f"{max_rows}. Narrow the filters (for example the date range) and try again."
+        )
+
+
+@dataclass(frozen=True)
+class InvitationExportFile:
+    content: bytes
+    media_type: str
+    filename: str
+    row_count: int
+
+
+_EXPORT_MEDIA_TYPES = {
+    ExportFormat.csv: "text/csv; charset=utf-8",
+    ExportFormat.xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+async def export_invitations(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    *,
+    branch_scope: BranchScope,
+    relevant_to_user_id: uuid.UUID | None,
+    default_host_role_id: uuid.UUID | None,
+    status: str | None,
+    registration_type: str | None,
+    source: str | None,
+    search: str | None,
+    purpose_of_visit: str | None,
+    date_range: InvitationExportDateRange,
+    export_format: ExportFormat,
+) -> InvitationExportFile:
+    """Backs `GET /invitations/export` (specs/invitation-export/spec.md).
+    `dateFrom`/`dateTo` are inclusive calendar dates in the visit timezone,
+    turned into half-open UTC bounds here so the repository only ever
+    compares instants (design.md Decision 3).
+    """
+    tz = await _resolve_visit_timezone(tenant_db, tenant)
+
+    def _local_midnight_utc(day: date) -> datetime:
+        return datetime.combine(day, time.min, tzinfo=tz).astimezone(UTC)
+
+    criteria = InvitationExportCriteria(
+        branch_scope=branch_scope,
+        relevant_to_user_id=relevant_to_user_id,
+        default_host_role_id=default_host_role_id,
+        status=status,
+        registration_type=registration_type,
+        source=source,
+        search=search,
+        purpose_of_visit=purpose_of_visit,
+        starts_at=_local_midnight_utc(date_range.date_from) if date_range.date_from else None,
+        ends_before=(
+            _local_midnight_utc(date_range.date_to + timedelta(days=1))
+            if date_range.date_to
+            else None
+        ),
+    )
+    repository = InvitationRepository(tenant_db)
+    row_count = await repository.count_export_rows(criteria)
+    max_rows = settings.invitation_export_max_rows
+    if row_count > max_rows:
+        raise ExportTooLargeError(row_count, max_rows)
+
+    invitations = await repository.list_for_export(criteria)
+    rows = export.build_rows(invitations, tz)
+    renderer = export.render_xlsx if export_format == ExportFormat.xlsx else export.render_csv
+    content = await anyio.to_thread.run_sync(renderer, rows, export.columns_for(status), tz.key)
+    status_slug = (status or "all").replace("_", "-")
+    filename = f"invitations-{status_slug}-{datetime.now(tz):%Y-%m-%d}.{export_format.value}"
+    return InvitationExportFile(
+        content=content,
+        media_type=_EXPORT_MEDIA_TYPES[export_format],
+        filename=filename,
+        row_count=len(rows),
+    )
+
+
+# --- add-staff-calendar ------------------------------------------------------
+
+CALENDAR_EVENT_LIMIT = 1000
+"""design.md D4 — `days` totals stay exact above it; only `events` is cut."""
+
+
+async def _calendar_criteria(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    user: User,
+    *,
+    date_from: date,
+    date_to: date,
+    scope: CalendarScope,
+    statuses: list[InvitationStatus] | None,
+    x_branch_id: uuid.UUID | None,
+) -> tuple[CalendarCriteria, Literal["mine", "branch"], ZoneInfo]:
+    """Who sees what, for every calendar endpoint — one builder, so the feed
+    and the paged day can't drift (improve-calendar-scale-and-theme-switch
+    design.md A1). `auto` resolves to `branch` for anyone holding
+    `invitations:view-all` anywhere, else `mine` — decided here rather than
+    by the client, which can't see permissions (add-staff-calendar D2).
+    `branch` goes through the same `resolve_branch_scope` the list uses, so
+    its 403/404s are identical.
+    """
+    permission = "invitations:view-all"
+    if scope is CalendarScope.auto:
+        has_branch_view = bool(user.authorized_branch_ids(permission))
+        scope = CalendarScope.branch if has_branch_view else CalendarScope.mine
+
+    branch_scope: BranchScope | None = None
+    default_host_role_id: uuid.UUID | None = None
+    if scope is CalendarScope.branch:
+        branch_scope = await resolve_branch_scope(tenant_db, user, permission, x_branch_id)
+    else:
+        default_host_role_id = (await get_default_host_role(tenant_db)).id
+
+    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    criteria = CalendarCriteria(
+        branch_scope=branch_scope,
+        relevant_to_user_id=user.id if scope is CalendarScope.mine else None,
+        default_host_role_id=default_host_role_id,
+        date_from=date_from,
+        date_to=date_to,
+        starts_at=datetime.combine(date_from, time.min, tzinfo=tz).astimezone(UTC),
+        ends_before=datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=tz).astimezone(
+            UTC
+        ),
+        timezone=tz.key,
+        statuses=tuple(s.value for s in (statuses or CALENDAR_DEFAULT_STATUSES)),
+    )
+    applied: Literal["mine", "branch"] = "branch" if scope is CalendarScope.branch else "mine"
+    return criteria, applied, tz
+
+
+async def get_calendar_feed(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    user: User,
+    *,
+    date_range: CalendarDateRange,
+    scope: CalendarScope,
+    statuses: list[InvitationStatus] | None,
+    x_branch_id: uuid.UUID | None,
+    per_day_limit: int | None = None,
+) -> CalendarFeedOut:
+    """Backs `GET /invitations/calendar` (specs/invitation-calendar).
+    `per_day_limit` keeps only each day's first N events; `days` totals
+    stay exact either way, and the rest of a day is paged through
+    `get_calendar_day_page`.
+    """
+    criteria, applied, tz = await _calendar_criteria(
+        tenant_db,
+        tenant,
+        user,
+        date_from=date_range.date_from,
+        date_to=date_range.date_to,
+        scope=scope,
+        statuses=statuses,
+        x_branch_id=x_branch_id,
+    )
+    repository = InvitationRepository(tenant_db)
+    totals = await repository.calendar_day_totals(criteria)
+    rows = await repository.calendar_events(
+        criteria, limit=CALENDAR_EVENT_LIMIT + 1, per_day_limit=per_day_limit
+    )
+    truncated = len(rows) > CALENDAR_EVENT_LIMIT
+    if truncated:
+        logger.info(
+            "calendar_feed_truncated",
+            date_from=date_range.date_from.isoformat(),
+            date_to=date_range.date_to.isoformat(),
+            total=sum(totals.values()),
+        )
+
+    span = (date_range.date_to - date_range.date_from).days + 1
+    days = [date_range.date_from + timedelta(days=offset) for offset in range(span)]
+    return CalendarFeedOut(
+        scope=applied,
+        timezone=tz.key,
+        date_from=date_range.date_from,
+        date_to=date_range.date_to,
+        generated_at=datetime.now(UTC),
+        days=[CalendarDayOut(day=day, total=totals.get(day, 0)) for day in days],
+        events=[CalendarEventOut.model_validate(dict(row)) for row in rows[:CALENDAR_EVENT_LIMIT]],
+        truncated=truncated,
+    )
+
+
+async def get_calendar_day_page(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    user: User,
+    *,
+    day: date,
+    scope: CalendarScope,
+    statuses: list[InvitationStatus] | None,
+    x_branch_id: uuid.UUID | None,
+    page: int,
+    page_size: int,
+) -> tuple[list[CalendarEventOut], int, Literal["mine", "branch"]]:
+    """Backs `GET /invitations/calendar/day`: one day's events a page at a
+    time, with the feed's exact scope, filters and order — so page 1 of
+    size N is the feed's first N for that day (design.md A3). The total is
+    the same per-day count the feed reports.
+    """
+    criteria, applied, _ = await _calendar_criteria(
+        tenant_db,
+        tenant,
+        user,
+        date_from=day,
+        date_to=day,
+        scope=scope,
+        statuses=statuses,
+        x_branch_id=x_branch_id,
+    )
+    repository = InvitationRepository(tenant_db)
+    total = (await repository.calendar_day_totals(criteria)).get(day, 0)
+    rows = await repository.calendar_day_page(
+        criteria, offset=(page - 1) * page_size, limit=page_size
+    )
+    return [CalendarEventOut.model_validate(dict(row)) for row in rows], total, applied
 
 
 async def is_invitation_relevant_to(
@@ -2346,27 +3126,19 @@ async def is_invitation_relevant_to(
     )
 
 
-async def get_prefill_by_email(
-    tenant_db: AsyncSession, email: str, branch_scope: BranchScope, user: User
-) -> InvitationLookupPrefillOut | None:
-    """Backs `GET /invitations/lookup-by-email`
-    (`add-invitation-lookup-by-email/proposal.md`) — `None` on no match is
-    the normal, expected case, not an error (spec.md "No Matching
-    Invitation Returns Null Data, Not an Error"). `photo_url` is resolved
-    unconditionally; `id_proof_url` only when `user` holds `documents:view`
-    at the matched invitation's branch — same split
-    `router.py::_to_invitation_detail_out` uses for the staff detail view
-    (design.md "photoUrl unconditional, idProofUrl gated...")."""
-    invitation = await InvitationRepository(tenant_db).get_latest_for_prefill_by_email(
-        email, branch_scope
-    )
-    if invitation is None:
-        return None
+async def _build_prefill(invitation: Invitation, user: User) -> InvitationLookupPrefillOut:
+    """`photo_url` is resolved unconditionally; `id_proof_url` only when
+    `user` holds `documents:view` at the matched invitation's branch — same
+    split `router.py::_to_invitation_detail_out` uses for the staff detail
+    view (add-invitation-lookup-by-email/design.md "photoUrl unconditional,
+    idProofUrl gated...").
+    """
     include_documents = user.has_permission("documents:view", invitation.branch_id)
     photo_key = invitation.primary_contact_photo_storage_key
     id_proof_key = invitation.primary_contact_id_proof_storage_key
     return InvitationLookupPrefillOut(
         full_name=invitation.primary_contact_full_name,
+        email=invitation.primary_contact_email,
         phone=invitation.primary_contact_phone,
         preferred_contact_method=invitation.primary_contact_preferred_contact_method,
         visitor_category_id=invitation.visitor_category_id,
@@ -2378,6 +3150,40 @@ async def get_prefill_by_email(
             else None
         ),
     )
+
+
+async def get_prefill_by_email(
+    tenant_db: AsyncSession, email: str, branch_scope: BranchScope, user: User
+) -> InvitationLookupPrefillOut | None:
+    """Backs `GET /invitations/lookup-by-email`
+    (`add-invitation-lookup-by-email/proposal.md`) — `None` on no match is
+    the normal, expected case, not an error (spec.md "No Matching
+    Invitation Returns Null Data, Not an Error")."""
+    invitation = await InvitationRepository(tenant_db).get_latest_for_prefill_by_email(
+        email, branch_scope
+    )
+    if invitation is None:
+        return None
+    return await _build_prefill(invitation, user)
+
+
+async def get_prefill_by_phone(
+    tenant_db: AsyncSession, phone_digits_value: str, branch_scope: BranchScope, user: User
+) -> InvitationLookupPrefillOut | None:
+    """Backs `GET /invitations/lookup-by-phone`
+    (`reception-phone-prefill-lookup/proposal.md`); `phone_digits_value` is
+    already normalized by the router. Logs the masked phone only."""
+    invitation = await InvitationRepository(tenant_db).get_latest_for_prefill_by_phone(
+        phone_digits_value, branch_scope
+    )
+    logger.info(
+        "invitation_prefill_lookup_by_phone",
+        phone=f"***{phone_digits_value[-2:]}",
+        matched=invitation is not None,
+    )
+    if invitation is None:
+        return None
+    return await _build_prefill(invitation, user)
 
 
 async def email_qr_png(schema_name: str, invitation_id: uuid.UUID) -> bytes | None:

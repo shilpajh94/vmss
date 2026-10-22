@@ -37,6 +37,7 @@ from vmss_api.core.database import Base, GlobalBase, get_db
 from vmss_api.core.security import create_access_token, hash_password
 from vmss_api.core.tenancy import get_tenant_db
 from vmss_api.invitations import qr_token
+from vmss_api.invitations import tasks as invitation_tasks
 from vmss_api.main import app
 from vmss_api.org_structure.models import Branch
 from vmss_api.platform.models import SuperAdmin, TenantUserIndex
@@ -107,6 +108,24 @@ def _email_asset_base_url_unset(monkeypatch) -> None:
     opt in explicitly.
     """
     monkeypatch.setattr(settings, "email_asset_base_url", None)
+
+
+@pytest.fixture(autouse=True)
+def staff_lifecycle_email_calls(monkeypatch) -> list[dict]:
+    """Captures `send_staff_lifecycle_notification.delay` for every test, so
+    a deny/revert/reschedule on an invitation with a host or point of
+    contact never enqueues onto the real DDEV broker (where the dev worker
+    would retry it against a schema that only exists in `vmss_test`).
+    Request it by name to assert on the captured calls
+    (staff-lifecycle-emails-and-dashboard-landing).
+    """
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        invitation_tasks.send_staff_lifecycle_notification,
+        "delay",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    return calls
 
 
 @pytest_asyncio.fixture
@@ -216,6 +235,11 @@ ADMIN_PERMISSION_CODES = [
     "branches:provision",
     "kiosks:manage",
     "kiosks:view",
+    "devices:view",
+    "devices:manage",
+    "devices:approve",
+    "settings:view",
+    "settings:manage",
     "reports:view",
     "users:manage",
     "companies:view",
@@ -245,6 +269,7 @@ ADMIN_PERMISSION_CODES = [
     "invitations:approve",
     "invitations:approve-override",
     "invitations:deny",
+    "invitations:revert-approval",
     "invitations:checkin",
     "invitations:checkout",
     "invitations:reschedule",
@@ -252,6 +277,7 @@ ADMIN_PERMISSION_CODES = [
     "invitations:edit",
     "invitations:badge",
     "invitations:watchlist-override",
+    "invitations:export",
     "documents:view",
     "roles:view",
     "roles:manage",

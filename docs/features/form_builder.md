@@ -37,6 +37,36 @@ effect on live invitation/registration submission or the public/staff
 renderer until `POST /form-builder/publish` re-validates the whole draft
 and serializes it into that scope's `FormConfigVersion`.
 
+## Step icons (`auto-assign-form-step-icons`)
+
+A step's `icon` is a slug from a fixed vocabulary
+(`form_builder/step_icons.py::STEP_ICON_VOCABULARY`) that every client maps
+to its own glyph:
+
+`user`, `calendar`, `briefcase`, `package`, `car`, `shield-check`,
+`check-circle`, `file-text`, `file-signature`, `id-card`, `camera`,
+`heart-pulse`, `laptop`, `phone`, `building`, `users`, `clock`, `map-pin`,
+`alert-triangle`, `clipboard-list` (the neutral default).
+
+- **Create** — `icon` is optional. Omitted (or `null`/empty), the server
+  infers one from the step name by keyword (case-insensitive; whole-word
+  or word-prefix match, first rule wins): "Vehicle Info" → `car`, "NDA
+  Signing" → `file-signature`, "Health Declaration" → `heart-pulse`. No
+  match → `clipboard-list`. The admin UI never sends an icon, so this is
+  how every custom step gets one.
+- **Rename** — a `PATCH` that changes `name` without sending `icon`
+  re-infers the icon only if the current one is what the *old* name would
+  have inferred (i.e. it was auto-assigned). An icon that differs was
+  chosen explicitly and is kept.
+- **Reads** — a step stored with a null icon (created before this change)
+  is served with the inferred icon from every step endpoint and from
+  `/effective`, including old published snapshots. No migration.
+- An explicit `icon` outside the vocabulary is still accepted (tightening
+  it would break existing clients); clients render a neutral glyph for an
+  unknown slug. Adding a slug to the vocabulary means adding a glyph to
+  `VMMS_WEB`'s `admin-form-builder/step-icons.ts` (and Flutter, if it
+  renders step icons).
+
 ## The six canonical steps and field tiers
 
 Every tenant starts with six steps, in order: **Visitor Info**, **Visit
@@ -384,6 +414,19 @@ snapshot with no group data simply behaves as an unlimited repeatable
 group (today's actual Vehicle Info behavior) until an admin next publishes
 that scope. See `openspec/changes/add-repeatable-field-groups/design.md`
 Risks/Migration Plan.
+
+### Preferred Contact Method offers WhatsApp
+
+The locked `preferred_contact_method` field offers `email`, `sms` and
+`whatsapp`. New tenants get all three from the seed defaults; migration
+`9d2b6f1c4a8e` appends `whatsapp` for existing tenants, in both the draft
+`form_fields` row and every published `form_config_versions` snapshot
+(idempotent; no republish needed). Rollout order: deploy WhatsApp delivery
+(`integrate-fast2sms-dlt-sms`) with its Fast2SMS settings first, then run
+`scripts/upgrade_all_tenants.py`, then flush each tenant's
+`vmss:{tenant_id}:form-builder:effective:*` Redis keys (or wait out the
+cache TTL) so the cached effective form stops hiding the option. See
+`openspec/changes/backfill-whatsapp-contact-method-form-option/design.md`.
 
 ## Locked-position ordering
 

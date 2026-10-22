@@ -193,3 +193,9 @@ the opaque storage key `save` returns.
   update to `is_active`/`key_hash`.
 - **Wiring OTP verification into this endpoint**, **check-in**,
   **approval-workflow evaluation** — see above.
+
+## Device registration and `device-id`
+
+Kiosk/security devices that register through `POST /api/v1/devices/register` and
+send a `device-id` header on check-in/out are documented in `devices.md`. That
+flow is separate from the `X-Device-Key` credential described here.

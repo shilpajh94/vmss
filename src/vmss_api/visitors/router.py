@@ -13,6 +13,7 @@ from vmss_api.core.deps import (
     get_tenant,
     get_tenant_db,
     require_permission,
+    require_permission_anywhere,
 )
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
@@ -169,7 +170,7 @@ async def list_visitor_categories(
 @category_router.get(
     "/{category_id}",
     response_model=Envelope[VisitorCategoryOut],
-    dependencies=[Depends(require_permission("visitor-categories:view"))],
+    dependencies=[Depends(require_permission_anywhere("visitor-categories:view"))],
 )
 async def get_visitor_category(
     category_id: uuid.UUID, tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)]
@@ -263,7 +264,7 @@ async def create_approval_workflow_rule(
 @workflow_rule_router.get(
     "",
     response_model=PaginatedEnvelope[ApprovalWorkflowRuleOut],
-    dependencies=[Depends(require_permission("approval-workflow-rules:view"))],
+    dependencies=[Depends(require_permission_anywhere("approval-workflow-rules:view"))],
 )
 async def list_approval_workflow_rules(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
@@ -294,7 +295,7 @@ async def list_approval_workflow_rules(
 @workflow_rule_router.get(
     "/{rule_id}",
     response_model=Envelope[ApprovalWorkflowRuleOut],
-    dependencies=[Depends(require_permission("approval-workflow-rules:view"))],
+    dependencies=[Depends(require_permission_anywhere("approval-workflow-rules:view"))],
 )
 async def get_approval_workflow_rule(
     rule_id: uuid.UUID, tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)]

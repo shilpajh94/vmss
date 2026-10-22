@@ -1,12 +1,27 @@
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
-from sqlalchemy import Select, exists, func, or_, select, update
+from sqlalchemy import (
+    Date,
+    Select,
+    and_,
+    case,
+    cast,
+    delete,
+    exists,
+    func,
+    insert,
+    literal_column,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.orm import aliased, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
-from vmss_api.auth.models import Role, UserBranchRole
+from vmss_api.auth.models import AuditLog, Role, User, UserBranchRole
 from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
 from vmss_api.core.database import TenantScopedRepository
 from vmss_api.core.schemas import BranchScope, SortOrder
@@ -18,6 +33,42 @@ from vmss_api.invitations.models import (
     InvitationVisitor,
 )
 from vmss_api.org_structure.models import Branch, Building, Department, Floor
+from vmss_api.visitors.models import VisitorCategory
+
+# Tables the retention purge backs up and deletes, parents before children,
+# each paired with the column that ties it to the invitation ids in play.
+_PURGE_TABLES_PARENT_FIRST: list[tuple[Any, Any]] = [
+    (Invitation, Invitation.id),
+    (InvitationApprovalStep, InvitationApprovalStep.invitation_id),
+    (InvitationVisitor, InvitationVisitor.invitation_id),
+    (InvitationQRCode, InvitationQRCode.invitation_id),
+    (InvitationVehicle, InvitationVehicle.invitation_id),
+]
+
+
+class InvitationExportNames(NamedTuple):
+    """Display names `list_for_export` joins in alongside each invitation;
+    `None` when the invitation has no such reference.
+    """
+
+    branch: str | None
+    building: str | None
+    department: str | None
+    host: str | None
+    visitor_category: str | None
+    checked_in_by: str | None
+    checked_out_by: str | None
+
+
+# Inline literals (not bound params) so Postgres can match the expression to
+# the `ix_invitations_primary_contact_phone_digits` functional index.
+PHONE_DIGITS_SQL = r"regexp_replace(invitations.primary_contact_phone, '\D', '', 'g')"
+
+
+def phone_digits(phone: str) -> str:
+    """Digits-only form compared by the phone prefill lookup — must stay in
+    step with `PHONE_DIGITS_SQL` (and the migration's functional index)."""
+    return "".join(ch for ch in phone if ch.isdigit())
 
 
 def _branch_filter(branch_scope: BranchScope) -> Any | None:
@@ -138,8 +189,204 @@ def _relevant_to_me_filter(user_id: uuid.UUID, default_host_role_id: uuid.UUID) 
     return or_(host_or_delegate_or_actor, current_role_holder, default_host_role_holder)
 
 
+def relevant_to_me_clause(user_id: uuid.UUID, default_host_role_id: uuid.UUID) -> Any:
+    """Public handle on the `relevantToMe` predicate for other features — the
+    personal dashboard counts over exactly this set so it can never disagree
+    with `GET /invitations?relevantToMe=true` (staff-lifecycle-emails-and-
+    dashboard-landing design.md D6).
+    """
+    return _relevant_to_me_filter(user_id, default_host_role_id)
+
+
+def _list_filters(
+    *,
+    branch_scope: BranchScope | None,
+    relevant_to_user_id: uuid.UUID | None,
+    default_host_role_id: uuid.UUID | None,
+    status: str | None,
+    registration_type: str | None,
+    source: str | None,
+    search: str | None,
+    purpose_of_visit: str | None,
+) -> list[Any]:
+    """The one filter set `GET /invitations` and `GET /invitations/export`
+    share, so the two can't drift (add-invitation-export/design.md
+    Decision 2). The branch scope and the `relevantToMe` predicate are
+    ANDed when both are given: the list passes exactly one, the export
+    always passes its `invitations:export` branch scope and adds
+    `relevantToMe` on top.
+    """
+    filters: list[Any] = []
+    if branch_scope is not None:
+        branch_filter = _branch_filter(branch_scope)
+        if branch_filter is not None:
+            filters.append(branch_filter)
+    if relevant_to_user_id is not None:
+        assert default_host_role_id is not None
+        filters.append(_relevant_to_me_filter(relevant_to_user_id, default_host_role_id))
+    if status is not None:
+        filters.append(Invitation.status == status)
+    if registration_type is not None:
+        filters.append(Invitation.registration_type == registration_type)
+    if source is not None:
+        filters.append(Invitation.source == source)
+    if purpose_of_visit is not None:
+        filters.append(Invitation.purpose_of_visit == purpose_of_visit)
+    if search is not None:
+        pattern = f"%{search}%"
+        filters.append(
+            or_(
+                Invitation.primary_contact_full_name.ilike(pattern),
+                Invitation.tracking_id.ilike(pattern),
+            )
+        )
+    return filters
+
+
+@dataclass(frozen=True)
+class CalendarCriteria:
+    """`GET /invitations/calendar`'s filters as plain values. Exactly one of
+    `branch_scope` or `relevant_to_user_id` (with `default_host_role_id`)
+    is set; each becomes the same predicate the list and the dashboards
+    use, so the calendar can't disagree with them (add-staff-calendar
+    design.md D2). `starts_at`/`ends_before` are the half-open UTC bounds of
+    the local date range, used only for legacy rows with no visit date (D3).
+    """
+
+    branch_scope: BranchScope | None
+    relevant_to_user_id: uuid.UUID | None
+    default_host_role_id: uuid.UUID | None
+    date_from: date
+    date_to: date
+    starts_at: datetime
+    ends_before: datetime
+    timezone: str
+    statuses: tuple[str, ...]
+
+
+def _calendar_event_date(timezone: str) -> Any:
+    """The visit date, else the visit-timezone date of the check-in."""
+    return func.coalesce(
+        Invitation.preferred_visit_date,
+        cast(func.timezone(timezone, Invitation.checked_in_at), Date),
+    )
+
+
+def _calendar_filters(criteria: CalendarCriteria) -> list[Any]:
+    """Two OR arms rather than `COALESCE(...) BETWEEN`, so the visit-date
+    arm stays on `ix_invitations_branch_visit_date` (design.md D3).
+    """
+    filters: list[Any] = [
+        Invitation.deleted_at.is_(None),
+        Invitation.status.in_(criteria.statuses),
+        or_(
+            Invitation.preferred_visit_date.between(criteria.date_from, criteria.date_to),
+            and_(
+                Invitation.preferred_visit_date.is_(None),
+                Invitation.checked_in_at >= criteria.starts_at,
+                Invitation.checked_in_at < criteria.ends_before,
+            ),
+        ),
+    ]
+    if criteria.relevant_to_user_id is not None:
+        assert criteria.default_host_role_id is not None
+        filters.append(
+            _relevant_to_me_filter(criteria.relevant_to_user_id, criteria.default_host_role_id)
+        )
+    else:
+        assert criteria.branch_scope is not None
+        branch_clause = _branch_filter(criteria.branch_scope)
+        if branch_clause is not None:
+            filters.append(branch_clause)
+    return filters
+
+
+# add-invitation-export/design.md Decision 3: an export's date range (and
+# its sort order) applies to the timestamp matching its `status` filter, or
+# to `created_at` when no status is given.
+_EXPORT_DATE_COLUMNS: dict[str | None, Any] = {
+    "submitted": Invitation.submitted_at,
+    "approved": Invitation.approved_at,
+    "denied": Invitation.denied_at,
+    "checked_in": Invitation.checked_in_at,
+    "checked_out": Invitation.checked_out_at,
+    "archived": Invitation.archived_at,
+    None: Invitation.created_at,
+}
+
+
+@dataclass(frozen=True)
+class InvitationExportCriteria:
+    """`GET /invitations/export`'s filters as plain values. `starts_at`/
+    `ends_before` are the half-open UTC bounds the service derives from the
+    tenant-local `dateFrom`/`dateTo` calendar dates.
+    """
+
+    branch_scope: BranchScope
+    relevant_to_user_id: uuid.UUID | None
+    default_host_role_id: uuid.UUID | None
+    status: str | None
+    registration_type: str | None
+    source: str | None
+    search: str | None
+    purpose_of_visit: str | None
+    starts_at: datetime | None
+    ends_before: datetime | None
+
+
+def _export_filters(criteria: InvitationExportCriteria) -> list[Any]:
+    filters = _list_filters(
+        branch_scope=criteria.branch_scope,
+        relevant_to_user_id=criteria.relevant_to_user_id,
+        default_host_role_id=criteria.default_host_role_id,
+        status=criteria.status,
+        registration_type=criteria.registration_type,
+        source=criteria.source,
+        search=criteria.search,
+        purpose_of_visit=criteria.purpose_of_visit,
+    )
+    column = _EXPORT_DATE_COLUMNS[criteria.status]
+    if criteria.starts_at is not None:
+        filters.append(column >= criteria.starts_at)
+    if criteria.ends_before is not None:
+        filters.append(column < criteria.ends_before)
+    return filters
+
+
 def _order_clause(column: Any, sort_order: SortOrder) -> Any:
     return column.desc() if sort_order == SortOrder.desc else column.asc()
+
+
+def _status_changed_at_expr() -> Any:
+    """When the invitation entered its current status — the SQL half of
+    `service.status_changed_at`, which mirrors it in Python for the list row
+    (sort-invitation-board-by-status-date/design.md Decisions 1-2). Postgres
+    `GREATEST` skips NULLs, so a revert/reschedule time only counts when
+    set; `rescheduled_at` only counts once the row has been archived, since
+    only a reschedule out of `archived` changes the status.
+    """
+    rescheduled_from_archive = case(
+        (Invitation.archived_at.is_not(None), Invitation.rescheduled_at)
+    )
+    return func.coalesce(
+        case(
+            (
+                Invitation.status == "submitted",
+                func.greatest(
+                    Invitation.submitted_at,
+                    Invitation.approval_reverted_at,
+                    rescheduled_from_archive,
+                ),
+            ),
+            (Invitation.status == "approved", Invitation.approved_at),
+            (Invitation.status == "checked_in", Invitation.checked_in_at),
+            (Invitation.status == "checked_out", Invitation.checked_out_at),
+            (Invitation.status == "denied", Invitation.denied_at),
+            (Invitation.status == "archived", Invitation.archived_at),
+        ),
+        Invitation.submitted_at,
+        Invitation.created_at,
+    )
 
 
 # add-invitation-lifecycle-actions/design.md Decision 1: statuses eligible
@@ -156,6 +403,21 @@ _ACTIVE_STATUSES = ("approved", "checked_in")
 # excludes an invitation that was never validly approved (`submitted`/
 # `denied`).
 _QR_ENTRY_ELIGIBLE_STATUSES = ("approved", "checked_in", "checked_out")
+
+
+def _reschedule_values(preferred_visit_date: Any, preferred_visit_time: Any) -> dict[str, Any]:
+    """Every `SET` in one Postgres `UPDATE` reads the pre-update row, so the
+    `previous_*` columns reliably capture the immediately-prior schedule
+    (`add-reschedule-history/design.md`).
+    """
+    return {
+        "previous_preferred_visit_date": Invitation.preferred_visit_date,
+        "previous_preferred_visit_time": Invitation.preferred_visit_time,
+        "preferred_visit_date": preferred_visit_date,
+        "preferred_visit_time": preferred_visit_time,
+        "rescheduled_at": datetime.now(UTC),
+        "reschedule_count": Invitation.reschedule_count + 1,
+    }
 
 
 class InvitationRepository(TenantScopedRepository[Invitation]):
@@ -249,6 +511,35 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def revert_approval_if_eligible(
+        self, id_: uuid.UUID, *, user_id: uuid.UUID, reason: str
+    ) -> Invitation | None:
+        """Atomic conditional `approved` -> `submitted` transition, same
+        shape as `approve_if_submitted`. `check_in_status = 'unused'` is
+        checked in the same `WHERE` because `status` and `check_in_status`
+        are written by different paths — this is the only place a race
+        with a concurrent check-in can be closed (add-invitation-approval-
+        revert/design.md Decision 2). `None` means "not eligible", which
+        the caller turns into a 409.
+        """
+        stmt = (
+            update(Invitation)
+            .where(
+                Invitation.id == id_,
+                Invitation.status == "approved",
+                Invitation.check_in_status == "unused",
+            )
+            .values(
+                status="submitted",
+                approved_at=None,
+                approval_reverted_at=datetime.now(UTC),
+                approval_reverted_by_user_id=user_id,
+                approval_revert_reason=reason,
+            )
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def deny_if_submitted(self, id_: uuid.UUID, *, reason: str) -> Invitation | None:
         """Atomic conditional transition, same shape as `approve_if_submitted`
         — see spec.md "A Submitted Invitation Can Be Denied With a Reason".
@@ -262,7 +553,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def check_in_if_eligible(
-        self, id_: uuid.UUID, *, user_id: uuid.UUID | None
+        self, id_: uuid.UUID, *, user_id: uuid.UUID | None, device_pk: uuid.UUID | None = None
     ) -> Invitation | None:
         """Gated on `check_in_status` (not `status` alone), same cycling
         rule as `check_in_by_qr_if_eligible` (allow-multiple-checkins):
@@ -297,13 +588,15 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 check_in_status="checked_in",
                 checked_in_at=datetime.now(UTC),
                 checked_in_by_user_id=user_id,
+                check_in_device_id=device_pk,
+                check_out_device_id=None,
             )
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def check_in_by_qr_if_eligible(
-        self, id_: uuid.UUID, *, today_local: date
+        self, id_: uuid.UUID, *, today_local: date, device_pk: uuid.UUID | None = None
     ) -> Invitation | None:
         """The `unused`/`checked_out` -> `checked_in` transition driven by
         a QR scan (spec.md "QR Check-In Drives a Cycling
@@ -345,12 +638,16 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 check_in_status="checked_in",
                 status="checked_in",
                 checked_in_at=datetime.now(UTC),
+                check_in_device_id=device_pk,
+                check_out_device_id=None,
             )
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
-    async def check_out_by_qr_if_eligible(self, id_: uuid.UUID) -> Invitation | None:
+    async def check_out_by_qr_if_eligible(
+        self, id_: uuid.UUID, *, device_pk: uuid.UUID | None = None
+    ) -> Invitation | None:
         """The `checked_in` -> `checked_out` transition driven by a second
         scan of the same QR token — deliberately not subject to the expiry
         check `check_in_by_qr_if_eligible` applies on entry (spec.md "QR
@@ -363,13 +660,15 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 check_in_status="checked_out",
                 status="checked_out",
                 checked_out_at=datetime.now(UTC),
+                checked_out_automatically=False,
+                check_out_device_id=device_pk,
             )
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def check_out_if_checked_in(
-        self, id_: uuid.UUID, *, user_id: uuid.UUID
+        self, id_: uuid.UUID, *, user_id: uuid.UUID, device_pk: uuid.UUID | None = None
     ) -> Invitation | None:
         """Also writes `check_in_status="checked_out"` (allow-multiple-
         checkins) — this path previously left `check_in_status` untouched,
@@ -387,10 +686,140 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
                 check_in_status="checked_out",
                 checked_out_at=datetime.now(UTC),
                 checked_out_by_user_id=user_id,
+                checked_out_automatically=False,
+                check_out_device_id=device_pk,
             )
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def auto_check_out_expired(self, *, now: datetime) -> list[uuid.UUID]:
+        """Visit-lifecycle sweep (auto-checkout-and-archive-no-shows): closes
+        every check-in whose `expires_at` has passed. Matches either status
+        column so a legacy row where only one says `checked_in` is still
+        closed, and writes both. `checked_out_at` is the expiry, not `now` —
+        the real exit time is unknown and sweep lag shouldn't inflate the
+        visit (design.md D3). The conditional `WHERE` is what makes a
+        redelivered or concurrent sweep a no-op for rows already closed
+        (design.md D2).
+        """
+        stmt = (
+            update(Invitation)
+            .where(
+                or_(
+                    Invitation.status == "checked_in",
+                    Invitation.check_in_status == "checked_in",
+                ),
+                Invitation.expires_at <= now,
+                Invitation.deleted_at.is_(None),
+            )
+            .values(
+                status="checked_out",
+                check_in_status="checked_out",
+                checked_out_at=Invitation.expires_at,
+                checked_out_automatically=True,
+            )
+            .returning(Invitation.id)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def archive_expired_no_shows(self, *, now: datetime) -> list[uuid.UUID]:
+        """Visit-lifecycle sweep: an approved invitation never checked in by
+        the end of its (possibly extended) `expires_at` becomes `archived`.
+        `submitted` rows are deliberately left alone (design.md Non-Goals).
+        """
+        stmt = (
+            update(Invitation)
+            .where(
+                Invitation.status == "approved",
+                Invitation.check_in_status == "unused",
+                Invitation.expires_at <= now,
+                Invitation.deleted_at.is_(None),
+            )
+            .values(status="archived", archived_at=now)
+            .returning(Invitation.id)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_expired_ids(self, *, cutoff: date, limit: int) -> list[uuid.UUID]:
+        """Retention purge: ids of invitations whose reference date (visit
+        date, else creation date) is before `cutoff`, oldest first. Includes
+        soft-deleted rows — retention bounds how long the data exists, not
+        just what's visible. A visitor still inside (checked in, not checked
+        out) is never eligible however old the row is.
+        """
+        reference_date = func.coalesce(
+            Invitation.preferred_visit_date, cast(Invitation.created_at, Date)
+        )
+        stmt = (
+            select(Invitation.id)
+            .where(
+                reference_date < cutoff,
+                Invitation.status != "checked_in",
+                Invitation.check_in_status != "checked_in",
+            )
+            .order_by(reference_date.asc(), Invitation.id.asc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def load_rows_for_backup(self, ids: list[uuid.UUID]) -> list[tuple[str, dict[str, Any]]]:
+        """Retention purge: every row about to be deleted — the invitations
+        and each dependent table — as `(table_name, column_values)`. One
+        `IN (...)` query per table (never per invitation), selecting plain
+        rows rather than ORM objects so the `lazy="raise"` relationships on
+        `Invitation` never come into play.
+        """
+        records: list[tuple[str, dict[str, Any]]] = []
+        for model, key in _PURGE_TABLES_PARENT_FIRST:
+            stmt = select(model).where(key.in_(ids))
+            for row in (await self.session.execute(stmt)).scalars().all():
+                records.append(
+                    (
+                        model.__tablename__,
+                        {c.name: getattr(row, c.key) for c in model.__table__.columns},
+                    )
+                )
+        return records
+
+    async def delete_with_children(self, ids: list[uuid.UUID]) -> int:
+        """Retention purge: hard-deletes `ids` and every dependent row,
+        children first (the FKs have no `ON DELETE CASCADE`), one statement
+        per table. Returns the number of invitations deleted. Dependent
+        tables are exactly the four with an FK to `invitations.id`; audit
+        entries only store the id and are deliberately left in place.
+        """
+        deleted = 0
+        for model, key in reversed(_PURGE_TABLES_PARENT_FIRST):
+            result = await self.session.execute(delete(model).where(key.in_(ids)))
+            if model is Invitation:
+                deleted = result.rowcount  # type: ignore[attr-defined]
+        return deleted
+
+    async def record_system_audit(
+        self, invitation_ids: list[uuid.UUID], *, action: str, diff: dict[str, Any]
+    ) -> None:
+        """Bulk audit rows with no actor, written in the caller's transaction
+        so a sweep transition can't commit without its audit entry (design.md
+        D2) — unlike `auth/audit.py::record_audit_log`, which opens its own
+        session because it runs after a request's session has closed.
+        """
+        if not invitation_ids:
+            return
+        await self.session.execute(
+            insert(AuditLog),
+            [
+                {
+                    "id": uuid.uuid4(),
+                    "actor_user_id": None,
+                    "action": action,
+                    "entity_type": "invitation",
+                    "entity_id": invitation_id,
+                    "diff": diff,
+                }
+                for invitation_id in invitation_ids
+            ],
+        )
 
     async def edit_if_eligible(
         self,
@@ -448,24 +877,41 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         immediately-prior schedule rather than the just-written new one
         (`add-reschedule-history/design.md`).
 
-        `expires_at`, when given (an already-`approved` invitation moved to
-        a new visit day), realigns expiry to the end of that new day the
-        same way `approve_if_submitted` does at initial approval.
+        `expires_at`, when given, realigns expiry to the end of the new
+        visit day the same way `approve_if_submitted` does at initial
+        approval — the service always supplies it, for `submitted` and
+        `approved` alike.
         """
-        values: dict[str, Any] = {
-            "previous_preferred_visit_date": Invitation.preferred_visit_date,
-            "previous_preferred_visit_time": Invitation.preferred_visit_time,
-            "preferred_visit_date": preferred_visit_date,
-            "preferred_visit_time": preferred_visit_time,
-            "rescheduled_at": datetime.now(UTC),
-            "reschedule_count": Invitation.reschedule_count + 1,
-        }
+        values = _reschedule_values(preferred_visit_date, preferred_visit_time)
         if expires_at is not None:
             values["expires_at"] = expires_at
         stmt = (
             update(Invitation)
             .where(Invitation.id == id_, Invitation.status.in_(_RESCHEDULABLE_STATUSES))
             .values(**values)
+            .returning(Invitation)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def reschedule_archived_if_eligible(
+        self,
+        id_: uuid.UUID,
+        *,
+        preferred_visit_date: Any,
+        preferred_visit_time: Any,
+        expires_at: datetime,
+    ) -> Invitation | None:
+        """The only way out of `archived` (auto-checkout-and-archive-no-shows
+        design.md D6): same reschedule-history `SET`s as
+        `reschedule_if_eligible`, plus a return to `submitted` with
+        `approved_at` cleared, so the visit is reviewed again for its new
+        date. `archived_at` is left as history.
+        """
+        values = _reschedule_values(preferred_visit_date, preferred_visit_time)
+        stmt = (
+            update(Invitation)
+            .where(Invitation.id == id_, Invitation.status == "archived")
+            .values(**values, expires_at=expires_at, status="submitted", approved_at=None)
             .returning(Invitation)
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
@@ -553,6 +999,12 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_checkin_code(self, code: str) -> Invitation | None:
+        stmt = self._with_children().where(
+            Invitation.checkin_code == code, Invitation.deleted_at.is_(None)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def list_by_primary_contact_email(self, email: str) -> list[Invitation]:
         """Backs the email-based tracking lookup (spec.md "Public Lookup by
         Email Is Rate-Limited and Minimally Revealing") — no eager-load of
@@ -611,6 +1063,25 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         stmt = select(Invitation).where(*filters).order_by(Invitation.created_at.desc()).limit(1)
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def get_latest_for_prefill_by_phone(
+        self, phone_digits_value: str, branch_scope: BranchScope
+    ) -> Invitation | None:
+        """Phone counterpart of `get_latest_for_prefill_by_email`, comparing
+        digits only (`reception-phone-prefill-lookup/design.md`); the
+        expression matches the `ix_invitations_primary_contact_phone_digits`
+        functional index.
+        """
+        filters = [
+            literal_column(PHONE_DIGITS_SQL) == phone_digits_value,
+            Invitation.primary_contact_phone.is_not(None),
+            Invitation.deleted_at.is_(None),
+        ]
+        branch_filter = _branch_filter(branch_scope)
+        if branch_filter is not None:
+            filters.append(branch_filter)
+        stmt = select(Invitation).where(*filters).order_by(Invitation.created_at.desc()).limit(1)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def list_page(
         self,
         *,
@@ -625,6 +1096,7 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         page_size: int,
         sort_by: str,
         sort_order: SortOrder,
+        purpose_of_visit: str | None = None,
     ) -> tuple[list[Invitation], int]:
         """Backs `GET /invitations` (design.md Decision 2) — deliberately no
         `selectinload` of visitors/vehicles here (unlike `_with_children`
@@ -642,38 +1114,229 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         harden-approval-gate-and-narrow-delegate-visibility/design.md
         Decision 1) and is otherwise ignored.
         """
-        column = {"submitted_at": Invitation.submitted_at, "created_at": Invitation.created_at}[
-            sort_by
-        ]
-        filters: list[Any] = []
+        column = {
+            "submitted_at": Invitation.submitted_at,
+            "created_at": Invitation.created_at,
+            "status_changed_at": _status_changed_at_expr(),
+        }[sort_by]
         if relevant_to_user_id is not None:
-            assert default_host_role_id is not None
-            filters.append(_relevant_to_me_filter(relevant_to_user_id, default_host_role_id))
+            branch_scope = None
         else:
             assert branch_scope is not None
-            branch_filter = _branch_filter(branch_scope)
-            if branch_filter is not None:
-                filters.append(branch_filter)
-        if status is not None:
-            filters.append(Invitation.status == status)
-        if registration_type is not None:
-            filters.append(Invitation.registration_type == registration_type)
-        if source is not None:
-            filters.append(Invitation.source == source)
-        if search is not None:
-            pattern = f"%{search}%"
-            filters.append(
-                or_(
-                    Invitation.primary_contact_full_name.ilike(pattern),
-                    Invitation.tracking_id.ilike(pattern),
-                )
-            )
+        filters = _list_filters(
+            branch_scope=branch_scope,
+            relevant_to_user_id=relevant_to_user_id,
+            default_host_role_id=default_host_role_id,
+            status=status,
+            registration_type=registration_type,
+            source=source,
+            search=search,
+            purpose_of_visit=purpose_of_visit,
+        )
         return await super().paginate(
             page=page,
             page_size=page_size,
-            order_by=_order_clause(column, sort_order),
+            # `id` breaks timestamp ties so offset paging never repeats or
+            # skips a row (design.md Decision 3).
+            order_by=(_order_clause(column, sort_order).nulls_last(), Invitation.id.asc()),
             filters=filters,
         )
+
+    async def calendar_day_totals(self, criteria: CalendarCriteria) -> dict[date, int]:
+        """Exact per-day counts, independent of the event cap (design.md
+        D4). Grouped over a subquery rather than the expression itself:
+        the expression carries the timezone as a bind parameter, and
+        Postgres won't match a SELECT-list parameter to a GROUP BY one.
+        """
+        dated = (
+            select(_calendar_event_date(criteria.timezone).label("event_date"))
+            .where(*_calendar_filters(criteria))
+            .subquery()
+        )
+        stmt = select(dated.c.event_date, func.count()).group_by(dated.c.event_date)
+        return {row[0]: int(row[1]) for row in (await self.session.execute(stmt)).all()}
+
+    @staticmethod
+    def _calendar_rows(criteria: CalendarCriteria) -> Any:
+        """Every matching event as one column-only subquery — display names
+        joined in and the co-visitor count correlated, so no ORM entity can
+        lazy-load and nothing runs per row (query-performance.md §1-2).
+        Ordering, windowing and paging all happen over its columns, which
+        also keeps `event_date`'s bound timezone in one place (Postgres
+        can't match a bound parameter repeated across clauses).
+        """
+        host = aliased(User)
+        co_visitor_count = (
+            select(func.count())
+            .select_from(InvitationVisitor)
+            .where(InvitationVisitor.invitation_id == Invitation.id)
+            .correlate(Invitation)
+            .scalar_subquery()
+        )
+        return (
+            select(
+                Invitation.id,
+                Invitation.tracking_id,
+                Invitation.status,
+                Invitation.source,
+                _calendar_event_date(criteria.timezone).label("event_date"),
+                Invitation.preferred_visit_time.label("event_time"),
+                Invitation.expected_duration,
+                Invitation.checked_in_at,
+                Invitation.checked_out_at,
+                Invitation.primary_contact_full_name,
+                (co_visitor_count + 1).label("visitor_count"),
+                Invitation.host_id,
+                host.full_name.label("host_full_name"),
+                Invitation.branch_id,
+                Branch.name.label("branch_name"),
+                Building.name.label("building_name"),
+                Invitation.purpose_of_visit,
+                VisitorCategory.name.label("visitor_category_name"),
+                VisitorCategory.badge_color.label("visitor_category_badge_color"),
+            )
+            .outerjoin(host, host.id == Invitation.host_id)
+            .outerjoin(Branch, Branch.id == Invitation.branch_id)
+            .outerjoin(Building, Building.id == Invitation.building_id)
+            .outerjoin(VisitorCategory, VisitorCategory.id == Invitation.visitor_category_id)
+            .where(*_calendar_filters(criteria))
+            .subquery("calendar_events")
+        )
+
+    @staticmethod
+    def _within_day_order(rows: Any) -> list[Any]:
+        """The standard event order within one day — time (any-time last),
+        name, then id, so offset paging never repeats or skips a row
+        (improve-calendar-scale-and-theme-switch design.md A4).
+        """
+        return [
+            rows.c.event_time.asc().nulls_last(),
+            rows.c.primary_contact_full_name.asc(),
+            rows.c.id.asc(),
+        ]
+
+    async def calendar_events(
+        self, criteria: CalendarCriteria, *, limit: int, per_day_limit: int | None = None
+    ) -> list[Any]:
+        """The feed's events in the standard order, capped at `limit`. With
+        `per_day_limit`, only each day's first N (a `row_number()` window per
+        event date, design.md A2) — the rest of a day is paged through
+        `calendar_day_page`.
+        """
+        rows = self._calendar_rows(criteria)
+        if per_day_limit is not None:
+            ranked = select(
+                rows,
+                func.row_number()
+                .over(partition_by=rows.c.event_date, order_by=self._within_day_order(rows))
+                .label("day_rank"),
+            ).subquery("ranked_calendar_events")
+            stmt = (
+                select(*[ranked.c[column.name] for column in rows.c])
+                .where(ranked.c.day_rank <= per_day_limit)
+                .order_by(ranked.c.event_date.asc(), *self._within_day_order(ranked))
+                .limit(limit)
+            )
+        else:
+            stmt = (
+                select(rows)
+                .order_by(rows.c.event_date.asc(), *self._within_day_order(rows))
+                .limit(limit)
+            )
+        return list((await self.session.execute(stmt)).mappings().all())
+
+    async def calendar_day_page(
+        self, criteria: CalendarCriteria, *, offset: int, limit: int
+    ) -> list[Any]:
+        """One page of a single day's events (`criteria` spans just that
+        date), in the same order `calendar_events` uses, so page 1 of size N
+        equals the feed's first N for the day (design.md A3).
+        """
+        rows = self._calendar_rows(criteria)
+        stmt = select(rows).order_by(*self._within_day_order(rows)).offset(offset).limit(limit)
+        return list((await self.session.execute(stmt)).mappings().all())
+
+    async def count_export_rows(
+        self,
+        criteria: InvitationExportCriteria,
+    ) -> int:
+        """Visitor rows `GET /invitations/export` would produce — one per
+        invitation (its primary contact) plus one per co-visitor — counted
+        before anything is loaded, so an over-cap export is rejected without
+        doing the work (add-invitation-export/design.md Decision 1).
+        """
+        conditions = (Invitation.deleted_at.is_(None), *_export_filters(criteria))
+        invitation_count = select(func.count()).select_from(Invitation).where(*conditions)
+        visitor_count = (
+            select(func.count())
+            .select_from(InvitationVisitor)
+            .join(Invitation, Invitation.id == InvitationVisitor.invitation_id)
+            .where(*conditions)
+        )
+        stmt = select(invitation_count.scalar_subquery() + visitor_count.scalar_subquery())
+        return int((await self.session.execute(stmt)).scalar_one())
+
+    async def list_for_export(
+        self,
+        criteria: InvitationExportCriteria,
+    ) -> list[tuple[Invitation, InvitationExportNames]]:
+        """Every matching invitation with its co-visitors and vehicles
+        eager-loaded and its branch/building/department/host/visitor-category
+        and check-in/out staff display names joined in the same query — no
+        per-row lookup (query-performance.md §1-2). Newest first by the
+        status-matched timestamp (design.md Decision 3).
+        """
+        column = _EXPORT_DATE_COLUMNS[criteria.status]
+        host = aliased(User)
+        checked_in_by = aliased(User)
+        checked_out_by = aliased(User)
+        stmt = (
+            select(
+                Invitation,
+                Branch.name,
+                Building.name,
+                Department.name,
+                host.full_name,
+                VisitorCategory.name,
+                checked_in_by.full_name,
+                checked_out_by.full_name,
+            )
+            .outerjoin(Branch, Branch.id == Invitation.branch_id)
+            .outerjoin(Building, Building.id == Invitation.building_id)
+            .outerjoin(Department, Department.id == Invitation.department_id)
+            .outerjoin(host, host.id == Invitation.host_id)
+            .outerjoin(VisitorCategory, VisitorCategory.id == Invitation.visitor_category_id)
+            .outerjoin(checked_in_by, checked_in_by.id == Invitation.checked_in_by_user_id)
+            .outerjoin(checked_out_by, checked_out_by.id == Invitation.checked_out_by_user_id)
+            .options(selectinload(Invitation.visitors), selectinload(Invitation.vehicles))
+            .where(Invitation.deleted_at.is_(None), *_export_filters(criteria))
+            .order_by(column.desc().nulls_last(), Invitation.id)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        return [
+            (
+                invitation,
+                InvitationExportNames(
+                    branch=branch,
+                    building=building,
+                    department=department,
+                    host=host_name,
+                    visitor_category=category,
+                    checked_in_by=checked_in_name,
+                    checked_out_by=checked_out_name,
+                ),
+            )
+            for (
+                invitation,
+                branch,
+                building,
+                department,
+                host_name,
+                category,
+                checked_in_name,
+                checked_out_name,
+            ) in rows
+        ]
 
     async def is_relevant_to(
         self, id_: uuid.UUID, *, user_id: uuid.UUID, default_host_role_id: uuid.UUID

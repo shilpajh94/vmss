@@ -127,7 +127,7 @@ DEFAULT_STEP_SPECS: list[DefaultStepSpec] = [
                 "toggle_switch",
                 is_locked=True,
                 is_required=True,
-                options=["email", "sms"],
+                options=["email", "sms", "whatsapp"],
             ),
             DefaultFieldSpec(
                 "id_proof_type",

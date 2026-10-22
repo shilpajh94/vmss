@@ -1,8 +1,9 @@
 import uuid
 from collections.abc import Collection, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import ColumnElement, func, or_, select, update
+from sqlalchemy import ColumnElement, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
@@ -65,6 +66,42 @@ class UserRepository(TenantScopedRepository[User]):
             .execution_options(synchronize_session=False)
         )
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def lock_active_admin_ids(self) -> set[uuid.UUID]:
+        """Ids of every active, non-deleted user holding the `admin` role,
+        row-locked (`FOR UPDATE`) so two concurrent disables/deletes of the
+        last two admins serialize instead of both passing the "someone else
+        is still admin" check. `DISTINCT` can't combine with `FOR UPDATE`,
+        hence the `IN (subquery)` shape.
+        """
+        admin_ids = (
+            select(UserBranchRole.user_id)
+            .join(Role, UserBranchRole.role_id == Role.id)
+            .where(Role.name == "admin")
+        )
+        stmt = (
+            select(User.id)
+            .where(
+                User.id.in_(admin_ids),
+                User.is_active.is_(True),
+                User.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        return set((await self.session.execute(stmt)).scalars().all())
+
+    async def tombstone(self, user: User) -> None:
+        """Soft-deletes `user` and releases its unique identifiers: the email
+        is rewritten to a non-routable placeholder and `employee_code` nulled,
+        so both can be reused by a new employee (`users.email` and
+        `users.employee_code` have plain unique constraints that a bare
+        `deleted_at` would keep reserved).
+        """
+        user.deleted_at = datetime.now(UTC)
+        user.is_active = False
+        user.email = f"deleted+{user.id}@invalid.local"
+        user.employee_code = None
+        await self.session.flush()
 
     async def get_active(self, id_: uuid.UUID) -> User | None:
         """Used to validate `hostId` on invitation/walk-in creation — an id
@@ -143,8 +180,9 @@ class UserRepository(TenantScopedRepository[User]):
         every branch (`auth/models.py::User.has_branch_access` already
         treats a `None` `branch_id` as "every branch"; this listing now
         agrees). A user with no department AND no branch-scoped role grant
-        at all still only appears in the unscoped ("all branches") listing,
-        same as before.
+        at all belongs to every branch and appears in every branch-scoped
+        listing too (all-branch employee), once each — the clause is an
+        `EXISTS`, so multi-role users are never duplicated.
 
         `role` matches via a correlated `EXISTS` against `UserBranchRole`/
         `Role` rather than a join, so a user holding that role at more than
@@ -168,6 +206,17 @@ class UserRepository(TenantScopedRepository[User]):
                         ),
                     )
                     .exists(),
+                    # All-branch employee: no department and no
+                    # branch-specific grant, so nothing pins them to one branch.
+                    and_(
+                        User.department_id.is_(None),
+                        ~select(UserBranchRole.id)
+                        .where(
+                            UserBranchRole.user_id == User.id,
+                            UserBranchRole.branch_id.is_not(None),
+                        )
+                        .exists(),
+                    ),
                 )
             )
         if department_id is not None:

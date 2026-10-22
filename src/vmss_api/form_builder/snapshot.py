@@ -17,6 +17,7 @@ from typing import Any, Protocol
 from vmss_api.core.logging import logger
 from vmss_api.form_builder.defaults import DEFAULT_EFFECTIVE_FORM
 from vmss_api.form_builder.schemas import FormFieldType
+from vmss_api.form_builder.step_icons import resolve_step_icon
 
 SUPPORTED_FIELD_TYPES = frozenset(member.value for member in FormFieldType)
 
@@ -93,6 +94,9 @@ def _add_missing_location_fields(step: dict[str, Any]) -> None:
 
 def _normalize_step(step: dict[str, Any], *, source: str) -> dict[str, Any]:
     _add_missing_location_fields(step)
+    # Snapshots published before steps were always given an icon carry
+    # `"icon": null` (auto-assign-form-step-icons design.md Decision 3).
+    step["icon"] = resolve_step_icon(step.get("icon"), step.get("name", ""))
     fields = []
     dropped_keys: set[str] = set()
     dropped_ids: set[str] = set()
@@ -134,6 +138,7 @@ def _normalize_step(step: dict[str, Any], *, source: str) -> dict[str, Any]:
 def normalize_snapshot(snapshot: list[dict[str, Any]], *, source: str) -> list[dict[str, Any]]:
     """A copy of `snapshot` in the current field/group shape: missing keys
     filled with their defaults, fields of unsupported types dropped (and
-    warned about), group memberships pruned to match. Values the snapshot
-    does carry are left exactly as they are."""
+    warned about), group memberships pruned to match, a null step icon
+    filled with the one its name infers. Values the snapshot does carry are
+    otherwise left exactly as they are."""
     return [_normalize_step(step, source=source) for step in copy.deepcopy(snapshot)]

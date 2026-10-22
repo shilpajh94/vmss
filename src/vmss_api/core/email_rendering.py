@@ -4,7 +4,7 @@ existing `EmailSender` interface (`core/emailing.py`), not a parallel
 dispatch path, so a provider swap never has to touch template code.
 
 Templates live in `core/email_templates/` as a pair per notification type:
-`<name>.html` extends `base.html` (the shared Visimio layout) and
+`<name>.html` extends `base.html` (the shared Guestify layout) and
 defines `subject` + `content` blocks; `<name>.txt` extends `base.txt` and
 carries the same information as plain text
 (redesign-notification-email-templates/design.md Decision 3). Both are
@@ -22,6 +22,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, TemplateError, Undefined, select_autoescape
 
 from vmss_api.core import email_assets
+from vmss_api.core.config import BRAND_NAME
 from vmss_api.core.logging import logger
 
 _TEMPLATES_DIR = Path(__file__).parent / "email_templates"
@@ -127,12 +128,25 @@ TEMPLATE_TONES: dict[str, str] = {
     "tracking_only": "pending",
     "submission_role": "pending",
     "denial": "danger",
+    "approval_reverted": "pending",
     "reschedule": "info",
     "edit": "info",
     "host_assigned": "brand",
     "poc_assigned": "brand",
     "verification_code": "brand",
     "daily_snapshot": "brand",
+    "staff_lifecycle_update": "info",
+}
+
+# Types whose tone varies with the context's `event`, overriding
+# `TEMPLATE_TONES` (email-notifications "Staff Lifecycle Update Email
+# Carries Event-Specific Content").
+TEMPLATE_EVENT_TONES: dict[str, dict[str, str]] = {
+    "staff_lifecycle_update": {
+        "denied": "danger",
+        "approval_reverted": "pending",
+        "rescheduled": "info",
+    },
 }
 
 
@@ -177,12 +191,15 @@ def render_email(template_name: str, context: dict[str, Any]) -> RenderedEmail:
     so every call site's failure path looks the same regardless of which
     template or context field caused it.
     """
-    tone = TEMPLATE_TONES.get(template_name, "brand")
+    tone = TEMPLATE_EVENT_TONES.get(template_name, {}).get(
+        context.get("event", ""), TEMPLATE_TONES.get(template_name, "brand")
+    )
     context = {
         **context,
         "tone": tone,
         "t": asdict(TONES[tone]),
         "current_year": datetime.now(UTC).year,
+        "brand_name": BRAND_NAME,
         "logo_src": _logo_src(),
     }
     try:

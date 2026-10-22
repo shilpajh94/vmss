@@ -23,7 +23,10 @@ is identical for every tenant.
 | DELETE | `/api/v1/auth/users/{id}/branch-roles/{assignmentId}` | `users:manage` (company-wide) | — | Revokes a previously granted branch-role assignment. |
 | POST | `/api/v1/auth/employees` | `employees:manage` (company-wide) | — | Creates a single employee, setting `employeeCode`/`departmentId` (required) and optional `phoneNumber`/`designation` directly — immediately visible via `GET /auth/employees` below, with no sync call needed. Never affects any other employee. |
 | POST | `/api/v1/auth/employees/sync` | `employees:manage` (company-wide) | — | Reconciles the employee directory against a full, authoritative batch — see below. Company-wide by design: one sync call spans every department/branch at once. |
-| GET | `/api/v1/auth/employees` | None (public) | — | Paginated employee directory (via `department -> floor -> building`) of every non-deleted user in the tenant, not just ones reconciled through the employee-sync flow — an Admin/Security/Reception account with no `employeeCode` still appears. Optionally narrowed by `departmentId`, `email` (exact match), `role` (role name, matched via any branch-role assignment), and/or `status` (`active`/`inactive`, mapped onto `User.is_active`). No bearer token or permission required: tenant resolves from a presented access token when valid, otherwise the deployment's default tenant. `X-Branch-ID` is optional: scopes to that branch if sent, else every branch in the resolved tenant. An employee with no `department_id` still appears in an unscoped ("all branches") listing — it only drops out of a specific branch/`departmentId`-narrowed view, since there's no department chain to resolve it against. Each row includes `avatarUrl` and the employee's current `branchRoles`. |
+| POST | `/api/v1/auth/employees/{id}/disable` | `employees:manage` (company-wide) | — | Reversible disable: sets `isActive=false` and an internal `disabled_by_admin` flag. The employee can't sign in, existing access tokens stop working, and they drop out of host search and `status=active`. Idempotent. `409` if the caller targets themself or the tenant's last active admin. |
+| POST | `/api/v1/auth/employees/{id}/enable` | `employees:manage` (company-wide) | — | Re-enables a disabled employee (clears both flags). Idempotent. |
+| DELETE | `/api/v1/auth/employees/{id}` | `employees:manage` (company-wide) | — | Soft delete (`204`): the row is kept for historical invitations, but the employee vanishes from every listing, can't sign in, and their email and `employeeCode` are released for reuse (email is tombstoned to `deleted+<id>@invalid.local`, `tenant_user_index` row removed). Same `409` guards as disable. A second delete is `404`. |
+| GET | `/api/v1/auth/employees` | None (public) | — | Paginated employee directory (via `department -> floor -> building`) of every non-deleted user in the tenant, not just ones reconciled through the employee-sync flow — an Admin/Security/Reception account with no `employeeCode` still appears. Optionally narrowed by `departmentId`, `email` (exact match), `role` (role name, matched via any branch-role assignment), and/or `status` (`active`/`inactive`, mapped onto `User.is_active`). No bearer token or permission required: tenant resolves from a presented access token when valid, otherwise the deployment's default tenant. `X-Branch-ID` is optional: scopes to that branch if sent, else every branch in the resolved tenant. A branch-scoped view returns that branch's employees (department at the branch, or a role grant at it) **plus every all-branch employee** — one with a company-wide role grant, or with no `department_id` and no branch-specific grant — so an all-branch employee shows under every branch (and in the approval delegate picker, `?role=…` + `X-Branch-ID`), once each even if they hold several roles. An employee tied only to other branches is excluded. Each row includes `avatarUrl` and the employee's current `branchRoles`. |
 | GET | `/api/v1/auth/permissions` | `roles:view` (company-wide) | — | Paginated permission-code catalog (`{code, description}` rows, `page`/`pageSize` default 1/20, max 100; `sortBy` whitelisted to `code`, default ascending), so a role-creation/update form can populate its permission-code choices instead of guessing. |
 | POST | `/api/v1/auth/roles` | `roles:manage` (company-wide) | — | Creates a tenant-defined custom role with a name, optional description, and a set of permission codes (validated against the global catalog — see `GET /auth/permissions` above for discovering valid ones). |
 | GET | `/api/v1/auth/roles` | `roles:view` (company-wide) | — | Paginated list of every role in the tenant — the five standard ones plus any custom roles. |
@@ -296,3 +299,17 @@ code isn't in the catalog (`auth/service.py::_resolve_permission_codes`).
 - Superadmin login (a completely separate identity — not a member of any
   tenant's schema) lives in `platform/`, not here — see
   `docs/features/platform.md`.
+
+## Disabling and deleting employees
+
+Disable/enable/delete (`auth/service.py::disable_employee`, `enable_employee`,
+`delete_employee`) are audited as `employee_disabled`, `employee_enabled` and
+`employee_deleted` (the delete entry's diff keeps the original email, since the
+row itself is tombstoned). The last-active-admin check row-locks the active
+admin set so two concurrent requests can't remove the last two admins.
+
+Directory sync interaction: an employee disabled through the endpoint keeps
+`disabled_by_admin=true`, so a later sync batch still updates their directory
+fields but does **not** set them active. An employee sync itself deactivated
+(omitted from a batch) is re-activated when they reappear. A deleted employee
+is invisible to sync, so a batch containing their email creates a new employee.

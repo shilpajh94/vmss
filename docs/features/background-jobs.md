@@ -18,14 +18,40 @@ uvicorn daemon:
 
 | Daemon | Command | Job |
 |---|---|---|
-| `vmss-api-celery-worker` | `uv run celery -A vmss_api.core.celery_app:celery_app worker` | Executes tasks — request-triggered (`.delay()`) and scheduled alike. |
-| `vmss-api-celery-beat` | `uv run celery -A vmss_api.core.celery_app:celery_app beat` | Enqueues scheduled tasks on their configured schedule. Enqueues only — never executes a task itself; the worker daemon above does that. |
+| `vmss-api-celery-worker` | `uv run watchfiles '<celery ... worker>' src` | Executes tasks — request-triggered (`.delay()`) and scheduled alike. |
+| `vmss-api-celery-beat` | `uv run watchfiles '<celery ... beat>' src` | Enqueues scheduled tasks on their configured schedule. Enqueues only — never executes a task itself; the worker daemon above does that. |
 
 Without the worker, anything dispatched via `.delay()` (request-triggered or
 beat-enqueued) queues in Redis forever with nothing consuming it. Without
 beat, a `beat_schedule` entry is configured but nothing ever triggers it —
 see `add-celery-worker-and-demo-seed-script`'s investigation for the
 request-triggered case this exact failure mode was first diagnosed from.
+
+Locally, both run under `watchfiles`, which restarts them whenever anything
+under `src/` changes, including email templates and image assets as well as
+`.py` files. Celery has no reload of its own. Before this, a worker started
+before a pull kept running the old code: it dropped newly added tasks as
+"unregistered" and kept sending pre-rebrand emails
+(`autoreload-local-celery-worker`). Deployed workers never watch files.
+
+## Deployment requirements
+
+The deployment target is still undecided (`project-rules.md`). Wherever it
+lands, it must run:
+
+- **Exactly one `celery beat` process per environment.** With none,
+  nothing scheduled ever runs. That means no visit-lifecycle sweep (expired
+  check-ins stay "inside" forever, no-shows are never archived) and no
+  daily rollups. With two, every schedule fires twice. Both tasks are
+  idempotent, but it is still wasted work and duplicate audit noise.
+- **At least one worker consuming each queue**, including the cron queue
+  the sweep is routed to and the notifications queue every email and push
+  goes through.
+
+The visit-lifecycle sweep is deliberately silent: it sends no email or
+push. It also leaves `submitted` requests alone even after their date has
+passed. Both were explicit product decisions
+(`auto-checkout-and-archive-no-shows`), not gaps.
 
 ## Scheduled (beat-triggered) tasks
 
@@ -35,6 +61,8 @@ every recurring task is registered:
 | Schedule name | Cadence | Task |
 |---|---|---|
 | `dispatch-daily-rollup-snapshots` | Daily, 02:00 UTC | `reports.tasks.dispatch_daily_rollup_snapshots` — see `docs/features/reports.md`'s "Scheduled snapshot" section. |
+| `visit-lifecycle-sweep` | Every 15 minutes | `invitations.tasks.dispatch_visit_lifecycle_sweep`. It fans out to `sweep_tenant_visit_lifecycle` per tenant, which auto-checks-out expired check-ins and archives approved no-shows. See `docs/features/invitations.md`'s "Automatic check-out and archived no-shows" section. Both tasks are routed to the cron queue by exact name, ahead of the `vmss_api.invitations.tasks.*` → notifications glob. If beat or the cron worker isn't running, nothing is swept. |
+| `invitation-retention-purge` | Daily, `INVITATION_PURGE_HOUR:INVITATION_PURGE_MINUTE` UTC (default 03:00) | `invitations.tasks.dispatch_invitation_purge` fans out to `purge_tenant_invitations` per tenant (cron queue, exact-name routes). Backs up, verifies, then deletes invitations past `INVITATION_RETENTION_DAYS`; a no-op when that is `0`. A per-tenant Redis lock (`vmss:{tenant_id}:invitations:purge:lock`) prevents concurrent runs. See `docs/features/invitations.md`'s "Retention purge" section. |
 
 Adding a new scheduled task: register it in `beat_schedule`, add its module
 to `celery_app.autodiscover_tasks([...])` if it's a new feature package, and
@@ -54,8 +82,10 @@ This means one tenant's failure is a separate Celery message from every
 other tenant's — it can't block or delay them, and Celery's own retry
 mechanism applies to that one tenant's task in isolation. `reports/tasks.py`
 (`dispatch_daily_rollup_snapshots` / `send_tenant_rollup_snapshot`) is the
-reference implementation; a single task that loops over every tenant inline
-does not satisfy this.
+reference implementation. `invitations/tasks.py`'s visit-lifecycle sweep
+follows the same shape. It needs no Redis run-marker, because its
+conditional bulk `UPDATE`s already match nothing on a redelivered run.
+A single task that loops over every tenant inline does not satisfy this.
 
 ## Every task's contract
 
@@ -97,8 +127,8 @@ shared template, no second channel), so a plain shared sender is enough.
 `invitations/notifications.py` re-exports the pieces it needs so its
 existing call sites (`notifications.email_sender`,
 `notifications.make_attachment`) didn't need to change; it still owns the
-invitation-specific `SmsSender`/`UnconfiguredSmsSender` (reports has no SMS
-need).
+SMS and WhatsApp senders (the shared Fast2SMS clients in
+`core/sms.py`/`core/whatsapp.py`; reports has no SMS need).
 
 ## Not yet built (flagged, not silently dropped)
 

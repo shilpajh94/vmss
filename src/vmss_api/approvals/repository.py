@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select, update
 
@@ -211,3 +211,66 @@ class InvitationApprovalStepRepository(TenantScopedRepository[InvitationApproval
             .values(escalates_at=escalates_at, auto_approves_at=auto_approves_at)
         )
         await self.session.execute(stmt)
+
+    async def reset_all_for_invitation(self, invitation_id: uuid.UUID) -> None:
+        """Puts every non-deleted step of `invitation_id` back to `pending`
+        with no actor, delegation, or clock — one bulk `UPDATE`, not a
+        per-step loop (query-performance.md §3). Backs an approval revert
+        (add-invitation-approval-revert/design.md Decision 5); the caller
+        then re-activates the first step's clock. Step order, approver
+        identity, and the snapshotted minute values are left untouched.
+        Returns the number of steps reset (0 for an invitation with no
+        workflow).
+        """
+        stmt = (
+            update(InvitationApprovalStep)
+            .where(
+                InvitationApprovalStep.invitation_id == invitation_id,
+                InvitationApprovalStep.deleted_at.is_(None),
+            )
+            .values(
+                status="pending",
+                acted_by_user_id=None,
+                acted_at=None,
+                delegated_to_user_id=None,
+                delegated_by_user_id=None,
+                delegated_at=None,
+                escalates_at=None,
+                auto_approves_at=None,
+            )
+        )
+        await self.session.execute(stmt)
+
+    async def activate_current_pending(
+        self, invitation_id: uuid.UUID
+    ) -> InvitationApprovalStep | None:
+        """Starts the clock on the invitation's current pending step (lowest
+        `step_order` still `pending`): its `escalates_at`/`auto_approves_at`
+        are computed from its own snapshotted minute values relative to
+        *now* (specs/approvals/spec.md "A later step's timestamps are set
+        when it becomes current"). Shared by `approvals/service.py::
+        approve_step` (the next step after an approval) and `invitations/
+        service.py::revert_invitation_approval` (step 1 again after a
+        reset) — it lives here rather than in either service because
+        `approvals.service` already imports `invitations.service`. Returns
+        the activated step, or `None` if nothing is pending, so the caller
+        can push its approver *after* commit.
+        """
+        step = await self.get_current_pending(invitation_id)
+        if step is None:
+            return None
+        now = datetime.now(UTC)
+        await self.set_clock(
+            step.id,
+            escalates_at=(
+                now + timedelta(minutes=step.escalation_minutes)
+                if step.escalation_minutes is not None
+                else None
+            ),
+            auto_approves_at=(
+                now + timedelta(minutes=step.auto_approve_minutes)
+                if step.auto_approve_minutes is not None
+                else None
+            ),
+        )
+        return step

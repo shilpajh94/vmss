@@ -22,6 +22,10 @@ touch its `DeviceToken` table or the FCM SDK directly; they call
 |---|---|---|---|
 | POST | `/api/v1/notifications/devices` | Any authenticated staff user (self-service, like `GET /auth/me` — no permission check) | Registers/updates a device token (`fcmToken`, `platform`: `web`/`android`/`ios`) against the caller's own account. Re-registering an already-known token updates it in place; a token previously owned by a *different* user is reassigned to the caller (a device is physically one browser/app install). |
 | DELETE | `/api/v1/notifications/devices/{fcmToken}` | Any authenticated staff user | Removes one of the caller's own device tokens. A no-op (still 200), not an error, if the token was never registered or belongs to someone else. |
+| GET | `/api/v1/notifications` | Any authenticated staff user (own notifications only) | The caller's in-app notifications, newest first. `page`/`pageSize` (default 20, max 100) and an optional `unreadOnly=true`. Each item: `id`, `title`, `body`, `data` (the push `data` verbatim), `createdAt`, `readAt`. |
+| GET | `/api/v1/notifications/unread-count` | Any authenticated staff user | `{"unreadCount": n}` for the caller. |
+| PATCH | `/api/v1/notifications/{id}/read` | Any authenticated staff user | Marks one of the caller's notifications read. Already read: 200, original `readAt` kept. Another user's or an unknown id: 404. |
+| POST | `/api/v1/notifications/read-all` | Any authenticated staff user | Marks every unread notification of the caller read, in one statement. |
 
 ## Dispatch primitive
 
@@ -107,6 +111,39 @@ carry a `Role`/`User` id already implied by which step is current, nothing
   attempting delivery to it — a transient send failure is left for the
   task's own retry instead.
 
+## In-app feed and push state (`fix-web-push-and-add-notification-feed`)
+
+- **Every dispatch is recorded.** `send_push` writes one `notifications`
+  row per recipient (same title, body and `data` as the push), then commits,
+  *before* looking up devices or calling FCM. A recipient with no device,
+  or a send that exhausts its retries, still gets the in-app row.
+  `(dispatch_id, user_id)` is unique: the service generates `dispatch_id`
+  at enqueue time, so a redelivery or retry is an `ON CONFLICT DO NOTHING`.
+  A recording failure logs `WARNING notification_record_failed` and the
+  push still goes out.
+- **Zero-device sends are logged.** `INFO push_no_registered_devices` with
+  `recipient_count`. If staff report "no notifications", check this line
+  and `device_tokens` first — a push to nobody used to look like success.
+- **Retention.** Rows older than 90 days are hard-deleted by the
+  visit-lifecycle sweep (every 15 minutes per tenant), in a commit separate
+  from the sweep's own work. The sweep's log line reports
+  `notifications_purged`.
+- **Portal bell.** Loads the feed and unread count from the API on sign-in,
+  on tab focus, every 60 seconds while visible, and when a foreground push
+  arrives (the push itself only triggers a refetch). Clicking an item marks
+  it read and opens its invitation; "Mark all read" calls `read-all`.
+- **Push state.** The bell panel shows this browser's state: *enabled*,
+  *off* (with **Enable notifications**), *blocked* (re-allow in the
+  browser's site settings — a page can't re-prompt), or *unavailable*
+  (insecure context or unsupported browser). Only that button asks for
+  permission, because browsers suppress prompts not triggered by a click.
+  Sign-in, tab focus and the 30-minute timer only re-register a browser
+  that already granted permission.
+- **Testing push locally.** Open the portal on `http://localhost:5173` or
+  the DDEV HTTPS URL. On `http://<LAN-IP>:5173` the browser isn't a secure
+  context, so push shows as unavailable (the in-app feed still works).
+  Restart the DDEV Celery worker after changing `notifications/tasks.py`.
+
 ## Notification emails (`redesign-notification-email-templates`)
 
 This section covers every templated email, not push: the invitation
@@ -117,21 +154,25 @@ emails dispatched by `invitations/tasks.py`, the verification-code email
 sent through `core/emailing.py::build_message`.
 
 **Layout** (`base.html`, restyled by
-`refine-email-templates-and-visimio-brand`):
-- a navy (`#0f172a`) header showing the tenant logo, else the Visimio
-  logo image, else (no asset base URL configured) a styled "Visimio" text
-  wordmark;
+`refine-email-templates-and-visimio-brand`, rebranded by
+`rebrand-to-guestify`):
+- a navy (`#0f172a`) header showing the tenant logo, else the Guestify
+  logo image, else (no asset base URL configured) a styled "Guestify" text
+  wordmark ("Gu" teal, "estify" white);
 - a cyan accent rule;
 - a white card with the tone-coloured status pill (when the type has one),
   the heading, the greeting (the OTP email has none), and the per-type
   sections;
-- a footer reading "Sent by {company or Visimio}", the no-reply line,
-  "Powered by Visimio", and "© {year} Visimio. All rights reserved.".
+- a footer reading "Sent by {company or Guestify}", the no-reply line,
+  "Powered by Guestify", and "© {year} Guestify. All rights reserved.".
 
-The Visimio logo is `core/email_assets/visimio-logo-on-dark.png`, generated
-by `scripts/build_brand_assets.py`, and served publicly (see "Images load
-by URL" below). The From header carries the display name `SMTP_FROM_NAME` (default
-"Visimio").
+The product name comes from `core/config.py::BRAND_NAME`, injected into
+every template as `brand_name`. The Guestify logo is
+`core/email_assets/guestify-logo-on-dark.png`, rendered by
+`scripts/build_brand_assets.py` from the SVG masters in `brand/` (see
+`brand/README.md`; never hand-edit the PNG), and served publicly (see
+"Images load by URL" below). The From header carries the display name
+`SMTP_FROM_NAME` (default `BRAND_NAME`, "Guestify").
 
 The layout is table-based with inline styles, 600px wide, and fluid below
 that. One `<style>` block carries only the ≤620px media query and the
@@ -204,9 +245,12 @@ A candidate whose name fails `display_name` is skipped, not shown.
 with `EMAIL_ASSET_BASE_URL` set, every image is an absolute `<img src>`
 and the delivered message is just `multipart/alternative` (text + HTML) —
 no attachment and no inline part, so no client shows an attachment strip.
-- Logo: `GET /api/v1/public/email-assets/visimio-logo.png`
+- Logo: `GET /api/v1/public/email-assets/guestify-logo.png`
   (`core/email_assets_router.py`, `Cache-Control: public, max-age=31536000,
-  immutable`; rename the file to bust caches).
+  immutable`; rename the file to bust caches). The pre-rebrand
+  `visimio-logo.png` URL still answers 200 with the Guestify image
+  (`RETIRED_LOGO_FILENAMES`, hidden from the OpenAPI schema), so emails sent
+  before the rename never show a broken image.
 - Check-in QR: `GET /api/v1/public/email-assets/{tenantId}/qr/{invitationId}.png?exp=&sig=`
   (`invitations/email_assets_router.py`). `sig` is an HMAC-SHA256 over
   `qr:{tenant}:{invitation}:{exp}` (`core/email_assets.py`); `exp` is the
@@ -262,7 +306,7 @@ set, eight emails carry one call-to-action button, plus the same URL as a
 
 **Previewing:** `ddev exec uv run python scripts/send_email_previews.py`
 sends all ten templates, with full sample data and `[Preview]` subjects,
-to `preview@visimio.local` in Mailpit (`ddev mailpit`). The QR previews
+to `preview@guestify.local` in Mailpit (`ddev mailpit`). The QR previews
 use a real signed URL for the tenant's latest invitation with an issued
 QR, or the inline fallback otherwise. `--to` and `--tenant-slug` override
 the defaults. Mailpit's HTML Check tab shows the per-client support

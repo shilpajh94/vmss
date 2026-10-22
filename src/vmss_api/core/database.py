@@ -116,6 +116,11 @@ class _SoftDeletableModel(Protocol):
     deleted_at: Mapped[datetime | None]
 
 
+def _as_order_by_sequence(order_by: Any | Sequence[Any]) -> Sequence[Any]:
+    # A SQLAlchemy expression is never a list/tuple, so this can't misread one.
+    return order_by if isinstance(order_by, (list, tuple)) else (order_by,)
+
+
 class TenantScopedRepository[ModelT: _SoftDeletableModel]:
     """Base repository for tables living in a tenant's own Postgres schema.
 
@@ -147,7 +152,12 @@ class TenantScopedRepository[ModelT: _SoftDeletableModel]:
         return (await self.session.execute(stmt)).scalar_one()
 
     async def paginate(
-        self, *, page: int, page_size: int, order_by: Any, filters: Sequence[Any] = ()
+        self,
+        *,
+        page: int,
+        page_size: int,
+        order_by: Any | Sequence[Any],
+        filters: Sequence[Any] = (),
     ) -> tuple[list[ModelT], int]:
         """Shared pagination primitive for the org-structure-style
         `list_page` methods (api-conventions.md §1): one count query plus one
@@ -156,6 +166,8 @@ class TenantScopedRepository[ModelT: _SoftDeletableModel]:
         (e.g. `Model.name.asc()`), never a raw client-supplied string — see
         api-conventions.md §1 on why sort columns go through an explicit
         whitelist upstream, in the feature's own repository method, not here.
+        A sequence of expressions (primary sort, then a tie-breaker) is
+        applied in order.
 
         Deliberately named differently from every subclass's own
         `list_page` (which each takes different filter kwargs) rather than
@@ -173,7 +185,7 @@ class TenantScopedRepository[ModelT: _SoftDeletableModel]:
         stmt = (
             select(self.model)
             .where(self.model.deleted_at.is_(None), *filters)
-            .order_by(order_by)
+            .order_by(*_as_order_by_sequence(order_by))
             .limit(page_size)
             .offset((page - 1) * page_size)
         )

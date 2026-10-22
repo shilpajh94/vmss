@@ -1,7 +1,7 @@
 ## Purpose
 
-Lets staff (Admin/Reception/Security/Host) sign into VisitorPass with their
-company's own OIDC identity provider instead of a VisitorPass password,
+Lets staff (Admin/Reception/Security/Host) sign into Guestify with their
+company's own OIDC identity provider instead of a Guestify password,
 with per-tenant provider configuration, just-in-time account provisioning,
 IdP-group-to-role mapping, and full audit coverage. Visitors are never
 involved — this capability governs staff sign-in only.
@@ -54,7 +54,7 @@ anything, so a configuration mistake is caught before it can lock staff out.
 ### Requirement: IdP-Group-to-Role Mapping Decides a New User's Role
 The system SHALL let a caller with `sso-config:manage` maintain a per-tenant
 table mapping an IdP group identifier (as it appears in the ID token's
-group claim) to one existing VisitorPass role. When a new SSO user's token
+group claim) to one existing Guestify role. When a new SSO user's token
 carries a group that matches an entry in this table, the system SHALL
 assign that role. When it carries no group that matches any entry, the
 system SHALL assign the `Host` role and SHALL NOT assign `Admin` or any

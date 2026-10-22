@@ -25,12 +25,12 @@ dependencies = [
     "aiosmtplib>=5.1.2",
     "anyio>=4.14.2",
     "aioboto3>=15.5.0",
-    "twilio>=9.11.0",
     "httpx>=0.28.1",
     "cryptography>=46.0.3",
     "firebase-admin>=7.5.0",
     "reportlab>=5.0.1",
     "jinja2>=3.1.6",
+    "openpyxl>=3.1.5",
 ]
 
 [dependency-groups]
@@ -43,6 +43,11 @@ dev = [
     "polyfactory>=3.3.0",
     "respx>=0.22.0",
     "pytest-cov>=7.1.0",
+    "locust>=2.46.7",
+    "vtracer>=0.6.15",
+    "fonttools>=4.67.0",
+    "resvg-py>=0.5.0",
+    "watchfiles>=1.2.0",
 ]
 
 [build-system]

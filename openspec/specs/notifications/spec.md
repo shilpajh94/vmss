@@ -55,8 +55,13 @@ than an error.
 The system SHALL provide a dispatch primitive, used by other capabilities,
 that sends a push notification either to one or more specific user ids, or to
 every user holding a specific role at a specific branch (company-wide role
-grants included). A recipient with no registered device SHALL simply receive
-nothing — this is not an error condition for the dispatching action.
+grants included). A recipient with no registered device SHALL receive no
+push, and this is not an error condition for the dispatching action. Every
+resolved recipient SHALL nevertheless receive an in-app notification (see
+"Every Push Dispatch Is Also Recorded as an In-App Notification"). A
+dispatch in which no recipient has a registered device SHALL be logged at
+`INFO` as `push_no_registered_devices` with the recipient count, so that a
+push reaching no device is distinguishable from a delivered one.
 
 #### Scenario: Dispatch to a specific user
 - **WHEN** a triggering action resolves its recipient as a specific user id
@@ -74,8 +79,10 @@ nothing — this is not an error condition for the dispatching action.
 #### Scenario: Recipient has no registered device
 - **WHEN** the resolved recipient (by user id or by role-at-branch) has zero
   registered devices
-- **THEN** the dispatch completes without error and the triggering action's
-  own outcome (e.g. the invitation's state transition) is unaffected
+- **THEN** the dispatch completes without error, the triggering action's
+  own outcome (e.g. the invitation's state transition) is unaffected, the
+  recipient still gets an in-app notification, and an `INFO`
+  `push_no_registered_devices` log line is written
 
 ### Requirement: A Push Send Failure Does Not Block or Fail the Triggering Action
 Push dispatch SHALL always run as a background task enqueued after the
@@ -136,3 +143,131 @@ payload, matching how that particular push was addressed.
   (e.g. a step delegate, or a newly assigned host)
 - **THEN** the payload includes `assignedUserId` set to that person's id,
   `assignedRoleId` null, and `reason` set to `delegated`
+
+### Requirement: Every Push Dispatch Is Also Recorded as an In-App Notification
+For every push dispatch, the system SHALL store one in-app notification per
+resolved recipient user. It SHALL do this regardless of whether that user
+has any registered device, and regardless of whether the push send
+succeeds. The stored notification SHALL carry the same title, body and
+data payload as the push, so it is subject to the same "Push Payloads
+Exclude Sensitive Visitor Data" rule. It SHALL start unread. Recording SHALL
+be idempotent per dispatch and recipient: a redelivered or retried dispatch
+SHALL NOT create a second notification for the same recipient. A failure
+to record SHALL NOT fail the triggering action.
+
+#### Scenario: Recipient without a device still gets an in-app notification
+- **WHEN** an invitation is approved and its host has no registered device
+- **THEN** the host has one unread in-app notification for that approval
+
+#### Scenario: Role fan-out records one notification per holder
+- **WHEN** a push is dispatched to a role with three holders at the branch
+- **THEN** each of the three holders has exactly one new in-app
+  notification
+
+#### Scenario: Redelivered dispatch does not duplicate
+- **WHEN** the same dispatch is processed twice (a broker redelivery or a
+  retry after a transient send failure)
+- **THEN** each recipient still has exactly one in-app notification for it
+
+### Requirement: A Staff User Lists and Reads Their Own Notifications
+The system SHALL expose, to any authenticated tenant user:
+
+- `GET /api/v1/notifications`: the caller's own notifications, newest
+  first, paginated by `page`/`pageSize` (default 20, max 100), with an
+  optional `unreadOnly` boolean filter. Each item has `id`, `title`,
+  `body`, `data`, `createdAt` and `readAt`.
+- `GET /api/v1/notifications/unread-count`: the number of the caller's
+  unread notifications.
+- `PATCH /api/v1/notifications/{id}/read`: marks one of the caller's
+  notifications read. Marking an already-read notification is a no-op that
+  keeps the original `readAt`.
+- `POST /api/v1/notifications/read-all`: marks every unread notification of
+  the caller read, in one operation.
+
+A caller SHALL only ever see or change their own notifications. A
+notification id belonging to another user SHALL be answered with 404, the
+same as an unknown id. An unauthenticated request SHALL get 401.
+
+#### Scenario: Listing returns only the caller's notifications
+- **WHEN** users A and B each have notifications and A calls
+  `GET /api/v1/notifications`
+- **THEN** only A's notifications are returned, newest first, with
+  pagination metadata
+
+#### Scenario: Unread filter and count agree
+- **WHEN** a user has five notifications, two of them read
+- **THEN** `GET /api/v1/notifications?unreadOnly=true` returns three items
+  and `GET /api/v1/notifications/unread-count` returns 3
+
+#### Scenario: Marking another user's notification is a 404
+- **WHEN** user A calls `PATCH /api/v1/notifications/{id}/read` for a
+  notification belonging to user B
+- **THEN** the response is 404 and B's notification stays unread
+
+#### Scenario: Mark all read
+- **WHEN** a user with three unread notifications calls
+  `POST /api/v1/notifications/read-all`
+- **THEN** their unread count becomes 0, and no other user's notifications
+  change
+
+### Requirement: In-App Notifications Are Retained for 90 Days
+The system SHALL permanently delete in-app notifications older than 90 days,
+read or unread, as part of a recurring background job. It SHALL NOT need
+any user action to do so.
+
+#### Scenario: Old notifications are purged
+- **WHEN** the recurring job runs and a user has a notification created 91
+  days ago and another created yesterday
+- **THEN** the 91-day-old notification is deleted and yesterday's remains
+
+### Requirement: The Staff Portal Shows the Notification Feed and Push State
+The staff web portal's notification bell SHALL show the signed-in user's
+in-app notifications from the server, with the unread count as its badge.
+It SHALL refresh when a foreground push arrives, when the tab regains
+focus, and at least once a minute while the tab is open. Selecting a
+notification about an invitation SHALL mark it read and open that
+invitation. "Mark all read" SHALL mark all of the user's notifications
+read on the server.
+
+The bell SHALL also show the browser's push state for this device:
+
+- **enabled**: permission is granted and the device is registered;
+- **off**: permission not yet decided. An "Enable notifications" control
+  requests permission only in direct response to the user's click;
+- **blocked**: permission denied, with guidance to re-allow it in browser
+  settings;
+- **unavailable**: an insecure context or an unsupported browser, with that
+  reason shown.
+
+The portal SHALL NOT request notification permission without a user click.
+It SHALL re-register an already-permitted device on sign-in, on tab focus
+and periodically. A failed registration SHALL be shown to the user, not
+only logged to the console.
+
+#### Scenario: Notifications show without browser push
+- **WHEN** a host whose browser has never granted push permission signs in,
+  after an invitation they host was approved
+- **THEN** the bell shows an unread badge, and the panel lists the approval
+  notification
+
+#### Scenario: Enabling push from the bell
+- **WHEN** a user whose push state is "off" clicks "Enable notifications"
+  and grants permission
+- **THEN** the device is registered with the API and the push state shows
+  "enabled"
+
+#### Scenario: Blocked permission is explained
+- **WHEN** a user has denied notification permission for the portal
+- **THEN** the push state shows "blocked" with guidance to re-allow
+  notifications in browser settings, and no permission prompt is attempted
+
+#### Scenario: Insecure context is explained
+- **WHEN** the portal is opened over plain HTTP on a non-localhost address
+- **THEN** the push state shows "unavailable" and states that push needs
+  HTTPS or localhost, and the in-app feed still works
+
+#### Scenario: Background push click opens the invitation
+- **WHEN** a staff user clicks a system notification shown while no portal
+  tab was focused
+- **THEN** the portal opens that invitation on the staff invitations board,
+  or the admin invitations page for an admin context

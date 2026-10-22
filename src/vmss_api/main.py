@@ -55,9 +55,13 @@ _TAGS_METADATA = [
     },
     {
         "name": "kiosks",
+        "description": ("Admin management of kiosks: create, edit, hide/unhide, and soft-delete."),
+    },
+    {
+        "name": "devices",
         "description": (
-            "Admin management of kiosks: create, edit, hide/unhide, and "
-            "soft-delete."
+            "Kiosk and security device registration, admin approval, "
+            "enable/disable, and the branch/building check-in validation setting."
         ),
     },
     {
@@ -178,7 +182,7 @@ _TAGS_METADATA = [
     {
         "name": "email-assets",
         "description": (
-            "Public images that emails load by URL: the Visimio header logo "
+            "Public images that emails load by URL: the Guestify header logo "
             "and each approved visit's HMAC-signed, expiring check-in QR."
         ),
     },
@@ -244,6 +248,9 @@ def create_app(environment: str | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Readable by a cross-origin portal: the calendar day endpoint's
+        # applied scope (improve-calendar-scale-and-theme-switch design.md A3).
+        expose_headers=["X-Calendar-Scope"],
     )
 
     app.include_router(api_router, prefix="/api/v1")

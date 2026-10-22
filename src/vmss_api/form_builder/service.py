@@ -26,6 +26,7 @@ from vmss_api.form_builder.schemas import (
     FormStepUpdate,
 )
 from vmss_api.form_builder.snapshot import normalize_snapshot
+from vmss_api.form_builder.step_icons import infer_step_icon, resolve_step_icon
 
 _CACHE_TTL_SECONDS = 300
 
@@ -299,7 +300,7 @@ async def create_step(
         key=payload.key,
         name=payload.name,
         description=payload.description,
-        icon=payload.icon,
+        icon=resolve_step_icon(payload.icon, payload.name),
         is_system=False,
         is_locked=False,
         is_active=True,
@@ -322,6 +323,15 @@ async def update_step(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail="A locked step cannot be deactivated"
         )
+    # An icon that differs from what the old name infers was chosen
+    # explicitly; only an auto-assigned one follows a rename
+    # (auto-assign-form-step-icons design.md Decision 2).
+    if (
+        changes.get("name")
+        and "icon" not in changes
+        and step.icon in (None, infer_step_icon(step.name))
+    ):
+        changes["icon"] = infer_step_icon(changes["name"])
     for field_name, value in changes.items():
         setattr(step, field_name, value)
     await tenant_db.commit()
@@ -917,7 +927,7 @@ def _step_to_snapshot(
         "key": step.key,
         "name": step.name,
         "description": step.description,
-        "icon": step.icon,
+        "icon": resolve_step_icon(step.icon, step.name),
         "isSystem": step.is_system,
         "isLocked": step.is_locked,
         "isActive": step.is_active,

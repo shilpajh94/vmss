@@ -22,6 +22,8 @@ from factories import (
 from vmss_api.auth.models import AuditLog, Permission, Role, User, UserBranchRole
 from vmss_api.auth.rbac_catalog import seed_default_roles
 from vmss_api.auth.repository import RoleRepository, UserRepository
+from vmss_api.auth.schemas import EmployeeCreateRequest
+from vmss_api.auth.service import create_employee, resync_role_permissions
 from vmss_api.core import storage
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
@@ -1069,9 +1071,16 @@ async def test_list_employees_without_branch_header_includes_employee_with_no_de
     assert "Dana Employee" in names
 
 
-async def test_list_employees_with_branch_header_excludes_employee_with_no_department(
+async def test_list_employees_with_branch_header_includes_employee_with_no_department(
     client: AsyncClient, user: User, branch: Branch
 ) -> None:
+    """A departmentless employee with no branch-scoped role grant belongs to
+    every branch, so a branch-scoped listing includes them (see
+    `UserRepository.list_employees_page`). They'd previously been
+    invisible from any `X-Branch-ID`-scoped call, including the approval
+    delegate-candidate lookup.
+    """
+    branch_id = branch.id  # a request rolls back the shared session, expiring fixtures
     token = await _login(client, user.email)
     headers = {"Authorization": f"Bearer {token}"}
     await client.post(
@@ -1089,11 +1098,11 @@ async def test_list_employees_with_branch_header_excludes_employee_with_no_depar
     )
 
     response = await client.get(
-        "/api/v1/auth/employees", headers={**headers, "X-Branch-ID": str(branch.id)}
+        "/api/v1/auth/employees", headers={**headers, "X-Branch-ID": str(branch_id)}
     )
     assert response.status_code == 200
     names = {e["fullName"] for e in response.json()["data"]}
-    assert "Dana Employee" not in names
+    assert "Dana Employee" in names
 
 
 async def _make_role_holder_no_department(
@@ -1124,9 +1133,8 @@ async def test_list_employees_with_branch_header_includes_departmentless_matchin
     listing when their own `UserBranchRole` is scoped to that exact branch
     — the RBAC branch grant is itself sufficient to place them there, not
     only their (optional) department. Complements
-    `test_list_employees_with_branch_header_excludes_employee_with_no_department`,
-    whose departmentless user has no branch-scoped role grant either and so
-    is still correctly excluded.
+    `test_list_employees_with_branch_header_includes_employee_with_no_department`,
+    whose departmentless user has no role grant at all.
     """
     role_holder = await _make_role_holder_no_department(db_session, tenant, "host", branch.id)
 
@@ -2653,3 +2661,561 @@ async def test_resync_role_permissions_backfills_invitations_view_all(
     }
     assert "invitations:view-all" in granted["reception"]
     assert "invitations:view-all" not in granted.get("host", [])
+
+
+# --- grant-reception-checkout-permission --------------------------------------
+
+
+async def test_seeded_roles_grant_invitations_checkout_to_reception(
+    db_session: AsyncSession,
+) -> None:
+    """spec.md "A newly provisioned tenant's Reception role can check visitors out"."""
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    repo = RoleRepository(db_session)
+    for name in ("admin", "reception", "security"):
+        role = await repo.get_by_name(name)
+        assert role is not None
+        assert "invitations:checkout" in {p.code for p in role.permissions}, name
+    for name in ("host", "visitor"):
+        role = await repo.get_by_name(name)
+        assert role is not None
+        assert "invitations:checkout" not in {p.code for p in role.permissions}, name
+
+
+async def test_resync_role_permissions_backfills_reception_invitations_checkout(
+    db_session: AsyncSession,
+) -> None:
+    """Service-level rather than via `POST /auth/roles/resync-permissions`:
+    the endpoint-level resync tests currently fail under the shared test
+    session (`get_tenant`'s `db.rollback()` expires the actor before the
+    audit task reads `actor.id`), unrelated to the catalog itself.
+    """
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    reception = await RoleRepository(db_session).get_by_name("reception")
+    assert reception is not None
+    reception.permissions = [p for p in reception.permissions if p.code != "invitations:checkout"]
+    await db_session.commit()
+
+    granted = await resync_role_permissions(db_session)
+    assert "invitations:checkout" in granted["reception"]
+    assert "invitations:checkout" not in granted.get("host", [])
+
+    again = await resync_role_permissions(db_session)
+    assert all("invitations:checkout" not in codes for codes in again.values())
+
+
+# --- add-invitation-approval-revert --------------------------------------------
+
+
+async def test_seeded_roles_grant_invitations_revert_approval_to_approving_roles(
+    db_session: AsyncSession,
+) -> None:
+    """spec.md "A newly provisioned tenant's approving roles can revert"."""
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    repo = RoleRepository(db_session)
+    for name in ("admin", "reception", "host"):
+        role = await repo.get_by_name(name)
+        assert role is not None
+        assert "invitations:revert-approval" in {p.code for p in role.permissions}, name
+    for name in ("security", "visitor"):
+        role = await repo.get_by_name(name)
+        assert role is not None
+        assert "invitations:revert-approval" not in {p.code for p in role.permissions}, name
+
+
+async def test_resync_role_permissions_backfills_invitations_revert_approval(
+    db_session: AsyncSession,
+) -> None:
+    """Service-level for the same reason as
+    `test_resync_role_permissions_backfills_reception_invitations_checkout`.
+    """
+    await seed_default_roles(db_session)
+    await db_session.commit()
+
+    repo = RoleRepository(db_session)
+    for name in ("reception", "host"):
+        role = await repo.get_by_name(name)
+        assert role is not None
+        role.permissions = [p for p in role.permissions if p.code != "invitations:revert-approval"]
+    await db_session.commit()
+
+    granted = await resync_role_permissions(db_session)
+    assert "invitations:revert-approval" in granted["reception"]
+    assert "invitations:revert-approval" in granted["host"]
+    assert "invitations:revert-approval" not in granted.get("security", [])
+
+    again = await resync_role_permissions(db_session)
+    assert all("invitations:revert-approval" not in codes for codes in again.values())
+
+
+# --- Admin disable / enable / delete of a single employee -----------------
+
+
+async def _make_employee(
+    db_session: AsyncSession,
+    tenant: Tenant,
+    *,
+    email: str,
+    employee_code: str | None = None,
+    admin: bool = False,
+) -> User:
+    """A plain employee (or, with `admin=True`, a second company-wide Admin
+    holding no permissions beyond the role name `has_admin_role` checks).
+    """
+    branch_roles = []
+    if admin:
+        role = await RoleRepository(db_session).get_by_name("admin")
+        if role is None:
+            role = RoleFactory.build(id=uuid.uuid4(), name="admin", permissions=[])
+        branch_roles = [UserBranchRole(id=uuid.uuid4(), role=role, branch_id=None)]
+    employee = UserFactory.build(
+        id=uuid.uuid4(),
+        email=email,
+        hashed_password=hash_password("correct-password"),
+        full_name=email.split("@")[0].title(),
+        employee_code=employee_code,
+        is_active=True,
+        disabled_by_admin=False,
+        branch_roles=branch_roles,
+    )
+    db_session.add(employee)
+    await db_session.flush()
+    db_session.add(TenantUserIndex(email=email, tenant_id=tenant.id, user_id=employee.id))
+    await db_session.commit()
+    return employee
+
+
+async def _audit_count(db_session: AsyncSession, action: str) -> int:
+    stmt = select(func.count()).select_from(AuditLog).where(AuditLog.action == action)
+    return (await db_session.execute(stmt)).scalar_one()
+
+
+async def test_disable_employee_blocks_access_and_is_reversible(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    user: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    target = await _make_employee(
+        db_session, tenant, email="dina@acme-test.example", employee_code="EMP-D1", admin=True
+    )
+    target_token = issue_token(target)
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+
+    response = await client.post(f"/api/v1/auth/employees/{target.id}/disable", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["data"]["isActive"] is False
+
+    # Existing session revoked, login rejected, excluded from host selection.
+    me = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {target_token}"})
+    assert me.status_code == 401
+    login = await client.post(
+        "/api/v1/auth/login", json={"email": target.email, "password": "correct-password"}
+    )
+    assert login.status_code == 401
+    repo = UserRepository(db_session)
+    assert await repo.get_active(target.id) is None
+    hosts = await repo.search_active_by_name_or_email("dina", limit=10)
+    assert target.id not in {h.id for h in hosts}
+    listing = await client.get("/api/v1/auth/employees?status=inactive&pageSize=100")
+    assert target.email in {row["email"] for row in listing.json()["data"]}
+
+    # Repeating the disable is a no-op: one audit entry only.
+    again = await client.post(f"/api/v1/auth/employees/{target.id}/disable", headers=headers)
+    assert again.status_code == 200
+    assert await _audit_count(db_session, "employee_disabled") == 1
+
+    enabled = await client.post(f"/api/v1/auth/employees/{target.id}/enable", headers=headers)
+    assert enabled.status_code == 200
+    assert enabled.json()["data"]["isActive"] is True
+    assert (
+        await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {target_token}"})
+    ).status_code == 200
+    relogin = await client.post(
+        "/api/v1/auth/login", json={"email": target.email, "password": "correct-password"}
+    )
+    assert relogin.status_code == 200
+    # Enabling an already-enabled employee records nothing further.
+    await client.post(f"/api/v1/auth/employees/{target.id}/enable", headers=headers)
+    assert await _audit_count(db_session, "employee_enabled") == 1
+
+
+async def test_delete_employee_releases_identifiers_and_keeps_row(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, user: User, branch: Branch
+) -> None:
+    department = await _make_department(db_session, branch)
+    department_id = department.id
+    tenant_id = tenant.id  # a request's rollback expires the shared session's objects
+    target = await _make_employee(
+        db_session, tenant, email="erin@acme-test.example", employee_code="EMP-E1"
+    )
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+
+    response = await client.delete(f"/api/v1/auth/employees/{target.id}", headers=headers)
+    assert response.status_code == 204
+
+    listing = await client.get("/api/v1/auth/employees?pageSize=100")
+    assert target.email not in {row["email"] for row in listing.json()["data"]}
+    assert await UserRepository(db_session).get_by_email("erin@acme-test.example") is None
+    assert await db_session.get(TenantUserIndex, "erin@acme-test.example") is None
+    # Row retained for historical references, as a tombstone.
+    await db_session.refresh(target)
+    assert target.deleted_at is not None
+    assert target.is_active is False
+    assert target.employee_code is None
+    assert target.email.endswith("@invalid.local")
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "erin@acme-test.example", "password": "correct-password"},
+    )
+    assert login.status_code == 401
+
+    # Email and code are reusable.
+    recreated = await create_employee(
+        db_session,
+        tenant_id=tenant_id,
+        payload=EmployeeCreateRequest(
+            email="erin@acme-test.example",
+            full_name="Erin Again",
+            employee_code="EMP-E1",
+            department_id=department_id,
+        ),
+    )
+    assert recreated.email == "erin@acme-test.example"
+    assert recreated.employee_code == "EMP-E1"
+
+    # A second delete is 404, and the audit diff kept the original email.
+    assert (
+        await client.delete(f"/api/v1/auth/employees/{target.id}", headers=headers)
+    ).status_code == 404
+    audit = (
+        await db_session.execute(select(AuditLog).where(AuditLog.action == "employee_deleted"))
+    ).scalar_one()
+    assert audit.diff == {"email": "erin@acme-test.example"}
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix"), [("POST", "/disable"), ("POST", "/enable"), ("DELETE", "")]
+)
+async def test_employee_removal_endpoints_require_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
+    method: str,
+    suffix: str,
+) -> None:
+    target = await _make_employee(db_session, tenant, email="fay@acme-test.example")
+    response = await client.request(
+        method,
+        f"/api/v1/auth/employees/{target.id}{suffix}",
+        headers={"Authorization": f"Bearer {issue_token(user_without_permissions)}"},
+    )
+    assert response.status_code == 403
+    await db_session.refresh(target)
+    assert target.is_active is True and target.deleted_at is None
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix"), [("POST", "/disable"), ("POST", "/enable"), ("DELETE", "")]
+)
+async def test_employee_removal_unknown_id_not_found(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str], method: str, suffix: str
+) -> None:
+    response = await client.request(
+        method,
+        f"/api/v1/auth/employees/{uuid.uuid4()}{suffix}",
+        headers={"Authorization": f"Bearer {issue_token(user)}"},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize(("method", "suffix"), [("POST", "/disable"), ("DELETE", "")])
+async def test_admin_cannot_disable_or_delete_self(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str], method: str, suffix: str
+) -> None:
+    response = await client.request(
+        method,
+        f"/api/v1/auth/employees/{user.id}{suffix}",
+        headers={"Authorization": f"Bearer {issue_token(user)}"},
+    )
+    assert response.status_code == 409
+
+
+async def test_last_active_admin_cannot_be_disabled_or_deleted(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    user: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    # A caller who may manage employees but is not themselves an Admin.
+    manage_permission = (
+        await db_session.execute(select(Permission).where(Permission.code == "employees:manage"))
+    ).scalar_one()
+    manager_role = RoleFactory.build(
+        id=uuid.uuid4(), name="employee-manager", permissions=[manage_permission]
+    )
+    manager = UserFactory.build(
+        id=uuid.uuid4(),
+        email="manager@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        branch_roles=[UserBranchRole(id=uuid.uuid4(), role=manager_role, branch_id=None)],
+    )
+    db_session.add_all([manager_role, manager])
+    await db_session.flush()
+    db_session.add(TenantUserIndex(email=manager.email, tenant_id=tenant.id, user_id=manager.id))
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {issue_token(manager)}"}
+
+    assert (
+        await client.post(f"/api/v1/auth/employees/{user.id}/disable", headers=headers)
+    ).status_code == 409
+    assert (
+        await client.delete(f"/api/v1/auth/employees/{user.id}", headers=headers)
+    ).status_code == 409
+    await db_session.refresh(user)
+    assert user.is_active is True and user.deleted_at is None
+
+    # With another active admin present, removing one is allowed.
+    await db_session.refresh(tenant)
+    await _make_employee(db_session, tenant, email="second-admin@acme-test.example", admin=True)
+    assert (
+        await client.post(f"/api/v1/auth/employees/{user.id}/disable", headers=headers)
+    ).status_code == 200
+
+
+async def test_employee_removal_tenant_schema_isolation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    user: User,
+    make_tenant_schema,
+    open_tenant_session,
+) -> None:
+    target = await _make_employee(db_session, tenant, email="gus@acme-test.example")
+    other_schema = "tenant_other_employee_removal_test"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        other_user = UserFactory.build(
+            id=uuid.uuid4(),
+            email="gus-other@acme-test.example",
+            hashed_password="x",
+            is_active=True,
+            disabled_by_admin=False,
+        )
+        other_session.add(other_user)
+        await other_session.commit()
+
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+    assert (
+        await client.post(f"/api/v1/auth/employees/{target.id}/disable", headers=headers)
+    ).status_code == 200
+    # An id that exists only in the other tenant's schema is unknown here.
+    assert (
+        await client.delete(f"/api/v1/auth/employees/{other_user.id}", headers=headers)
+    ).status_code == 404
+    async with open_tenant_session(other_schema) as other_session:
+        refreshed = await UserRepository(other_session).get_by_id(other_user.id)
+        assert refreshed is not None and refreshed.is_active is True
+
+
+async def test_sync_keeps_admin_disabled_employee_disabled(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, user: User
+) -> None:
+    target = await _make_employee(
+        db_session, tenant, email="hal@acme-test.example", employee_code="EMP-H1"
+    )
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+    await client.post(f"/api/v1/auth/employees/{target.id}/disable", headers=headers)
+
+    sync = await client.post(
+        "/api/v1/auth/employees/sync",
+        json={
+            "employees": [
+                {
+                    "email": "hal@acme-test.example",
+                    "fullName": "Hal Renamed",
+                    "employeeCode": "EMP-H1",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    assert sync.status_code == 200
+    await db_session.refresh(target)
+    assert target.full_name == "Hal Renamed"
+    assert target.is_active is False and target.disabled_by_admin is True
+
+
+async def test_sync_reactivates_employee_it_deactivated_itself(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, user: User
+) -> None:
+    keep = {"email": "ivy@acme-test.example", "fullName": "Ivy", "employeeCode": "EMP-I1"}
+    drop = {"email": "jon@acme-test.example", "fullName": "Jon", "employeeCode": "EMP-J1"}
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+    await client.post(
+        "/api/v1/auth/employees/sync", json={"employees": [keep, drop]}, headers=headers
+    )
+    await client.post("/api/v1/auth/employees/sync", json={"employees": [keep]}, headers=headers)
+    jon = await UserRepository(db_session).get_by_email("jon@acme-test.example")
+    assert jon is not None
+    await db_session.refresh(jon)
+    assert jon.is_active is False
+
+    await client.post(
+        "/api/v1/auth/employees/sync", json={"employees": [keep, drop]}, headers=headers
+    )
+    await db_session.refresh(jon)
+    assert jon.is_active is True
+
+
+async def test_sync_treats_deleted_employee_as_new(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, user: User
+) -> None:
+    target = await _make_employee(
+        db_session, tenant, email="kim@acme-test.example", employee_code="EMP-K1"
+    )
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+    await client.delete(f"/api/v1/auth/employees/{target.id}", headers=headers)
+
+    sync = await client.post(
+        "/api/v1/auth/employees/sync",
+        json={
+            "employees": [
+                {"email": "kim@acme-test.example", "fullName": "Kim", "employeeCode": "EMP-K1"}
+            ]
+        },
+        headers=headers,
+    )
+    assert sync.status_code == 200
+    assert sync.json()["data"]["created"] == ["kim@acme-test.example"]
+
+
+# --- all-branch employees in branch-scoped listings -------------------------
+
+
+async def test_list_employees_branch_scope_is_branch_members_plus_all_branch(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant, user: User, branch: Branch
+) -> None:
+    """Branch A's view = A's own people + every all-branch employee; an
+    employee tied only to branch B is excluded, and the all-branch employee
+    shows under both A and B.
+    """
+    branch_id = branch.id  # captured before commits expire the fixture instance
+    other_branch = BranchFactory.build(id=uuid.uuid4(), name="Branch B", code="BR-B")
+    other_branch_id = other_branch.id
+    db_session.add(other_branch)
+    await db_session.commit()
+    a_only = await _make_role_holder_no_department(db_session, tenant, "host", branch_id)
+    b_only = await _make_role_holder_no_department(db_session, tenant, "greeter", other_branch_id)
+    a_only_email, b_only_email = a_only.email, b_only.email
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+    await client.post(
+        "/api/v1/auth/employees/sync",
+        json={
+            "employees": [
+                {
+                    "email": "allbranch@acme-test.example",
+                    "fullName": "All Branch Employee",
+                    "employeeCode": "EMP-AB1",
+                }
+            ]
+        },
+        headers=headers,
+    )
+
+    async def emails_for(branch_id: uuid.UUID) -> set[str]:
+        response = await client.get(
+            "/api/v1/auth/employees",
+            params={"pageSize": 100},
+            headers={**headers, "X-Branch-ID": str(branch_id)},
+        )
+        assert response.status_code == 200
+        return {e["email"] for e in response.json()["data"]}
+
+    in_a = await emails_for(branch_id)
+    in_b = await emails_for(other_branch_id)
+    assert "allbranch@acme-test.example" in in_a
+    assert "allbranch@acme-test.example" in in_b
+    assert a_only_email in in_a and b_only_email not in in_a
+    assert b_only_email in in_b and a_only_email not in in_b
+
+
+async def test_list_employees_multi_role_employee_listed_once_and_matches_role_filter(
+    client: AsyncClient, db_session: AsyncSession, user: User, branch: Branch
+) -> None:
+    """One role at the branch, another company-wide, plus a second branch:
+    still exactly one row, one `total`, and the `role` filter finds them.
+    """
+    branch_id = branch.id
+    other_branch = BranchFactory.build(id=uuid.uuid4(), name="Branch C", code="BR-C")
+    host_role = RoleFactory.build(id=uuid.uuid4(), name="MultiHost")
+    guard_role = RoleFactory.build(id=uuid.uuid4(), name="MultiGuard")
+    holder = UserFactory.build(
+        id=uuid.uuid4(),
+        email="multi@acme-test.example",
+        full_name="Multi Role",
+        branch_roles=[
+            UserBranchRole(id=uuid.uuid4(), role=host_role, branch_id=branch_id),
+            UserBranchRole(id=uuid.uuid4(), role=guard_role, branch_id=None),
+            UserBranchRole(id=uuid.uuid4(), role=host_role, branch_id=other_branch.id),
+        ],
+    )
+    db_session.add_all([other_branch, host_role, guard_role])
+    await db_session.flush()
+    db_session.add(holder)
+    await db_session.commit()
+    token = await _login(client, user.email)
+
+    for params in ({}, {"role": "MultiHost"}, {"role": "MultiGuard"}):
+        response = await client.get(
+            "/api/v1/auth/employees",
+            params={**params, "pageSize": 100},
+            headers={"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch_id)},
+        )
+        body = response.json()
+        rows = [e for e in body["data"] if e["email"] == "multi@acme-test.example"]
+        assert len(rows) == 1
+        if params:
+            assert body["pagination"]["total"] == 1
+
+
+async def test_all_branch_employee_can_be_disabled_and_deleted_from_branch_view(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    await client.post(
+        "/api/v1/auth/employees/sync",
+        json={
+            "employees": [
+                {
+                    "email": "ab-manage@acme-test.example",
+                    "fullName": "AB Manage",
+                    "employeeCode": "EMP-AB2",
+                }
+            ]
+        },
+        headers=headers,
+    )
+    listing = await client.get("/api/v1/auth/employees", params={"pageSize": 100}, headers=headers)
+    target = next(e for e in listing.json()["data"] if e["email"] == "ab-manage@acme-test.example")
+
+    disabled = await client.post(f"/api/v1/auth/employees/{target['id']}/disable", headers=headers)
+    assert disabled.status_code == 200
+    enabled = await client.post(f"/api/v1/auth/employees/{target['id']}/enable", headers=headers)
+    assert enabled.status_code == 200
+    deleted = await client.delete(f"/api/v1/auth/employees/{target['id']}", headers=headers)
+    assert deleted.status_code == 204
+    after = await client.get("/api/v1/auth/employees", params={"pageSize": 100}, headers=headers)
+    assert target["id"] not in {e["id"] for e in after.json()["data"]}

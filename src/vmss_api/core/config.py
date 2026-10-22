@@ -11,11 +11,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # consistency, not to imply multi-driver support.
 _DB_DRIVERS: dict[str, str] = {"pgsql": "postgresql+asyncpg"}
 
+# The product name shown to people: email From name, footers, alt text.
+# One constant so a rename is a one-line change (rebrand-to-guestify).
+BRAND_NAME = "Guestify"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "Visimio API"
+    app_name: str = f"{BRAND_NAME} API"
     environment: str = Field(default="local", alias="APP_ENV")
     debug: bool = Field(default=True, alias="APP_DEBUG")
 
@@ -186,9 +190,9 @@ class Settings(BaseSettings):
     smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
     smtp_use_tls: bool = Field(default=False, alias="SMTP_USE_TLS")
     smtp_from_address: str = Field(default="no-reply@vmss.local", alias="SMTP_FROM_ADDRESS")
-    # Display name shown in front of `smtp_from_address` ("Visimio <no-reply@…>").
-    smtp_from_name: str = Field(default="Visimio", alias="SMTP_FROM_NAME")
-    # Public origin email `<img src>` URLs are built from — the Visimio logo
+    # Display name shown in front of `smtp_from_address` ("Guestify <no-reply@…>").
+    smtp_from_name: str = Field(default=BRAND_NAME, alias="SMTP_FROM_NAME")
+    # Public origin email `<img src>` URLs are built from — the Guestify logo
     # and the signed check-in QR (`core/email_assets.py`). Unset means
     # emails fall back to a text wordmark and an inline `cid:` QR.
     email_asset_base_url: str | None = Field(default=None, alias="EMAIL_ASSET_BASE_URL")
@@ -202,16 +206,39 @@ class Settings(BaseSettings):
     # means emails carry no link.
     staff_portal_url: str | None = Field(default=None, alias="STAFF_PORTAL_URL")
 
-    # SMS gateway — no vendor chosen yet (design.md Open Questions); these are
-    # placeholders the `SmsSender` adapter reads once one is picked. Left
-    # unset by default, which the adapter treats as "not configured" and
-    # fails visibly per background-jobs.md §4, rather than pretending to send.
-    sms_gateway_base_url: str | None = None
-    sms_gateway_api_key: str | None = None
-    sms_from_number: str | None = None
+    # Fast2SMS — DLT SMS (`core/sms.py`) and WhatsApp (`core/whatsapp.py`) for
+    # identity-verification OTP and invitation notifications. All optional:
+    # a blank value means "not configured" and the sender fails loudly per
+    # call (background-jobs.md §4) instead of pretending to send.
+    fast2sms_api_key: str | None = None
+    fast2sms_sender_id: str | None = None
+    fast2sms_base_url: str = "https://www.fast2sms.com"
+    # DLT-approved template IDs, one per SMS message type.
+    fast2sms_template_otp: str | None = None
+    fast2sms_template_registration_pending: str | None = None
+    fast2sms_template_registration_confirmed: str | None = None
+    fast2sms_template_registration_confirmed_code: str | None = None
+    fast2sms_template_registration_denied: str | None = None
+    fast2sms_template_visit_rescheduled: str | None = None
+    fast2sms_template_visit_details_changed: str | None = None
+    # WhatsApp: the sending number's id, Graph-style API version, template
+    # language, and the approved template *names* (not ids).
+    fast2sms_whatsapp_phone_number_id: str | None = None
+    fast2sms_whatsapp_api_version: str = "v26.0"
+    fast2sms_whatsapp_language_code: str = "en"
+    fast2sms_whatsapp_template_otp: str | None = None
+    fast2sms_whatsapp_template_registration_pending: str | None = None
+    fast2sms_whatsapp_template_registration_confirmed: str | None = None
+    fast2sms_whatsapp_template_registration_denied: str | None = None
+    fast2sms_whatsapp_template_visit_rescheduled: str | None = None
+    fast2sms_whatsapp_template_visit_details_changed: str | None = None
+
+    # Public check-in-by-code abuse limits (add-sms-numeric-checkin-code): a
+    # 8-digit code is guessable, so failed lookups per IP are capped.
+    checkin_code_max_failures: int = 10
+    checkin_code_lockout_seconds: int = 900
 
     # `invitations` feature config (add-pre-registration).
-    invitation_token_ttl_hours: int = 168
     invitation_max_upload_size_bytes: int = 5 * 1024 * 1024
     # Only consulted at tenant/branch provisioning and by the
     # `add-repeatable-field-groups` migration that seeded existing
@@ -226,8 +253,25 @@ class Settings(BaseSettings):
     # file-upload-handling.md §1's "tune per artifact type".
     invitation_max_photo_size_bytes: int = 2 * 1024 * 1024
 
+    # Visitor rows per `GET /invitations/export` (add-invitation-export/
+    # design.md Decision 1) — an over-cap export is rejected with 422, never
+    # truncated.
+    invitation_export_max_rows: int = 10_000
+
     # User profile picture upload (add-avatar-upload-and-verify-image-storage).
     avatar_max_upload_size_bytes: int = 2 * 1024 * 1024
+
+    # Invitation retention purge (invitations/tasks.py). `0` disables the job
+    # outright — the safe default until the window is signed off. Invitations
+    # whose visit date (or creation date) is older than this many days are
+    # backed up, then permanently deleted, `invitation_purge_batch_size` at a
+    # time, daily at `invitation_purge_hour:invitation_purge_minute` UTC.
+    invitation_retention_days: int = Field(default=0, ge=0, alias="INVITATION_RETENTION_DAYS")
+    invitation_purge_batch_size: int = Field(
+        default=500, ge=1, le=5000, alias="INVITATION_PURGE_BATCH_SIZE"
+    )
+    invitation_purge_hour: int = Field(default=3, ge=0, le=23, alias="INVITATION_PURGE_HOUR")
+    invitation_purge_minute: int = Field(default=0, ge=0, le=59, alias="INVITATION_PURGE_MINUTE")
 
     # QR check-in token encryption (add-qr-checkin-security) — a dedicated
     # key, deliberately not shared with `sso_encryption_key` even though
@@ -248,27 +292,19 @@ class Settings(BaseSettings):
         default="MAIN", alias="REGISTRATION_DEFAULT_BRANCH_CODE"
     )
 
+    # Per-IP slowapi limits (`core/rate_limit.py`). Only ever switched off
+    # locally, for a load test whose simulated users all share one IP and
+    # would otherwise measure the limiter instead of the API
+    # (docs/features/qa-harness.md). Never disable it in a deployed
+    # environment.
+    rate_limit_enabled: bool = True
+
     # `identity_verification` feature config (API-15, add-identity-verification-otp).
     otp_ttl_seconds: int = 300
     otp_length: int = 6
     otp_max_attempts: int = 5
     otp_rate_limit_per_identifier: int = 5
     otp_rate_limit_window_seconds: int = 3600
-
-    # Twilio — the chosen SMS provider for `identity_verification`, distinct
-    # from the still-unconfigured `sms_gateway_*` placeholders above (those
-    # belong to `invitations`' unbuilt SMS path). Left unset by default;
-    # `identity_verification/senders.py` falls back to an unconfigured
-    # sender when any of the three is missing, rather than constructing a
-    # Twilio client with empty credentials.
-    twilio_account_sid: str | None = None
-    twilio_auth_token: str | None = None
-    twilio_sms_from_number: str | None = None
-
-    # WhatsApp gateway — no vendor chosen yet, same posture `sms_gateway_*`
-    # had before Twilio was picked for SMS.
-    whatsapp_gateway_base_url: str | None = None
-    whatsapp_gateway_api_key: str | None = None
 
     # `sso` feature config (API-19, add-sso-oidc-login). `sso_encryption_key`
     # is the Fernet key `core/encryption.py` uses to encrypt/decrypt every
@@ -314,7 +350,7 @@ class Settings(BaseSettings):
     # Flutter app (add-invitation-push-notifications/design.md Decision 4).
     # Points at a service-account key file (the Admin SDK's own credential
     # format); left unset by default, same "not configured" posture as
-    # `sms_gateway_*`/`twilio_*` above — `notifications/fcm.py` fails loudly
+    # the Fast2SMS settings above — `notifications/fcm.py` fails loudly
     # rather than silently no-op'ing when a push is actually attempted.
     fcm_credentials_path: str | None = Field(default=None, alias="FCM_CREDENTIALS_PATH")
 

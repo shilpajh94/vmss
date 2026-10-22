@@ -81,8 +81,8 @@ def _load_key_maps(
         text(
             f"""
             SELECT ff.key, ff.id, fs.branch_id
-            FROM {schema}.form_fields ff
-            JOIN {schema}.form_steps fs ON fs.id = ff.step_id
+            FROM "{schema}".form_fields ff
+            JOIN "{schema}".form_steps fs ON fs.id = ff.step_id
             WHERE ff.deleted_at IS NULL
               AND fs.deleted_at IS NULL
               AND (fs.branch_id = :branch_id OR fs.branch_id IS NULL)
@@ -104,7 +104,7 @@ def _load_key_maps(
         text(
             f"""
             SELECT fg.key, fg.id, fg.branch_id
-            FROM {schema}.form_field_groups fg
+            FROM "{schema}".form_field_groups fg
             WHERE fg.deleted_at IS NULL
               AND (fg.branch_id = :branch_id OR fg.branch_id IS NULL)
             """
@@ -162,7 +162,7 @@ def upgrade() -> None:
             SELECT id, branch_id, custom_field_values,
                    primary_contact_custom_field_values, consents,
                    group_field_values
-            FROM {schema}.invitations
+            FROM "{schema}".invitations
             """
         )
     ).fetchall()
@@ -182,7 +182,7 @@ def upgrade() -> None:
         conn.execute(
             text(
                 f"""
-                UPDATE {schema}.invitations
+                UPDATE "{schema}".invitations
                 SET custom_field_values = :custom_field_values,
                     primary_contact_custom_field_values = :primary_contact_custom_field_values,
                     consents = :consents,
@@ -211,8 +211,8 @@ def upgrade() -> None:
             text(
                 f"""
                 SELECT c.id, c.custom_field_values, i.branch_id
-                FROM {schema}.{table} c
-                JOIN {schema}.invitations i ON i.id = c.invitation_id
+                FROM "{schema}".{table} c
+                JOIN "{schema}".invitations i ON i.id = c.invitation_id
                 """
             )
         ).fetchall()
@@ -225,7 +225,7 @@ def upgrade() -> None:
             conn.execute(
                 text(
                     f"""
-                    UPDATE {schema}.{table}
+                    UPDATE "{schema}".{table}
                     SET custom_field_values = :custom_field_values
                     WHERE id = :id
                     """

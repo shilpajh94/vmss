@@ -2,7 +2,18 @@ import uuid
 from datetime import date, datetime, time
 from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Time, Uuid
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Time,
+    Uuid,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -38,6 +49,29 @@ class Invitation(Base, TimestampMixin):
     """
 
     __tablename__ = "invitations"
+    # Dashboard analytics range scans (live-dashboards-and-analytics
+    # design.md D4); mirrors alembic_tenant revision 6791c5e6a421.
+    __table_args__ = (
+        Index(
+            "ix_invitations_branch_visit_date",
+            "branch_id",
+            "preferred_visit_date",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "ix_invitations_branch_checked_in_at",
+            "branch_id",
+            "checked_in_at",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # Digits-only phone prefill lookup (reception-phone-prefill-lookup
+        # design.md); mirrors alembic_tenant revision a7c3e1d9b5f2.
+        Index(
+            "ix_invitations_primary_contact_phone_digits",
+            text(r"regexp_replace(primary_contact_phone, '\D', '', 'g')"),
+            postgresql_where=text("deleted_at IS NULL AND primary_contact_phone IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     branch_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("branches.id"), index=True)
@@ -71,6 +105,9 @@ class Invitation(Base, TimestampMixin):
         Uuid, ForeignKey("visitor_categories.id"), index=True
     )
     tracking_id: Mapped[str] = mapped_column(String(20), unique=True, index=True)
+    # 8-digit code sent by SMS instead of a QR image; only issued at approval
+    # for contacts preferring `sms` (add-sms-numeric-checkin-code).
+    checkin_code: Mapped[str | None] = mapped_column(String(8), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set when `status` transitions to "approved" — either resolved
@@ -213,11 +250,41 @@ class Invitation(Base, TimestampMixin):
     denial_reason: Mapped[str | None] = mapped_column(String(500))
     denied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # --- Lifecycle: approval revert (add-invitation-approval-revert) --------
+    # Latest revert only — overwritten on each revert; the full history is
+    # in `audit_logs` (design.md Decision 1).
+    approval_reverted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approval_reverted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id")
+    )
+    approval_revert_reason: Mapped[str | None] = mapped_column(String(500))
+
     # --- Lifecycle: check-in / check-out --------------------------------------
     checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     checked_in_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     checked_out_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+    # True only when the visit-lifecycle sweep closed an expired check-in
+    # (`checked_out_at` is then the invitation's `expires_at`, not an observed
+    # exit); every manual check-out writes it back to False
+    # (auto-checkout-and-archive-no-shows/design.md D3).
+    checked_out_automatically: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # --- Lifecycle: archive (auto-checkout-and-archive-no-shows) ---------------
+    # Set when the sweep moves an approved, never-admitted invitation to
+    # `status="archived"` after its `expires_at`. Kept after a reschedule out
+    # of `archived` as history; overwritten if archived again (design.md D4).
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Device that performed the most recent state-changing check-in/out
+    # (add-kiosk-device-approval-and-traceability/design.md Decision 7). Null
+    # when the caller sent no `device-id` header.
+    check_in_device_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("devices.id"), index=True
+    )
+    check_out_device_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("devices.id"), index=True
+    )
 
     # --- Lifecycle: QR check-in scan state (add-qr-checkin-security) -----------
     # Deliberately parallel to, not derived from, `status` above: `status`

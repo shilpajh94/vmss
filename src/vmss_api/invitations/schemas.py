@@ -3,14 +3,25 @@ from datetime import date, datetime, time
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.core.schemas import CamelModel
+from vmss_api.devices.schemas import DeviceBriefOut
 
-InvitationSortableField = Literal["submitted_at", "created_at"]
+InvitationSortableField = Literal["submitted_at", "created_at", "status_changed_at"]
 """Whitelisted `sortBy` values for `GET /invitations` (api-conventions.md
 §1) — mirrors `org_structure/schemas.py`'s `SortableField` pattern.
+`status_changed_at` is computed, not a column: when the invitation entered
+its current status (sort-invitation-board-by-status-date/design.md
+Decision 1).
 """
 
 
@@ -33,12 +44,13 @@ class InvitationStatus(StrEnum):
     application code — `models.py`'s state-machine writes (`create_invitation`,
     `approve_if_submitted`, `deny_if_submitted`, `check_in_if_eligible`/
     `check_in_by_qr_if_eligible`, `check_out_if_checked_in`/
-    `check_out_by_qr_if_eligible`, `service.py`'s `initial_status`). `pending`
-    is the column's DB-level default but is never produced by any code path
-    (see `models.py::Invitation`'s own docstring) — deliberately excluded so
-    `GET /invitations?status=` can't be used to fish for a state that no row
-    can actually be in. `api-conventions.md` §1's real-enum-filter rule,
-    matching `RegistrationType`/`RegistrationSource` above.
+    `check_out_by_qr_if_eligible`, `archive_expired_no_shows`, `service.py`'s
+    `initial_status`). `pending` is the column's DB-level default but is
+    never produced by any code path (see `models.py::Invitation`'s own
+    docstring) — deliberately excluded so `GET /invitations?status=` can't
+    be used to fish for a state that no row can actually be in.
+    `api-conventions.md` §1's real-enum-filter rule, matching
+    `RegistrationType`/`RegistrationSource` above.
     """
 
     submitted = "submitted"
@@ -46,6 +58,7 @@ class InvitationStatus(StrEnum):
     denied = "denied"
     checked_in = "checked_in"
     checked_out = "checked_out"
+    archived = "archived"
 
 
 class RegistrationSource(StrEnum):
@@ -62,6 +75,7 @@ class RegistrationSource(StrEnum):
 class ContactMethod(StrEnum):
     email = "email"
     sms = "sms"
+    whatsapp = "whatsapp"
 
 
 # --- Admin-authored answers, joined by field/group id — never by key -------
@@ -169,8 +183,8 @@ def _require_contact_for_method(
     """
     if method == ContactMethod.email and not email:
         raise ValueError("email is required when preferredContactMethod is 'email'")
-    if method == ContactMethod.sms and not phone:
-        raise ValueError("phone is required when preferredContactMethod is 'sms'")
+    if method in (ContactMethod.sms, ContactMethod.whatsapp) and not phone:
+        raise ValueError(f"phone is required when preferredContactMethod is '{method.value}'")
 
 
 # --- Shared nested request shapes, used by the single invitation-creation --
@@ -448,10 +462,20 @@ class InvitationOut(CamelModel):
     submitted_at: datetime | None
     approved_at: datetime | None
     current_approval_step: CurrentApprovalStepOut | None = None
+    # Populated only by the check-in/out endpoints (devices spec).
+    check_in_device: DeviceBriefOut | None = None
+    check_out_device: DeviceBriefOut | None = None
+    approval_reverted_at: datetime | None = None
+    approval_reverted_by_user_id: uuid.UUID | None = None
+    approval_revert_reason: str | None = None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
 
 
 class InvitationLookupPrefillOut(CamelModel):
-    """`GET /invitations/lookup-by-email`'s prefill shape. `photo_url` is
+    """Prefill shape shared by `GET /invitations/lookup-by-email` and
+    `GET /invitations/lookup-by-phone` (`email` is the matched invitation's
+    own, `null` for a phone-only registration). `photo_url` is
     always resolved when captured, same as every other invitation response
     (`InvitationOut`, `InvitationListItemOut`) — a face photo isn't gated
     like an identity document in this codebase. `id_proof_url` is `null`
@@ -462,6 +486,7 @@ class InvitationLookupPrefillOut(CamelModel):
     """
 
     full_name: str
+    email: str | None
     phone: str | None
     preferred_contact_method: str
     visitor_category_id: uuid.UUID | None
@@ -497,6 +522,116 @@ class InvitationListItemOut(CamelModel):
     expires_at: datetime
     submitted_at: datetime | None
     approved_at: datetime | None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
+    status_changed_at: datetime | None = None
+
+
+# --- add-invitation-export ---------------------------------------------------
+
+
+class ExportFormat(StrEnum):
+    csv = "csv"
+    xlsx = "xlsx"
+
+
+class InvitationExportDateRange(CamelModel):
+    """`GET /invitations/export`'s inclusive, tenant-local calendar-date
+    range (add-invitation-export/design.md Decision 3) — which timestamp it
+    applies to depends on the `status` filter, resolved in the repository.
+    """
+
+    date_from: date | None = None
+    date_to: date | None = None
+
+    @model_validator(mode="after")
+    def _check_order(self) -> Self:
+        if (
+            self.date_from is not None
+            and self.date_to is not None
+            and self.date_from > self.date_to
+        ):
+            raise ValueError("dateFrom must not be later than dateTo")
+        return self
+
+
+# --- add-staff-calendar ------------------------------------------------------
+
+CALENDAR_MAX_RANGE_DAYS = 42
+"""One six-week month grid (add-staff-calendar design.md D1)."""
+
+CALENDAR_DEFAULT_STATUSES: tuple[InvitationStatus, ...] = tuple(
+    s for s in InvitationStatus if s is not InvitationStatus.denied
+)
+"""A denied visit never happened, so it stays off the grid unless asked for
+(design.md D5); a missed (`archived`) one is useful history and stays on.
+"""
+
+
+class CalendarScope(StrEnum):
+    auto = "auto"
+    mine = "mine"
+    branch = "branch"
+
+
+class CalendarDateRange(CamelModel):
+    """`GET /invitations/calendar`'s inclusive visit-timezone date range."""
+
+    date_from: date
+    date_to: date
+
+    @model_validator(mode="after")
+    def _check_range(self) -> Self:
+        if self.date_to < self.date_from:
+            raise ValueError("to must not be earlier than from")
+        if (self.date_to - self.date_from).days + 1 > CALENDAR_MAX_RANGE_DAYS:
+            raise ValueError(f"The range must not span more than {CALENDAR_MAX_RANGE_DAYS} days")
+        return self
+
+
+class CalendarDayOut(CamelModel):
+    day: date = Field(serialization_alias="date")
+    total: int
+
+
+class CalendarEventOut(CamelModel):
+    """Display fields only — no phone, email, ID-proof, photo or custom
+    field data (specs/invitation-calendar "Calendar Events Carry Only
+    Display Fields"); the detail modal is where those live, behind its own
+    visibility and `documents:view` checks.
+    """
+
+    id: uuid.UUID
+    tracking_id: str
+    status: InvitationStatus
+    source: RegistrationSource
+    # Wire names `date`/`time`; the Python names avoid shadowing the types.
+    event_date: date = Field(serialization_alias="date")
+    event_time: time | None = Field(serialization_alias="time")
+    expected_duration: str | None
+    checked_in_at: datetime | None
+    checked_out_at: datetime | None
+    primary_contact_full_name: str
+    visitor_count: int
+    host_id: uuid.UUID | None
+    host_full_name: str | None
+    branch_id: uuid.UUID
+    branch_name: str | None
+    building_name: str | None
+    purpose_of_visit: str | None
+    visitor_category_name: str | None
+    visitor_category_badge_color: str | None
+
+
+class CalendarFeedOut(CamelModel):
+    scope: Literal["mine", "branch"]
+    timezone: str
+    date_from: date = Field(serialization_alias="from")
+    date_to: date = Field(serialization_alias="to")
+    generated_at: datetime
+    days: list[CalendarDayOut]
+    events: list[CalendarEventOut]
+    truncated: bool
 
 
 # --- API-12: public tracking lookup -----------------------------------------
@@ -601,6 +736,10 @@ class InvitationCheckInOut(CamelModel):
     submitted_at: datetime | None
     approved_at: datetime | None
     current_approval_step: CurrentApprovalStepOut | None = None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
+    check_in_device: DeviceBriefOut | None = None
+    check_out_device: DeviceBriefOut | None = None
     primary_contact_full_name: str
     primary_contact_photo_url: str | None = None
     purpose_of_visit: str | None
@@ -651,6 +790,8 @@ class InvitationTrackingOut(CamelModel):
     submitted_at: datetime | None
     approved_at: datetime | None
     current_approval_step: CurrentApprovalStepOut | None = None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
     visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 
@@ -725,10 +866,15 @@ class InvitationDetailOut(CamelModel):
     current_approval_step: CurrentApprovalStepOut | None = None
     denial_reason: str | None
     denied_at: datetime | None
+    approval_reverted_at: datetime | None = None
+    approval_reverted_by_user_id: uuid.UUID | None = None
+    approval_revert_reason: str | None = None
     checked_in_at: datetime | None
     checked_in_by_user_id: uuid.UUID | None
     checked_out_at: datetime | None
     checked_out_by_user_id: uuid.UUID | None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
     badge_number: str | None
     badge_issued_at: datetime | None
     badge_reprint_count: int
@@ -742,6 +888,12 @@ class InvitationDetailOut(CamelModel):
 
 class InvitationDenyRequest(CamelModel):
     reason: str = Field(min_length=1, max_length=500)
+
+
+class InvitationRevertApprovalRequest(CamelModel):
+    # Stripped before the length check, so a whitespace-only reason is a
+    # 422, not a stored blank (spec.md "Reason is mandatory").
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
 class InvitationRescheduleRequest(CamelModel):
@@ -809,6 +961,14 @@ class WatchlistOverrideRequest(CamelModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class CheckInCodeRequest(CamelModel):
+    """Body of `PATCH /api/v2/invitations/code/check-in|check-out` — the code
+    travels in the body, not the path, so it stays out of access logs.
+    """
+
+    code: str = Field(pattern=r"^\d{8}$", min_length=8, max_length=8)
+
+
 class InvitationQrCheckInOut(CamelModel):
     """Response for `PATCH /api/v2/invitations/qr/{token}/check-in`
     (`qr-checkin-full-registration-detail` — spec.md "QR Check-In Response
@@ -826,6 +986,8 @@ class InvitationQrCheckInOut(CamelModel):
     tracking_id: str
     status: str
     check_in_status: str
+    check_in_device: DeviceBriefOut | None = None
+    check_out_device: DeviceBriefOut | None = None
     registration_type: str
     source: str
     visitor_category_id: uuid.UUID | None
@@ -836,7 +998,6 @@ class InvitationQrCheckInOut(CamelModel):
     primary_contact_photo_url: str | None = None
     primary_contact_preferred_contact_method: ContactMethod
     primary_contact_id_proof_type: str | None = None
-    primary_contact_id_proof_url: str | None = None
     primary_contact_email: str | None
     primary_contact_phone: str | None
     host_id: uuid.UUID | None = None
@@ -863,8 +1024,10 @@ class InvitationQrCheckInOut(CamelModel):
     approved_at: datetime | None
     checked_in_at: datetime | None
     checked_out_at: datetime | None
+    archived_at: datetime | None = None
+    checked_out_automatically: bool = False
     expires_at: datetime
-    visitors: list[InvitationVisitorDetailOut]
+    visitors: list[InvitationVisitorOut]
     vehicles: list[InvitationVehicleOut]
 
 

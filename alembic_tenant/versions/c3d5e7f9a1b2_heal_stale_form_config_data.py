@@ -59,7 +59,7 @@ def _heal_rows(conn: sa.Connection, schema: str) -> None:
     # Soft-deleted rows too, so an undelete can't bring a broken row back.
     rows = conn.execute(
         text(
-            f"SELECT id, key, field_type FROM {schema}.form_fields WHERE field_type IN :types"
+            f'SELECT id, key, field_type FROM "{schema}".form_fields WHERE field_type IN :types'
         ).bindparams(sa.bindparam("types", expanding=True)),
         {"types": list(_REMAP)},
     ).fetchall()
@@ -67,7 +67,7 @@ def _heal_rows(conn: sa.Connection, schema: str) -> None:
         new_type, clear_options = _REMAP[row.field_type]
         conn.execute(
             text(
-                f"UPDATE {schema}.form_fields SET field_type = :new_type"
+                f'UPDATE "{schema}".form_fields SET field_type = :new_type'
                 + (", options = NULL" if clear_options else "")
                 + " WHERE id = :id"
             ),
@@ -126,7 +126,7 @@ def upgrade() -> None:
     _heal_rows(conn, schema)
 
     versions = conn.execute(
-        text(f"SELECT id, snapshot FROM {schema}.form_config_versions")
+        text(f'SELECT id, snapshot FROM "{schema}".form_config_versions')
     ).fetchall()
     rewritten = 0
     for row in versions:
@@ -137,7 +137,8 @@ def upgrade() -> None:
         if changed:
             conn.execute(
                 text(
-                    f"UPDATE {schema}.form_config_versions SET snapshot = :snapshot WHERE id = :id"
+                    f'UPDATE "{schema}".form_config_versions '
+                    "SET snapshot = :snapshot WHERE id = :id"
                 ).bindparams(sa.bindparam("snapshot", type_=JSONB)),
                 {"id": row.id, "snapshot": snapshot},
             )
