@@ -927,12 +927,17 @@ async def test_get_company_not_configured_yet(client: AsyncClient, user: User) -
     assert response.status_code == 404
 
 
-async def test_get_company_requires_permission(
-    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
-) -> None:
-    token = issue_token(user_without_permissions)
-    response = await client.get("/api/v1/company", headers={"Authorization": f"Bearer {token}"})
-    assert response.status_code == 403
+async def test_get_company_is_public(client: AsyncClient, user: User) -> None:
+    token = await _login(client, user.email)
+    await client.post(
+        "/api/v1/company",
+        json={"legalName": "Public Co"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    response = await client.get("/api/v1/company")
+    assert response.status_code == 200
+    assert response.json()["data"]["legalName"] == "Public Co"
 
 
 async def test_get_company_success(client: AsyncClient, user: User) -> None:
@@ -2971,3 +2976,8 @@ async def test_update_security_gate_ignores_removed_connectivity_field(
     )
     assert response.status_code == 200
     assert "connectivityStatus" not in response.json()["data"]
+
+
+async def test_get_company_public_no_token_not_configured(client: AsyncClient) -> None:
+    response = await client.get("/api/v1/company")
+    assert response.status_code == 404

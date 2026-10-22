@@ -129,9 +129,16 @@ async def create_company(
 @company_router.get(
     "",
     response_model=Envelope[CompanyOut],
-    dependencies=[Depends(require_permission("companies:view"))],
 )
-async def get_company(tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)]) -> JSONResponse:
+@limiter.limit("60/minute")
+async def get_company(
+    request: Request,
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
+) -> JSONResponse:
+    """Public — no bearer token, no permission check, same posture as
+    `GET /branches`. Resolves the caller's tenant from a token when one is
+    sent, else the default tenant.
+    """
     company = await service.get_company(tenant_db)
     return success_response(data=CompanyOut.model_validate(company))
 
