@@ -82,14 +82,10 @@ export function useAdminFormBuilderStepEditor() {
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
     void getCurrentStaffUserUseCase.execute().then(setCurrentUser)
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate, stepId, branchId])
+  }, [stepId, branchId])
 
   const retry = useCallback(() => void load(), [load])
 

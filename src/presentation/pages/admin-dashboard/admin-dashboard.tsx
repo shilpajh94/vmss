@@ -3,7 +3,7 @@ import { BranchDashboard } from '../../components/dashboard/BranchDashboard'
 import { useBranchDashboard } from '../../hooks/use-branch-dashboard'
 
 export function AdminDashboardPage() {
-  const dashboard = useBranchDashboard({ loginPath: '/admin/login' })
+  const dashboard = useBranchDashboard()
 
   usePageHeader({ description: "A bird's-eye view of today's visitor activity" })
 

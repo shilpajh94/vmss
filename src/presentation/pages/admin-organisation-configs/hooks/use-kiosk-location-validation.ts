@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { ApiError } from '../../../../data/api/api-error'
+import { permissionsFor } from '../../../utils/permissions'
 
 // /auth/me doesn't expose permission codes yet, so `settings:manage` is
 // approximated by the Admin role; the backend still enforces the real
@@ -23,7 +24,7 @@ export function useKioskLocationValidation() {
     setErrorMessage(undefined)
     try {
       const [user, value] = await Promise.all([getCurrentStaffUserUseCase.execute(), getKioskLocationValidationUseCase.execute()])
-      setCanManage(user.isAdmin)
+      setCanManage(permissionsFor(user).can('settings:manage'))
       setEnforce(value)
     } catch (error) {
       if (error instanceof ApiError && error.status === 403) {

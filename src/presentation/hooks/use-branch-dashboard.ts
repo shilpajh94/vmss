@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useCallback, useState } from 'react'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useCurrentUser } from '../context/current-user-context'
 import { useBranchOptions } from './use-branch-options'
@@ -10,7 +9,6 @@ const LOAD_ERROR = 'Something went wrong loading the dashboard. Please try again
 const RECENT_CHECKINS_PAGE_SIZE = 8
 
 interface UseBranchDashboardOptions {
-  loginPath: string
   // False while the page is still deciding whether the user may see it
   // (reception's role guard) — nothing is fetched until it's true.
   allowed?: boolean
@@ -19,17 +17,12 @@ interface UseBranchDashboardOptions {
 // Data for the branch-wide dashboards (admin and reception): overview,
 // recent check-ins and analytics, each re-fetched on its own key so a range
 // switch reloads only the charts (dashboard-insights "Range Toggle").
-export function useBranchDashboard({ loginPath, allowed = true }: UseBranchDashboardOptions) {
-  const navigate = useNavigate()
+export function useBranchDashboard({ allowed = true }: UseBranchDashboardOptions = {}) {
   const currentUser = useCurrentUser()
   const { getDashboardOverviewUseCase, listRecentCheckinsUseCase, getDashboardAnalyticsUseCase } = useAppDependencies()
 
   const [range, setRange] = useState<DashboardRange>('7d')
   const [branchId, setBranchId] = useState<string | undefined>(undefined)
-
-  useEffect(() => {
-    if (!sessionStorage.getItem('token')) navigate(loginPath, { replace: true })
-  }, [navigate, loginPath])
 
   const enabled = allowed
 

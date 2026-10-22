@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test'
 import z from 'zod'
 import { ApiClient, SESSION_EXPIRED_EVENT } from '../../src/data/api/api-client'
 import { API_ENDPOINTS } from '../../src/data/api/api-endpoints'
+import { ApiError } from '../../src/data/api/api-error'
 import { installBrowserStubs, type BrowserStubs } from './browser-stubs'
 
 const ok = { success: true, message: '', data: [] }
@@ -70,5 +71,28 @@ describe('ApiClient session token (design D-W2)', () => {
     )
 
     assert.deepEqual(stubs.events, [SESSION_EXPIRED_EVENT])
+  })
+
+  test('a 403 keeps the session and signals nothing (QA F8)', async () => {
+    stubs.session.setItem('token', 'staff-token')
+    stubs.respondWith(403, { success: false, message: 'Forbidden', data: null })
+
+    await assert.rejects(
+      new ApiClient('http://api').makeRequest({ endpointConfig: API_ENDPOINTS.LIST_HOST_EMPLOYEES, parserSchema: anything }),
+      (error: unknown) => error instanceof ApiError && error.status === 403,
+    )
+
+    assert.equal(stubs.session.getItem('token'), 'staff-token')
+    assert.deepEqual(stubs.events, [])
+  })
+
+  test('sign-out sends the token, and a 401 there neither redirects nor toasts', async () => {
+    stubs.session.setItem('token', 'expired')
+    stubs.respondWith(401, { success: false, message: 'Invalid token', data: null })
+
+    await assert.rejects(new ApiClient('http://api').makeRequest({ endpointConfig: API_ENDPOINTS.STAFF_LOGOUT, parserSchema: anything }))
+
+    assert.equal(stubs.requests[0].headers.Authorization, 'Bearer expired')
+    assert.deepEqual(stubs.events, [])
   })
 })

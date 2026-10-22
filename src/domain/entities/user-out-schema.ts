@@ -4,6 +4,8 @@ export const BranchRoleSchema = z.object({
   id: z.string(),
   roleName: z.string(),
   branchId: z.string().nullable(),
+  // Only on `/auth/me`: every code the role grants.
+  permissionCodes: z.array(z.string()).optional(),
 })
 
 export type BranchRole = z.infer<typeof BranchRoleSchema>

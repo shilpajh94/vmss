@@ -58,13 +58,8 @@ export function useAdminKioskForm() {
   }, [getCurrentStaffUserUseCase, getKioskUseCase, isEditMode, id, navigate, toast])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void load()
-  }, [navigate, load])
+  }, [load])
 
   const retry = useCallback(() => {
     void load()

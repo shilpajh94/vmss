@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
@@ -13,7 +12,6 @@ import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 const PAGE_SIZE = 20
 
 export function useAdminHostEmployees() {
-  const navigate = useNavigate()
   const { getCurrentStaffUserUseCase, listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase } = useAppDependencies()
   const toast = useToast()
 
@@ -65,13 +63,8 @@ export function useAdminHostEmployees() {
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void loadHostEmployees()
-  }, [navigate, loadHostEmployees])
+  }, [loadHostEmployees])
 
   const retry = useCallback(() => {
     void loadHostEmployees()

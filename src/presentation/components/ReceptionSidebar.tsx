@@ -1,6 +1,8 @@
 import { useNavigate } from 'react-router'
 import { CalendarIcon, HomeIcon, PlusIcon, UsersIcon } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
+import { usePermissions } from '../context/current-user-context'
+import { PAGE_PERMISSIONS } from '../route-permissions'
 import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
@@ -31,6 +33,14 @@ const RECEPTION_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item
   ['/staff/visitors/new', 'register-visitor'],
 ]
 
+// Entries the user can't open are hidden (app-shell "Admin and Staff Areas
+// and Their Actions Are Gated by the Caller's Permissions").
+const NAV_ITEM_PERMISSIONS: Partial<Record<ReceptionSidebarActiveItem, string>> = {
+  visits: PAGE_PERMISSIONS.staffInvitations,
+  calendar: PAGE_PERMISSIONS.calendar,
+  'register-visitor': PAGE_PERMISSIONS.registerVisitor,
+}
+
 // Derives which sidebar entry highlights from the current URL, so the active
 // item can never drift out of sync with the route table the way a hardcoded
 // per-page prop could - mirrors `DashboardSidebar.resolveStaffActiveItem`.
@@ -41,6 +51,7 @@ export function resolveReceptionActiveItem(pathname: string): ReceptionSidebarAc
 export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
   const navigate = useNavigate()
   const { closeNav } = useNavDrawer()
+  const { can } = usePermissions()
 
   const handleActivate = (key: ReceptionSidebarActiveItem) => {
     closeNav()
@@ -61,7 +72,10 @@ export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
       />
 
       <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
-        {NAV_ITEMS.map(({ key, label, icon }) => (
+        {NAV_ITEMS.filter(({ key }) => {
+          const requires = NAV_ITEM_PERMISSIONS[key]
+          return !requires || can(requires)
+        }).map(({ key, label, icon }) => (
           <SidebarNavItem
             key={key}
             icon={icon}

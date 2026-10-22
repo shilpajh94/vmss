@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
@@ -19,7 +18,6 @@ export interface FloorRow extends Floor {
 const PAGE_SIZE = 20
 
 export function useAdminFloors() {
-  const navigate = useNavigate()
   const { getCurrentStaffUserUseCase, listFloorsPageUseCase, listBuildingsUseCase, listDepartmentsUseCase, deleteFloorUseCase } =
     useAppDependencies()
   const toast = useToast()
@@ -78,13 +76,8 @@ export function useAdminFloors() {
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void loadFloors()
-  }, [navigate, loadFloors])
+  }, [loadFloors])
 
   const retry = useCallback(() => {
     void loadFloors()

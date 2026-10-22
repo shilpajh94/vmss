@@ -68,16 +68,12 @@ export function useAdminFormBuilder() {
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
     void getCurrentStaffUserUseCase.execute().then(setCurrentUser)
     void loadBranches()
     void loadSteps(undefined)
     // Runs once on mount — selectedBranchId changes are handled by selectWorkspace below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate])
+  }, [])
 
   const selectWorkspace = useCallback(
     (value: string) => {

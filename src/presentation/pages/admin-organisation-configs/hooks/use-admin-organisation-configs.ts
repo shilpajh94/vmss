@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePageRefresh } from '../../../context/refresh-context'
@@ -19,7 +18,6 @@ function withIanaTimezone(config: OrganisationConfig): OrganisationConfig {
 }
 
 export function useAdminOrganisationConfigs() {
-  const navigate = useNavigate()
   const { getCurrentStaffUserUseCase, getOrganisationConfigUseCase, updateOrganisationConfigUseCase } = useAppDependencies()
   const toast = useToast()
 
@@ -49,13 +47,8 @@ export function useAdminOrganisationConfigs() {
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void loadConfig()
-  }, [navigate, loadConfig])
+  }, [loadConfig])
 
   const retry = useCallback(() => {
     void loadConfig()

@@ -110,12 +110,8 @@ export function StaffVisitorRegistrationPage() {
   }, [listBranchesUseCase, listBuildingsUseCase, listVisitorCategoriesUseCase])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/staff/login', { replace: true })
-      return
-    }
     void loadVisitInfoMasterData()
-  }, [navigate, loadVisitInfoMasterData])
+  }, [loadVisitInfoMasterData])
 
   // The top-bar refresh starts the registration over from step 1 with fresh
   // master data; it asks first once anything has been entered.

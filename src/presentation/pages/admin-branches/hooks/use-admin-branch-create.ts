@@ -58,13 +58,8 @@ export function useAdminBranchCreate() {
   }, [getCurrentStaffUserUseCase, listHostEmployeesUseCase])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void loadReferenceData()
-  }, [navigate, loadReferenceData])
+  }, [loadReferenceData])
 
   // A confirmed top-bar refresh empties the form and re-fetches its lists.
   const reload = useCallback(() => {

@@ -1,5 +1,3 @@
-import { useEffect } from 'react'
-import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useLiveDashboard, useLiveResource } from '../../../hooks/use-live-dashboard'
 import type { CalendarFeed } from '../../../../domain/entities/calendar-feed-schema'
@@ -13,7 +11,6 @@ interface UseCalendarFeedOptions {
   statuses: readonly string[] | undefined
   // Each day's first N visits only; the rest are paged per day.
   perDayLimit: number
-  loginPath: string
 }
 
 interface KeyedFeed {
@@ -27,13 +24,8 @@ interface KeyedFeed {
 // response is tagged with the query it answers, so while a new month,
 // branch or filter loads, the previous one is shown as stale — never as if it
 // were the new one.
-export function useCalendarFeed({ range, branchId, statuses, perDayLimit, loginPath }: UseCalendarFeedOptions) {
-  const navigate = useNavigate()
+export function useCalendarFeed({ range, branchId, statuses, perDayLimit }: UseCalendarFeedOptions) {
   const { getCalendarFeedUseCase } = useAppDependencies()
-
-  useEffect(() => {
-    if (!sessionStorage.getItem('token')) navigate(loginPath, { replace: true })
-  }, [navigate, loginPath])
 
   const key = `${range.from}:${range.to}:${branchId ?? 'all'}:${statuses?.join(',') ?? 'default'}:${perDayLimit}`
   const resource = useLiveResource<KeyedFeed>(

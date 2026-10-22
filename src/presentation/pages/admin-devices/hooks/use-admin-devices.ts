@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
@@ -25,7 +24,6 @@ const ACTION_SUCCESS: Record<DeviceAction, string> = {
 }
 
 export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string) {
-  const navigate = useNavigate()
   const {
     getCurrentStaffUserUseCase,
     listDevicesPageUseCase,
@@ -116,13 +114,8 @@ export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void loadDevices()
-  }, [navigate, loadDevices])
+  }, [loadDevices])
 
   const retry = useCallback(() => {
     void loadDevices()

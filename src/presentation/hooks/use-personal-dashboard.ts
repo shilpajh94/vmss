@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useState } from 'react'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useCurrentUser } from '../context/current-user-context'
 import { useLiveDashboard, useLiveResource } from './use-live-dashboard'
@@ -10,14 +9,9 @@ const LOAD_ERROR = 'Something went wrong loading your dashboard. Please try agai
 // The staff landing page: counts and charts over the caller's own visits only
 // (`my-overview` / `my-analytics`), so it always agrees with their board.
 export function usePersonalDashboard() {
-  const navigate = useNavigate()
   const currentUser = useCurrentUser()
   const { getMyDashboardOverviewUseCase, getMyDashboardAnalyticsUseCase } = useAppDependencies()
   const [range, setRange] = useState<DashboardRange>('7d')
-
-  useEffect(() => {
-    if (!sessionStorage.getItem('token')) navigate('/staff/login', { replace: true })
-  }, [navigate])
 
   const enabled = true
   const overview = useLiveResource(() => getMyDashboardOverviewUseCase.execute(), 'my-overview', enabled)

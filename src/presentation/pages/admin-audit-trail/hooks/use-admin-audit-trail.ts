@@ -12,6 +12,7 @@ import { saveBlob } from '../../../utils/save-blob'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePageRefresh } from '../../../context/refresh-context'
 import { toUserMessage } from '../../../utils/to-user-message'
+import { permissionsFor } from '../../../utils/permissions'
 
 const REPORT_POLL_INTERVAL_MS = 1000
 const REPORT_POLL_MAX_ATTEMPTS = 20
@@ -61,7 +62,9 @@ export function useAdminAuditTrail() {
       return
     }
 
-    if (!user.isAdmin) {
+    // The route already requires `audit-logs:view`; this only covers a
+    // permission revoked while the page is open.
+    if (!permissionsFor(user).can('audit-logs:view')) {
       navigate(landingPathFor(user), { replace: true })
       return
     }
@@ -88,13 +91,8 @@ export function useAdminAuditTrail() {
   }, [begin, getCurrentStaffUserUseCase, getAuditTrailUseCase, listHostEmployeesUseCase, dateRange, activityType, page, toast, navigate])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void load()
-  }, [navigate, load])
+  }, [load])
 
   const retry = useCallback(() => {
     void load()

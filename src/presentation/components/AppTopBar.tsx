@@ -4,6 +4,7 @@ import { LogOutIcon, RefreshCcwIcon } from './icons'
 import type { StaffUser } from '../../domain/entities/staff-user-schema'
 import { usePushNotifications } from '../hooks/use-push-notifications'
 import { useRefreshContext } from '../context/refresh-context'
+import { useAppDependencies } from '../context/app-dependencies-context'
 import { NotificationBell } from './notification-bell/NotificationBell'
 import { ThemeModeMenu } from './ThemeModeMenu'
 import { NavMenuButton } from './AppShell'
@@ -13,6 +14,9 @@ import { ConfirmDialog } from './ui/ConfirmDialog'
 
 // A manual refresh that never reports progress stops spinning after this.
 const MANUAL_REFRESH_SPIN_LIMIT_MS = 15_000
+
+// How long sign-out waits for the server before clearing the session anyway.
+const SIGN_OUT_TIMEOUT_MS = 4000
 
 function formatClockTime(date: Date): string {
   return [date.getHours(), date.getMinutes(), date.getSeconds()].map((part) => String(part).padStart(2, '0')).join(':')
@@ -146,9 +150,15 @@ export function AppTopBar({ title, description, breadcrumb, currentUser, navLabe
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { unregisterCurrentDevice } = usePushNotifications()
+  const { logoutStaffUseCase } = useAppDependencies()
 
+  // Both calls need the token, so they run before it is cleared. Neither
+  // failing (or hanging) can keep the user signed in (app-shell "Signing
+  // Out Ends the Server Session").
   const signOut = () => {
-    void unregisterCurrentDevice().finally(() => {
+    const serverSignOut = Promise.allSettled([logoutStaffUseCase.execute(), unregisterCurrentDevice()])
+    const timeout = new Promise((resolve) => window.setTimeout(resolve, SIGN_OUT_TIMEOUT_MS))
+    void Promise.race([serverSignOut, timeout]).finally(() => {
       sessionStorage.removeItem('token')
       navigate(loginPath)
     })

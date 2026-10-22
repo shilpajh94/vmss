@@ -57,6 +57,14 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  // `hasToken: false` on purpose: the token is still sent (D-W2), but a 401
+  // from an already-expired session mid sign-out must not raise the
+  // session-expired redirect and toast on top of the sign-out itself.
+  STAFF_LOGOUT: {
+    endpoint: "/auth/logout",
+    method: "POST",
+    hasToken: false,
+  },
   STAFF_CREATE_VISIT_REQUEST: {
     endpoint: "/invitations",
     method: "POST",

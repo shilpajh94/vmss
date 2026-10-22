@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
@@ -13,7 +12,6 @@ import { toUserMessage } from '../../../utils/to-user-message'
 const PAGE_SIZE = 20
 
 export function useAdminBuildings() {
-  const navigate = useNavigate()
   const { getCurrentStaffUserUseCase, listBuildingsPageUseCase, listBranchesUseCase, deleteBuildingUseCase } = useAppDependencies()
   const toast = useToast()
 
@@ -63,13 +61,8 @@ export function useAdminBuildings() {
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void loadBuildings()
-  }, [navigate, loadBuildings])
+  }, [loadBuildings])
 
   const retry = useCallback(() => {
     void loadBuildings()

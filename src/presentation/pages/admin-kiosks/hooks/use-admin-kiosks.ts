@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
@@ -16,7 +15,6 @@ const PAGE_SIZE = 20
 export type KioskSort = 'name:asc' | 'name:desc' | 'created_at:asc' | 'created_at:desc'
 
 export function useAdminKiosks() {
-  const navigate = useNavigate()
   const {
     getCurrentStaffUserUseCase,
     listKiosksPageUseCase,
@@ -83,13 +81,8 @@ export function useAdminKiosks() {
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void loadKiosks()
-  }, [navigate, loadKiosks])
+  }, [loadKiosks])
 
   const retry = useCallback(() => {
     void loadKiosks()

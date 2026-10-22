@@ -79,6 +79,7 @@ export function StaffInvitationsPage() {
     denyingId,
     canCheckOut,
     canExport,
+    actionPermissions,
     isExportOpen,
     openExport,
     closeExport,
@@ -167,22 +168,28 @@ export function StaffInvitationsPage() {
                 onLoadMore={column.loadMore}
                 emptyMessage={EMPTY_MESSAGES[column.status]}
                 embedded={embedded}
-                onDrop={column.status === 'approved' ? requestApprove : column.status === 'denied' ? requestDeny : undefined}
-                onMoveToApproved={column.status === 'requested' ? requestApprove : undefined}
-                onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
+                onDrop={
+                  column.status === 'approved' && actionPermissions.approve
+                    ? requestApprove
+                    : column.status === 'denied' && actionPermissions.deny
+                      ? requestDeny
+                      : undefined
+                }
+                onMoveToApproved={column.status === 'requested' && actionPermissions.approve ? requestApprove : undefined}
+                onMoveToDenied={column.status === 'requested' && actionPermissions.deny ? requestDeny : undefined}
                 approvingId={approvingId}
                 invitationDetails={invitationDetails}
                 roleNameById={roleNameById}
                 employeeNameById={employeeNameById}
                 workflowRulesByCategory={workflowRulesByCategory}
-                onRescheduleClick={requestReschedule}
-                onDelegateClick={requestDelegate}
-                onApproveAndDelegateClick={requestApproveAndDelegate}
-                onApproveClick={requestApprove}
-                onEditClick={requestEdit}
+                onRescheduleClick={actionPermissions.reschedule ? requestReschedule : undefined}
+                onDelegateClick={actionPermissions.delegate ? requestDelegate : undefined}
+                onApproveAndDelegateClick={actionPermissions.approve ? requestApproveAndDelegate : undefined}
+                onApproveClick={actionPermissions.approve ? requestApprove : undefined}
+                onEditClick={actionPermissions.edit ? requestEdit : undefined}
                 onVisitorInfoClick={viewVisitorInfo}
                 onCheckOutClick={column.status === 'checked_in' && canCheckOut ? requestCheckOut : undefined}
-                onRevertClick={column.status === 'approved' ? requestRevert : undefined}
+                onRevertClick={column.status === 'approved' && actionPermissions.revert ? requestRevert : undefined}
               />
             )}
           />

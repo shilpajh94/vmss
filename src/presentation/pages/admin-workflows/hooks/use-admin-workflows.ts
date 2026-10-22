@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
@@ -30,7 +29,6 @@ export interface WorkflowGroup {
 const PAGE_SIZE = 4
 
 export function useAdminWorkflows() {
-  const navigate = useNavigate()
   const { getCurrentStaffUserUseCase, listApprovalWorkflowRulesUseCase, listVisitorCategoriesUseCase, listRolesUseCase, deleteWorkflowUseCase } =
     useAppDependencies()
   const toast = useToast()
@@ -117,13 +115,8 @@ export function useAdminWorkflows() {
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void loadWorkflows()
-  }, [navigate, loadWorkflows])
+  }, [loadWorkflows])
 
   const retry = useCallback(() => {
     void loadWorkflows()

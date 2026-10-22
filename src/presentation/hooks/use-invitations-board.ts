@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router'
+import { useSearchParams } from 'react-router'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { useToast } from '../components/toast/toast-context'
 import { ApiError } from '../../data/api/api-error'
@@ -20,6 +20,7 @@ import { saveBlob } from '../utils/save-blob'
 import { REGISTRATION_TYPE_OPTIONS, SOURCE_OPTIONS, STATUS_OPTIONS, exportFilename, optionLabel } from '../components/invitation-board/filter-options'
 import type { InvitationExportChoice } from '../components/invitation-board/ExportInvitationsModal'
 import { boardStatusForApiStatus, usePagedBoardColumns, type BoardStatus, type ColumnQuery } from './use-paged-board-columns'
+import { permissionsFor } from '../utils/permissions'
 
 export const BOARD_STATUS_COLUMNS = [
   { status: 'requested', label: 'Requested' },
@@ -61,13 +62,11 @@ function describeApprovalOutcome(
 
 // Shared Kanban-board data/actions behind the staff dashboard and the admin
 // invitations board — same columns, same approve/reschedule/step-progress
-// behavior, differing in where an unauthenticated visitor is redirected and
-// in scope: the staff dashboard asks the API for only the requests where the
+// behavior, differing in scope: the staff dashboard asks the API for only the requests where the
 // current user is the host or a delegate (`relevantToMe=true`), while the
 // admin board keeps its organisation-wide view. Every filter is applied
 // server-side, per status column (see `usePagedBoardColumns`).
-export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | 'all' = 'all') {
-  const navigate = useNavigate()
+export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
   const [searchParams] = useSearchParams()
   const {
     listVisitRequestsUseCase,
@@ -223,13 +222,8 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate(loginRedirectPath, { replace: true })
-      return
-    }
-
     void loadDashboard()
-  }, [navigate, loginRedirectPath, loadDashboard])
+  }, [loadDashboard])
 
   // A changed filter or (debounced) search restarts every column from its
   // first page. Skipped on mount - the initial `loadDashboard` covers that.
@@ -885,16 +879,24 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     [pendingRevertId, revertingId, findRequest, revertInvitationApprovalUseCase, loadDashboard, toast],
   )
 
-  // Only Admin and Reception hold `invitations:checkout` by default; the web
-  // app has no permission codes, so this role-name check decides whether the
-  // Checked-in column gets the button and the API stays the real authority.
-  const canCheckOut = Boolean(currentUser?.isAdmin || currentUser?.isReception)
-
-  // `invitations:export` is granted to Admin and Reception (and Security,
-  // which has no board). Same role-name stand-in as `canCheckOut`: the admin
-  // board is Admin-only, and on the staff dashboard only Reception gets it —
-  // a host would just get a 403.
-  const canExport = scope === 'all' ? Boolean(currentUser?.isAdmin) : Boolean(currentUser?.isReception)
+  // Which actions the board offers, by the caller's permission codes (design
+  // D-W1), so a tenant-defined role gets exactly the buttons its grants
+  // allow. The API stays the authority; this only hides what would 403.
+  const permissions = useMemo(() => permissionsFor(currentUser), [currentUser])
+  const actionPermissions = useMemo(
+    () => ({
+      approve: permissions.can('invitations:approve'),
+      deny: permissions.can('invitations:deny'),
+      // Delegating hands an approval step on, so it rides on approving.
+      delegate: permissions.can('invitations:approve'),
+      revert: permissions.can('invitations:revert-approval'),
+      edit: permissions.can('invitations:edit'),
+      reschedule: permissions.can('invitations:reschedule'),
+    }),
+    [permissions],
+  )
+  const canCheckOut = permissions.can('invitations:checkout')
+  const canExport = permissions.can('invitations:export')
 
   // What the export applies beyond the dialog's own status/dates/format,
   // as shown read-only in the dialog — the same values `columnQuery` sends.
@@ -1059,6 +1061,7 @@ export function useInvitationsBoard(loginRedirectPath: string, scope: 'mine' | '
     denyingId,
     canCheckOut,
     canExport,
+    actionPermissions,
     isExportOpen,
     openExport,
     closeExport,

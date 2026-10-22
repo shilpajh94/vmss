@@ -11,6 +11,8 @@ import { StaffLayout } from './presentation/components/StaffLayout'
 import { NotificationCenterProvider } from './presentation/context/notification-center-context'
 import { ThemeModeProvider } from './presentation/context/theme-mode-context'
 import { UnsavedChangesProvider } from './presentation/context/unsaved-changes-context'
+import { RequirePermission } from './presentation/components/session/RouteGuards'
+import { PAGE_PERMISSIONS } from './presentation/route-permissions'
 import { VisitorPortalLandingPage } from './presentation/pages/visitor-portal-landing/visitor-portal-landing'
 import { VisitorRequestPage } from './presentation/pages/visitor-request/visitor-request'
 import { VisitorTrackPage } from './presentation/pages/visitor-track/visitor-track'
@@ -44,6 +46,7 @@ import { AdminRoleCreateFormPage } from './presentation/pages/admin-roles/admin-
 import { AdminFormBuilderPage } from './presentation/pages/admin-form-builder/admin-form-builder'
 import { AdminFormBuilderStepEditorPage } from './presentation/pages/admin-form-builder/admin-form-builder-step-editor'
 import { AdminAuditTrailPage } from './presentation/pages/admin-audit-trail/admin-audit-trail'
+import { NotFoundPage } from './presentation/pages/not-found/not-found'
 
 // The dashboards are the only pages that render charts; loading them lazily
 // keeps the chart library out of the public portal and login bundles
@@ -64,6 +67,108 @@ function LazyPage({ children, label = 'Loading dashboard…' }: { children: Reac
   return <Suspense fallback={<LoadingState label={label} className="flex-1" />}>{children}</Suspense>
 }
 
+interface PageRoute {
+  path: string
+  element: ReactNode
+  // The permission the page needs (design D-W1); checked by
+  // `RequirePermission` once the layout has the signed-in user.
+  requires?: string
+}
+
+const ADMIN_ROUTES: PageRoute[] = [
+  {
+    path: '/admin/dashboard',
+    requires: PAGE_PERMISSIONS.adminDashboard,
+    element: (
+      <LazyPage>
+        <AdminDashboardPage />
+      </LazyPage>
+    ),
+  },
+  { path: '/admin/organisation-configs', requires: PAGE_PERMISSIONS.organisationConfigs, element: <AdminOrganisationConfigsPage /> },
+  { path: '/admin/branches', requires: PAGE_PERMISSIONS.branches, element: <AdminBranchesPage /> },
+  { path: '/admin/branches/new', requires: PAGE_PERMISSIONS.branches, element: <AdminBranchCreatePage /> },
+  { path: '/admin/departments', requires: PAGE_PERMISSIONS.departments, element: <AdminDepartmentsPage /> },
+  { path: '/admin/departments/new', requires: PAGE_PERMISSIONS.departments, element: <AdminDepartmentFormPage /> },
+  { path: '/admin/departments/:id/edit', requires: PAGE_PERMISSIONS.departments, element: <AdminDepartmentFormPage /> },
+  { path: '/admin/buildings', requires: PAGE_PERMISSIONS.buildings, element: <AdminBuildingsPage /> },
+  { path: '/admin/buildings/new', requires: PAGE_PERMISSIONS.buildings, element: <AdminBuildingFormPage /> },
+  { path: '/admin/buildings/:id/edit', requires: PAGE_PERMISSIONS.buildings, element: <AdminBuildingFormPage /> },
+  { path: '/admin/floors', requires: PAGE_PERMISSIONS.floors, element: <AdminFloorsPage /> },
+  { path: '/admin/floors/new', requires: PAGE_PERMISSIONS.floors, element: <AdminFloorFormPage /> },
+  { path: '/admin/floors/:id/edit', requires: PAGE_PERMISSIONS.floors, element: <AdminFloorFormPage /> },
+  { path: '/admin/host-employees', requires: PAGE_PERMISSIONS.hostEmployees, element: <AdminHostEmployeesPage /> },
+  { path: '/admin/host-employees/new', requires: PAGE_PERMISSIONS.hostEmployees, element: <AdminHostEmployeeFormPage /> },
+  { path: '/admin/host-employees/:id/edit', requires: PAGE_PERMISSIONS.hostEmployees, element: <AdminHostEmployeeFormPage /> },
+  { path: '/admin/reception-desks', requires: PAGE_PERMISSIONS.receptionDesks, element: <AdminReceptionDesksPage /> },
+  { path: '/admin/reception-desks/*', element: <Navigate to="/admin/reception-desks" replace /> },
+  { path: '/admin/security-gates', requires: PAGE_PERMISSIONS.securityGates, element: <AdminSecurityGatesPage /> },
+  { path: '/admin/security-gates/*', element: <Navigate to="/admin/security-gates" replace /> },
+  { path: '/admin/kiosks', requires: PAGE_PERMISSIONS.kiosks, element: <AdminKiosksPage /> },
+  { path: '/admin/kiosks/new', requires: PAGE_PERMISSIONS.kiosks, element: <AdminKioskFormPage /> },
+  { path: '/admin/kiosks/:id/edit', requires: PAGE_PERMISSIONS.kiosks, element: <AdminKioskFormPage /> },
+  { path: '/admin/visitor-categories', requires: PAGE_PERMISSIONS.visitorCategories, element: <AdminVisitorCategoriesPage /> },
+  { path: '/admin/visitor-categories/new', requires: PAGE_PERMISSIONS.visitorCategories, element: <AdminVisitorCategoryFormPage /> },
+  { path: '/admin/visitor-categories/:id/edit', requires: PAGE_PERMISSIONS.visitorCategories, element: <AdminVisitorCategoryFormPage /> },
+  { path: '/admin/workflows', requires: PAGE_PERMISSIONS.workflows, element: <AdminWorkflowsPage /> },
+  { path: '/admin/workflows/new', requires: PAGE_PERMISSIONS.workflows, element: <AdminWorkflowFormPage /> },
+  { path: '/admin/workflows/:visitorCategoryId/edit', requires: PAGE_PERMISSIONS.workflows, element: <AdminWorkflowFormPage /> },
+  { path: '/admin/invitations', requires: PAGE_PERMISSIONS.adminInvitations, element: <AdminInvitationsPage /> },
+  {
+    path: '/admin/calendar',
+    requires: PAGE_PERMISSIONS.calendar,
+    element: (
+      <LazyPage label="Loading calendar…">
+        <CalendarPage boardBasePath="/admin/invitations" />
+      </LazyPage>
+    ),
+  },
+  { path: '/admin/roles', requires: PAGE_PERMISSIONS.roles, element: <AdminRolesPage /> },
+  { path: '/admin/roles/new', requires: PAGE_PERMISSIONS.roles, element: <AdminRoleCreateFormPage /> },
+  { path: '/admin/roles/:id/edit', requires: PAGE_PERMISSIONS.roles, element: <AdminRolePermissionsFormPage /> },
+  { path: '/admin/form-builder', requires: PAGE_PERMISSIONS.formBuilder, element: <AdminFormBuilderPage /> },
+  { path: '/admin/form-builder/steps/:stepId', requires: PAGE_PERMISSIONS.formBuilder, element: <AdminFormBuilderStepEditorPage /> },
+  { path: '/admin/audit-trail', requires: PAGE_PERMISSIONS.auditTrail, element: <AdminAuditTrailPage /> },
+]
+
+const STAFF_ROUTES: PageRoute[] = [
+  {
+    path: '/staff/dashboard',
+    element: (
+      <LazyPage>
+        <StaffDashboardPage />
+      </LazyPage>
+    ),
+  },
+  // Under the staff layout so reception shares its top bar, refresh control
+  // and current-user context; the page keeps its own Reception-role guard.
+  {
+    path: '/reception/dashboard',
+    element: (
+      <LazyPage>
+        <ReceptionDashboardPage />
+      </LazyPage>
+    ),
+  },
+  { path: '/staff/invitations', requires: PAGE_PERMISSIONS.staffInvitations, element: <StaffInvitationsPage /> },
+  {
+    path: '/staff/calendar',
+    requires: PAGE_PERMISSIONS.calendar,
+    element: (
+      <LazyPage label="Loading calendar…">
+        <CalendarPage boardBasePath="/staff/invitations" />
+      </LazyPage>
+    ),
+  },
+  { path: '/staff/visitors/new', requires: PAGE_PERMISSIONS.registerVisitor, element: <StaffVisitorRegistrationPage /> },
+]
+
+function renderPageRoutes(routes: PageRoute[]) {
+  return routes.map(({ path, element, requires }) => (
+    <Route key={path} path={path} element={<RequirePermission requires={requires}>{element}</RequirePermission>} />
+  ))
+}
+
 function RootLayout() {
   return (
     <ThemeModeProvider>
@@ -80,93 +185,12 @@ function RootLayout() {
                     <Route path="/visitor/track" element={<VisitorTrackPage />} />
                     <Route path="/admin/login" element={<StaffLoginPage />} />
                     <Route path="/staff/login" element={<StaffSsoLoginPage />} />
+                    <Route path="*" element={<NotFoundPage />} />
                   </Route>
 
-                  <Route element={<AdminLayout />}>
-                    <Route
-                      path="/admin/dashboard"
-                      element={
-                        <LazyPage>
-                          <AdminDashboardPage />
-                        </LazyPage>
-                      }
-                    />
-                    <Route path="/admin/organisation-configs" element={<AdminOrganisationConfigsPage />} />
-                    <Route path="/admin/branches" element={<AdminBranchesPage />} />
-                    <Route path="/admin/branches/new" element={<AdminBranchCreatePage />} />
-                    <Route path="/admin/departments" element={<AdminDepartmentsPage />} />
-                    <Route path="/admin/departments/new" element={<AdminDepartmentFormPage />} />
-                    <Route path="/admin/departments/:id/edit" element={<AdminDepartmentFormPage />} />
-                    <Route path="/admin/buildings" element={<AdminBuildingsPage />} />
-                    <Route path="/admin/buildings/new" element={<AdminBuildingFormPage />} />
-                    <Route path="/admin/buildings/:id/edit" element={<AdminBuildingFormPage />} />
-                    <Route path="/admin/floors" element={<AdminFloorsPage />} />
-                    <Route path="/admin/floors/new" element={<AdminFloorFormPage />} />
-                    <Route path="/admin/floors/:id/edit" element={<AdminFloorFormPage />} />
-                    <Route path="/admin/host-employees" element={<AdminHostEmployeesPage />} />
-                    <Route path="/admin/host-employees/new" element={<AdminHostEmployeeFormPage />} />
-                    <Route path="/admin/host-employees/:id/edit" element={<AdminHostEmployeeFormPage />} />
-                    <Route path="/admin/reception-desks" element={<AdminReceptionDesksPage />} />
-                    <Route path="/admin/reception-desks/*" element={<Navigate to="/admin/reception-desks" replace />} />
-                    <Route path="/admin/security-gates" element={<AdminSecurityGatesPage />} />
-                    <Route path="/admin/security-gates/*" element={<Navigate to="/admin/security-gates" replace />} />
-                    <Route path="/admin/kiosks" element={<AdminKiosksPage />} />
-                    <Route path="/admin/kiosks/new" element={<AdminKioskFormPage />} />
-                    <Route path="/admin/kiosks/:id/edit" element={<AdminKioskFormPage />} />
-                    <Route path="/admin/visitor-categories" element={<AdminVisitorCategoriesPage />} />
-                    <Route path="/admin/visitor-categories/new" element={<AdminVisitorCategoryFormPage />} />
-                    <Route path="/admin/visitor-categories/:id/edit" element={<AdminVisitorCategoryFormPage />} />
-                    <Route path="/admin/workflows" element={<AdminWorkflowsPage />} />
-                    <Route path="/admin/workflows/new" element={<AdminWorkflowFormPage />} />
-                    <Route path="/admin/workflows/:visitorCategoryId/edit" element={<AdminWorkflowFormPage />} />
-                    <Route path="/admin/invitations" element={<AdminInvitationsPage />} />
-                    <Route
-                      path="/admin/calendar"
-                      element={
-                        <LazyPage label="Loading calendar…">
-                          <CalendarPage loginPath="/admin/login" boardBasePath="/admin/invitations" />
-                        </LazyPage>
-                      }
-                    />
-                    <Route path="/admin/roles" element={<AdminRolesPage />} />
-                    <Route path="/admin/roles/new" element={<AdminRoleCreateFormPage />} />
-                    <Route path="/admin/roles/:id/edit" element={<AdminRolePermissionsFormPage />} />
-                    <Route path="/admin/form-builder" element={<AdminFormBuilderPage />} />
-                    <Route path="/admin/form-builder/steps/:stepId" element={<AdminFormBuilderStepEditorPage />} />
-                    <Route path="/admin/audit-trail" element={<AdminAuditTrailPage />} />
-                  </Route>
+                  <Route element={<AdminLayout />}>{renderPageRoutes(ADMIN_ROUTES)}</Route>
 
-                  <Route element={<StaffLayout />}>
-                    <Route
-                      path="/staff/dashboard"
-                      element={
-                        <LazyPage>
-                          <StaffDashboardPage />
-                        </LazyPage>
-                      }
-                    />
-                    {/* Under the staff layout so reception shares its top bar,
-                        refresh control and current-user context; the page
-                        keeps its own Reception-role guard. */}
-                    <Route
-                      path="/reception/dashboard"
-                      element={
-                        <LazyPage>
-                          <ReceptionDashboardPage />
-                        </LazyPage>
-                      }
-                    />
-                    <Route path="/staff/invitations" element={<StaffInvitationsPage />} />
-                    <Route
-                      path="/staff/calendar"
-                      element={
-                        <LazyPage label="Loading calendar…">
-                          <CalendarPage loginPath="/staff/login" boardBasePath="/staff/invitations" />
-                        </LazyPage>
-                      }
-                    />
-                    <Route path="/staff/visitors/new" element={<StaffVisitorRegistrationPage />} />
-                  </Route>
+                  <Route element={<StaffLayout />}>{renderPageRoutes(STAFF_ROUTES)}</Route>
                 </Routes>
               </PushNotificationsProvider>
             </NotificationCenterProvider>

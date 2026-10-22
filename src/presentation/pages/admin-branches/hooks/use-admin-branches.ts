@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
@@ -16,7 +15,6 @@ export type BranchFormState = { mode: 'edit'; branch: Branch } | undefined
 const PAGE_SIZE = 20
 
 export function useAdminBranches() {
-  const navigate = useNavigate()
   const {
     getCurrentStaffUserUseCase,
     listBranchesPageUseCase,
@@ -73,13 +71,8 @@ export function useAdminBranches() {
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void loadBranches()
-  }, [navigate, loadBranches])
+  }, [loadBranches])
 
   const retry = useCallback(() => {
     void loadBranches()
