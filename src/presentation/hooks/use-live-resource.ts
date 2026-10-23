@@ -60,7 +60,7 @@ export function useLiveResource<T, R = undefined>({
   const [controller] = useState(
     () => new LiveResourceController<T, R>({ load, reference, onChange: () => undefined }),
   )
-  const [state, setState] = useState<LiveResourceState<T, R>>(controller.getState)
+  const [state, setState] = useState<LiveResourceState<T, R>>(() => controller.getState())
 
   // The latest closures, without restarting a load.
   controller.setOptions({

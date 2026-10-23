@@ -139,7 +139,8 @@ export const VisitRequestCard = memo(function VisitRequestCard({
     // `::after` stretches over the card so a click anywhere still opens it,
     // while the action buttons sit above that overlay as separate controls
     // (accessibility "Interactive Elements Are Not Nested").
-    <div
+    <article
+      aria-label={`${request.primaryContactFullName}, ${request.trackingId}`}
       className={`relative flex w-full flex-col gap-2 rounded-xl border border-border bg-surface p-3 drop-shadow-[0px_4px_4px_rgba(15,23,42,0.03)] ${
         onVisitorInfoClick ? 'cursor-pointer transition-colors hover:border-secondary-accent/40' : ''
       } ${isApproving ? 'opacity-60' : ''}`}
@@ -243,6 +244,6 @@ export const VisitRequestCard = memo(function VisitRequestCard({
           ))}
         </div>
       ) : null}
-    </div>
+    </article>
   )
 })

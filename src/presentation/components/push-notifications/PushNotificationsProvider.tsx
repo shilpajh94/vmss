@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
-import { whenFirebaseMessagingReady } from '../../../infrastructure/firebase/firebase-app'
+import { loadFirebaseMessaging, whenFirebaseMessagingReady } from '../../../infrastructure/firebase/firebase-app'
 import { useToast } from '../toast/toast-context'
 import { useNotificationCenter, type NotificationAddressingReason } from '../../context/notification-center-context'
 import { usePushNotifications } from '../../hooks/use-push-notifications'
@@ -81,6 +81,11 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
       if (document.visibilityState !== 'visible') return
       if (!sessionStorage.getItem('token')) return
       registerServiceWorkerOnce()
+      // Loads the SDK for any signed-in session (app-performance "The
+      // Push-Notification SDK Is Loaded Only for Signed-In Staff"), so the
+      // foreground listener below subscribes even before permission is
+      // granted, as it did when the SDK was in the initial bundle.
+      void loadFirebaseMessaging()
 
       const now = Date.now()
       if (now - lastRegisteredAtRef.current < MIN_RE_REGISTER_GAP_MS) return
