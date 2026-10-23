@@ -2,6 +2,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GridIcon, PencilIcon, TrashIcon, XIcon } from '../../../components/icons'
 import { ExpandableText } from '../../../components/ui/ExpandableText'
+import { SelectDropdown } from '../../../components/ui/SelectDropdown'
 import { CONTENT_ONLY_FIELD_TYPES, DELETE_LOCKED_SYSTEM_FIELD_KEYS, fieldTypeLabel } from '../field-type-catalog'
 import type { FormField, FormFieldGroup } from '../../../../domain/entities/form-builder-schema'
 
@@ -58,19 +59,13 @@ export function SortableFieldRow({ field, isSelected, onSelect, onToggleRequired
       </div>
 
       {groups.length > 0 && (
-        <select
+        <SelectDropdown
+          ariaLabel="Assign to group"
+          className="min-w-32"
           value={field.groupId ?? UNGROUPED_VALUE}
-          onChange={(event) => onAssignGroup(event.target.value === UNGROUPED_VALUE ? null : event.target.value)}
-          aria-label="Assign to group"
-          className="rounded-lg border border-border bg-surface px-2 py-1.5 font-body text-xs text-text focus:outline-none focus:ring-2 focus:ring-admin-accent"
-        >
-          <option value={UNGROUPED_VALUE}>Ungrouped</option>
-          {groups.map((group) => (
-            <option key={group.id} value={group.id}>
-              {group.name}
-            </option>
-          ))}
-        </select>
+          onChange={(value) => onAssignGroup(value === UNGROUPED_VALUE ? null : value)}
+          options={[{ value: UNGROUPED_VALUE, label: 'Ungrouped' }, ...groups.map((group) => ({ value: group.id, label: group.name }))]}
+        />
       )}
 
       {!CONTENT_ONLY_FIELD_TYPES.includes(field.fieldType) && (

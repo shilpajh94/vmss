@@ -20,6 +20,9 @@ export interface EditInvitationFields {
   departmentToVisit?: string
   additionalNotes?: string
   pocUserId?: string
+  // ISO-8601 with a UTC offset. Only valid on `checked_out` visits (409
+  // otherwise); the backend ignores every other field on such a visit.
+  checkedOutAt?: string
 }
 
 export interface ListVisitRequestsParams {

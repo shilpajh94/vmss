@@ -42,6 +42,8 @@ interface VisitRequestCardProps {
   onApproveAndDelegateClick?: (id: string) => void
   onApproveClick?: (id: string) => void
   onEditClick?: (id: string) => void
+  // Checked-out cards only get Edit (for the check-out time) when true.
+  canEditCheckOutTime?: boolean
   onVisitorInfoClick?: (id: string) => void
   // Only passed to Checked-in cards, and only for staff who may check out.
   onCheckOutClick?: (id: string) => void
@@ -66,6 +68,7 @@ export function VisitRequestCard({
   onApproveAndDelegateClick,
   onApproveClick,
   onEditClick,
+  canEditCheckOutTime,
   onVisitorInfoClick,
   onCheckOutClick,
   onRevertClick,
@@ -88,7 +91,8 @@ export function VisitRequestCard({
   const isLockedToApproveAndDelegate = isReceptionApprovalStep && (totalSteps ?? 0) > 1
   const canApproveAndDelegate = Boolean(onApproveAndDelegateClick) && isLockedToApproveAndDelegate
   const canApprove = Boolean(onApproveClick) && isReceptionApprovalStep && (totalSteps ?? 0) <= 1
-  const canEdit = Boolean(onEditClick) && RESCHEDULABLE_STATUSES.has(request.status)
+  const canEdit =
+    Boolean(onEditClick) && (RESCHEDULABLE_STATUSES.has(request.status) || (request.status === 'checked_out' && Boolean(canEditCheckOutTime)))
   const canRevert = Boolean(onRevertClick) && request.status === 'approved'
   // Before this card's detail has loaded, we don't yet know whether it's
   // Reception's own step — default to not draggable rather than briefly

@@ -81,8 +81,9 @@ def test_admin_edits_a_form_builder_field(as_role, api: Api) -> None:
     try:
         admin = as_role("admin")
         admin.goto("/admin/form-builder", wait_until="networkidle")
-        admin.get_by_role("main").get_by_role("combobox").first.select_option(
-            label="QA Form Builder Branch"
+        select_matching(
+            admin.get_by_role("main").locator("button[aria-haspopup=listbox]").first,
+            "^QA Form Builder Branch$",
         )
         step_card = admin.get_by_text(f"QA E2E Step {tag}").locator(
             "xpath=ancestor::*[.//button[normalize-space()='Edit Fields']][1]"

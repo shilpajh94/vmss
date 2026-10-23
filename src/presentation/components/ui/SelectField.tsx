@@ -1,15 +1,12 @@
 import { useId } from 'react'
-
-interface SelectOption {
-  value: string
-  label: string
-}
+import { SelectDropdown } from './SelectDropdown'
+import type { DropdownOption } from './SelectDropdown'
 
 interface SelectFieldProps {
   label: string
   value: string
   onChange: (value: string) => void
-  options: SelectOption[]
+  options: DropdownOption[]
   placeholder?: string
   error?: string
   required?: boolean
@@ -39,25 +36,18 @@ export function SelectField({
         {label}
         {required && <span className="ml-1 text-danger">*</span>}
       </label>
-      <select
+      <SelectDropdown
         id={selectId}
+        ariaLabel={label}
+        options={options}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-        aria-required={required}
+        onChange={onChange}
+        placeholder={placeholder ?? 'Select'}
+        placeholderSelectable={placeholderSelectable}
+        required={required}
         disabled={disabled}
-        className={`rounded-lg border bg-surface px-3 py-2 text-body text-text max-sm:text-base max-lg:min-h-10 focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60 ${
-          error ? 'border-danger' : 'border-border'
-        }`}
-      >
-        <option value="" disabled={!placeholderSelectable}>
-          {placeholder ?? 'Select'}
-        </option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        error={Boolean(error)}
+      />
       {error && <p className="text-caption text-danger">{error}</p>}
     </div>
   )
