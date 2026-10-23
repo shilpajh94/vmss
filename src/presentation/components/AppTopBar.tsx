@@ -7,6 +7,7 @@ import { useRefreshContext } from '../context/refresh-context'
 import { useAppDependencies } from '../context/app-dependencies-context'
 import { NotificationBell } from './notification-bell/NotificationBell'
 import { ThemeModeMenu } from './ThemeModeMenu'
+import { TopBarOverflowMenu } from './TopBarOverflowMenu'
 import { NavMenuButton } from './AppShell'
 import { Avatar } from './ui/Avatar'
 import { useRefreshSpin } from '../hooks/use-refresh-spin'
@@ -192,8 +193,12 @@ export function AppTopBar({ title, description, breadcrumb, currentUser, navLabe
 
       <div className="flex shrink-0 items-center gap-2 md:gap-6">
         <TopBarClock />
-        <RefreshControl />
-        <ThemeModeMenu />
+        {/* Below `sm` these two live in the overflow menu, so the title fits. */}
+        <div className="hidden items-center gap-2 sm:flex md:gap-6">
+          <RefreshControl />
+          <ThemeModeMenu />
+        </div>
+        <TopBarOverflowMenu />
         <NotificationBell />
 
         <div className="flex items-center gap-2">

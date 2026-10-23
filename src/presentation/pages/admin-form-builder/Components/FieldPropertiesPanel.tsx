@@ -83,10 +83,15 @@ function OptionRow({ row, disabled, onChange, onRemove }: OptionRowProps) {
         disabled={disabled}
         maxLength={100}
         aria-label="Option"
-        className="flex-1 rounded-lg border border-border px-3 py-2 text-body text-text focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60"
+        className="min-w-0 flex-1 rounded-lg border border-border px-3 py-2 text-body text-text max-sm:text-base max-lg:min-h-10 focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60"
       />
       {!disabled && (
-        <button type="button" onClick={onRemove} aria-label="Remove option" className="text-danger">
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label="Remove option"
+          className="flex size-10 shrink-0 items-center justify-center rounded-lg text-danger lg:size-8"
+        >
           <XIcon className="size-4" />
         </button>
       )}

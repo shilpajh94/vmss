@@ -10,7 +10,7 @@ export function VisitorTrackPage() {
   const { trackingId, setTrackingId, validationError, status, response, errorMessage, submit } = useVisitorTrackLookup()
 
   return (
-    <div className="flex min-h-screen w-full flex-col bg-surface-muted">
+    <div className="flex min-h-dvh w-full flex-col bg-surface-muted">
       <PortalHeader backTo="/" />
       <div className="relative flex w-full flex-1 flex-col">
         <div aria-hidden className="absolute inset-0">

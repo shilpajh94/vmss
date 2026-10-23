@@ -17,7 +17,8 @@ import { purposeLabel } from '../../utils/purpose-of-visit-options'
 // re-approval when its date changes.
 const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved', 'archived'])
 
-const AVATAR_TINTS = ['#dbeafe', '#ffe4e6', '#d1fae5', '#fef3c7', '#f3e8ff', '#fee2e2']
+// Full class names (not built strings) so Tailwind generates them.
+const AVATAR_TINTS = ['bg-avatar-1', 'bg-avatar-2', 'bg-avatar-3', 'bg-avatar-4', 'bg-avatar-5', 'bg-avatar-6']
 
 function avatarTintFor(trackingId: string): string {
   const hash = trackingId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)
@@ -147,8 +148,7 @@ export const VisitRequestCard = memo(function VisitRequestCard({
         <Avatar
           name={request.primaryContactFullName}
           size="md"
-          toneClassName="text-ink"
-          style={{ backgroundColor: avatarTintFor(request.trackingId) }}
+          toneClassName={`text-ink ${avatarTintFor(request.trackingId)}`}
         />
         <div className="flex min-w-0 flex-1 flex-col">
           {onVisitorInfoClick ? (
@@ -231,7 +231,7 @@ export const VisitRequestCard = memo(function VisitRequestCard({
       ) : null}
 
       {iconActions.length > 0 ? (
-        <div className="relative z-10 -mx-1 -mb-1 flex w-full items-center gap-1">
+        <div className="relative z-10 -mx-1 -mb-1 flex w-full flex-wrap items-center gap-1">
           {iconActions.map((action) => (
             <IconActionButton
               key={action.label}

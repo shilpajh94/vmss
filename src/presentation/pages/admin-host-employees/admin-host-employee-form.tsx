@@ -1,4 +1,3 @@
-import { ChevronLeftIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
@@ -6,6 +5,7 @@ import { TextField } from '../../components/ui/TextField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminHostEmployeeForm } from './hooks/use-admin-host-employee-form'
 import { ErrorState } from '../../components/ui/ErrorState'
+import { BackButton } from '../../components/BackButton'
 
 const fieldLabelClassName = 'text-[13px] font-bold uppercase text-text-secondary'
 
@@ -46,14 +46,7 @@ export function AdminHostEmployeeFormPage() {
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
         <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={cancel}
-            aria-label="Back"
-            className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-          >
-            <ChevronLeftIcon className="size-4" />
-          </button>
+          <BackButton onClick={cancel} />
           <div className="flex flex-col gap-0.5">
             <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Manage Employee Access' : 'Add Employee'}</h1>
             <p className="font-body text-sm text-text-muted">
@@ -117,7 +110,7 @@ export function AdminHostEmployeeFormPage() {
                         onClick={() => void revokeRole(role.id)}
                         pending={revokingAssignmentId === role.id}
                         pendingLabel="Revoking…"
-                        className="rounded-full border border-danger/30 bg-danger/10 px-3.5 py-1.5 font-body text-xs font-semibold text-danger disabled:opacity-50"
+                        className="rounded-full border border-danger/30 bg-danger/10 px-3.5 py-1.5 font-body text-xs font-semibold text-danger max-lg:min-h-10 disabled:opacity-50"
                       >
                         Revoke
                       </PendingButton>

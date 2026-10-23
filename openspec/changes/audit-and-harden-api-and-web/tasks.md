@@ -92,21 +92,21 @@ These tasks follow the shared design in `VMSS_API/openspec/changes/audit-and-har
 
 ## 7. P3 — Responsive fixes
 
-- [ ] 7.1 `admin-form-builder/Components/SortableFieldRow.tsx:29-97` (**broken on phones**): switch to a two-row layout below `md`, add `truncate` to the label, and make every control at least 40px with a 16px select font.
-- [ ] 7.2 Bring inputs to 16px on phones (`max-sm:text-base`) with a 40px minimum height: `TrackingLookupCard.tsx:27`, `otp/OtpRequestScreen.tsx:55`, `otp/OtpVerifyScreen.tsx:55`, the Deny, Revert and Delegate modals, `admin-role-create-form.tsx:59,73` (switch it to `TextField`) and `FieldPropertiesPanel.tsx:81`.
-- [ ] 7.3 Stop overflow and clipping:
+- [x] 7.1 *(The controls row is `w-full` below `md` with `justify-end`. The group select is 16px and 40px tall, and the edit/delete buttons are 40px below `md` and 32px from `md`.)* `admin-form-builder/Components/SortableFieldRow.tsx:29-97` (**broken on phones**): switch to a two-row layout below `md`, add `truncate` to the label, and make every control at least 40px with a 16px select font.
+- [x] 7.2 *(The Deny/Revert/Delegate fields landed in §6 (6.1), the role create form in §2 (2.2), and the tracking input in §6 (6.5). Here: both OTP inputs (the code also gets `inputMode=numeric` and `autocomplete=one-time-code`) and the option inputs in the field panel.)* Bring inputs to 16px on phones (`max-sm:text-base`) with a 40px minimum height: `TrackingLookupCard.tsx:27`, `otp/OtpRequestScreen.tsx:55`, `otp/OtpVerifyScreen.tsx:55`, the Deny, Revert and Delegate modals, `admin-role-create-form.tsx:59,73` (switch it to `TextField`) and `FieldPropertiesPanel.tsx:81`.
+- [x] 7.3 Stop overflow and clipping:
   - `ui/FileUploadField.tsx:85` gets `min-w-0 break-all`;
   - `ReviewConfirmStep.tsx:107,128` gets `min-w-0 break-words`;
   - `PrimaryContactCard.tsx:103-124` and `InlineFileUpload.tsx:73` become `flex-col sm:flex-row` with `min-w-0` and truncate;
   - permission codes get `break-all` (`admin-role-create-form.tsx:84`, `admin-role-permissions-form.tsx:39`);
   - `RegistrationStepper.tsx:25` labels get truncate.
-- [ ] 7.4 Touch targets of at least 40px below `lg`:
+- [x] 7.4 *(The list-header buttons already measure about 41px (`p-btn-*` plus 13px text), so they were left alone. ConfirmDialog, AuditFilterBar and the rest got `max-lg:min-h-10` or `size-10 lg:size-8`. Deviation: the calendar day number is 36px below 400px wide, because seven 40px columns don't fit a 360px phone, and 40px from 400px.)* Touch targets of at least 40px below `lg`:
   - `BackButton.tsx:19` becomes `size-10 lg:size-9`, and the 7 inline copies switch to `BackButton`/`FormPageHeader`;
   - the `max-lg:min-h-10` pattern on the shared buttons covers `ConfirmDialog`, the list headers and `AuditFilterBar`;
   - `GroupCard.tsx:123`, `FieldPropertiesPanel.tsx:84`, `StepCard.tsx:57,66`, `FloorCard.tsx:25,31,39`, `admin-workflow-form.tsx:103`, the host-employee Revoke button, `KanbanColumn.tsx:192`, `PortalFooter.tsx:13-24`, `MonthGrid.tsx:57,64,90`, `CalendarToolbar.tsx:94`, and the `VehicleInfoStep.tsx:141-178` actions (pinned column).
-- [ ] 7.5 Staff Review step: hide the page footer on `review_confirm`, so the two sticky bars stop overlapping (`staff-visitor-registration.tsx:150`). Pass the host card's padding to the sticky bar (`ReviewConfirmStep.tsx:440`). Check in a browser at 375 and 700 px.
-- [ ] 7.6 `AppTopBar.tsx:158,186`: below `sm`, move the theme and refresh controls into the avatar/overflow menu, so the page title fits at 360px.
-- [ ] 7.7 Smaller items:
+- [x] 7.5 *(The staff footer (Cancel/Next) isn't rendered on `review_confirm`. ReviewConfirmStep takes a `stickyBarInsetClassName` that mirrors its card's padding: the visitor default is p-4/sm:p-6 and the staff one p-4/md:p-6. **Needs your browser check at 375 and 700 px.**)* Staff Review step: hide the page footer on `review_confirm`, so the two sticky bars stop overlapping (`staff-visitor-registration.tsx:150`). Pass the host card's padding to the sticky bar (`ReviewConfirmStep.tsx:440`). Check in a browser at 375 and 700 px.
+- [x] 7.6 *(New `TopBarOverflowMenu` (a "More options" button, below `sm` only) holds Refresh (with the same unsaved-changes confirm and a dot for a failing refresh) and Light/Dark/System. **The e2e tests `test_live_refresh`/`test_theme_mode` look for the Refresh and Theme buttons by name, so at phone widths they will need the menu.**)* `AppTopBar.tsx:158,186`: below `sm`, move the theme and refresh controls into the avatar/overflow menu, so the page title fits at 360px.
+- [x] 7.7 *(Past 3 options, `SegmentedToggle` becomes a select below `sm`: vehicle types are tenant-configured. The visitor wizard's StepSidebar shows from `lg` and its compact progress header covers phones and tablets. The audit rows stack below `md`, with the action first, then time · actor, then entity. The avatar tints are `--color-avatar-1…6`.)* Smaller items:
   - `ui/SegmentedToggle.tsx` wraps or falls back to a select past 3 options;
   - `ui/Modal.tsx:59` uses `90dvh`;
   - `min-h-screen` becomes `min-h-dvh` (`visitor-request.tsx:346,363,384`, `visitor-track.tsx:13`);

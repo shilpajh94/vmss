@@ -52,6 +52,10 @@ export interface ReviewableFormState {
 }
 
 interface ReviewConfirmStepProps {
+  // Negative margins and padding that pull the phone-sticky Back/Submit bar
+  // flush with the card around this step; they must mirror that card's own
+  // padding (the visitor card is p-4 sm:p-6, the staff one p-4 md:p-6).
+  stickyBarInsetClassName?: string
   formState: ReviewableFormState
   status: SubmissionStatus
   trackingId?: string
@@ -102,9 +106,9 @@ function SummarySection({ title, rows }: { title: string; rows: [string, ReactNo
       <h4 className="font-display text-base font-semibold text-text">{title}</h4>
       <dl className="grid grid-cols-1 gap-4 text-body sm:grid-cols-2">
         {rows.map(([label, value], index) => (
-          <div key={`${label}-${index}`} className="flex flex-col gap-1">
+          <div key={`${label}-${index}`} className="flex min-w-0 flex-col gap-1">
             <dt className="text-caption text-text-muted">{label}</dt>
-            <dd className="text-text">{value || '—'}</dd>
+            <dd className="min-w-0 break-words text-text">{value || '—'}</dd>
           </div>
         ))}
       </dl>
@@ -117,14 +121,14 @@ function FilePreviewCell({ fileName, previewUrl }: { fileName?: string; previewU
   if (!previewUrl) return fileName
   const kind = getFilePreviewKind(fileName)
   return (
-    <a href={previewUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2">
+    <a href={previewUrl} target="_blank" rel="noreferrer" className="flex min-w-0 items-center gap-2">
       {kind === 'image' && <img src={previewUrl} alt={fileName} className="size-10 shrink-0 rounded-lg border border-border object-cover" />}
       {kind === 'pdf' && (
         <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-danger/10 text-danger">
           <FileTextIcon className="size-5" />
         </span>
       )}
-      <span className="text-text underline">{fileName}</span>
+      <span className="min-w-0 break-all text-text underline">{fileName}</span>
     </a>
   )
 }
@@ -222,6 +226,7 @@ export function ReviewConfirmStep({
   onSubmit,
   onGoHome,
   homeLabel = 'Back to Home',
+  stickyBarInsetClassName = '-mx-4 -mb-4 px-4 sm:-mx-6 sm:-mb-6 sm:px-6',
 }: ReviewConfirmStepProps) {
   if (status === 'success') {
     return (
@@ -437,7 +442,9 @@ export function ReviewConfirmStep({
         />
       )}
 
-      <div className="sticky bottom-0 -mx-4 -mb-4 flex flex-wrap gap-3 rounded-b-2xl border-t border-border-subtle bg-surface px-4 py-3 sm:-mx-6 sm:-mb-6 sm:px-6 md:static md:m-0 md:border-0 md:p-0">
+      <div
+        className={`sticky bottom-0 flex flex-wrap gap-3 rounded-b-2xl border-t border-border-subtle bg-surface py-3 md:static md:m-0 md:border-0 md:p-0 ${stickyBarInsetClassName}`}
+      >
         <button
           type="button"
           onClick={onBack}

@@ -41,29 +41,39 @@ function formatTimestamp(iso: string): string {
 }
 
 export function ActivityTable({ entries, employeeNameById }: ActivityTableProps) {
-  // The empty state is rendered by the page's AsyncRegion.
+  // The empty state is rendered by the page's AsyncRegion. Below `md` each
+  // entry stacks (action, then time and actor) instead of a table that
+  // scrolled sideways on a phone.
   return (
-    <div className="flex w-full min-w-0 flex-1 flex-col overflow-x-auto rounded-xl border border-border bg-surface">
-      <div className="flex w-full min-w-[480px] items-center gap-3 border-b border-border bg-border-subtle px-4 py-3 md:min-w-0">
-        <p className="w-[120px] shrink-0 md:w-[160px] font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[0]}</p>
-        <p className="w-[150px] shrink-0 md:w-[200px] font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[1]}</p>
+    <div className="flex w-full min-w-0 flex-1 flex-col rounded-xl border border-border bg-surface">
+      <div className="hidden w-full items-center gap-3 border-b border-border bg-border-subtle px-4 py-3 md:flex">
+        <p className="w-[160px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[0]}</p>
+        <p className="w-[200px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[1]}</p>
         <p className="min-w-0 flex-1 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[2]}</p>
-        <p className="hidden w-[140px] shrink-0 font-body text-xs font-bold text-text-muted md:block">{COLUMN_LABELS[3]}</p>
+        <p className="w-[140px] shrink-0 font-body text-xs font-bold text-text-muted">{COLUMN_LABELS[3]}</p>
       </div>
 
-      {entries.map((entry, index) => (
-        <div
-          key={entry.id}
-          className={`flex w-full min-w-[480px] items-center gap-3 px-4 py-3 md:min-w-0 ${index < entries.length - 1 ? 'border-b border-border' : ''}`}
-        >
-          <p className="w-[120px] shrink-0 md:w-[160px] font-body text-[13px] text-text">{formatTimestamp(entry.createdAt)}</p>
-          <p className="w-[150px] shrink-0 md:w-[200px] font-body text-[13px] font-semibold text-text">{humanizeAction(entry.action)}</p>
-          <p className="min-w-0 flex-1 truncate font-body text-[13px] text-text-muted">
-            {entry.actorUserId ? (employeeNameById[entry.actorUserId] ?? 'Unknown') : 'System'}
-          </p>
-          <p className="hidden w-[140px] shrink-0 font-body text-[13px] text-text md:block">{entry.entityType}</p>
-        </div>
-      ))}
+      {entries.map((entry, index) => {
+        const actor = entry.actorUserId ? (employeeNameById[entry.actorUserId] ?? 'Unknown') : 'System'
+        return (
+          <div
+            key={entry.id}
+            className={`flex w-full flex-col gap-0.5 px-4 py-3 md:flex-row md:items-center md:gap-3 ${index < entries.length - 1 ? 'border-b border-border' : ''}`}
+          >
+            <p className="order-2 font-body text-xs text-text-muted md:order-none md:w-[160px] md:shrink-0 md:text-[13px] md:text-text">
+              {formatTimestamp(entry.createdAt)}
+              <span className="md:hidden"> · {actor}</span>
+            </p>
+            <p className="order-1 font-body text-[13px] font-semibold break-words text-text md:order-none md:w-[200px] md:shrink-0">
+              {humanizeAction(entry.action)}
+            </p>
+            <p className="hidden min-w-0 flex-1 truncate font-body text-[13px] text-text-muted md:block">{actor}</p>
+            <p className="order-3 font-body text-xs text-text-muted md:order-none md:w-[140px] md:shrink-0 md:text-[13px] md:text-text">
+              {entry.entityType}
+            </p>
+          </div>
+        )
+      })}
     </div>
   )
 }

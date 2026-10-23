@@ -47,6 +47,14 @@
   --color-knob: #ffffff;
   /* Dark text on fixed pastel fills (board avatar tints), both themes. */
   --color-ink: #0f172a;
+  /* The board avatars' pastel fills, picked per tracking ID; fixed in both
+     themes since their initials are `ink`. */
+  --color-avatar-1: #dbeafe;
+  --color-avatar-2: #ffe4e6;
+  --color-avatar-3: #d1fae5;
+  --color-avatar-4: #fef3c7;
+  --color-avatar-5: #f3e8ff;
+  --color-avatar-6: #fee2e2;
 
   /* Dashboard trend series (dataviz reference palette slots 1-3, validated
      on the white surface; see components/dashboard/chart-theme.ts). */

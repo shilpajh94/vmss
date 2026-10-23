@@ -13,9 +13,38 @@ interface SegmentedToggleProps {
    * 'divided': full-width equal segments separated by a hairline divider (e.g. Preferred Contact Method).
    */
   variant?: 'inline' | 'pill' | 'divided'
+  // Names the select that stands in for the segments on a phone.
+  ariaLabel?: string
 }
 
-export function SegmentedToggle({ options, value, onChange, variant = 'inline' }: SegmentedToggleProps) {
+// More segments than this don't fit side by side on a phone.
+const MAX_PHONE_SEGMENTS = 3
+
+export function SegmentedToggle(props: SegmentedToggleProps) {
+  if (props.options.length <= MAX_PHONE_SEGMENTS) return <Segments {...props} />
+  // Past three options: a select below `sm`, the segments from `sm` up.
+  return (
+    <>
+      <select
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+        aria-label={props.ariaLabel}
+        className="min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-base text-text focus:outline-none focus:ring-2 focus:ring-secondary-accent sm:hidden"
+      >
+        {props.options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <div className="hidden sm:contents">
+        <Segments {...props} />
+      </div>
+    </>
+  )
+}
+
+function Segments({ options, value, onChange, variant = 'inline' }: SegmentedToggleProps) {
   if (variant === 'pill') {
     const activeIndex = options.findIndex((option) => option.value === value)
     return (

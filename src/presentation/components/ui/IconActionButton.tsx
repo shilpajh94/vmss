@@ -9,8 +9,9 @@ interface IconActionButtonProps {
   onClick: () => void
 }
 
-// The tooltip is CSS-only and also shows on keyboard focus, which a plain
-// `title` attribute would not. It is anchored to the button's left edge rather
+// Below `lg` (touch, where there is no hover) the label is shown beside the
+// icon. From `lg` it is a tooltip, CSS-only, that also shows on keyboard
+// focus, which a plain `title` attribute would not. It is anchored to the button's left edge rather
 // than centred so the first icon's tooltip isn't clipped by the column's scroll area.
 export function IconActionButton({ icon: Icon, label, accessibleName, onClick }: IconActionButtonProps) {
   return (
@@ -18,12 +19,15 @@ export function IconActionButton({ icon: Icon, label, accessibleName, onClick }:
       type="button"
       aria-label={accessibleName}
       onClick={onClick}
-      className="group relative flex size-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-secondary-accent/8 hover:text-secondary-accent focus-visible:ring-2 focus-visible:ring-secondary-accent/40 focus-visible:outline-none active:bg-secondary-accent/15 max-lg:size-10"
+      className="group relative flex size-8 shrink-0 items-center justify-center gap-1.5 rounded-md text-text-muted transition-colors hover:bg-secondary-accent/8 hover:text-secondary-accent focus-visible:ring-2 focus-visible:ring-secondary-accent/40 focus-visible:outline-none active:bg-secondary-accent/15 max-lg:h-10 max-lg:w-auto max-lg:px-2"
     >
-      <Icon className="size-4" />
+      <Icon className="size-4 shrink-0" />
+      <span aria-hidden className="font-body text-[11px] font-medium lg:hidden">
+        {label}
+      </span>
       <span
         aria-hidden
-        className="pointer-events-none absolute bottom-full left-0 z-20 mb-1 rounded-md bg-text px-2 py-1 font-body text-[11px] font-medium whitespace-nowrap text-surface opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+        className="pointer-events-none absolute max-lg:hidden bottom-full left-0 z-20 mb-1 rounded-md bg-text px-2 py-1 font-body text-[11px] font-medium whitespace-nowrap text-surface opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
       >
         {label}
       </span>

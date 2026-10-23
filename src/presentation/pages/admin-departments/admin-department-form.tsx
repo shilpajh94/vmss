@@ -1,4 +1,3 @@
-import { ChevronLeftIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
@@ -8,6 +7,7 @@ import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminDepartmentForm } from './hooks/use-admin-department-form'
 import { ErrorState } from '../../components/ui/ErrorState'
+import { BackButton } from '../../components/BackButton'
 
 export function AdminDepartmentFormPage() {
   const {
@@ -34,14 +34,7 @@ export function AdminDepartmentFormPage() {
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
       <div className="flex items-center gap-4">
-        <button
-          type="button"
-          onClick={cancel}
-          aria-label="Back"
-          className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-        >
-          <ChevronLeftIcon className="size-4" />
-        </button>
+        <BackButton onClick={cancel} />
         <div className="flex flex-col gap-0.5">
           <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Department' : 'Add Department'}</h1>
           <p className="font-body text-sm text-text-muted">
@@ -111,7 +104,7 @@ export function AdminDepartmentFormPage() {
                 rows={3}
                 labelClassName={fieldLabelClassName}
               />
-              <div className="flex items-center justify-between py-2">
+              <div className="flex flex-col items-start gap-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-col gap-1">
                   <p className="font-body text-sm font-bold uppercase text-text">Department Status</p>
                   <p className="font-body text-[13px] text-text-muted">Set whether this department is active and accessible across workspace branches</p>

@@ -1,4 +1,4 @@
-import { ChevronLeftIcon, PlusIcon } from '../../components/icons'
+import { PlusIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
@@ -10,6 +10,7 @@ import { FloorModal } from './Components/FloorModal'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { useAdminBuildingForm } from './hooks/use-admin-building-form'
 import { ErrorState } from '../../components/ui/ErrorState'
+import { BackButton } from '../../components/BackButton'
 
 export function AdminBuildingFormPage() {
   const {
@@ -50,14 +51,7 @@ export function AdminBuildingFormPage() {
     <>
       <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
         <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={cancel}
-            aria-label="Back"
-            className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-          >
-            <ChevronLeftIcon className="size-4" />
-          </button>
+          <BackButton onClick={cancel} />
           <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Building' : 'Add Building'}</h1>
         </div>
 
@@ -117,7 +111,7 @@ export function AdminBuildingFormPage() {
                   />
                 </div>
               </div>
-              <div className="flex items-center justify-between py-2">
+              <div className="flex flex-col items-start gap-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-col gap-1">
                   <p className="font-body text-sm font-semibold text-text-muted">Building Status</p>
                   <p className="font-body text-xs text-text-faint">Set active state to allow access allocation and visitor intake checks</p>

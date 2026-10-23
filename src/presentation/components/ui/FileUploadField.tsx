@@ -81,8 +81,9 @@ export function FileUploadField({
             <FileTextIcon className="size-6" />
           </span>
         )}
-        <span className="flex flex-col gap-0.5">
-          <span className="text-body font-semibold text-text">
+        {/* A long file name wraps instead of pushing the card wider. */}
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-body font-semibold break-all text-text">
             {uploading ? 'Uploading…' : fileName ? fileName : 'Click to upload or drag & drop'}
           </span>
           {helperText && <span className="text-caption text-text-muted">{helperText}</span>}

@@ -17,12 +17,12 @@ export function PortalFooter() {
         </div>
         <div className="flex flex-col items-start gap-3 font-body text-[13px] text-text-muted sm:flex-row sm:flex-wrap sm:gap-6 lg:whitespace-nowrap">
           {LINKS.map((link) => (
-            <a key={link.label} href={link.href} className="hover:text-text">
+            <a key={link.label} href={link.href} className="inline-flex min-h-10 items-center hover:text-text lg:min-h-0">
               {link.label}
             </a>
           ))}
           {SUPPORT_EMAIL && (
-            <a href={`mailto:${SUPPORT_EMAIL}`} className="hover:text-text">
+            <a href={`mailto:${SUPPORT_EMAIL}`} className="inline-flex min-h-10 items-center break-all hover:text-text lg:min-h-0">
               Support Contact: {SUPPORT_EMAIL}
             </a>
           )}

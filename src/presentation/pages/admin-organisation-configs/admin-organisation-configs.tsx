@@ -47,7 +47,7 @@ export function AdminOrganisationConfigsPage() {
               />
             </div>
 
-            <div className="flex w-full max-w-[536px] items-start justify-end gap-3 pt-5">
+            <div className="flex w-full max-w-[536px] items-start justify-end gap-3 pt-5 lg:max-w-none">
               <button
                 type="button"
                 onClick={cancel}

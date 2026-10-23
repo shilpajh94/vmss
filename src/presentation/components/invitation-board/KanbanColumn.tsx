@@ -185,7 +185,7 @@ export function KanbanColumn({
               <button
                 type="button"
                 onClick={onLoadMore}
-                className="min-h-9 rounded-lg border border-border bg-surface px-3 font-body text-xs font-semibold text-text"
+                className="min-h-10 rounded-lg border border-border bg-surface px-3 font-body text-xs font-semibold text-text lg:min-h-9"
               >
                 Retry
               </button>

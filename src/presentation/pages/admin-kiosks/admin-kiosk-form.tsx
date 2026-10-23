@@ -1,5 +1,4 @@
 import type { FormEvent } from 'react'
-import { ChevronLeftIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { TextField } from '../../components/ui/TextField'
@@ -8,6 +7,7 @@ import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminKioskForm } from './hooks/use-admin-kiosk-form'
 import { ErrorState } from '../../components/ui/ErrorState'
+import { BackButton } from '../../components/BackButton'
 
 export function AdminKioskFormPage() {
   const { isEditMode, isLoading, errorMessage, retry, values, errors, isSaving, updateField, submit, cancel } = useAdminKioskForm()
@@ -24,14 +24,7 @@ export function AdminKioskFormPage() {
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
       <div className="flex items-center gap-4">
-        <button
-          type="button"
-          onClick={cancel}
-          aria-label="Back"
-          className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-        >
-          <ChevronLeftIcon className="size-4" />
-        </button>
+        <BackButton onClick={cancel} />
         <div className="flex flex-col gap-0.5">
           <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Kiosk' : 'Add Kiosk'}</h1>
           <p className="font-body text-sm text-text-muted">{isEditMode ? "Update this kiosk's details" : 'Register a new check-in kiosk'}</p>

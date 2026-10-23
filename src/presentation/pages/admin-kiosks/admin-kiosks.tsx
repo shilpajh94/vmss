@@ -118,7 +118,7 @@ export function AdminKiosksPage() {
               <div className="w-full sm:w-48">
                 <SelectField label="Sort by" value={sort} onChange={setSort} options={SORT_OPTIONS} />
               </div>
-              <div className="w-48 pb-2">
+              <div className="w-full pb-2 sm:w-48">
                 <ToggleSwitch label="Show hidden" checked={showHidden} onChange={setShowHidden} />
               </div>
               {isFiltering && (

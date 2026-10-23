@@ -1,4 +1,3 @@
-import { ChevronLeftIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
@@ -9,6 +8,7 @@ import { usePageHeader } from '../../context/page-header-context'
 import { BadgeColorField } from './Components/BadgeColorField'
 import { useAdminVisitorCategoryForm } from './hooks/use-admin-visitor-category-form'
 import { ErrorState } from '../../components/ui/ErrorState'
+import { BackButton } from '../../components/BackButton'
 
 const NDA_REQUIREMENT_OPTIONS = [
   { value: 'digital', label: 'Yes (Digital)' },
@@ -35,14 +35,7 @@ export function AdminVisitorCategoryFormPage() {
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
         <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={cancel}
-            aria-label="Back"
-            className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-          >
-            <ChevronLeftIcon className="size-4" />
-          </button>
+          <BackButton onClick={cancel} />
           <div className="flex flex-col gap-0.5">
             <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Category' : 'Add Category'}</h1>
             <p className="font-body text-sm text-text-muted">

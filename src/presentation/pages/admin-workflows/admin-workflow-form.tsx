@@ -1,10 +1,11 @@
-import { ChevronLeftIcon, PlusIcon, TrashIcon } from '../../components/icons'
+import { PlusIcon, TrashIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminWorkflowForm } from './hooks/use-admin-workflow-form'
 import { ErrorState } from '../../components/ui/ErrorState'
+import { BackButton } from '../../components/BackButton'
 
 export function AdminWorkflowFormPage() {
   const {
@@ -35,14 +36,7 @@ export function AdminWorkflowFormPage() {
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
         <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={cancel}
-            aria-label="Back"
-            className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-          >
-            <ChevronLeftIcon className="size-4" />
-          </button>
+          <BackButton onClick={cancel} />
           <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Workflow' : 'Add Workflow'}</h1>
         </div>
 
@@ -96,7 +90,7 @@ export function AdminWorkflowFormPage() {
                       onClick={() => removeLevel(index)}
                       disabled={index === 0 || levels.length <= 1}
                       aria-label={`Remove level ${index + 1}`}
-                      className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-danger/15 text-danger disabled:opacity-40"
+                      className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-danger/15 text-danger disabled:opacity-40 lg:size-9"
                     >
                       <TrashIcon className="size-3.5" />
                     </button>

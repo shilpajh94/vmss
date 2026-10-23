@@ -70,7 +70,7 @@ export function StatusPanel({ response }: StatusPanelProps) {
               <div key={stage.value} className="flex flex-1 items-center last:flex-none">
                 <div className="flex flex-col items-center gap-1">
                   <span className={`size-3 rounded-full ${dotClass}`} />
-                  <span className="whitespace-nowrap text-caption text-text-muted">{stage.label}</span>
+                  <span className="text-center text-caption whitespace-nowrap text-text-muted max-[360px]:text-[10px]">{stage.label}</span>
                 </div>
                 {index < TIMELINE_STAGES.length - 1 && <span className="mx-1 h-px flex-1 bg-border" />}
               </div>

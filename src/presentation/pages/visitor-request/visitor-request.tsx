@@ -347,7 +347,7 @@ export function VisitorRequestPage() {
 
   if (wizardInitial) {
     return (
-      <div className="flex min-h-screen w-full flex-col bg-surface-muted">
+      <div className="flex min-h-dvh w-full flex-col bg-surface-muted">
         <PortalHeader backTo="/" />
         <VisitorRequestWizard initial={wizardInitial} />
         <PortalFooter />
@@ -364,7 +364,7 @@ export function VisitorRequestPage() {
 
   if (hasHistoryToShow || hasRetryableError) {
     return (
-      <div className="flex min-h-screen w-full flex-col bg-surface-muted">
+      <div className="flex min-h-dvh w-full flex-col bg-surface-muted">
         <PortalHeader />
         <OtpScreenLayout onBack={() => navigate('/')}>
           <ReturnVisitHistoryScreen
@@ -385,7 +385,7 @@ export function VisitorRequestPage() {
   const isLookingUpHistory = portal.status === 'loading'
 
   return (
-    <div className="flex min-h-screen w-full flex-col bg-surface-muted">
+    <div className="flex min-h-dvh w-full flex-col bg-surface-muted">
       <PortalHeader />
       <OtpScreenLayout onBack={() => navigate('/')}>
         {isLookingUpHistory ? (

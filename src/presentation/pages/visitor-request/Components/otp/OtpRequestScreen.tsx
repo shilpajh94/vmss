@@ -52,7 +52,7 @@ export function OtpRequestScreen({
           value={contact}
           onChange={(event) => onContactChange(event.target.value)}
           placeholder="Enter Mobile Number / Email ID"
-          className={`rounded-lg border px-3 py-2 text-body text-text placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent ${
+          className={`min-h-10 rounded-lg border px-3 py-2 text-body text-text max-sm:text-base placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent ${
             contactError ? 'border-danger' : 'border-border'
           }`}
         />

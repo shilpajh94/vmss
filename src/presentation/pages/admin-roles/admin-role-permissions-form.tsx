@@ -32,7 +32,7 @@ export function AdminRolePermissionsFormPage() {
             {permissions.map((permission) => (
               <div key={permission.code} className="flex flex-col gap-0.5 border-b border-border-subtle pb-3 last:border-0 last:pb-0">
                 <Checkbox checked={selectedCodes.has(permission.code)} onChange={(checked) => togglePermission(permission.code, checked)}>
-                  <span className="font-body text-sm font-semibold text-text">{permission.code}</span>
+                  <span className="font-body text-sm font-semibold break-all text-text">{permission.code}</span>
                 </Checkbox>
                 <p className="pl-6 font-body text-xs text-text-muted">{permission.description}</p>
               </div>

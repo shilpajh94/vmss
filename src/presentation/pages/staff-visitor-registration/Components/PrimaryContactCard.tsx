@@ -103,8 +103,8 @@ export function PrimaryContactCard({
         </div>
 
         {visitorInfoFields.idProofActive && (
-          <div className="flex items-end gap-3">
-            <div className="flex-1">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="min-w-0 flex-1">
               <SelectField
                 label="ID Proof Type"
                 placeholder="Select ID type"

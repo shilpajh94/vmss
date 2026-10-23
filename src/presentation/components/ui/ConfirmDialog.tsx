@@ -53,7 +53,7 @@ export function ConfirmDialog({
           type="button"
           disabled={isBusy}
           onClick={onCancel}
-          className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text disabled:opacity-50"
+          className="rounded-full border border-border bg-surface px-4 py-2 font-body text-[13px] font-semibold text-text max-lg:min-h-10 disabled:opacity-50"
         >
           {cancelLabel}
         </button>
@@ -61,7 +61,7 @@ export function ConfirmDialog({
           pending={isBusy}
           pendingLabel={busyLabel}
           onClick={onConfirm}
-          className={`rounded-full ${TONE_CLASSES[tone]} px-4 py-2 font-body text-[13px] font-semibold disabled:opacity-50`}
+          className={`rounded-full ${TONE_CLASSES[tone]} px-4 py-2 font-body text-[13px] font-semibold max-lg:min-h-10 disabled:opacity-50`}
         >
           {confirmLabel}
         </PendingButton>

@@ -19,10 +19,12 @@ export function RegistrationStepper({ steps, currentStep, onStepSelect }: Regist
                 type="button"
                 onClick={() => onStepSelect(index)}
                 disabled={!isComplete}
-                className={`flex shrink-0 items-center gap-2 ${isComplete ? 'cursor-pointer' : 'cursor-default'}`}
+                title={label}
+                className={`flex min-w-0 max-w-full items-center gap-2 ${isComplete ? 'cursor-pointer' : 'cursor-default'}`}
               >
                 <StepMarker stepNumber={index + 1} isReached={index <= currentStep} isComplete={isComplete} textClassName="text-[13px] font-bold" />
-                <span className={`text-[13px] whitespace-nowrap ${index === currentStep ? 'font-bold text-text' : 'font-semibold text-text-muted'}`}>
+                {/* An admin-named step can be long; it truncates on a phone. */}
+                <span className={`min-w-0 truncate text-[13px] ${index === currentStep ? 'font-bold text-text' : 'font-semibold text-text-muted'}`}>
                   {label}
                 </span>
               </button>

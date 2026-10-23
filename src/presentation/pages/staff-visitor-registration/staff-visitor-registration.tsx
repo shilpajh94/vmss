@@ -157,27 +157,31 @@ export function StaffVisitorRegistrationPage() {
             <RegistrationStepper steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
           </>
         }
+        // The Review step has its own sticky Back/Submit bar; showing this
+        // one too stacked two sticky bars on a phone.
         footer={
-          <div className="sticky bottom-0 -mx-4 flex flex-none flex-wrap items-center justify-between gap-3 border-t border-border bg-surface px-4 pt-4 pb-1 lg:static lg:mx-0 lg:px-0 lg:pb-0">
-            <button
-              type="button"
-              onClick={cancelRegistration}
-              title="Cancel this registration"
-              className="cursor-pointer rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary transition-colors hover:bg-primary/10"
-            >
-              Cancel
-            </button>
-            {!isFormConfigLoading && !formConfigError && activeStep?.key !== 'review_confirm' && (
+          activeStep?.key === 'review_confirm' ? undefined : (
+            <div className="sticky bottom-0 -mx-4 flex flex-none flex-wrap items-center justify-between gap-3 border-t border-border bg-surface px-4 pt-4 pb-1 lg:static lg:mx-0 lg:px-0 lg:pb-0">
               <button
                 type="button"
-                onClick={goNext}
-                title="Continue to the next step"
-                className="cursor-pointer rounded-lg bg-primary px-7 py-3 text-body font-semibold text-on-primary transition-colors hover:opacity-90"
+                onClick={cancelRegistration}
+                title="Cancel this registration"
+                className="cursor-pointer rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary transition-colors hover:bg-primary/10"
               >
-                {nextStepLabel ? `Next: ${nextStepLabel} →` : 'Next →'}
+                Cancel
               </button>
-            )}
-          </div>
+              {!isFormConfigLoading && !formConfigError && activeStep?.key !== 'review_confirm' && (
+                <button
+                  type="button"
+                  onClick={goNext}
+                  title="Continue to the next step"
+                  className="cursor-pointer rounded-lg bg-primary px-7 py-3 text-body font-semibold text-on-primary transition-colors hover:opacity-90"
+                >
+                  {nextStepLabel ? `Next: ${nextStepLabel} →` : 'Next →'}
+                </button>
+              )}
+            </div>
+          )
         }
       >
         <div className="flex flex-col overflow-x-clip rounded-2xl border border-border bg-surface p-4 md:p-6">
@@ -264,6 +268,7 @@ export function StaffVisitorRegistrationPage() {
             )}
             {!isFormConfigLoading && !formConfigError && activeStep?.key === 'review_confirm' && (
               <ReviewConfirmStep
+                stickyBarInsetClassName="-mx-4 -mb-4 px-4 md:-mx-6 md:-mb-6 md:px-6"
                 formState={formState}
                 status={submissionStatus}
                 trackingId={trackingId}

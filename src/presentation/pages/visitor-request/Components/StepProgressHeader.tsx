@@ -18,7 +18,7 @@ export function StepProgressHeader({ steps, currentStep, onStepSelect }: StepPro
   const progressPercent = total > 0 ? Math.round(((currentStep + 1) / total) * 100) : 0
 
   return (
-    <div className="flex w-full flex-col gap-3 rounded-2xl border border-border bg-surface p-4 md:hidden">
+    <div className="flex w-full flex-col gap-3 rounded-2xl border border-border bg-surface p-4 lg:hidden">
       <button
         type="button"
         onClick={() => setIsListOpen((open) => !open)}

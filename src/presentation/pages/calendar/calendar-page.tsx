@@ -78,7 +78,7 @@ export function CalendarPage({ boardBasePath }: CalendarPageProps) {
   return (
     <div className="flex w-full min-w-0 flex-col gap-4 md:gap-6">
       <header className="flex flex-col gap-1">
-        <h1 className="font-display text-2xl font-semibold text-text">Calendar</h1>
+        <h1 className="font-display text-xl font-semibold text-text md:text-2xl">Calendar</h1>
         <p className="font-body text-sm text-text-muted">{scopeSubtitle(feed, state.branchId, branchOptions)}</p>
       </header>
 

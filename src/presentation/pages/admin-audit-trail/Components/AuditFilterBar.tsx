@@ -35,7 +35,7 @@ export function AuditFilterBar({
           pendingLabel="Preparing…"
           disabled={downloadingFormat !== undefined}
           onClick={() => onDownload('csv')}
-          className="flex-1 rounded-lg border border-border bg-surface px-3.5 py-2 font-body sm:flex-none text-[13px] font-semibold text-text enabled:hover:bg-border-subtle disabled:opacity-60"
+          className="flex-1 rounded-lg border border-border bg-surface px-3.5 py-2 font-body sm:flex-none text-[13px] font-semibold text-text enabled:hover:bg-border-subtle max-lg:min-h-10 disabled:opacity-60"
         >
           Download CSV
         </PendingButton>
@@ -44,7 +44,7 @@ export function AuditFilterBar({
           pendingLabel="Preparing…"
           disabled={downloadingFormat !== undefined}
           onClick={() => onDownload('pdf')}
-          className="flex-1 rounded-lg border border-border bg-surface px-3.5 py-2 font-body sm:flex-none text-[13px] font-semibold text-text enabled:hover:bg-border-subtle disabled:opacity-60"
+          className="flex-1 rounded-lg border border-border bg-surface px-3.5 py-2 font-body sm:flex-none text-[13px] font-semibold text-text enabled:hover:bg-border-subtle max-lg:min-h-10 disabled:opacity-60"
         >
           Download PDF
         </PendingButton>

@@ -120,7 +120,12 @@ export function GroupCard({ group, fieldCount, siblingFields, onSaveProperties, 
           </span>
         </div>
         {!group.isLocked && (
-          <button type="button" onClick={onDelete} aria-label="Delete group" className="shrink-0 text-danger">
+          <button
+            type="button"
+            onClick={onDelete}
+            aria-label="Delete group"
+            className="flex size-10 shrink-0 items-center justify-center rounded-lg text-danger lg:size-8"
+          >
             <TrashIcon className="size-4" />
           </button>
         )}

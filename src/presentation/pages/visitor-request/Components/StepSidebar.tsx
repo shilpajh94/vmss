@@ -8,8 +8,10 @@ interface StepSidebarProps {
 }
 
 export function StepSidebar({ steps, currentStep, onStepSelect }: StepSidebarProps) {
+  // From `lg`: on a tablet the 220px rail left the form too narrow; the
+  // compact progress header covers that width instead.
   return (
-    <nav className="hidden w-[220px] shrink-0 flex-col md:flex">
+    <nav className="hidden w-[220px] shrink-0 flex-col lg:flex">
       {steps.map((label, index) => {
         const isActive = index === currentStep
         const isComplete = index < currentStep
