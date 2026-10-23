@@ -2435,6 +2435,7 @@ async def _resolve_edit_changes(
             "expected_duration",
             "department_to_visit",
             "additional_notes",
+            "checked_out_at",
         },
     )
     if payload.purpose_id is not None:
@@ -2479,6 +2480,20 @@ async def _resolve_edit_changes(
         changes["poc_user_id"] = None
         changes["poc_name"] = poc_role.name
     return changes
+
+
+def _validate_checked_out_at(invitation: Invitation, checked_out_at: datetime | None) -> None:
+    if checked_out_at is None:
+        return
+    if checked_out_at > datetime.now(UTC):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="checkedOutAt cannot be in the future"
+        )
+    if invitation.checked_in_at is not None and checked_out_at < invitation.checked_in_at:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="checkedOutAt cannot be earlier than the check-in time",
+        )
 
 
 async def _poc_eligible(tenant_db: AsyncSession, invitation: Invitation) -> bool:
@@ -2561,8 +2576,18 @@ async def edit_invitation(
     # `archived`, back into approval (auto-checkout-and-archive-no-shows D7).
     # Gated on exactly `archived` so a concurrent reschedule can't be undone.
     archived = invitation.status == "archived"
+    # A closed visit only accepts a corrected check-out time; the rest of the
+    # form is ignored, same as for a checked-in visit above.
+    checked_out = invitation.status == "checked_out"
+    if payload.checked_out_at is not None and not checked_out:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Check-out time can only be edited once the visit is checked out",
+        )
     allowed_statuses: tuple[str, ...]
-    if checked_in:
+    if checked_out:
+        allowed_statuses = ("checked_out",)
+    elif checked_in:
         allowed_statuses = (*_RESCHEDULABLE_STATUSES, "checked_in")
     elif archived:
         allowed_statuses = ("archived",)
@@ -2570,7 +2595,18 @@ async def edit_invitation(
         allowed_statuses = _RESCHEDULABLE_STATUSES
     if invitation.status not in allowed_statuses:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
-    if not checked_in and (payload.poc_user_id is not None or payload.poc_role_id is not None):
+    if checked_out:
+        if payload.checked_out_at is not None and not user.has_permission(
+            "invitations:checkout", branch_id=invitation.branch_id
+        ):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="Caller lacks invitations:checkout required to edit the check-out time",
+            )
+        _validate_checked_out_at(invitation, payload.checked_out_at)
+    elif not checked_in and (
+        payload.poc_user_id is not None or payload.poc_role_id is not None
+    ):
         if not user.has_permission("invitations:approve", branch_id=invitation.branch_id):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
@@ -2588,6 +2624,11 @@ async def edit_invitation(
     changes = await _resolve_edit_changes(tenant_db, payload, invitation.branch_id)
     if checked_in:
         changes = {k: v for k, v in changes.items() if k in _LOCATION_EDIT_FIELDS}
+    elif checked_out:
+        changes = {k: v for k, v in changes.items() if k == "checked_out_at"}
+        if changes:
+            # A person set this time, so it's no longer the sweep's expiry stamp.
+            changes.update(checked_out_by_user_id=user.id, checked_out_automatically=False)
     if not changes:
         return invitation
     # Only an actual date change realigns expiry: the edit modal resubmits
@@ -2610,6 +2651,9 @@ async def edit_invitation(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation can no longer be edited")
     activated_step = await _restart_approval(tenant_db, updated) if leaves_archive else None
     await tenant_db.commit()
+    if checked_out:
+        # A time correction on a closed visit isn't news to the host/visitor.
+        return updated
     tasks.send_edit_notification.delay(
         request_id=_current_request_id(),
         tenant_schema=tenant.schema_name,

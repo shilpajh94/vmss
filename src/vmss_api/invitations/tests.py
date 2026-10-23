@@ -8914,6 +8914,73 @@ async def test_edit_invitation_success(
     assert email_calls[0]["invitation_id"] == str(invitation.id)
 
 
+async def test_edit_invitation_updates_checked_out_at(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    checked_in_at = datetime.now(UTC) - timedelta(hours=3)
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_out",
+        checked_in_at=checked_in_at,
+        checked_out_at=datetime.now(UTC) - timedelta(hours=1),
+        checked_out_automatically=True,
+    )
+    db_session.add(invitation)
+    await db_session.commit()
+    email_calls: list[dict] = []
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: email_calls.append(kw))
+
+    new_time = datetime.now(UTC) - timedelta(hours=2)
+    token = await _login(client, user.email)
+    response = await client.patch(
+        f"/api/v1/invitations/{invitation.id}/edit",
+        json={"checkedOutAt": new_time.isoformat(), "additionalNotes": "ignored"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    await db_session.refresh(invitation)
+    assert invitation.checked_out_at == new_time
+    assert invitation.checked_out_automatically is False
+    assert invitation.checked_out_by_user_id == user.id
+    assert invitation.additional_notes != "ignored"
+    assert email_calls == []
+
+
+async def test_edit_invitation_rejects_invalid_checked_out_at(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    invitation = _build_invitation(
+        db_session,
+        branch.id,
+        status="checked_out",
+        checked_in_at=datetime.now(UTC) - timedelta(hours=3),
+        checked_out_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    approved = _build_invitation(db_session, branch.id, status="approved")
+    db_session.add_all([invitation, approved])
+    await db_session.commit()
+    invitation_id, approved_id = invitation.id, approved.id
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    for when in (datetime.now(UTC) + timedelta(hours=1), datetime.now(UTC) - timedelta(hours=5)):
+        response = await client.patch(
+            f"/api/v1/invitations/{invitation_id}/edit",
+            json={"checkedOutAt": when.isoformat()},
+            headers=headers,
+        )
+        assert response.status_code == 422, response.text
+
+    response = await client.patch(
+        f"/api/v1/invitations/{approved_id}/edit",
+        json={"checkedOutAt": datetime.now(UTC).isoformat()},
+        headers=headers,
+    )
+    assert response.status_code == 409, response.text
+
+
 async def test_edit_invitation_resolves_catalog_ids(
     client: AsyncClient,
     user: User,

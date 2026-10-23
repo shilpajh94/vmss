@@ -32,6 +32,7 @@ class WhatsAppTemplate(StrEnum):
     registration_denied = "registration_denied"
     visit_rescheduled = "visit_rescheduled"
     visit_details_changed = "visit_details_changed"
+    approval_reverted = "approval_reverted"
 
 
 class Fast2WhatsAppSender:

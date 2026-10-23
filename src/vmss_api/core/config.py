@@ -221,6 +221,7 @@ class Settings(BaseSettings):
     fast2sms_template_registration_denied: str | None = None
     fast2sms_template_visit_rescheduled: str | None = None
     fast2sms_template_visit_details_changed: str | None = None
+    fast2sms_template_approval_reverted: str | None = None
     # WhatsApp: the sending number's id, Graph-style API version, template
     # language, and the approved template *names* (not ids).
     fast2sms_whatsapp_phone_number_id: str | None = None
@@ -232,6 +233,7 @@ class Settings(BaseSettings):
     fast2sms_whatsapp_template_registration_denied: str | None = None
     fast2sms_whatsapp_template_visit_rescheduled: str | None = None
     fast2sms_whatsapp_template_visit_details_changed: str | None = None
+    fast2sms_whatsapp_template_approval_reverted: str | None = None
 
     # Public check-in-by-code abuse limits (add-sms-numeric-checkin-code): a
     # 8-digit code is guessable, so failed lookups per IP are capped.
