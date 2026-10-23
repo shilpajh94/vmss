@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { useNavigate } from 'react-router'
 import { CalendarIcon, HomeIcon, PlusIcon, UsersIcon } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
@@ -6,6 +7,7 @@ import { PAGE_PERMISSIONS } from '../route-permissions'
 import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
+import { useScrollActivity } from '../hooks/use-scroll-activity'
 
 export type DashboardSidebarActiveItem = 'dashboard' | 'all-visitors' | 'calendar' | 'register-visitor'
 
@@ -54,6 +56,8 @@ export function staffNavLabelFor(pathname: string): string {
 
 export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
   const navigate = useNavigate()
+  const navRef = useRef<HTMLElement>(null)
+  useScrollActivity(navRef)
   const { closeNav } = useNavDrawer()
   const { can } = usePermissions()
 
@@ -74,7 +78,7 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
         }}
       />
 
-      <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+      <nav ref={navRef} className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
         {NAV_ITEMS.filter(({ key }) => {
           const requires = NAV_ITEM_PERMISSIONS[key]
           return !requires || can(requires)

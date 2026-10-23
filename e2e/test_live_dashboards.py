@@ -48,9 +48,10 @@ def test_every_dashboard_control_has_a_destination(as_role, role: str, path: str
             toggle.click()
             expect(toggle).to_have_attribute("aria-pressed", "true")
 
-    # Every other button on the page is the error state's "Try again", which
-    # only exists when loading failed.
-    plain_buttons = main.locator("button:not([aria-pressed])")
+    # Every other button on the page, bar dropdown triggers (the branch
+    # picker), is the error state's "Try again", which only exists when
+    # loading failed.
+    plain_buttons = main.locator("button:not([aria-pressed]):not([role=combobox])")
     expect(plain_buttons).to_have_count(0)
 
 
@@ -70,7 +71,7 @@ def test_kpi_tile_opens_the_filtered_board(
     page.locator("main").get_by_role("link", name=re.compile(rf"^{tile}:")).click()
     expect(page).to_have_url(re.compile(rf"{board}\?status={status}$"))
     status_select = page.get_by_label("Status", exact=True)
-    expect(status_select.locator("option:checked")).to_have_text(label)
+    expect(status_select).to_have_text(label)
 
 
 @pytest.mark.parametrize(("role", "path", "board"), DASHBOARDS[:2])
@@ -83,7 +84,7 @@ def test_view_all_check_ins_opens_the_checked_in_board(as_role, role: str, path:
 def test_unknown_status_deep_link_is_ignored(as_role) -> None:
     page = as_role("admin")
     page.goto("/admin/invitations?status=bogus")
-    expect(page.get_by_label("Status", exact=True).locator("option:checked")).to_have_text("All statuses")
+    expect(page.get_by_label("Status", exact=True)).to_have_text("All statuses")
 
 
 @pytest.mark.parametrize(("role", "path", "board"), DASHBOARDS)

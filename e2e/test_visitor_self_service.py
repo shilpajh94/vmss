@@ -6,7 +6,7 @@ import re
 
 from playwright.sync_api import expect
 
-from conftest import JPEG, Api, run_tag
+from conftest import Api, JPEG, choose_option, run_tag
 
 
 def test_visitor_requests_a_visit_and_tracks_it(as_role, api: Api) -> None:
@@ -24,17 +24,17 @@ def test_visitor_requests_a_visit_and_tracks_it(as_role, api: Api) -> None:
 
     page.get_by_label("Full Name").fill(name)
     expect(page.get_by_label("Email Address")).to_have_value(email)
-    page.get_by_label("Visitor Category").select_option(label="QA Single Step")
+    choose_option(page.get_by_label("Visitor Category"), "QA Single Step")
     page.locator("input[type=file]").first.set_input_files(
         {"name": "id.jpg", "mimeType": "image/jpeg", "buffer": JPEG}
     )
     page.get_by_role("button", name="Next", exact=True).click()
 
-    page.get_by_label("Purpose of Visit").select_option(index=1)
+    choose_option(page.get_by_label("Purpose of Visit"), index=0)
     page.get_by_label("Preferred Visit Date").fill(str(datetime.date.today()))
     page.get_by_label("Preferred Visit Time").fill("11:00")
-    page.get_by_label("Location").select_option(label="Main Branch")
-    page.get_by_label("Building").select_option(index=1)
+    choose_option(page.get_by_label("Location"), "Main Branch")
+    choose_option(page.get_by_label("Building"), index=0)
     for _ in range(3):  # Visit Details -> Carried Items -> Vehicle Info -> Consent
         page.get_by_role("button", name="Next", exact=True).click()
     for consent in ("Terms & Conditions", "Data Processing Consent", "Safety Guidelines"):

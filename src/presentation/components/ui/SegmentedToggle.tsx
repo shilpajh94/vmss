@@ -1,3 +1,5 @@
+import { Select } from './Select'
+
 interface SegmentedToggleOption {
   value: string
   label: string
@@ -13,7 +15,7 @@ interface SegmentedToggleProps {
    * 'divided': full-width equal segments separated by a hairline divider (e.g. Preferred Contact Method).
    */
   variant?: 'inline' | 'pill' | 'divided'
-  // Names the select that stands in for the segments on a phone.
+  // Names the dropdown that stands in for the segments on a phone.
   ariaLabel?: string
 }
 
@@ -22,21 +24,12 @@ const MAX_PHONE_SEGMENTS = 3
 
 export function SegmentedToggle(props: SegmentedToggleProps) {
   if (props.options.length <= MAX_PHONE_SEGMENTS) return <Segments {...props} />
-  // Past three options: a select below `sm`, the segments from `sm` up.
+  // Past three options: a dropdown below `sm`, the segments from `sm` up.
   return (
     <>
-      <select
-        value={props.value}
-        onChange={(event) => props.onChange(event.target.value)}
-        aria-label={props.ariaLabel}
-        className="min-h-10 w-full rounded-lg border border-border bg-surface px-3 py-2 text-base text-text focus:outline-none focus:ring-2 focus:ring-secondary-accent sm:hidden"
-      >
-        {props.options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      <div className="w-full sm:hidden">
+        <Select value={props.value} onChange={props.onChange} options={props.options} ariaLabel={props.ariaLabel} />
+      </div>
       <div className="hidden sm:contents">
         <Segments {...props} />
       </div>

@@ -365,24 +365,102 @@
   }
 }
 
+/* Sidebar nav: an auto-hiding overlay scrollbar with scroll-edge fades
+   (modernise-dropdowns-and-sidebar-chrome design.md D7). `useScrollActivity`
+   sets data-scrolling / data-at-top / data-at-bottom.
+
+   The thumb colour is a registered property so it transitions (fades)
+   rather than snapping; WebKit/Blink repaint the scrollbar as it animates.
+   Blink ignores ::-webkit-scrollbar once the standard scrollbar-color /
+   scrollbar-width are set, so those are given to Firefox only. */
+@property --sidebar-thumb {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+
 .sidebar-nav-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  --sidebar-thumb: transparent;
+  --sidebar-fade: 16px;
+  /* The 8px gutter is always reserved and pulled into the sidebar's own
+     padding, so the items keep their width (and the rail its centring)
+     whether or not the list overflows, and never shift when the thumb shows. */
+  scrollbar-gutter: stable;
+  margin-right: -8px;
+  transition: --sidebar-thumb var(--motion-slow) var(--ease-motion-in);
+}
+
+.sidebar-nav-scroll:hover,
+.sidebar-nav-scroll:has(:focus-visible),
+.sidebar-nav-scroll[data-scrolling] {
+  --sidebar-thumb: rgb(255 255 255 / 0.22);
+  transition-duration: var(--motion-standard);
+  transition-timing-function: var(--ease-motion-out);
 }
 
 .sidebar-nav-scroll::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
 }
 
 .sidebar-nav-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
+/* A transparent border clipped out of the background draws a slim 4px pill
+   that widens to 6px and brightens under the pointer. */
 .sidebar-nav-scroll::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.18);
+  background-color: var(--sidebar-thumb);
+  background-clip: padding-box;
+  border: 2px solid transparent;
   border-radius: 9999px;
 }
 
 .sidebar-nav-scroll::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.32);
+  background-color: rgb(255 255 255 / 0.4);
+  border-width: 1px;
+}
+
+@supports (-moz-appearance: none) {
+  .sidebar-nav-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--sidebar-thumb) transparent;
+  }
+}
+
+/* Fade whichever end still has items beyond it into the sidebar. No
+   attributes yet (first paint) or a list that fits: no mask. */
+.sidebar-nav-scroll[data-at-top]:not([data-at-bottom]) {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--sidebar-fade)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--sidebar-fade)), transparent);
+}
+
+.sidebar-nav-scroll[data-at-bottom]:not([data-at-top]) {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--sidebar-fade));
+  mask-image: linear-gradient(to bottom, transparent, #000 var(--sidebar-fade));
+}
+
+.sidebar-nav-scroll:not([data-at-top]):not([data-at-bottom]) {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--sidebar-fade),
+    #000 calc(100% - var(--sidebar-fade)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--sidebar-fade),
+    #000 calc(100% - var(--sidebar-fade)),
+    transparent
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-nav-scroll,
+  .sidebar-nav-scroll:hover,
+  .sidebar-nav-scroll:has(:focus-visible),
+  .sidebar-nav-scroll[data-scrolling] {
+    transition: none;
+  }
 }

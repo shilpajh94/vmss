@@ -1,5 +1,5 @@
 import type { ComponentType, SVGProps } from 'react'
-import { ChevronDownIcon } from '../icons'
+import { Select } from './Select'
 
 export interface DropdownOption {
   value: string
@@ -14,23 +14,12 @@ interface DropdownFilterProps {
   ariaLabel: string
 }
 
-export function DropdownFilter({ icon: Icon, value, options, onChange, ariaLabel }: DropdownFilterProps) {
+// The icon and chevron sit inside Select's trigger button, so clicking either
+// opens the list (select-dropdowns "The whole trigger opens the dropdown").
+export function DropdownFilter({ icon, value, options, onChange, ariaLabel }: DropdownFilterProps) {
   return (
-    <div className="relative flex h-10 w-full shrink-0 items-center sm:w-[200px] gap-2 rounded-lg border border-border-strong bg-surface px-3 focus-within:ring-2 focus-within:ring-secondary-accent">
-      <Icon className="size-4 shrink-0 text-text" />
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        aria-label={ariaLabel}
-        className="min-w-0 flex-1 appearance-none bg-surface font-body text-[13px] font-semibold text-text max-sm:text-base focus:outline-none"
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDownIcon className="pointer-events-none size-4 shrink-0 text-text" />
+    <div className="w-full shrink-0 sm:w-[200px]">
+      <Select icon={icon} size="sm" value={value} options={options} onChange={onChange} ariaLabel={ariaLabel} />
     </div>
   )
 }

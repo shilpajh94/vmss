@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.sync_api import APIRequestContext, BrowserContext, Locator, Page, Playwright
+from playwright.sync_api import APIRequestContext, BrowserContext, Locator, Page, Playwright, expect
 
 TOKENS_PATH = Path(os.environ.get("E2E_TOKENS", "/tokens/tokens.json"))
 MAILPIT_URL = os.environ.get("E2E_MAILPIT_URL", "https://vmss-new-api.ddev.site:8026")
@@ -53,13 +53,30 @@ def run_tag() -> str:
     return uuid.uuid4().hex[:6].upper()
 
 
-def select_matching(select: Locator, pattern: str) -> None:
-    """`select_option` by a case-insensitive pattern over the option texts
-    (Python Playwright's `label=` only takes an exact string)."""
-    texts = select.locator("option").all_inner_texts()
-    match = next((t for t in texts if re.search(pattern, t, re.I)), None)
-    assert match, f"no option matching {pattern!r} in {texts}"
-    select.select_option(label=match)
+def choose_option(
+    combobox: Locator,
+    label: str | None = None,
+    *,
+    index: int | None = None,
+    pattern: str | None = None,
+) -> None:
+    """Picks an option in the app's custom dropdown (select-dropdowns spec),
+    which replaced every native `<select>` so `select_option` no longer
+    applies: opens the combobox, then clicks the option in its portalled
+    listbox by exact `label`, case-insensitive regex `pattern`, or `index`
+    (0 is the first listed option; prompt-only placeholders aren't listed)."""
+    combobox.click()
+    listbox_id = combobox.get_attribute("aria-controls")
+    options = combobox.page.locator(f'[id="{listbox_id}"]').get_by_role("option")
+    if label is not None:
+        option = options.filter(has_text=re.compile(rf"^{re.escape(label)}$"))
+    elif pattern is not None:
+        option = options.filter(has_text=re.compile(pattern, re.I)).first
+    else:
+        assert index is not None, "pass a label, pattern or index"
+        option = options.nth(index)
+    option.click()
+    expect(combobox).to_have_attribute("aria-expanded", "false")
 
 
 def wait_for(read: Callable[[], Any], expected: Any, timeout: float = 10.0) -> None:

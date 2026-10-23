@@ -11,7 +11,7 @@ import re
 
 from playwright.sync_api import Page, expect
 
-from conftest import Api, run_tag
+from conftest import Api, choose_option, run_tag
 
 
 def row(page: Page, text: str):
@@ -29,10 +29,10 @@ def test_admin_creates_and_edits_org_structure(as_role, api: Api) -> None:
         admin.get_by_label("Branch Name").fill(branch_name)
         admin.get_by_label("Branch Code").fill(branch_code)
         admin.get_by_label("Location / City").fill("QA City")
-        admin.get_by_label("Country").select_option(index=1)
+        choose_option(admin.get_by_label("Country"), index=0)
         # Validated as required although the label carries no "*" (QA report F12).
         admin.get_by_label("Physical Address").fill("1 QA Street")
-        admin.get_by_label("Contact Person (Regional Admin)").select_option(index=1)
+        choose_option(admin.get_by_label("Contact Person (Regional Admin)"), index=0)
         admin.get_by_label("Contact Email Address").fill(f"qa.e2e.{tag.lower()}@example.com")
         admin.get_by_label("Contact Phone").fill("+919876543210")
         admin.get_by_role("button", name="Create Branch").click()
@@ -59,7 +59,7 @@ def test_admin_creates_and_edits_org_structure(as_role, api: Api) -> None:
 
         admin.goto("/admin/buildings/new", wait_until="networkidle")
         admin.get_by_label("Building Name").fill(building_name)
-        admin.get_by_label("Branch").select_option(label=branch_name)
+        choose_option(admin.get_by_label("Branch"), branch_name)
         admin.get_by_label("Building Code").fill(f"B{branch_code}")
         admin.get_by_role("button", name="Save Building").click()
         expect(admin).not_to_have_url(re.compile(r"/admin/buildings/new$"))
@@ -72,7 +72,7 @@ def test_admin_creates_and_edits_org_structure(as_role, api: Api) -> None:
 
         admin.goto("/admin/floors/new", wait_until="networkidle")
         admin.get_by_label("Floor Name").fill(f"QA E2E Floor {tag}")
-        admin.get_by_label("Building").select_option(label=building_name)
+        choose_option(admin.get_by_label("Building"), building_name)
         admin.get_by_role("button", name="Save Floor").click()
         expect(admin).not_to_have_url(re.compile(r"/admin/floors/new$"))
         floor = next(
@@ -84,7 +84,7 @@ def test_admin_creates_and_edits_org_structure(as_role, api: Api) -> None:
 
         admin.goto("/admin/departments/new", wait_until="networkidle")
         admin.get_by_label("Department Name").fill(f"QA E2E Dept {tag}")
-        admin.get_by_label("Branch").select_option(label=branch_name)
+        choose_option(admin.get_by_label("Branch"), branch_name)
         admin.get_by_label("Department Code").fill(f"D{branch_code}")
         admin.get_by_role("button", name="Save Department").click()
         expect(admin).not_to_have_url(re.compile(r"/admin/departments/new$"))

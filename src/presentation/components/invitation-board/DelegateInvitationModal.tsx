@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
 import { employeeAtBranch, employeeHasRoleAtBranch } from '../../utils/role-name-match'
 import { Modal } from '../ui/Modal'
+import { Select } from '../ui/Select'
 import { confirmSubject } from '../../utils/confirm-subject'
 import { FormConfirmStep } from './FormConfirmStep'
 
@@ -140,14 +141,12 @@ export function DelegateInvitationModal({
           ) : null}
           <label className="flex flex-col gap-1.5">
             <span className="font-body text-[13px] font-semibold text-text">{isApproveAndDelegate ? 'Assign next step to' : 'Delegate to'}</span>
-            <select
+            <Select
               value={delegateUserId}
-              onChange={(event) => setDelegateUserId(event.target.value)}
+              onChange={setDelegateUserId}
               disabled={isApproveAndDelegate && isLoadingCandidates}
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-body text-sm text-text max-sm:text-base max-lg:min-h-10 focus:outline-none focus:ring-2 focus:ring-secondary-accent"
-            >
-              <option value="">
-                {isApproveAndDelegate
+              placeholder={
+                isApproveAndDelegate
                   ? isLoadingCandidates
                     ? 'Loading eligible employees…'
                     : delegateCandidates?.length
@@ -157,14 +156,10 @@ export function DelegateInvitationModal({
                     ? 'Select host…'
                     : stepRoleName
                       ? `No one currently holds ${stepRoleName}`
-                      : 'No active employees at this branch'}
-              </option>
-              {delegateCandidates?.map((employee) => (
-                <option key={employee.id} value={employee.id}>
-                  {employee.fullName}
-                </option>
-              ))}
-            </select>
+                      : 'No active employees at this branch'
+              }
+              options={delegateCandidates?.map((employee) => ({ value: employee.id, label: employee.fullName })) ?? []}
+            />
           </label>
 
           <div className="flex items-center justify-end gap-3">

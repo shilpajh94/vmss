@@ -1,4 +1,5 @@
 import { useId } from 'react'
+import { Select } from './Select'
 
 interface SelectOption {
   value: string
@@ -33,6 +34,7 @@ export function SelectField({
 }: SelectFieldProps) {
   const selectId = useId()
   const errorId = `${selectId}-error`
+  const prompt = placeholder ?? 'Select'
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -40,27 +42,17 @@ export function SelectField({
         {label}
         {required && <span className="ml-1 text-danger">*</span>}
       </label>
-      <select
+      <Select
         id={selectId}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-        aria-required={required}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? errorId : undefined}
+        onChange={onChange}
+        options={placeholderSelectable ? [{ value: '', label: prompt }, ...options] : options}
+        placeholder={prompt}
+        required={required}
+        invalid={Boolean(error)}
+        ariaDescribedBy={error ? errorId : undefined}
         disabled={disabled}
-        className={`rounded-lg border bg-surface px-3 py-2 text-body text-text max-sm:text-base max-lg:min-h-10 focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60 ${
-          error ? 'border-danger' : 'border-border'
-        }`}
-      >
-        <option value="" disabled={!placeholderSelectable}>
-          {placeholder ?? 'Select'}
-        </option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      />
       {error && (
         <p id={errorId} className="text-caption text-danger">
           {error}

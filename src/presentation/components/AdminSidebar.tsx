@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { useNavigate } from 'react-router'
 import {
   BuildingIcon,
@@ -23,6 +24,7 @@ import { useSidebarCollapse } from '../context/sidebar-collapse-context'
 import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
+import { useScrollActivity } from '../hooks/use-scroll-activity'
 
 const BUILD_LABEL = [__APP_VERSION__ ? `v${__APP_VERSION__}` : '', __BUILD_SHA__].filter(Boolean).join(' · ')
 
@@ -157,6 +159,8 @@ export function adminNavLabelFor(pathname: string): string {
 
 export function AdminSidebar({ activeItem }: AdminSidebarProps) {
   const navigate = useNavigate()
+  const navRef = useRef<HTMLElement>(null)
+  useScrollActivity(navRef)
   const { closeNav } = useNavDrawer()
   const { isCollapsed } = useSidebarCollapse()
   const { can } = usePermissions()
@@ -196,7 +200,7 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
         }}
       />
 
-      <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
+      <nav ref={navRef} className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
         {sections.map((section, index) => (
           // The group's aria-label names the section for screen readers, so
           // the visible label is aria-hidden; on the icon rail a thin divider
