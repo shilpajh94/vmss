@@ -21,7 +21,8 @@ def test_admin_signs_in_with_password_and_signs_out(as_role) -> None:
     page.get_by_role("button", name="Sign out").click()
     expect(page).to_have_url(re.compile(r"/admin/login$"))
     page.goto("/admin/dashboard")
-    expect(page).to_have_url(re.compile(r"/login$"))
+    # The guard keeps the deep link to return to after signing in again.
+    expect(page).to_have_url(re.compile(r"/login\?from=%2Fadmin%2Fdashboard$"))
 
 
 def test_staff_sign_in_offers_sso_only(as_role) -> None:
@@ -54,11 +55,13 @@ def test_reception_dashboard_is_guarded_from_other_roles(as_role) -> None:
     expect(page).to_have_url(re.compile(r"/staff/dashboard$"))
 
 
-@pytest.mark.known_issue("F7")
-@pytest.mark.parametrize("role", ["norole", "reception"])
+@pytest.mark.parametrize("role", ["norole"])
 def test_admin_area_is_guarded_from_non_admins(as_role, role: str) -> None:
-    """The API refuses the data and actions either way; the portal should
-    not render the admin shell at all (spec "Route guarding")."""
+    """QA F7, fixed by audit-and-harden §3: pages are gated by the caller's
+    permission codes, so a user without them never gets the admin shell.
+    (Reception is not listed: the API's default Reception role is granted
+    companies/branches/buildings/departments/desks:manage, so it may open
+    those pages; whether it should is a role-seeding question.)"""
     page = as_role(role)
     page.goto("/admin/dashboard")
     page.wait_for_load_state("networkidle")

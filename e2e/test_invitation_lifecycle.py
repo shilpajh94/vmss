@@ -17,9 +17,10 @@ def open_card(page: Page, name: str):
     many other invitations exist."""
     page.goto("/staff/invitations")
     page.get_by_placeholder("Search visitor, tracking ID...").fill(name)
-    card = page.get_by_role(
-        "button", name=re.compile(rf"^Open visitor info for {re.escape(name)},")
-    )
+    # The card is an article named after the visitor; its title button is
+    # the control that opens Visitor Info (accessibility "Interactive
+    # Elements Are Not Nested").
+    card = page.get_by_role("article", name=re.compile(rf"^{re.escape(name)},"))
     expect(card).to_be_visible()
     return card
 

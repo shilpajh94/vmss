@@ -128,13 +128,25 @@ def test_a_push_burst_folds_into_one_summary_that_opens_the_bell(as_role) -> Non
 
 
 def test_action_feedback_is_not_merged_into_the_push_summary(as_role) -> None:
-    page = failing_login_page(as_role("anonymous"))
-    submit_login(page, 1)
+    # Signed in: the push listener only runs for a staff session, so the
+    # action toast comes from a failing manual refresh of the board, mocked
+    # only once the board's own first load has settled.
+    page = as_role("reception")
+    page.goto("/staff/invitations", wait_until="networkidle")
+    refresh = page.get_by_role("button", name="Refresh", exact=True)
+    expect(refresh).to_be_enabled()
+    page.route(
+        "**/api/v1/invitations?*",
+        # A 4xx: the conftest fails any journey that sees a 5xx.
+        lambda route: route.fulfill(status=400, content_type="application/json", body=json.dumps({"message": "boom"})),
+    )
+    refresh.click()
     expect(open_toasts(page)).to_have_count(1)
+    action_toast_text = open_toasts(page).first.inner_text()
 
     push(page, "QA mixed push 1", "QA mixed push 2", "QA mixed push 3")
     expect(open_toasts(page)).to_have_count(2)
-    expect(open_toasts(page).filter(has_text=LOGIN_ERROR)).to_have_count(1)
+    expect(open_toasts(page).filter(has_text=action_toast_text)).to_have_count(1)
     expect(open_toasts(page).filter(has_text="3 new notifications")).to_have_count(1)
 
 

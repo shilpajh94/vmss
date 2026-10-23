@@ -99,7 +99,13 @@ def test_public_pages_stay_light(as_role) -> None:
     _wait_for_shell(page)
     expect(_html(page)).to_have_attribute("data-theme", "dark")
 
+    # Signed out, with the same stored mode: a signed-in user opening a
+    # login page is sent back to their landing page (audit-and-harden §3.6).
+    public = as_role("anonymous")
+    _store_mode(public, "dark")
+    public.emulate_media(color_scheme="dark")
     for path in ("/staff/login", "/admin/login", "/"):
+        page = public
         page.goto(path)
         page.wait_for_load_state("networkidle")
         expect(_html(page)).not_to_have_attribute("data-theme", "dark")
@@ -142,9 +148,11 @@ def test_phone_top_bar_keeps_the_control_on_one_row(as_role) -> None:
     page = as_role("reception")
     page.set_viewport_size({"width": 360, "height": 740})
     page.goto("/staff/calendar")
-    _wait_for_shell(page)
     header = page.locator("header").first
-    theme = page.get_by_role("button", name=THEME_BUTTON)
+    # Below 640px the theme and refresh controls sit in the "More options"
+    # menu (audit-and-harden §7.6); that button is the row's last control.
+    theme = page.get_by_role("button", name=re.compile(r"^More options"))
+    expect(theme).to_be_visible()
     header_box, theme_box = header.bounding_box(), theme.bounding_box()
     assert header_box and theme_box
     assert header_box["height"] <= 72, header_box
@@ -194,8 +202,9 @@ def test_switch_repaints_everything_in_one_frame(as_role) -> None:
     sample = page.evaluate(_SWITCH_AND_SAMPLE)
     assert sample is not None, "the top bar never turned dark"
     assert sample["menuGoneAtClick"] is True
-    # The chart's muted tick colour is already the dark-theme value.
-    assert sample["tickFill"] == "#64748b", sample
+    # The chart's faint tick colour is already the dark-theme value
+    # (#94a3b8 since audit-and-harden §6 raised it to 4.5:1).
+    assert sample["tickFill"] == "#94a3b8", sample
     # Colour transitions are suspended while the new tokens land.
     assert sample["switching"] is True, sample
     assert sample["pressTransition"] == "0s", sample

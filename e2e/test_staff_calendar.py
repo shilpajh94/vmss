@@ -462,6 +462,8 @@ def test_week_column_shows_working_hours_and_busy_out_of_hours(as_role, timeline
     column = _column(page, TIMELINE_DAY)
     # Every run seeds two more visits on this day, so the late one is past
     # the first page once earlier runs' visits pile up: load to the end.
+    # The paging footer appears once the first page has loaded.
+    expect(column.get_by_role("status")).to_contain_text(re.compile(r"^(All|Showing) \d+"))
     while column.get_by_text(re.compile(r"^All \d+ visit")).count() == 0:
         loaded = _settled_count(column)
         _scroll_column_to_end(column)
