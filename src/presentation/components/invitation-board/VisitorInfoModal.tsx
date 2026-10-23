@@ -236,7 +236,7 @@ export function VisitorInfoModal({
         <FormSkeleton bare rows={4} columns={2} label="Loading visitor info…" />
       ) : (
         <div className="flex flex-col gap-5">
-          <div className="flex items-start justify-between gap-3 rounded-xl border border-border-subtle bg-bg p-4">
+          <div className="flex items-start justify-between gap-3 rounded-xl border border-border-subtle bg-surface-inset p-4">
             <div className="flex items-center gap-3">
               <Avatar
                 name={detail.primaryContactFullName}
@@ -385,7 +385,7 @@ export function VisitorInfoModal({
           </div>
 
           {detail.badgeNumber ? (
-            <div className="flex items-center gap-3 rounded-xl border border-border-subtle bg-bg p-4">
+            <div className="flex items-center gap-3 rounded-xl border border-border-subtle bg-surface-inset p-4">
               <CalendarClockIcon className="size-4 shrink-0 text-text-faint" />
               <div className="flex flex-1 flex-wrap gap-x-6 gap-y-2">
                 <Field label="Badge number" value={detail.badgeNumber} />

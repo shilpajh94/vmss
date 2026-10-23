@@ -115,7 +115,7 @@ export function GroupCard({ group, fieldCount, siblingFields, onSaveProperties, 
           <LayersIcon className="size-4 shrink-0 text-admin-accent" />
           {group.isLocked && <LockIcon className="size-3.5 shrink-0 text-text-faint" />}
           <span className="truncate font-body text-sm font-semibold text-text">{group.name}</span>
-          <span className="shrink-0 rounded-full bg-bg px-2 py-0.5 font-body text-[11px] font-medium text-text-muted">
+          <span className="shrink-0 rounded-full bg-surface-inset px-2 py-0.5 font-body text-[11px] font-medium text-text-muted">
             {fieldCount} field{fieldCount === 1 ? '' : 's'}
           </span>
         </div>

@@ -22,7 +22,7 @@ export function DropdownFilter({ icon: Icon, value, options, onChange, ariaLabel
         value={value}
         onChange={(event) => onChange(event.target.value)}
         aria-label={ariaLabel}
-        className="min-w-0 flex-1 appearance-none bg-transparent font-body text-[13px] font-semibold text-text max-sm:text-base focus:outline-none"
+        className="min-w-0 flex-1 appearance-none bg-surface font-body text-[13px] font-semibold text-text max-sm:text-base focus:outline-none"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>

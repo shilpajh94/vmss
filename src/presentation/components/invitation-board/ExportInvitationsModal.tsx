@@ -100,7 +100,7 @@ function ExportInvitationsForm({ initialStatus, appliedFilters, isExporting, err
         <SegmentedToggle options={FORMAT_OPTIONS} value={format} onChange={(value) => setFormat(value as InvitationExportFormat)} variant="divided" />
       </div>
 
-      <div className="flex flex-col gap-1 rounded-lg border border-border bg-bg px-3 py-2">
+      <div className="flex flex-col gap-1 rounded-lg border border-border bg-surface-inset px-3 py-2">
         <span className="font-body text-xs font-semibold text-text-muted">Also applies the board's filters</span>
         <p className="font-body text-[13px] text-text">{appliedFilters.length > 0 ? appliedFilters.join(' · ') : 'No other filters'}</p>
       </div>

@@ -485,7 +485,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave, onDirtyChan
         <button
           type="button"
           onClick={reset}
-          className="rounded-lg border border-border bg-bg px-4 py-2.5 font-body text-sm font-semibold text-text"
+          className="rounded-lg border border-border bg-surface px-4 py-2.5 font-body text-sm font-semibold text-text"
         >
           Reset
         </button>

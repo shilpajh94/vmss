@@ -20,6 +20,15 @@
   body {
     background-color: var(--color-bg);
   }
+
+  /* Native option popups follow the theme. A transparent <select> otherwise
+     opens on the browser's white canvas with the theme's light text
+     (fix-dark-theme-rendering design.md D1). */
+  option,
+  optgroup {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+  }
 }
 
 /* Theme switch in one frame (theme-mode "Switching theme repaints in one

@@ -49,7 +49,7 @@ export function SortableFieldRow({ field, isSelected, onSelect, onToggleRequired
           <span className="min-w-0 truncate font-body text-sm font-semibold text-text" title={field.label}>
             {field.label}
           </span>
-          <span className="shrink-0 rounded-full bg-bg px-2 py-0.5 font-body text-[11px] font-medium text-text-muted">
+          <span className="shrink-0 rounded-full bg-surface-inset px-2 py-0.5 font-body text-[11px] font-medium text-text-muted">
             {fieldTypeLabel(field.fieldType)}
           </span>
           {!field.isActive && (

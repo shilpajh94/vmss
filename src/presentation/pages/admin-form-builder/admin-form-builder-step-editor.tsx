@@ -236,7 +236,7 @@ export function AdminFormBuilderStepEditorPage() {
                 {step?.key === 'visit_details' &&
                   LOCKED_VISIT_FIELDS
                     .map((item) => (
-                    <div key={item.label} className="flex items-center gap-3 rounded-xl border border-border bg-bg px-4 py-3 opacity-80">
+                    <div key={item.label} className="flex items-center gap-3 rounded-xl border border-border bg-surface-inset px-4 py-3 opacity-80">
                       <LockIcon className="size-3.5 shrink-0 text-text-faint" />
                       <div className="flex min-w-0 flex-1 flex-col gap-1">
                         <div className="flex items-center gap-3">

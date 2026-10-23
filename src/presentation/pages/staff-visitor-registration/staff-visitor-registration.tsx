@@ -161,12 +161,12 @@ export function StaffVisitorRegistrationPage() {
         // one too stacked two sticky bars on a phone.
         footer={
           activeStep?.key === 'review_confirm' ? undefined : (
-            <div className="sticky bottom-0 -mx-4 flex flex-none flex-wrap items-center justify-between gap-3 border-t border-border bg-surface px-4 pt-4 pb-1 lg:static lg:mx-0 lg:px-0 lg:pb-0">
+            <div /* page-canvas */ className="sticky bottom-0 -mx-4 flex flex-none flex-wrap items-center justify-between gap-3 border-t border-border bg-bg px-4 pt-4 pb-1 lg:static lg:mx-0 lg:px-0 lg:pb-0">
               <button
                 type="button"
                 onClick={cancelRegistration}
                 title="Cancel this registration"
-                className="cursor-pointer rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary transition-colors hover:bg-primary/10"
+                className="cursor-pointer rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary transition-colors hover:bg-primary/10 dark:border-border-strong dark:text-text"
               >
                 Cancel
               </button>

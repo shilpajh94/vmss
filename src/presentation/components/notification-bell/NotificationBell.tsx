@@ -219,7 +219,7 @@ export function NotificationBell() {
         <span
           aria-hidden
           className={`absolute -top-0.5 left-[55%] flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-body text-[10px] leading-none font-semibold tabular-nums ${
-            unreadCount > 0 ? 'bg-danger text-on-accent' : 'bg-border text-text-muted'
+            unreadCount > 0 ? 'bg-danger text-on-accent' : 'bg-border text-text-secondary'
           }`}
         >
           {unreadCount}

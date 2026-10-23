@@ -30,6 +30,11 @@
   /* Former hard-coded slate-300 field borders and slate-50 sunken tracks. */
   --color-border-strong: #cbd5e1;
   --color-surface-muted: #f8fafc;
+  /* Controls, pills, icon tiles and inset panels placed on a card. White in
+     light (the card's own colour); lifted above the card in dark, where the
+     page-canvas `bg` would read as a hole. `bg` is the page canvas only
+     (fix-dark-theme-rendering design.md D2). */
+  --color-surface-inset: #ffffff;
   /* Pale cyan behind accent icons and badges on the always-light public and
      sign-in pages (cyan-50). */
   --color-secondary-accent-soft: #ecfeff;
@@ -95,7 +100,10 @@
   --color-text-secondary: #cbd5e1;
   --color-border-strong: #475569;
   --color-surface-muted: #1e293b;
-  --color-primary: #e2e8f0;
+  --color-surface-inset: #1e293b;
+  /* The cyan brand accent, not the inverted light grey, so primary buttons
+     don't read as glaring white slabs (fix-dark-theme-rendering D4). */
+  --color-primary: #22d3ee;
   --color-secondary-accent: #22d3ee;
   --color-admin-accent: #2dd4bf;
   --color-success: #34d399;
