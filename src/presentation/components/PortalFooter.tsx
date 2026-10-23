@@ -8,11 +8,13 @@ const LINKS = footerLinks([
 
 export function PortalFooter() {
   return (
-    <footer className="w-full border-t border-border bg-surface px-4 py-8 md:px-12 md:py-10">
-      <div className="flex w-full flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex w-full max-w-[400px] flex-col gap-1">
-          <BrandLogo variant="light" className="h-7 self-start" />
-          <p className="mt-1 font-body text-[13px] text-text-muted">Secure corporate guest registry and access automation.</p>
+    <footer className="w-full border-t border-border bg-surface px-4 py-4 md:px-12 lg:py-5">
+      <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-center lg:justify-between lg:gap-6">
+        {/* One row from lg up, so the footer stays slim (responsive-layout
+            "The Public Portal Footer Is Compact"). */}
+        <div className="flex min-w-0 flex-col gap-1 lg:flex-row lg:items-center lg:gap-4">
+          <BrandLogo variant="themed" className="h-7 self-start lg:self-center" />
+          <p className="font-body text-[13px] text-text-muted">Secure corporate guest registry and access automation.</p>
           <p className="font-body text-[12px] text-text-faint">{copyrightLine()}</p>
         </div>
         <div className="flex flex-col items-start gap-3 font-body text-[13px] text-text-muted sm:flex-row sm:flex-wrap sm:gap-6 lg:whitespace-nowrap">

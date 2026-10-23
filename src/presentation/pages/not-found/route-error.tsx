@@ -1,10 +1,13 @@
 import { PortalFooter } from '../../components/PortalFooter'
 import { PortalHeader } from '../../components/PortalHeader'
+import { useForceLightTheme } from '../../context/theme-mode-context'
 
 // The router's last-resort error page: a render error anywhere, or a page
 // chunk that still fails after `lazyPage`'s one automatic reload. Rendered
-// outside every provider, so it uses nothing but plain markup.
+// outside every provider, so it uses nothing but plain markup — and, being
+// outside PublicLayout too, forces the light theme itself.
 export function RouteErrorPage() {
+  useForceLightTheme()
   return (
     <div className="flex min-h-dvh w-full flex-col bg-bg">
       <PortalHeader />

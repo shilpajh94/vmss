@@ -10,15 +10,22 @@ interface BrandLogoProps {
 }
 
 export function BrandLogo({ variant, className = 'h-8', decorative = false }: BrandLogoProps) {
-  const { src } = BRAND_LOGOS[variant]
+  const logo = BRAND_LOGOS[variant]
+  const alt = decorative ? '' : BRAND_NAME
   // `max-w-fit` caps the used width at the image's natural width for its
   // height, so a stretching flex/grid parent can't widen (and distort) it;
   // `object-contain` keeps the ratio even if a layout forces a box anyway.
-  return (
-    <img
-      src={src}
-      alt={decorative ? '' : BRAND_NAME}
-      className={`block w-auto max-w-fit shrink-0 object-contain object-left ${className}`}
-    />
-  )
+  const sizing = `w-auto max-w-fit shrink-0 object-contain object-left ${className}`
+  if ('darkSrc' in logo) {
+    // Both lockups are in the markup and CSS shows one, so a live theme
+    // switch (or no provider at all) needs no re-render; the hidden one is
+    // `display: none`, so only one alt is announced.
+    return (
+      <>
+        <img src={logo.src} alt={alt} className={`block dark:hidden ${sizing}`} />
+        <img src={logo.darkSrc} alt={alt} className={`hidden dark:block ${sizing}`} />
+      </>
+    )
+  }
+  return <img src={logo.src} alt={alt} className={`block ${sizing}`} />
 }

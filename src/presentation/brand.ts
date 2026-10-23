@@ -35,6 +35,9 @@ export const BRAND_LOGOS = {
   light: { src: logoLight },
   // White wordmark, for the navy sidebars and staff headers.
   'on-dark': { src: logoOnDark },
+  // Follows the theme: dark wordmark in light, white wordmark in dark. For
+  // surfaces that change with the theme.
+  themed: { src: logoLight, darkSrc: logoOnDark },
   // The "G" pin mark alone.
   mark: { src: logoMark },
 } as const

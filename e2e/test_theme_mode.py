@@ -235,3 +235,29 @@ def test_cross_fade_only_without_reduced_motion(as_role) -> None:
     reduced.get_by_role("menuitemradio", name="Dark").click()
     expect(_html(reduced)).to_have_attribute("data-theme", "dark")
     assert reduced.evaluate("window.__vt") == 0
+
+
+# --- fix-error-page-logo-and-compact-footer ----------------------------------
+
+DARK_WORDMARK_LOGO = re.compile(r"/logo-guestify\.svg$")
+
+
+def test_error_page_renders_light_in_dark_mode(as_role) -> None:
+    """theme-mode "Public pages always render in the light theme": the route
+    error page sits outside PublicLayout, so it forces light itself."""
+    page = as_role("host")
+    _store_mode(page, "dark")
+    page.emulate_media(color_scheme="dark")
+    # The staff layout is the first lazy chunk on this route; both its first
+    # load and lazyPage's one automatic reload fail, so the router's error
+    # page is reached. (A page chunk would not do: the layout chunk loading
+    # fine clears lazyPage's reload flag each time.)
+    page.route(re.compile(r"/components/StaffLayout\.tsx"), lambda route: route.abort())
+    page.goto("/staff/calendar")
+    expect(page.get_by_role("heading", name="Something went wrong")).to_be_visible()
+    expect(_html(page)).not_to_have_attribute("data-theme", "dark")
+    for region in ("header", "footer"):
+        logo = page.locator(f"{region} img").filter(visible=True)
+        expect(logo).to_have_count(1)
+        expect(logo).to_have_attribute("src", DARK_WORDMARK_LOGO)
+

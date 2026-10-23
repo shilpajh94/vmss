@@ -27,7 +27,7 @@ export function PortalHeader({ backTo }: PortalHeaderProps) {
         </Link>
       )}
       <Link to="/" aria-label={`${BRAND_NAME} home`} className="flex items-center">
-        <BrandLogo variant="light" className="h-7 md:h-8" decorative />
+        <BrandLogo variant="themed" className="h-7 md:h-8" decorative />
       </Link>
     </header>
   )
