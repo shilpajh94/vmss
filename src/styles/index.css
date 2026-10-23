@@ -20,6 +20,14 @@
   body {
     background-color: var(--color-bg);
   }
+
+  /* Native <select> popups don't inherit the themed surface: options keep the
+     select's (light) text colour on the browser's white list in dark mode. */
+  select option,
+  select optgroup {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+  }
 }
 
 /* Theme switch in one frame (theme-mode "Switching theme repaints in one
