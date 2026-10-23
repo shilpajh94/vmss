@@ -12,6 +12,10 @@ export function roleNamesMatch(a: string | undefined | null, b: string | undefin
   return a.trim().toLowerCase() === b.trim().toLowerCase()
 }
 
+// A `branchRole` with no `branchId` is an "All branches" assignment and counts
+// at every branch. (The backend previously rejected such grants at submit time;
+// if that still happens the server error is surfaced to the user.)
+//
 // The backend enforces that a delegate actually holds the step's approver
 // role *at the invitation's own branch* (confirmed via the real API error:
 // "Delegate does not hold this step's approver role at the invitation's
@@ -30,7 +34,7 @@ export function employeeHasRoleAtBranch(
   branchId: string | undefined | null,
 ): boolean {
   return employee.branchRoles.some(
-    (branchRole) => roleNamesMatch(branchRole.roleName, roleName) && (!branchId || branchRole.branchId === branchId),
+    (branchRole) => roleNamesMatch(branchRole.roleName, roleName) && (!branchId || !branchRole.branchId || branchRole.branchId === branchId),
   )
 }
 
@@ -39,5 +43,5 @@ export function employeeHasRoleAtBranch(
 // employee at the invitation's branch can become the actual host regardless
 // of which role they hold.
 export function employeeAtBranch(employee: HostEmployee, branchId: string | undefined | null): boolean {
-  return employee.branchRoles.some((branchRole) => !branchId || branchRole.branchId === branchId)
+  return employee.branchRoles.some((branchRole) => !branchId || !branchRole.branchId || branchRole.branchId === branchId)
 }

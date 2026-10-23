@@ -87,6 +87,34 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
     return created
   }
 
+  async disable(employeeId: string): Promise<HostEmployee> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.DISABLE_HOST_EMPLOYEE,
+      pathParams: { employeeId },
+      parserSchema: EmployeeResponseSchema,
+    })
+
+    return toHostEmployee(response.data)
+  }
+
+  async enable(employeeId: string): Promise<HostEmployee> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.ENABLE_HOST_EMPLOYEE,
+      pathParams: { employeeId },
+      parserSchema: EmployeeResponseSchema,
+    })
+
+    return toHostEmployee(response.data)
+  }
+
+  async remove(employeeId: string): Promise<void> {
+    await this.apiClient.makeRequest<unknown>({
+      endpointConfig: API_ENDPOINTS.DELETE_HOST_EMPLOYEE,
+      pathParams: { employeeId },
+      parserSchema: z.unknown(),
+    })
+  }
+
   async listRoles(): Promise<RoleOut[]> {
     return fetchAllPages((page, pageSize) =>
       this.apiClient.makeRequest({

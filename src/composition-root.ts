@@ -95,6 +95,9 @@ import { UpdateRolePermissionsUseCase } from './data/use-cases/update-role-permi
 import { ResyncRolePermissionsUseCase } from './data/use-cases/resync-role-permissions'
 import { AssignHostEmployeeRoleUseCase } from './data/use-cases/assign-host-employee-role'
 import { RevokeHostEmployeeRoleUseCase } from './data/use-cases/revoke-host-employee-role'
+import { DisableHostEmployeeUseCase } from './data/use-cases/disable-host-employee'
+import { EnableHostEmployeeUseCase } from './data/use-cases/enable-host-employee'
+import { DeleteHostEmployeeUseCase } from './data/use-cases/delete-host-employee'
 import { ListKiosksPageUseCase } from './data/use-cases/list-kiosks-page'
 import { GetKioskUseCase } from './data/use-cases/get-kiosk'
 import { CreateKioskUseCase } from './data/use-cases/create-kiosk'
@@ -239,6 +242,9 @@ export interface AppDependencies {
   resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase
   assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase
   revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase
+  disableHostEmployeeUseCase: DisableHostEmployeeUseCase
+  enableHostEmployeeUseCase: EnableHostEmployeeUseCase
+  deleteHostEmployeeUseCase: DeleteHostEmployeeUseCase
   listKiosksPageUseCase: ListKiosksPageUseCase
   getKioskUseCase: GetKioskUseCase
   createKioskUseCase: CreateKioskUseCase
@@ -377,6 +383,9 @@ export function createApp(): AppDependencies {
   let resyncRolePermissionsUseCase: ResyncRolePermissionsUseCase | undefined
   let assignHostEmployeeRoleUseCase: AssignHostEmployeeRoleUseCase | undefined
   let revokeHostEmployeeRoleUseCase: RevokeHostEmployeeRoleUseCase | undefined
+  let disableHostEmployeeUseCase: DisableHostEmployeeUseCase | undefined
+  let enableHostEmployeeUseCase: EnableHostEmployeeUseCase | undefined
+  let deleteHostEmployeeUseCase: DeleteHostEmployeeUseCase | undefined
   let kioskRepository: KioskRepository | undefined
   let listKiosksPageUseCase: ListKiosksPageUseCase | undefined
   let getKioskUseCase: GetKioskUseCase | undefined
@@ -875,6 +884,21 @@ export function createApp(): AppDependencies {
     return assignHostEmployeeRoleUseCase
   }
 
+  const resolveDisableHostEmployeeUseCase = (): DisableHostEmployeeUseCase => {
+    disableHostEmployeeUseCase ??= new DisableHostEmployeeUseCase(resolveHostEmployeeRepository())
+    return disableHostEmployeeUseCase
+  }
+
+  const resolveEnableHostEmployeeUseCase = (): EnableHostEmployeeUseCase => {
+    enableHostEmployeeUseCase ??= new EnableHostEmployeeUseCase(resolveHostEmployeeRepository())
+    return enableHostEmployeeUseCase
+  }
+
+  const resolveDeleteHostEmployeeUseCase = (): DeleteHostEmployeeUseCase => {
+    deleteHostEmployeeUseCase ??= new DeleteHostEmployeeUseCase(resolveHostEmployeeRepository())
+    return deleteHostEmployeeUseCase
+  }
+
   const resolveRevokeHostEmployeeRoleUseCase = (): RevokeHostEmployeeRoleUseCase => {
     revokeHostEmployeeRoleUseCase ??= new RevokeHostEmployeeRoleUseCase(resolveHostEmployeeRepository())
     return revokeHostEmployeeRoleUseCase
@@ -1350,6 +1374,15 @@ export function createApp(): AppDependencies {
     },
     get assignHostEmployeeRoleUseCase() {
       return resolveAssignHostEmployeeRoleUseCase()
+    },
+    get disableHostEmployeeUseCase() {
+      return resolveDisableHostEmployeeUseCase()
+    },
+    get enableHostEmployeeUseCase() {
+      return resolveEnableHostEmployeeUseCase()
+    },
+    get deleteHostEmployeeUseCase() {
+      return resolveDeleteHostEmployeeUseCase()
     },
     get revokeHostEmployeeRoleUseCase() {
       return resolveRevokeHostEmployeeRoleUseCase()
