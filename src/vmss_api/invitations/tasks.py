@@ -533,13 +533,17 @@ async def _send_approval_revert_notification(tenant_schema: str, invitation_id: 
                 ),
                 fallback_subject="Your visit approval has been withdrawn",
             )
-            sms_body = (
-                f"The approval for your visit has been withdrawn while it's reviewed "
-                f"again; your pass won't admit you until it's re-approved. Tracking ID: "
-                f"{invitation.tracking_id}."
-            )
             await _dispatch(
-                invitation, subject=subject, body=body, sms_body=sms_body, html_body=html_body
+                invitation,
+                subject=subject,
+                body=body,
+                sms_template=SmsTemplate.approval_reverted,
+                sms_variables=[
+                    invitation.primary_contact_full_name,
+                    invitation.tracking_id,
+                    _visit_when(invitation),
+                ],
+                html_body=html_body,
             )
     finally:
         await engine.dispose()

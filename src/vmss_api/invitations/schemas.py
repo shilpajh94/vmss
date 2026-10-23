@@ -949,11 +949,24 @@ class InvitationEditRequest(CamelModel):
     additional_notes: str | None = Field(default=None, max_length=2000)
     poc_user_id: uuid.UUID | None = None
     poc_role_id: uuid.UUID | None = None
+    checked_out_at: datetime | None = Field(
+        default=None,
+        description=(
+            "Corrected check-out time; only accepted once the visit is `checked_out`, and "
+            "must fall between checkedInAt and now."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_poc_not_both(self) -> Self:
         if self.poc_user_id is not None and self.poc_role_id is not None:
             raise ValueError("pocUserId and pocRoleId cannot both be supplied")
+        return self
+
+    @model_validator(mode="after")
+    def _check_checked_out_at_timezone_aware(self) -> Self:
+        if self.checked_out_at is not None and self.checked_out_at.tzinfo is None:
+            raise ValueError("checkedOutAt must include a timezone offset")
         return self
 
 
