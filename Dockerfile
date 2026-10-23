@@ -59,6 +59,15 @@ ARG VITE_FIREBASE_APP_ID
 ARG VITE_FIREBASE_MEASUREMENT_ID
 ARG VITE_FIREBASE_VAPID_KEY
 
+# ==========================================================
+# FOOTER LINKS (optional; a link is hidden while its value is unset)
+# ==========================================================
+
+ARG VITE_SUPPORT_EMAIL
+ARG VITE_PRIVACY_URL
+ARG VITE_TERMS_URL
+ARG VITE_SECURITY_URL
+
 # ----------------------------------------------------------
 # Make variables available during Vite build
 # ----------------------------------------------------------
@@ -75,7 +84,11 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
     VITE_FIREBASE_MESSAGING_SENDER_ID=$VITE_FIREBASE_MESSAGING_SENDER_ID \
     VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID \
     VITE_FIREBASE_MEASUREMENT_ID=$VITE_FIREBASE_MEASUREMENT_ID \
-    VITE_FIREBASE_VAPID_KEY=$VITE_FIREBASE_VAPID_KEY
+    VITE_FIREBASE_VAPID_KEY=$VITE_FIREBASE_VAPID_KEY \
+    VITE_SUPPORT_EMAIL=$VITE_SUPPORT_EMAIL \
+    VITE_PRIVACY_URL=$VITE_PRIVACY_URL \
+    VITE_TERMS_URL=$VITE_TERMS_URL \
+    VITE_SECURITY_URL=$VITE_SECURITY_URL
 
 # ----------------------------------------------------------
 # Build Vite production bundle

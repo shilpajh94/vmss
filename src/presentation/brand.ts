@@ -1,6 +1,7 @@
 import logoLight from '../assets/brand/logo-guestify.svg'
 import logoOnDark from '../assets/brand/logo-guestify-on-dark.svg'
 import logoMark from '../assets/brand/logo-guestify-mark.svg'
+import { configuredEmail, configuredUrl } from './utils/configured-value'
 
 // The one place the product's name and logo live (brand-identity
 // capability). The SVGs are generated from the master logo in
@@ -11,13 +12,13 @@ export const BRAND_NAME = 'Guestify'
 
 // Per-deployment support address; the portal footer hides its support
 // line when this is unset rather than showing a made-up address.
-export const SUPPORT_EMAIL: string | null = import.meta.env.VITE_SUPPORT_EMAIL?.trim() || null
+export const SUPPORT_EMAIL: string | null = configuredEmail(import.meta.env.VITE_SUPPORT_EMAIL)
 
 // Per-deployment policy pages, linked from the portal and sign-in footers.
 // Each link is hidden while its URL is unset, never pointed at `#`.
-export const PRIVACY_POLICY_URL: string | null = import.meta.env.VITE_PRIVACY_URL?.trim() || null
-export const TERMS_URL: string | null = import.meta.env.VITE_TERMS_URL?.trim() || null
-export const SECURITY_POLICY_URL: string | null = import.meta.env.VITE_SECURITY_URL?.trim() || null
+export const PRIVACY_POLICY_URL: string | null = configuredUrl(import.meta.env.VITE_PRIVACY_URL)
+export const TERMS_URL: string | null = configuredUrl(import.meta.env.VITE_TERMS_URL)
+export const SECURITY_POLICY_URL: string | null = configuredUrl(import.meta.env.VITE_SECURITY_URL)
 
 export interface FooterLink {
   label: string
