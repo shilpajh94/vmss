@@ -55,13 +55,12 @@ def test_reception_dashboard_is_guarded_from_other_roles(as_role) -> None:
     expect(page).to_have_url(re.compile(r"/staff/dashboard$"))
 
 
-@pytest.mark.parametrize("role", ["norole"])
+@pytest.mark.parametrize("role", ["norole", "reception"])
 def test_admin_area_is_guarded_from_non_admins(as_role, role: str) -> None:
-    """QA F7, fixed by audit-and-harden §3: pages are gated by the caller's
-    permission codes, so a user without them never gets the admin shell.
-    (Reception is not listed: the API's default Reception role is granted
-    companies/branches/buildings/departments/desks:manage, so it may open
-    those pages; whether it should is a role-seeding question.)"""
+    """QA F7, fixed by audit-and-harden §3: pages and menu entries are gated
+    by the caller's permission codes, so neither a user without any nor
+    standard Reception (view-only on org setup, `auth/rbac_catalog.py`) is
+    offered the organisation configuration pages."""
     page = as_role(role)
     page.goto("/admin/dashboard")
     page.wait_for_load_state("networkidle")

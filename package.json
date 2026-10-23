@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "screenshots": "docker run --rm --network host -v \"$PWD\":/w -w /w mcr.microsoft.com/playwright/python:v1.55.0-noble bash -c \"pip install -q playwright==1.55.0 && python scripts/screenshot-pages.py\"",
     "e2e:image": "docker rm -f vmss-e2e-build >/dev/null 2>&1; docker run --name vmss-e2e-build mcr.microsoft.com/playwright/python:v1.55.0-noble pip install -q playwright==1.55.0 pytest==8.4.2 pytest-playwright==0.7.1 && docker commit vmss-e2e-build vmss-e2e:local && docker rm vmss-e2e-build",
+    "e2e:parallel": "bash scripts/e2e-parallel.sh",
     "e2e": "docker run --rm --network host --user \"$(id -u):$(id -g)\" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -v \"$PWD\":/w -v \"${E2E_TOKENS_DIR:-$PWD/../VMSS_API/var/qa}\":/tokens:ro -w /w/e2e vmss-e2e:local python -m pytest"
   },
   "dependencies": {
