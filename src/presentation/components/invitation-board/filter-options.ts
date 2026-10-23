@@ -24,10 +24,6 @@ export const REGISTRATION_TYPE_OPTIONS: DropdownOption[] = [
   { value: 'group', label: 'Group' },
 ]
 
-export const STATUS_FILTER_OPTIONS: DropdownOption[] = [{ value: '', label: 'All statuses' }, ...STATUS_OPTIONS]
-
-export const SOURCE_FILTER_OPTIONS: DropdownOption[] = [{ value: '', label: 'All sources' }, ...SOURCE_OPTIONS]
-
 // Mirrors the API's status-to-timestamp mapping for the export's date range
 // (VMSS_API add-invitation-export, design.md Decision 3); '' is "All statuses".
 const EXPORT_DATE_LABELS: Record<string, string> = {

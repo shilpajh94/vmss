@@ -53,13 +53,11 @@ def run_tag() -> str:
     return uuid.uuid4().hex[:6].upper()
 
 
-def select_matching(select: Locator, pattern: str) -> None:
-    """`select_option` by a case-insensitive pattern over the option texts
-    (Python Playwright's `label=` only takes an exact string)."""
-    texts = select.locator("option").all_inner_texts()
-    match = next((t for t in texts if re.search(pattern, t, re.I)), None)
-    assert match, f"no option matching {pattern!r} in {texts}"
-    select.select_option(label=match)
+def select_matching(trigger: Locator, pattern: str) -> None:
+    """Opens a themed dropdown trigger and clicks the option whose text
+    matches the case-insensitive pattern."""
+    trigger.click()
+    trigger.page.get_by_role("option", name=re.compile(pattern, re.I)).first.click()
 
 
 def wait_for(read: Callable[[], Any], expected: Any, timeout: float = 10.0) -> None:

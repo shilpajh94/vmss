@@ -11,6 +11,7 @@ import { EXPECTED_DURATION_OPTIONS } from '../../utils/expected-duration-options
 import { PURPOSE_OF_VISIT_OPTIONS } from '../../utils/purpose-of-visit-options'
 import { canEditPointOfContact, resolvePointOfContactLabel } from '../../utils/approval-step-label'
 import { confirmSubject } from '../../utils/confirm-subject'
+import { dateTimeInputToOffsetIso, formatDateTimeInputValue, nowAsDateTimeInputValue, toDateTimeInputValue } from '../../utils/local-datetime-input'
 import { FormConfirmStep, type ConfirmSummaryRow } from './FormConfirmStep'
 
 interface EditInvitationModalProps {
@@ -22,6 +23,10 @@ interface EditInvitationModalProps {
   // just another field on `fields`/`EditInvitationFields`, saved together
   // with the rest of the form via the normal "Save changes" flow.
   hostEmployees?: HostEmployee[]
+  // Needs `invitations:checkout` as well as edit; the board derives it from
+  // the same role check as the Check out button. Only matters for visits
+  // that are already checked out.
+  canEditCheckOutTime?: boolean
   onConfirm: (fields: EditInvitationFields) => void
   onCancel: () => void
 }
@@ -43,6 +48,7 @@ const FIELD_LABELS: Record<keyof EditInvitationFields, string> = {
   departmentToVisit: 'Department to Visit',
   additionalNotes: 'Additional Notes',
   pocUserId: 'Point of Contact',
+  checkedOutAt: 'Check-out Time',
 }
 
 function optionLabel(options: { value: string; label: string }[], value: string): string {
@@ -51,8 +57,16 @@ function optionLabel(options: { value: string; label: string }[], value: string)
 
 // Only the fields whose value differs from what the invitation already has,
 // labelled the way the form shows them — the confirmation step's summary.
-function changedFieldRows(initial: EditInvitationFields, fields: EditInvitationFields, hostEmployees: HostEmployee[]): ConfirmSummaryRow[] {
+function changedFieldRows(
+  initial: EditInvitationFields,
+  fields: EditInvitationFields,
+  hostEmployees: HostEmployee[],
+  isCheckedOut: boolean,
+): ConfirmSummaryRow[] {
+  // A checked-out visit only accepts `checkedOutAt`; every other field is
+  // ignored by the backend, so it is the only one compared there.
   return (Object.keys(FIELD_LABELS) as (keyof EditInvitationFields)[])
+    .filter((key) => (key === 'checkedOutAt') === isCheckedOut)
     .filter((key) => (fields[key] ?? '') !== (initial[key] ?? ''))
     .map((key) => {
       const raw = fields[key] ?? ''
@@ -60,6 +74,7 @@ function changedFieldRows(initial: EditInvitationFields, fields: EditInvitationF
       if (key === 'pocUserId') value = hostEmployees.find((employee) => employee.id === raw)?.fullName ?? raw
       if (key === 'expectedDuration') value = optionLabel(EXPECTED_DURATION_OPTIONS, raw)
       if (key === 'purposeOfVisit') value = optionLabel(PURPOSE_OF_VISIT_OPTIONS, raw)
+      if (key === 'checkedOutAt' && raw) value = formatDateTimeInputValue(raw)
       return { label: FIELD_LABELS[key], value: value || '—' }
     })
 }
@@ -73,6 +88,7 @@ function toFormState(detail?: InvitationDetail): EditInvitationFields {
     departmentToVisit: detail?.departmentToVisit ?? '',
     additionalNotes: detail?.additionalNotes ?? '',
     pocUserId: detail?.pocUserId ?? '',
+    checkedOutAt: toDateTimeInputValue(detail?.checkedOutAt),
   }
 }
 
@@ -90,6 +106,7 @@ export function EditInvitationModal({
   detail,
   workflowRulesByCategory,
   hostEmployees,
+  canEditCheckOutTime = false,
   onConfirm,
   onCancel,
 }: EditInvitationModalProps) {
@@ -110,7 +127,19 @@ export function EditInvitationModal({
     }
   }, [isOpen, detail])
 
-  const changedRows = changedFieldRows(toFormState(detail), fields, hostEmployees ?? [])
+  const isCheckedOut = detail?.status === 'checked_out'
+  const changedRows = changedFieldRows(toFormState(detail), fields, hostEmployees ?? [], isCheckedOut)
+
+  const checkedInAtInput = toDateTimeInputValue(detail?.checkedInAt)
+  const maxCheckOut = nowAsDateTimeInputValue()
+  const checkOutValue = fields.checkedOutAt ?? ''
+  let checkOutError: string | undefined
+  if (isCheckedOut && checkOutValue) {
+    if (checkOutValue > maxCheckOut) checkOutError = 'Check-out time cannot be in the future.'
+    else if (checkedInAtInput && checkOutValue < checkedInAtInput) checkOutError = 'Check-out time cannot be before the check-in time.'
+  } else if (isCheckedOut) {
+    checkOutError = 'Enter a check-out time.'
+  }
 
   const handleCancel = () => {
     if (isSaving) return
@@ -118,7 +147,12 @@ export function EditInvitationModal({
   }
 
   const handleConfirm = () => {
-    onConfirm(fields)
+    if (isCheckedOut) {
+      onConfirm({ checkedOutAt: dateTimeInputToOffsetIso(checkOutValue) })
+      return
+    }
+    const { checkedOutAt: _unused, ...rest } = fields
+    onConfirm(rest)
   }
 
   return (
@@ -148,60 +182,87 @@ export function EditInvitationModal({
             </div>
           </div>
 
-          <div className="flex flex-col gap-3">
-            <h3 className="text-overline text-text-faint">Visit details</h3>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <SelectField
-                label="Purpose of Visit"
-                placeholder="Select purpose"
-                options={PURPOSE_OF_VISIT_OPTIONS}
-                value={fields.purposeOfVisit ?? ''}
-                onChange={(purposeOfVisit) => setFields({ ...fields, purposeOfVisit })}
-              />
-              {canEditPoc ? (
-                <SelectField
-                  label="Point of Contact"
-                  placeholder="Select point of contact"
-                  options={(hostEmployees ?? []).map((employee) => ({ value: employee.id, label: employee.fullName }))}
-                  value={fields.pocUserId ?? ''}
-                  onChange={(pocUserId) => setFields({ ...fields, pocUserId })}
+          {isCheckedOut ? (
+            <div className="flex flex-col gap-3">
+              <h3 className="text-overline text-text-faint">Check-out</h3>
+              {canEditCheckOutTime ? (
+                <TextField
+                  label="Check-out Time"
+                  type="datetime-local"
+                  value={checkOutValue}
+                  min={checkedInAtInput || undefined}
+                  max={maxCheckOut}
+                  error={checkOutError}
+                  helperText={
+                    detail.checkedOutAutomatically ? 'Checked out automatically by the system — saving a new time marks it as manual.' : undefined
+                  }
+                  onChange={(checkedOutAt) => setFields({ ...fields, checkedOutAt })}
                 />
               ) : (
-                <ReadOnlyField label="Point of Contact" value={pointOfContactLabel ?? '—'} />
+                <p className="font-body text-sm text-text-muted">
+                  This visit is checked out. Only users who can check visitors out may change its check-out time.
+                </p>
               )}
-              <SelectField
-                label="Expected Duration"
-                placeholder="Select duration"
-                options={EXPECTED_DURATION_OPTIONS}
-                value={fields.expectedDuration ?? ''}
-                onChange={(expectedDuration) => setFields({ ...fields, expectedDuration })}
-              />
-              <TextField
-                label="Preferred Visit Date"
-                type="date"
-                value={fields.preferredVisitDate ?? ''}
-                onChange={(preferredVisitDate) => setFields({ ...fields, preferredVisitDate })}
-              />
-              <TextField
-                label="Preferred Visit Time"
-                type="time"
-                value={fields.preferredVisitTime ?? ''}
-                onChange={(preferredVisitTime) => setFields({ ...fields, preferredVisitTime })}
-              />
-              <TextField
-                label="Department to Visit"
-                placeholder="Enter department name"
-                value={fields.departmentToVisit ?? ''}
-                onChange={(departmentToVisit) => setFields({ ...fields, departmentToVisit })}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <h3 className="text-overline text-text-faint">Visit details</h3>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <SelectField
+                  label="Purpose of Visit"
+                  placeholder="Select purpose"
+                  options={PURPOSE_OF_VISIT_OPTIONS}
+                  value={fields.purposeOfVisit ?? ''}
+                  onChange={(purposeOfVisit) => setFields({ ...fields, purposeOfVisit })}
+                />
+                {canEditPoc ? (
+                  <SelectField
+                    label="Point of Contact"
+                    placeholder="Select point of contact"
+                    options={(hostEmployees ?? []).map((employee) => ({
+                      value: employee.id,
+                      label: employee.fullName,
+                    }))}
+                    value={fields.pocUserId ?? ''}
+                    onChange={(pocUserId) => setFields({ ...fields, pocUserId })}
+                  />
+                ) : (
+                  <ReadOnlyField label="Point of Contact" value={pointOfContactLabel ?? '—'} />
+                )}
+                <SelectField
+                  label="Expected Duration"
+                  placeholder="Select duration"
+                  options={EXPECTED_DURATION_OPTIONS}
+                  value={fields.expectedDuration ?? ''}
+                  onChange={(expectedDuration) => setFields({ ...fields, expectedDuration })}
+                />
+                <TextField
+                  label="Preferred Visit Date"
+                  type="date"
+                  value={fields.preferredVisitDate ?? ''}
+                  onChange={(preferredVisitDate) => setFields({ ...fields, preferredVisitDate })}
+                />
+                <TextField
+                  label="Preferred Visit Time"
+                  type="time"
+                  value={fields.preferredVisitTime ?? ''}
+                  onChange={(preferredVisitTime) => setFields({ ...fields, preferredVisitTime })}
+                />
+                <TextField
+                  label="Department to Visit"
+                  placeholder="Enter department name"
+                  value={fields.departmentToVisit ?? ''}
+                  onChange={(departmentToVisit) => setFields({ ...fields, departmentToVisit })}
+                />
+              </div>
+              <TextareaField
+                label="Additional Notes / Special Requirements"
+                placeholder="Any special requirements, accessibility needs, or notes for the host…"
+                value={fields.additionalNotes ?? ''}
+                onChange={(additionalNotes) => setFields({ ...fields, additionalNotes })}
               />
             </div>
-            <TextareaField
-              label="Additional Notes / Special Requirements"
-              placeholder="Any special requirements, accessibility needs, or notes for the host…"
-              value={fields.additionalNotes ?? ''}
-              onChange={(additionalNotes) => setFields({ ...fields, additionalNotes })}
-            />
-          </div>
+          )}
 
           <div className="flex items-center justify-end gap-3">
             <button
@@ -213,7 +274,7 @@ export function EditInvitationModal({
             </button>
             <button
               type="button"
-              disabled={changedRows.length === 0}
+              disabled={changedRows.length === 0 || Boolean(checkOutError)}
               onClick={() => setIsConfirming(true)}
               className="rounded-full bg-secondary-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent disabled:opacity-50"
             >

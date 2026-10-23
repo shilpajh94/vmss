@@ -88,6 +88,7 @@ export function AdminInvitationsPage() {
     isExporting,
     exportError,
     exportFilterSummary,
+    exportNeedsNarrowing,
     pendingCheckOutId,
     pendingCheckOutRequest,
     requestCheckOut,
@@ -185,6 +186,7 @@ export function AdminInvitationsPage() {
                 onApproveAndDelegateClick={requestApproveAndDelegate}
                 onApproveClick={requestApprove}
                 onEditClick={requestEdit}
+                canEditCheckOutTime={canCheckOut}
                 onVisitorInfoClick={viewVisitorInfo}
                 onCheckOutClick={column.status === 'checked_in' && canCheckOut ? requestCheckOut : undefined}
                 onRevertClick={column.status === 'approved' ? requestRevert : undefined}
@@ -274,14 +276,16 @@ export function AdminInvitationsPage() {
         detail={pendingEditDetail}
         workflowRulesByCategory={workflowRulesByCategory}
         hostEmployees={hostEmployees}
+        canEditCheckOutTime={canCheckOut}
         onConfirm={(fields) => pendingEditId && edit(pendingEditId, fields)}
         onCancel={cancelEdit}
       />
 
       <ExportInvitationsModal
         isOpen={isExportOpen}
-        initialStatus={statusFilter}
+        initialStatus={statusFilter.length === 1 ? statusFilter[0] : ''}
         appliedFilters={exportFilterSummary}
+        needsNarrowing={exportNeedsNarrowing}
         isExporting={isExporting}
         errorMessage={exportError}
         onConfirm={(choice) => void exportInvitations(choice)}

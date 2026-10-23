@@ -32,8 +32,60 @@ const API_MAX_PAGE_SIZE = 100
 // `columnPageParams` so no load path can drop it.
 const BOARD_SORT = { sortBy: 'status_changed_at', sortOrder: 'desc' } as const
 
-function columnPageParams(query: ColumnQuery, status: BoardStatus, page: number, pageSize: number): ListVisitRequestsParams {
+// The API takes one purpose / type / source per request, so a column with
+// several selected values is queried once per combination and merged. A visit
+// request has exactly one value for each, so combinations never overlap.
+export const MAX_FILTER_COMBINATIONS = 48
+
+type SingleValueQuery = Omit<ColumnQuery, 'purposesOfVisit' | 'registrationTypes' | 'sources'> &
+  Pick<ListVisitRequestsParams, 'purposeOfVisit' | 'registrationType' | 'source'>
+
+export function filterCombinations(query: ColumnQuery): SingleValueQuery[] {
+  const { purposesOfVisit = [], registrationTypes = [], sources = [], ...rest } = query
+  let dimensions = [purposesOfVisit, registrationTypes, sources]
+  // Past the cap, widen the largest dimension to "any" rather than send
+  // dozens of requests per column.
+  while (dimensions.reduce((count, values) => count * Math.max(1, values.length), 1) > MAX_FILTER_COMBINATIONS) {
+    const largest = dimensions.reduce((best, values) => (values.length > best.length ? values : best))
+    dimensions = dimensions.map((values) => (values === largest ? [] : values))
+  }
+  const [purposes, types, origins] = dimensions.map((values): (string | undefined)[] => (values.length > 0 ? values : [undefined]))
+  return purposes.flatMap((purposeOfVisit) =>
+    types.flatMap((registrationType) => origins.map((source) => ({ ...rest, purposeOfVisit, registrationType, source }))),
+  )
+}
+
+function columnPageParams(query: SingleValueQuery, status: BoardStatus, page: number, pageSize: number): ListVisitRequestsParams {
   return { ...query, ...BOARD_SORT, status: API_STATUS_BY_BOARD_STATUS[status], page, pageSize }
+}
+
+// The list payload doesn't expose `status_changed_at`, so combinations can't
+// be sorted against each other; interleaving by rank keeps each combination's
+// own newest-first order and approximates the global one.
+function interleave(pages: VisitRequestSummary[][]): VisitRequestSummary[] {
+  const longest = Math.max(0, ...pages.map((items) => items.length))
+  const merged: VisitRequestSummary[] = []
+  for (let rank = 0; rank < longest; rank += 1) {
+    for (const items of pages) {
+      if (rank < items.length) merged.push(items[rank])
+    }
+  }
+  return appendUnique([], merged)
+}
+
+// One page of a column across every filter combination, merged
+// in rank order. Totals add up exactly because combinations are disjoint.
+async function fetchColumnPage(
+  fetchPage: FetchVisitRequestsPage,
+  query: ColumnQuery,
+  status: BoardStatus,
+  page: number,
+  pageSize: number,
+): Promise<VisitRequestsPage> {
+  const combinations = filterCombinations(query)
+  const pages = await Promise.all(combinations.map((combination) => fetchPage(columnPageParams(combination, status, page, pageSize))))
+  if (pages.length === 1) return pages[0]
+  return { items: interleave(pages.map((current) => current.items)), total: pages.reduce((sum, current) => sum + current.total, 0) }
 }
 
 export interface BoardColumnPage {
@@ -51,7 +103,14 @@ export interface BoardColumnPage {
 type ColumnsState = Record<BoardStatus, BoardColumnPage>
 
 export type FetchVisitRequestsPage = (params: ListVisitRequestsParams) => Promise<VisitRequestsPage>
-export type ColumnQuery = Omit<ListVisitRequestsParams, 'status' | 'page' | 'pageSize' | 'sortBy' | 'sortOrder'>
+export type ColumnQuery = Omit<
+  ListVisitRequestsParams,
+  'status' | 'page' | 'pageSize' | 'sortBy' | 'sortOrder' | 'purposeOfVisit' | 'registrationType' | 'source'
+> & {
+  purposesOfVisit?: string[]
+  registrationTypes?: string[]
+  sources?: string[]
+}
 
 const EMPTY_COLUMN: BoardColumnPage = { items: [], total: 0, loadedPages: 0, isLoadingMore: false, loadMoreFailed: false, resetKey: 0 }
 
@@ -64,11 +123,11 @@ function appendUnique(existing: VisitRequestSummary[], incoming: VisitRequestSum
 // API's max page size allows: one call up to 100 rows, else 100-row pages.
 async function fetchWindow(fetchPage: FetchVisitRequestsPage, query: ColumnQuery, status: BoardStatus, rows: number): Promise<VisitRequestsPage> {
   if (rows <= API_MAX_PAGE_SIZE) {
-    return fetchPage(columnPageParams(query, status, 1, rows))
+    return fetchColumnPage(fetchPage, query, status, 1, rows)
   }
   const pageCount = Math.ceil(rows / API_MAX_PAGE_SIZE)
   const pages = await Promise.all(
-    Array.from({ length: pageCount }, (_, index) => fetchPage(columnPageParams(query, status, index + 1, API_MAX_PAGE_SIZE))),
+    Array.from({ length: pageCount }, (_, index) => fetchColumnPage(fetchPage, query, status, index + 1, API_MAX_PAGE_SIZE)),
   )
   return {
     items: pages.reduce<VisitRequestSummary[]>((items, page) => appendUnique(items, page.items), []),
@@ -179,7 +238,7 @@ export function usePagedBoardColumns(fetchPage: FetchVisitRequestsPage, query: C
       setColumns((previous) => ({ ...previous, [status]: { ...previous[status], isLoadingMore: true, loadMoreFailed: false } }))
 
       try {
-        const page = await fetchPage(columnPageParams(queryRef.current, status, nextPage, BOARD_PAGE_SIZE))
+        const page = await fetchColumnPage(fetchPage, queryRef.current, status, nextPage, BOARD_PAGE_SIZE)
         if (resultSetGeneration !== resultSetGenerationRef.current) return
         setColumns((previous) => {
           const items = appendUnique(previous[status].items, page.items)
