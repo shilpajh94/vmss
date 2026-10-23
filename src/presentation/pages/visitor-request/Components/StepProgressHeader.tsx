@@ -42,7 +42,11 @@ export function StepProgressHeader({ steps, currentStep, onStepSelect }: StepPro
         aria-label="Registration progress"
         className="h-1.5 w-full overflow-hidden rounded-full bg-border"
       >
-        <div className="step-motion h-full rounded-full bg-secondary-accent transition-[width]" style={{ width: `${progressPercent}%` }} />
+        {/* Scaled, not resized: a transform animates without relayout. */}
+        <div
+          className="step-motion h-full w-full origin-left rounded-full bg-secondary-accent transition-transform"
+          style={{ transform: `scaleX(${progressPercent / 100})` }}
+        />
       </div>
 
       {/* `-mt-3` cancels the card's gap-3 while closed (ui-motion

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { FormSkeleton } from '../ui/Skeleton'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
@@ -128,10 +129,7 @@ export function EditInvitationModal({
   return (
     <Modal isOpen={isOpen} onClose={handleCancel} title="Edit Invitation" maxWidthClassName="max-w-lg">
       {!detail ? (
-        <div className="flex flex-col items-center gap-2 py-8">
-          <div className="size-6 animate-spin rounded-full border-2 border-border-subtle border-t-secondary-accent" />
-          <p className="font-body text-sm text-text-muted">Loading invitation…</p>
-        </div>
+        <FormSkeleton bare rows={4} columns={2} label="Loading invitation…" />
       ) : isConfirming ? (
         <FormConfirmStep
           message={`Save these changes to the visit request for ${confirmSubject(detail.primaryContactFullName, detail.trackingId)}?`}

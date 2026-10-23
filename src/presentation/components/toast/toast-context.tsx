@@ -58,8 +58,10 @@ function toastReducer(state: ToastItem[], action: ToastAction): ToastItem[] {
   return state.filter((toast) => toast.id !== action.id)
 }
 
-// Exit animation length plus slack (ui-motion "Toasts animate in and out").
-const EXIT_MS = MOTION_MS.standard + 50
+// Exit animation length plus slack (ui-motion "Toasts animate in and out"):
+// the fallback removal when no `animationend` arrives.
+// Read per dismissal, since the duration comes from the stylesheet.
+const exitMs = () => MOTION_MS.standard + 50
 
 // Errors get more reading time than success/info before they auto-dismiss.
 // Each toast runs its own timer once it is actually visible (see Toast).
@@ -81,11 +83,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, dispatch] = useReducer(toastReducer, [] as ToastItem[])
 
   // Dismissing twice (click, then the auto-dismiss timer) is harmless:
-  // CLOSE is idempotent and REMOVE of a missing id is a no-op.
+  // CLOSE is idempotent and REMOVE of a missing id is a no-op. The toast
+  // removes itself when its exit animation ends (`remove`); the timer is
+  // only the fallback for when no animation runs (reduced motion).
   const dismiss = useCallback((id: string) => {
     dispatch({ type: 'CLOSE', id })
-    setTimeout(() => dispatch({ type: 'REMOVE', id }), EXIT_MS)
+    setTimeout(() => dispatch({ type: 'REMOVE', id }), exitMs())
   }, [])
+
+  const remove = useCallback((id: string) => dispatch({ type: 'REMOVE', id }), [])
 
   const show = useCallback((variant: ToastVariant, message: string, options?: ToastOptions) => {
     dispatch({
@@ -114,7 +120,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <ToastViewport toasts={toasts} onDismiss={dismiss} />
+      <ToastViewport toasts={toasts} onDismiss={dismiss} onExited={remove} />
     </ToastContext.Provider>
   )
 }

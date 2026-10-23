@@ -7,7 +7,7 @@ import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminKioskForm } from './hooks/use-admin-kiosk-form'
 import { ErrorState } from '../../components/ui/ErrorState'
-import { BackButton } from '../../components/BackButton'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 export function AdminKioskFormPage() {
   const { isEditMode, isLoading, errorMessage, retry, values, errors, isSaving, updateField, submit, cancel } = useAdminKioskForm()
@@ -23,13 +23,7 @@ export function AdminKioskFormPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-      <div className="flex items-center gap-4">
-        <BackButton onClick={cancel} />
-        <div className="flex flex-col gap-0.5">
-          <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Kiosk' : 'Add Kiosk'}</h1>
-          <p className="font-body text-sm text-text-muted">{isEditMode ? "Update this kiosk's details" : 'Register a new check-in kiosk'}</p>
-        </div>
-      </div>
+      <FormPageHeader title={isEditMode ? 'Edit Kiosk' : 'Add Kiosk'} description={isEditMode ? "Update this kiosk's details" : 'Register a new check-in kiosk'} onBack={cancel} />
 
       {errorMessage ? (
         <ErrorState message={errorMessage} onRetry={retry} />

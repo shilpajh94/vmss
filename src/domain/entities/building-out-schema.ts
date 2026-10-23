@@ -1,4 +1,5 @@
 import z from "zod"
+import { PaginationMetaSchema } from "./pagination-meta-schema"
 
 export const BuildingOutSchema = z.object({
   id: z.string(),
@@ -23,12 +24,7 @@ export const BuildingListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z.array(BuildingOutSchema),
-  pagination: z.object({
-    page: z.number(),
-    pageSize: z.number(),
-    total: z.number(),
-    totalPages: z.number(),
-  }),
+  pagination: PaginationMetaSchema,
 })
 
 export type BuildingListResponse = z.infer<typeof BuildingListResponseSchema>

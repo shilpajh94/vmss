@@ -1,4 +1,5 @@
 import z from "zod"
+import { PaginationMetaSchema } from "./pagination-meta-schema"
 
 export const ApprovalWorkflowRuleSchema = z.object({
   id: z.string(),
@@ -27,12 +28,7 @@ export const ApprovalWorkflowRuleListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z.array(ApprovalWorkflowRuleSchema),
-  pagination: z.object({
-    page: z.number(),
-    pageSize: z.number(),
-    total: z.number(),
-    totalPages: z.number(),
-  }),
+  pagination: PaginationMetaSchema,
 })
 
 export type ApprovalWorkflowRuleListResponse = z.infer<typeof ApprovalWorkflowRuleListResponseSchema>

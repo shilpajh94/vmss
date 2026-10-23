@@ -1,4 +1,5 @@
 import z from "zod"
+import { PaginationMetaSchema } from "./pagination-meta-schema"
 
 export const KioskSchema = z.object({
   id: z.string(),
@@ -28,12 +29,7 @@ export const KioskListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z.array(KioskSchema),
-  pagination: z.object({
-    page: z.number(),
-    pageSize: z.number(),
-    total: z.number(),
-    totalPages: z.number(),
-  }),
+  pagination: PaginationMetaSchema,
 })
 
 export type KioskListResponse = z.infer<typeof KioskListResponseSchema>

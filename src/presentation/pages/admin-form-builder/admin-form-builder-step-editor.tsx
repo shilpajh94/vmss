@@ -16,6 +16,7 @@ import { GroupCard } from './Components/GroupCard'
 import { SortableFieldRow } from './Components/SortableFieldRow'
 import { SortableGroupCard } from './Components/SortableGroupCard'
 import { useAdminFormBuilderStepEditor } from './hooks/use-admin-form-builder-step-editor'
+import { moveItem } from '../../utils/move-item'
 
 export function AdminFormBuilderStepEditorPage() {
   const {
@@ -88,12 +89,8 @@ export function AdminFormBuilderStepEditorPage() {
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    const oldIndex = editableFields.findIndex((f) => f.id === active.id)
-    const newIndex = editableFields.findIndex((f) => f.id === over.id)
-    if (oldIndex === -1 || newIndex === -1) return
-    const reordered = [...editableFields]
-    const [moved] = reordered.splice(oldIndex, 1)
-    reordered.splice(newIndex, 0, moved)
+    const reordered = moveItem(editableFields, active.id, over.id)
+    if (!reordered) return
     void reorderFields([...hiddenFieldIds, ...reordered.map((f) => f.id)])
   }
 
@@ -109,12 +106,8 @@ export function AdminFormBuilderStepEditorPage() {
   const handleGroupDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    const oldIndex = unlockedGroups.findIndex((g) => g.id === active.id)
-    const newIndex = unlockedGroups.findIndex((g) => g.id === over.id)
-    if (oldIndex === -1 || newIndex === -1) return
-    const reordered = [...unlockedGroups]
-    const [moved] = reordered.splice(oldIndex, 1)
-    reordered.splice(newIndex, 0, moved)
+    const reordered = moveItem(unlockedGroups, active.id, over.id)
+    if (!reordered) return
     void reorderGroups([...lockedGroups.map((g) => g.id), ...reordered.map((g) => g.id)])
   }
 

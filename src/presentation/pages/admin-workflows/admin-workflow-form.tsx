@@ -5,7 +5,7 @@ import { SelectField } from '../../components/ui/SelectField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminWorkflowForm } from './hooks/use-admin-workflow-form'
 import { ErrorState } from '../../components/ui/ErrorState'
-import { BackButton } from '../../components/BackButton'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 export function AdminWorkflowFormPage() {
   const {
@@ -35,10 +35,7 @@ export function AdminWorkflowFormPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-        <div className="flex items-center gap-4">
-          <BackButton onClick={cancel} />
-          <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Workflow' : 'Add Workflow'}</h1>
-        </div>
+        <FormPageHeader title={isEditMode ? 'Edit Workflow' : 'Add Workflow'} onBack={cancel} />
 
         {errorMessage ? (
           <ErrorState message={errorMessage} onRetry={retry} />

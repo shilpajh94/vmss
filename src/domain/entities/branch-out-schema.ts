@@ -1,4 +1,5 @@
 import z from "zod"
+import { PaginationMetaSchema } from "./pagination-meta-schema"
 
 export const BranchOutSchema = z.object({
   id: z.string(),
@@ -30,12 +31,7 @@ export const BranchListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z.array(BranchOutSchema),
-  pagination: z.object({
-    page: z.number(),
-    pageSize: z.number(),
-    total: z.number(),
-    totalPages: z.number(),
-  }),
+  pagination: PaginationMetaSchema,
 })
 
 export type BranchListResponse = z.infer<typeof BranchListResponseSchema>

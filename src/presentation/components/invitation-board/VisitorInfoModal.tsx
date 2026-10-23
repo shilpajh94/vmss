@@ -1,4 +1,5 @@
 import type { InvitationDetail, InvitationVehicle } from '../../../domain/entities/invitation-detail-schema'
+import { FormSkeleton } from '../ui/Skeleton'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
 import type { FieldAnswer, GroupAnswer } from '../../../domain/entities/form-field-answer-schema'
@@ -232,10 +233,7 @@ export function VisitorInfoModal({
           )}
         </div>
       ) : isLoading || !detail ? (
-        <div className="flex flex-col items-center gap-2 py-8">
-          <div className="size-6 animate-spin rounded-full border-2 border-border-subtle border-t-secondary-accent" />
-          <p className="font-body text-sm text-text-muted">Loading visitor info…</p>
-        </div>
+        <FormSkeleton bare rows={4} columns={2} label="Loading visitor info…" />
       ) : (
         <div className="flex flex-col gap-5">
           <div className="flex items-start justify-between gap-3 rounded-xl border border-border-subtle bg-bg p-4">

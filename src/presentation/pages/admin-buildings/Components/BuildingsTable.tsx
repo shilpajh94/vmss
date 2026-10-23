@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router'
 import { PencilIcon, TrashIcon } from '../../../components/icons'
 import type { Building } from '../../../../domain/entities/building-schema'
 import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+import { StatusBadge } from '../../../components/ui/StatusBadge'
 
 // Below `md`: only the identifying, status, and actions columns stay visible.
 const TABLE_CLASS_NAME = responsiveTableClassName([2, 3, 4])
@@ -37,14 +38,7 @@ export function BuildingsTable({ buildings, onDelete }: BuildingsTableProps) {
               <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{building.code}</td>
               <td className="max-w-[175px] truncate px-6 py-4 font-body text-sm text-text-faint">{building.address || '—'}</td>
               <td className="px-6 py-4 whitespace-nowrap">
-                <span
-                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                    building.isActive ? 'bg-success/15 text-success-text' : 'bg-border-subtle text-text-muted'
-                  }`}
-                >
-                  <span className={`size-1.5 rounded-full ${building.isActive ? 'bg-success' : 'bg-text-faint'}`} />
-                  {building.isActive ? 'Active' : 'Inactive'}
-                </span>
+                <StatusBadge isActive={building.isActive} />
               </td>
               <td className="px-6 py-4">
                 <div className="flex items-center justify-end gap-2">

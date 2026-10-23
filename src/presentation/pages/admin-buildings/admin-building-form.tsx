@@ -10,7 +10,7 @@ import { FloorModal } from './Components/FloorModal'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { useAdminBuildingForm } from './hooks/use-admin-building-form'
 import { ErrorState } from '../../components/ui/ErrorState'
-import { BackButton } from '../../components/BackButton'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 export function AdminBuildingFormPage() {
   const {
@@ -50,10 +50,7 @@ export function AdminBuildingFormPage() {
   return (
     <>
       <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-        <div className="flex items-center gap-4">
-          <BackButton onClick={cancel} />
-          <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Building' : 'Add Building'}</h1>
-        </div>
+        <FormPageHeader title={isEditMode ? 'Edit Building' : 'Add Building'} onBack={cancel} />
 
         {errorMessage ? (
           <ErrorState message={errorMessage} onRetry={retry} />

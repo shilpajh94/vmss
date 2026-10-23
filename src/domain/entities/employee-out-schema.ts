@@ -1,4 +1,5 @@
 import z from "zod"
+import { PaginationMetaSchema } from "./pagination-meta-schema"
 import { BranchRoleSchema } from "./user-out-schema"
 
 export const EmployeeOutSchema = z.object({
@@ -20,12 +21,7 @@ export const EmployeeListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z.array(EmployeeOutSchema),
-  pagination: z.object({
-    page: z.number(),
-    pageSize: z.number(),
-    total: z.number(),
-    totalPages: z.number(),
-  }),
+  pagination: PaginationMetaSchema,
 })
 
 export const EmployeeResponseSchema = z.object({

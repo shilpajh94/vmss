@@ -8,7 +8,7 @@ import { FLOOR_LIMITS } from './floor-form-validation'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminFloorForm } from './hooks/use-admin-floor-form'
 import { ErrorState } from '../../components/ui/ErrorState'
-import { BackButton } from '../../components/BackButton'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 const CAPACITY_TYPE_OPTIONS = [
   { value: 'guests', label: 'Guests' },
@@ -42,10 +42,7 @@ export function AdminFloorFormPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-      <div className="flex items-center gap-4">
-        <BackButton onClick={cancel} />
-        <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Floor' : 'Add Floor'}</h1>
-      </div>
+      <FormPageHeader title={isEditMode ? 'Edit Floor' : 'Add Floor'} onBack={cancel} />
 
       {errorMessage ? (
           <ErrorState message={errorMessage} onRetry={retry} />

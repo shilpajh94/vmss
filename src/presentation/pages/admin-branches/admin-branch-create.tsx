@@ -1,4 +1,4 @@
-import { BackButton } from '../../components/BackButton'
+import { FormPageHeader } from '../../components/FormPageHeader'
 import { DashboardLoadError } from '../../components/dashboard/DashboardStates'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { SelectField } from '../../components/ui/SelectField'
@@ -21,15 +21,7 @@ export function AdminBranchCreatePage() {
 
   return (
     <>
-      <div className="flex items-center gap-4">
-        <BackButton onClick={cancel} />
-        <div className="flex flex-col gap-1">
-          <h1 className="font-display text-xl font-bold md:text-2xl text-text">Create New Branch</h1>
-          <p className="font-body text-[13px] text-text-muted">
-            Provision a new logical branch office with physical addresses, operating parameters, and contact references.
-          </p>
-        </div>
-      </div>
+      <FormPageHeader title="Create New Branch" description="Provision a new logical branch office with physical addresses, operating parameters, and contact references." onBack={cancel} />
 
       {loadErrorMessage ? (
         <DashboardLoadError message={loadErrorMessage} onRetry={retry} />

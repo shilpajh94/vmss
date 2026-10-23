@@ -58,7 +58,8 @@
 }
 
 .route-transition {
-  animation: route-fade-in var(--motion-standard) var(--ease-motion-out);
+  /* theme.css reserves --motion-slow for route and step transitions. */
+  animation: route-fade-in var(--motion-slow) var(--ease-motion-out);
 }
 
 @keyframes motion-fade-in {

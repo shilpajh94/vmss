@@ -5,7 +5,7 @@ import { TextField } from '../../components/ui/TextField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminHostEmployeeForm } from './hooks/use-admin-host-employee-form'
 import { ErrorState } from '../../components/ui/ErrorState'
-import { BackButton } from '../../components/BackButton'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 const fieldLabelClassName = 'text-[13px] font-bold uppercase text-text-secondary'
 
@@ -45,17 +45,7 @@ export function AdminHostEmployeeFormPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-        <div className="flex items-center gap-4">
-          <BackButton onClick={cancel} />
-          <div className="flex flex-col gap-0.5">
-            <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Manage Employee Access' : 'Add Employee'}</h1>
-            <p className="font-body text-sm text-text-muted">
-              {isEditMode
-                ? 'View and manage this employee’s role and branch assignments'
-                : 'Authorize a new employee to sponsor and host corporate visitors'}
-            </p>
-          </div>
-        </div>
+        <FormPageHeader title={isEditMode ? 'Manage Employee Access' : 'Add Employee'} description={isEditMode ? 'View and manage this employee’s role and branch assignments' : 'Authorize a new employee to sponsor and host corporate visitors'} onBack={cancel} />
 
         {errorMessage ? (
           <ErrorState message={errorMessage} onRetry={retry} />

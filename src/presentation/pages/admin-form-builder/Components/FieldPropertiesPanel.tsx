@@ -24,6 +24,7 @@ import type {
   FormFieldType,
   FormFieldUpdateInput,
 } from '../../../../domain/entities/form-builder-schema'
+import { moveItem } from '../../../utils/move-item'
 
 interface FieldPropertiesPanelProps {
   field: FormField
@@ -257,15 +258,7 @@ export function FieldPropertiesPanel({ field, siblingFields, onSave, onDirtyChan
   const handleOptionDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    setOptionRows((current) => {
-      const oldIndex = current.findIndex((row) => row.id === active.id)
-      const newIndex = current.findIndex((row) => row.id === over.id)
-      if (oldIndex === -1 || newIndex === -1) return current
-      const reordered = [...current]
-      const [moved] = reordered.splice(oldIndex, 1)
-      reordered.splice(newIndex, 0, moved)
-      return reordered
-    })
+    setOptionRows((current) => moveItem(current, active.id, over.id) ?? current)
   }
 
   const save = async () => {

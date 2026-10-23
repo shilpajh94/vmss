@@ -4,6 +4,7 @@ import { PencilIcon, TrashIcon } from '../../../components/icons'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+import { StatusBadge } from '../../../components/ui/StatusBadge'
 
 // Below `md`: only the identifying, status, and actions columns stay visible.
 const TABLE_CLASS_NAME = responsiveTableClassName([2, 3, 4])
@@ -57,14 +58,7 @@ export function DepartmentsTable({ departments, employees, onDelete }: Departmen
                   )}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                      department.isActive ? 'bg-success/15 text-success-text' : 'bg-border-subtle text-text-muted'
-                    }`}
-                  >
-                    <span className={`size-1.5 rounded-full ${department.isActive ? 'bg-success' : 'bg-text-faint'}`} />
-                    {department.isActive ? 'Active' : 'Inactive'}
-                  </span>
+                  <StatusBadge isActive={department.isActive} />
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center justify-end gap-2">

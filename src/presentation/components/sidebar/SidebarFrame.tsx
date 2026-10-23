@@ -16,7 +16,7 @@ export function SidebarFrame({ expandedWidthClassName, gapClassName, children }:
   const { isCollapsed } = useSidebarCollapse()
   return (
     <aside
-      className={`flex h-full shrink-0 flex-col self-stretch overflow-hidden bg-sidebar transition-[width,padding] duration-200 ease-out motion-reduce:transition-none lg:h-auto ${
+      className={`flex h-full shrink-0 flex-col self-stretch overflow-hidden bg-sidebar transition-[width,padding] duration-standard ease-motion-out motion-reduce:transition-none lg:h-auto ${
         isCollapsed ? 'w-[72px] gap-4 px-3 py-6' : `${expandedWidthClassName} ${gapClassName} p-6`
       }`}
     >

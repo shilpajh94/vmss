@@ -1,4 +1,4 @@
-import { BackButton } from '../../components/BackButton'
+import { FormPageHeader } from '../../components/FormPageHeader'
 import { Checkbox } from '../../components/ui/Checkbox'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
@@ -20,13 +20,7 @@ export function AdminRolePermissionsFormPage() {
         <FormSkeleton rows={6} columns={1} label="Loading role…" />
       ) : (
         <>
-          <div className="flex items-center gap-4">
-            <BackButton onClick={cancel} />
-            <div className="flex flex-col gap-1">
-              <h1 className="font-display text-xl font-bold md:text-2xl text-text">{role?.name}</h1>
-              <p className="font-body text-sm text-text-muted">{role?.description ?? 'Choose what this role is permitted to do.'}</p>
-            </div>
-          </div>
+          <FormPageHeader title={role?.name} description={role?.description ?? 'Choose what this role is permitted to do.'} onBack={cancel} />
 
           <div className="flex w-full flex-1 flex-col gap-3 rounded-2xl border border-border bg-surface p-4 md:p-6">
             {permissions.map((permission) => (

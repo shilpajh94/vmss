@@ -7,7 +7,7 @@ import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminDepartmentForm } from './hooks/use-admin-department-form'
 import { ErrorState } from '../../components/ui/ErrorState'
-import { BackButton } from '../../components/BackButton'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 export function AdminDepartmentFormPage() {
   const {
@@ -33,17 +33,7 @@ export function AdminDepartmentFormPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-      <div className="flex items-center gap-4">
-        <BackButton onClick={cancel} />
-        <div className="flex flex-col gap-0.5">
-          <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Department' : 'Add Department'}</h1>
-          <p className="font-body text-sm text-text-muted">
-            {isEditMode
-              ? "Update this operational division's details"
-              : 'Create a new operational division inside your workplace directory'}
-          </p>
-        </div>
-      </div>
+      <FormPageHeader title={isEditMode ? 'Edit Department' : 'Add Department'} description={isEditMode ? "Update this operational division's details" : 'Create a new operational division inside your workplace directory'} onBack={cancel} />
 
       {errorMessage ? (
           <ErrorState message={errorMessage} onRetry={retry} />

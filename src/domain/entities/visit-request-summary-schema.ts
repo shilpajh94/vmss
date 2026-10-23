@@ -1,4 +1,5 @@
 import z from "zod"
+import { PaginationMetaSchema } from "./pagination-meta-schema"
 import { CurrentApprovalStepSchema } from "./invitation-detail-schema"
 
 export const VisitRequestSummarySchema = z.object({
@@ -26,12 +27,7 @@ export const VisitRequestSummaryListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z.array(VisitRequestSummarySchema),
-  pagination: z.object({
-    page: z.number(),
-    pageSize: z.number(),
-    total: z.number(),
-    totalPages: z.number(),
-  }),
+  pagination: PaginationMetaSchema,
 })
 
 export type VisitRequestSummaryListResponse = z.infer<typeof VisitRequestSummaryListResponseSchema>

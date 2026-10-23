@@ -122,19 +122,19 @@ These tasks follow the shared design in `VMSS_API/openspec/changes/audit-and-har
 
 ## 8. P3 — Consistency and refactors carried over from `optimize-web-code-reuse-and-performance` (D15)
 
-- [ ] 8.1 Add `ui/StatusBadge` and replace the identical markup in the Buildings, Departments, Floors and HostEmployees tables.
-- [ ] 8.2 Add `FormPageHeader` (back button and title) to every admin `*-form.tsx`, starting with `admin-building-form.tsx:55-60`.
-- [ ] 8.3 Add a `moveItem` helper for the 4 splice-based drag handlers (`admin-form-builder.tsx:91`, `admin-form-builder-step-editor.tsx:94,115`, `FieldPropertiesPanel.tsx:211`).
-- [ ] 8.4 Unify `createEmptyVisitorFormEntry` and `createEmptyStaffVisitorFormEntry` into one generic shape.
-- [ ] 8.5 Replace the inline pagination shapes in the `*-out-schema.ts` files (`floor-out-schema.ts:28`, `role-out-schema.ts:23`, …) with `PaginationMetaSchema`.
-- [ ] 8.6 Motion:
+- [x] 8.1 *(Also Branches, Workflows ("Paused") and Kiosks. The inactive text is now `text-secondary`, which closes the 4.34:1 residual from 6.2.)* Add `ui/StatusBadge` and replace the identical markup in the Buildings, Departments, Floors and HostEmployees tables.
+- [x] 8.2 *(All 9 admin `*-form.tsx` pages plus Create Branch. Org Configs has no back button.)* Add `FormPageHeader` (back button and title) to every admin `*-form.tsx`, starting with `admin-building-form.tsx:55-60`.
+- [x] 8.3 *(`utils/move-item.ts`, with unit tests.)* Add a `moveItem` helper for the 4 splice-based drag handlers (`admin-form-builder.tsx:91`, `admin-form-builder-step-editor.tsx:94,115`, `FieldPropertiesPanel.tsx:211`).
+- [x] 8.4 *(The shapes were identical, so `StaffVisitorFormEntry` and `createEmptyStaffVisitorFormEntry` are now aliases of the visitor wizard's.)* Unify `createEmptyVisitorFormEntry` and `createEmptyStaffVisitorFormEntry` into one generic shape.
+- [x] 8.5 *(All 13 inline copies.)* Replace the inline pagination shapes in the `*-out-schema.ts` files (`floor-out-schema.ts:28`, `role-out-schema.ts:23`, …) with `PaginationMetaSchema`.
+- [x] 8.6 *(The route fade now uses `--motion-slow`, which theme.css reserves for route transitions. `MOTION_MS` reads the CSS variables once each, with constants only where there is no stylesheet. A toast removes itself on its exit animation's `animationend`, and the timer stays as a fallback.)* Motion:
   - `StepProgressHeader.tsx:45` animates `scaleX` instead of `width`;
   - `SidebarFrame.tsx:19` uses the motion tokens;
   - align the route-fade token (`index.css:61` vs `theme.css:106`);
   - derive `utils/motion.ts` from the CSS variables;
   - toasts remove themselves on `animationend`;
   - `EditInvitationModal`/`VisitorInfoModal` use `FormSkeleton` instead of hand-built spinners.
-- [ ] 8.7 Remove the D-W1 role-name fallback once the API half is confirmed deployed.
+- [ ] 8.7 *(Left open on purpose: the API half is deployed locally only, not yet to DEV/STAGE/PROD, so the fallback in `utils/permissions.ts` stays.)* Remove the D-W1 role-name fallback once the API half is confirmed deployed.
 - [ ] 8.8 Delete `openspec/changes/optimize-web-code-reuse-and-performance/`. Do not archive it (D15); confirm with the user first.
 
 ## 9. Verification and handoff

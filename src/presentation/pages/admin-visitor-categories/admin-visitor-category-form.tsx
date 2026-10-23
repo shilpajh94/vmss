@@ -8,7 +8,7 @@ import { usePageHeader } from '../../context/page-header-context'
 import { BadgeColorField } from './Components/BadgeColorField'
 import { useAdminVisitorCategoryForm } from './hooks/use-admin-visitor-category-form'
 import { ErrorState } from '../../components/ui/ErrorState'
-import { BackButton } from '../../components/BackButton'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 const NDA_REQUIREMENT_OPTIONS = [
   { value: 'digital', label: 'Yes (Digital)' },
@@ -34,15 +34,7 @@ export function AdminVisitorCategoryFormPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-        <div className="flex items-center gap-4">
-          <BackButton onClick={cancel} />
-          <div className="flex flex-col gap-0.5">
-            <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Category' : 'Add Category'}</h1>
-            <p className="font-body text-sm text-text-muted">
-              {isEditMode ? "Update this visitor category's classification and policy details" : 'Create a new visitor classification'}
-            </p>
-          </div>
-        </div>
+        <FormPageHeader title={isEditMode ? 'Edit Category' : 'Add Category'} description={isEditMode ? "Update this visitor category's classification and policy details" : 'Create a new visitor classification'} onBack={cancel} />
 
         {errorMessage ? (
           <ErrorState message={errorMessage} onRetry={retry} />
