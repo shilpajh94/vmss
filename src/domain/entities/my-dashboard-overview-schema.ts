@@ -15,7 +15,8 @@ export const MyUpcomingVisitorSchema = z.object({
 export const MyDashboardOverviewSchema = z.object({
   visitsToday: z.number(),
   insideNow: z.number(),
-  awaitingApproval: z.number(),
+  // Submitted and not yet expired; the deprecated `awaitingApproval` isn't read.
+  openAwaitingApproval: z.number(),
   upcoming: z.number(),
   upcomingPreview: z.array(MyUpcomingVisitorSchema),
   today: z.string().min(1),

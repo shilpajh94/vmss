@@ -22,7 +22,7 @@ export function SsoSignInCard({ status, errorMessage, onSignIn }: SsoSignInCardP
           onClick={onSignIn}
           pending={isBusy}
           pendingLabel={status === 'completing' ? 'Completing sign-in…' : 'Redirecting…'}
-          className={AUTH_PRIMARY_BUTTON_CLASS}
+          className={`cursor-pointer disabled:cursor-not-allowed ${AUTH_PRIMARY_BUTTON_CLASS}`}
         >
           <img src={KeyIcon} alt="" className="size-[18px]" />
           Sign in with SSO

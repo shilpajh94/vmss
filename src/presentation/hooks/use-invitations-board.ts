@@ -13,10 +13,11 @@ import type { CurrentApprovalStep, InvitationDetail } from '../../domain/entitie
 import type { RoleOut } from '../../domain/entities/role-out-schema'
 import type { HostEmployee } from '../../domain/entities/host-employee-schema'
 import type { ApprovalWorkflowRule } from '../../domain/entities/approval-workflow-rule-schema'
-import type { EditInvitationFields } from '../../data/repositories/visit-request-summary-repository'
+import type { EditInvitationFields, InvitationDrillDown } from '../../data/repositories/visit-request-summary-repository'
+import { drillDownChips, parseDeepLinkStatuses, parseDrillDown } from '../components/invitation-board/board-drill-down'
 import { PURPOSE_OF_VISIT_OPTIONS } from '../utils/purpose-of-visit-options'
 import { saveBlob } from '../utils/save-blob'
-import { REGISTRATION_TYPE_OPTIONS, SOURCE_OPTIONS, STATUS_OPTIONS, exportFilename, optionLabel } from '../components/invitation-board/filter-options'
+import { REGISTRATION_TYPE_OPTIONS, SOURCE_OPTIONS, exportFilename, optionLabel } from '../components/invitation-board/filter-options'
 import type { InvitationExportChoice } from '../components/invitation-board/ExportInvitationsModal'
 import { boardStatusForApiStatus, usePagedBoardColumns, type BoardStatus, type ColumnQuery } from './use-paged-board-columns'
 import { permissionsFor } from '../utils/permissions'
@@ -92,6 +93,7 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
     rejectInvitationStepUseCase,
     delegateInvitationStepUseCase,
     listApprovalWorkflowRulesUseCase,
+    listBranchesUseCase,
   } = useAppDependencies()
   const toast = useToast()
 
@@ -103,14 +105,14 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
   const [search, setSearch] = useState('')
   const [purposeFilter, setPurposeFilter] = useState<string[]>([])
   const [registrationTypeFilter, setRegistrationTypeFilter] = useState<string[]>([])
-  // A dashboard tile or "View all" link opens the board on one status via
-  // ?status=<api status>, applied once as the initial filter; an unknown
-  // value is ignored (staff-dashboard / admin-invitations "opens a status
-  // from a deep link").
-  const [statusFilter, setStatusFilter] = useState<string[]>(() => {
-    const requested = searchParams.get('status') ?? ''
-    return STATUS_OPTIONS.some((option) => option.value === requested) ? [requested] : []
-  })
+  // A dashboard tile, bar or "View all" link opens the board on exactly what
+  // it counted: one or more ?status=<api status> plus the drill-down params
+  // (visit dates, upcoming, not expired, branch), applied once on load.
+  // Unknown or malformed values are ignored (staff-dashboard /
+  // admin-invitations "opens a status from a deep link").
+  const [statusFilter, setStatusFilter] = useState<string[]>(() => parseDeepLinkStatuses(searchParams))
+  const [drillDown, setDrillDown] = useState<InvitationDrillDown>(() => parseDrillDown(searchParams))
+  const [drillDownBranchName, setDrillDownBranchName] = useState<string | undefined>(undefined)
   const [sourceFilter, setSourceFilter] = useState<string[]>([])
   const debouncedSearch = useDebouncedValue(search, 300)
   const [approvingId, setApprovingId] = useState<string | undefined>(undefined)
@@ -147,19 +149,59 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
       sources: sourceFilter,
       search: debouncedSearch.trim() || undefined,
       purposesOfVisit: purposeFilter.flatMap(purposeStoredValues),
+      ...drillDown,
     }),
-    [scope, registrationTypeFilter, sourceFilter, debouncedSearch, purposeFilter],
+    [scope, registrationTypeFilter, sourceFilter, debouncedSearch, purposeFilter, drillDown],
   )
   // Owned here, not by either page, so the staff and admin bars share one
   // definition of "a filter is set" and of what Clear filters resets.
-  const isFiltering = purposeFilter.length > 0 || statusFilter.length > 0 || registrationTypeFilter.length > 0 || sourceFilter.length > 0
-  // Leaves the search text alone - only the dropdown filters reset.
+  const isFiltering =
+    purposeFilter.length > 0 ||
+    statusFilter.length > 0 ||
+    registrationTypeFilter.length > 0 ||
+    sourceFilter.length > 0 ||
+    Object.keys(drillDown).length > 0
+  // Leaves the search text alone - only the dropdown filters and the
+  // dashboard chips reset.
   const clearFilters = useCallback(() => {
     setPurposeFilter([])
     setStatusFilter([])
     setRegistrationTypeFilter([])
     setSourceFilter([])
+    setDrillDown({})
   }, [])
+
+  // The branch chip shows a name, not an id; the board stays usable (with a
+  // generic label) if the branch list can't be loaded.
+  const drillDownBranchId = drillDown.branchId
+  useEffect(() => {
+    if (!drillDownBranchId) return
+    let isCurrent = true
+    listBranchesUseCase
+      .execute()
+      .then((branches) => {
+        if (isCurrent) setDrillDownBranchName(branches.find((branch) => branch.id === drillDownBranchId)?.name)
+      })
+      .catch((error: unknown) => console.error('Failed to load the branch name for the board filter', error))
+    return () => {
+      isCurrent = false
+    }
+  }, [drillDownBranchId, listBranchesUseCase])
+
+  const dashboardChips = useMemo(
+    () =>
+      drillDownChips(drillDown, drillDownBranchName).map((chip) => ({
+        key: chip.keys.join('+'),
+        label: chip.label,
+        onRemove: () =>
+          setDrillDown((current) => {
+            const next = { ...current }
+            for (const key of chip.keys) delete next[key]
+            return next
+          }),
+      })),
+    [drillDown, drillDownBranchName],
+  )
   // A status filter narrows loading to that one column; a status with no
   // column leaves every column empty.
   const visibleStatuses = useMemo<readonly BoardStatus[]>(() => {
@@ -878,8 +920,9 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
       summary.push(`Type: ${registrationTypeFilter.map((value) => optionLabel(REGISTRATION_TYPE_OPTIONS, value)).join(', ')}`)
     }
     if (sourceFilter.length > 0) summary.push(`Source: ${sourceFilter.map((value) => optionLabel(SOURCE_OPTIONS, value)).join(', ')}`)
+    for (const chip of dashboardChips) summary.push(chip.label)
     return summary
-  }, [columnQuery.search, purposeFilter, registrationTypeFilter, sourceFilter])
+  }, [columnQuery.search, purposeFilter, registrationTypeFilter, sourceFilter, dashboardChips])
 
   // The export endpoint takes one value per filter and returns a file that
   // can't be merged client-side, so several values must be narrowed first.
@@ -915,6 +958,7 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
           dateFrom: choice.dateFrom || undefined,
           dateTo: choice.dateTo || undefined,
           format: choice.format,
+          ...drillDown,
         })
         saveBlob(blob, exportFilename(choice.status, choice.format))
         setIsExportOpen(false)
@@ -928,7 +972,7 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
         setIsExporting(false)
       }
     },
-    [columnQuery.relevantToMe, columnQuery.search, purposeFilter, registrationTypeFilter, sourceFilter, exportInvitationsUseCase, toast],
+    [columnQuery.relevantToMe, columnQuery.search, purposeFilter, registrationTypeFilter, sourceFilter, drillDown, exportInvitationsUseCase, toast],
   )
 
   const requestCheckOut = useCallback((id: string) => {
@@ -1059,6 +1103,7 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
     exportFilterSummary,
     exportNeedsNarrowing,
     statusFilter,
+    dashboardChips,
     focusClosedStatus,
     pendingCheckOutId,
     pendingCheckOutRequest,

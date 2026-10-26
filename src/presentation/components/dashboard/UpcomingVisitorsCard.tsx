@@ -3,7 +3,7 @@ import { Avatar } from '../ui/Avatar'
 import { EmptyState } from '../ui/EmptyState'
 import { formatDate, formatTime } from '../../utils/format-time'
 import { CardHeader } from './CardHeader'
-import { boardInvitationPath, boardStatusPath, scheduledLocal, type BoardBasePath } from './dashboard-format'
+import { boardDrillDownPath, boardInvitationPath, scheduledLocal, type BoardBasePath } from './dashboard-format'
 import { purposeLabel } from '../../utils/purpose-of-visit-options'
 
 export interface UpcomingVisitorRow {
@@ -23,17 +23,21 @@ interface UpcomingVisitorsCardProps {
   subtitle: string
   visitors: UpcomingVisitorRow[]
   boardBasePath: BoardBasePath
+  branchId?: string
   showHost: boolean
   className?: string
 }
 
 // Approved visitors not yet admitted. Each row shows the scheduled visit
 // (falling back to the pass's expiry when no visit date is set) and opens the
-// visit; "View all" opens the board on approved invitations.
-export function UpcomingVisitorsCard({ title, subtitle, visitors, boardBasePath, showHost, className = '' }: UpcomingVisitorsCardProps) {
+// visit; "View all" opens the board on the same upcoming invitations the
+// Upcoming tile counts.
+export function UpcomingVisitorsCard({ title, subtitle, visitors, boardBasePath, branchId, showHost, className = '' }: UpcomingVisitorsCardProps) {
   return (
     <section aria-label={title} className={`flex min-w-0 flex-col gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 ${className}`}>
-      <CardHeader title={title} subtitle={subtitle} viewAllHref={boardStatusPath(boardBasePath, 'approved')} viewAllLabel="View all approved visits" />
+      <CardHeader title={title} subtitle={subtitle} viewAllHref={boardDrillDownPath(boardBasePath, { upcoming: true, branchId })}
+        viewAllLabel="View all upcoming visitors"
+      />
 
       {visitors.length === 0 ? (
         <EmptyState message="No upcoming visitors scheduled." className="py-12" />

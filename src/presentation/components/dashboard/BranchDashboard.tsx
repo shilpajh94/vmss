@@ -10,30 +10,33 @@ import { StatusBarsChart } from './StatusBarsChart'
 import { TopLabelsChart } from './TopLabelsChart'
 import { TrafficTrendChart } from './TrafficTrendChart'
 import { UpcomingVisitorsCard } from './UpcomingVisitorsCard'
-import { boardStatusPath, formatWaitingSince, type BoardBasePath } from './dashboard-format'
+import { VISIT_DAY_STATUSES, boardDrillDownPath, formatWaitingSince, type BoardBasePath } from './dashboard-format'
 import type { useBranchDashboard } from '../../hooks/use-branch-dashboard'
 import type { DashboardOverview } from '../../../domain/entities/dashboard-overview-schema'
 
 const ALL_BRANCHES = ''
 
-function buildKpis(overview: DashboardOverview, basePath: BoardBasePath): DashboardKpiTile[] {
+// Each tile links to exactly what it counts (dashboard-insights "KPI Tiles
+// Link to the Matching Invitations"), narrowed to the selected branch.
+function buildKpis(overview: DashboardOverview, basePath: BoardBasePath, branchId: string | undefined): DashboardKpiTile[] {
+  const link = (drillDown: Parameters<typeof boardDrillDownPath>[1]) => boardDrillDownPath(basePath, { ...drillDown, branchId })
   return [
     {
       key: 'visits-today',
       label: 'Expected Today',
       value: overview.scheduledTodayCount,
-      detail: `${overview.checkedInTodayCount} checked in so far`,
-      href: boardStatusPath(basePath, 'approved'),
+      detail: `${overview.scheduledTodayCheckedInCount} checked in so far`,
+      href: link({ statuses: VISIT_DAY_STATUSES, visitDateFrom: overview.today, visitDateTo: overview.today }),
     },
-    { key: 'checked-in', label: 'On-Site Now', value: overview.checkedInCount, href: boardStatusPath(basePath, 'checked_in') },
+    { key: 'checked-in', label: 'On-Site Now', value: overview.checkedInCount, href: link({ statuses: ['checked_in'] }) },
     {
       key: 'pending-approval',
       label: 'Pending Approval',
-      value: overview.pendingApprovalCount,
-      detail: overview.oldestPendingSubmittedAt ? `Oldest waiting ${formatWaitingSince(overview.oldestPendingSubmittedAt)}` : undefined,
-      href: boardStatusPath(basePath, 'submitted'),
+      value: overview.openPendingApprovalCount,
+      detail: overview.oldestOpenPendingSubmittedAt ? `Oldest waiting ${formatWaitingSince(overview.oldestOpenPendingSubmittedAt)}` : undefined,
+      href: link({ statuses: ['submitted'], excludeExpired: true }),
     },
-    { key: 'upcoming-visitors', label: 'Upcoming Visitors', value: overview.upcomingVisitorCount, href: boardStatusPath(basePath, 'approved') },
+    { key: 'upcoming-visitors', label: 'Upcoming Visitors', value: overview.upcomingVisitorCount, href: link({ upcoming: true }) },
   ]
 }
 
@@ -77,7 +80,7 @@ export function BranchDashboard({ dashboard, boardBasePath, subtitle }: BranchDa
         }
       />
 
-      <KpiRow kpis={buildKpis(overview, boardBasePath)} />
+      <KpiRow kpis={buildKpis(overview, boardBasePath, dashboard.branchId)} />
 
       <div className="grid w-full grid-cols-1 gap-4 md:gap-6 lg:grid-cols-12">
         <TrafficTrendChart
@@ -92,6 +95,9 @@ export function BranchDashboard({ dashboard, boardBasePath, subtitle }: BranchDa
           statuses={analytics.statusBreakdown}
           rangeDays={rangeDays}
           boardBasePath={boardBasePath}
+          visitDateFrom={analytics.dailyTrend[0]?.date ?? analytics.today}
+          visitDateTo={analytics.today}
+          branchId={dashboard.branchId}
           isUpdating={dashboard.isAnalyticsLoading}
           className="lg:col-span-4"
         />
@@ -108,12 +114,13 @@ export function BranchDashboard({ dashboard, boardBasePath, subtitle }: BranchDa
       </div>
 
       <div className="grid w-full grid-cols-1 gap-4 md:gap-6 lg:grid-cols-12">
-        <RecentCheckinsCard checkins={recentCheckins} boardBasePath={boardBasePath} className="lg:col-span-7" />
+        <RecentCheckinsCard checkins={recentCheckins} boardBasePath={boardBasePath} branchId={dashboard.branchId} className="lg:col-span-7" />
         <UpcomingVisitorsCard
           title="Upcoming Visitors"
           subtitle="Approved and not yet arrived"
           visitors={overview.upcomingVisitors}
           boardBasePath={boardBasePath}
+          branchId={dashboard.branchId}
           showHost
           className="lg:col-span-5"
         />

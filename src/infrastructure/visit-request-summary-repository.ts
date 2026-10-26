@@ -2,6 +2,7 @@ import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
 import type {
   EditInvitationFields,
+  InvitationDrillDown,
   InvitationExportParams,
   ListVisitRequestsParams,
   VisitRequestSummaryRepository,
@@ -18,6 +19,17 @@ import {
   type InvitationDetail,
   type InvitationDetailResponse,
 } from '../domain/entities/invitation-detail-schema'
+
+// Unset or false values are omitted, like the other optional filters.
+function drillDownQuery(params: InvitationDrillDown | undefined) {
+  return {
+    visitDateFrom: params?.visitDateFrom,
+    visitDateTo: params?.visitDateTo,
+    upcoming: params?.upcoming ? true : undefined,
+    excludeExpired: params?.excludeExpired ? true : undefined,
+    branchId: params?.branchId,
+  }
+}
 
 export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRepository {
   private readonly apiClient: ApiClient
@@ -36,6 +48,7 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
         source: params?.source,
         search: params?.search,
         purposeOfVisit: params?.purposeOfVisit,
+        ...drillDownQuery(params),
         page: params?.page,
         pageSize: params?.pageSize,
         sortBy: params?.sortBy,
@@ -62,6 +75,7 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
         source: params.source,
         search: params.search,
         purposeOfVisit: params.purposeOfVisit,
+        ...drillDownQuery(params),
       },
     })
   }

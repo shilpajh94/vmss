@@ -90,7 +90,7 @@ export function LoginFormCard({
           }
         />
 
-        <PendingButton type="submit" pending={loading} pendingLabel="Signing in…" className={`mt-1 ${AUTH_PRIMARY_BUTTON_CLASS}`}>
+        <PendingButton type="submit" pending={loading} pendingLabel="Signing in…" className={`mt-1 cursor-pointer disabled:cursor-not-allowed ${AUTH_PRIMARY_BUTTON_CLASS}`}>
           Sign In
         </PendingButton>
 
@@ -104,7 +104,7 @@ export function LoginFormCard({
           type="button"
           onClick={onSsoSignIn}
           disabled={loading}
-          className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-border-strong bg-surface px-6 py-3.5 font-body text-[15px] font-semibold text-text transition-colors duration-[var(--motion-fast)] hover:border-text-faint hover:bg-surface-muted disabled:opacity-60"
+          className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-border-strong bg-surface px-6 py-3.5 font-body text-[15px] font-semibold text-text transition-colors duration-[var(--motion-fast)] hover:border-text-faint hover:bg-surface-muted disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed"
         >
           {/* The key SVG is drawn white for the cyan buttons; darken it on this outlined one. */}
           <img src={KeyIcon} alt="" className="size-[18px] brightness-0 opacity-75" />

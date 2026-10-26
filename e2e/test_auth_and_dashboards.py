@@ -33,6 +33,21 @@ def test_staff_sign_in_offers_sso_only(as_role) -> None:
 
 
 @pytest.mark.parametrize(
+    ("path", "button"),
+    [
+        ("/admin/login", "Sign In"),
+        ("/admin/login", "Sign in with SSO"),
+        ("/staff/login", "Sign in with SSO"),
+    ],
+)
+def test_login_buttons_show_pointer_cursor(as_role, path: str, button: str) -> None:
+    # Hover only, no submit - doesn't spend a login attempt.
+    page = as_role("anonymous")
+    page.goto(path)
+    expect(page.get_by_role("button", name=button, exact=True)).to_have_css("cursor", "pointer")
+
+
+@pytest.mark.parametrize(
     ("role", "path", "heading"),
     [
         ("admin", "/admin/dashboard", re.compile(r"Good (Morning|Afternoon|Evening)")),
