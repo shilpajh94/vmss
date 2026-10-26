@@ -18,7 +18,17 @@ The system SHALL check for a staff auth token before rendering the dashboard, an
 - **THEN** the system renders the dashboard
 
 ### Requirement: Dashboard renders the sidebar, workspace header, and kanban board
-The system SHALL render, for an authenticated non-Reception session, a sidebar (brand mark, "Invitations" / "My actions" navigation with "Invitations" selected, and a "Help & Support" link), the shared staff top bar, and a main workspace containing the "Invitations" title row, the search and filter bar, and the invitations kanban board. For an authenticated Reception session, the system SHALL instead render the Reception sidebar (see `reception-dashboard`) with "Invitations" marked active, alongside the same top bar and main workspace.
+The system SHALL render, for an authenticated non-Reception session:
+- a sidebar with the brand mark and the "Dashboard", "Invitations" and "My
+  actions" navigation, with "Invitations" selected. The sidebar SHALL
+  contain no "Help & Support" item;
+- the shared staff top bar;
+- a main workspace containing the "Invitations" title row, the search and
+  filter bar, and the invitations kanban board.
+
+For an authenticated Reception session, the system SHALL instead render the
+Reception sidebar (see `reception-dashboard`) with "Invitations" marked
+active, alongside the same top bar and main workspace.
 
 #### Scenario: Authenticated staff views the dashboard
 - **WHEN** an authenticated, non-Reception staff member's dashboard finishes loading
@@ -28,12 +38,9 @@ The system SHALL render, for an authenticated non-Reception session, a sidebar (
 - **WHEN** an authenticated Reception user's dashboard finishes loading
 - **THEN** the Reception sidebar (with "Invitations" marked active), the staff top bar, the "Invitations" title row, the search bar, and the kanban board are all visible
 
-### Requirement: Other sidebar navigation items are visible but not yet functional
-The system SHALL render the "Help & Support" link per the design, but SHALL NOT navigate anywhere when it is activated.
-
-#### Scenario: Inert nav item activated
-- **WHEN** a staff member activates "Help & Support"
-- **THEN** the current view does not change
+#### Scenario: No inert Help item
+- **WHEN** an authenticated staff member views any page with the staff sidebar
+- **THEN** no "Help & Support" item is shown
 
 ### Requirement: "My actions" opens the Register Visitor wizard
 The system SHALL, when a staff member activates "My actions" in the sidebar, navigate to the Register Visitor wizard's first step.
@@ -678,3 +685,20 @@ When the status filter is set to Checked-out, Denied, or Archived, the switcher 
 #### Scenario: Phones and tablets keep separate tabs
 - **WHEN** a staff member opens the board at 390px wide
 - **THEN** the status tabs list Requested, Approved, Checked-in, Checked-out, Denied, and Archived as six separate tabs, with no grouping
+
+### Requirement: The staff board opens a status from a deep link
+The system SHALL, when the staff Invitations board is opened with a
+`status` query parameter naming a known invitation status (`submitted`,
+`approved`, `checked_in`, `checked_out`, `denied` or `archived`), apply
+that status filter once on load, exactly as if the user had picked it in
+the filter bar. The user SHALL be able to clear or change it afterwards. An
+unknown `status` value SHALL be ignored, leaving the board unfiltered.
+
+#### Scenario: Open the checked-in visitors from a dashboard
+- **WHEN** a staff member opens `/staff/invitations?status=checked_in`
+- **THEN** the board shows only checked-in invitations, and the status
+  filter shows "Checked in"
+
+#### Scenario: Unknown status ignored
+- **WHEN** a staff member opens `/staff/invitations?status=bogus`
+- **THEN** the board loads unfiltered, with no error
