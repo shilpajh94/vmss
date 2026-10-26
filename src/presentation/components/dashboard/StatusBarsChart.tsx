@@ -1,6 +1,6 @@
 import { BarList } from './BarList'
 import { ChartCard } from './ChartCard'
-import { STATUS_LABELS, boardStatusPath, type BoardBasePath } from './dashboard-format'
+import { STATUS_LABELS, boardDrillDownPath, type BoardBasePath } from './dashboard-format'
 import type { StatusCount } from '../../../domain/entities/dashboard-analytics-schema'
 
 // The board's own status colours, so a status looks the same on both pages.
@@ -18,14 +18,29 @@ interface StatusBarsChartProps {
   statuses: StatusCount[]
   rangeDays: number
   boardBasePath: BoardBasePath
+  // The period the bars count, as API dates (first trend day to `today`),
+  // plus the dashboard's branch, so each bar's board total equals the bar.
+  visitDateFrom: string
+  visitDateTo: string
+  branchId?: string
   isUpdating?: boolean
   className?: string
 }
 
 // Visits in the period by status: one labeled bar per status, in lifecycle
-// order, each opening the board on that status. Bars rather than a donut —
-// see VMMS_WEB design.md W7.
-export function StatusBarsChart({ title, statuses, rangeDays, boardBasePath, isUpdating, className }: StatusBarsChartProps) {
+// order, each opening the board on that status and period. Bars rather than
+// a donut — see VMMS_WEB design.md W7.
+export function StatusBarsChart({
+  title,
+  statuses,
+  rangeDays,
+  boardBasePath,
+  visitDateFrom,
+  visitDateTo,
+  branchId,
+  isUpdating,
+  className,
+}: StatusBarsChartProps) {
   const total = statuses.reduce((sum, row) => sum + row.count, 0)
   const summary = `${total} visits in the last ${rangeDays} days: ${statuses
     .map((row) => `${row.count} ${STATUS_LABELS[row.status] ?? row.status}`)
@@ -48,7 +63,7 @@ export function StatusBarsChart({ title, statuses, rangeDays, boardBasePath, isU
           label: STATUS_LABELS[row.status] ?? row.status,
           value: row.count,
           barClassName: STATUS_BAR_CLASSES[row.status] ?? 'bg-text-faint',
-          href: boardStatusPath(boardBasePath, row.status),
+          href: boardDrillDownPath(boardBasePath, { statuses: [row.status], visitDateFrom, visitDateTo, branchId }),
         }))}
       />
     </ChartCard>

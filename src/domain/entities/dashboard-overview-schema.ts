@@ -12,14 +12,18 @@ export const DashboardUpcomingVisitorSchema = z.object({
   expiresAt: z.string().min(1),
 })
 
-// `visitsTodayCount` (invitations created today) is deprecated API-side and
-// deliberately not read here — "Expected today" is `scheduledTodayCount`.
+// The deprecated `visitsTodayCount`, `pendingApprovalCount` and
+// `oldestPendingSubmittedAt` are deliberately not read: "Expected today" is
+// `scheduledTodayCount`, and "Pending approval" counts only requests whose
+// visit window is still open (fix-dashboard-count-accuracy).
 export const DashboardOverviewSchema = z.object({
   scheduledTodayCount: z.number(),
+  // Today's expected visitors checked in so far; never above scheduledTodayCount.
+  scheduledTodayCheckedInCount: z.number(),
   checkedInTodayCount: z.number(),
   checkedInCount: z.number(),
-  pendingApprovalCount: z.number(),
-  oldestPendingSubmittedAt: z.string().nullable(),
+  openPendingApprovalCount: z.number(),
+  oldestOpenPendingSubmittedAt: z.string().nullable(),
   upcomingVisitorCount: z.number(),
   upcomingVisitors: z.array(DashboardUpcomingVisitorSchema),
   today: z.string().min(1),

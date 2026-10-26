@@ -3,25 +3,26 @@ import { Avatar } from '../ui/Avatar'
 import { EmptyState } from '../ui/EmptyState'
 import { formatTime } from '../../utils/format-time'
 import { CardHeader } from './CardHeader'
-import { boardInvitationPath, boardStatusPath, type BoardBasePath } from './dashboard-format'
+import { boardDrillDownPath, boardInvitationPath, type BoardBasePath } from './dashboard-format'
 import type { DashboardRecentCheckin } from '../../../domain/entities/dashboard-checkin-schema'
 
 interface RecentCheckinsCardProps {
   checkins: DashboardRecentCheckin[]
   boardBasePath: BoardBasePath
+  branchId?: string
   className?: string
 }
 
 // Most recent check-ins first; each row opens the visit, and "View all"
-// opens the board on the checked-in visitors.
-export function RecentCheckinsCard({ checkins, boardBasePath, className = '' }: RecentCheckinsCardProps) {
+// opens the board on both statuses the card lists.
+export function RecentCheckinsCard({ checkins, boardBasePath, branchId, className = '' }: RecentCheckinsCardProps) {
   return (
     <section aria-label="Recent check-ins" className={`flex min-w-0 flex-col gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 ${className}`}>
       <CardHeader
         title="Recent Check-ins"
         subtitle="Latest arrivals and departures"
-        viewAllHref={boardStatusPath(boardBasePath, 'checked_in')}
-        viewAllLabel="View all checked-in visitors"
+        viewAllHref={boardDrillDownPath(boardBasePath, { statuses: ['checked_in', 'checked_out'], branchId })}
+        viewAllLabel="View all checked-in and checked-out visitors"
       />
 
       {checkins.length === 0 ? (

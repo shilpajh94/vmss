@@ -41,6 +41,7 @@ export function StaffInvitationsPage() {
     registrationTypeFilter,
     setRegistrationTypeFilter,
     statusFilter,
+    dashboardChips,
     focusClosedStatus,
     setStatusFilter,
     sourceFilter,
@@ -134,6 +135,7 @@ export function StaffInvitationsPage() {
             registrationTypeFilter={registrationTypeFilter}
             onRegistrationTypeFilterChange={setRegistrationTypeFilter}
             extraFilters={boardExtraFilters({ statusFilter, setStatusFilter, sourceFilter, setSourceFilter })}
+            dashboardChips={dashboardChips}
             isFiltering={isFiltering}
             onClearFilters={clearFilters}
           />

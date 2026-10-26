@@ -72,8 +72,32 @@ export const STATUS_LABELS: Record<string, string> = {
 // (reception, hosts) on the staff board.
 export type BoardBasePath = '/admin/invitations' | '/staff/invitations'
 
-export function boardStatusPath(basePath: BoardBasePath, status: string): string {
-  return `${basePath}?status=${encodeURIComponent(status)}`
+// Exactly what a dashboard figure counted (fix-dashboard-count-accuracy
+// design D7): the board applies these as the same API filters, so its column
+// totals add up to the figure. Dates are the API's own (`today`, trend
+// dates), never the browser clock.
+export interface BoardDrillDown {
+  statuses?: string[]
+  visitDateFrom?: string
+  visitDateTo?: string
+  upcoming?: boolean
+  excludeExpired?: boolean
+  branchId?: string
+}
+
+// The statuses "Expected today" / "Visits today" count.
+export const VISIT_DAY_STATUSES = ['approved', 'checked_in', 'checked_out']
+
+export function boardDrillDownPath(basePath: BoardBasePath, drillDown: BoardDrillDown): string {
+  const params = new URLSearchParams()
+  for (const status of drillDown.statuses ?? []) params.append('status', status)
+  if (drillDown.visitDateFrom) params.set('visitDateFrom', drillDown.visitDateFrom)
+  if (drillDown.visitDateTo) params.set('visitDateTo', drillDown.visitDateTo)
+  if (drillDown.upcoming) params.set('upcoming', 'true')
+  if (drillDown.excludeExpired) params.set('excludeExpired', 'true')
+  if (drillDown.branchId) params.set('branchId', drillDown.branchId)
+  const query = params.toString()
+  return query ? `${basePath}?${query}` : basePath
 }
 
 export function boardInvitationPath(basePath: BoardBasePath, invitationId: string): string {
