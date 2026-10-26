@@ -66,11 +66,15 @@ Out of scope:
 - `brand-identity`: the product name, logo, alt text, home-link name,
   favicon, tab title, push title and copyright line are "Guestify". The
   retired-name rule now covers "Visimio" too. The footer-logo size scenario
-  reflects the new aspect ratio.
-- `staff-login`: the dark header carries the Guestify on-dark logo.
-- `visitor-portal-landing`: the header/footer identity scenario names
-  Guestify. The support contact comes from configuration and is hidden
-  when unset.
+  reflects the new aspect ratio. Its "Logo Variant Matches Its Background"
+  requirement is carried by `modernize-visitor-flow-pages` instead, since
+  public pages no longer have a light header for the dark-wordmark logo.
+- `staff-login`: no delta here any more. `modernize-login-pages` replaced the
+  dark header with a brand panel that already names the Guestify logo, and
+  its sync carries that requirement.
+- `visitor-portal-landing`: no delta here any more.
+  `modernize-visitor-landing-page` carries the Guestify identity and the
+  configured support contact (hidden when unset) in its own delta.
 
 ## Impact
 

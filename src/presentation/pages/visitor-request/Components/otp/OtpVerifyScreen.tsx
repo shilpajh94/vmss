@@ -1,3 +1,4 @@
+import { AUTH_PRIMARY_BUTTON_CLASS, AuthErrorAlert, AuthFormHeading } from '../../../../components/auth/AuthFormParts'
 import { PendingButton } from '../../../../components/ui/PendingButton'
 
 interface OtpVerifyScreenProps {
@@ -20,8 +21,8 @@ export function OtpVerifyScreen({
   onUseDifferentContact,
 }: OtpVerifyScreenProps) {
   return (
-    <div className="flex h-fit w-full max-w-[480px] flex-col gap-6 rounded-2xl border border-border bg-surface p-5 md:p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
-      <h3 className="font-display text-[22px] font-bold text-text">Request a visit</h3>
+    <div className="flex w-full flex-col gap-6">
+      <AuthFormHeading title="Request a visit" />
 
       <div className="flex items-start gap-2 rounded-lg bg-secondary-accent-soft px-4 py-3 text-body text-text">
         <svg
@@ -61,14 +62,14 @@ export function OtpVerifyScreen({
         {codeError && <p className="text-caption text-danger">{codeError}</p>}
       </div>
 
-      {verifyErrorMessage && <p className="text-caption text-danger">{verifyErrorMessage}</p>}
+      {verifyErrorMessage && <AuthErrorAlert message={verifyErrorMessage} />}
 
       <PendingButton
         onClick={onSubmit}
         title="Verify the code sent to your contact and continue"
         pending={loading}
         pendingLabel="Verifying…"
-        className="flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white transition-colors enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+        className={`cursor-pointer disabled:cursor-not-allowed ${AUTH_PRIMARY_BUTTON_CLASS}`}
       >
         Verify and continue
       </PendingButton>

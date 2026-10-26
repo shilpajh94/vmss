@@ -1,3 +1,4 @@
+import { AUTH_PRIMARY_BUTTON_CLASS, AuthFormHeading } from '../../../../components/auth/AuthFormParts'
 import { Skeleton } from '../../../../components/ui/Skeleton'
 import { PendingButton } from '../../../../components/ui/PendingButton'
 import type { VisitHistoryEntry } from '../../../../../domain/entities/visitor-portal-schema'
@@ -25,11 +26,11 @@ export function ReturnVisitHistoryScreen({
   const isRetryableError = status === 'rate-limited' || status === 'misconfigured' || status === 'error'
 
   return (
-    <div className="flex h-fit w-full max-w-[560px] flex-col gap-6 rounded-2xl border border-border bg-surface p-5 md:p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]">
-      <div>
-        <h3 className="font-display text-[22px] font-bold text-text">Your recent visits</h3>
-        <p className="mt-1 text-body text-text-muted">Review your past visits, or start a new request pre-filled with your details.</p>
-      </div>
+    <div className="flex w-full flex-col gap-6">
+      <AuthFormHeading
+        title="Your recent visits"
+        description="Review your past visits, or start a new request pre-filled with your details."
+      />
 
       {isRetryableError && (
         <div className="flex flex-col gap-3 rounded-lg bg-danger/10 px-4 py-3 text-body text-text">
@@ -101,7 +102,7 @@ export function ReturnVisitHistoryScreen({
         type="button"
         onClick={onStartNewRequest}
         title="Start a new visit request pre-filled with your details"
-        className="cursor-pointer rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white transition-colors hover:opacity-90"
+        className={`cursor-pointer ${AUTH_PRIMARY_BUTTON_CLASS}`}
       >
         Start a new request
       </button>

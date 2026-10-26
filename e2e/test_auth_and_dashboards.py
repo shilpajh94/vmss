@@ -13,7 +13,7 @@ def test_admin_signs_in_with_password_and_signs_out(as_role) -> None:
     page = as_role("anonymous")
     page.goto("/admin/login")
     page.get_by_label("Email").fill(ADMIN_EMAIL)
-    page.get_by_label("Password").fill(ADMIN_PASSWORD)
+    page.get_by_role("textbox", name="Password").fill(ADMIN_PASSWORD)
     page.get_by_role("button", name="Sign In", exact=True).click()
     expect(page).to_have_url(re.compile(r"/admin/dashboard$"))
     expect(page.get_by_text("Admin User").first).to_be_visible()

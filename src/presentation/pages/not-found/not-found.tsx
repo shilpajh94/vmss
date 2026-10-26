@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
-import { PortalFooter } from '../../components/PortalFooter'
-import { PortalHeader } from '../../components/PortalHeader'
+import { AUTH_PRIMARY_BUTTON_CLASS, AuthFormHeading } from '../../components/auth/AuthFormParts'
+import { SplitScreenLayout } from '../../components/layout/SplitScreenLayout'
+import { VISITOR_BRAND, visitorFooterLinks } from '../../components/layout/visitor-brand'
 import { useStaffSession } from '../../components/session/use-staff-session'
 import { landingPathFor } from '../../utils/landing-path'
 
@@ -15,20 +16,17 @@ export function NotFoundPage() {
       : { to: '/', label: 'Go to the visitor portal' }
 
   return (
-    <div className="flex min-h-dvh w-full flex-col bg-bg">
-      <PortalHeader />
-      <main className="flex flex-1 flex-col items-center justify-center gap-4 px-4 py-16 text-center">
+    <SplitScreenLayout portalLabel="Visitor Portal" brand={VISITOR_BRAND} footerLinks={visitorFooterLinks()}>
+      <div className="flex flex-col gap-3">
         <p className="font-display text-5xl font-bold text-text-faint">404</p>
-        <h1 className="text-h1 text-text">Page not found</h1>
-        <p className="max-w-md text-body text-text-muted">The page you were looking for doesn't exist or has moved. Check the address, or head back home.</p>
-        <Link
-          to={home.to}
-          className="min-h-10 rounded-lg bg-primary px-6 py-3 text-body font-semibold text-on-primary transition-opacity hover:opacity-90"
-        >
-          {session.status === 'loading' ? 'Go home' : home.label}
-        </Link>
-      </main>
-      <PortalFooter />
-    </div>
+        <AuthFormHeading
+          title="Page not found"
+          description="The page you were looking for doesn't exist or has moved. Check the address, or head back home."
+        />
+      </div>
+      <Link to={home.to} className={AUTH_PRIMARY_BUTTON_CLASS}>
+        {session.status === 'loading' ? 'Go home' : home.label}
+      </Link>
+    </SplitScreenLayout>
   )
 }

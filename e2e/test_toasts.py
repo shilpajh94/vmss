@@ -43,7 +43,7 @@ def failing_login_page(page: Page, fake_clock: bool = False) -> Page:
     )
     page.goto("/admin/login")
     page.get_by_label("Email").fill("nobody@example.com")
-    page.get_by_label("Password").fill("wrong-password")
+    page.get_by_role("textbox", name="Password").fill("wrong-password")
     return page
 
 

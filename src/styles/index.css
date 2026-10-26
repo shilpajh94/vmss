@@ -157,6 +157,11 @@
 /* Top-bar refresh control's idle affordance: a small turn on hover/focus,
    on its own wrapper so it never fights the spin (use-refresh-spin.ts).
    Off while spinning, and under reduced motion. */
+/* The sign-in pages' form block settles in on arrival. */
+.auth-form-enter {
+  animation: route-fade-in var(--motion-slow) var(--ease-motion-out);
+}
+
 .refresh-nudge {
   transition: transform var(--motion-standard) var(--ease-motion-out);
 }

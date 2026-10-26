@@ -1,5 +1,5 @@
 import { useId } from 'react'
-import { SearchIcon } from '../../../../assets/icons'
+import { AUTH_PRIMARY_BUTTON_CLASS, AuthFormHeading } from '../../../components/auth/AuthFormParts'
 import { PendingButton } from '../../../components/ui/PendingButton'
 
 interface TrackingLookupCardProps {
@@ -22,15 +22,9 @@ export function TrackingLookupCard({ trackingId, onTrackingIdChange, onSubmit, l
         event.preventDefault()
         if (!loading) onSubmit()
       }}
-      className="flex w-full max-w-[420px] flex-col gap-4 rounded-2xl border border-border bg-surface p-5 md:p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]"
+      className="flex w-full flex-col gap-5"
     >
-      <div className="flex size-14 items-center justify-center rounded-xl bg-secondary-accent-soft">
-        <img src={SearchIcon} alt="" className="size-7" />
-      </div>
-      <div>
-        <h3 className="font-display text-[22px] font-bold text-text">Enter Your Tracking ID</h3>
-        <p className="text-body text-text-muted">Use the tracking ID from your confirmation email.</p>
-      </div>
+      <AuthFormHeading title="Enter Your Tracking ID" description="Use the tracking ID from your confirmation email." />
       <div className="flex flex-col gap-1.5">
         <label htmlFor={inputId} className="text-body font-medium text-text">
           Tracking ID
@@ -59,7 +53,7 @@ export function TrackingLookupCard({ trackingId, onTrackingIdChange, onSubmit, l
         title="Look up the status of your visit using your tracking ID"
         pending={loading}
         pendingLabel="Tracking…"
-        className="cursor-pointer rounded-lg bg-primary px-6 py-3 text-body font-semibold text-white transition-colors enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+        className={`cursor-pointer disabled:cursor-not-allowed ${AUTH_PRIMARY_BUTTON_CLASS}`}
       >
         Track Request
       </PendingButton>

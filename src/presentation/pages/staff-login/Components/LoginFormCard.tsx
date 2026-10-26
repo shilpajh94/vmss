@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { KeyIcon } from '../../../../assets/icons'
+import { AUTH_PRIMARY_BUTTON_CLASS, AuthErrorAlert, AuthFormHeading, AuthSecurityNote } from '../../../components/auth/AuthFormParts'
 import { PendingButton } from '../../../components/ui/PendingButton'
 import { TextField } from '../../../components/ui/TextField'
 
@@ -15,6 +17,8 @@ interface LoginFormCardProps {
   passwordError?: string
 }
 
+const FIELD_LABEL_CLASS = 'font-body text-[13px] font-semibold text-text-secondary'
+
 export function LoginFormCard({
   email,
   password,
@@ -27,53 +31,68 @@ export function LoginFormCard({
   emailError,
   passwordError,
 }: LoginFormCardProps) {
+  const [showPassword, setShowPassword] = useState(false)
+
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault()
         onSubmit()
       }}
-      className="flex w-full max-w-[460px] flex-col gap-6 md:gap-8 md:short:gap-6 xshort:gap-4 md:xshort:gap-4 rounded-2xl border border-border bg-surface p-6 md:p-12 md:short:p-8 md:xshort:py-6 drop-shadow-[0_16px_16px_rgba(15,23,42,0.05)]"
+      className="flex w-full flex-col gap-6 xshort:gap-4"
     >
-      <div className="flex flex-col items-center gap-4 xshort:gap-2">
-        <span className="rounded-full bg-secondary-accent-soft px-3 py-1 font-body text-[12px] font-bold tracking-[1px] text-secondary-accent uppercase">
-          Admin Portal
-        </span>
-        <div className="flex flex-col items-center gap-2 text-center">
-          <h1 className="font-display text-[28px] font-bold text-text">Enterprise Sign In</h1>
-          <p className="font-body text-[14px] leading-normal text-text-muted">Sign in with your organization credentials</p>
-        </div>
-      </div>
+      <AuthFormHeading title="Welcome back" description="Sign in with your organization credentials" />
 
       <div className="flex flex-col gap-4 xshort:gap-3">
+        {errorMessage && <AuthErrorAlert message={errorMessage} />}
         <TextField
           label="Email"
           type="email"
           value={email}
           onChange={onEmailChange}
-          placeholder="Enter your email"
+          placeholder="name@company.com"
           required
           error={emailError}
+          autoComplete="username"
+          labelClassName={FIELD_LABEL_CLASS}
+          inputClassName="py-3"
         />
         <TextField
           label="Password"
-          type="password"
+          type={showPassword ? 'text' : 'password'}
           value={password}
           onChange={onPasswordChange}
           placeholder="Enter your password"
           required
           error={passwordError}
+          autoComplete="current-password"
+          labelClassName={FIELD_LABEL_CLASS}
+          inputClassName="py-3"
+          trailing={
+            <button
+              type="button"
+              onClick={() => setShowPassword((shown) => !shown)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              aria-pressed={showPassword}
+              className="flex size-8 items-center justify-center rounded-md text-text-faint hover:text-text focus-visible:outline-2 focus-visible:outline-secondary-accent"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                {showPassword && <path d="m3 3 18 18" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />}
+              </svg>
+            </button>
+          }
         />
 
-        <PendingButton
-          type="submit"
-          pending={loading}
-          pendingLabel="Signing in…"
-          className="flex w-full items-center justify-center gap-2.5 rounded-lg bg-secondary-accent px-6 py-3.5 font-body text-[15px] font-semibold text-white drop-shadow-[0_4px_6px_rgba(6,182,212,0.15)] disabled:opacity-60"
-        >
+        <PendingButton type="submit" pending={loading} pendingLabel="Signing in…" className={`mt-1 ${AUTH_PRIMARY_BUTTON_CLASS}`}>
           Sign In
         </PendingButton>
-        {errorMessage && <p className="font-body text-[13px] text-danger">{errorMessage}</p>}
 
         <div className="flex items-center gap-3">
           <span className="h-px flex-1 bg-border" />
@@ -85,25 +104,15 @@ export function LoginFormCard({
           type="button"
           onClick={onSsoSignIn}
           disabled={loading}
-          className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-border bg-surface px-6 py-3.5 font-body text-[15px] font-semibold text-text disabled:opacity-60"
+          className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-border-strong bg-surface px-6 py-3.5 font-body text-[15px] font-semibold text-text transition-colors duration-[var(--motion-fast)] hover:border-text-faint hover:bg-surface-muted disabled:opacity-60"
         >
-          <img src={KeyIcon} alt="" className="size-[18px]" />
+          {/* The key SVG is drawn white for the cyan buttons; darken it on this outlined one. */}
+          <img src={KeyIcon} alt="" className="size-[18px] brightness-0 opacity-75" />
           Sign in with SSO
         </button>
       </div>
 
-      <div className="flex items-center justify-center gap-2 pt-2">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0 text-text-faint" aria-hidden>
-          <path
-            d="M12 2 4 5v6c0 5 3.4 8.4 8 11 4.6-2.6 8-6 8-11V5l-8-3Z"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        <p className="text-center font-body text-[12px] text-text-faint">Secured by corporate authentication</p>
-      </div>
+      <AuthSecurityNote text="Secured by corporate authentication" />
     </form>
   )
 }

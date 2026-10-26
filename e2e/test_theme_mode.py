@@ -237,9 +237,10 @@ def test_cross_fade_only_without_reduced_motion(as_role) -> None:
     assert reduced.evaluate("window.__vt") == 0
 
 
-# --- fix-error-page-logo-and-compact-footer ----------------------------------
+# --- modernize-visitor-flow-pages --------------------------------------------
 
-DARK_WORDMARK_LOGO = re.compile(r"/logo-guestify\.svg$")
+# The white-wordmark lockup (hashed in a build, plain in dev).
+ON_DARK_LOGO = re.compile(r"/logo-guestify-on-dark[^/]*\.svg$")
 
 
 def test_error_page_renders_light_in_dark_mode(as_role) -> None:
@@ -256,8 +257,9 @@ def test_error_page_renders_light_in_dark_mode(as_role) -> None:
     page.goto("/staff/calendar")
     expect(page.get_by_role("heading", name="Something went wrong")).to_be_visible()
     expect(_html(page)).not_to_have_attribute("data-theme", "dark")
-    for region in ("header", "footer"):
-        logo = page.locator(f"{region} img").filter(visible=True)
-        expect(logo).to_have_count(1)
-        expect(logo).to_have_attribute("src", DARK_WORDMARK_LOGO)
+    # One logo, on the navy brand panel (the strip's copy is hidden at this
+    # width), never the dark wordmark on a dark surface.
+    logo = page.locator("img[src*='logo-guestify']").filter(visible=True)
+    expect(logo).to_have_count(1)
+    expect(logo).to_have_attribute("src", ON_DARK_LOGO)
 

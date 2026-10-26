@@ -124,19 +124,18 @@ def test_paged_list_pagination_stays_visible(as_role, width: int, height: int) -
     assert not failures, f"{width}x{height}:\n" + "\n".join(failures)
 
 
-# responsive-layout "The Public Portal Footer Is Compact" (change
-# fix-error-page-logo-and-compact-footer).
+# The split-screen layout's footer, at the bottom of the content panel
+# (responsive-layout "The Public Portal Footer Is Compact").
 FOOTER = """() => {
-  const footer = document.querySelector('footer')
+  const footer = document.querySelector('main footer')
   const style = getComputedStyle(footer)
   const centre = el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2 }
-  const [logo] = [...footer.querySelectorAll('img')].filter(img => img.offsetParent !== null)
-  const [tagline, copyright] = footer.querySelectorAll('p')
+  const links = [...footer.querySelectorAll('a')].filter(a => a.offsetParent !== null)
   return {
     height: footer.getBoundingClientRect().height,
     paddingTop: parseFloat(style.paddingTop),
     paddingBottom: parseFloat(style.paddingBottom),
-    centres: [centre(logo), centre(tagline), centre(copyright)],
+    centres: links.map(centre),
     overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   }
 }"""
@@ -144,12 +143,13 @@ FOOTER = """() => {
 
 def test_public_footer_is_compact(as_role) -> None:
     page = as_role("anonymous")
-    page.goto("/")
-    footer = page.locator("footer")
-    footer.wait_for()
+    page.goto("/visitor/track")
+    page.locator("main footer").wait_for(state="attached")
     desktop = page.evaluate(FOOTER)
     assert desktop["height"] <= 88, desktop
-    assert max(desktop["centres"]) - min(desktop["centres"]) <= 4, desktop
+    # The configured links sit on one row from `lg` up.
+    if desktop["centres"]:
+        assert max(desktop["centres"]) - min(desktop["centres"]) <= 4, desktop
 
     page.set_viewport_size({"width": 360, "height": 740})
     phone = page.evaluate(FOOTER)

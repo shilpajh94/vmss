@@ -3,8 +3,8 @@ import { PreferredContactMethodSchema } from '../../../domain/entities/preferred
 import { FormSkeleton, Skeleton } from '../../components/ui/Skeleton'
 import { GroupErrorsContext } from '../../components/dynamic-fields/group-errors-context'
 import { useNavigate } from 'react-router'
-import { PortalFooter } from '../../components/PortalFooter'
-import { PortalHeader } from '../../components/PortalHeader'
+import { SplitScreenLayout } from '../../components/layout/SplitScreenLayout'
+import { VISITOR_BRAND, visitorFooterLinks } from '../../components/layout/visitor-brand'
 import { StepProgressHeader } from './Components/StepProgressHeader'
 import { useAppDependencies } from '../../context/app-dependencies-context'
 import type { Branch } from '../../../domain/entities/branch-schema'
@@ -120,10 +120,22 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
 
   return (
     <GroupErrorsContext.Provider value={errors}>
-      <div className="flex w-full flex-1 flex-col gap-4 px-4 py-4 md:flex-row md:gap-8 md:px-12 md:py-10">
-        <StepSidebar steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
+      {/* `navigate` goes through the router, so the unsaved-changes guard
+          still intercepts the panel's Back. The navy panel carries the step
+          list instead of the brand copy, and no photo (design D4). */}
+      <SplitScreenLayout
+        portalLabel="Visitor Portal"
+        brand={VISITOR_BRAND}
+        footerLinks={visitorFooterLinks()}
+        back={{ onClick: () => navigate('/') }}
+        panel={<StepSidebar steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />}
+        panelClassName="w-[340px]"
+        align="start"
+        showPortalTag={false}
+        contentClassName="max-w-[760px]"
+      >
         <StepProgressHeader steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
-        <div className="min-w-0 flex-1 overflow-x-clip rounded-2xl border border-border bg-surface p-4 sm:p-6 md:p-8">
+        <div className="min-w-0 overflow-x-clip">
           {/* The action bar below stays outside this keyed wrapper, so only the step content slides. */}
           <div key={currentStep} data-direction={stepDirection} className="step-enter">
             {isFormConfigLoading && <FormSkeleton bare rows={3} label="Loading the registration form…" />}
@@ -247,15 +259,15 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
           </div>
 
           {!isFormConfigLoading && !formConfigError && activeStep?.key !== 'review_confirm' && (
-            // Pinned to the bottom of the viewport below `md`, so Back/Next
-            // stay reachable while a long step scrolls.
-            <div className="sticky bottom-0 -mx-4 -mb-4 mt-6 flex justify-between gap-3 rounded-b-2xl border-t border-border-subtle bg-surface px-4 py-3 sm:-mx-6 sm:-mb-6 sm:px-6 md:static md:m-0 md:mt-8 md:border-0 md:p-0">
+            // Pinned to the bottom of the scrolling content panel at every
+            // width, so Back/Next stay reachable while a long step scrolls.
+            <div className="sticky bottom-0 z-10 mt-8 flex justify-between gap-3 border-t border-border-subtle bg-surface py-4">
               <button
                 type="button"
                 onClick={goBack}
                 disabled={currentStep === 0}
                 title="Go back to the previous step"
-                className="cursor-pointer rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary transition-colors enabled:hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-0"
+                className="cursor-pointer rounded-lg border border-border px-6 py-3 text-body font-semibold text-text transition-colors enabled:hover:bg-border-subtle disabled:cursor-not-allowed disabled:opacity-0"
               >
                 ← Back
               </button>
@@ -263,14 +275,14 @@ function VisitorRequestWizard({ initial }: { initial?: VisitorRequestWizardIniti
                 type="button"
                 onClick={goNext}
                 title="Continue to the next step"
-                className="cursor-pointer rounded-lg bg-secondary-accent px-6 py-3 text-body font-semibold text-white transition-colors hover:opacity-90"
+                className="relative cursor-pointer rounded-lg bg-secondary-accent px-6 py-3 text-body font-semibold text-white shadow-[0_8px_20px_-6px_rgba(6,182,212,0.55)] after:absolute after:inset-x-0 after:top-full after:h-0.5 transition-[transform,box-shadow] duration-[var(--motion-fast)] hover:-translate-y-px hover:shadow-[0_12px_24px_-6px_rgba(6,182,212,0.6)]"
               >
                 Next
               </button>
             </div>
           )}
         </div>
-      </div>
+      </SplitScreenLayout>
     </GroupErrorsContext.Provider>
   )
 }
@@ -346,13 +358,7 @@ export function VisitorRequestPage() {
   }
 
   if (wizardInitial) {
-    return (
-      <div className="flex min-h-dvh w-full flex-col bg-surface-muted">
-        <PortalHeader backTo="/" />
-        <VisitorRequestWizard initial={wizardInitial} />
-        <PortalFooter />
-      </div>
-    )
+    return <VisitorRequestWizard initial={wizardInitial} />
   }
 
   // A verified visitor with prior visits (or a retryable lookup error) sees
@@ -364,64 +370,52 @@ export function VisitorRequestPage() {
 
   if (hasHistoryToShow || hasRetryableError) {
     return (
-      <div className="flex min-h-dvh w-full flex-col bg-surface-muted">
-        <PortalHeader />
-        <OtpScreenLayout onBack={() => navigate('/')}>
-          <ReturnVisitHistoryScreen
-            status={portal.status}
-            history={portal.data?.history ?? []}
-            errorMessage={portal.errorMessage}
-            hasMore={portal.hasMore}
-            onLoadMore={portal.loadMore}
-            onRetry={portal.retry}
-            onStartNewRequest={startNewRequestFromHistory}
-          />
-        </OtpScreenLayout>
-        <PortalFooter />
-      </div>
+      <OtpScreenLayout onBack={() => navigate('/')} align="start" contentClassName="max-w-[560px]">
+        <ReturnVisitHistoryScreen
+          status={portal.status}
+          history={portal.data?.history ?? []}
+          errorMessage={portal.errorMessage}
+          hasMore={portal.hasMore}
+          onLoadMore={portal.loadMore}
+          onRetry={portal.retry}
+          onStartNewRequest={startNewRequestFromHistory}
+        />
+      </OtpScreenLayout>
     )
   }
 
   const isLookingUpHistory = portal.status === 'loading'
 
   return (
-    <div className="flex min-h-dvh w-full flex-col bg-surface-muted">
-      <PortalHeader />
-      <OtpScreenLayout onBack={() => navigate('/')}>
-        {isLookingUpHistory ? (
-          <div
-            role="status"
-            aria-label="Looking up your visits…"
-            className="flex h-fit w-full max-w-[480px] flex-col gap-3 rounded-2xl border border-border bg-surface p-8 shadow-[0_4px_8px_rgba(15,23,42,0.03)]"
-          >
-            <Skeleton className="h-5 w-48" />
-            <Skeleton className="h-3.5 w-full" />
-            <Skeleton className="h-3.5 w-2/3" />
-          </div>
-        ) : otp.phase === 'request' ? (
-          <OtpRequestScreen
-            registrationType={otp.registrationType}
-            onRegistrationTypeChange={otp.setRegistrationType}
-            contact={otp.contact}
-            onContactChange={otp.setContact}
-            contactError={otp.contactError}
-            requestErrorMessage={otp.requestErrorMessage}
-            loading={otp.requestStatus === 'requesting'}
-            onSubmit={otp.requestOtp}
-          />
-        ) : (
-          <OtpVerifyScreen
-            code={otp.code}
-            onCodeChange={otp.setCode}
-            codeError={otp.codeError}
-            verifyErrorMessage={otp.verifyErrorMessage}
-            loading={otp.verifyStatus === 'verifying'}
-            onSubmit={otp.verifyOtp}
-            onUseDifferentContact={otp.useDifferentContact}
-          />
-        )}
-      </OtpScreenLayout>
-      <PortalFooter />
-    </div>
+    <OtpScreenLayout onBack={() => navigate('/')}>
+      {isLookingUpHistory ? (
+        <div role="status" aria-label="Looking up your visits…" className="flex w-full flex-col gap-3">
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-3.5 w-full" />
+          <Skeleton className="h-3.5 w-2/3" />
+        </div>
+      ) : otp.phase === 'request' ? (
+        <OtpRequestScreen
+          registrationType={otp.registrationType}
+          onRegistrationTypeChange={otp.setRegistrationType}
+          contact={otp.contact}
+          onContactChange={otp.setContact}
+          contactError={otp.contactError}
+          requestErrorMessage={otp.requestErrorMessage}
+          loading={otp.requestStatus === 'requesting'}
+          onSubmit={otp.requestOtp}
+        />
+      ) : (
+        <OtpVerifyScreen
+          code={otp.code}
+          onCodeChange={otp.setCode}
+          codeError={otp.codeError}
+          verifyErrorMessage={otp.verifyErrorMessage}
+          loading={otp.verifyStatus === 'verifying'}
+          onSubmit={otp.verifyOtp}
+          onUseDifferentContact={otp.useDifferentContact}
+        />
+      )}
+    </OtpScreenLayout>
   )
 }
