@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 
@@ -1049,3 +1049,59 @@ class BadgeOut(CamelModel):
     badge_url: str
     issued_at: datetime
     reprint_count: int
+
+
+# --- add-clear-all-invitations -----------------------------------------------
+
+CLEAR_ALL_CONFIRMATION = "CLEAR ALL INVITATIONS"
+CLEAR_SCOPED_CONFIRMATION = "CLEAR INVITATIONS"
+
+
+class ClearInvitationsRequest(CamelModel):
+    """`POST /invitations/clear-all`. Scope is on the invitation's visit date:
+    `month` (`YYYY-MM`) or an inclusive `fromDate`/`toDate` range, never both;
+    no scope clears everything. The confirmation phrase differs for a scoped
+    run so it can't be mistaken for a full wipe.
+    """
+
+    confirm: Annotated[str, Field(max_length=64)]
+    include_checked_in: bool = False
+    from_date: date | None = None
+    to_date: date | None = None
+    month: Annotated[str | None, Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")] = None
+
+    @model_validator(mode="after")
+    def _check_scope_and_confirmation(self) -> Self:
+        has_range = self.from_date is not None or self.to_date is not None
+        if self.month is not None and has_range:
+            raise ValueError("month cannot be combined with fromDate/toDate")
+        if (
+            self.from_date is not None
+            and self.to_date is not None
+            and self.from_date > self.to_date
+        ):
+            raise ValueError("fromDate must not be later than toDate")
+        expected = (
+            CLEAR_SCOPED_CONFIRMATION
+            if self.month is not None or has_range
+            else CLEAR_ALL_CONFIRMATION
+        )
+        if self.confirm != expected:
+            raise ValueError(f"confirm must be exactly '{expected}'")
+        return self
+
+    def resolved_range(self) -> tuple[date | None, date | None]:
+        """`(from_date, to_date)` with `month` expanded to its first/last day."""
+        if self.month is None:
+            return self.from_date, self.to_date
+        year, month = (int(part) for part in self.month.split("-"))
+        first = date(year, month, 1)
+        next_first = date(year + (month == 12), month % 12 + 1, 1)
+        return first, next_first - timedelta(days=1)
+
+
+class ClearInvitationsOut(CamelModel):
+    accepted: bool
+    from_date: date | None
+    to_date: date | None
+    include_checked_in: bool

@@ -137,6 +137,7 @@ class EmployeeCreateRequest(CamelModel):
     department_id: uuid.UUID
     phone_number: str | None = Field(default=None, max_length=50)
     designation: str | None = Field(default=None, max_length=100)
+    password: str | None = Field(default=None, min_length=8, max_length=128)
 
 
 class EmployeeSyncResult(CamelModel):

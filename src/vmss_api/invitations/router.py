@@ -26,7 +26,13 @@ from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.auth.models import User
 from vmss_api.core.config import settings
-from vmss_api.core.deps import get_current_user, get_pagination, get_tenant, get_tenant_db
+from vmss_api.core.deps import (
+    get_current_user,
+    get_pagination,
+    get_tenant,
+    get_tenant_db,
+    require_permission,
+)
 from vmss_api.core.idempotency import cache_response as _core_cache_response
 from vmss_api.core.idempotency import cached_response as _core_cached_response
 from vmss_api.core.logging import logger
@@ -52,6 +58,8 @@ from vmss_api.invitations.schemas import (
     CalendarScope,
     CarriedItemsSubmit,
     CheckInCodeRequest,
+    ClearInvitationsOut,
+    ClearInvitationsRequest,
     ConsentValue,
     ContactMethod,
     CustomFieldValue,
@@ -2205,6 +2213,49 @@ async def list_invitations(
         page_size=page_size,
         total=total,
     )
+
+
+# --- add-clear-all-invitations ----------------------------------------------
+# Registered before "/{invitation_id}" like "/export" below.
+
+
+@router.post(
+    "/clear-all",
+    response_model=Envelope[ClearInvitationsOut],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def clear_invitations(
+    payload: ClearInvitationsRequest,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    user: Annotated[User, Depends(require_permission("invitations:clear-all"))],
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            description=(
+                "Optional. A retried request with the same key returns the "
+                "original response instead of enqueueing a second run."
+            ),
+        ),
+    ] = None,
+) -> JSONResponse:
+    """Permanently deletes (after a verified backup) every invitation in the
+    caller's tenant, or only those whose visit date falls in `month` /
+    `fromDate`..`toDate`. Runs in the background.
+    """
+    cached = await _cached_response(tenant.id, idempotency_key)
+    if cached is not None:
+        return cached
+    try:
+        result = await service.request_clear_invitations(tenant, user, payload)
+    except service.ClearInProgressError:
+        return error_response(
+            message="A clear or purge is already running for this tenant",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    response = success_response(data=result, status_code=status.HTTP_202_ACCEPTED)
+    await _cache_response(tenant.id, idempotency_key, response)
+    return response
 
 
 # --- add-invitation-export ---------------------------------------------------

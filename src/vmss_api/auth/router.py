@@ -424,6 +424,7 @@ async def list_employees(
     email: Annotated[EmailStr | None, Query()] = None,
     role: Annotated[str | None, Query(max_length=100)] = None,
     employee_status: Annotated[EmployeeStatus | None, Query(alias="status")] = None,
+    search: Annotated[str | None, Query(max_length=255)] = None,
     sort_by: Annotated[EmployeeSortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
@@ -443,7 +444,9 @@ async def list_employees(
     employee with no department and no branch-specific role grant belongs
     to every branch and is included in every branch-scoped call; one tied
     only to other branches is not — see
-    `auth/repository.py::UserRepository.list_employees_page`.
+    `auth/repository.py::UserRepository.list_employees_page`. `search` is a
+    case-insensitive literal substring match on name, email, or employee
+    code, ANDed with every other filter.
     """
     page, page_size = pagination
     employees, total = await service.list_employees(
@@ -453,6 +456,7 @@ async def list_employees(
         email=email,
         role=role,
         status=employee_status,
+        search=search,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

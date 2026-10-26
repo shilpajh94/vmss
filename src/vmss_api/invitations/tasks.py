@@ -28,7 +28,7 @@ inline only as the fallback.
 
 import asyncio
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Literal
 
@@ -1224,7 +1224,7 @@ def purge_tenant_invitations(self, *, tenant_id: str, tenant_schema: str) -> Non
 async def _purge_tenant_invitations(tenant_id: str, tenant_schema: str) -> None:
     if settings.invitation_retention_days <= 0:
         return
-    lock_key = f"vmss:{tenant_id}:invitations:purge:lock"
+    lock_key = purge_lock_key(tenant_id)
     # Dedicated client, not the shared module-level one — same cross-event-loop
     # hazard `reports/tasks.py` documents.
     redis = redis_from_url(settings.redis_url, decode_responses=True)
@@ -1251,15 +1251,54 @@ async def purge_expired_invitations(
     """
     now = now or datetime.now(UTC)
     cutoff = now.date() - timedelta(days=settings.invitation_retention_days)
+
+    async def select_ids(repo: InvitationRepository) -> list[uuid.UUID]:
+        return await repo.list_expired_ids(
+            cutoff=cutoff, limit=settings.invitation_purge_batch_size
+        )
+
+    purged, backup_keys = await _backup_and_delete_batches(
+        tenant_id,
+        tenant_schema,
+        select_ids,
+        now=now,
+        audit_action="invitations_purged",
+        actor_user_id=None,
+        audit_context={"cutoff": cutoff.isoformat()},
+    )
+    if purged:
+        logger.info(
+            "invitations_purged",
+            tenant_id=str(tenant_id),
+            count=purged,
+            cutoff=cutoff.isoformat(),
+            backup_keys=backup_keys,
+        )
+    return purged
+
+
+async def _backup_and_delete_batches(
+    tenant_id: uuid.UUID,
+    tenant_schema: str,
+    select_ids: Callable[[InvitationRepository], Awaitable[list[uuid.UUID]]],
+    *,
+    now: datetime,
+    audit_action: str,
+    actor_user_id: uuid.UUID | None,
+    audit_context: dict[str, Any],
+) -> tuple[int, list[str]]:
+    """Shared by the retention purge and admin clear-all: for each batch
+    `select_ids` returns, writes and verifies a backup, then hard-deletes the
+    batch and its dependents. The audit entry is written in `finally` so what
+    was deleted before a failure is still recorded.
+    """
     purged = 0
     backup_keys: list[str] = []
     try:
         async with tenant_session_scope(tenant_schema) as session:
             repo = InvitationRepository(session)
             while True:
-                ids = await repo.list_expired_ids(
-                    cutoff=cutoff, limit=settings.invitation_purge_batch_size
-                )
+                ids = await select_ids(repo)
                 if not ids:
                     break
                 records = await repo.load_rows_for_backup(ids)
@@ -1277,24 +1316,141 @@ async def purge_expired_invitations(
                 session.add(
                     AuditLog(
                         id=uuid.uuid4(),
-                        actor_user_id=None,
-                        action="invitations_purged",
+                        actor_user_id=actor_user_id,
+                        action=audit_action,
                         entity_type="invitation",
                         entity_id=None,
-                        diff={
-                            "cutoff": cutoff.isoformat(),
-                            "count": purged,
-                            "backup_keys": backup_keys,
-                        },
+                        diff={**audit_context, "count": purged, "backup_keys": backup_keys},
                     )
                 )
                 await session.commit()
-    if purged:
+    return purged, backup_keys
+
+
+def purge_lock_key(tenant_id: str) -> str:
+    return f"vmss:{tenant_id}:invitations:purge:lock"
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def clear_tenant_invitations(
+    self,
+    *,
+    tenant_id: str,
+    tenant_schema: str,
+    actor_user_id: str,
+    include_checked_in: bool,
+    from_date: str | None,
+    to_date: str | None,
+    request_id: str,
+) -> None:
+    structlog.contextvars.bind_contextvars(
+        request_id=request_id, tenant_id=tenant_id, tenant_schema=tenant_schema
+    )
+    try:
+        asyncio.run(
+            _clear_tenant_invitations(
+                tenant_id,
+                tenant_schema,
+                uuid.UUID(actor_user_id),
+                include_checked_in,
+                date.fromisoformat(from_date) if from_date else None,
+                date.fromisoformat(to_date) if to_date else None,
+            )
+        )
+    except Exception:
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "invitation_clear_exhausted",
+                tenant_id=tenant_id,
+                tenant_schema=tenant_schema,
+                actor_user_id=actor_user_id,
+                entity_type="invitation",
+                exc_info=True,
+            )
+        raise
+
+
+async def _clear_tenant_invitations(
+    tenant_id: str,
+    tenant_schema: str,
+    actor_user_id: uuid.UUID,
+    include_checked_in: bool,
+    from_date: date | None,
+    to_date: date | None,
+) -> int:
+    # Same lock as the retention purge so the two can never overlap; losing
+    # the race is a silent no-op (the endpoint's 409 pre-check is best effort).
+    redis = redis_from_url(settings.redis_url, decode_responses=True)
+    try:
+        lock_key = purge_lock_key(tenant_id)
+        if not await redis.set(lock_key, "1", nx=True, ex=_PURGE_LOCK_TTL_SECONDS):
+            logger.warning("invitation_clear_skipped_locked", tenant_id=tenant_id)
+            return 0
+        try:
+            return await clear_invitations(
+                uuid.UUID(tenant_id),
+                tenant_schema,
+                actor_user_id=actor_user_id,
+                include_checked_in=include_checked_in,
+                from_date=from_date,
+                to_date=to_date,
+            )
+        finally:
+            await redis.delete(lock_key)
+    finally:
+        await redis.aclose()
+        await engine.dispose()
+
+
+async def clear_invitations(
+    tenant_id: uuid.UUID,
+    tenant_schema: str,
+    *,
+    actor_user_id: uuid.UUID,
+    include_checked_in: bool,
+    from_date: date | None,
+    to_date: date | None,
+    now: datetime | None = None,
+) -> int:
+    """Admin clear-all body (no lock): backs up then hard-deletes every
+    invitation in scope. Idempotent — a repeat finds nothing left to delete.
+    Returns the number of invitations deleted.
+    """
+    now = now or datetime.now(UTC)
+
+    async def select_ids(repo: InvitationRepository) -> list[uuid.UUID]:
+        return await repo.list_ids_for_clear(
+            limit=settings.invitation_purge_batch_size,
+            include_checked_in=include_checked_in,
+            from_date=from_date,
+            to_date=to_date,
+        )
+
+    deleted, backup_keys = await _backup_and_delete_batches(
+        tenant_id,
+        tenant_schema,
+        select_ids,
+        now=now,
+        audit_action="invitations_cleared",
+        actor_user_id=actor_user_id,
+        audit_context={
+            "scope": (
+                {
+                    "from_date": from_date.isoformat() if from_date else None,
+                    "to_date": to_date.isoformat() if to_date else None,
+                }
+                if from_date or to_date
+                else None
+            ),
+            "include_checked_in": include_checked_in,
+        },
+    )
+    if deleted:
         logger.info(
-            "invitations_purged",
+            "invitations_cleared",
             tenant_id=str(tenant_id),
-            count=purged,
-            cutoff=cutoff.isoformat(),
+            actor_user_id=str(actor_user_id),
+            count=deleted,
             backup_keys=backup_keys,
         )
-    return purged
+    return deleted
