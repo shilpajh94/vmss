@@ -14,14 +14,26 @@ its own.
 The system SHALL provide `GET /admin/dashboard/overview` returning, for the
 resolved branch scope:
 
-- `scheduledTodayCount`: invitations whose scheduled visit date is today
-  and whose status is `approved`, `checked_in` or `checked_out`;
+- `scheduledTodayCount`: invitations whose visit day (see "Branch-Wide
+  Dashboard Analytics") is today and whose status is `approved`,
+  `checked_in` or `checked_out`;
+- `scheduledTodayCheckedInCount`: those of the `scheduledTodayCount`
+  invitations that have been checked in at least once. It SHALL never
+  exceed `scheduledTodayCount`;
 - `checkedInTodayCount`: invitations whose most recent check-in time falls
-  today;
+  today, whatever their visit day. It SHALL equal the sum of
+  `hourlyCheckInsToday` from the analytics endpoint for the same scope;
 - `checkedInCount`: invitations currently checked in (status `checked_in`);
-- `pendingApprovalCount`: invitations awaiting approval (status `submitted`);
+- `openPendingApprovalCount`: invitations awaiting approval (status
+  `submitted`) whose `expiresAt` is still in the future;
+- `oldestOpenPendingSubmittedAt`: the submission time of the oldest of
+  those open pending invitations, or null when there are none;
+- `pendingApprovalCount`: every `submitted` invitation, including expired
+  ones. It is kept unchanged for existing clients and is **deprecated** in
+  favour of `openPendingApprovalCount`;
 - `oldestPendingSubmittedAt`: the submission time of the oldest of those
-  `submitted` invitations, or null when there are none;
+  `submitted` invitations, or null when there are none. **Deprecated** in
+  favour of `oldestOpenPendingSubmittedAt`;
 - `upcomingVisitorCount`: upcoming visitors (status `approved`, never
   checked in, not expired). It SHALL use exactly the same filter as the
   upcoming-visitors preview;
@@ -33,8 +45,20 @@ resolved branch scope:
 - `today`: the tenant-local calendar date the figures were computed for;
 - `generatedAt`: the UTC time the response was computed.
 
-"Today" SHALL be evaluated in the resolved tenant's configured timezone,
-not UTC or server local time.
+"Today" SHALL be evaluated in the visit timezone (see "Branch-Wide
+Dashboard Analytics"), not UTC or server local time.
+
+Every count except the deprecated ones SHALL equal the `total` that
+`GET /invitations` returns for the same caller, the same branch scope and
+the matching drill-down filters (see the `invitations` capability's
+"Invitation List Supports Dashboard Drill-Down Filters"):
+
+| Count | Matching list filters |
+|---|---|
+| `scheduledTodayCount` | `visitDateFrom` = `visitDateTo` = `today`, summed over statuses `approved`, `checked_in`, `checked_out` |
+| `checkedInCount` | `status=checked_in` |
+| `openPendingApprovalCount` | `status=submitted&excludeExpired=true` |
+| `upcomingVisitorCount` | `upcoming=true` |
 
 The endpoint SHALL accept an optional `branchId` query parameter. When it
 is supplied, the caller SHALL hold `invitations:view` at that branch and
@@ -86,9 +110,9 @@ Each row in the upcoming-visitors preview SHALL include:
 - **WHEN** the overview is requested for a tenant configured with a
   non-UTC timezone, at a moment where UTC and that timezone disagree on the
   calendar date
-- **THEN** `scheduledTodayCount`, `checkedInTodayCount` and
-  `visitsTodayCount` reflect the tenant's local calendar date, and `today`
-  is that local date
+- **THEN** `scheduledTodayCount`, `scheduledTodayCheckedInCount`,
+  `checkedInTodayCount` and `visitsTodayCount` reflect the tenant's local
+  calendar date, and `today` is that local date
 
 #### Scenario: Scheduled-today counts visits, not creations
 - **WHEN** an invitation created last week is `approved` for a visit today,
@@ -96,11 +120,35 @@ Each row in the upcoming-visitors preview SHALL include:
 - **THEN** `scheduledTodayCount` counts the first and not the second, while
   the deprecated `visitsTodayCount` counts the second and not the first
 
+#### Scenario: Checked in so far never exceeds expected today
+- **WHEN** two visits are scheduled for today and one of them has checked
+  in, and a visitor scheduled for tomorrow also checked in today
+- **THEN** `scheduledTodayCount` is 2, `scheduledTodayCheckedInCount` is 1
+  and `checkedInTodayCount` is 2
+
 #### Scenario: Oldest pending submission is reported
 - **WHEN** a branch has two `submitted` invitations, submitted at 09:00 and
-  11:00 today
-- **THEN** `pendingApprovalCount` is 2 and `oldestPendingSubmittedAt` is the
-  09:00 submission time
+  11:00 today, both still inside their visit window
+- **THEN** `openPendingApprovalCount` and the deprecated
+  `pendingApprovalCount` are both 2, and `oldestOpenPendingSubmittedAt` and
+  the deprecated `oldestPendingSubmittedAt` are both the 09:00 submission
+  time
+
+#### Scenario: Expired pending requests are left out of the open count
+- **WHEN** a branch has two `submitted` invitations still inside their
+  visit window, submitted at 09:00 and 11:00 today, and one `submitted`
+  invitation whose `expiresAt` passed three days ago
+- **THEN** `openPendingApprovalCount` is 2 and
+  `oldestOpenPendingSubmittedAt` is the 09:00 submission time, while the
+  deprecated `pendingApprovalCount` is 3 and `oldestPendingSubmittedAt` is
+  the expired request's submission time
+
+#### Scenario: Counts equal the totals of their drill-down lists
+- **WHEN** a caller requests the overview with `branchId` set to Branch A,
+  then requests `GET /invitations` with `branchId` set to Branch A and the
+  matching filters for each count
+- **THEN** each list's `total` (summed over statuses for
+  `scheduledTodayCount`) equals the corresponding count
 
 #### Scenario: Upcoming-visitors preview rows carry trackingId
 - **WHEN** the overview's upcoming-visitors preview is returned
@@ -213,10 +261,15 @@ return for the same caller at the same moment. It SHALL ignore
 `X-Branch-ID` and SHALL NOT accept a `branchId` parameter. The response
 SHALL contain:
 
-- `visitsToday`: relevant invitations whose scheduled visit date is today
-  and whose status is `approved`, `checked_in` or `checked_out`;
+- `visitsToday`: relevant invitations whose visit day (see "Branch-Wide
+  Dashboard Analytics") is today and whose status is `approved`,
+  `checked_in` or `checked_out`;
 - `insideNow`: relevant invitations currently `checked_in`;
-- `awaitingApproval`: relevant invitations in status `submitted`;
+- `openAwaitingApproval`: relevant invitations in status `submitted` whose
+  `expiresAt` is still in the future;
+- `awaitingApproval`: every relevant invitation in status `submitted`,
+  including expired ones. It is kept unchanged for existing clients and is
+  **deprecated** in favour of `openAwaitingApproval`;
 - `upcoming`: relevant invitations in status `approved` that have never
   been checked in and have not expired;
 - `upcomingPreview`: up to 5 of those upcoming invitations, soonest
@@ -225,10 +278,17 @@ SHALL contain:
 - `today`: the tenant-local calendar date the figures were computed for;
 - `generatedAt`: the UTC time the response was computed.
 
-"Today" SHALL be evaluated in the tenant's configured timezone, the same as
-the branch-wide overview. `archived` and `denied` invitations SHALL count
+"Today" SHALL be evaluated in the visit timezone, the same as the
+branch-wide overview. `archived` and `denied` invitations SHALL count
 toward none of the figures. The response SHALL be read-only and SHALL NOT
 reveal any invitation outside the caller's relevant set.
+
+Every count except the deprecated one SHALL equal the `total` of
+`GET /invitations?relevantToMe=true` for the same caller with the matching
+drill-down filters: `visitsToday` with `visitDateFrom` = `visitDateTo` =
+`today` (summed over `approved`, `checked_in`, `checked_out`), `insideNow`
+with `status=checked_in`, `openAwaitingApproval` with
+`status=submitted&excludeExpired=true`, and `upcoming` with `upcoming=true`.
 
 #### Scenario: A host sees only their own visits
 - **WHEN** host H, who holds only the `host` role, requests
@@ -239,8 +299,14 @@ reveal any invitation outside the caller's relevant set.
 
 #### Scenario: Counts agree with the relevantToMe list
 - **WHEN** a caller requests `my-overview` and then
-  `GET /invitations?relevantToMe=true&status=submitted`
-- **THEN** `awaitingApproval` equals that list's total
+  `GET /invitations?relevantToMe=true&status=submitted&excludeExpired=true`
+- **THEN** `openAwaitingApproval` equals that list's total
+
+#### Scenario: Expired requests are left out of the open count
+- **WHEN** a caller's relevant set contains one `submitted` invitation
+  inside its visit window and one whose `expiresAt` has passed
+- **THEN** `openAwaitingApproval` is 1 and the deprecated
+  `awaitingApproval` is 2
 
 #### Scenario: Archived and denied visits are excluded
 - **WHEN** a caller's relevant set contains one `archived` and one
@@ -276,12 +342,24 @@ overview endpoint, and a `range` query parameter of `7d` or `30d`
 error.
 
 The range SHALL cover today and the preceding 6 (for `7d`) or 29 (for
-`30d`) tenant-local calendar days. All day and hour boundaries SHALL use
-the tenant's configured timezone.
+`30d`) calendar days. Every dashboard endpoint SHALL compute every day and
+hour boundary, and report `timezone`, in the **visit timezone**: the
+company's default timezone, else the tenant's timezone, else UTC (an
+invalid name is skipped). This is the same zone that decides each
+invitation's visit day and `expiresAt`, so "today" on the dashboard is the
+same day the rest of the system uses. "Tenant-local" below means local to
+the visit timezone.
+
+An invitation's **visit day** is its scheduled visit date or, when it has
+none, the tenant-local date it was created. Every dashboard figure that
+dates a visit (the overview's scheduled-today counts, the personal
+overview's `visitsToday`, and every series below except
+`hourlyCheckInsToday`) SHALL use the visit day, and so SHALL the
+`visitDateFrom`/`visitDateTo` list filters.
 
 Throughout this requirement, a **scheduled visit** is an invitation in
 status `approved`, `checked_in`, `checked_out` or `archived`, dated by its
-scheduled visit date. The response SHALL contain:
+visit day. The response SHALL contain:
 
 - `range`, `timezone` (the IANA name actually used), `today` and
   `generatedAt`;
@@ -296,9 +374,10 @@ scheduled visit date. The response SHALL contain:
   hour of today;
 - `statusBreakdown`: one row for each of `submitted`, `approved`,
   `checked_in`, `checked_out`, `denied` and `archived` (zero counts
-  included), counting invitations whose scheduled visit date falls in the
-  range. An invitation with no scheduled visit date SHALL be dated by its
-  creation date instead;
+  included), counting invitations whose visit day falls in the range. Each
+  row's count SHALL equal the `total` of `GET /invitations` for the same
+  scope with that `status` and `visitDateFrom`/`visitDateTo` set to the
+  range's first and last day;
 - `topPurposes` and `topDepartments`: the top 5 labels by scheduled-visit
   count in the range, highest first, ties broken alphabetically. A further
   `Other` row SHALL sum every remaining label and SHALL appear only when
@@ -320,6 +399,27 @@ scheduled visit date. The response SHALL contain:
 - **THEN** yesterday's row reports `scheduled` 4, `checkedIn` 3 and
   `noShow` 1
 
+#### Scenario: Today's trend point agrees with the overview
+- **WHEN** the overview and the analytics are requested for the same scope
+  on the same day
+- **THEN** today's `dailyTrend` row reports `checkedIn` equal to the
+  overview's `scheduledTodayCheckedInCount`, and `scheduled` equal to the
+  overview's `scheduledTodayCount` plus today's `noShow`
+
+#### Scenario: An undated visit is dated by its creation day everywhere
+- **WHEN** an `approved` invitation with no scheduled visit date was
+  created today
+- **THEN** it is counted in the overview's `scheduledTodayCount`, in
+  today's `dailyTrend` row, and in the `approved` row of `statusBreakdown`
+
+#### Scenario: Dashboard uses the company's timezone, not only the tenant's
+- **WHEN** the tenant's timezone is `UTC`, the company's default timezone is
+  `Asia/Kolkata`, and the overview and analytics are requested at 02:00 IST
+  (20:30 UTC the previous day)
+- **THEN** `today` is the IST date, `timezone` is `Asia/Kolkata`, and a
+  check-in at 01:30 IST is counted in the `hour` 1 row of
+  `hourlyCheckInsToday`
+
 #### Scenario: Hourly arrivals use the tenant's local hours
 - **WHEN** a tenant in `Asia/Kolkata` has visitors checked in at 09:10 and
   09:50 local time today
@@ -331,6 +431,12 @@ scheduled visit date. The response SHALL contain:
   scheduled in the range
 - **THEN** `statusBreakdown` still lists all six statuses, with zero for the
   four that have no invitations
+
+#### Scenario: Status breakdown equals its drill-down list
+- **WHEN** the `denied` row of `statusBreakdown` for `range=7d` reports 3
+- **THEN** `GET /invitations?status=denied` with `visitDateFrom` set to the
+  first day of the range and `visitDateTo` set to today, in the same scope,
+  returns a `total` of 3
 
 #### Scenario: Top purposes roll the remainder into Other
 - **WHEN** scheduled visits in the range span 7 distinct purposes

@@ -69,7 +69,11 @@ from vmss_api.invitations.models import (
     InvitationVisitor,
 )
 from vmss_api.invitations.qr import generate_qr_png
-from vmss_api.invitations.repository import InvitationExportNames, InvitationRepository
+from vmss_api.invitations.repository import (
+    InvitationExportNames,
+    InvitationRepository,
+    VisitDayRange,
+)
 from vmss_api.invitations.schemas import (
     ExportFormat,
     InvitationExportDateRange,
@@ -12951,13 +12955,13 @@ async def test_visit_timezone_tenant_schema_isolation(
     """
     db_session.add(CompanyFactory.build(id=uuid.uuid4(), default_timezone=_KOLKATA))
     await db_session.commit()
-    assert (await invitations_service._resolve_visit_timezone(db_session, tenant)).key == _KOLKATA
+    assert (await invitations_service.resolve_visit_timezone(db_session, tenant)).key == _KOLKATA
 
     other_schema = "tenant_other_test_visit_timezone"
     await make_tenant_schema(other_schema)
 
     async with open_tenant_session(other_schema) as other_session:
-        tz = await invitations_service._resolve_visit_timezone(other_session, tenant)
+        tz = await invitations_service.resolve_visit_timezone(other_session, tenant)
     assert tz.key == "UTC"
 
 
@@ -15763,3 +15767,217 @@ async def test_lookup_by_phone_id_proof_url_gated_on_documents_view(
     )
     data = (await _lookup_by_phone(client, issue_token(with_docs), "7778889990")).json()["data"]
     assert data["idProofUrl"] is not None
+
+
+# --- fix-dashboard-count-accuracy: drill-down list filters --------------------
+# specs/invitations/spec.md "Invitation List Supports Dashboard Drill-Down
+# Filters". Every row pins `checkin_code`/check-in times/`created_at`, so the
+# factory's random values can't leak into a count.
+
+
+def _drill_down_row(branch_id: uuid.UUID, **overrides: Any):
+    now = datetime.now(UTC)
+    overrides.setdefault("checkin_code", None)
+    overrides.setdefault("check_in_status", "unused")
+    overrides.setdefault("checked_in_at", None)
+    overrides.setdefault("checked_out_at", None)
+    overrides.setdefault("created_at", now)
+    overrides.setdefault("preferred_visit_date", now.date())
+    overrides.setdefault("expires_at", now + timedelta(hours=6))
+    overrides.setdefault("created_by_user_id", None)
+    overrides.setdefault("registration_type", "individual")
+    overrides.setdefault("source", "staff_pre_registration")
+    return InvitationFactory.build(id=uuid.uuid4(), branch_id=branch_id, **overrides)
+
+
+async def _list_ids(client: AsyncClient, headers: dict[str, str], **params: str) -> set[str]:
+    response = await client.get("/api/v1/invitations", params=params, headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["pagination"]["total"] == len(body["data"])
+    return {row["id"] for row in body["data"]}
+
+
+async def test_list_visit_date_range_filters_by_visit_day(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    today = datetime.now(UTC).date()
+    on_day = _drill_down_row(branch.id, preferred_visit_date=today)
+    next_day = _drill_down_row(branch.id, preferred_visit_date=today + timedelta(days=1))
+    undated_created_today = _drill_down_row(branch.id, preferred_visit_date=None)
+    db_session.add_all([on_day, next_day, undated_created_today])
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+
+    day = today.isoformat()
+    assert await _list_ids(client, headers, visitDateFrom=day, visitDateTo=day) == {
+        str(on_day.id),
+        str(undated_created_today.id),
+    }
+    assert await _list_ids(
+        client, headers, visitDateFrom=(today + timedelta(days=1)).isoformat()
+    ) == {str(next_day.id)}
+
+
+async def test_list_undated_invitation_dated_by_visit_timezone_creation_day(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """Created 23:30 IST on day D (18:00 UTC) — still day D in the visit
+    timezone, whatever the UTC date.
+    """
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), default_timezone=_KOLKATA))
+    kolkata_day = date(2026, 10, 25)
+    created = datetime.combine(kolkata_day, time(23, 30), tzinfo=ZoneInfo(_KOLKATA))
+    undated = _drill_down_row(
+        branch.id, preferred_visit_date=None, created_at=created.astimezone(UTC)
+    )
+    db_session.add(undated)
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+
+    day = kolkata_day.isoformat()
+    assert await _list_ids(client, headers, visitDateFrom=day, visitDateTo=day) == {str(undated.id)}
+    next_day = (kolkata_day + timedelta(days=1)).isoformat()
+    assert await _list_ids(client, headers, visitDateFrom=next_day, visitDateTo=next_day) == set()
+
+
+async def test_list_reversed_visit_date_range_rejected(
+    client: AsyncClient, user: User, db_session: AsyncSession
+) -> None:
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+    response = await client.get(
+        "/api/v1/invitations",
+        params={"visitDateFrom": "2026-10-27", "visitDateTo": "2026-10-26"},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_list_upcoming_and_exclude_expired(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC)
+    upcoming = _drill_down_row(branch.id, status="approved")
+    expired_approved = _drill_down_row(
+        branch.id, status="approved", expires_at=now - timedelta(hours=1)
+    )
+    inside = _drill_down_row(
+        branch.id, status="checked_in", check_in_status="checked_in", checked_in_at=now
+    )
+    open_request = _drill_down_row(branch.id, status="submitted")
+    expired_request = _drill_down_row(
+        branch.id, status="submitted", expires_at=now - timedelta(days=3)
+    )
+    db_session.add_all([upcoming, expired_approved, inside, open_request, expired_request])
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+
+    assert await _list_ids(client, headers, upcoming="true") == {str(upcoming.id)}
+    assert await _list_ids(client, headers, status="submitted", excludeExpired="true") == {
+        str(open_request.id)
+    }
+    assert await _list_ids(client, headers, status="submitted") == {
+        str(open_request.id),
+        str(expired_request.id),
+    }
+
+
+async def test_list_branch_id_narrows_to_an_authorized_branch(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    other = BranchFactory.build(id=uuid.uuid4(), name="Drill Other", code="DRILLB")
+    db_session.add(other)
+    await db_session.flush()
+    here = _drill_down_row(branch.id)
+    there = _drill_down_row(other.id)
+    db_session.add_all([here, there])
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+
+    assert await _list_ids(client, headers, branchId=str(branch.id)) == {str(here.id)}
+
+
+async def test_list_branch_id_outside_view_all_scope_is_forbidden(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession, issue_token
+) -> None:
+    """The permission-denied case (testing-standards.md §2)."""
+    other = BranchFactory.build(id=uuid.uuid4(), name="Drill Forbidden", code="DRILLF")
+    db_session.add(other)
+    await db_session.commit()
+    viewer = await _branch_scoped_invitation_viewer(db_session, tenant, branch.id)
+    headers = {"Authorization": f"Bearer {issue_token(viewer)}"}
+
+    response = await client.get(
+        "/api/v1/invitations", params={"branchId": str(other.id)}, headers=headers
+    )
+    assert response.status_code == 403, response.text
+
+
+async def test_list_branch_id_never_widens_relevant_to_me(
+    client: AsyncClient, branch: Branch, db_session: AsyncSession, issue_token
+) -> None:
+    other = BranchFactory.build(id=uuid.uuid4(), name="Drill Host", code="DRILLH")
+    host = UserFactory.build(
+        id=uuid.uuid4(), email=f"host-{uuid.uuid4().hex[:8]}@acme-test.example"
+    )
+    db_session.add_all([other, host])
+    await db_session.flush()
+    own_here = _drill_down_row(branch.id, host_id=host.id)
+    own_there = _drill_down_row(other.id, host_id=host.id)
+    not_own_there = _drill_down_row(other.id)
+    db_session.add_all([own_here, own_there, not_own_there])
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {issue_token(host)}"}
+
+    assert await _list_ids(client, headers, relevantToMe="true", branchId=str(other.id)) == {
+        str(own_there.id)
+    }
+
+
+async def test_export_applies_the_drill_down_filters(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC)
+    open_request = _drill_down_row(branch.id, status="submitted")
+    expired_request = _drill_down_row(
+        branch.id, status="submitted", expires_at=now - timedelta(days=3)
+    )
+    db_session.add_all([open_request, expired_request])
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {await _login(client, user.email)}"}
+    params = {"status": "submitted", "excludeExpired": "true", "branchId": str(branch.id)}
+
+    exported = await client.get("/api/v1/invitations/export", params=params, headers=headers)
+    assert exported.status_code == 200, exported.text
+    assert {row["Tracking ID"] for row in _csv_rows(exported.content)} == {open_request.tracking_id}
+
+
+async def test_drill_down_filters_tenant_schema_isolation(
+    make_tenant_schema, open_tenant_session, branch: Branch, db_session: AsyncSession
+) -> None:
+    """testing-standards.md §2 — the drill-down filters on another tenant's
+    schema see none of this schema's rows.
+    """
+    today = datetime.now(UTC).date()
+    db_session.add(_drill_down_row(branch.id, status="approved"))
+    await db_session.commit()
+
+    other_schema = "tenant_other_test_drill_down"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        _, total = await InvitationRepository(other_session).list_page(
+            branch_scope="all",
+            status=None,
+            registration_type=None,
+            source=None,
+            search=None,
+            page=1,
+            page_size=20,
+            sort_by="submitted_at",
+            sort_order=SortOrder.desc,
+            visit_days=VisitDayRange.local(today, today, ZoneInfo("UTC")),
+            upcoming=True,
+            now=datetime.now(UTC),
+            branch_id=branch.id,
+        )
+    assert total == 0

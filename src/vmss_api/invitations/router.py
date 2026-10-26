@@ -38,6 +38,7 @@ from vmss_api.core.responses import (
 )
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.core.storage import url_for as storage_url_for
+from vmss_api.core.tenancy import get_token_payload
 from vmss_api.devices import service as device_service
 from vmss_api.devices.deps import make_device_dependency
 from vmss_api.devices.models import Device
@@ -2141,14 +2142,55 @@ async def override_watchlist(
 # --- Employee listing ---------------------------------------------------------
 
 
+def _list_drill_down(
+    visit_date_from: Annotated[date | None, Query(alias="visitDateFrom")] = None,
+    visit_date_to: Annotated[date | None, Query(alias="visitDateTo")] = None,
+    upcoming: Annotated[bool, Query()] = False,
+    exclude_expired: Annotated[bool, Query(alias="excludeExpired")] = False,
+    branch_id: Annotated[uuid.UUID | None, Query(alias="branchId")] = None,
+) -> service.ListDrillDown | None:
+    """specs/invitations/spec.md "Invitation List Supports Dashboard
+    Drill-Down Filters" — shared by the list and the export. `None` when
+    none is given, so the existing paths stay untouched.
+    """
+    if visit_date_from and visit_date_to and visit_date_from > visit_date_to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="visitDateFrom must not be later than visitDateTo",
+        )
+    drill_down = service.ListDrillDown(
+        visit_date_from=visit_date_from,
+        visit_date_to=visit_date_to,
+        upcoming=upcoming,
+        exclude_expired=exclude_expired,
+        branch_id=branch_id,
+    )
+    return None if drill_down == service.ListDrillDown() else drill_down
+
+
+def _drill_down_audit(drill_down: service.ListDrillDown | None) -> dict[str, Any]:
+    """The export audit entry's drill-down filters, JSON-ready."""
+    if drill_down is None:
+        return {}
+    return {
+        "visit_date_from": drill_down.visit_date_from and drill_down.visit_date_from.isoformat(),
+        "visit_date_to": drill_down.visit_date_to and drill_down.visit_date_to.isoformat(),
+        "upcoming": drill_down.upcoming,
+        "exclude_expired": drill_down.exclude_expired,
+        "branch_id": drill_down.branch_id and str(drill_down.branch_id),
+    }
+
+
 @router.get(
     "",
     response_model=PaginatedEnvelope[InvitationListItemOut],
 )
 async def list_invitations(
+    token_payload: Annotated[dict[str, Any], Depends(get_token_payload)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    drill_down: Annotated[service.ListDrillDown | None, Depends(_list_drill_down)],
     x_branch_id: Annotated[uuid.UUID | None, Header(alias="X-Branch-ID")] = None,
     relevant_to_me: Annotated[bool, Query(alias="relevantToMe")] = False,
     sort_by: Annotated[InvitationSortableField, Query(alias="sortBy")] = "submitted_at",
@@ -2184,6 +2226,10 @@ async def list_invitations(
         )
     else:
         default_host_role_id = (await get_default_host_role(tenant_db)).id
+    if drill_down is not None and drill_down.branch_id is not None and not relevant_to_me:
+        # Narrowing only: `branchId` must lie inside the caller's view-all
+        # scope (404/403 otherwise). Under relevantToMe it just filters.
+        await authorize_branch_id(tenant_db, user, "invitations:view-all", drill_down.branch_id)
     invitations, total = await service.list_invitations_page(
         tenant_db,
         branch_scope=branch_scope,
@@ -2198,6 +2244,12 @@ async def list_invitations(
         sort_by=sort_by,
         sort_order=sort_order,
         purpose_of_visit=purpose_of_visit,
+        # The tenant id, not `get_tenant`: the tenant itself is only needed
+        # for a visit-date filter's timezone, so the service loads it then.
+        # (`get_tenant` here would also roll back the shared session under
+        # the test client and expire objects the list tests still hold.)
+        tenant_id=uuid.UUID(token_payload["tenant_id"]),
+        drill_down=drill_down,
     )
     return paginated_response(
         data=[await _to_list_item_out(invitation) for invitation in invitations],
@@ -2241,6 +2293,7 @@ async def export_invitations(
     purpose_of_visit: Annotated[str | None, Query(alias="purposeOfVisit", max_length=255)] = None,
     date_from: Annotated[date | None, Query(alias="dateFrom")] = None,
     date_to: Annotated[date | None, Query(alias="dateTo")] = None,
+    drill_down: Annotated[service.ListDrillDown | None, Depends(_list_drill_down)] = None,
 ) -> Response:
     """specs/invitation-export/spec.md — a raw file download, so it's the
     documented exception to `success_response`; every error path is still
@@ -2254,6 +2307,8 @@ async def export_invitations(
     except ValidationError as exc:
         return error_response(message=str(exc), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
 
+    if drill_down is not None and drill_down.branch_id is not None:
+        await authorize_branch_id(tenant_db, user, "invitations:export", drill_down.branch_id)
     default_host_role_id = (await get_default_host_role(tenant_db)).id if relevant_to_me else None
     filters: dict[str, Any] = {
         "relevant_to_me": relevant_to_me,
@@ -2264,6 +2319,7 @@ async def export_invitations(
         "purpose_of_visit": purpose_of_visit,
         "date_from": date_from.isoformat() if date_from is not None else None,
         "date_to": date_to.isoformat() if date_to is not None else None,
+        **_drill_down_audit(drill_down),
     }
     try:
         export_file = await service.export_invitations(
@@ -2279,6 +2335,7 @@ async def export_invitations(
             purpose_of_visit=purpose_of_visit,
             date_range=date_range,
             export_format=export_format,
+            drill_down=drill_down,
         )
     except service.ExportTooLargeError as exc:
         logger.warning("invitations_export_too_large", format=export_format.value)
