@@ -9,6 +9,8 @@ import type { RoleOut } from '../../../../domain/entities/role-out-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
 
+const MIN_PASSWORD_LENGTH = 8
+
 const EMPTY_CREATE_VALUES: HostEmployeeCreateInput = {
   fullName: '',
   email: '',
@@ -18,6 +20,7 @@ const EMPTY_CREATE_VALUES: HostEmployeeCreateInput = {
   departmentId: undefined,
   roleId: undefined,
   branchId: undefined,
+  password: undefined,
 }
 
 export function useAdminHostEmployeeForm() {
@@ -127,6 +130,9 @@ export function useAdminHostEmployeeForm() {
     if (!createValues.fullName.trim()) nextErrors.fullName = 'Employee name is required.'
     if (!createValues.email.trim()) nextErrors.email = 'Email address is required.'
     if (!createValues.employeeCode.trim()) nextErrors.employeeCode = 'Employee code is required.'
+    if (createValues.password && createValues.password.length < MIN_PASSWORD_LENGTH) {
+      nextErrors.password = `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`
+    }
 
     if (Object.keys(nextErrors).length > 0) {
       setCreateErrors(nextErrors)

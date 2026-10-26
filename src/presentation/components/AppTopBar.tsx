@@ -190,7 +190,9 @@ export function AppTopBar({ title, description, breadcrumb, currentUser, navLabe
           <Avatar name={currentUser?.name ?? ''} size="md" />
           <div className="hidden flex-col gap-0.5 md:flex">
             <p className="font-body text-[13px] font-semibold text-text">{currentUser?.name ?? '—'}</p>
-            <p className="font-body text-[11px] text-text-faint">{currentUser?.role ?? ''}</p>
+            <p className="max-w-48 truncate font-body text-[11px] text-text-faint" title={currentUser?.roles.join(', ')}>
+              {currentUser?.roles.join(', ') ?? ''}
+            </p>
           </div>
         </div>
 

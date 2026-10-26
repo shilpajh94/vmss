@@ -21,6 +21,23 @@
     background-color: var(--color-bg);
   }
 
+  /* Tailwind v4 no longer gives clickable controls the hand cursor; restore
+     it app-wide (staff, admin and public pages) and keep disabled ones inert. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary,
+  select:not(:disabled),
+  input:is([type="button"], [type="submit"], [type="reset"], [type="checkbox"], [type="radio"], [type="file"]):not(:disabled),
+  label[for]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [role="button"][aria-disabled="true"],
+  input:disabled {
+    cursor: not-allowed;
+  }
+
   /* Native <select> popups don't inherit the themed surface: options keep the
      select's (light) text colour on the browser's white list in dark mode. */
   select option,

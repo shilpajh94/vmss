@@ -111,7 +111,7 @@ const NAV_SECTIONS = [
       { key: 'departments', label: 'Departments', icon: UsersIcon },
       { key: 'reception-desks', label: 'Reception Desks', icon: MonitorIcon },
       { key: 'security-gates', label: 'Security Gates', icon: ShieldIcon },
-      { key: 'kiosks', label: 'Kiosks', icon: MonitorIcon },
+      { key: 'kiosks', label: 'Kiosk Features', icon: MonitorIcon },
       { key: 'organisation-configs', label: 'Organisation Configs', icon: SettingsIcon },
     ],
   },

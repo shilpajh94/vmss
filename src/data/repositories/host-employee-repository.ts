@@ -8,6 +8,7 @@ export interface ListHostEmployeesPageParams {
   departmentId?: string
   role?: string
   status?: 'active' | 'inactive'
+  search?: string
 }
 
 export interface HostEmployeesPage {

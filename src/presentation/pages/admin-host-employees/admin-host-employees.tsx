@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router'
-import { PlusIcon, SlidersIcon } from '../../components/icons'
+import { PlusIcon, SearchGlyphIcon, SlidersIcon } from '../../components/icons'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SelectField } from '../../components/ui/SelectField'
 import { Pagination } from '../../components/Pagination'
@@ -45,6 +45,9 @@ export function AdminHostEmployeesPage() {
     setStatusFilter,
     clearFilters,
     isFiltering,
+    isNarrowed,
+    search,
+    setSearch,
   } = useAdminHostEmployees()
 
   usePageHeader({ description: 'Registry of employees authorized to sponsor and host corporate visitors' })
@@ -70,6 +73,18 @@ export function AdminHostEmployeesPage() {
           <div className="flex w-full flex-wrap items-center justify-between gap-3">
             <h1 className="font-display text-xl font-bold md:text-2xl text-text">Employees Directory</h1>
             <div className="flex flex-wrap items-center gap-3">
+              <div className="flex h-10 min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-3 sm:w-64">
+                <SearchGlyphIcon className="size-4 shrink-0 text-text-faint" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  maxLength={255}
+                  aria-label="Search employees"
+                  placeholder="Search name, email, code..."
+                  className="min-w-0 flex-1 bg-transparent font-body text-sm text-text placeholder:text-text-faint focus:outline-none max-sm:text-base"
+                />
+              </div>
               <button
                 type="button"
                 onClick={toggleFilterPanel}
@@ -141,8 +156,8 @@ export function AdminHostEmployeesPage() {
         isEmpty={hostEmployees.length === 0}
         empty={
           <div className="flex w-full flex-1 items-center justify-center rounded-2xl border border-border bg-surface py-16">
-            {isFiltering ? (
-              <EmptyState message="No employees match these filters." />
+            {isNarrowed ? (
+              <EmptyState message="No employees match your search or filters." />
             ) : (
               <EmptyState message="No employees yet." action={{ label: 'Add Employee', onClick: goToAddHostEmployee }} />
             )}

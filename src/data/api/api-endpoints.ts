@@ -313,6 +313,13 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: true,
   },
+  // Sets the login credentials (email + password) for a staff user; the employee
+  // sync endpoint has no password field.
+  CREATE_STAFF_USER: {
+    endpoint: "/auth/users",
+    method: "POST",
+    hasToken: true,
+  },
   LIST_ROLES: {
     endpoint: "/auth/roles",
     method: "GET",

@@ -6,12 +6,14 @@ import { useToast } from '../../../components/toast/toast-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { usePageRefresh } from '../../../context/refresh-context'
+import { useDebouncedValue } from '../../../hooks/use-debounced-value'
 import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
 const PAGE_SIZE = 20
+const SEARCH_DEBOUNCE_MS = 300
 
 export function useAdminHostEmployees() {
   const navigate = useNavigate()
@@ -41,7 +43,19 @@ export function useAdminHostEmployees() {
   const [roleFilter, setRoleFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
 
+  const [search, setSearch] = useState('')
+  const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS).trim()
+
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
+
+  // Re-anchors to page 1 when the *debounced* search changes (not per
+  // keystroke). Adjusted during render so the load below runs once, with the
+  // new search and page 1, instead of once per state change.
+  const [appliedSearch, setAppliedSearch] = useState(debouncedSearch)
+  if (appliedSearch !== debouncedSearch) {
+    setAppliedSearch(debouncedSearch)
+    resetToFirstPage()
+  }
 
   // `user` (default): filter/page/retry/refresh - keeps the current rows on
   // screen with a progress cue. `background`: the 15s poll.
@@ -58,6 +72,7 @@ export function useAdminHostEmployees() {
             departmentId: departmentFilter || undefined,
             role: roleFilter || undefined,
             status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+            search: debouncedSearch || undefined,
           }),
           listDepartmentsUseCase.execute(),
           listRolesUseCase.execute(),
@@ -73,7 +88,7 @@ export function useAdminHostEmployees() {
         toast.error('Something went wrong loading the employees. Please try again.')
       }
     },
-    [begin, getCurrentStaffUserUseCase, listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase, page, departmentFilter, roleFilter, statusFilter, toast],
+    [begin, getCurrentStaffUserUseCase, listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase, page, departmentFilter, roleFilter, statusFilter, debouncedSearch, toast],
   )
 
   useEffect(() => {
@@ -149,6 +164,7 @@ export function useAdminHostEmployees() {
   const departmentNameById = useMemo(() => new Map(departments.map((department) => [department.id, department.name])), [departments])
 
   const isFiltering = departmentFilter !== '' || roleFilter !== '' || statusFilter !== ''
+  const isNarrowed = isFiltering || debouncedSearch !== ''
 
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
 
@@ -212,5 +228,8 @@ export function useAdminHostEmployees() {
     setStatusFilter: changeStatusFilter,
     clearFilters,
     isFiltering,
+    isNarrowed,
+    search,
+    setSearch,
   }
 }

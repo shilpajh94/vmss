@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { ChevronLeftIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
@@ -9,6 +10,7 @@ import { useAdminHostEmployeeForm } from './hooks/use-admin-host-employee-form'
 const fieldLabelClassName = 'text-[13px] font-bold uppercase text-text-secondary'
 
 export function AdminHostEmployeeFormPage() {
+  const [showPassword, setShowPassword] = useState(false)
   const {
     isEditMode,
     isLoading,
@@ -262,6 +264,26 @@ export function AdminHostEmployeeFormPage() {
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <TextField
+                  label="Password (optional)"
+                  type={showPassword ? 'text' : 'password'}
+                  value={createValues.password ?? ''}
+                  onChange={(password) => updateCreateField('password', password || undefined)}
+                  placeholder="At least 8 characters"
+                  error={createErrors.password}
+                  autoComplete="new-password"
+                  labelClassName={fieldLabelClassName}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((current) => !current)}
+                  aria-pressed={showPassword}
+                  className="self-start font-body text-sm font-semibold text-secondary-accent"
+                >
+                  {showPassword ? 'Hide password' : 'Show password'}
+                </button>
               </div>
             </div>
 

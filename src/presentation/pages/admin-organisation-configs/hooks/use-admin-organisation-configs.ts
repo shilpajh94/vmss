@@ -18,9 +18,6 @@ export function useAdminOrganisationConfigs() {
   const [form, setForm] = useState<OrganisationConfig | undefined>(undefined)
   const { phase, isRefreshing, begin } = useLoadTracker()
   const [isSaving, setIsSaving] = useState(false)
-  // The backend has no endpoint to store an uploaded logo file (only a logoUrl
-  // string on /company), so a picked file is a local, unsaved preview only.
-  const [logoPreview, setLogoPreviewState] = useState<{ url: string; fileName: string } | undefined>(undefined)
 
   const loadConfig = useCallback(
     async (mode: LoadMode = 'user') => {
@@ -57,30 +54,19 @@ export function useAdminOrganisationConfigs() {
     setForm((current) => (current ? { ...current, [key]: value } : current))
   }, [])
 
-  const previewLogo = useCallback(async (file: File) => URL.createObjectURL(file), [])
-
-  const setLogoPreview = useCallback((fileRef: string | undefined, fileName: string | undefined) => {
-    setLogoPreviewState((current) => {
-      if (current) URL.revokeObjectURL(current.url)
-      return fileRef && fileName ? { url: fileRef, fileName } : undefined
-    })
-  }, [])
-
   // A form page: never polled. The top-bar refresh reloads the saved config
-  // (dropping any unsaved edits or logo preview), and asks first when there
+  // (dropping any unsaved edits), and asks first when there
   // are any.
-  const hasUnsavedChanges = useUnsavedChanges(savedConfig, form) || logoPreview !== undefined
+  const hasUnsavedChanges = useUnsavedChanges(savedConfig, form)
   const reload = useCallback(() => {
-    setLogoPreview(undefined, undefined)
     void loadConfig()
-  }, [setLogoPreview, loadConfig])
+  }, [loadConfig])
 
   usePageRefresh({ refresh: reload, isRefreshing: phase === 'initial' || isRefreshing, hasUnsavedChanges })
 
   const cancel = useCallback(() => {
     setForm(savedConfig)
-    setLogoPreview(undefined, undefined)
-  }, [savedConfig, setLogoPreview])
+  }, [savedConfig])
 
   const save = useCallback(async () => {
     if (!form) return
@@ -104,11 +90,8 @@ export function useAdminOrganisationConfigs() {
     phase,
     isRefreshing,
     isSaving,
-    logoPreview,
     retry,
     updateField,
-    previewLogo,
-    setLogoPreview,
     cancel,
     save,
   }

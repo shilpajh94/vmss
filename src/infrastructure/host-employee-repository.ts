@@ -52,10 +52,10 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
     return response.data.map(toHostEmployee)
   }
 
-  async listPage({ page, pageSize, departmentId, role, status }: ListHostEmployeesPageParams): Promise<HostEmployeesPage> {
+  async listPage({ page, pageSize, departmentId, role, status, search }: ListHostEmployeesPageParams): Promise<HostEmployeesPage> {
     const response = await this.apiClient.makeRequest({
       endpointConfig: API_ENDPOINTS.LIST_HOST_EMPLOYEES,
-      queryParams: { page, pageSize, departmentId, role, status },
+      queryParams: { page, pageSize, departmentId, role, status, search },
       parserSchema: EmployeeListResponseSchema,
     })
 
@@ -89,6 +89,17 @@ export class HttpHostEmployeeRepository implements HostEmployeeRepository {
       phoneNumber: input.phoneNumber ?? null,
       designation: input.designation ?? null,
       departmentId: input.departmentId ?? null,
+    }
+
+    // Credentials must exist before the sync: the sync registers the email, after
+    // which POST /auth/users answers "Email already registered". The sync endpoint
+    // itself has no password field, so it is expected to link the existing user.
+    if (input.password) {
+      await this.apiClient.makeRequest<unknown>({
+        endpointConfig: API_ENDPOINTS.CREATE_STAFF_USER,
+        body: { email: input.email, password: input.password, fullName: input.fullName },
+        parserSchema: z.unknown(),
+      })
     }
 
     await this.apiClient.makeRequest({

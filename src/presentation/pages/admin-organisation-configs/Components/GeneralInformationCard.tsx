@@ -1,9 +1,6 @@
-import { FileUploadField } from '../../../components/ui/FileUploadField'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
 import type { OrganisationConfig } from '../../../../domain/entities/organisation-config-schema'
-
-const LOGO_ALLOWED_TYPES = ['image/png', 'image/jpeg']
 
 const TIMEZONE_OPTIONS = [
   { value: 'GMT+00:00', label: 'GMT+00:00 (London, Lisbon)' },
@@ -14,27 +11,18 @@ const TIMEZONE_OPTIONS = [
   { value: 'GMT+08:00', label: 'GMT+08:00 (Singapore, Hong Kong)' },
 ]
 
-interface LogoPreview {
-  url: string
-  fileName: string
-}
-
 interface GeneralInformationCardProps {
   form: OrganisationConfig
-  logoPreview: LogoPreview | undefined
   onNameChange: (organisationName: string) => void
   onTimezoneChange: (defaultTimezone: string) => void
-  onPreviewLogo: (file: File) => Promise<string>
-  onLogoPreviewChange: (fileRef: string | undefined, fileName: string | undefined) => void
+  onLogoUrlChange: (logoUrl: string | undefined) => void
 }
 
 export function GeneralInformationCard({
   form,
-  logoPreview,
   onNameChange,
   onTimezoneChange,
-  onPreviewLogo,
-  onLogoPreviewChange,
+  onLogoUrlChange,
 }: GeneralInformationCardProps) {
   return (
     <section className="flex flex-1 flex-col gap-5 rounded-2xl border border-border bg-surface p-4 md:p-6">
@@ -42,15 +30,18 @@ export function GeneralInformationCard({
 
       <TextField label="Organisation Name" value={form.organisationName} onChange={onNameChange} />
 
-      <FileUploadField
-        label="Organisation Logo"
-        helperText="PNG, JPG up to 5MB (Recommended 512x512) — preview only; logo upload isn't saved until the backend adds file storage support"
-        allowedTypes={LOGO_ALLOWED_TYPES}
-        fileName={logoPreview?.fileName}
-        previewUrl={logoPreview?.url ?? form.logoUrl}
-        onUpload={onPreviewLogo}
-        onFileRefChange={onLogoPreviewChange}
+      <TextField
+        label="Organisation Logo URL"
+        type="url"
+        value={form.logoUrl ?? ''}
+        onChange={(logoUrl) => onLogoUrlChange(logoUrl.trim() || undefined)}
+        placeholder="https://example.com/logo.svg"
+        helperText="Public link to the logo image; this is what gets saved."
       />
+
+      {form.logoUrl && (
+        <img src={form.logoUrl} alt="Organisation logo preview" className="h-16 w-auto max-w-full self-start object-contain" />
+      )}
 
       <SelectField
         label="Default Timezone"

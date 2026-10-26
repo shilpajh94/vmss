@@ -10,7 +10,7 @@ import { VisitorPolicyCard } from './Components/VisitorPolicyCard'
 import { useAdminOrganisationConfigs } from './hooks/use-admin-organisation-configs'
 
 export function AdminOrganisationConfigsPage() {
-  const { form, phase, isRefreshing, isSaving, logoPreview, retry, updateField, previewLogo, setLogoPreview, cancel, save } =
+  const { form, phase, isRefreshing, isSaving, retry, updateField, cancel, save } =
     useAdminOrganisationConfigs()
 
   usePageHeader({ description: 'Update global configuration, visitor policy, and notification preferences' })
@@ -49,11 +49,9 @@ export function AdminOrganisationConfigsPage() {
             <div className="flex w-full flex-col gap-6 lg:flex-row lg:items-start">
               <GeneralInformationCard
                 form={form}
-                logoPreview={logoPreview}
                 onNameChange={(organisationName) => updateField('organisationName', organisationName)}
                 onTimezoneChange={(defaultTimezone) => updateField('defaultTimezone', defaultTimezone)}
-                onPreviewLogo={previewLogo}
-                onLogoPreviewChange={setLogoPreview}
+                onLogoUrlChange={(logoUrl) => updateField('logoUrl', logoUrl)}
               />
               <VisitorPolicyCard
                 form={form}

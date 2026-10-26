@@ -32,6 +32,7 @@ export const HostEmployeeCreateInputSchema = z.object({
   departmentId: z.string().optional(),
   roleId: z.string().optional(),
   branchId: z.string().optional(),
+  password: z.string().optional(),
 })
 
 export type HostEmployeeCreateInput = z.infer<typeof HostEmployeeCreateInputSchema>
