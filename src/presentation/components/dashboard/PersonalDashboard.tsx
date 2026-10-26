@@ -5,18 +5,26 @@ import { RangeToggle } from './RangeToggle'
 import { StatusBarsChart } from './StatusBarsChart'
 import { TrafficTrendChart } from './TrafficTrendChart'
 import { UpcomingVisitorsCard } from './UpcomingVisitorsCard'
-import { boardStatusPath } from './dashboard-format'
+import { VISIT_DAY_STATUSES, boardDrillDownPath } from './dashboard-format'
 import type { usePersonalDashboard } from '../../hooks/use-personal-dashboard'
 import type { MyDashboardOverview } from '../../../domain/entities/my-dashboard-overview-schema'
 
 const BOARD = '/staff/invitations'
 
+// The staff board is already limited to the user's own visits, so these
+// links open exactly what each tile counted.
 function buildKpis(overview: MyDashboardOverview): DashboardKpiTile[] {
+  const today = { visitDateFrom: overview.today, visitDateTo: overview.today }
   return [
-    { key: 'visits-today', label: 'Visits Today', value: overview.visitsToday, href: boardStatusPath(BOARD, 'approved') },
-    { key: 'checked-in', label: 'Inside Now', value: overview.insideNow, href: boardStatusPath(BOARD, 'checked_in') },
-    { key: 'pending-approval', label: 'Awaiting Approval', value: overview.awaitingApproval, href: boardStatusPath(BOARD, 'submitted') },
-    { key: 'upcoming-visitors', label: 'Upcoming', value: overview.upcoming, href: boardStatusPath(BOARD, 'approved') },
+    { key: 'visits-today', label: 'Visits Today', value: overview.visitsToday, href: boardDrillDownPath(BOARD, { statuses: VISIT_DAY_STATUSES, ...today }) },
+    { key: 'checked-in', label: 'Inside Now', value: overview.insideNow, href: boardDrillDownPath(BOARD, { statuses: ['checked_in'] }) },
+    {
+      key: 'pending-approval',
+      label: 'Awaiting Approval',
+      value: overview.openAwaitingApproval,
+      href: boardDrillDownPath(BOARD, { statuses: ['submitted'], excludeExpired: true }),
+    },
+    { key: 'upcoming-visitors', label: 'Upcoming', value: overview.upcoming, href: boardDrillDownPath(BOARD, { upcoming: true }) },
   ]
 }
 
@@ -55,6 +63,8 @@ export function PersonalDashboard({ dashboard }: { dashboard: ReturnType<typeof 
           statuses={analytics.statusBreakdown}
           rangeDays={rangeDays}
           boardBasePath={BOARD}
+          visitDateFrom={analytics.dailyTrend[0]?.date ?? analytics.today}
+          visitDateTo={analytics.today}
           isUpdating={dashboard.isAnalyticsLoading}
           className="lg:col-span-4"
         />

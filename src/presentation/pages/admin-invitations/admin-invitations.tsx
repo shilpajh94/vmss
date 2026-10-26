@@ -40,6 +40,7 @@ export function AdminInvitationsPage() {
     setPurposeFilter,
     purposeOptions,
     statusFilter,
+    dashboardChips,
     focusClosedStatus,
     setStatusFilter,
     registrationTypeFilter,
@@ -137,6 +138,7 @@ export function AdminInvitationsPage() {
             registrationTypeFilter={registrationTypeFilter}
             onRegistrationTypeFilterChange={setRegistrationTypeFilter}
             extraFilters={boardExtraFilters({ statusFilter, setStatusFilter, sourceFilter, setSourceFilter })}
+            dashboardChips={dashboardChips}
             isFiltering={isFiltering}
             onClearFilters={clearFilters}
           />

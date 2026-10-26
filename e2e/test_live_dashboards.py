@@ -15,6 +15,7 @@ DASHBOARDS = [
     ("host", "/staff/dashboard", "/staff/invitations"),
 ]
 KNOWN_STATUSES = {"submitted", "approved", "checked_in", "checked_out", "denied", "archived"}
+DRILL_DOWN_PARAMS = {"status", "visitDateFrom", "visitDateTo", "upcoming", "excludeExpired", "branchId"}
 
 
 def _open_dashboard(as_role, role: str, path: str) -> Page:
@@ -27,8 +28,8 @@ def _open_dashboard(as_role, role: str, path: str) -> Page:
 @pytest.mark.parametrize(("role", "path", "board"), DASHBOARDS)
 def test_every_dashboard_control_has_a_destination(as_role, role: str, path: str, board: str) -> None:
     """dashboard-insights "Every Dashboard Control Is Functional": each link
-    targets the role's board with a known status or an invitation id, and
-    each button visibly changes state when pressed."""
+    targets the role's board with an invitation id or a drill-down of known
+    statuses and filters, and each button visibly changes state when pressed."""
     page = _open_dashboard(as_role, role, path)
     main = page.locator("main")
 
@@ -38,7 +39,10 @@ def test_every_dashboard_control_has_a_destination(as_role, role: str, path: str
         parsed = urlparse(href)
         assert parsed.path == board, href
         query = parse_qs(parsed.query)
-        assert query.get("status", [""])[0] in KNOWN_STATUSES or query.get("invitationId"), href
+        if query.get("invitationId"):
+            continue
+        assert query and set(query) <= DRILL_DOWN_PARAMS, href
+        assert set(query.get("status", [])) <= KNOWN_STATUSES, href
 
     toggles = main.locator("button[aria-pressed]")
     assert toggles.count() >= 2
@@ -48,42 +52,50 @@ def test_every_dashboard_control_has_a_destination(as_role, role: str, path: str
             toggle.click()
             expect(toggle).to_have_attribute("aria-pressed", "true")
 
-    # Every other button on the page is the error state's "Try again", which
-    # only exists when loading failed.
-    plain_buttons = main.locator("button:not([aria-pressed])")
+    # Every other button on the page, besides dropdown triggers like the
+    # branch selector, is the error state's "Try again", which only exists
+    # when loading failed.
+    plain_buttons = main.locator("button:not([aria-pressed]):not([aria-haspopup])")
     expect(plain_buttons).to_have_count(0)
 
 
 @pytest.mark.parametrize(
-    ("role", "path", "tile", "board", "status", "label"),
+    ("role", "path", "tile", "board", "query", "label", "chip"),
     [
-        ("admin", "/admin/dashboard", "Pending Approval", "/admin/invitations", "submitted", "Requested"),
-        ("admin", "/admin/dashboard", "On-Site Now", "/admin/invitations", "checked_in", "Checked-in"),
-        ("reception", "/reception/dashboard", "Upcoming Visitors", "/staff/invitations", "approved", "Approved"),
-        ("host", "/staff/dashboard", "Inside Now", "/staff/invitations", "checked_in", "Checked-in"),
+        ("admin", "/admin/dashboard", "Pending Approval", "/admin/invitations", "status=submitted&excludeExpired=true", "Requested", "Not expired"),
+        ("admin", "/admin/dashboard", "On-Site Now", "/admin/invitations", "status=checked_in", "Checked-in", None),
+        ("reception", "/reception/dashboard", "Upcoming Visitors", "/staff/invitations", "upcoming=true", None, "Upcoming only"),
+        ("host", "/staff/dashboard", "Inside Now", "/staff/invitations", "status=checked_in", "Checked-in", None),
     ],
 )
 def test_kpi_tile_opens_the_filtered_board(
-    as_role, role: str, path: str, tile: str, board: str, status: str, label: str
+    as_role, role: str, path: str, tile: str, board: str, query: str, label: str | None, chip: str | None
 ) -> None:
+    """dashboard-insights "KPI Tiles Link to the Matching Invitations"."""
     page = _open_dashboard(as_role, role, path)
     page.locator("main").get_by_role("link", name=re.compile(rf"^{tile}:")).click()
-    expect(page).to_have_url(re.compile(rf"{board}\?status={status}$"))
-    status_select = page.get_by_label("Status", exact=True)
-    expect(status_select.locator("option:checked")).to_have_text(label)
+    expect(page).to_have_url(re.compile(rf"{board}\?{re.escape(query)}$"))
+    if label:
+        # The Status filter is a multi-select whose trigger shows the selection.
+        expect(page.get_by_role("button", name="Status", exact=True)).to_have_text(label)
+    chips = page.get_by_role("group", name="From dashboard")
+    if chip:
+        expect(chips.get_by_text(chip, exact=True)).to_be_visible()
+    else:
+        expect(chips).to_have_count(0)
 
 
 @pytest.mark.parametrize(("role", "path", "board"), DASHBOARDS[:2])
 def test_view_all_check_ins_opens_the_checked_in_board(as_role, role: str, path: str, board: str) -> None:
     page = _open_dashboard(as_role, role, path)
-    page.get_by_role("link", name="View all checked-in visitors").click()
-    expect(page).to_have_url(re.compile(rf"{board}\?status=checked_in$"))
+    page.get_by_role("link", name="View all checked-in and checked-out visitors").click()
+    expect(page).to_have_url(re.compile(rf"{board}\?status=checked_in&status=checked_out$"))
 
 
 def test_unknown_status_deep_link_is_ignored(as_role) -> None:
     page = as_role("admin")
     page.goto("/admin/invitations?status=bogus")
-    expect(page.get_by_label("Status", exact=True).locator("option:checked")).to_have_text("All statuses")
+    expect(page.get_by_role("button", name="Status", exact=True)).to_have_text("All statuses")
 
 
 @pytest.mark.parametrize(("role", "path", "board"), DASHBOARDS)
@@ -104,7 +116,7 @@ def test_host_dashboard_matches_their_own_overview(as_role, api) -> None:
     figures, the same numbers the personal overview API returns."""
     expected = api.call("GET", "/api/v1/admin/dashboard/my-overview", "host", expect=200, branch=None)
     page = _open_dashboard(as_role, "host", "/staff/dashboard")
-    for label, key in (("Inside Now", "insideNow"), ("Awaiting Approval", "awaitingApproval"), ("Upcoming", "upcoming")):
+    for label, key in (("Inside Now", "insideNow"), ("Awaiting Approval", "openAwaitingApproval"), ("Upcoming", "upcoming")):
         tile = page.locator("main").get_by_role("link", name=re.compile(rf"^{label}:"))
         expect(tile).to_have_attribute("aria-label", re.compile(rf"^{label}: {expected[key]}\b"))
 

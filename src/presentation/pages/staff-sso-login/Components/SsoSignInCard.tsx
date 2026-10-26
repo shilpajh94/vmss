@@ -28,7 +28,7 @@ export function SsoSignInCard({ status, errorMessage, onSignIn }: SsoSignInCardP
           onClick={onSignIn}
           pending={isBusy}
           pendingLabel={status === 'completing' ? 'Completing sign-in…' : 'Redirecting…'}
-          className="flex w-full items-center justify-center gap-2.5 rounded-lg bg-secondary-accent px-6 py-3.5 font-body text-[15px] font-semibold text-white drop-shadow-[0_4px_6px_rgba(6,182,212,0.15)] disabled:opacity-60"
+          className="flex w-full items-center justify-center gap-2.5 rounded-lg bg-secondary-accent px-6 py-3.5 font-body text-[15px] font-semibold text-white drop-shadow-[0_4px_6px_rgba(6,182,212,0.15)] disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed"
         >
           <img src={KeyIcon} alt="" className="size-[18px]" />
           Sign in with SSO
