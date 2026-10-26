@@ -23,7 +23,10 @@ def listbox_for(combobox):
 def test_clicking_a_filter_chevron_opens_the_list(as_role) -> None:
     page = as_role("admin")
     page.goto("/admin/invitations", wait_until="networkidle")
-    status = page.get_by_label("Status", exact=True)
+    # The board's Status filter is the multi-select (improve-board-filters-
+    # multiselect), whose open list shares the "Status" label, so name the
+    # trigger by role.
+    status = page.get_by_role("button", name="Status", exact=True)
     # The chevron is the trigger's last icon; it used to be a dead zone.
     status.locator("svg").last.click()
     expect(status).to_have_attribute("aria-expanded", "true")

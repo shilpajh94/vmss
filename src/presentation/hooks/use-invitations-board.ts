@@ -62,6 +62,12 @@ function describeApprovalOutcome(
   return `Level ${approvedLevel} of ${totalSteps} approved — now waiting on ${approverLabel} (level ${nextLevel} of ${totalSteps}).`
 }
 
+// Every spelling an invitation may store a purpose under.
+function purposeStoredValues(label: string): string[] {
+  const slug = PURPOSE_OF_VISIT_OPTIONS.find((option) => option.label === label)?.value
+  return slug && slug !== label ? [label, slug] : [label]
+}
+
 // Shared Kanban-board data/actions behind the staff dashboard and the admin
 // invitations board — same columns, same approve/reschedule/step-progress
 // behavior, differing in scope: the staff dashboard asks the API for only the requests where the
@@ -95,17 +101,17 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
   // start before an older one settles.
   const [pendingColumnReloads, setPendingColumnReloads] = useState(0)
   const [search, setSearch] = useState('')
-  const [purposeFilter, setPurposeFilter] = useState('all')
-  const [registrationTypeFilter, setRegistrationTypeFilter] = useState('all')
+  const [purposeFilter, setPurposeFilter] = useState<string[]>([])
+  const [registrationTypeFilter, setRegistrationTypeFilter] = useState<string[]>([])
   // A dashboard tile or "View all" link opens the board on one status via
   // ?status=<api status>, applied once as the initial filter; an unknown
   // value is ignored (staff-dashboard / admin-invitations "opens a status
   // from a deep link").
-  const [statusFilter, setStatusFilter] = useState(() => {
+  const [statusFilter, setStatusFilter] = useState<string[]>(() => {
     const requested = searchParams.get('status') ?? ''
-    return STATUS_OPTIONS.some((option) => option.value === requested) ? requested : ''
+    return STATUS_OPTIONS.some((option) => option.value === requested) ? [requested] : []
   })
-  const [sourceFilter, setSourceFilter] = useState('')
+  const [sourceFilter, setSourceFilter] = useState<string[]>([])
   const debouncedSearch = useDebouncedValue(search, 300)
   const [approvingId, setApprovingId] = useState<string | undefined>(undefined)
   const [pendingApproveId, setPendingApproveId] = useState<string | undefined>(undefined)
@@ -137,36 +143,34 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
   const columnQuery = useMemo<ColumnQuery>(
     () => ({
       relevantToMe: scope === 'mine',
-      registrationType: registrationTypeFilter === 'all' ? undefined : registrationTypeFilter,
-      source: sourceFilter || undefined,
+      registrationTypes: registrationTypeFilter,
+      sources: sourceFilter,
       search: debouncedSearch.trim() || undefined,
-      purposeOfVisit: purposeFilter === 'all' ? undefined : purposeFilter,
+      purposesOfVisit: purposeFilter.flatMap(purposeStoredValues),
     }),
     [scope, registrationTypeFilter, sourceFilter, debouncedSearch, purposeFilter],
   )
   // Owned here, not by either page, so the staff and admin bars share one
   // definition of "a filter is set" and of what Clear filters resets.
-  const isFiltering = purposeFilter !== 'all' || statusFilter !== '' || registrationTypeFilter !== 'all' || sourceFilter !== ''
+  const isFiltering = purposeFilter.length > 0 || statusFilter.length > 0 || registrationTypeFilter.length > 0 || sourceFilter.length > 0
   // Leaves the search text alone - only the dropdown filters reset.
   const clearFilters = useCallback(() => {
-    setPurposeFilter('all')
-    setStatusFilter('')
-    setRegistrationTypeFilter('all')
-    setSourceFilter('')
+    setPurposeFilter([])
+    setStatusFilter([])
+    setRegistrationTypeFilter([])
+    setSourceFilter([])
   }, [])
   // A status filter narrows loading to that one column; a status with no
   // column leaves every column empty.
   const visibleStatuses = useMemo<readonly BoardStatus[]>(() => {
-    if (!statusFilter) return ALL_BOARD_STATUSES
-    const status = boardStatusForApiStatus(statusFilter)
-    return status ? [status] : []
+    if (statusFilter.length === 0) return ALL_BOARD_STATUSES
+    return statusFilter.flatMap((apiStatus) => boardStatusForApiStatus(apiStatus) ?? [])
   }, [statusFilter])
 
   // A closed status chosen in the filter should be the one the Closed column shows.
   const focusClosedStatus = useMemo(() => {
-    const status = boardStatusForApiStatus(statusFilter)
-    return status && CLOSED_BOARD_STATUSES.includes(status) ? status : undefined
-  }, [statusFilter])
+    return visibleStatuses.find((status) => statusFilter.length > 0 && CLOSED_BOARD_STATUSES.includes(status))
+  }, [statusFilter, visibleStatuses])
 
   const fetchVisitRequestsPage = useCallback(
     (params: Parameters<typeof listVisitRequestsUseCase.execute>[0]) => listVisitRequestsUseCase.execute(params),
@@ -869,11 +873,17 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
   const exportFilterSummary = useMemo(() => {
     const summary: string[] = []
     if (columnQuery.search) summary.push(`Search: "${columnQuery.search}"`)
-    if (columnQuery.purposeOfVisit) summary.push(`Purpose: ${columnQuery.purposeOfVisit}`)
-    if (columnQuery.registrationType) summary.push(`Type: ${optionLabel(REGISTRATION_TYPE_OPTIONS, columnQuery.registrationType)}`)
-    if (columnQuery.source) summary.push(`Source: ${optionLabel(SOURCE_OPTIONS, columnQuery.source)}`)
+    if (purposeFilter.length > 0) summary.push(`Purpose: ${purposeFilter.join(', ')}`)
+    if (registrationTypeFilter.length > 0) {
+      summary.push(`Type: ${registrationTypeFilter.map((value) => optionLabel(REGISTRATION_TYPE_OPTIONS, value)).join(', ')}`)
+    }
+    if (sourceFilter.length > 0) summary.push(`Source: ${sourceFilter.map((value) => optionLabel(SOURCE_OPTIONS, value)).join(', ')}`)
     return summary
-  }, [columnQuery])
+  }, [columnQuery.search, purposeFilter, registrationTypeFilter, sourceFilter])
+
+  // The export endpoint takes one value per filter and returns a file that
+  // can't be merged client-side, so several values must be narrowed first.
+  const exportNeedsNarrowing = [purposeFilter, registrationTypeFilter, sourceFilter, statusFilter].some((values) => values.length > 1)
 
   const openExport = useCallback(() => {
     setExportError(undefined)
@@ -896,7 +906,11 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
       setExportError(undefined)
       try {
         const blob = await exportInvitationsUseCase.execute({
-          ...columnQuery,
+          relevantToMe: columnQuery.relevantToMe,
+          search: columnQuery.search,
+          purposeOfVisit: purposeFilter[0],
+          registrationType: registrationTypeFilter[0],
+          source: sourceFilter[0],
           status: choice.status || undefined,
           dateFrom: choice.dateFrom || undefined,
           dateTo: choice.dateTo || undefined,
@@ -914,7 +928,7 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
         setIsExporting(false)
       }
     },
-    [columnQuery, exportInvitationsUseCase, toast],
+    [columnQuery.relevantToMe, columnQuery.search, purposeFilter, registrationTypeFilter, sourceFilter, exportInvitationsUseCase, toast],
   )
 
   const requestCheckOut = useCallback((id: string) => {
@@ -954,8 +968,13 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
     await loadDashboard('background')
   }, [pendingCheckOutId, checkingOutId, pendingCheckOutRequest, checkOutInvitationUseCase, loadDashboard, toast])
 
-  // Filtered server-side by exact match on the stored label (QA F11).
-  const purposeOptions = useMemo(() => [{ value: 'all', label: 'All purposes' }, ...PURPOSE_OF_VISIT_OPTIONS], [])
+  // Filtered server-side by exact match, and invitations hold the purpose as
+  // either its display name ("Interview") or its option slug ("interview"),
+  // so each selected label is queried under both (`purposeStoredValues`).
+  const purposeOptions = useMemo(
+    () => PURPOSE_OF_VISIT_OPTIONS.map(({ label }) => ({ value: label, label })),
+    [],
+  )
 
   const columns = useMemo(
     () =>
@@ -1038,6 +1057,7 @@ export function useInvitationsBoard(scope: 'mine' | 'all' = 'all') {
     isExporting,
     exportError,
     exportFilterSummary,
+    exportNeedsNarrowing,
     statusFilter,
     focusClosedStatus,
     pendingCheckOutId,

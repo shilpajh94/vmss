@@ -1,13 +1,15 @@
 import type { ComponentType, ReactNode, SVGProps } from 'react'
 import { SearchGlyphIcon, TagIcon, UsersIcon } from '../icons'
-import { DropdownFilter, type DropdownOption } from '../ui/DropdownFilter'
+import type { DropdownOption } from '../ui/DropdownFilter'
+import { MultiSelectFilter } from '../ui/MultiSelectFilter'
 import { REGISTRATION_TYPE_OPTIONS } from './filter-options'
 
 export interface BoardExtraFilter {
   icon: ComponentType<SVGProps<SVGSVGElement>>
-  value: string
+  values: string[]
   options: DropdownOption[]
-  onChange: (value: string) => void
+  onChange: (values: string[]) => void
+  allLabel: string
   ariaLabel: string
 }
 
@@ -15,11 +17,11 @@ interface BoardFilterBarProps {
   search: string
   onSearchChange: (value: string) => void
   searchPlaceholder?: string
-  purposeFilter: string
-  onPurposeFilterChange: (value: string) => void
+  purposeFilter: string[]
+  onPurposeFilterChange: (values: string[]) => void
   purposeOptions: DropdownOption[]
-  registrationTypeFilter: string
-  onRegistrationTypeFilterChange: (value: string) => void
+  registrationTypeFilter: string[]
+  onRegistrationTypeFilterChange: (values: string[]) => void
   /** Further dropdowns after Registration Type (e.g. the admin board's Status and Source). */
   extraFilters?: BoardExtraFilter[]
   isFiltering?: boolean
@@ -27,8 +29,6 @@ interface BoardFilterBarProps {
   /** Rendered last in the bar, e.g. the staff dashboard's Export button. */
   trailingAction?: ReactNode
 }
-
-const REGISTRATION_TYPE_FILTER_OPTIONS: DropdownOption[] = [{ value: 'all', label: 'All types' }, ...REGISTRATION_TYPE_OPTIONS]
 
 // Shared by the staff dashboard and the admin Invitations board so the two
 // bars can't drift apart.
@@ -64,21 +64,30 @@ export function BoardFilterBar({
         />
       </div>
 
-      <DropdownFilter icon={TagIcon} value={purposeFilter} options={purposeOptions} onChange={onPurposeFilterChange} ariaLabel="Purpose of visit" />
-      <DropdownFilter
+      <MultiSelectFilter
+        icon={TagIcon}
+        values={purposeFilter}
+        options={purposeOptions}
+        onChange={onPurposeFilterChange}
+        allLabel="All purposes"
+        ariaLabel="Purpose of visit"
+      />
+      <MultiSelectFilter
         icon={UsersIcon}
-        value={registrationTypeFilter}
-        options={REGISTRATION_TYPE_FILTER_OPTIONS}
+        values={registrationTypeFilter}
+        options={REGISTRATION_TYPE_OPTIONS}
         onChange={onRegistrationTypeFilterChange}
+        allLabel="All types"
         ariaLabel="Registration type"
       />
       {extraFilters.map((filter) => (
-        <DropdownFilter
+        <MultiSelectFilter
           key={filter.ariaLabel}
           icon={filter.icon}
-          value={filter.value}
+          values={filter.values}
           options={filter.options}
           onChange={filter.onChange}
+          allLabel={filter.allLabel}
           ariaLabel={filter.ariaLabel}
         />
       ))}

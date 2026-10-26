@@ -20,6 +20,8 @@ interface ExportInvitationsModalProps {
   initialStatus: string
   /** Labels for the board's other active filters, which the export also applies. */
   appliedFilters: string[]
+  /** True when a board filter holds several values, which the export can't apply. */
+  needsNarrowing: boolean
   isExporting: boolean
   errorMessage?: string
   onConfirm: (choice: InvitationExportChoice) => void
@@ -51,13 +53,15 @@ export function ExportInvitationsModal({ isOpen, onClose, isExporting, ...formPr
 interface ExportInvitationsFormProps {
   initialStatus: string
   appliedFilters: string[]
+  /** True when a board filter holds several values, which the export can't apply. */
+  needsNarrowing: boolean
   isExporting: boolean
   errorMessage?: string
   onConfirm: (choice: InvitationExportChoice) => void
   onCancel: () => void
 }
 
-function ExportInvitationsForm({ initialStatus, appliedFilters, isExporting, errorMessage, onConfirm, onCancel }: ExportInvitationsFormProps) {
+function ExportInvitationsForm({ initialStatus, appliedFilters, needsNarrowing, isExporting, errorMessage, onConfirm, onCancel }: ExportInvitationsFormProps) {
   const [status, setStatus] = useState(initialStatus)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -105,6 +109,12 @@ function ExportInvitationsForm({ initialStatus, appliedFilters, isExporting, err
         <p className="font-body text-[13px] text-text">{appliedFilters.length > 0 ? appliedFilters.join(' · ') : 'No other filters'}</p>
       </div>
 
+      {needsNarrowing ? (
+        <p role="alert" className="font-body text-[13px] text-text-muted">
+          Export supports one value per filter. Narrow any filter that has several values selected, then try again.
+        </p>
+      ) : null}
+
       {errorMessage ? (
         <p role="alert" className="font-body text-[13px] text-danger">
           {errorMessage}
@@ -124,7 +134,7 @@ function ExportInvitationsForm({ initialStatus, appliedFilters, isExporting, err
           onClick={() => onConfirm({ status, dateFrom, dateTo, format })}
           pending={isExporting}
           pendingLabel="Exporting…"
-          disabled={isRangeInverted}
+          disabled={isRangeInverted || needsNarrowing}
           className="rounded-full bg-secondary-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent disabled:opacity-50"
         >
           Export
