@@ -69,7 +69,7 @@ export function LoginFormCard({
           type="submit"
           pending={loading}
           pendingLabel="Signing in…"
-          className="flex w-full items-center justify-center gap-2.5 rounded-lg bg-secondary-accent px-6 py-3.5 font-body text-[15px] font-semibold text-white drop-shadow-[0_4px_6px_rgba(6,182,212,0.15)] disabled:opacity-60"
+          className="flex w-full items-center justify-center gap-2.5 rounded-lg bg-secondary-accent px-6 py-3.5 font-body text-[15px] font-semibold text-white drop-shadow-[0_4px_6px_rgba(6,182,212,0.15)] disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed"
         >
           Sign In
         </PendingButton>
@@ -85,7 +85,7 @@ export function LoginFormCard({
           type="button"
           onClick={onSsoSignIn}
           disabled={loading}
-          className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-border bg-surface px-6 py-3.5 font-body text-[15px] font-semibold text-text disabled:opacity-60"
+          className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-border bg-surface px-6 py-3.5 font-body text-[15px] font-semibold text-text disabled:opacity-60 cursor-pointer disabled:cursor-not-allowed"
         >
           <img src={KeyIcon} alt="" className="size-[18px]" />
           Sign in with SSO
