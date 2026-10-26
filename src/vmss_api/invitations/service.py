@@ -49,6 +49,7 @@ from vmss_api.invitations.repository import (
     CalendarCriteria,
     InvitationExportCriteria,
     InvitationRepository,
+    VisitDayRange,
 )
 from vmss_api.invitations.schemas import (
     CALENDAR_DEFAULT_STATUSES,
@@ -74,6 +75,7 @@ from vmss_api.org_structure.models import Branch, Building, Company, Department
 from vmss_api.org_structure.repository import CompanyRepository, DepartmentRepository
 from vmss_api.org_structure.service import get_default_host_role
 from vmss_api.tenant.models import Tenant
+from vmss_api.tenant.repository import TenantRepository
 from vmss_api.visit_info.repository import VisitDurationRepository, VisitPurposeRepository
 from vmss_api.visitors.repository import ApprovalWorkflowRuleRepository, VisitorCategoryRepository
 
@@ -154,7 +156,7 @@ def _visit_timezone(company: Company | None, tenant: Tenant) -> ZoneInfo:
     return ZoneInfo("UTC")
 
 
-async def _resolve_visit_timezone(tenant_db: AsyncSession, tenant: Tenant) -> ZoneInfo:
+async def resolve_visit_timezone(tenant_db: AsyncSession, tenant: Tenant) -> ZoneInfo:
     company = await CompanyRepository(tenant_db).get_singleton()
     return _visit_timezone(company, tenant)
 
@@ -1720,7 +1722,7 @@ async def approve_invitation(
         )
     expires_at = (
         _end_of_visit_day_utc(
-            invitation.preferred_visit_date, await _resolve_visit_timezone(tenant_db, tenant)
+            invitation.preferred_visit_date, await resolve_visit_timezone(tenant_db, tenant)
         )
         if invitation.preferred_visit_date is not None
         else None
@@ -2118,7 +2120,7 @@ async def _check_in_resolved(
             detail="Invitation is watchlist-flagged; override required before check-in",
         )
     today_local = (
-        datetime.now(UTC).astimezone(await _resolve_visit_timezone(tenant_db, tenant)).date()
+        datetime.now(UTC).astimezone(await resolve_visit_timezone(tenant_db, tenant)).date()
     )
     if (
         invitation.preferred_visit_date is not None
@@ -2280,7 +2282,7 @@ async def _reject_past_visit_date(
     later in the visit timezone (design.md D6). Returns the zone so the
     caller can realign `expires_at` without resolving it twice.
     """
-    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    tz = await resolve_visit_timezone(tenant_db, tenant)
     if visit_date < datetime.now(UTC).astimezone(tz).date():
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -2393,7 +2395,7 @@ async def reschedule_invitation(
     # pending invitation moved to a later day keeps the old day's expiry
     # (expire-invitation-at-end-of-visit-day/design.md D2).
     expires_at = _end_of_visit_day_utc(
-        preferred_visit_date, await _resolve_visit_timezone(tenant_db, tenant)
+        preferred_visit_date, await resolve_visit_timezone(tenant_db, tenant)
     )
     updated = await InvitationRepository(tenant_db).reschedule_if_eligible(
         invitation.id,
@@ -2604,9 +2606,7 @@ async def edit_invitation(
                 detail="Caller lacks invitations:checkout required to edit the check-out time",
             )
         _validate_checked_out_at(invitation, payload.checked_out_at)
-    elif not checked_in and (
-        payload.poc_user_id is not None or payload.poc_role_id is not None
-    ):
+    elif not checked_in and (payload.poc_user_id is not None or payload.poc_role_id is not None):
         if not user.has_permission("invitations:approve", branch_id=invitation.branch_id):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
@@ -2642,7 +2642,7 @@ async def edit_invitation(
             changes.update(status="submitted", approved_at=None)
             leaves_archive = True
         else:
-            tz = await _resolve_visit_timezone(tenant_db, tenant)
+            tz = await resolve_visit_timezone(tenant_db, tenant)
         changes["expires_at"] = _end_of_visit_day_utc(new_visit_date, tz)
     updated = await InvitationRepository(tenant_db).edit_if_eligible(
         invitation.id, allowed_statuses=allowed_statuses, **changes
@@ -2715,7 +2715,7 @@ async def extend_invitation(
     if updated is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not active")
     await tenant_db.commit()
-    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    tz = await resolve_visit_timezone(tenant_db, tenant)
     extended = partial(push_notifications.extended, tz=tz)
     await _notify_host(tenant, updated, extended)
     await _push_point_of_contact(
@@ -2894,6 +2894,46 @@ def status_changed_at(invitation: Invitation) -> datetime:
     return by_status or invitation.submitted_at or invitation.created_at
 
 
+@dataclass(frozen=True)
+class ListDrillDown:
+    """The dashboard drill-down filters of `GET /invitations` and its export
+    (fix-dashboard-count-accuracy): plain request values, resolved against
+    the visit timezone and the request time by `_drill_down_filters`.
+    """
+
+    visit_date_from: date | None = None
+    visit_date_to: date | None = None
+    upcoming: bool = False
+    exclude_expired: bool = False
+    branch_id: uuid.UUID | None = None
+
+
+async def _drill_down_filters(
+    tenant_db: AsyncSession, tenant: Tenant | uuid.UUID, drill_down: ListDrillDown
+) -> dict[str, Any]:
+    """`tenant` may be just its id: the tenant row is then loaded only when
+    a visit-date filter needs the visit timezone.
+    """
+    visit_days = None
+    if drill_down.visit_date_from is not None or drill_down.visit_date_to is not None:
+        if isinstance(tenant, uuid.UUID):
+            loaded = await TenantRepository(tenant_db).get(tenant)
+            assert loaded is not None  # the request's own tenant, already resolved
+            tenant = loaded
+        visit_days = VisitDayRange.local(
+            drill_down.visit_date_from,
+            drill_down.visit_date_to,
+            await resolve_visit_timezone(tenant_db, tenant),
+        )
+    return {
+        "visit_days": visit_days,
+        "upcoming": drill_down.upcoming,
+        "exclude_expired": drill_down.exclude_expired,
+        "now": datetime.now(UTC),
+        "branch_id": drill_down.branch_id,
+    }
+
+
 async def list_invitations_page(
     tenant_db: AsyncSession,
     *,
@@ -2909,7 +2949,13 @@ async def list_invitations_page(
     sort_by: InvitationSortableField,
     sort_order: SortOrder,
     purpose_of_visit: str | None = None,
+    tenant_id: uuid.UUID | None = None,
+    drill_down: ListDrillDown | None = None,
 ) -> tuple[list[Invitation], int]:
+    extra: dict[str, Any] = {}
+    if drill_down is not None:
+        assert tenant_id is not None
+        extra = await _drill_down_filters(tenant_db, tenant_id, drill_down)
     return await InvitationRepository(tenant_db).list_page(
         branch_scope=branch_scope,
         relevant_to_user_id=relevant_to_user_id,
@@ -2923,6 +2969,7 @@ async def list_invitations_page(
         sort_by=sort_by,
         sort_order=sort_order,
         purpose_of_visit=purpose_of_visit,
+        **extra,
     )
 
 
@@ -2967,13 +3014,14 @@ async def export_invitations(
     purpose_of_visit: str | None,
     date_range: InvitationExportDateRange,
     export_format: ExportFormat,
+    drill_down: ListDrillDown | None = None,
 ) -> InvitationExportFile:
     """Backs `GET /invitations/export` (specs/invitation-export/spec.md).
     `dateFrom`/`dateTo` are inclusive calendar dates in the visit timezone,
     turned into half-open UTC bounds here so the repository only ever
     compares instants (design.md Decision 3).
     """
-    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    tz = await resolve_visit_timezone(tenant_db, tenant)
 
     def _local_midnight_utc(day: date) -> datetime:
         return datetime.combine(day, time.min, tzinfo=tz).astimezone(UTC)
@@ -2993,6 +3041,7 @@ async def export_invitations(
             if date_range.date_to
             else None
         ),
+        **(await _drill_down_filters(tenant_db, tenant, drill_down) if drill_down else {}),
     )
     repository = InvitationRepository(tenant_db)
     row_count = await repository.count_export_rows(criteria)
@@ -3051,7 +3100,7 @@ async def _calendar_criteria(
     else:
         default_host_role_id = (await get_default_host_role(tenant_db)).id
 
-    tz = await _resolve_visit_timezone(tenant_db, tenant)
+    tz = await resolve_visit_timezone(tenant_db, tenant)
     criteria = CalendarCriteria(
         branch_scope=branch_scope,
         relevant_to_user_id=user.id if scope is CalendarScope.mine else None,

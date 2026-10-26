@@ -936,6 +936,14 @@ Query params:
 | `search` | string (max 255) | unset | Case-insensitive substring match against primary contact name **or** tracking ID. |
 | `purposeOfVisit` | string (max 255) | unset | Exact (case-sensitive) match against the invitation's purpose of visit. Used by the paged web board's purpose dropdown so filtering — and `pagination.total` — happens server-side (`add-invitation-purpose-filter`). |
 | `relevantToMe` | bool | `false` | See "Relevant to me" below — a different filter mode entirely, not a narrower branch scope. |
+| `visitDateFrom` / `visitDateTo` | date (`YYYY-MM-DD`) | unset | Inclusive range on the visit day: the scheduled visit date, else the visit-timezone creation date. Either may be given alone; `visitDateFrom` later than `visitDateTo` is a 422 (`fix-dashboard-count-accuracy`). |
+| `upcoming` | bool | `false` | Only `approved`, never-checked-in, not-expired invitations — the dashboard's "upcoming" filter. |
+| `excludeExpired` | bool | `false` | Only invitations whose `expiresAt` is in the future. |
+| `branchId` | uuid | unset | Narrows to one branch. In the default mode it must lie inside the caller's `invitations:view-all` scope (404/403 otherwise); under `relevantToMe` it only filters the caller's own set and never widens it. |
+
+The last four are the dashboard drill-down filters: each dashboard count
+equals the `pagination.total` of this list with the matching filters (see
+`docs/features/dashboard.md`, "Every count equals the list it drills into").
 
 Each row is an `InvitationListItemOut` — tracking ID, registration type,
 source, status, `visitorCategoryId`, primary contact name,
@@ -992,7 +1000,9 @@ caller — unlike the list, it never replaces the permission check.
 
 Query params — every filter of [Listing invitations](#listing-invitations)
 with the same meaning (`status`, `registrationType`, `source`, `search`,
-`purposeOfVisit`, `relevantToMe`), plus:
+`purposeOfVisit`, `relevantToMe`, and the drill-down filters
+`visitDateFrom`/`visitDateTo`/`upcoming`/`excludeExpired`/`branchId`, with
+`branchId` checked against the `invitations:export` scope), plus:
 
 | Param | Type | Default | Notes |
 |---|---|---|---|
