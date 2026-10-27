@@ -59,13 +59,14 @@ export function SortableFieldRow({ field, isSelected, onSelect, onToggleRequired
       </div>
 
       {groups.length > 0 && (
-        <SelectDropdown
-          ariaLabel="Assign to group"
-          className="min-w-32"
-          value={field.groupId ?? UNGROUPED_VALUE}
-          onChange={(value) => onAssignGroup(value === UNGROUPED_VALUE ? null : value)}
-          options={[{ value: UNGROUPED_VALUE, label: 'Ungrouped' }, ...groups.map((group) => ({ value: group.id, label: group.name }))]}
-        />
+        <div className="w-40 shrink-0 max-sm:w-32">
+          <SelectDropdown
+            ariaLabel="Assign to group"
+            value={field.groupId ?? UNGROUPED_VALUE}
+            onChange={(value) => onAssignGroup(value === UNGROUPED_VALUE ? null : value)}
+            options={[{ value: UNGROUPED_VALUE, label: 'Ungrouped' }, ...groups.map((group) => ({ value: group.id, label: group.name }))]}
+          />
+        </div>
       )}
 
       {!CONTENT_ONLY_FIELD_TYPES.includes(field.fieldType) && (
