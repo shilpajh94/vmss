@@ -2537,6 +2537,59 @@ async def _poc_eligible(tenant_db: AsyncSession, invitation: Invitation) -> bool
     return current.step_order == steps[-1].step_order
 
 
+async def _resolve_custom_field_edit(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    invitation: Invitation,
+    payload: InvitationEditRequest,
+) -> dict[str, Any]:
+    """Validates the supplied `customFields` against the branch's effective
+    form and merges them over the stored answers, split by scope the same
+    way `create_invitation` does (Visitor Info fields are the primary
+    contact's, the rest invitation-level) so `GET` reads them back. Only the
+    supplied fields are checked for requiredness, so an invitation predating
+    a newly-required field can still be edited. `file_upload` fields are
+    skipped — they can't be answered from JSON.
+    """
+    effective_form = await form_builder_service.resolve_effective_form(
+        tenant_db, await get_redis(), tenant_id=tenant.id, branch_id=invitation.branch_id
+    )
+    visitor_info_fields = form_builder_validation.custom_fields_for_step(
+        effective_form, "visitor_info"
+    )
+    visitor_info_ids = {f["id"] for f in visitor_info_fields}
+    scope_fields = form_builder_validation.custom_fields_for_invitation_scope(effective_form)
+    all_fields = {f["id"]: f for f in [*visitor_info_fields, *scope_fields]}
+
+    supplied = payload.custom_field_values
+    unknown = set(supplied) - set(all_fields)
+    if unknown:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unknown custom field id(s): {', '.join(sorted(unknown))}",
+        )
+    supplied = {k: v for k, v in supplied.items() if all_fields[k]["fieldType"] != "file_upload"}
+    for field_id, value in supplied.items():
+        if all_fields[field_id]["isRequired"] and value in (None, "", []):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Missing required custom field(s): {all_fields[field_id]['label']}",
+            )
+    form_builder_validation.validate_custom_field_values(
+        [all_fields[k] for k in supplied], supplied, scope="the invitation"
+    )
+    return {
+        "primary_contact_custom_field_values": {
+            **invitation.primary_contact_custom_field_values,
+            **{k: v for k, v in supplied.items() if k in visitor_info_ids},
+        },
+        "custom_field_values": {
+            **invitation.custom_field_values,
+            **{k: v for k, v in supplied.items() if k not in visitor_info_ids},
+        },
+    }
+
+
 async def edit_invitation(
     tenant_db: AsyncSession,
     invitation: Invitation,
@@ -2626,6 +2679,8 @@ async def edit_invitation(
                 ),
             )
     changes = await _resolve_edit_changes(tenant_db, payload, invitation.branch_id)
+    if payload.custom_fields is not None and not (checked_in or checked_out):
+        changes.update(await _resolve_custom_field_edit(tenant_db, tenant, invitation, payload))
     if checked_in:
         changes = {k: v for k, v in changes.items() if k in _LOCATION_EDIT_FIELDS}
     elif checked_out:

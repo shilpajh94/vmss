@@ -41,7 +41,7 @@
   ("Department", department),
   ("Expected duration", duration),
   ("Purpose", purpose),
-] + after %}
+] + (custom_fields or []) + after %}
 {% if rows | selectattr(1) | list %}
 {{ section(title) }}
 {{ detail_table(rows) }}

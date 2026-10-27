@@ -49,6 +49,10 @@ from vmss_api.core.email_rendering import TemplateRenderError, display_name, ren
 from vmss_api.core.logging import logger
 from vmss_api.core.sms import SmsInvalidNumberError, SmsNotConfiguredError, SmsTemplate
 from vmss_api.core.whatsapp import WhatsAppTemplate
+from vmss_api.form_builder import validation as form_builder_validation
+from vmss_api.form_builder.defaults import DEFAULT_EFFECTIVE_FORM
+from vmss_api.form_builder.repository import FormConfigVersionRepository
+from vmss_api.form_builder.snapshot import normalize_snapshot
 from vmss_api.invitations import notifications, retention
 from vmss_api.invitations.models import Invitation
 from vmss_api.invitations.qr import generate_qr_png, generate_qr_png_rgb
@@ -146,6 +150,47 @@ async def _resolve_contact(
     return _contact(f"Reception at {branch.name}" if branch is not None else "Reception", None)
 
 
+async def _custom_field_rows(
+    session: AsyncSession, invitation: Invitation
+) -> tuple[str | None, list[tuple[str, str]]]:
+    """`(duration, rows)` — the invitation's admin-defined answers as
+    `(label, value)` rows for the "Visit details" table. An answer to a
+    custom field labelled "Expected Duration" replaces the built-in
+    `expected_duration` value rather than appearing as a second row, since
+    that's where an edit via `customFields` lands. `file_upload` answers
+    are skipped.
+    """
+    duration = invitation.expected_duration
+    answers = {
+        **(invitation.primary_contact_custom_field_values or {}),
+        **(invitation.custom_field_values or {}),
+    }
+    if not answers:
+        return duration, []
+    version = await FormConfigVersionRepository(session).get_for_scope(invitation.branch_id)
+    if version is None and invitation.branch_id is not None:
+        version = await FormConfigVersionRepository(session).get_for_scope(None)
+    form = normalize_snapshot(
+        version.snapshot if version is not None else DEFAULT_EFFECTIVE_FORM, source="email"
+    )
+    fields = [
+        *form_builder_validation.custom_fields_for_step(form, "visitor_info"),
+        *form_builder_validation.custom_fields_for_invitation_scope(form),
+    ]
+    rows: list[tuple[str, str]] = []
+    for field in fields:
+        value = answers.get(field["id"])
+        if value in (None, "", []) or field["fieldType"] == "file_upload":
+            continue
+        text = ", ".join(map(str, value)) if isinstance(value, list) else str(value)
+        label = field.get("label") or field["key"]
+        if label.strip().lower() == "expected duration":
+            duration = text
+        else:
+            rows.append((label, text))
+    return duration, rows
+
+
 async def _invitation_email_context(
     session: AsyncSession,
     invitation: Invitation,
@@ -179,6 +224,7 @@ async def _invitation_email_context(
         front_desk_contact = branch.contact_phone or branch.contact_email
     if front_desk_contact is None and company is not None:
         front_desk_contact = company.phone or company.email
+    duration, custom_fields = await _custom_field_rows(session, invitation)
     return {
         "company_name": company.legal_name if company is not None else None,
         "logo_url": company.logo_url if company is not None else None,
@@ -191,7 +237,8 @@ async def _invitation_email_context(
         "visit_time": invitation.preferred_visit_time,
         "previous_visit_date": invitation.previous_preferred_visit_date,
         "previous_visit_time": invitation.previous_preferred_visit_time,
-        "duration": invitation.expected_duration,
+        "duration": duration,
+        "custom_fields": custom_fields,
         "department": department,
         "place": place or None,
         "front_desk_contact": front_desk_contact,

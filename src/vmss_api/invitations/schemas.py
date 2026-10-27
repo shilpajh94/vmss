@@ -957,6 +957,27 @@ class InvitationEditRequest(CamelModel):
         ),
     )
 
+    custom_fields: list[CustomFieldValue] | None = Field(
+        default=None,
+        max_length=50,
+        description=(
+            "Invitation-level admin-defined custom field answers to overwrite, same shape "
+            "as on creation. `file_upload` fields are ignored."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_custom_fields(self) -> Self:
+        if self.custom_fields is not None:
+            _custom_fields_to_dict(self.custom_fields, scope="the invitation's customFields")
+        return self
+
+    @property
+    def custom_field_values(self) -> dict[str, Any]:
+        return _custom_fields_to_dict(
+            self.custom_fields or [], scope="the invitation's customFields"
+        )
+
     @model_validator(mode="after")
     def _check_poc_not_both(self) -> Self:
         if self.poc_user_id is not None and self.poc_role_id is not None:
