@@ -1,5 +1,6 @@
 import type { VisitRequestSummary } from '../../domain/entities/visit-request-summary-schema'
 import type { InvitationDetail } from '../../domain/entities/invitation-detail-schema'
+import type { FieldAnswer } from '../../domain/entities/form-field-answer-schema'
 
 // Every field is optional — a PATCH sends only what changed. Deliberately
 // excludes the visitor's personal fields, `visitorCategoryId`, and
@@ -20,6 +21,9 @@ export interface EditInvitationFields {
   departmentToVisit?: string
   additionalNotes?: string
   pocUserId?: string
+  // fieldId-addressed answers for the invitation's form-builder fields, same
+  // wire shape as the submission-side `customFields`.
+  customFields?: FieldAnswer[]
   // ISO-8601 with a UTC offset. Only valid on `checked_out` visits (409
   // otherwise); the backend ignores every other field on such a visit.
   checkedOutAt?: string

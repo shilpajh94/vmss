@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
+import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
 import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
 import type { EditInvitationFields } from '../../../data/repositories/visit-request-summary-repository'
+import { useEffectiveForm } from '../../hooks/use-effective-form'
+import { CustomFieldsSection } from '../dynamic-fields/CustomFieldsSection'
+import type { DynamicFieldValue } from '../dynamic-fields/DynamicField'
+import { findInvitationFields } from '../dynamic-fields/custom-field-files'
+import { toFieldAnswers } from '../dynamic-fields/field-answers'
 import { Modal } from '../ui/Modal'
 import { SelectField } from '../ui/SelectField'
 import { TextField } from '../ui/TextField'
@@ -40,7 +46,7 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
   )
 }
 
-const FIELD_LABELS: Record<keyof EditInvitationFields, string> = {
+const FIELD_LABELS: Record<Exclude<keyof EditInvitationFields, 'customFields'>, string> = {
   purposeOfVisit: 'Purpose of Visit',
   preferredVisitDate: 'Preferred Visit Date',
   preferredVisitTime: 'Preferred Visit Time',
@@ -65,7 +71,7 @@ function changedFieldRows(
 ): ConfirmSummaryRow[] {
   // A checked-out visit only accepts `checkedOutAt`; every other field is
   // ignored by the backend, so it is the only one compared there.
-  return (Object.keys(FIELD_LABELS) as (keyof EditInvitationFields)[])
+  return (Object.keys(FIELD_LABELS) as (keyof typeof FIELD_LABELS)[])
     .filter((key) => (key === 'checkedOutAt') === isCheckedOut)
     .filter((key) => (fields[key] ?? '') !== (initial[key] ?? ''))
     .map((key) => {
@@ -77,6 +83,59 @@ function changedFieldRows(
       if (key === 'checkedOutAt' && raw) value = formatDateTimeInputValue(raw)
       return { label: FIELD_LABELS[key], value: value || '—' }
     })
+}
+
+
+// Invitation-level answers the edit form can change: the admin-authored
+// fields of the effective form, plus any system field that already has an
+// answer in `customFields` (e.g. Expected Duration, which the wizards now
+// submit there instead of the legacy top-level property). File uploads and
+// static text have no inline edit control.
+function editableCustomFields(detail: InvitationDetail | undefined, steps: EffectiveFormStep[]): FormField[] {
+  const answeredIds = new Set((detail?.customFields ?? []).map((answer) => answer.fieldId))
+  const authored = new Set(findInvitationFields(steps).map((field) => field.id))
+  return steps
+    .filter((step) => step.key !== 'visitor_info' && step.key !== 'vehicle_info' && step.key !== 'consent_agreement')
+    .flatMap((step) => {
+      const grouped = new Set(step.groups.flatMap((group) => group.fieldKeys))
+      return step.fields.filter(
+        (field) =>
+          !grouped.has(field.key) &&
+          field.fieldType !== 'file_upload' &&
+          field.fieldType !== 'static_text' &&
+          (authored.has(field.id) || answeredIds.has(field.id)),
+      )
+    })
+}
+
+function toDynamicValue(raw: unknown): DynamicFieldValue {
+  if (typeof raw === 'string' || typeof raw === 'boolean') return raw
+  if (Array.isArray(raw) && raw.every((item) => typeof item === 'string')) return raw
+  return undefined
+}
+
+function toCustomValues(detail: InvitationDetail | undefined, fields: FormField[]): Record<string, DynamicFieldValue> {
+  const values: Record<string, DynamicFieldValue> = {}
+  for (const field of fields) {
+    const answer = detail?.customFields.find((candidate) => candidate.fieldId === field.id)
+    const value = toDynamicValue(answer?.value)
+    if (value !== undefined) values[field.key] = value
+  }
+  return values
+}
+
+function displayCustomValue(value: DynamicFieldValue): string {
+  if (value === undefined || value === '') return ''
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (Array.isArray(value)) return value.join(', ')
+  if (typeof value === 'object') return value.fileName
+  return value
+}
+
+function changedCustomRows(initial: Record<string, DynamicFieldValue>, current: Record<string, DynamicFieldValue>, fields: FormField[]): ConfirmSummaryRow[] {
+  return fields
+    .filter((field) => displayCustomValue(initial[field.key]) !== displayCustomValue(current[field.key]))
+    .map((field) => ({ label: field.label, value: displayCustomValue(current[field.key]) || '—' }))
 }
 
 function toFormState(detail?: InvitationDetail): EditInvitationFields {
@@ -110,7 +169,12 @@ export function EditInvitationModal({
   onConfirm,
   onCancel,
 }: EditInvitationModalProps) {
+  const { steps: formSteps } = useEffectiveForm(detail?.branchId ?? undefined)
+  const customFieldDefs = editableCustomFields(detail, formSteps)
+  const initialCustomValues = toCustomValues(detail, customFieldDefs)
+  const initialCustomKey = JSON.stringify(initialCustomValues)
   const [fields, setFields] = useState<EditInvitationFields>(() => toFormState(detail))
+  const [customValues, setCustomValues] = useState<Record<string, DynamicFieldValue>>(initialCustomValues)
   const [isConfirming, setIsConfirming] = useState(false)
 
   const pointOfContactLabel = detail?.pocName ?? (detail ? resolvePointOfContactLabel(detail, workflowRulesByCategory ?? {}) : undefined)
@@ -123,12 +187,23 @@ export function EditInvitationModal({
   useEffect(() => {
     if (isOpen) {
       setFields(toFormState(detail))
+      setCustomValues(JSON.parse(initialCustomKey))
       setIsConfirming(false)
     }
-  }, [isOpen, detail])
+    // `initialCustomKey` stands in for the derived initial values so the
+    // effect re-seeds when the effective form loads, not on every render.
+  }, [isOpen, detail, initialCustomKey])
 
   const isCheckedOut = detail?.status === 'checked_out'
-  const changedRows = changedFieldRows(toFormState(detail), fields, hostEmployees ?? [], isCheckedOut)
+  const hasCustomFields = customFieldDefs.length > 0
+  const changedCustom = isCheckedOut ? [] : changedCustomRows(initialCustomValues, customValues, customFieldDefs)
+  const changedRows = [
+    ...changedFieldRows(toFormState(detail), fields, hostEmployees ?? [], isCheckedOut).filter(
+      // With the form's own fields shown, the legacy inputs are hidden.
+      (row) => !(hasCustomFields && (row.label === FIELD_LABELS.expectedDuration || row.label === FIELD_LABELS.additionalNotes)),
+    ),
+    ...changedCustom,
+  ]
 
   const checkedInAtInput = toDateTimeInputValue(detail?.checkedInAt)
   const maxCheckOut = nowAsDateTimeInputValue()
@@ -152,7 +227,10 @@ export function EditInvitationModal({
       return
     }
     const { checkedOutAt: _unused, ...rest } = fields
-    onConfirm(rest)
+    onConfirm({
+      ...rest,
+      ...(changedCustom.length > 0 ? { customFields: toFieldAnswers(customValues, customFieldDefs) } : {}),
+    })
   }
 
   return (
@@ -229,13 +307,15 @@ export function EditInvitationModal({
                 ) : (
                   <ReadOnlyField label="Point of Contact" value={pointOfContactLabel ?? '—'} />
                 )}
-                <SelectField
-                  label="Expected Duration"
-                  placeholder="Select duration"
-                  options={EXPECTED_DURATION_OPTIONS}
-                  value={fields.expectedDuration ?? ''}
-                  onChange={(expectedDuration) => setFields({ ...fields, expectedDuration })}
-                />
+                {hasCustomFields ? null : (
+                  <SelectField
+                    label="Expected Duration"
+                    placeholder="Select duration"
+                    options={EXPECTED_DURATION_OPTIONS}
+                    value={fields.expectedDuration ?? ''}
+                    onChange={(expectedDuration) => setFields({ ...fields, expectedDuration })}
+                  />
+                )}
                 <TextField
                   label="Preferred Visit Date"
                   type="date"
@@ -255,12 +335,16 @@ export function EditInvitationModal({
                   onChange={(departmentToVisit) => setFields({ ...fields, departmentToVisit })}
                 />
               </div>
-              <TextareaField
-                label="Additional Notes / Special Requirements"
-                placeholder="Any special requirements, accessibility needs, or notes for the host…"
-                value={fields.additionalNotes ?? ''}
-                onChange={(additionalNotes) => setFields({ ...fields, additionalNotes })}
-              />
+              {hasCustomFields ? (
+                <CustomFieldsSection fields={customFieldDefs} value={customValues} onChange={setCustomValues} />
+              ) : (
+                <TextareaField
+                  label="Additional Notes / Special Requirements"
+                  placeholder="Any special requirements, accessibility needs, or notes for the host…"
+                  value={fields.additionalNotes ?? ''}
+                  onChange={(additionalNotes) => setFields({ ...fields, additionalNotes })}
+                />
+              )}
             </div>
           )}
 
