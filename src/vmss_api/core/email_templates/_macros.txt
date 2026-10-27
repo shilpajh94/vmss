@@ -12,7 +12,7 @@
   ("Department", department),
   ("Expected duration", duration),
   ("Purpose", purpose),
-] + after %}
+] + (custom_fields or []) + after %}
 {% if rows | selectattr(1) | list %}
 {{ title | upper }}
 {{ detail_rows(rows) }}

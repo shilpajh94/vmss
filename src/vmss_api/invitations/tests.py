@@ -8918,6 +8918,42 @@ async def test_edit_invitation_success(
     assert email_calls[0]["invitation_id"] == str(invitation.id)
 
 
+async def test_edit_invitation_updates_custom_fields(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
+) -> None:
+    """`customFields` on edit overwrites the stored answers so `GET` returns
+    them, and an invalid answer is rejected.
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    field = await _create_and_publish_custom_field(
+        client,
+        token,
+        branch,
+        step_key="visit_details",
+        key="floor_pref",
+        field_type="dropdown_select",
+        options=["Ground", "First"],
+    )
+    invitation = _build_invitation(db_session, branch.id, status="submitted")
+    db_session.add(invitation)
+    await db_session.commit()
+    monkeypatch.setattr(tasks.send_edit_notification, "delay", lambda **kw: None)
+
+    url = f"/api/v1/invitations/{invitation.id}/edit"
+    bad = await client.patch(
+        url, json={"customFields": [{"fieldId": field["id"], "value": "Roof"}]}, headers=headers
+    )
+    assert bad.status_code == 422, bad.text
+
+    ok = await client.patch(
+        url, json={"customFields": [{"fieldId": field["id"], "value": "First"}]}, headers=headers
+    )
+    assert ok.status_code == 200, ok.text
+    await db_session.refresh(invitation)
+    assert invitation.custom_field_values[field["id"]] == "First"
+
+
 async def test_edit_invitation_updates_checked_out_at(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession, monkeypatch
 ) -> None:
