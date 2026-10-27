@@ -489,7 +489,9 @@ async def create_employee(
     """Creates one employee directly, unlike `sync_employee_directory` this
     never touches any other existing employee's `is_active` status — see
     `Requirement: Single Employee Creation Without a Full Directory Sync` in
-    openspec/specs/auth/spec.md.
+    openspec/specs/auth/spec.md. When `payload.password` is given it becomes
+    the account's real password; otherwise an unusable random one is set,
+    same as sync.
     """
     if await UserRepository(tenant_db).get_by_email(payload.email) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Email already registered")
@@ -503,7 +505,7 @@ async def create_employee(
         tenant_db,
         tenant_id=tenant_id,
         email=payload.email,
-        hashed_password=hash_password(secrets.token_urlsafe(32)),
+        hashed_password=hash_password(payload.password or secrets.token_urlsafe(32)),
         full_name=payload.full_name,
         employee_code=payload.employee_code,
         designation=payload.designation,
@@ -602,6 +604,7 @@ async def list_employees(
     email: str | None,
     role: str | None,
     status: EmployeeStatus | None,
+    search: str | None,
     page: int,
     page_size: int,
     sort_by: EmployeeSortableField,
@@ -613,6 +616,7 @@ async def list_employees(
         email=email,
         role=role,
         status=status,
+        search=(search or "").strip() or None,
         page=page,
         page_size=page_size,
         sort_by=sort_by,

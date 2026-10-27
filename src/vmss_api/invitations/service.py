@@ -58,6 +58,8 @@ from vmss_api.invitations.schemas import (
     CalendarEventOut,
     CalendarFeedOut,
     CalendarScope,
+    ClearInvitationsOut,
+    ClearInvitationsRequest,
     ExportFormat,
     InvitationCreate,
     InvitationEditRequest,
@@ -2452,6 +2454,10 @@ async def _resolve_edit_changes(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown durationId")
         changes["duration_id"] = duration.id
         changes["expected_duration"] = duration.name
+    elif "expected_duration" in changes:
+        # Free-text edit: drop the old catalog link so `duration_id` can't
+        # keep pointing at a duration that no longer matches the text.
+        changes["duration_id"] = None
     if payload.department_id is not None:
         department = await DepartmentRepository(tenant_db).get_active(payload.department_id)
         if department is None:
@@ -3295,3 +3301,41 @@ async def email_qr_png(schema_name: str, invitation_id: uuid.UUID) -> bytes | No
     if qr_code is None:
         return None
     return await generate_qr_png(qr_code.qr_token)
+
+
+class ClearInProgressError(Exception):
+    """A clear-all or retention purge already holds this tenant's lock."""
+
+
+async def request_clear_invitations(
+    tenant: Tenant, user: User, payload: ClearInvitationsRequest
+) -> ClearInvitationsOut:
+    """Validation already happened in the request schema; this best-effort
+    pre-checks the lock (the task re-acquires it with `SET NX`, so
+    correctness never depends on this check) and enqueues the delete.
+    """
+    redis = await get_redis()
+    if await redis.exists(tasks.purge_lock_key(str(tenant.id))):
+        raise ClearInProgressError
+    from_date, to_date = payload.resolved_range()
+    tasks.clear_tenant_invitations.delay(
+        tenant_id=str(tenant.id),
+        tenant_schema=tenant.schema_name,
+        actor_user_id=str(user.id),
+        include_checked_in=payload.include_checked_in,
+        from_date=from_date.isoformat() if from_date else None,
+        to_date=to_date.isoformat() if to_date else None,
+        request_id=_current_request_id(),
+    )
+    logger.info(
+        "invitations_clear_requested",
+        actor_user_id=str(user.id),
+        from_date=from_date.isoformat() if from_date else None,
+        to_date=to_date.isoformat() if to_date else None,
+    )
+    return ClearInvitationsOut(
+        accepted=True,
+        from_date=from_date,
+        to_date=to_date,
+        include_checked_in=payload.include_checked_in,
+    )

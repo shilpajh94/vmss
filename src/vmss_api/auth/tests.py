@@ -28,7 +28,7 @@ from vmss_api.core import storage
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.schemas import SortOrder
-from vmss_api.core.security import hash_password
+from vmss_api.core.security import hash_password, verify_password
 from vmss_api.core.tenancy import get_current_user
 from vmss_api.org_structure.models import Branch, Department
 from vmss_api.platform.models import TenantUserIndex
@@ -827,6 +827,52 @@ async def test_create_employee_success(
     assert body["phoneNumber"] == "+1-555-0100"
     assert body["designation"] == "Engineer"
     assert body["isActive"] is True
+
+
+async def test_create_employee_with_password_stores_usable_hash(
+    db_session: AsyncSession, tenant: Tenant, branch: Branch
+) -> None:
+    department = await _make_department(db_session, branch)
+    base = {"full_name": "Pw Employee", "department_id": department.id}
+    with_pw = await create_employee(
+        db_session,
+        tenant_id=tenant.id,
+        payload=EmployeeCreateRequest(
+            email="pw-emp@acme-test.example",
+            employee_code="EMP-PW1",
+            password="Pass@1234",
+            **base,
+        ),
+    )
+    assert verify_password("Pass@1234", with_pw.hashed_password)
+
+    without_pw = await create_employee(
+        db_session,
+        tenant_id=tenant.id,
+        payload=EmployeeCreateRequest(
+            email="nopw@acme-test.example", employee_code="EMP-PW2", **base
+        ),
+    )
+    assert not verify_password("Pass@1234", without_pw.hashed_password)
+
+
+async def test_create_employee_rejects_short_password(
+    client: AsyncClient, db_session: AsyncSession, user: User, branch: Branch
+) -> None:
+    department = await _make_department(db_session, branch)
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/employees",
+        json={
+            "email": "short@acme-test.example",
+            "fullName": "Short",
+            "employeeCode": "EMP-SH1",
+            "departmentId": str(department.id),
+            "password": "abc",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
 
 
 async def test_create_employee_visible_in_listing_without_sync(
@@ -3219,3 +3265,87 @@ async def test_all_branch_employee_can_be_disabled_and_deleted_from_branch_view(
     assert deleted.status_code == 204
     after = await client.get("/api/v1/auth/employees", params={"pageSize": 100}, headers=headers)
     assert target["id"] not in {e["id"] for e in after.json()["data"]}
+
+
+# --- Employee directory free-text search ----------------------------------
+
+
+async def _search_emails(client: AsyncClient, query: str) -> tuple[set[str], int]:
+    response = await client.get("/api/v1/auth/employees", params=query_params(query))
+    assert response.status_code == 200
+    body = response.json()
+    return {row["email"] for row in body["data"]}, body["pagination"]["total"]
+
+
+def query_params(search: str, **extra: str) -> dict[str, str]:
+    return {"search": search, **extra}
+
+
+async def test_list_employees_search_matches_name_email_and_code(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant
+) -> None:
+    await _make_employee(
+        db_session, tenant, email="searchdina@acme-test.example", employee_code="SRCH-0012"
+    )
+    await _make_employee(
+        db_session, tenant, email="plain@acme-test.example", employee_code="SRCH-0034"
+    )
+    await _make_employee(db_session, tenant, email="other@acme-test.example", employee_code="ZZZ-1")
+
+    by_name, total = await _search_emails(client, "SEARCHDINA")
+    assert by_name == {"searchdina@acme-test.example"}
+    assert total == 1
+
+    by_email, _ = await _search_emails(client, "plain@acme")
+    assert by_email == {"plain@acme-test.example"}
+
+    by_code, total = await _search_emails(client, "srch-00")
+    assert by_code == {"searchdina@acme-test.example", "plain@acme-test.example"}
+    assert total == 2
+
+
+async def test_list_employees_search_combines_with_status_filter(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant
+) -> None:
+    active = await _make_employee(db_session, tenant, email="combo-a@acme-test.example")
+    inactive = await _make_employee(db_session, tenant, email="combo-b@acme-test.example")
+    inactive.is_active = False
+    await db_session.commit()
+
+    response = await client.get(
+        "/api/v1/auth/employees", params={"search": "combo-", "status": "active"}
+    )
+    assert response.status_code == 200
+    assert {r["email"] for r in response.json()["data"]} == {active.email}
+    assert response.json()["pagination"]["total"] == 1
+
+
+async def test_list_employees_search_treats_wildcards_literally(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant
+) -> None:
+    await _make_employee(db_session, tenant, email="wild@acme-test.example", employee_code="W%1")
+    await _make_employee(db_session, tenant, email="nowild@acme-test.example", employee_code="W91")
+
+    emails, total = await _search_emails(client, "W%")
+    assert emails == {"wild@acme-test.example"}
+    assert total == 1
+
+    emails, _ = await _search_emails(client, "W_1")
+    assert emails == set()
+
+
+async def test_list_employees_blank_search_is_ignored(
+    client: AsyncClient, db_session: AsyncSession, tenant: Tenant
+) -> None:
+    await _make_employee(db_session, tenant, email="blank@acme-test.example")
+    baseline = await client.get("/api/v1/auth/employees")
+    blank = await client.get("/api/v1/auth/employees", params={"search": "   "})
+    assert blank.status_code == 200
+    assert blank.json()["pagination"]["total"] == baseline.json()["pagination"]["total"]
+
+
+async def test_list_employees_search_over_255_chars_rejected(
+    client: AsyncClient, tenant: Tenant
+) -> None:
+    response = await client.get("/api/v1/auth/employees", params={"search": "a" * 256})
+    assert response.status_code in (400, 422)

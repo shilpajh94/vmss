@@ -1530,6 +1530,30 @@ storage tier, are never exposed through a presigned URL, and have no expiry job
 yet. Stored files (ID proofs, photos, QR images) of purged invitations are not
 deleted. Restoring a backup is a manual ops task.
 
+## Clear invitations (`add-clear-all-invitations`)
+
+`POST /api/v1/invitations/clear-all` permanently deletes invitations (and their
+visitors, vehicles, QR codes and approval steps) for the caller's own tenant. It
+needs the `invitations:clear-all` permission, which only the Admin role gets, and
+returns `202` — the work runs in the `clear_tenant_invitations` Celery task. It
+reuses the retention purge's batching, verified backup and per-tenant lock, so
+the data is **hard-deleted** after a backup; there is no undo besides restoring
+that backup by hand.
+
+Body:
+
+| Field | Meaning |
+|---|---|
+| `confirm` | Required. `CLEAR ALL INVITATIONS` when no scope is given, `CLEAR INVITATIONS` when `month` or a date bound is given. Anything else is `422`. |
+| `month` | Optional `YYYY-MM`. Clears invitations whose visit date (`preferredVisitDate`) falls in that month. |
+| `fromDate` / `toDate` | Optional, inclusive, either may be omitted. Cannot be combined with `month`; `fromDate` must not be after `toDate`. |
+| `includeCheckedIn` | Default `false`: visitors currently checked in are skipped so "who's inside" isn't wiped. |
+
+A scoped clear never matches invitations with no visit date. A second request while
+a clear or the retention purge is running gets `409`. An `Idempotency-Key` header
+is honored. Each run writes one `invitations_cleared` audit entry (actor, scope,
+count, backup keys). Backups hold PII and stay in the storage tier.
+
 ## Config knobs
 
 | Setting | Default | Purpose |

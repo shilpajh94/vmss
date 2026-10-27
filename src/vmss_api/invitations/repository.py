@@ -862,6 +862,33 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def list_ids_for_clear(
+        self,
+        *,
+        limit: int,
+        include_checked_in: bool,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> list[uuid.UUID]:
+        """Admin clear-all: ids of invitations to delete, optionally scoped to
+        a visit-date range (inclusive; either bound optional). A bounded scope
+        never matches a row with no `preferred_visit_date`. Includes
+        soft-deleted rows, like retention. Deleted rows drop out of the next
+        call, so repeated `LIMIT` batches need no keyset.
+        """
+        stmt = select(Invitation.id)
+        if from_date is not None:
+            stmt = stmt.where(Invitation.preferred_visit_date >= from_date)
+        if to_date is not None:
+            stmt = stmt.where(Invitation.preferred_visit_date <= to_date)
+        if not include_checked_in:
+            stmt = stmt.where(
+                Invitation.status != "checked_in",
+                Invitation.check_in_status != "checked_in",
+            )
+        stmt = stmt.order_by(Invitation.id.asc()).limit(limit)
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def load_rows_for_backup(self, ids: list[uuid.UUID]) -> list[tuple[str, dict[str, Any]]]:
         """Retention purge: every row about to be deleted — the invitations
         and each dependent table — as `(table_name, column_values)`. One

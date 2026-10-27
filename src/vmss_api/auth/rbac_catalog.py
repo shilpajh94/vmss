@@ -62,6 +62,7 @@ PERMISSION_CODES = [
     "invitations:badge",
     "invitations:watchlist-override",
     "invitations:export",
+    "invitations:clear-all",
     "documents:view",
     "roles:manage",
     "roles:view",

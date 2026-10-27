@@ -153,6 +153,7 @@ class UserRepository(TenantScopedRepository[User]):
         email: str | None,
         role: str | None,
         status: EmployeeStatus | None,
+        search: str | None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -232,6 +233,16 @@ class UserRepository(TenantScopedRepository[User]):
             )
         if status is not None:
             conditions.append(User.is_active.is_(status == EmployeeStatus.active))
+        if search:
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{escaped}%"
+            conditions.append(
+                or_(
+                    User.full_name.ilike(pattern, escape="\\"),
+                    User.email.ilike(pattern, escape="\\"),
+                    User.employee_code.ilike(pattern, escape="\\"),
+                )
+            )
 
         joined_from = select(User).outerjoin(Department, User.department_id == Department.id)
 
