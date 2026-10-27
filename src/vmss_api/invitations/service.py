@@ -2452,6 +2452,10 @@ async def _resolve_edit_changes(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Unknown durationId")
         changes["duration_id"] = duration.id
         changes["expected_duration"] = duration.name
+    elif "expected_duration" in changes:
+        # Free-text edit: drop the old catalog link so `duration_id` can't
+        # keep pointing at a duration that no longer matches the text.
+        changes["duration_id"] = None
     if payload.department_id is not None:
         department = await DepartmentRepository(tenant_db).get_active(payload.department_id)
         if department is None:
