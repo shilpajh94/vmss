@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
 import { employeeAtBranch, employeeHasRoleAtBranch } from '../../utils/role-name-match'
 import { Modal } from '../ui/Modal'
@@ -92,11 +92,19 @@ export function DelegateInvitationModal({
     onCancel()
   }
 
+  // Reset only once the modal has actually closed. Resetting inside
+  // `handleConfirm` flipped the still-open modal back to the Review step while
+  // the request was in flight, so the review popup appeared again.
+  useEffect(() => {
+    if (!isOpen) {
+      setDelegateUserId('')
+      setIsConfirming(false)
+    }
+  }, [isOpen])
+
   const handleConfirm = () => {
-    if (!delegateUserId) return
+    if (!delegateUserId || isDelegating) return
     onConfirm(delegateUserId)
-    setDelegateUserId('')
-    setIsConfirming(false)
   }
 
   const delegateName = delegateCandidates?.find((employee) => employee.id === delegateUserId)?.fullName ?? delegateUserId
