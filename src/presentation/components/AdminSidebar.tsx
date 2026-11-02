@@ -7,6 +7,7 @@ import {
   ClockIcon,
   GitBranchIcon,
   HomeIcon,
+  IdCardIcon,
   LayersIcon,
   ListChecksIcon,
   MonitorIcon,
@@ -25,6 +26,7 @@ import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
 import { useScrollActivity } from '../hooks/use-scroll-activity'
+import { useBadgePrintFlow } from '../hooks/use-badge-print-flow'
 
 const BUILD_LABEL = [__APP_VERSION__ ? `v${__APP_VERSION__}` : '', __BUILD_SHA__].filter(Boolean).join(' · ')
 
@@ -43,6 +45,7 @@ export type AdminSidebarActiveItem =
   | 'workflows'
   | 'invitations'
   | 'calendar'
+  | 'badge-printing'
   | 'roles'
   | 'form-builder'
   | 'audit-trail'
@@ -66,6 +69,7 @@ const ADMIN_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: Ad
   ['/admin/workflows', 'workflows'],
   ['/admin/invitations', 'invitations'],
   ['/admin/calendar', 'calendar'],
+  ['/admin/badge-printing', 'badge-printing'],
   ['/admin/roles', 'roles'],
   ['/admin/form-builder', 'form-builder'],
   ['/admin/audit-trail', 'audit-trail'],
@@ -95,6 +99,7 @@ const NAV_ITEM_PERMISSIONS: Record<AdminSidebarActiveItem, string> = {
   workflows: PAGE_PERMISSIONS.workflows,
   invitations: PAGE_PERMISSIONS.adminInvitations,
   calendar: PAGE_PERMISSIONS.calendar,
+  'badge-printing': PAGE_PERMISSIONS.badgePrinting,
   roles: PAGE_PERMISSIONS.roles,
   'form-builder': PAGE_PERMISSIONS.formBuilder,
   'audit-trail': PAGE_PERMISSIONS.auditTrail,
@@ -110,6 +115,7 @@ const NAV_SECTIONS = [
       { key: 'dashboard', label: 'Dashboard', icon: HomeIcon },
       { key: 'invitations', label: 'Invitations', icon: CalendarCheckIcon },
       { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
+      { key: 'badge-printing', label: 'Badge Printing', icon: IdCardIcon },
       { key: 'audit-trail', label: 'Audit Trail', icon: ClockIcon },
     ],
   },
@@ -164,9 +170,11 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
   const { closeNav } = useNavDrawer()
   const { isCollapsed } = useSidebarCollapse()
   const { can } = usePermissions()
+  const badgePrintFlow = useBadgePrintFlow()
   const sections = NAV_SECTIONS.map((section) => ({
     label: section.label,
-    items: section.items.filter((item) => can(NAV_ITEM_PERMISSIONS[item.key])),
+    // Badge printing also needs the tenant flag on (see useBadgePrintFlow).
+    items: section.items.filter((item) => can(NAV_ITEM_PERMISSIONS[item.key]) && (item.key !== 'badge-printing' || badgePrintFlow === 'on')),
   })).filter((section) => section.items.length > 0)
 
   const handleActivate = (key: AdminSidebarActiveItem) => {
@@ -185,6 +193,7 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
     if (key === 'workflows') navigate('/admin/workflows')
     if (key === 'invitations') navigate('/admin/invitations')
     if (key === 'calendar') navigate('/admin/calendar')
+    if (key === 'badge-printing') navigate('/admin/badge-printing')
     if (key === 'roles') navigate('/admin/roles')
     if (key === 'form-builder') navigate('/admin/form-builder')
     if (key === 'audit-trail') navigate('/admin/audit-trail')

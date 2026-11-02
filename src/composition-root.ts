@@ -169,9 +169,33 @@ import { HttpVisitorCategoryRepository } from './infrastructure/visitor-category
 import { HttpFormBuilderRepository } from './infrastructure/form-builder-repository'
 import { HttpApprovalWorkflowRuleRepository } from './infrastructure/approval-workflow-rule-repository'
 import { HttpNotificationRepository } from './infrastructure/notification-repository'
+import { HttpCheckinRepository } from './infrastructure/checkin-repository'
+import { HttpTenantSettingsRepository } from './infrastructure/tenant-settings-repository'
+import type { CheckinRepository } from './data/repositories/checkin-repository'
+import type { TenantSettingsRepository } from './data/repositories/tenant-settings-repository'
+import { SearchCheckinVisitsUseCase } from './data/use-cases/search-checkin-visits'
+import { UploadCheckinPhotoUseCase } from './data/use-cases/upload-checkin-photo'
+import { VerifyCheckinIdUseCase } from './data/use-cases/verify-checkin-id'
+import { PrintVisitorBadgeUseCase } from './data/use-cases/print-visitor-badge'
+import { ReprintVisitorBadgeUseCase } from './data/use-cases/reprint-visitor-badge'
+import { CheckOutWithBadgeUseCase } from './data/use-cases/check-out-with-badge'
+import { CheckInWithBadgeUseCase } from './data/use-cases/check-in-with-badge'
+import { ReEnterWithBadgeUseCase } from './data/use-cases/re-enter-with-badge'
+import { GetBadgePrintFlowEnabledUseCase } from './data/use-cases/get-badge-print-flow-enabled'
+import { SetBadgePrintFlowEnabledUseCase } from './data/use-cases/set-badge-print-flow-enabled'
 
 export interface AppDependencies {
   apiClient: ApiClient
+  searchCheckinVisitsUseCase: SearchCheckinVisitsUseCase
+  verifyCheckinIdUseCase: VerifyCheckinIdUseCase
+  uploadCheckinPhotoUseCase: UploadCheckinPhotoUseCase
+  printVisitorBadgeUseCase: PrintVisitorBadgeUseCase
+  reprintVisitorBadgeUseCase: ReprintVisitorBadgeUseCase
+  checkOutWithBadgeUseCase: CheckOutWithBadgeUseCase
+  reEnterWithBadgeUseCase: ReEnterWithBadgeUseCase
+  checkInWithBadgeUseCase: CheckInWithBadgeUseCase
+  getBadgePrintFlowEnabledUseCase: GetBadgePrintFlowEnabledUseCase
+  setBadgePrintFlowEnabledUseCase: SetBadgePrintFlowEnabledUseCase
   submitVisitRequestUseCase: SubmitVisitRequestUseCase
   trackVisitRequestUseCase: TrackVisitRequestUseCase
   requestVisitorOtpUseCase: RequestVisitorOtpUseCase
@@ -431,6 +455,18 @@ export function createApp(): AppDependencies {
   let listApprovalWorkflowRulesUseCase: ListApprovalWorkflowRulesUseCase | undefined
   let saveWorkflowUseCase: SaveWorkflowUseCase | undefined
   let deleteWorkflowUseCase: DeleteWorkflowUseCase | undefined
+  let checkinRepository: CheckinRepository | undefined
+  let tenantSettingsRepository: TenantSettingsRepository | undefined
+  let searchCheckinVisitsUseCase: SearchCheckinVisitsUseCase | undefined
+  let verifyCheckinIdUseCase: VerifyCheckinIdUseCase | undefined
+  let uploadCheckinPhotoUseCase: UploadCheckinPhotoUseCase | undefined
+  let printVisitorBadgeUseCase: PrintVisitorBadgeUseCase | undefined
+  let reprintVisitorBadgeUseCase: ReprintVisitorBadgeUseCase | undefined
+  let checkOutWithBadgeUseCase: CheckOutWithBadgeUseCase | undefined
+  let reEnterWithBadgeUseCase: ReEnterWithBadgeUseCase | undefined
+  let checkInWithBadgeUseCase: CheckInWithBadgeUseCase | undefined
+  let getBadgePrintFlowEnabledUseCase: GetBadgePrintFlowEnabledUseCase | undefined
+  let setBadgePrintFlowEnabledUseCase: SetBadgePrintFlowEnabledUseCase | undefined
   let notificationRepository: NotificationRepository | undefined
   let registerDeviceUseCase: RegisterDeviceUseCase | undefined
   let unregisterDeviceUseCase: UnregisterDeviceUseCase | undefined
@@ -1149,6 +1185,66 @@ export function createApp(): AppDependencies {
     return listNotificationsUseCase
   }
 
+  const resolveCheckinRepository = (): CheckinRepository => {
+    checkinRepository ??= new HttpCheckinRepository(resolveApiClient())
+    return checkinRepository
+  }
+
+  const resolveTenantSettingsRepository = (): TenantSettingsRepository => {
+    tenantSettingsRepository ??= new HttpTenantSettingsRepository(resolveApiClient())
+    return tenantSettingsRepository
+  }
+
+  const resolveSearchCheckinVisitsUseCase = (): SearchCheckinVisitsUseCase => {
+    searchCheckinVisitsUseCase ??= new SearchCheckinVisitsUseCase(resolveCheckinRepository())
+    return searchCheckinVisitsUseCase
+  }
+
+  const resolveUploadCheckinPhotoUseCase = (): UploadCheckinPhotoUseCase => {
+    uploadCheckinPhotoUseCase ??= new UploadCheckinPhotoUseCase(resolveCheckinRepository())
+    return uploadCheckinPhotoUseCase
+  }
+
+  const resolveVerifyCheckinIdUseCase = (): VerifyCheckinIdUseCase => {
+    verifyCheckinIdUseCase ??= new VerifyCheckinIdUseCase(resolveCheckinRepository())
+    return verifyCheckinIdUseCase
+  }
+
+  const resolvePrintVisitorBadgeUseCase = (): PrintVisitorBadgeUseCase => {
+    printVisitorBadgeUseCase ??= new PrintVisitorBadgeUseCase(resolveCheckinRepository())
+    return printVisitorBadgeUseCase
+  }
+
+  const resolveReprintVisitorBadgeUseCase = (): ReprintVisitorBadgeUseCase => {
+    reprintVisitorBadgeUseCase ??= new ReprintVisitorBadgeUseCase(resolveCheckinRepository())
+    return reprintVisitorBadgeUseCase
+  }
+
+  const resolveCheckOutWithBadgeUseCase = (): CheckOutWithBadgeUseCase => {
+    checkOutWithBadgeUseCase ??= new CheckOutWithBadgeUseCase(resolveCheckinRepository())
+    return checkOutWithBadgeUseCase
+  }
+
+  const resolveCheckInWithBadgeUseCase = (): CheckInWithBadgeUseCase => {
+    checkInWithBadgeUseCase ??= new CheckInWithBadgeUseCase(resolveCheckinRepository())
+    return checkInWithBadgeUseCase
+  }
+
+  const resolveReEnterWithBadgeUseCase = (): ReEnterWithBadgeUseCase => {
+    reEnterWithBadgeUseCase ??= new ReEnterWithBadgeUseCase(resolveCheckinRepository())
+    return reEnterWithBadgeUseCase
+  }
+
+  const resolveGetBadgePrintFlowEnabledUseCase = (): GetBadgePrintFlowEnabledUseCase => {
+    getBadgePrintFlowEnabledUseCase ??= new GetBadgePrintFlowEnabledUseCase(resolveTenantSettingsRepository())
+    return getBadgePrintFlowEnabledUseCase
+  }
+
+  const resolveSetBadgePrintFlowEnabledUseCase = (): SetBadgePrintFlowEnabledUseCase => {
+    setBadgePrintFlowEnabledUseCase ??= new SetBadgePrintFlowEnabledUseCase(resolveTenantSettingsRepository())
+    return setBadgePrintFlowEnabledUseCase
+  }
+
   const resolveGetUnreadNotificationCountUseCase = (): GetUnreadNotificationCountUseCase => {
     getUnreadNotificationCountUseCase ??= new GetUnreadNotificationCountUseCase(resolveNotificationRepository())
     return getUnreadNotificationCountUseCase
@@ -1470,6 +1566,36 @@ export function createApp(): AppDependencies {
     },
     get markAllNotificationsReadUseCase() {
       return resolveMarkAllNotificationsReadUseCase()
+    },
+    get searchCheckinVisitsUseCase() {
+      return resolveSearchCheckinVisitsUseCase()
+    },
+    get uploadCheckinPhotoUseCase() {
+      return resolveUploadCheckinPhotoUseCase()
+    },
+    get verifyCheckinIdUseCase() {
+      return resolveVerifyCheckinIdUseCase()
+    },
+    get printVisitorBadgeUseCase() {
+      return resolvePrintVisitorBadgeUseCase()
+    },
+    get reprintVisitorBadgeUseCase() {
+      return resolveReprintVisitorBadgeUseCase()
+    },
+    get checkOutWithBadgeUseCase() {
+      return resolveCheckOutWithBadgeUseCase()
+    },
+    get checkInWithBadgeUseCase() {
+      return resolveCheckInWithBadgeUseCase()
+    },
+    get reEnterWithBadgeUseCase() {
+      return resolveReEnterWithBadgeUseCase()
+    },
+    get getBadgePrintFlowEnabledUseCase() {
+      return resolveGetBadgePrintFlowEnabledUseCase()
+    },
+    get setBadgePrintFlowEnabledUseCase() {
+      return resolveSetBadgePrintFlowEnabledUseCase()
     },
     get listFormStepsUseCase() {
       return resolveListFormStepsUseCase()

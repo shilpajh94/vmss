@@ -593,6 +593,63 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: false,
   },
+  GET_TENANT_ME: {
+    endpoint: "/tenants/me",
+    method: "GET",
+    hasToken: true,
+  },
+  UPDATE_TENANT_SETTINGS: {
+    endpoint: "/tenants/me/settings",
+    method: "PATCH",
+    hasToken: true,
+  },
+  // Badge print flow: every /checkin/* route 404s while the flow is off
+  // (server flag or tenant toggle), which callers treat as "feature off".
+  CHECKIN_SEARCH: {
+    endpoint: "/checkin/search",
+    method: "GET",
+    hasToken: true,
+  },
+  CHECKIN_VERIFY_ID: {
+    endpoint: "/checkin/:visitId/verify-id",
+    method: "POST",
+    hasToken: true,
+  },
+  // Captures a photo for a visit registered without one (multipart `file`).
+  CHECKIN_UPLOAD_PHOTO: {
+    endpoint: "/checkin/:visitId/photo",
+    method: "POST",
+    hasToken: true,
+  },
+  // Returns a PDF, not JSON.
+  CHECKIN_PRINT_BADGE: {
+    endpoint: "/checkin/:visitId/badge",
+    method: "POST",
+    hasToken: true,
+  },
+  // A state-changing GET (invalidates the previous badge) that returns a PDF:
+  // only ever called from an explicit, confirmed user action.
+  CHECKIN_REPRINT_BADGE: {
+    endpoint: "/checkin/:visitId/badge",
+    method: "GET",
+    hasToken: true,
+  },
+  // The signed QR token in the body is the credential: no staff login.
+  CHECKIN_BADGE_CHECK_IN: {
+    endpoint: "/checkin/badge/check-in",
+    method: "POST",
+    hasToken: false,
+  },
+  CHECKIN_BADGE_CHECK_OUT: {
+    endpoint: "/checkin/badge/check-out",
+    method: "POST",
+    hasToken: false,
+  },
+  CHECKIN_BADGE_RE_ENTER: {
+    endpoint: "/checkin/badge/re-enter",
+    method: "POST",
+    hasToken: false,
+  },
 } as const
 
 export type ApiEndpointDefinition = (typeof API_ENDPOINTS)[keyof typeof API_ENDPOINTS]

@@ -22,4 +22,5 @@ export const PAGE_PERMISSIONS = {
   auditTrail: 'audit-logs:view',
   staffInvitations: 'invitations:view',
   registerVisitor: 'invitations:create',
+  badgePrinting: 'visitors:print_badge',
 } as const

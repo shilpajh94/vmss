@@ -25,6 +25,7 @@ interface MakeRequestOptions<T> {
 
 interface UploadFileOptions<T> {
   endpointConfig: ApiEndpointDefinition
+  pathParams?: Record<string, string>
   file: File
   parserSchema: ZodType<T>
 }
@@ -40,6 +41,8 @@ interface DownloadFileOptions {
   endpointConfig: ApiEndpointDefinition
   queryParams?: QueryParams
   pathParams?: Record<string, string>
+  /** Extra request headers (e.g. `Idempotency-Key`). */
+  headers?: Record<string, string>
 }
 
 export const SESSION_EXPIRED_EVENT = 'auth:session-expired'
@@ -179,11 +182,11 @@ export class ApiClient {
   // body — plain browser navigation to these routes never attaches the
   // Authorization header, so the file must be fetched here and handed to the
   // caller as a Blob to save via an object URL instead.
-  async downloadBlob({ endpointConfig, queryParams, pathParams }: DownloadFileOptions): Promise<Blob> {
+  async downloadBlob({ endpointConfig, queryParams, pathParams, headers: extraHeaders }: DownloadFileOptions): Promise<Blob> {
     const { endpoint, method, hasToken } = endpointConfig as EndpointConfigShape
     const url = `${this.baseUrl}${this.buildPath(endpoint, pathParams)}${this.buildQueryString(queryParams)}`
 
-    const headers: Record<string, string> = {}
+    const headers: Record<string, string> = { ...extraHeaders }
 
     const sentSessionToken = this.attachSessionToken(headers, hasToken, endpoint)
 
@@ -193,9 +196,9 @@ export class ApiClient {
     return response.blob()
   }
 
-  async uploadFile<T>({ endpointConfig, file, parserSchema }: UploadFileOptions<T>): Promise<T> {
+  async uploadFile<T>({ endpointConfig, pathParams, file, parserSchema }: UploadFileOptions<T>): Promise<T> {
     const { endpoint, method, hasToken } = endpointConfig as EndpointConfigShape
-    const url = `${this.baseUrl}${endpoint}`
+    const url = `${this.baseUrl}${this.buildPath(endpoint, pathParams)}`
 
     const headers: Record<string, string> = {}
 

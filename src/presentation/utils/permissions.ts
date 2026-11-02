@@ -59,6 +59,7 @@ const FALLBACK_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'invitations:edit',
     'invitations:badge',
     'invitations:export',
+    'visitors:print_badge',
     'documents:view',
     'roles:view',
   ],

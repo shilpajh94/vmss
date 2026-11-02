@@ -58,6 +58,8 @@ const AdminLayout = lazyPage(() => import('./presentation/components/AdminLayout
 const StaffLayout = lazyPage(() => import('./presentation/components/StaffLayout'), 'StaffLayout')
 const AdminDashboardPage = lazyPage(() => import('./presentation/pages/admin-dashboard/admin-dashboard'), 'AdminDashboardPage')
 const ReceptionDashboardPage = lazyPage(() => import('./presentation/pages/reception-dashboard/reception-dashboard'), 'ReceptionDashboardPage')
+const ReceptionBadgePrintingPage = lazyPage(() => import('./presentation/pages/reception-badge-printing/reception-badge-printing'), 'ReceptionBadgePrintingPage')
+const BadgeScanPage = lazyPage(() => import('./presentation/pages/badge-scan/badge-scan'), 'BadgeScanPage')
 const StaffDashboardPage = lazyPage(() => import('./presentation/pages/staff-dashboard/staff-dashboard'), 'StaffDashboardPage')
 // add-staff-calendar: one page for both portals (design.md W5).
 const CalendarPage = lazyPage(() => import('./presentation/pages/calendar/calendar-page'), 'CalendarPage')
@@ -104,6 +106,7 @@ const ADMIN_ROUTES: PageRoute[] = [
   { path: '/admin/workflows', requires: PAGE_PERMISSIONS.workflows, element: <AdminWorkflowsPage /> },
   { path: '/admin/workflows/new', requires: PAGE_PERMISSIONS.workflows, element: <AdminWorkflowFormPage /> },
   { path: '/admin/workflows/:visitorCategoryId/edit', requires: PAGE_PERMISSIONS.workflows, element: <AdminWorkflowFormPage /> },
+  { path: '/admin/badge-printing', requires: PAGE_PERMISSIONS.badgePrinting, element: <ReceptionBadgePrintingPage /> },
   { path: '/admin/invitations', requires: PAGE_PERMISSIONS.adminInvitations, element: <AdminInvitationsPage /> },
   {
     path: '/admin/calendar',
@@ -129,6 +132,7 @@ const STAFF_ROUTES: PageRoute[] = [
     path: '/reception/dashboard',
     element: <ReceptionDashboardPage />,
   },
+  { path: '/reception/badge-printing', requires: PAGE_PERMISSIONS.badgePrinting, element: <ReceptionBadgePrintingPage /> },
   { path: '/staff/invitations', requires: PAGE_PERMISSIONS.staffInvitations, element: <StaffInvitationsPage /> },
   {
     path: '/staff/calendar',
@@ -161,6 +165,7 @@ function RootLayout() {
                       <Route path="/" element={<VisitorPortalLandingPage />} />
                       <Route path="/visitor/request" element={<VisitorRequestPage />} />
                       <Route path="/visitor/track" element={<VisitorTrackPage />} />
+                      <Route path="/badge/scan" element={<BadgeScanPage />} />
                       <Route path="/admin/login" element={<StaffLoginPage />} />
                       <Route path="/staff/login" element={<StaffSsoLoginPage />} />
                       <Route path="*" element={<NotFoundPage />} />
