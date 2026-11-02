@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.tenant.models import Tenant
@@ -43,3 +43,16 @@ class TenantRepository:
         self.session.add(tenant)
         await self.session.flush()
         return tenant
+
+    async def set_badge_print_flow(self, id_: uuid.UUID, *, enabled: bool) -> Tenant | None:
+        """Guarded single-statement update (rather than load-mutate) so the
+        change doesn't depend on the registry session's state after
+        `get_tenant`'s rollback."""
+        stmt = (
+            update(Tenant)
+            .where(Tenant.id == id_, Tenant.deleted_at.is_(None))
+            .values(badge_print_flow_enabled=enabled)
+            .returning(Tenant)
+            .execution_options(populate_existing=True)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()

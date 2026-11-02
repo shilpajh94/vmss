@@ -305,6 +305,17 @@ class Settings(BaseSettings):
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     qr_token_encryption_key: str | None = Field(default=None, alias="QR_TOKEN_ENCRYPTION_KEY")
 
+    # Badge print flow (add-badge-print-flow). Deploy-level kill switch,
+    # AND-ed with each tenant's own `badge_print_flow_enabled` toggle
+    # (`core/deps.py::require_badge_print_flow`). `badge_token_secret` signs the
+    # day-bound badge QR token (`checkin/badge_token.py`) — deliberately not
+    # `qr_token_encryption_key`, so rotating one doesn't invalidate the other.
+    # Unset by default: fails loudly the first time a badge is printed.
+    badge_print_flow_enabled: bool = Field(default=False, alias="BADGE_PRINT_FLOW_ENABLED")
+    badge_token_secret: str | None = Field(default=None, alias="BADGE_TOKEN_SECRET")
+    # Per-IP slowapi limit string for the unauthenticated badge-scan endpoints.
+    badge_scan_rate_limit: str = Field(default="30/minute", alias="BADGE_SCAN_RATE_LIMIT")
+
     # `registrations` feature config (API-13, add-walkin-visitor-registration).
     # Fallback tenant/branch for `POST /registrations/walk-in` when the
     # caller sends no `X-Device-Key` (registrations/deps.py::get_registration_device) —

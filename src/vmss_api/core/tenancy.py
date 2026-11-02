@@ -31,6 +31,7 @@ class TenantContext:
     schema_name: str
     is_active: bool
     timezone: str
+    badge_print_flow_enabled: bool = False
 
 
 class DefaultTenantUnresolved(Exception):
@@ -121,6 +122,7 @@ async def get_tenant(
             schema_name=tenant.schema_name,
             is_active=tenant.is_active,
             timezone=tenant.timezone,
+            badge_print_flow_enabled=tenant.badge_print_flow_enabled,
         )
 
     finally:
@@ -134,6 +136,16 @@ async def get_tenant(
         )
 
     return tenant_context
+
+
+async def require_badge_print_flow(
+    tenant: Annotated[TenantContext, Depends(get_tenant)],
+) -> None:
+    """`404` unless both the deploy-level setting and this tenant's toggle are
+    on (add-badge-print-flow design Decision 1). `404`, not `403`, so a
+    disabled flow is indistinguishable from a route that doesn't exist."""
+    if not (settings.badge_print_flow_enabled and tenant.badge_print_flow_enabled):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
 
 
 async def get_tenant_db(

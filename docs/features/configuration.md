@@ -77,6 +77,17 @@ process environment when `STORAGE_BACKEND=s3`. They're documented in
 `.env.example` for discoverability even though `core/config.py` never
 touches them.
 
+## Badge print flow
+
+`BADGE_PRINT_FLOW_ENABLED` (default `false`) is the deploy-level switch for
+the reception badge-printing flow (`docs/features/checkin_badge.md`). The
+flow is live for a tenant only when this is `true` **and** the tenant's own
+`badgePrintFlowEnabled` toggle is on; otherwise every `/checkin` endpoint
+returns `404`. `BADGE_TOKEN_SECRET` signs the day-bound badge QR token and
+must be set before the first print (it is separate from
+`QR_TOKEN_ENCRYPTION_KEY`). `BADGE_SCAN_RATE_LIMIT` (default `30/minute`)
+limits the unauthenticated scan endpoints per IP.
+
 ## Provisioning the default tenant/branch
 
 `TENANT_DEFAULT_SLUG` and `REGISTRATION_DEFAULT_BRANCH_CODE` back the

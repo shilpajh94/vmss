@@ -67,3 +67,32 @@ async def test_tenant_repository_has_no_tenant_schema_to_isolate_across(
         found = await TenantRepository(other_session).get(tenant.id)
         assert found is not None
         assert found.slug == tenant.slug
+
+
+async def test_patch_tenant_settings_toggles_badge_print_flow(
+    client: AsyncClient, user: User, tenant: Tenant, issue_token: Callable[[User], str]
+) -> None:
+    headers = {"Authorization": f"Bearer {issue_token(user)}"}
+
+    before = await client.get("/api/v1/tenants/me", headers=headers)
+    assert before.json()["data"]["badgePrintFlowEnabled"] is False
+
+    response = await client.patch(
+        "/api/v1/tenants/me/settings", json={"badgePrintFlowEnabled": True}, headers=headers
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["badgePrintFlowEnabled"] is True
+
+    after = await client.get("/api/v1/tenants/me", headers=headers)
+    assert after.json()["data"]["badgePrintFlowEnabled"] is True
+
+
+async def test_patch_tenant_settings_requires_permission(
+    client: AsyncClient, user_without_permissions: User, issue_token: Callable[[User], str]
+) -> None:
+    response = await client.patch(
+        "/api/v1/tenants/me/settings",
+        json={"badgePrintFlowEnabled": True},
+        headers={"Authorization": f"Bearer {issue_token(user_without_permissions)}"},
+    )
+    assert response.status_code == 403

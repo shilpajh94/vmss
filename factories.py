@@ -245,6 +245,9 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     # code check-in set one explicitly.
     checkin_code = None
     approved_at = None
+    # add-badge-print-flow: a random FK UUID here would violate the users FK.
+    id_verified_at = None
+    id_verified_by_user_id = None
     # auto-checkout-and-archive-no-shows: a random True/timestamp here would
     # make an ordinary row read as swept (e.g. the export's Checked Out By
     # turning into the system label); tests of the sweep set them explicitly.

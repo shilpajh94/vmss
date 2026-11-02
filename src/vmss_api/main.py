@@ -56,6 +56,14 @@ _TAGS_METADATA = [
         ),
     },
     {
+        "name": "checkin",
+        "description": (
+            "Reception badge print flow (feature-flagged): visit search, ID "
+            "verification, PDF badge print/reprint, and badge-scan check-out and "
+            "same-day re-entry. Returns 404 unless enabled for the tenant."
+        ),
+    },
+    {
         "name": "kiosks",
         "description": ("Admin management of kiosks: create, edit, hide/unhide, and soft-delete."),
     },

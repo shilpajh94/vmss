@@ -245,6 +245,9 @@ async def tenant(db_session: AsyncSession) -> Tenant:
         slug="acme-test",
         schema_name=_TENANT_SCHEMA,
         timezone="UTC",
+        # Same reasoning as `timezone` above: polyfactory would otherwise pick a
+        # random bool for the badge print flow toggle.
+        badge_print_flow_enabled=False,
     )
     db_session.add(tenant)
     await db_session.commit()
@@ -318,6 +321,8 @@ ADMIN_PERMISSION_CODES = [
     "sso-config:manage",
     "audit-logs:view",
     "audit-logs:export",
+    "tenants:update",
+    "visitors:print_badge",
 ]
 
 

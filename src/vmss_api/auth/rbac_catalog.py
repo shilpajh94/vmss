@@ -21,6 +21,8 @@ from vmss_api.auth.models import Permission, Role
 # the skeleton actually has wired up.
 PERMISSION_CODES = [
     "tenants:read",
+    "tenants:update",
+    "visitors:print_badge",
     "branches:manage",
     "branches:view",
     "branches:provision",
@@ -106,6 +108,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:edit",
         "invitations:badge",
         "invitations:export",
+        "visitors:print_badge",
         "documents:view",
         "roles:view",
     ],

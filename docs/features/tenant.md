@@ -13,7 +13,8 @@ the core layer already used "tenant" terminology (`TenantScopedRepository`,
 
 | Method | Path | Auth | Permission | Description |
 |---|---|---|---|---|
-| GET | `/api/v1/tenants/me` | Required | `tenants:read` | Returns the caller's own tenant. |
+| GET | `/api/v1/tenants/me` | Required | `tenants:read` | Returns the caller's own tenant, including `badgePrintFlowEnabled`. |
+| PATCH | `/api/v1/tenants/me/settings` | Required | `tenants:update` | Sets `badgePrintFlowEnabled` for the caller's own tenant (audited). The badge flow is live only when this and `BADGE_PRINT_FLOW_ENABLED` are both true — see `docs/features/checkin_badge.md`. |
 
 ## Notes for whoever builds the next admin-facing tenant endpoints
 

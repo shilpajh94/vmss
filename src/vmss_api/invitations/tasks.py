@@ -381,6 +381,15 @@ def send_approval_notification(
     )
 
 
+async def _badge_flow_active(session: AsyncSession, tenant_schema: str) -> bool:
+    """True when the badge print flow is on for this tenant (server flag AND
+    tenant toggle)."""
+    if not settings.badge_print_flow_enabled:
+        return False
+    tenant = await TenantRepository(session).get_by_schema_name(tenant_schema)
+    return tenant is not None and tenant.badge_print_flow_enabled
+
+
 async def _send_approval_notification(
     tenant_schema: str, invitation_id: str, qr_token: str
 ) -> None:
@@ -402,7 +411,13 @@ async def _send_approval_notification(
             # Host Detail": the point-of-contact block (POC, else resolved
             # host, else front desk) and the place of visit come from
             # `_invitation_email_context`, shared with reschedule/edit.
-            qr_src, qr_images = await _qr_source(session, tenant_schema, invitation, qr_token)
+            # add-badge-print-flow: when the flow is on, the visitor's QR is
+            # printed on the badge at reception, so the email carries none.
+            badge_flow = await _badge_flow_active(session, tenant_schema)
+            if badge_flow:
+                qr_src, qr_images = None, []
+            else:
+                qr_src, qr_images = await _qr_source(session, tenant_schema, invitation, qr_token)
             context = {
                 **await _invitation_email_context(
                     session,
@@ -412,6 +427,11 @@ async def _send_approval_notification(
                 ),
                 "qr_src": qr_src,
             }
+            # add-badge-print-flow: email-only "bring your ID" callout. The key is
+            # added only when the flow is on for this tenant, so the context (and
+            # so the rendered email) is unchanged for everyone else.
+            if badge_flow:
+                context["badge_flow_enabled"] = True
             subject, body, html_body = _render_or_fallback(
                 "visit_confirmation", context, fallback_subject="Your visit is confirmed"
             )
@@ -499,7 +519,7 @@ async def _reschedule_qr(
     Primary Contact": an approved visit gets its existing QR (same token as
     at approval — a reschedule never re-issues one) re-embedded inline; a
     still-submitted one has no QR yet."""
-    if invitation.status != "approved":
+    if invitation.status != "approved" or await _badge_flow_active(session, tenant_schema):
         return []
     qr_code = await InvitationRepository(session).get_qr_code(invitation.id)
     if qr_code is None:

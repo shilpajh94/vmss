@@ -269,6 +269,11 @@ class Invitation(Base, TimestampMixin):
     # exit); every manual check-out writes it back to False
     # (auto-checkout-and-archive-no-shows/design.md D3).
     checked_out_automatically: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Reception's explicit "I checked the physical ID" confirmation
+    # (add-badge-print-flow, `POST /checkin/{visit_id}/verify-id`). Distinct from
+    # having an ID-proof document uploaded; gates badge printing only.
+    id_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    id_verified_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
 
     # --- Lifecycle: archive (auto-checkout-and-archive-no-shows) ---------------
     # Set when the sweep moves an approved, never-admitted invitation to

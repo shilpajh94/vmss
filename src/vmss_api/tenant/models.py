@@ -1,5 +1,6 @@
 import uuid
 
+import sqlalchemy as sa
 from sqlalchemy import Boolean, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,3 +27,8 @@ class Tenant(GlobalBase, TimestampMixin):
     schema_name: Mapped[str] = mapped_column(String(63), unique=True, index=True)
     timezone: Mapped[str] = mapped_column(String(50), default="UTC")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Per-tenant half of the badge print flow gate (add-badge-print-flow);
+    # AND-ed with `settings.badge_print_flow_enabled`.
+    badge_print_flow_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.false()
+    )

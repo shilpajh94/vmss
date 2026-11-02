@@ -15,6 +15,7 @@ from vmss_api.core.tenancy import (
     get_current_user,
     get_tenant,
     get_tenant_db,
+    require_badge_print_flow,
     require_permission,
     require_permission_anywhere,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "get_pagination",
     "get_tenant",
     "get_tenant_db",
+    "require_badge_print_flow",
     "require_permission",
     "require_permission_anywhere",
 ]

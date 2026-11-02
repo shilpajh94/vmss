@@ -3,7 +3,7 @@
 {% block eyebrow %}Confirmed{% endblock %}
 {% block heading %}Your visit is confirmed{% endblock %}
 {% block content %}
-{{ m.lead("Good news — your visit has been approved. Everything you need for a smooth check-in is below.") }}
+{{ m.lead("Good news — your visit has been approved. Everything you need for a smooth check-in is below.") }}{% if badge_flow_enabled %}{{ m.callout("Please bring your ID", "Reception will check your photo ID when you arrive, and your visitor badge is printed once it is verified.") }}{% endif %}
 {{ m.highlight_box("Tracking ID", tracking_id) }}
 {{ m.visit_details() }}
 {% include "_contact.html" %}
@@ -12,7 +12,7 @@
 {{ m.checklist([
   "Plan to arrive about 10 minutes before your scheduled time.",
   "Bring a valid government-issued photo ID.",
-  "Head to reception and show your QR code.",
+  "Head to reception" ~ ("" if badge_flow_enabled else " and show your QR code") ~ ".",
   "Keep this email handy in case you're asked for your tracking ID.",
 ]) }}
 {% if cta %}{{ m.button(cta.label, cta.url) }}{% endif %}
