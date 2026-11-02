@@ -153,7 +153,8 @@ export function VehicleInfoStep({
                     {field.label}
                   </th>
                 ))}
-                <th className="px-4 py-2">Actions</th>
+                {/* Pinned, so the row's actions stay reachable when the table scrolls sideways on a phone. */}
+                <th className="sticky right-0 bg-surface px-4 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -169,13 +170,19 @@ export function VehicleInfoStep({
                       {formatDynamicFieldValue(field, (vehicle.customFieldValues as Record<string, DynamicFieldValue> | undefined)?.[field.key])}
                     </td>
                   ))}
-                  <td className="px-4 py-2">
-                    <button type="button" onClick={() => startEditVehicle(index)} className="mr-2 text-secondary-accent">
-                      Edit
-                    </button>
-                    <button type="button" onClick={() => removeVehicle(index)} className="text-danger">
-                      Remove
-                    </button>
+                  <td className="sticky right-0 bg-surface px-2 py-1">
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => startEditVehicle(index)}
+                        className="min-h-10 rounded-lg px-2 text-secondary-accent lg:min-h-0 lg:py-1"
+                      >
+                        Edit
+                      </button>
+                      <button type="button" onClick={() => removeVehicle(index)} className="min-h-10 rounded-lg px-2 text-danger lg:min-h-0 lg:py-1">
+                        Remove
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -194,11 +201,13 @@ export function VehicleInfoStep({
               value={draftVehicle.vehicleType}
               onChange={(vehicleType) => setDraftVehicle({ ...draftVehicle, vehicleType })}
               variant="pill"
+              ariaLabel="Vehicle type"
             />
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <TextField
               label="License Plate"
+              maxLength={50}
               placeholder="Enter plate number"
               value={draftVehicle.licensePlate}
               onChange={(licensePlate) => setDraftVehicle({ ...draftVehicle, licensePlate })}
@@ -208,6 +217,7 @@ export function VehicleInfoStep({
             {vehicleInfoFields.makeModelActive && (
               <TextField
                 label="Make / Model"
+                maxLength={255}
                 placeholder="e.g. Honda City"
                 value={draftVehicle.makeModel}
                 onChange={(makeModel) => setDraftVehicle({ ...draftVehicle, makeModel })}
@@ -218,6 +228,7 @@ export function VehicleInfoStep({
             {vehicleInfoFields.colorActive && (
               <TextField
                 label="Color"
+                maxLength={50}
                 placeholder="e.g. White"
                 value={draftVehicle.color}
                 onChange={(color) => setDraftVehicle({ ...draftVehicle, color })}

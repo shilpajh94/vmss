@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 type DepartmentInput = Omit<Department, 'id' | 'branchName'>
 
@@ -26,7 +27,6 @@ export function useAdminDepartmentForm() {
   const isEditMode = id !== undefined
 
   const {
-    getCurrentStaffUserUseCase,
     listBranchesUseCase,
     listDepartmentsUseCase,
     listHostEmployeesUseCase,
@@ -35,7 +35,7 @@ export function useAdminDepartmentForm() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [branches, setBranches] = useState<Branch[]>([])
   const [employees, setEmployees] = useState<HostEmployee[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -50,12 +50,10 @@ export function useAdminDepartmentForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, branchList, employeeList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listBranchesUseCase.execute(),
+      const [branchList, employeeList] = await Promise.all([
+        listBranchesUseCase.execute({ activeOnly: !isEditMode }),
         listHostEmployeesUseCase.execute(),
       ])
-      setCurrentUser(user)
       setBranches(branchList)
       setEmployees(employeeList)
 
@@ -84,22 +82,17 @@ export function useAdminDepartmentForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listBranchesUseCase, listDepartmentsUseCase, listHostEmployeesUseCase, isEditMode, id, toast])
+  }, [listBranchesUseCase, listDepartmentsUseCase, listHostEmployeesUseCase, isEditMode, id, toast])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void load()
-  }, [navigate, load])
+  }, [load])
 
   const retry = useCallback(() => {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: values, isLoading, reload: retry })
+  const { release } = useFormPageRefresh({ values: values, isLoading, reload: retry })
 
   const updateField = useCallback(<K extends keyof DepartmentInput>(key: K, value: DepartmentInput[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
@@ -126,13 +119,14 @@ export function useAdminDepartmentForm() {
         await createDepartmentUseCase.execute(values)
         toast.success('Department created.')
       }
+      release()
       navigate('/admin/departments')
-    } catch {
-      toast.error(`Something went wrong ${isEditMode ? 'updating' : 'creating'} the department. Please try again.`)
+    } catch (error) {
+      toast.error(toUserMessage(error, `Something went wrong ${isEditMode ? 'updating' : 'creating'} the department. Please try again.`))
     } finally {
       setIsSaving(false)
     }
-  }, [values, isEditMode, id, createDepartmentUseCase, updateDepartmentUseCase, navigate, toast])
+  }, [values, isEditMode, id, createDepartmentUseCase, updateDepartmentUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/departments')

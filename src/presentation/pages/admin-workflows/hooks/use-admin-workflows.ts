@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useCallback, useMemo, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
-import { usePageRefresh } from '../../../context/refresh-context'
-import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
+import { useLiveResource } from '../../../hooks/use-live-resource'
 import type { ApprovalWorkflowRule } from '../../../../domain/entities/approval-workflow-rule-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 export interface WorkflowLevelView {
   ruleId: string
@@ -29,15 +27,10 @@ export interface WorkflowGroup {
 const PAGE_SIZE = 4
 
 export function useAdminWorkflows() {
-  const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listApprovalWorkflowRulesUseCase, listVisitorCategoriesUseCase, listRolesUseCase, deleteWorkflowUseCase } =
-    useAppDependencies()
+  const { listApprovalWorkflowRulesUseCase, listVisitorCategoriesUseCase, listRolesUseCase, deleteWorkflowUseCase } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [workflows, setWorkflows] = useState<WorkflowGroup[]>([])
-  const [categoryOptions, setCategoryOptions] = useState<{ value: string; label: string }[]>([])
-  const { phase, isRefreshing, begin } = useLoadTracker()
+  const currentUser = useCurrentUser()
 
   const [pendingDelete, setPendingDelete] = useState<WorkflowGroup | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -48,90 +41,63 @@ export function useAdminWorkflows() {
 
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
-  // `user` (default): filter/retry/refresh/post-delete - keeps the current
-  // rows on screen with a progress cue. `background`: the 15s poll.
-  const loadWorkflows = useCallback(
-    async (mode: LoadMode = 'user') => {
-      const request = begin(mode)
-
-      try {
-        const [user, rules, categories, roles] = await Promise.all([
-          getCurrentStaffUserUseCase.execute(),
-          listApprovalWorkflowRulesUseCase.execute({
-            visitorCategoryId: categoryFilter || undefined,
-            status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
-          }),
-          listVisitorCategoriesUseCase.execute(),
-          listRolesUseCase.execute(),
-        ])
-        if (!request.succeed()) return
-        setCurrentUser(user)
-
-        const categoryNameById = new Map(categories.map((category) => [category.id, category.name]))
-        const roleNameById = new Map(roles.map((role) => [role.id, role.name]))
-        setCategoryOptions(categories.map((category) => ({ value: category.id, label: category.name })).sort((a, b) => a.label.localeCompare(b.label)))
-
-        const rulesByCategory = new Map<string, ApprovalWorkflowRule[]>()
-        for (const rule of rules) {
-          const group = rulesByCategory.get(rule.visitorCategoryId) ?? []
-          group.push(rule)
-          rulesByCategory.set(rule.visitorCategoryId, group)
-        }
-
-        const groups: WorkflowGroup[] = Array.from(rulesByCategory.entries()).map(([visitorCategoryId, categoryRules]) => {
-          const levels: WorkflowLevelView[] = [...categoryRules]
-            .sort((a, b) => a.stepOrder - b.stepOrder)
-            .map((rule) => ({
-              ruleId: rule.id,
-              stepOrder: rule.stepOrder,
-              approverRoleId: rule.approverRoleId,
-              approverRoleName: roleNameById.get(rule.approverRoleId) ?? 'Unknown role',
-              isActive: rule.isActive,
-            }))
-
-          return {
-            visitorCategoryId,
-            categoryName: categoryNameById.get(visitorCategoryId) ?? 'Unknown category',
-            levels,
-            status: levels.every((level) => level.isActive) ? 'active' : ('paused' as WorkflowStatus),
-          }
-        })
-
-        setWorkflows(groups)
-      } catch {
-        if (!request.fail()) return
-        toast.error('Something went wrong loading the workflows. Please try again.')
-      }
+  // The rules are the live data; category and role names load once (and on
+  // a manual refresh). Polls skip while a delete dialog is open.
+  const isActionInProgress = pendingDelete !== undefined || isDeleting
+  const resource = useLiveResource({
+    load: () =>
+      listApprovalWorkflowRulesUseCase.execute({
+        visitorCategoryId: categoryFilter || undefined,
+        status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+      }),
+    query: { categoryFilter, statusFilter },
+    reference: async () => {
+      const [categories, roles] = await Promise.all([listVisitorCategoriesUseCase.execute(), listRolesUseCase.execute()])
+      return { categories, roles }
     },
-    [
-      begin,
-      getCurrentStaffUserUseCase,
-      listApprovalWorkflowRulesUseCase,
-      listVisitorCategoriesUseCase,
-      listRolesUseCase,
-      categoryFilter,
-      statusFilter,
-      toast,
-    ],
+    errorMessage: 'Something went wrong loading the workflows. Please try again.',
+    isBusy: isActionInProgress,
+  })
+  const { phase, isRefreshing, retry, reload } = resource
+
+  const categoryOptions = useMemo(
+    () =>
+      (resource.reference?.categories ?? [])
+        .map((category) => ({ value: category.id, label: category.name }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [resource.reference],
   )
 
-  useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
+  const workflows = useMemo<WorkflowGroup[]>(() => {
+    const categoryNameById = new Map((resource.reference?.categories ?? []).map((category) => [category.id, category.name]))
+    const roleNameById = new Map((resource.reference?.roles ?? []).map((role) => [role.id, role.name]))
+
+    const rulesByCategory = new Map<string, ApprovalWorkflowRule[]>()
+    for (const rule of resource.data ?? []) {
+      const group = rulesByCategory.get(rule.visitorCategoryId) ?? []
+      group.push(rule)
+      rulesByCategory.set(rule.visitorCategoryId, group)
     }
 
-    void loadWorkflows()
-  }, [navigate, loadWorkflows])
+    return Array.from(rulesByCategory.entries()).map(([visitorCategoryId, categoryRules]) => {
+      const levels: WorkflowLevelView[] = [...categoryRules]
+        .sort((a, b) => a.stepOrder - b.stepOrder)
+        .map((rule) => ({
+          ruleId: rule.id,
+          stepOrder: rule.stepOrder,
+          approverRoleId: rule.approverRoleId,
+          approverRoleName: roleNameById.get(rule.approverRoleId) ?? 'Unknown role',
+          isActive: rule.isActive,
+        }))
 
-  const retry = useCallback(() => {
-    void loadWorkflows()
-  }, [loadWorkflows])
-
-  const isActionInProgress = pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadWorkflows('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
-
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
+      return {
+        visitorCategoryId,
+        categoryName: categoryNameById.get(visitorCategoryId) ?? 'Unknown category',
+        levels,
+        status: levels.every((level) => level.isActive) ? 'active' : ('paused' as WorkflowStatus),
+      }
+    })
+  }, [resource.data, resource.reference])
 
   const isFiltering = categoryFilter !== '' || statusFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
@@ -175,13 +141,13 @@ export function useAdminWorkflows() {
       toast.success('Workflow deleted.')
       setPendingDelete(undefined)
       resetToFirstPage()
-      await loadWorkflows()
-    } catch {
-      toast.error('Something went wrong deleting the workflow. Please try again.')
+      await reload()
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong deleting the workflow. Please try again.'))
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, deleteWorkflowUseCase, toast, loadWorkflows, resetToFirstPage])
+  }, [pendingDelete, deleteWorkflowUseCase, toast, reload, resetToFirstPage])
 
   const totalPages = Math.max(1, Math.ceil(workflows.length / PAGE_SIZE))
   const pagedWorkflows = workflows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)

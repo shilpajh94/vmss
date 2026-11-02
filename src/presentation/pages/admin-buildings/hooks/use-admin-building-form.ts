@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { BuildingInput } from '../../../../domain/entities/building-schema'
 import type { Floor, FloorInput } from '../../../../domain/entities/floor-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 export type FloorDetailsInput = Omit<FloorInput, 'buildingId'>
 
@@ -27,7 +28,6 @@ export function useAdminBuildingForm() {
   const isEditMode = id !== undefined
 
   const {
-    getCurrentStaffUserUseCase,
     listBranchesUseCase,
     listBuildingsUseCase,
     createBuildingUseCase,
@@ -40,7 +40,7 @@ export function useAdminBuildingForm() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [branches, setBranches] = useState<Branch[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -62,12 +62,10 @@ export function useAdminBuildingForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, branchList, departmentList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listBranchesUseCase.execute(),
+      const [branchList, departmentList] = await Promise.all([
+        listBranchesUseCase.execute({ activeOnly: !isEditMode }),
         listDepartmentsUseCase.execute(),
       ])
-      setCurrentUser(user)
       setBranches(branchList)
       setDepartments(departmentList)
 
@@ -98,7 +96,6 @@ export function useAdminBuildingForm() {
       setIsLoading(false)
     }
   }, [
-    getCurrentStaffUserUseCase,
     listBranchesUseCase,
     listBuildingsUseCase,
     listDepartmentsUseCase,
@@ -109,19 +106,14 @@ export function useAdminBuildingForm() {
   ])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void load()
-  }, [navigate, load])
+  }, [load])
 
   const retry = useCallback(() => {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: details, isLoading, reload: retry })
+  const { release } = useFormPageRefresh({ values: details, isLoading, reload: retry })
 
   const updateField = useCallback(<K extends keyof BuildingInput>(key: K, value: BuildingInput[K]) => {
     setDetails((current) => ({ ...current, [key]: value }))
@@ -150,8 +142,8 @@ export function useAdminBuildingForm() {
           toast.success('Floor updated.')
         }
         setFloorModal(undefined)
-      } catch {
-        toast.error('Something went wrong saving the floor. Please try again.')
+      } catch (error) {
+        toast.error(toUserMessage(error, 'Something went wrong saving the floor. Please try again.'))
       } finally {
         setIsSavingFloor(false)
       }
@@ -177,8 +169,8 @@ export function useAdminBuildingForm() {
       })
       toast.success('Floor deleted.')
       setPendingDeleteFloor(undefined)
-    } catch {
-      toast.error('Something went wrong deleting the floor. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong deleting the floor. Please try again.'))
     } finally {
       setIsDeletingFloor(false)
     }
@@ -215,18 +207,20 @@ export function useAdminBuildingForm() {
       if (isEditMode) {
         await updateBuildingUseCase.execute(id, details)
         toast.success('Building updated.')
+        release()
         navigate('/admin/buildings')
       } else {
         const created = await createBuildingUseCase.execute(details)
         toast.success('Building created.')
+        release()
         navigate(`/admin/buildings/${created.id}/edit`)
       }
-    } catch {
-      toast.error(`Something went wrong ${isEditMode ? 'updating' : 'creating'} the building. Please try again.`)
+    } catch (error) {
+      toast.error(toUserMessage(error, `Something went wrong ${isEditMode ? 'updating' : 'creating'} the building. Please try again.`))
     } finally {
       setIsSaving(false)
     }
-  }, [details, isEditMode, id, createBuildingUseCase, updateBuildingUseCase, navigate, toast])
+  }, [details, isEditMode, id, createBuildingUseCase, updateBuildingUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/buildings')

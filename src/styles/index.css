@@ -38,10 +38,11 @@
     cursor: not-allowed;
   }
 
-  /* Native <select> popups don't inherit the themed surface: options keep the
-     select's (light) text colour on the browser's white list in dark mode. */
-  select option,
-  select optgroup {
+  /* Native option popups follow the theme. A transparent <select> otherwise
+     opens on the browser's white canvas with the theme's light text
+     (fix-dark-theme-rendering design.md D1). */
+  option,
+  optgroup {
     background-color: var(--color-surface);
     color: var(--color-text);
   }
@@ -83,7 +84,8 @@
 }
 
 .route-transition {
-  animation: route-fade-in var(--motion-standard) var(--ease-motion-out);
+  /* theme.css reserves --motion-slow for route and step transitions. */
+  animation: route-fade-in var(--motion-slow) var(--ease-motion-out);
 }
 
 @keyframes motion-fade-in {
@@ -172,6 +174,11 @@
 /* Top-bar refresh control's idle affordance: a small turn on hover/focus,
    on its own wrapper so it never fights the spin (use-refresh-spin.ts).
    Off while spinning, and under reduced motion. */
+/* The sign-in pages' form block settles in on arrival. */
+.auth-form-enter {
+  animation: route-fade-in var(--motion-slow) var(--ease-motion-out);
+}
+
 .refresh-nudge {
   transition: transform var(--motion-standard) var(--ease-motion-out);
 }
@@ -380,24 +387,102 @@
   }
 }
 
+/* Sidebar nav: an auto-hiding overlay scrollbar with scroll-edge fades
+   (modernise-dropdowns-and-sidebar-chrome design.md D7). `useScrollActivity`
+   sets data-scrolling / data-at-top / data-at-bottom.
+
+   The thumb colour is a registered property so it transitions (fades)
+   rather than snapping; WebKit/Blink repaint the scrollbar as it animates.
+   Blink ignores ::-webkit-scrollbar once the standard scrollbar-color /
+   scrollbar-width are set, so those are given to Firefox only. */
+@property --sidebar-thumb {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+
 .sidebar-nav-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  --sidebar-thumb: transparent;
+  --sidebar-fade: 16px;
+  /* The 8px gutter is always reserved and pulled into the sidebar's own
+     padding, so the items keep their width (and the rail its centring)
+     whether or not the list overflows, and never shift when the thumb shows. */
+  scrollbar-gutter: stable;
+  margin-right: -8px;
+  transition: --sidebar-thumb var(--motion-slow) var(--ease-motion-in);
+}
+
+.sidebar-nav-scroll:hover,
+.sidebar-nav-scroll:has(:focus-visible),
+.sidebar-nav-scroll[data-scrolling] {
+  --sidebar-thumb: rgb(255 255 255 / 0.22);
+  transition-duration: var(--motion-standard);
+  transition-timing-function: var(--ease-motion-out);
 }
 
 .sidebar-nav-scroll::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
 }
 
 .sidebar-nav-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
+/* A transparent border clipped out of the background draws a slim 4px pill
+   that widens to 6px and brightens under the pointer. */
 .sidebar-nav-scroll::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.18);
+  background-color: var(--sidebar-thumb);
+  background-clip: padding-box;
+  border: 2px solid transparent;
   border-radius: 9999px;
 }
 
 .sidebar-nav-scroll::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.32);
+  background-color: rgb(255 255 255 / 0.4);
+  border-width: 1px;
+}
+
+@supports (-moz-appearance: none) {
+  .sidebar-nav-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--sidebar-thumb) transparent;
+  }
+}
+
+/* Fade whichever end still has items beyond it into the sidebar. No
+   attributes yet (first paint) or a list that fits: no mask. */
+.sidebar-nav-scroll[data-at-top]:not([data-at-bottom]) {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--sidebar-fade)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--sidebar-fade)), transparent);
+}
+
+.sidebar-nav-scroll[data-at-bottom]:not([data-at-top]) {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--sidebar-fade));
+  mask-image: linear-gradient(to bottom, transparent, #000 var(--sidebar-fade));
+}
+
+.sidebar-nav-scroll:not([data-at-top]):not([data-at-bottom]) {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--sidebar-fade),
+    #000 calc(100% - var(--sidebar-fade)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--sidebar-fade),
+    #000 calc(100% - var(--sidebar-fade)),
+    transparent
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-nav-scroll,
+  .sidebar-nav-scroll:hover,
+  .sidebar-nav-scroll:has(:focus-visible),
+  .sidebar-nav-scroll[data-scrolling] {
+    transition: none;
+  }
 }

@@ -1,23 +1,21 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useCallback, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
-import { usePageRefresh } from '../../../context/refresh-context'
-import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
+import { useLiveResource } from '../../../hooks/use-live-resource'
 import type { Branch } from '../../../../domain/entities/branch-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 export type BranchFormState = { mode: 'edit'; branch: Branch } | undefined
 
 const PAGE_SIZE = 20
+const EMPTY_BRANCHES: Branch[] = []
+const EMPTY_EMPLOYEES: HostEmployee[] = []
 
 export function useAdminBranches() {
-  const navigate = useNavigate()
   const {
-    getCurrentStaffUserUseCase,
     listBranchesPageUseCase,
     listHostEmployeesUseCase,
     updateBranchUseCase,
@@ -25,11 +23,7 @@ export function useAdminBranches() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [branches, setBranches] = useState<Branch[]>([])
-  const [total, setTotal] = useState(0)
-  const [employees, setEmployees] = useState<HostEmployee[]>([])
-  const { phase, isRefreshing, begin } = useLoadTracker()
+  const currentUser = useCurrentUser()
 
   const [formState, setFormState] = useState<BranchFormState>(undefined)
   const [isSaving, setIsSaving] = useState(false)
@@ -42,54 +36,25 @@ export function useAdminBranches() {
 
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
-  // `user` (default): filter/page/retry/refresh/post-mutation - keeps the
-  // current rows on screen with a progress cue. `background`: the 15s poll.
-  const loadBranches = useCallback(
-    async (mode: LoadMode = 'user') => {
-      const request = begin(mode)
-
-      try {
-        const [user, page_, employeeList] = await Promise.all([
-          getCurrentStaffUserUseCase.execute(),
-          listBranchesPageUseCase.execute({
-            page,
-            pageSize: PAGE_SIZE,
-            status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
-          }),
-          listHostEmployeesUseCase.execute(),
-        ])
-        if (!request.succeed()) return
-        setCurrentUser(user)
-        setBranches(page_.items)
-        setTotal(page_.total)
-        setEmployees(employeeList)
-      } catch {
-        if (!request.fail()) return
-        toast.error('Something went wrong loading the branches. Please try again.')
-      }
-    },
-    [begin, getCurrentStaffUserUseCase, listBranchesPageUseCase, listHostEmployeesUseCase, page, statusFilter, toast],
-  )
-
-  useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
-    void loadBranches()
-  }, [navigate, loadBranches])
-
-  const retry = useCallback(() => {
-    void loadBranches()
-  }, [loadBranches])
-
-  // Auto-refreshes the register every 15s; skipped while a form/delete dialog
-  // is open so a background tick can't replace data underneath it.
+  // Polls skip while a form/delete dialog is open, so a background tick can't
+  // replace data underneath it. The employee list (contact person) loads once.
   const isActionInProgress = formState !== undefined || isSaving || pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadBranches('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
-
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
+  const resource = useLiveResource({
+    load: () =>
+      listBranchesPageUseCase.execute({
+        page,
+        pageSize: PAGE_SIZE,
+        status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+      }),
+    query: { page, statusFilter },
+    reference: () => listHostEmployeesUseCase.execute(),
+    errorMessage: 'Something went wrong loading the branches. Please try again.',
+    isBusy: isActionInProgress,
+  })
+  const { phase, isRefreshing, retry, reload, setData } = resource
+  const branches = resource.data?.items ?? EMPTY_BRANCHES
+  const total = resource.data?.total ?? 0
+  const employees = resource.reference ?? EMPTY_EMPLOYEES
 
   const openEditForm = useCallback((branch: Branch) => {
     setFormState({ mode: 'edit', branch })
@@ -106,16 +71,16 @@ export function useAdminBranches() {
       setIsSaving(true)
       try {
         const updated = await updateBranchUseCase.execute(formState.branch.id, input)
-        setBranches((current) => current.map((branch) => (branch.id === updated.id ? updated : branch)))
+        setData((current) => current && { ...current, items: current.items.map((branch) => (branch.id === updated.id ? updated : branch)) })
         toast.success('Branch updated.')
         setFormState(undefined)
-      } catch {
-        toast.error('Something went wrong saving the branch. Please try again.')
+      } catch (error) {
+        toast.error(toUserMessage(error, 'Something went wrong saving the branch. Please try again.'))
       } finally {
         setIsSaving(false)
       }
     },
-    [formState, updateBranchUseCase, toast],
+    [formState, updateBranchUseCase, toast, setData],
   )
 
   const requestDelete = useCallback((branch: Branch) => {
@@ -134,13 +99,13 @@ export function useAdminBranches() {
       await deleteBranchUseCase.execute(pendingDelete.id)
       toast.success('Branch deleted.')
       setPendingDelete(undefined)
-      await loadBranches()
-    } catch {
-      toast.error('Something went wrong deleting the branch. Please try again.')
+      await reload()
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong deleting the branch. Please try again.'))
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, deleteBranchUseCase, toast, loadBranches])
+  }, [pendingDelete, deleteBranchUseCase, toast, reload])
 
   const isFiltering = statusFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])

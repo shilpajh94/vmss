@@ -11,6 +11,8 @@ import re
 
 from playwright.sync_api import Page, Route, expect
 
+from conftest import choose_option
+
 BRANCH_LIST = re.compile(r"/api/v1/branches(\?.*)?$")
 
 
@@ -55,7 +57,7 @@ def test_filter_change_keeps_rows_on_screen(as_role) -> None:
     expect(status).to_be_visible()
 
     held = hold_branch_list(admin)
-    status.select_option("active")
+    choose_option(status, "Active")
 
     # While the filtered request is in flight: the old table is still
     # rendered (no spinner swap, no height collapse), marked busy.

@@ -43,7 +43,7 @@ export function RevertApprovalModal({ isOpen, visitorName, trackingId, isReverti
             maxLength={500}
             rows={3}
             placeholder="Explain why this approval is being reverted..."
-            className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 font-body text-sm text-text placeholder:text-text-faint focus:outline-none"
+            className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 font-body text-sm text-text placeholder:text-text-faint max-sm:text-base focus:outline-none focus:ring-2 focus:ring-secondary-accent"
           />
         </label>
 

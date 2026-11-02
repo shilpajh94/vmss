@@ -258,3 +258,83 @@ SHALL show the signed-in user's initials in the avatar.
 - **WHEN** an admin opens Branches at 375px
 - **THEN** the top bar reads "Branches" (not "Organizat…"), and the avatar
   shows the admin's initials
+
+### Requirement: Paged List Pagination Stays Visible Below the Data
+On every paged staff or admin list page (a table with a
+`Showing A-B of N` footer and Previous/Next controls), from `lg` (1024px)
+up:
+- the pagination footer SHALL sit directly below the scrolling data
+  region, outside it;
+- the footer SHALL stay visible without scrolling, whatever the number
+  of rows;
+- only the rows SHALL scroll;
+- when the rows are scrolled to the end, the last row and the data
+  container's bottom edge SHALL sit fully above the footer;
+- the page itself SHALL NOT scroll vertically because of the rows.
+
+Below `lg`, the whole page SHALL scroll as one, and the pagination footer
+SHALL follow the last row.
+
+While the list is loading for the first time, has failed, or is empty,
+the footer SHALL NOT be shown.
+
+#### Scenario: Full page of rows on a laptop screen
+- **WHEN** the employees list shows 20 rows at 1280×720
+- **THEN** the `Showing 1-20 of N` text and the Previous/Next buttons
+  are fully inside the window without scrolling, and the page itself
+  does not scroll
+
+#### Scenario: Scrolling the rows keeps the footer in place
+- **WHEN** the user scrolls the rows of a paged list to the end at
+  1440×900
+- **THEN** the pagination footer stays in the same position and the last
+  row ends above it
+
+#### Scenario: Short list
+- **WHEN** a paged list has three rows at 1440×900
+- **THEN** the pagination footer is directly below the third row, not
+  pushed to the bottom of the window
+
+#### Scenario: Phone width
+- **WHEN** a paged list with 20 rows is viewed at 390px wide
+- **THEN** the page scrolls as a whole and the pagination footer follows
+  the last row
+
+#### Scenario: Workflows list
+- **WHEN** the approval workflows list shows a full page at 1280×720
+- **THEN** its `Showing A-B of N workflows` footer and Previous/Next
+  buttons are visible without scrolling
+
+### Requirement: The Public Portal Footer Is Compact
+The footer shared by the public pages (visitor portal, visitor request,
+tracking, not-found and route error pages) SHALL take only the height
+its content needs:
+- From 1024px wide upward, the logo, tagline and copyright line SHALL sit
+  on one row, with the policy links and support contact on the same row,
+  and the footer SHALL be no taller than 88px when its content fits on
+  one row.
+- Below 1024px the blocks SHALL stack, with no more than 16px of vertical
+  padding above and below the footer content.
+- The footer logo SHALL stay 28px tall. The tagline, the copyright line,
+  and any configured Privacy Policy, Terms of Service and support contact
+  links SHALL still be shown.
+- Links SHALL keep the touch target sizes required by "Controls Are
+  Touch-Operable".
+
+#### Scenario: Error page footer on a full-HD desktop
+- **WHEN** the "Something went wrong" page renders in a viewport 1920px
+  wide and about 866px tall
+- **THEN** the footer is no taller than 88px and shows the logo, tagline
+  and copyright line on one row
+
+#### Scenario: Landing page footer with all links configured
+- **WHEN** the visitor portal landing page renders at 1440px wide with the
+  privacy, terms and support settings all configured
+- **THEN** the footer shows the brand block and all three links on one row,
+  no taller than 88px
+
+#### Scenario: Footer on a phone
+- **WHEN** any public page renders at 360px wide
+- **THEN** the footer blocks are stacked, nothing overflows horizontally,
+  and the footer's vertical padding is no more than 16px at the top and
+  bottom

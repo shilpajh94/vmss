@@ -5,6 +5,8 @@ import type { BranchRepository } from '../data/repositories/branch-repository'
 import type { DepartmentRepository, DepartmentsPage, ListDepartmentsPageParams } from '../data/repositories/department-repository'
 import { DepartmentListResponseSchema, DepartmentResponseSchema, type DepartmentOut } from '../domain/entities/department-out-schema'
 import type { Department } from '../domain/entities/department-schema'
+import { fetchAllPages } from '../data/api/fetch-all-pages'
+import type { ListOptions } from '../data/repositories/list-options'
 
 export class HttpDepartmentRepository implements DepartmentRepository {
   private readonly apiClient: ApiClient
@@ -34,17 +36,19 @@ export class HttpDepartmentRepository implements DepartmentRepository {
     }
   }
 
-  async list(): Promise<Department[]> {
-    const [response, branchNameById] = await Promise.all([
-      this.apiClient.makeRequest({
-        endpointConfig: API_ENDPOINTS.LIST_DEPARTMENTS,
-        queryParams: { pageSize: 100 },
-        parserSchema: DepartmentListResponseSchema,
-      }),
+  async list(options?: ListOptions): Promise<Department[]> {
+    const [departments, branchNameById] = await Promise.all([
+      fetchAllPages((page, pageSize) =>
+        this.apiClient.makeRequest({
+          endpointConfig: API_ENDPOINTS.LIST_DEPARTMENTS,
+          queryParams: { page, pageSize, status: options?.activeOnly ? 'active' : undefined },
+          parserSchema: DepartmentListResponseSchema,
+        }),
+      ),
       this.buildBranchNameById(),
     ])
 
-    return response.data.map((departmentOut) => this.toDepartment(departmentOut, branchNameById))
+    return departments.map((departmentOut) => this.toDepartment(departmentOut, branchNameById))
   }
 
   async listPage({ page, pageSize, status, branchId }: ListDepartmentsPageParams): Promise<DepartmentsPage> {

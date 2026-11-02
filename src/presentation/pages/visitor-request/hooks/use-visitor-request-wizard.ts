@@ -27,6 +27,8 @@ import {
   type VisitRequestFormState,
 } from '../types'
 import type { SubmissionStatus } from '../Components/steps/ReviewConfirmStep'
+import { toUserMessage } from '../../../utils/to-user-message'
+import { isValidEmail } from '../../../utils/is-valid-email'
 
 export interface VisitorRequestWizardInitialData {
   registrationType?: RegistrationType
@@ -112,7 +114,7 @@ function validateVisitorContact(
   visitorInfoFields: VisitorInfoFieldState,
 ): Record<string, string> {
   const errors: Record<string, string> = {}
-  if (!contact.fullName) errors.fullName = 'Full name is required.'
+  if (!contact.fullName.trim()) errors.fullName = 'Full name is required.'
   if (isPrimary) {
     if (!contact.preferredContactMethod) {
       errors.preferredContactMethod = 'Preferred contact method is required.'
@@ -123,6 +125,9 @@ function validateVisitorContact(
     }
   } else if (!contact.email && !contact.phone) {
     errors.email = 'Either email or phone is required.'
+  }
+  if (!errors.email && contact.email.trim() && !isValidEmail(contact.email)) {
+    errors.email = 'Enter a valid email address.'
   }
   if (contact.phone && !isValidPhoneNumber(contact.phone)) {
     errors.phone = 'Enter a valid phone number.'
@@ -460,8 +465,13 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     }
   }, [initialPhotoUrl])
 
+  // Set by the visitor's own edits only: a returning visitor's prefill and
+  // its re-fetched files aren't input they could lose.
+  const [hasUserInput, setHasUserInput] = useState(false)
+
   const updateFormState = (next: VisitRequestFormState) => {
     setFormState(next)
+    setHasUserInput(true)
     // Clear stale step errors optimistically; goNext re-validates before advancing.
     setErrors({})
   }
@@ -634,7 +644,7 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
           // Leave confirmedFullName unset — the success screen just omits it.
         })
     } catch (error) {
-      setSubmissionError(error instanceof Error ? error.message : 'Something went wrong submitting your request. Please try again.')
+      setSubmissionError(toUserMessage(error, 'Something went wrong submitting your request. Please try again.'))
       setSubmissionStatus('error')
     }
   }
@@ -643,6 +653,7 @@ export function useVisitorRequestWizard(initial?: VisitorRequestWizardInitialDat
     currentStep,
     formState,
     setFormState: updateFormState,
+    hasUnsavedInput: hasUserInput && submissionStatus !== 'success',
     errors,
     goNext,
     goBack,

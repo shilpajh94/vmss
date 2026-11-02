@@ -1,24 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useCallback, useMemo, useState } from 'react'
 import { ApiError } from '../../../../data/api/api-error'
-import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
+import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { usePagedList } from '../../../hooks/use-paged-list'
-import { usePageRefresh } from '../../../context/refresh-context'
 import { useDebouncedValue } from '../../../hooks/use-debounced-value'
-import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
+import { useLiveResource } from '../../../hooks/use-live-resource'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 
 const PAGE_SIZE = 20
 const SEARCH_DEBOUNCE_MS = 300
+const EMPTY_EMPLOYEES: HostEmployee[] = []
+const EMPTY_DEPARTMENTS: Department[] = []
+const EMPTY_ROLE_OPTIONS: string[] = []
 
 export function useAdminHostEmployees() {
-  const navigate = useNavigate()
   const {
-    getCurrentStaffUserUseCase,
     listHostEmployeesPageUseCase,
     listDepartmentsUseCase,
     listRolesUseCase,
@@ -28,12 +26,7 @@ export function useAdminHostEmployees() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [hostEmployees, setHostEmployees] = useState<HostEmployee[]>([])
-  const [total, setTotal] = useState(0)
-  const [departments, setDepartments] = useState<Department[]>([])
-  const [roleOptions, setRoleOptions] = useState<string[]>([])
-  const { phase, isRefreshing, begin } = useLoadTracker()
+  const currentUser = useCurrentUser()
   const [pendingDelete, setPendingDelete] = useState<HostEmployee | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
   const [busyEmployeeId, setBusyEmployeeId] = useState<string | undefined>(undefined)
@@ -49,65 +42,39 @@ export function useAdminHostEmployees() {
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
   // Re-anchors to page 1 when the *debounced* search changes (not per
-  // keystroke). Adjusted during render so the load below runs once, with the
-  // new search and page 1, instead of once per state change.
+  // keystroke), adjusted during render so the load runs once.
   const [appliedSearch, setAppliedSearch] = useState(debouncedSearch)
   if (appliedSearch !== debouncedSearch) {
     setAppliedSearch(debouncedSearch)
     resetToFirstPage()
   }
 
-  // `user` (default): filter/page/retry/refresh - keeps the current rows on
-  // screen with a progress cue. `background`: the 15s poll.
-  const loadHostEmployees = useCallback(
-    async (mode: LoadMode = 'user') => {
-      const request = begin(mode)
-
-      try {
-        const [user, page_, departmentList, roles] = await Promise.all([
-          getCurrentStaffUserUseCase.execute(),
-          listHostEmployeesPageUseCase.execute({
-            page,
-            pageSize: PAGE_SIZE,
-            departmentId: departmentFilter || undefined,
-            role: roleFilter || undefined,
-            status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
-            search: debouncedSearch || undefined,
-          }),
-          listDepartmentsUseCase.execute(),
-          listRolesUseCase.execute(),
-        ])
-        if (!request.succeed()) return
-        setCurrentUser(user)
-        setHostEmployees(page_.items)
-        setTotal(page_.total)
-        setDepartments(departmentList)
-        setRoleOptions([...new Set(roles.map((role) => role.name))].sort((a, b) => a.localeCompare(b)))
-      } catch {
-        if (!request.fail()) return
-        toast.error('Something went wrong loading the employees. Please try again.')
-      }
+  // Polls skip while a delete dialog is open or an action is in flight, so a
+  // poll can't swap the rows underneath it. Departments and role names (the
+  // filters) load once.
+  const resource = useLiveResource({
+    load: () =>
+      listHostEmployeesPageUseCase.execute({
+        page,
+        pageSize: PAGE_SIZE,
+        departmentId: departmentFilter || undefined,
+        role: roleFilter || undefined,
+        status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+        search: debouncedSearch || undefined,
+      }),
+    query: { page, departmentFilter, roleFilter, statusFilter, debouncedSearch },
+    reference: async () => {
+      const [departments, roles] = await Promise.all([listDepartmentsUseCase.execute(), listRolesUseCase.execute()])
+      return { departments, roleOptions: [...new Set(roles.map((role) => role.name))].sort((a, b) => a.localeCompare(b)) }
     },
-    [begin, getCurrentStaffUserUseCase, listHostEmployeesPageUseCase, listDepartmentsUseCase, listRolesUseCase, page, departmentFilter, roleFilter, statusFilter, debouncedSearch, toast],
-  )
-
-  useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
-    void loadHostEmployees()
-  }, [navigate, loadHostEmployees])
-
-  const retry = useCallback(() => {
-    void loadHostEmployees()
-  }, [loadHostEmployees])
-
-  // Auto-refreshes the directory every 15s; skipped while a delete dialog is
-  // open or an action is in flight so a poll can't swap the rows underneath it.
-  const isActionInProgress = pendingDelete !== undefined || isDeleting || busyEmployeeId !== undefined
-  usePolling(() => void loadHostEmployees('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
+    errorMessage: 'Something went wrong loading the employees. Please try again.',
+    isBusy: pendingDelete !== undefined || isDeleting || busyEmployeeId !== undefined,
+  })
+  const { phase, isRefreshing, retry, reload } = resource
+  const hostEmployees = resource.data?.items ?? EMPTY_EMPLOYEES
+  const total = resource.data?.total ?? 0
+  const departments = resource.reference?.departments ?? EMPTY_DEPARTMENTS
+  const roleOptions = resource.reference?.roleOptions ?? EMPTY_ROLE_OPTIONS
 
   // 404 = already deleted elsewhere, so the list is stale; 409 (self / last
   // admin) and 403 carry the backend's own message, shown as-is.
@@ -115,12 +82,12 @@ export function useAdminHostEmployees() {
     (error: unknown, fallback: string) => {
       if (error instanceof ApiError && error.status === 404) {
         toast.error('This employee no longer exists. The list has been refreshed.')
-        void loadHostEmployees()
+        void reload()
         return
       }
       toast.error(error instanceof ApiError ? error.message : fallback)
     },
-    [toast, loadHostEmployees],
+    [toast, reload],
   )
 
   const setEmployeeActive = useCallback(
@@ -129,14 +96,14 @@ export function useAdminHostEmployees() {
       try {
         await (active ? enableHostEmployeeUseCase : disableHostEmployeeUseCase).execute(employee.id)
         toast.success(active ? `${employee.fullName} enabled.` : `${employee.fullName} disabled.`)
-        await loadHostEmployees()
+        await reload()
       } catch (error) {
         reportActionError(error, `Something went wrong ${active ? 'enabling' : 'disabling'} the employee. Please try again.`)
       } finally {
         setBusyEmployeeId(undefined)
       }
     },
-    [enableHostEmployeeUseCase, disableHostEmployeeUseCase, toast, loadHostEmployees, reportActionError],
+    [enableHostEmployeeUseCase, disableHostEmployeeUseCase, toast, reload, reportActionError],
   )
 
   const requestDelete = useCallback((employee: HostEmployee) => setPendingDelete(employee), [])
@@ -150,16 +117,14 @@ export function useAdminHostEmployees() {
       await deleteHostEmployeeUseCase.execute(pendingDelete.id)
       toast.success('Employee deleted.')
       setPendingDelete(undefined)
-      await loadHostEmployees()
+      await reload()
     } catch (error) {
       setPendingDelete(undefined)
       reportActionError(error, 'Something went wrong deleting the employee. Please try again.')
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, deleteHostEmployeeUseCase, toast, loadHostEmployees, reportActionError])
-
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
+  }, [pendingDelete, deleteHostEmployeeUseCase, toast, reload, reportActionError])
 
   const departmentNameById = useMemo(() => new Map(departments.map((department) => [department.id, department.name])), [departments])
 

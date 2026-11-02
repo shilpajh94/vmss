@@ -16,6 +16,7 @@ import { SortableStepCard } from './Components/SortableStepCard'
 import { StepCard } from './Components/StepCard'
 import { DEFAULT_WORKSPACE_VALUE, useAdminFormBuilder } from './hooks/use-admin-form-builder'
 import type { FormStep } from '../../../domain/entities/form-builder-schema'
+import { moveItem } from '../../utils/move-item'
 
 // Mirrors `VMSS_API/src/vmss_api/form_builder/service.py`'s
 // `_LEADING_LOCKED_KEYS`/`_TRAILING_LOCKED_KEYS` - the fixed, permanent
@@ -84,12 +85,8 @@ export function AdminFormBuilderPage() {
   const handleStepDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    const oldIndex = movable.findIndex((s) => s.id === active.id)
-    const newIndex = movable.findIndex((s) => s.id === over.id)
-    if (oldIndex === -1 || newIndex === -1) return
-    const reorderedMovable = [...movable]
-    const [moved] = reorderedMovable.splice(oldIndex, 1)
-    reorderedMovable.splice(newIndex, 0, moved)
+    const reorderedMovable = moveItem(movable, active.id, over.id)
+    if (!reorderedMovable) return
     const fullOrder = [...leading, ...reorderedMovable, ...trailing].map((s) => s.id)
     void reorderSteps(fullOrder)
   }
@@ -197,7 +194,7 @@ export function AdminFormBuilderPage() {
         </AsyncRegion>
       </div>
 
-      <CreateStepModal isOpen={isCreateOpen} onClose={closeCreateStep} onCreate={(name) => void createStep(name)} />
+      <CreateStepModal isOpen={isCreateOpen} onClose={closeCreateStep} onCreate={createStep} />
 
       <ConfirmDialog
         isOpen={pendingDelete !== undefined}

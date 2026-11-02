@@ -91,7 +91,7 @@ export function CalendarToolbar({
               type="button"
               aria-pressed={isOn}
               onClick={() => onToggleStatus(status)}
-              className={`flex h-8 items-center gap-1.5 rounded-full border px-3 font-body text-xs font-semibold ${PRESS_FEEDBACK_CLASS} ${
+              className={`flex h-10 items-center gap-1.5 rounded-full border px-3 font-body text-xs font-semibold lg:h-8 ${PRESS_FEEDBACK_CLASS} ${
                 isOn ? `border-transparent text-text ${style.fillClass}` : 'border-border bg-surface text-text-faint line-through hover:text-text-muted'
               }`}
             >

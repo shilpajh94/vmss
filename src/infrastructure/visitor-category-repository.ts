@@ -18,6 +18,8 @@ import type {
   VisitorCategoryBulkCreateInput,
   VisitorCategoryInput,
 } from '../domain/entities/visitor-category-schema'
+import { fetchAllPages } from '../data/api/fetch-all-pages'
+import type { ListOptions } from '../data/repositories/list-options'
 
 function toVisitorCategory(visitorCategoryOut: VisitorCategoryOut): VisitorCategory {
   return {
@@ -43,14 +45,17 @@ export class HttpVisitorCategoryRepository implements VisitorCategoryRepository 
     this.apiClient = apiClient
   }
 
-  async list(): Promise<VisitorCategory[]> {
-    const response = await this.apiClient.makeRequest({
-      endpointConfig: API_ENDPOINTS.LIST_VISITOR_CATEGORIES,
-      queryParams: { pageSize: 100 },
-      parserSchema: VisitorCategoryListResponseSchema,
-    })
+  // The endpoint has no status filter, so `activeOnly` filters here.
+  async list(options?: ListOptions): Promise<VisitorCategory[]> {
+    const categories = await fetchAllPages((page, pageSize) =>
+      this.apiClient.makeRequest({
+        endpointConfig: API_ENDPOINTS.LIST_VISITOR_CATEGORIES,
+        queryParams: { page, pageSize },
+        parserSchema: VisitorCategoryListResponseSchema,
+      }),
+    )
 
-    return response.data.map(toVisitorCategory)
+    return categories.filter((category) => !options?.activeOnly || category.isActive).map(toVisitorCategory)
   }
 
   async listPage({ page, pageSize, badgeColor, ndaRequirement, escortRequirement }: ListVisitorCategoriesPageParams): Promise<VisitorCategoriesPage> {

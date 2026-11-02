@@ -1,9 +1,12 @@
-import { BackButton } from '../../components/BackButton'
+import { FormPageHeader } from '../../components/FormPageHeader'
 import { Checkbox } from '../../components/ui/Checkbox'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
+import { TextField } from '../../components/ui/TextField'
+import { TextareaField } from '../../components/ui/TextareaField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminRoleCreateForm } from './hooks/use-admin-role-create-form'
+import { ErrorState } from '../../components/ui/ErrorState'
 
 export function AdminRoleCreateFormPage() {
   const {
@@ -28,60 +31,31 @@ export function AdminRoleCreateFormPage() {
   return (
     <>
       {errorMessage ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
-          <p className="font-body text-sm text-danger">{errorMessage}</p>
-          <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
-            Try again
-          </button>
-        </div>
+        <ErrorState message={errorMessage} onRetry={retry} />
       ) : isLoading ? (
         <FormSkeleton rows={6} columns={1} label="Loading permission catalog…" />
       ) : (
         <>
-          <div className="flex items-center gap-4">
-            <BackButton onClick={cancel} />
-            <div className="flex flex-col gap-1">
-              <h1 className="font-display text-xl font-bold md:text-2xl text-text">Add Role</h1>
-              <p className="font-body text-sm text-text-muted">Name the role and choose what it is permitted to do.</p>
-            </div>
-          </div>
+          <FormPageHeader title="Add Role" description="Name the role and choose what it is permitted to do." onBack={cancel} />
 
           <div className="flex w-full flex-col gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="role-name" className="font-body text-sm font-semibold text-text">
-                Role name
-              </label>
-              <input
-                id="role-name"
-                type="text"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className="rounded-lg border border-border bg-bg px-3 py-2 font-body text-sm text-text"
-                placeholder="e.g. Front Desk Supervisor"
-              />
-              {nameError ? <p className="font-body text-xs text-danger">{nameError}</p> : null}
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="role-description" className="font-body text-sm font-semibold text-text">
-                Description
-              </label>
-              <textarea
-                id="role-description"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                className="rounded-lg border border-border bg-bg px-3 py-2 font-body text-sm text-text"
-                placeholder="Optional"
-                rows={2}
-              />
-            </div>
+            <TextField
+              label="Role name"
+              required
+              value={name}
+              onChange={setName}
+              error={nameError}
+              placeholder="e.g. Front Desk Supervisor"
+              maxLength={100}
+            />
+            <TextareaField label="Description" value={description} onChange={setDescription} placeholder="Optional" rows={2} maxLength={255} />
           </div>
 
           <div className="flex w-full flex-1 flex-col gap-3 rounded-2xl border border-border bg-surface p-4 md:p-6">
             {permissions.map((permission) => (
               <div key={permission.code} className="flex flex-col gap-0.5 border-b border-border-subtle pb-3 last:border-0 last:pb-0">
                 <Checkbox checked={selectedCodes.has(permission.code)} onChange={(checked) => togglePermission(permission.code, checked)}>
-                  <span className="font-body text-sm font-semibold text-text">{permission.code}</span>
+                  <span className="font-body text-sm font-semibold break-all text-text">{permission.code}</span>
                 </Checkbox>
                 <p className="pl-6 font-body text-xs text-text-muted">{permission.description}</p>
               </div>

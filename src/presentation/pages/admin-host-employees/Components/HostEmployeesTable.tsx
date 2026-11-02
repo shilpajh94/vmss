@@ -3,6 +3,7 @@ import { LockIcon, PencilIcon, TrashIcon, UnlockIcon } from '../../../components
 import type { HostEmployee } from '../../../../domain/entities/host-employee-schema'
 import { responsiveTableClassName } from '../../../components/ui/responsive-table'
 import { Avatar } from '../../../components/ui/Avatar'
+import { StatusBadge } from '../../../components/ui/StatusBadge'
 
 // Below `md`: only the identifying, status, and actions columns stay visible.
 const TABLE_CLASS_NAME = responsiveTableClassName([2, 3, 4])
@@ -63,14 +64,7 @@ export function HostEmployeesTable({ hostEmployees, departmentNameById, busyEmpl
                 )}
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                <span
-                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                    hostEmployee.isActive ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
-                  }`}
-                >
-                  <span className={`size-1.5 rounded-full ${hostEmployee.isActive ? 'bg-success' : 'bg-text-faint'}`} />
-                  {hostEmployee.isActive ? 'Active' : 'Inactive'}
-                </span>
+                <StatusBadge isActive={hostEmployee.isActive} />
               </td>
               <td className="px-6 py-4">
                 <div className="flex items-center justify-end gap-2">

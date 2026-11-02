@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.sync_api import APIRequestContext, BrowserContext, Locator, Page, Playwright
+from playwright.sync_api import APIRequestContext, BrowserContext, Locator, Page, Playwright, expect
 
 TOKENS_PATH = Path(os.environ.get("E2E_TOKENS", "/tokens/tokens.json"))
 MAILPIT_URL = os.environ.get("E2E_MAILPIT_URL", "https://vmss-new-api.ddev.site:8026")
@@ -53,11 +53,30 @@ def run_tag() -> str:
     return uuid.uuid4().hex[:6].upper()
 
 
-def select_matching(trigger: Locator, pattern: str) -> None:
-    """Opens a themed dropdown trigger and clicks the option whose text
-    matches the case-insensitive pattern."""
-    trigger.click()
-    trigger.page.get_by_role("option", name=re.compile(pattern, re.I)).first.click()
+def choose_option(
+    combobox: Locator,
+    label: str | None = None,
+    *,
+    index: int | None = None,
+    pattern: str | None = None,
+) -> None:
+    """Picks an option in the app's custom dropdown (select-dropdowns spec),
+    which replaced every native `<select>` so `select_option` no longer
+    applies: opens the combobox, then clicks the option in its portalled
+    listbox by exact `label`, case-insensitive regex `pattern`, or `index`
+    (0 is the first listed option; prompt-only placeholders aren't listed)."""
+    combobox.click()
+    listbox_id = combobox.get_attribute("aria-controls")
+    options = combobox.page.locator(f'[id="{listbox_id}"]').get_by_role("option")
+    if label is not None:
+        option = options.filter(has_text=re.compile(rf"^{re.escape(label)}$"))
+    elif pattern is not None:
+        option = options.filter(has_text=re.compile(pattern, re.I)).first
+    else:
+        assert index is not None, "pass a label, pattern or index"
+        option = options.nth(index)
+    option.click()
+    expect(combobox).to_have_attribute("aria-expanded", "false")
 
 
 def wait_for(read: Callable[[], Any], expected: Any, timeout: float = 10.0) -> None:

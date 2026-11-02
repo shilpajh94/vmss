@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePageRefresh } from '../../../context/refresh-context'
@@ -14,8 +15,9 @@ import type {
   FormFieldUpdateInput,
   FormStep,
 } from '../../../../domain/entities/form-builder-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormBuilderPublishState } from './use-form-builder-publish-state'
+import { toUserMessage } from '../../../utils/to-user-message'
+import { useUnsavedChangesGuard } from '../../../hooks/use-unsaved-changes-guard'
 
 export function useAdminFormBuilderStepEditor() {
   const navigate = useNavigate()
@@ -24,7 +26,6 @@ export function useAdminFormBuilderStepEditor() {
   const branchId = searchParams.get('branchId') ?? undefined
 
   const {
-    getCurrentStaffUserUseCase,
     listFormStepsUseCase,
     listFormFieldsUseCase,
     createFormFieldUseCase,
@@ -40,7 +41,7 @@ export function useAdminFormBuilderStepEditor() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [step, setStep] = useState<FormStep | undefined>(undefined)
   const [fields, setFields] = useState<FormField[]>([])
   const [groups, setGroups] = useState<FormFieldGroup[]>([])
@@ -72,7 +73,9 @@ export function useAdminFormBuilderStepEditor() {
         setGroups([...stepGroups].sort((a, b) => a.orderIndex - b.orderIndex))
         setSelectedFieldId((current) => current ?? sortedFields[0]?.id)
       } catch {
-        if (!request.fail()) return
+        // A failing poll keeps the last fields without a toast; the next
+        // tick retries (live-data-refresh).
+        if (!request.fail() || (mode === 'background' && !request.isInitial)) return
         toast.error('Something went wrong loading this step. Please try again.')
       }
     },
@@ -80,14 +83,9 @@ export function useAdminFormBuilderStepEditor() {
   )
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-    void getCurrentStaffUserUseCase.execute().then(setCurrentUser)
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate, stepId, branchId])
+  }, [stepId, branchId])
 
   const retry = useCallback(() => void load(), [load])
 
@@ -102,10 +100,21 @@ export function useAdminFormBuilderStepEditor() {
   // Bumped only on an explicit Edit/select click (not the auto-select on
   // load) so the page can scroll the properties panel into view.
   const [panelScrollRequest, setPanelScrollRequest] = useState(0)
-  const selectField = useCallback((fieldId: string) => {
-    setSelectedFieldId(fieldId)
-    setPanelScrollRequest((n) => n + 1)
-  }, [])
+  // The properties panel reports unsaved edits, so switching to another
+  // field (or leaving the page) asks before dropping them (D-W6).
+  const [isPanelDirty, setIsPanelDirty] = useState(false)
+  const { confirmDiscard } = useUnsavedChangesGuard(isPanelDirty)
+  const selectField = useCallback(
+    (fieldId: string) => {
+      const show = () => {
+        setSelectedFieldId(fieldId)
+        setPanelScrollRequest((n) => n + 1)
+      }
+      if (fieldId === selectedFieldId) show()
+      else confirmDiscard(show)
+    },
+    [selectedFieldId, confirmDiscard],
+  )
 
   const toggleFieldRequired = useCallback(
     async (field: FormField) => {
@@ -114,8 +123,8 @@ export function useAdminFormBuilderStepEditor() {
         const updated = await updateFormFieldUseCase.execute(field.id, { isRequired: !field.isRequired }, branchId)
         setFields((current) => current.map((f) => (f.id === updated.id ? updated : f)))
         markDirty()
-      } catch {
-        toast.error('Something went wrong updating the field. Please try again.')
+      } catch (error) {
+        toast.error(toUserMessage(error, 'Something went wrong updating the field. Please try again.'))
       }
     },
     [updateFormFieldUseCase, branchId, toast, markDirty],
@@ -149,10 +158,7 @@ export function useAdminFormBuilderStepEditor() {
         toast.success('Field properties saved to draft. Publish to update the visitor form.')
         return undefined
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'Something went wrong saving this field. Please check for a conflicting conditional rule.'
+        const message = toUserMessage(error, 'Something went wrong saving this field. Please check for a conflicting conditional rule.')
         toast.error(message)
         return message
       }
@@ -187,8 +193,8 @@ export function useAdminFormBuilderStepEditor() {
         const updated = await updateFormFieldUseCase.execute(fieldId, { groupId }, branchId)
         setFields((current) => current.map((f) => (f.id === updated.id ? updated : f)))
         markDirty()
-      } catch {
-        toast.error('Something went wrong assigning this field to a group. Please try again.')
+      } catch (error) {
+        toast.error(toUserMessage(error, 'Something went wrong assigning this field to a group. Please try again.'))
       }
     },
     [fields, updateFormFieldUseCase, branchId, toast, markDirty],
@@ -205,8 +211,8 @@ export function useAdminFormBuilderStepEditor() {
       setSelectedFieldId((current) => (current === pendingDelete.id ? undefined : current))
       markDirty()
       toast.success('Field removed from draft. Publish to update the visitor form.')
-    } catch {
-      toast.error('Something went wrong removing the field. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong removing the field. Please try again.'))
     } finally {
       setPendingDelete(undefined)
     }
@@ -244,8 +250,7 @@ export function useAdminFormBuilderStepEditor() {
         setIsAddFieldOpen(false)
         return undefined
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'Something went wrong creating the field. Please try again.'
+        const message = toUserMessage(error, 'Something went wrong creating the field. Please try again.')
         toast.error(message)
         return message
       }
@@ -265,9 +270,9 @@ export function useAdminFormBuilderStepEditor() {
         const updated = await reorderFormFieldsUseCase.execute(stepId, orderedIds, branchId)
         setFields([...updated].sort((a, b) => a.orderIndex - b.orderIndex))
         markDirty()
-      } catch {
+      } catch (error) {
         setFields(previous)
-        toast.error('Something went wrong reordering fields. Please try again.')
+        toast.error(toUserMessage(error, 'Something went wrong reordering fields. Please try again.'))
       }
     },
     [stepId, fields, reorderFormFieldsUseCase, branchId, toast, markDirty],
@@ -277,16 +282,19 @@ export function useAdminFormBuilderStepEditor() {
   const closeAddGroup = useCallback(() => setIsAddGroupOpen(false), [])
 
   const createGroup = useCallback(
-    async (input: FormFieldGroupCreateInput) => {
-      if (!stepId) return
+    async (input: FormFieldGroupCreateInput): Promise<string | undefined> => {
+      if (!stepId) return 'This step could not be found.'
       try {
         const created = await createFormFieldGroupUseCase.execute(stepId, input, branchId)
         setGroups((current) => [...current, created].sort((a, b) => a.orderIndex - b.orderIndex))
         markDirty()
         toast.success('Group created in draft. Publish to update the visitor form.')
         setIsAddGroupOpen(false)
+        return undefined
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Something went wrong creating the group. Please try again.')
+        const message = toUserMessage(error, 'Something went wrong creating the group. Please try again.')
+        toast.error(message)
+        return message
       }
     },
     [stepId, createFormFieldGroupUseCase, branchId, toast, markDirty],
@@ -305,7 +313,7 @@ export function useAdminFormBuilderStepEditor() {
         toast.success('Group properties saved to draft. Publish to update the visitor form.')
         return undefined
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Something went wrong saving this group. Please try again.'
+        const message = toUserMessage(error, 'Something went wrong saving this group. Please try again.')
         toast.error(message)
         return message
       }
@@ -328,7 +336,7 @@ export function useAdminFormBuilderStepEditor() {
       markDirty()
       toast.success('Group removed. Its fields are now ungrouped.')
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Something went wrong removing the group. Please try again.')
+      toast.error(toUserMessage(error, 'Something went wrong removing the group. Please try again.'))
     } finally {
       setPendingDeleteGroup(undefined)
     }
@@ -346,9 +354,9 @@ export function useAdminFormBuilderStepEditor() {
         const updated = await reorderFormFieldGroupsUseCase.execute(stepId, orderedIds, branchId)
         setGroups([...updated].sort((a, b) => a.orderIndex - b.orderIndex))
         markDirty()
-      } catch {
+      } catch (error) {
         setGroups(previous)
-        toast.error('Something went wrong reordering groups. Please try again.')
+        toast.error(toUserMessage(error, 'Something went wrong reordering groups. Please try again.'))
       }
     },
     [stepId, groups, reorderFormFieldGroupsUseCase, branchId, toast, markDirty],
@@ -360,8 +368,8 @@ export function useAdminFormBuilderStepEditor() {
       const result = await publishFormConfigUseCase.execute(branchId)
       markPublished()
       toast.success(`Published — now live as v${result.version}.`)
-    } catch {
-      toast.error('Something went wrong publishing. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong publishing. Please try again.'))
     } finally {
       setIsPublishing(false)
     }
@@ -378,6 +386,7 @@ export function useAdminFormBuilderStepEditor() {
     groups,
     selectedField,
     selectField,
+    setIsPanelDirty,
     panelScrollRequest,
     phase,
     isRefreshing,

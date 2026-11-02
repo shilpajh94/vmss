@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { ApiError } from '../../../../data/api/api-error'
 import type { KioskInput } from '../../../../domain/entities/kiosk-schema'
@@ -17,8 +18,9 @@ export function useAdminKioskForm() {
   const { id } = useParams<{ id: string }>()
   const isEditMode = id !== undefined
 
-  const { getCurrentStaffUserUseCase, getKioskUseCase, createKioskUseCase, updateKioskUseCase } = useAppDependencies()
+  const { getKioskUseCase, createKioskUseCase, updateKioskUseCase } = useAppDependencies()
   const toast = useToast()
+  const currentUser = useCurrentUser()
 
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
@@ -31,8 +33,7 @@ export function useAdminKioskForm() {
     setErrorMessage(undefined)
 
     try {
-      const user = await getCurrentStaffUserUseCase.execute()
-      if (!canManageKiosks(user)) {
+      if (!canManageKiosks(currentUser)) {
         toast.error('You do not have permission to manage kiosks.')
         navigate('/admin/kiosks', { replace: true })
         return
@@ -55,22 +56,17 @@ export function useAdminKioskForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, getKioskUseCase, isEditMode, id, navigate, toast])
+  }, [currentUser, getKioskUseCase, isEditMode, id, navigate, toast])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void load()
-  }, [navigate, load])
+  }, [load])
 
   const retry = useCallback(() => {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: values, isLoading, reload: retry })
+  const { release } = useFormPageRefresh({ values: values, isLoading, reload: retry })
 
   const updateField = useCallback(<K extends keyof KioskInput>(key: K, value: KioskInput[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
@@ -102,12 +98,14 @@ export function useAdminKioskForm() {
         await createKioskUseCase.execute(input)
         toast.success('Kiosk created.')
       }
+      release()
       navigate('/admin/kiosks')
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         setErrors({ name: 'A kiosk with this name already exists.' })
       } else if (error instanceof ApiError && error.status === 404) {
         toast.error('That kiosk no longer exists.')
+        release()
         navigate('/admin/kiosks', { replace: true })
       } else if (error instanceof ApiError && (error.status === 403 || error.status === 422)) {
         toast.error(error.message)
@@ -117,7 +115,7 @@ export function useAdminKioskForm() {
     } finally {
       setIsSaving(false)
     }
-  }, [values, isEditMode, id, createKioskUseCase, updateKioskUseCase, navigate, toast])
+  }, [values, isEditMode, id, createKioskUseCase, updateKioskUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/kiosks')

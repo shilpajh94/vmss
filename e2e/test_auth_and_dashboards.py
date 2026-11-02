@@ -13,7 +13,7 @@ def test_admin_signs_in_with_password_and_signs_out(as_role) -> None:
     page = as_role("anonymous")
     page.goto("/admin/login")
     page.get_by_label("Email").fill(ADMIN_EMAIL)
-    page.get_by_label("Password").fill(ADMIN_PASSWORD)
+    page.get_by_role("textbox", name="Password").fill(ADMIN_PASSWORD)
     page.get_by_role("button", name="Sign In", exact=True).click()
     expect(page).to_have_url(re.compile(r"/admin/dashboard$"))
     expect(page.get_by_text("Admin User").first).to_be_visible()
@@ -21,7 +21,8 @@ def test_admin_signs_in_with_password_and_signs_out(as_role) -> None:
     page.get_by_role("button", name="Sign out").click()
     expect(page).to_have_url(re.compile(r"/admin/login$"))
     page.goto("/admin/dashboard")
-    expect(page).to_have_url(re.compile(r"/login$"))
+    # The guard keeps the deep link to return to after signing in again.
+    expect(page).to_have_url(re.compile(r"/login\?from=%2Fadmin%2Fdashboard$"))
 
 
 def test_staff_sign_in_offers_sso_only(as_role) -> None:
@@ -29,6 +30,21 @@ def test_staff_sign_in_offers_sso_only(as_role) -> None:
     page.goto("/staff/login")
     expect(page.get_by_role("button", name="Sign in with SSO")).to_be_visible()
     expect(page.get_by_label("Password")).to_have_count(0)
+
+
+@pytest.mark.parametrize(
+    ("path", "button"),
+    [
+        ("/admin/login", "Sign In"),
+        ("/admin/login", "Sign in with SSO"),
+        ("/staff/login", "Sign in with SSO"),
+    ],
+)
+def test_login_buttons_show_pointer_cursor(as_role, path: str, button: str) -> None:
+    # Hover only, no submit - doesn't spend a login attempt.
+    page = as_role("anonymous")
+    page.goto(path)
+    expect(page.get_by_role("button", name=button, exact=True)).to_have_css("cursor", "pointer")
 
 
 @pytest.mark.parametrize(
@@ -54,11 +70,12 @@ def test_reception_dashboard_is_guarded_from_other_roles(as_role) -> None:
     expect(page).to_have_url(re.compile(r"/staff/dashboard$"))
 
 
-@pytest.mark.known_issue("F7")
 @pytest.mark.parametrize("role", ["norole", "reception"])
 def test_admin_area_is_guarded_from_non_admins(as_role, role: str) -> None:
-    """The API refuses the data and actions either way; the portal should
-    not render the admin shell at all (spec "Route guarding")."""
+    """QA F7, fixed by audit-and-harden §3: pages and menu entries are gated
+    by the caller's permission codes, so neither a user without any nor
+    standard Reception (view-only on org setup, `auth/rbac_catalog.py`) is
+    offered the organisation configuration pages."""
     page = as_role(role)
     page.goto("/admin/dashboard")
     page.wait_for_load_state("networkidle")

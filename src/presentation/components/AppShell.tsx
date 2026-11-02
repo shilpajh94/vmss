@@ -43,7 +43,7 @@ function MobileNavBar() {
   return (
     <div className="flex h-14 w-full shrink-0 items-center gap-3 border-b border-border bg-surface px-4 lg:hidden">
       <NavMenuButton />
-      <BrandLogo variant="light" className="h-7" />
+      <BrandLogo variant="themed" className="h-7" />
     </div>
   )
 }

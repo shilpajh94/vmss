@@ -60,14 +60,19 @@ export function useRefreshContext(): RefreshContextValue {
 // state into the shared top-bar control.
 // Re-registers whenever those values change, and clears the registration on
 // unmount so navigating to a page that doesn't call this (or away from one
-// that does) doesn't leave a stale control behind.
-export function usePageRefresh(state: PageRefreshState): void {
+// that does) doesn't leave a stale control behind. `undefined` registers
+// nothing, for a shared hook whose caller registers instead.
+export function usePageRefresh(state: PageRefreshState | undefined): void {
   const { setActiveRefresh } = useRefreshContext()
-  const { refresh, isRefreshing, hasFailed = false, hasUnsavedChanges = false } = state
+  const isRegistered = state !== undefined
+  const { refresh, isRefreshing, hasFailed = false, hasUnsavedChanges = false } = state ?? UNREGISTERED
 
   useEffect(() => {
+    if (!isRegistered) return
     setActiveRefresh({ refresh, isRefreshing, hasFailed, hasUnsavedChanges })
     return () => setActiveRefresh(undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refresh, isRefreshing, hasFailed, hasUnsavedChanges])
+  }, [isRegistered, refresh, isRefreshing, hasFailed, hasUnsavedChanges])
 }
+
+const UNREGISTERED: PageRefreshState = { refresh: () => undefined, isRefreshing: false }

@@ -372,19 +372,22 @@ export const MenuIcon = createIcon(
   </>,
 )
 
-export const PanelLeftCloseIcon = createIcon(
+// The sidebar toggle's two states (app-shell "Desktop sidebar can be
+// collapsed to an icon rail"): a bar for the sidebar's edge, with a double
+// chevron folding into it or opening out of it - opposite at a glance.
+export const CollapseSidebarIcon = createIcon(
   <>
-    <rect width="18" height="18" x="3" y="3" rx="2" />
-    <path d="M9 3v18" />
-    <path d="m16 15-3-3 3-3" />
+    <path d="M4 4v16" />
+    <path d="m13 7-5 5 5 5" />
+    <path d="m19 7-5 5 5 5" />
   </>,
 )
 
-export const PanelLeftOpenIcon = createIcon(
+export const ExpandSidebarIcon = createIcon(
   <>
-    <rect width="18" height="18" x="3" y="3" rx="2" />
-    <path d="M9 3v18" />
-    <path d="m14 9 3 3-3 3" />
+    <path d="M4 4v16" />
+    <path d="m9 7 5 5-5 5" />
+    <path d="m15 7 5 5-5 5" />
   </>,
 )
 
@@ -509,3 +512,11 @@ export const SunIcon = createIcon(
 )
 
 export const MoonIcon = createIcon(<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />)
+
+export const MoreVerticalIcon = createIcon(
+  <>
+    <circle cx="12" cy="5" r="1" />
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="12" cy="19" r="1" />
+  </>,
+)

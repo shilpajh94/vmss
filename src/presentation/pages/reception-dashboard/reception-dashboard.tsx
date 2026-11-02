@@ -14,7 +14,7 @@ export function ReceptionDashboardPage() {
   const navigate = useNavigate()
   const currentUser = useCurrentUser()
   const isReception = currentUser?.isReception === true
-  const dashboard = useBranchDashboard({ loginPath: '/staff/login', allowed: isReception })
+  const dashboard = useBranchDashboard({ allowed: isReception })
 
   usePageHeader({ description: "A bird's-eye view of today's visitor activity" })
 

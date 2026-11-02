@@ -1,4 +1,5 @@
 import type { Floor, FloorInput } from '../../domain/entities/floor-schema'
+import type { ListOptions } from './list-options'
 
 export interface ListFloorsPageParams {
   page: number
@@ -14,7 +15,7 @@ export interface FloorsPage {
 }
 
 export interface FloorRepository {
-  list(buildingId?: string): Promise<Floor[]>
+  list(buildingId?: string, options?: ListOptions): Promise<Floor[]>
   listPage(params: ListFloorsPageParams): Promise<FloorsPage>
   create(input: FloorInput): Promise<Floor>
   update(id: string, input: FloorInput): Promise<Floor>

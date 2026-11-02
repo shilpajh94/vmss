@@ -8,7 +8,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from conftest import Api, run_tag, select_matching
+from conftest import Api, choose_option, run_tag
 
 
 def test_admin_creates_category_and_workflow(as_role, api: Api) -> None:
@@ -41,7 +41,7 @@ def test_admin_creates_category_and_workflow(as_role, api: Api) -> None:
 
         admin.goto(f"/admin/workflows/{category_id}/edit", wait_until="networkidle")
         admin.get_by_role("button", name="Add Level").click()
-        select_matching(admin.get_by_label("Level 2 approver"), "^host$")
+        choose_option(admin.get_by_label("Level 2 approver"), pattern="^host$")
         admin.get_by_role("button", name="Save Workflow").click()
         expect(admin).not_to_have_url(re.compile(r"/edit$"))
         rules = api.call(
@@ -81,10 +81,7 @@ def test_admin_edits_a_form_builder_field(as_role, api: Api) -> None:
     try:
         admin = as_role("admin")
         admin.goto("/admin/form-builder", wait_until="networkidle")
-        select_matching(
-            admin.get_by_role("main").locator("button[aria-haspopup=listbox]").first,
-            "^QA Form Builder Branch$",
-        )
+        choose_option(admin.get_by_role("main").get_by_role("combobox").first, "QA Form Builder Branch")
         step_card = admin.get_by_text(f"QA E2E Step {tag}").locator(
             "xpath=ancestor::*[.//button[normalize-space()='Edit Fields']][1]"
         )

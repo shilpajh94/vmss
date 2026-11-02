@@ -1,4 +1,5 @@
 import z from "zod"
+import { PaginationMetaSchema } from "./pagination-meta-schema"
 
 export const VisitorCategoryOutSchema = z.object({
   id: z.string(),
@@ -12,6 +13,7 @@ export const VisitorCategoryOutSchema = z.object({
   ndaRequirement: z.enum(["digital", "signed_pdf", "optional", "none"]).nullable(),
   escortRequirement: z.enum(["self_escort", "access_logs_only", "always_required", "gate_check_in_only"]).nullable(),
   maxDurationMinutes: z.number().nullable(),
+  isActive: z.boolean().default(true),
 })
 
 export type VisitorCategoryOut = z.infer<typeof VisitorCategoryOutSchema>
@@ -28,12 +30,7 @@ export const VisitorCategoryListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z.array(VisitorCategoryOutSchema),
-  pagination: z.object({
-    page: z.number(),
-    pageSize: z.number(),
-    total: z.number(),
-    totalPages: z.number(),
-  }),
+  pagination: PaginationMetaSchema,
 })
 
 export type VisitorCategoryListResponse = z.infer<typeof VisitorCategoryListResponseSchema>

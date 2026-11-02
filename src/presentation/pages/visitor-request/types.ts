@@ -136,9 +136,10 @@ export function createInitialFormState(): VisitRequestFormState {
 // top-level `customFields` array instead, see `toVisitRequest`.
 export function toVisitor(entry: VisitorFormEntry): Visitor {
   return {
-    fullName: entry.fullName,
-    email: entry.email,
-    phone: entry.phone,
+    // Trimmed so a stray space can't create a second "different" contact.
+    fullName: entry.fullName.trim(),
+    email: entry.email.trim(),
+    phone: entry.phone.trim(),
     preferredContactMethod: entry.preferredContactMethod,
     // Omitted rather than sent as `''` when ID Proof Type isn't
     // active/required for this branch and the visitor left it blank — the

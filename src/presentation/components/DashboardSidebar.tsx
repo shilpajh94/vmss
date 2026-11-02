@@ -1,11 +1,15 @@
+import { useRef } from 'react'
 import { useNavigate } from 'react-router'
-import { CalendarIcon, CheckIcon, HomeIcon, UsersIcon } from './icons'
+import { CalendarIcon, HomeIcon, PlusIcon, UsersIcon } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
+import { usePermissions } from '../context/current-user-context'
+import { PAGE_PERMISSIONS } from '../route-permissions'
 import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
+import { useScrollActivity } from '../hooks/use-scroll-activity'
 
-export type DashboardSidebarActiveItem = 'dashboard' | 'all-visitors' | 'calendar' | 'my-actions'
+export type DashboardSidebarActiveItem = 'dashboard' | 'all-visitors' | 'calendar' | 'register-visitor'
 
 interface DashboardSidebarProps {
   activeItem: DashboardSidebarActiveItem
@@ -15,7 +19,7 @@ interface DashboardSidebarProps {
 // frequent task (app-shell "Sidebar menus are ordered by how often they are used").
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: HomeIcon },
-  { key: 'my-actions', label: 'My actions', icon: CheckIcon },
+  { key: 'register-visitor', label: 'Register Visitor', icon: PlusIcon },
   { key: 'all-visitors', label: 'Invitations', icon: UsersIcon },
   { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
 ] as const
@@ -24,8 +28,16 @@ const STAFF_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: Da
   ['/staff/dashboard', 'dashboard'],
   ['/staff/invitations', 'all-visitors'],
   ['/staff/calendar', 'calendar'],
-  ['/staff/visitors/new', 'my-actions'],
+  ['/staff/visitors/new', 'register-visitor'],
 ]
+
+// Entries the user can't open are hidden (app-shell "Admin and Staff Areas
+// and Their Actions Are Gated by the Caller's Permissions").
+const NAV_ITEM_PERMISSIONS: Partial<Record<DashboardSidebarActiveItem, string>> = {
+  'all-visitors': PAGE_PERMISSIONS.staffInvitations,
+  calendar: PAGE_PERMISSIONS.calendar,
+  'register-visitor': PAGE_PERMISSIONS.registerVisitor,
+}
 
 // Derives which sidebar entry highlights from the current URL, so the active
 // item can never drift out of sync with the route table the way a hardcoded
@@ -44,14 +56,17 @@ export function staffNavLabelFor(pathname: string): string {
 
 export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
   const navigate = useNavigate()
+  const navRef = useRef<HTMLElement>(null)
+  useScrollActivity(navRef)
   const { closeNav } = useNavDrawer()
+  const { can } = usePermissions()
 
   const handleActivate = (key: DashboardSidebarActiveItem) => {
     closeNav()
     if (key === 'dashboard') navigate('/staff/dashboard')
     if (key === 'all-visitors') navigate('/staff/invitations')
     if (key === 'calendar') navigate('/staff/calendar')
-    if (key === 'my-actions') navigate('/staff/visitors/new')
+    if (key === 'register-visitor') navigate('/staff/visitors/new')
   }
 
   return (
@@ -63,8 +78,11 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
         }}
       />
 
-      <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-        {NAV_ITEMS.map(({ key, label, icon }) => (
+      <nav ref={navRef} className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+        {NAV_ITEMS.filter(({ key }) => {
+          const requires = NAV_ITEM_PERMISSIONS[key]
+          return !requires || can(requires)
+        }).map(({ key, label, icon }) => (
           <SidebarNavItem
             key={key}
             icon={icon}

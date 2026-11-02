@@ -1,7 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
-import { onMessage } from 'firebase/messaging'
-import { getFirebaseMessaging } from '../../../infrastructure/firebase/firebase-app'
+import { loadFirebaseMessaging, whenFirebaseMessagingReady } from '../../../infrastructure/firebase/firebase-app'
 import { useToast } from '../toast/toast-context'
 import { useNotificationCenter, type NotificationAddressingReason } from '../../context/notification-center-context'
 import { usePushNotifications } from '../../hooks/use-push-notifications'
@@ -36,9 +35,20 @@ const RE_REGISTER_INTERVAL_MS = 30 * 60 * 1000
 // trigger several redundant re-registration calls seconds apart.
 const MIN_RE_REGISTER_GAP_MS = 5 * 60 * 1000
 
-// Mounted once at the app root: registers the background service worker and
-// listens for foreground pushes for the lifetime of the app, independent of
-// which page is currently rendered.
+// The background worker pulls the Firebase SDK from gstatic, so it is only
+// registered for a signed-in session, never on a public page.
+let hasRegisteredServiceWorker = false
+function registerServiceWorkerOnce(): void {
+  if (hasRegisteredServiceWorker || !('serviceWorker' in navigator)) return
+  hasRegisteredServiceWorker = true
+  navigator.serviceWorker.register('/firebase-messaging-sw.js').catch((error: unknown) => {
+    console.error('Failed to register push notification service worker', error)
+  })
+}
+
+// Mounted once at the app root: registers the background service worker
+// (once signed in) and listens for foreground pushes for the lifetime of the
+// app, independent of which page is currently rendered.
 export function PushNotificationsProvider({ children }: { children: ReactNode }) {
   const toast = useToast()
   const navigate = useNavigate()
@@ -62,14 +72,6 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
     latestRef.current = { toast, navigate, notificationCenter, listRolesUseCase }
   })
 
-  useEffect(() => {
-    if (!('serviceWorker' in navigator)) return
-
-    navigator.serviceWorker.register('/firebase-messaging-sw.js').catch((error: unknown) => {
-      console.error('Failed to register push notification service worker', error)
-    })
-  }, [])
-
   // A signed-in device re-registers on mount, on an interval, and whenever the
   // tab regains focus, so a rotated FCM token gets picked up without waiting for
   // the host to log out and back in. This never prompts for permission — only
@@ -78,6 +80,12 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
     const reRegisterIfSignedIn = () => {
       if (document.visibilityState !== 'visible') return
       if (!sessionStorage.getItem('token')) return
+      registerServiceWorkerOnce()
+      // Loads the SDK for any signed-in session (app-performance "The
+      // Push-Notification SDK Is Loaded Only for Signed-In Staff"), so the
+      // foreground listener below subscribes even before permission is
+      // granted, as it did when the SDK was in the initial bundle.
+      void loadFirebaseMessaging()
 
       const now = Date.now()
       if (now - lastRegisteredAtRef.current < MIN_RE_REGISTER_GAP_MS) return
@@ -97,51 +105,60 @@ export function PushNotificationsProvider({ children }: { children: ReactNode })
     }
   }, [refreshRegistrationIfGranted])
 
+  // Subscribes once the Firebase SDK has been loaded by a signed-in
+  // registration (`refreshRegistrationIfGranted`), so a public page never
+  // downloads it just to listen.
   useEffect(() => {
-    const messaging = getFirebaseMessaging()
-    if (!messaging) return
+    let cancelled = false
+    let unsubscribe: (() => void) | undefined
+    void whenFirebaseMessagingReady().then(({ messaging, onMessage }) => {
+      if (cancelled) return
+      unsubscribe = onMessage(messaging, (payload) => {
+        const { toast, navigate, notificationCenter, listRolesUseCase } = latestRef.current
+        const invitationId = payload.data?.invitationId
+        const message = payload.notification?.body ?? payload.notification?.title ?? 'You have a new notification.'
+        const onClick = invitationId ? () => navigate(buildInvitationPath(invitationId)) : undefined
+        const reason = payload.data?.reason as NotificationAddressingReason | undefined
+        const assignedRoleId = payload.data?.assignedRoleId
 
-    return onMessage(messaging, (payload) => {
-      const { toast, navigate, notificationCenter, listRolesUseCase } = latestRef.current
-      const invitationId = payload.data?.invitationId
-      const message = payload.notification?.body ?? payload.notification?.title ?? 'You have a new notification.'
-      const onClick = invitationId ? () => navigate(buildInvitationPath(invitationId)) : undefined
-      const reason = payload.data?.reason as NotificationAddressingReason | undefined
-      const assignedRoleId = payload.data?.assignedRoleId
-
-      const dispatch = (roleName: string | undefined) => {
-        const addressingLabel = buildAddressingLabel(reason, roleName)
-        const displayMessage = addressingLabel ? `${addressingLabel}: ${message}` : message
-        // A push arriving while another push toast is still up joins it as
-        // one "N new notifications" summary that opens the bell, so a burst
-        // never floods the screen (notifications "A burst of push
-        // notifications is grouped into one summary").
-        toast.info(displayMessage, {
-          onClick,
-          groupKey: 'push',
-          groupSummary: (count) => ({ message: `${count} new notifications`, onClick: () => latestRef.current.notificationCenter.openPanel() }),
-        })
-        // The API recorded this push before sending it, so a refetch finds
-        // it — the bell never shows a client-only item the server lacks.
-        notificationCenter.refresh()
-      }
-
-      if (reason === 'role_assigned' && assignedRoleId && !roleNameByIdRef.current) {
-        listRolesUseCase
-          .execute()
-          .then((roles) => {
-            roleNameByIdRef.current = Object.fromEntries(roles.map((role) => [role.id, role.name]))
-            dispatch(roleNameByIdRef.current[assignedRoleId])
+        const dispatch = (roleName: string | undefined) => {
+          const addressingLabel = buildAddressingLabel(reason, roleName)
+          const displayMessage = addressingLabel ? `${addressingLabel}: ${message}` : message
+          // A push arriving while another push toast is still up joins it as
+          // one "N new notifications" summary that opens the bell, so a burst
+          // never floods the screen (notifications "A burst of push
+          // notifications is grouped into one summary").
+          toast.info(displayMessage, {
+            onClick,
+            groupKey: 'push',
+            groupSummary: (count) => ({ message: `${count} new notifications`, onClick: () => latestRef.current.notificationCenter.openPanel() }),
           })
-          .catch((error: unknown) => {
-            console.error('Failed to resolve role name for push notification label', error)
-            dispatch(undefined)
-          })
-        return
-      }
+          // The API recorded this push before sending it, so a refetch finds
+          // it — the bell never shows a client-only item the server lacks.
+          notificationCenter.refresh()
+        }
 
-      dispatch(assignedRoleId ? roleNameByIdRef.current?.[assignedRoleId] : undefined)
+        if (reason === 'role_assigned' && assignedRoleId && !roleNameByIdRef.current) {
+          listRolesUseCase
+            .execute()
+            .then((roles) => {
+              roleNameByIdRef.current = Object.fromEntries(roles.map((role) => [role.id, role.name]))
+              dispatch(roleNameByIdRef.current[assignedRoleId])
+            })
+            .catch((error: unknown) => {
+              console.error('Failed to resolve role name for push notification label', error)
+              dispatch(undefined)
+            })
+          return
+        }
+
+        dispatch(assignedRoleId ? roleNameByIdRef.current?.[assignedRoleId] : undefined)
+      })
     })
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
     // Intentionally subscribes once for the component's lifetime — see latestRef above.
   }, [])
 

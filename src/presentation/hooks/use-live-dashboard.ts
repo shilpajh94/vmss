@@ -5,7 +5,7 @@ import { usePageRefresh } from '../context/refresh-context'
 import { LIVE_REFRESH_INTERVAL_MS, usePolling } from './use-polling'
 
 
-export interface LiveResource<T> {
+export interface DashboardResource<T> {
   data: T | undefined
   // The most recent load failed. With no `data` yet, that was the initial
   // load; otherwise a background refresh, and `data` is the last good value.
@@ -18,7 +18,7 @@ export interface LiveResource<T> {
 // being fetched (e.g. branch + range); when it changes the resource re-fetches
 // while keeping its current data on screen. Responses to a superseded request
 // are dropped, so a slow 7-day response can't overwrite a newer 30-day one.
-export function useLiveResource<T>(fetcher: () => Promise<T>, key: string, enabled: boolean): LiveResource<T> {
+export function useDashboardResource<T>(fetcher: () => Promise<T>, key: string, enabled: boolean): DashboardResource<T> {
   const [data, setData] = useState<T | undefined>(undefined)
   const [hasError, setHasError] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -62,7 +62,7 @@ interface LiveDashboardState {
 // control. A failure toasts once per outage rather than on every tick; while
 // background refreshes keep failing the last data stays and the control
 // shows that it is retrying.
-export function useLiveDashboard(resources: LiveResource<unknown>[], errorText: string, enabled: boolean): LiveDashboardState {
+export function useLiveDashboard(resources: DashboardResource<unknown>[], errorText: string, enabled: boolean): LiveDashboardState {
   const toast = useToast()
   const { onInvitationActivity } = useNotificationCenter()
   const resourcesRef = useRef(resources)

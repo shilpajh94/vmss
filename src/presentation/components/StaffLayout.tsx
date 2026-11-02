@@ -1,36 +1,33 @@
-import { useEffect, useState } from 'react'
+import { Suspense } from 'react'
 import { Outlet, useLocation } from 'react-router'
 import { DashboardSidebar, resolveStaffActiveItem, staffNavLabelFor } from './DashboardSidebar'
 import { ReceptionSidebar, resolveReceptionActiveItem } from './ReceptionSidebar'
 import { AppShell } from './AppShell'
 import { AppTopBar } from './AppTopBar'
 import { RouteTransition } from './RouteTransition'
+import { LoadingState } from './ui/LoadingState'
+import { SignInRedirect } from './session/RouteGuards'
+import { SessionGateContent } from './session/SessionGateContent'
+import { useStaffSession } from './session/use-staff-session'
 import { PageHeaderProvider, usePageHeaderContext } from '../context/page-header-context'
 import { RefreshProvider } from '../context/refresh-context'
 import { CurrentUserProvider } from '../context/current-user-context'
 import { useApplyTheme } from '../context/theme-mode-context'
-import { useAppDependencies } from '../context/app-dependencies-context'
-import type { StaffUser } from '../../domain/entities/staff-user-schema'
 
 // Persists the sidebar and top bar across every /staff/* route so navigating
 // between staff pages only swaps the content inside <Outlet /> instead of
 // unmounting the whole page tree (see persistent-nav-shell's proposal.md).
-// Mirrors AdminLayout so the staff and admin chrome stay the same.
+// Mirrors AdminLayout so the staff and admin chrome stay the same, including
+// its session check (design D-W3); any signed-in user may enter, and each
+// route's `requires` is checked in App.tsx.
 function StaffLayoutContent() {
   useApplyTheme()
   const location = useLocation()
   const { header } = usePageHeaderContext()
-  const { getCurrentStaffUserUseCase } = useAppDependencies()
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const { session, retry } = useStaffSession()
+  const currentUser = session.status === 'ready' ? session.user : undefined
 
-  useEffect(() => {
-    getCurrentStaffUserUseCase
-      .execute()
-      .then(setCurrentUser)
-      .catch((error: unknown) => {
-        console.error('Failed to load current staff user', error)
-      })
-  }, [getCurrentStaffUserUseCase])
+  if (session.status === 'signed-out') return <SignInRedirect loginPath="/staff/login" />
 
   const sidebar = currentUser?.isReception ? (
     <ReceptionSidebar activeItem={resolveReceptionActiveItem(location.pathname)} />
@@ -39,24 +36,29 @@ function StaffLayoutContent() {
   )
 
   return (
-    <AppShell
-      sidebar={sidebar}
-      topBar={
-        <AppTopBar
-          title={currentUser?.isReception ? 'Reception Desk' : 'Staff Workspace'}
-          description={header.description}
-          currentUser={currentUser}
-          navLabelFor={staffNavLabelFor}
-          loginPath="/staff/login"
-        />
-      }
-    >
-      <CurrentUserProvider user={currentUser}>
-        <RouteTransition withEndGap>
-          <Outlet />
-        </RouteTransition>
-      </CurrentUserProvider>
-    </AppShell>
+    <CurrentUserProvider user={currentUser}>
+      <AppShell
+        sidebar={sidebar}
+        topBar={
+          <AppTopBar
+            title={currentUser?.isReception ? 'Reception Desk' : 'Staff Workspace'}
+            description={header.description}
+            currentUser={currentUser}
+            navLabelFor={staffNavLabelFor}
+            loginPath="/staff/login"
+          />
+        }
+      >
+        <SessionGateContent session={session} onRetry={retry}>
+          <RouteTransition withEndGap>
+            {/* A page's chunk loads on its first visit (design D13). */}
+            <Suspense fallback={<LoadingState label="Loading…" className="flex-1" />}>
+              <Outlet />
+            </Suspense>
+          </RouteTransition>
+        </SessionGateContent>
+      </AppShell>
+    </CurrentUserProvider>
   )
 }
 

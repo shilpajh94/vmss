@@ -48,6 +48,50 @@ portal.
   or "VisitorPass"
 - **THEN** the lint step fails and names the offending file and line
 
+### Requirement: Copyright Line Names Guestify and the Current Year`
+
+## MODIFIED Requirements
+
+### Requirement: The Portal Presents the Guestify Brand Everywhere
+The portal SHALL identify the product as "Guestify" on every surface that
+shows a product name or mark:
+- admin, staff and reception sidebars;
+- the phone/tablet navigation bar;
+- the visitor portal header and footer;
+- the staff login and SSO login headers and footers;
+- the browser tab title;
+- the favicon;
+- the push-notification fallback title.
+
+The retired names "VisitorPass" and "Visimio", the old placeholder "V"
+tile and the Visimio "V" mark SHALL NOT appear anywhere in the rendered
+portal.
+
+#### Scenario: Sidebar shows the Visimio logo
+- **WHEN** a signed-in admin opens any admin page
+- **THEN** the sidebar header shows the Guestify logo (the teal "G" pin
+  mark, teal "Gu" and white "estify") with alt text "Guestify", and
+  neither "VisitorPass" nor "Visimio" text is present
+
+#### Scenario: Collapsed sidebar shows the Guestify mark
+- **WHEN** a signed-in admin collapses the sidebar
+- **THEN** the sidebar header shows only the teal "G" pin mark
+
+#### Scenario: Browser tab identifies the product
+- **WHEN** any route is opened
+- **THEN** the document title reads "Guestify" and the favicon shows the
+  Guestify "G" pin mark
+
+#### Scenario: Push notification without a title
+- **WHEN** a background push notification arrives with no title in its
+  payload
+- **THEN** the system notification is titled "Guestify"
+
+#### Scenario: Retired name cannot return
+- **WHEN** a source file under the shipped code roots contains "Visimio"
+  or "VisitorPass"
+- **THEN** the lint step fails and names the offending file and line
+
 ### Requirement: Logo Variant Matches Its Background
 The portal SHALL use the logo variant that stays legible on the surface
 behind it:

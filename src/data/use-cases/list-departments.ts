@@ -1,5 +1,6 @@
 import type { DepartmentRepository } from '../repositories/department-repository'
 import type { Department } from '../../domain/entities/department-schema'
+import type { ListOptions } from '../repositories/list-options'
 
 export class ListDepartmentsUseCase {
   private readonly departmentRepository: DepartmentRepository
@@ -8,7 +9,7 @@ export class ListDepartmentsUseCase {
     this.departmentRepository = departmentRepository
   }
 
-  async execute(): Promise<Department[]> {
-    return this.departmentRepository.list()
+  async execute(options?: ListOptions): Promise<Department[]> {
+    return this.departmentRepository.list(options)
   }
 }

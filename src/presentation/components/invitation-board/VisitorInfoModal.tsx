@@ -1,4 +1,5 @@
 import type { InvitationDetail, InvitationVehicle } from '../../../domain/entities/invitation-detail-schema'
+import { FormSkeleton } from '../ui/Skeleton'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
 import type { FieldAnswer, GroupAnswer } from '../../../domain/entities/form-field-answer-schema'
@@ -10,11 +11,15 @@ import { formatDateTime } from '../../utils/format-time'
 import { resolvePointOfContactLabel } from '../../utils/approval-step-label'
 import { prettifyKey } from '../../utils/prettify-key'
 import { useEffectiveForm, findFieldById, findGroupById } from '../../hooks/use-effective-form'
+import { purposeLabel } from '../../utils/purpose-of-visit-options'
 
 interface VisitorInfoModalProps {
   isOpen: boolean
   isLoading?: boolean
   detail?: InvitationDetail
+  // The detail couldn't be loaded for this open; offered with a retry.
+  hasError?: boolean
+  onRetry?: () => void
   workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
   // Names the user who reverted an approval, when the board already knows
   // them; otherwise the note shows only the time and reason.
@@ -26,7 +31,7 @@ interface VisitorInfoModalProps {
 const STATUS_TONE_CLASSES: Record<string, string> = {
   submitted: 'bg-info/10 text-info',
   requested: 'bg-info/10 text-info',
-  approved: 'bg-success/10 text-success',
+  approved: 'bg-success/10 text-success-text',
   checked_in: 'bg-secondary-accent/10 text-secondary-accent',
   checked_out: 'bg-text-faint/15 text-text-muted',
   denied: 'bg-danger/10 text-danger',
@@ -146,8 +151,7 @@ function formatRawFieldValue(value: unknown, field?: FormField): string {
   return field?.options && field.options.length > 0 ? prettifyKey(stringValue) : stringValue
 }
 
-/** Renders a fieldId-addressed custom-field answer list (`customFields` /
- * `primaryContactCustomFields`) as `Field` rows, labeling each answer via
+/** Renders a fieldId-addressed custom-field answer list (`customFields`) as `Field` rows, labeling each answer via
  * the branch's published form-builder config when a match exists and
  * falling back to a prettified fieldId otherwise. Dynamic by construction:
  * it has no fixed list of fields, so it stays correct as admins add/remove
@@ -204,6 +208,8 @@ export function VisitorInfoModal({
   isOpen,
   isLoading,
   detail,
+  hasError,
+  onRetry,
   workflowRulesByCategory,
   employeeNameById,
   onClose,
@@ -217,14 +223,20 @@ export function VisitorInfoModal({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Visitor Info" maxWidthClassName="max-w-lg">
-      {isLoading || !detail ? (
-        <div className="flex flex-col items-center gap-2 py-8">
-          <div className="size-6 animate-spin rounded-full border-2 border-border-subtle border-t-secondary-accent" />
-          <p className="font-body text-sm text-text-muted">Loading visitor info…</p>
+      {hasError ? (
+        <div role="alert" className="flex flex-col items-center gap-3 py-8 text-center">
+          <p className="font-body text-sm text-danger">We couldn't load this visitor's details.</p>
+          {onRetry && (
+            <button type="button" onClick={onRetry} className="min-h-10 rounded-lg bg-secondary-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
+              Try again
+            </button>
+          )}
         </div>
+      ) : isLoading || !detail ? (
+        <FormSkeleton bare rows={4} columns={2} label="Loading visitor info…" />
       ) : (
         <div className="flex flex-col gap-5">
-          <div className="flex items-start justify-between gap-3 rounded-xl border border-border-subtle bg-bg p-4">
+          <div className="flex items-start justify-between gap-3 rounded-xl border border-border-subtle bg-surface-inset p-4">
             <div className="flex items-center gap-3">
               <Avatar
                 name={detail.primaryContactFullName}
@@ -254,7 +266,7 @@ export function VisitorInfoModal({
             <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
               <Field label="Email" value={detail.primaryContactEmail ?? '—'} />
               <Field label="Phone" value={detail.primaryContactPhone ?? '—'} />
-              <Field label="Purpose" value={detail.purposeOfVisit} />
+              <Field label="Purpose" value={purposeLabel(detail.purposeOfVisit) ?? '—'} />
               <Field label="Host" value={detail.hostNameOrEmail ?? '—'} />
               <Field label="Point of Contact" value={pointOfContact ?? '—'} />
               <Field label="Department" value={detail.departmentToVisit ?? '—'} />
@@ -287,7 +299,6 @@ export function VisitorInfoModal({
                 </div>
               ) : null}
               <IdProofField label="ID proof" type={detail.primaryContactIdProofType} url={detail.primaryContactIdProofUrl} />
-              <CustomFieldValueFields values={detail.primaryContactCustomFields} steps={formSteps} />
               {detail.additionalNotes ? (
                 <div className="col-span-full">
                   <Field label="Notes" value={detail.additionalNotes} />
@@ -327,7 +338,7 @@ export function VisitorInfoModal({
           <div className="flex flex-col gap-3">
             <SectionLabel>Timeline</SectionLabel>
             <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 rounded-xl border border-border-subtle p-4">
-              <Field label="Submitted" value={formatDateTime(detail.submittedAt)} />
+              <Field label="Submitted" value={detail.submittedAt ? formatDateTime(detail.submittedAt) : '—'} />
               <Field label="Expires" value={formatDateTime(detail.expiresAt)} />
               {detail.approvedAt ? <Field label="Approved" value={formatDateTime(detail.approvedAt)} /> : null}
               {detail.checkedInAt ? <Field label="Checked in" value={formatDateTime(detail.checkedInAt)} /> : null}
@@ -374,7 +385,7 @@ export function VisitorInfoModal({
           </div>
 
           {detail.badgeNumber ? (
-            <div className="flex items-center gap-3 rounded-xl border border-border-subtle bg-bg p-4">
+            <div className="flex items-center gap-3 rounded-xl border border-border-subtle bg-surface-inset p-4">
               <CalendarClockIcon className="size-4 shrink-0 text-text-faint" />
               <div className="flex flex-1 flex-wrap gap-x-6 gap-y-2">
                 <Field label="Badge number" value={detail.badgeNumber} />

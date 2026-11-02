@@ -12,7 +12,6 @@ import { DenyInvitationModal } from '../../components/invitation-board/DenyInvit
 import { RevertApprovalModal } from '../../components/invitation-board/RevertApprovalModal'
 import { CheckOutVisitorModal } from '../../components/invitation-board/CheckOutVisitorModal'
 import { RescheduleInvitationModal } from '../../components/invitation-board/RescheduleInvitationModal'
-import { todayAsDateInputValue } from '../../utils/local-date-input-value'
 import { DelegateInvitationModal } from '../../components/invitation-board/DelegateInvitationModal'
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
@@ -41,6 +40,7 @@ export function StaffInvitationsPage() {
     registrationTypeFilter,
     setRegistrationTypeFilter,
     statusFilter,
+    dashboardChips,
     focusClosedStatus,
     setStatusFilter,
     sourceFilter,
@@ -59,7 +59,8 @@ export function StaffInvitationsPage() {
     cancelRevert,
     confirmRevert,
     revertingId,
-    invitationDetails,
+    visitorInfo,
+    retryVisitorInfo,
     roleNameById,
     hostEmployees,
     employeeNameById,
@@ -80,6 +81,7 @@ export function StaffInvitationsPage() {
     denyingId,
     canCheckOut,
     canExport,
+    actionPermissions,
     isExportOpen,
     openExport,
     closeExport,
@@ -134,6 +136,7 @@ export function StaffInvitationsPage() {
             registrationTypeFilter={registrationTypeFilter}
             onRegistrationTypeFilterChange={setRegistrationTypeFilter}
             extraFilters={boardExtraFilters({ statusFilter, setStatusFilter, sourceFilter, setSourceFilter })}
+            dashboardChips={dashboardChips}
             isFiltering={isFiltering}
             onClearFilters={clearFilters}
           />
@@ -169,23 +172,28 @@ export function StaffInvitationsPage() {
                 onLoadMore={column.loadMore}
                 emptyMessage={EMPTY_MESSAGES[column.status]}
                 embedded={embedded}
-                onDrop={column.status === 'approved' ? requestApprove : column.status === 'denied' ? requestDeny : undefined}
-                onMoveToApproved={column.status === 'requested' ? requestApprove : undefined}
-                onMoveToDenied={column.status === 'requested' ? requestDeny : undefined}
+                onDrop={
+                  column.status === 'approved' && actionPermissions.approve
+                    ? requestApprove
+                    : column.status === 'denied' && actionPermissions.deny
+                      ? requestDeny
+                      : undefined
+                }
+                onMoveToApproved={column.status === 'requested' && actionPermissions.approve ? requestApprove : undefined}
+                onMoveToDenied={column.status === 'requested' && actionPermissions.deny ? requestDeny : undefined}
                 approvingId={approvingId}
-                invitationDetails={invitationDetails}
                 roleNameById={roleNameById}
                 employeeNameById={employeeNameById}
                 workflowRulesByCategory={workflowRulesByCategory}
-                onRescheduleClick={requestReschedule}
-                onDelegateClick={requestDelegate}
-                onApproveAndDelegateClick={requestApproveAndDelegate}
-                onApproveClick={requestApprove}
-                onEditClick={requestEdit}
+                onRescheduleClick={actionPermissions.reschedule ? requestReschedule : undefined}
+                onDelegateClick={actionPermissions.delegate ? requestDelegate : undefined}
+                onApproveAndDelegateClick={actionPermissions.approve ? requestApproveAndDelegate : undefined}
+                onApproveClick={actionPermissions.approve ? requestApprove : undefined}
+                onEditClick={actionPermissions.edit ? requestEdit : undefined}
                 canEditCheckOutTime={canCheckOut}
                 onVisitorInfoClick={viewVisitorInfo}
                 onCheckOutClick={column.status === 'checked_in' && canCheckOut ? requestCheckOut : undefined}
-                onRevertClick={column.status === 'approved' ? requestRevert : undefined}
+                onRevertClick={column.status === 'approved' && actionPermissions.revert ? requestRevert : undefined}
               />
             )}
           />
@@ -233,7 +241,6 @@ export function StaffInvitationsPage() {
         visitorName={findRequest(pendingRescheduleId)?.primaryContactFullName}
         trackingId={findRequest(pendingRescheduleId)?.trackingId}
         isRescheduling={reschedulingId !== undefined}
-        minDate={findRequest(pendingRescheduleId)?.status === 'archived' ? todayAsDateInputValue() : undefined}
         onConfirm={(preferredVisitDate, preferredVisitTime) =>
           pendingRescheduleId && reschedule(pendingRescheduleId, preferredVisitDate, preferredVisitTime)
         }
@@ -290,8 +297,10 @@ export function StaffInvitationsPage() {
 
       <VisitorInfoModal
         isOpen={visitorInfoId !== undefined}
-        isLoading={visitorInfoId !== undefined && !invitationDetails[visitorInfoId]}
-        detail={visitorInfoId ? invitationDetails[visitorInfoId] : undefined}
+        isLoading={visitorInfo.status === 'loading'}
+        hasError={visitorInfo.status === 'error'}
+        onRetry={retryVisitorInfo}
+        detail={visitorInfo.detail}
         workflowRulesByCategory={workflowRulesByCategory}
         employeeNameById={employeeNameById}
         onClose={closeVisitorInfo}

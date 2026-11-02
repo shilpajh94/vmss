@@ -1,4 +1,4 @@
-import { ChevronLeftIcon, PlusIcon } from '../../components/icons'
+import { PlusIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
@@ -9,6 +9,8 @@ import { FloorCard } from './Components/FloorCard'
 import { FloorModal } from './Components/FloorModal'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { useAdminBuildingForm } from './hooks/use-admin-building-form'
+import { ErrorState } from '../../components/ui/ErrorState'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 export function AdminBuildingFormPage() {
   const {
@@ -48,25 +50,10 @@ export function AdminBuildingFormPage() {
   return (
     <>
       <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={cancel}
-            aria-label="Back"
-            className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-          >
-            <ChevronLeftIcon className="size-4" />
-          </button>
-          <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Building' : 'Add Building'}</h1>
-        </div>
+        <FormPageHeader title={isEditMode ? 'Edit Building' : 'Add Building'} onBack={cancel} />
 
         {errorMessage ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
-            <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
-              Try again
-            </button>
-          </div>
+          <ErrorState message={errorMessage} onRetry={retry} />
         ) : isLoading ? (
           <FormSkeleton rows={3} columns={2} label="Loading building…" />
         ) : (
@@ -77,18 +64,22 @@ export function AdminBuildingFormPage() {
                 <div className="flex-1">
                   <TextField
                     label="Building Name"
+                    required
                     value={details.name}
                     onChange={(name) => updateField('name', name)}
                     error={errors.name}
+                    maxLength={255}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
                 <div className="flex-1">
                   <SelectField
                     label="Branch"
+                    required
                     value={details.branchId}
                     onChange={(branchId) => updateField('branchId', branchId)}
                     options={branchOptions}
+                    disabled={isEditMode}
                     placeholder="Select associated branch..."
                     error={errors.branchId}
                     labelClassName={fieldLabelClassName}
@@ -99,9 +90,11 @@ export function AdminBuildingFormPage() {
                 <div className="flex-1">
                   <TextField
                     label="Building Code"
+                    required
                     value={details.code}
                     onChange={(code) => updateField('code', code)}
                     error={errors.code}
+                    maxLength={50}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
@@ -110,11 +103,12 @@ export function AdminBuildingFormPage() {
                     label="Street Address"
                     value={details.address}
                     onChange={(address) => updateField('address', address)}
+                    maxLength={500}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
               </div>
-              <div className="flex items-center justify-between py-2">
+              <div className="flex flex-col items-start gap-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-col gap-1">
                   <p className="font-body text-sm font-semibold text-text-muted">Building Status</p>
                   <p className="font-body text-xs text-text-faint">Set active state to allow access allocation and visitor intake checks</p>

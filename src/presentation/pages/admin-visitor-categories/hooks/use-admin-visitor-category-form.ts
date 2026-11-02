@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { VisitorCategoryInput } from '../../../../domain/entities/visitor-category-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
+import { wholeNumberRangeError } from '../../../utils/whole-number-range'
 
 const EMPTY_VALUES: VisitorCategoryInput = {
   name: '',
@@ -22,7 +24,6 @@ export function useAdminVisitorCategoryForm() {
   const isEditMode = id !== undefined
 
   const {
-    getCurrentStaffUserUseCase,
     listVisitorCategoriesUseCase,
     createVisitorCategoryUseCase,
     updateVisitorCategoryUseCase,
@@ -31,7 +32,7 @@ export function useAdminVisitorCategoryForm() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
@@ -44,8 +45,6 @@ export function useAdminVisitorCategoryForm() {
     setErrorMessage(undefined)
 
     try {
-      const user = await getCurrentStaffUserUseCase.execute()
-      setCurrentUser(user)
 
       if (isEditMode) {
         const visitorCategories = await listVisitorCategoriesUseCase.execute()
@@ -72,22 +71,17 @@ export function useAdminVisitorCategoryForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listVisitorCategoriesUseCase, isEditMode, id, toast])
+  }, [listVisitorCategoriesUseCase, isEditMode, id, toast])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void load()
-  }, [navigate, load])
+  }, [load])
 
   const retry = useCallback(() => {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: values, isLoading, reload: retry })
+  const { release } = useFormPageRefresh({ values: values, isLoading, reload: retry })
 
   const updateField = useCallback(<K extends keyof VisitorCategoryInput>(key: K, value: VisitorCategoryInput[K]) => {
     setValues((current) => ({ ...current, [key]: value }))
@@ -97,6 +91,8 @@ export function useAdminVisitorCategoryForm() {
     const nextErrors: Partial<Record<keyof VisitorCategoryInput, string>> = {}
     if (!values.name.trim()) nextErrors.name = 'Category name is required.'
     if (!values.code.trim()) nextErrors.code = 'Category code is required.'
+    const durationError = wholeNumberRangeError(values.maxDurationMinutes, { label: 'Max duration', min: 1 })
+    if (durationError) nextErrors.maxDurationMinutes = durationError
 
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors)
@@ -129,13 +125,14 @@ export function useAdminVisitorCategoryForm() {
           console.error('Failed to auto-configure the default Reception approval level', workflowError)
         }
       }
+      release()
       navigate('/admin/visitor-categories')
-    } catch {
-      toast.error(`Something went wrong ${isEditMode ? 'updating' : 'creating'} the visitor category. Please try again.`)
+    } catch (error) {
+      toast.error(toUserMessage(error, `Something went wrong ${isEditMode ? 'updating' : 'creating'} the visitor category. Please try again.`))
     } finally {
       setIsSaving(false)
     }
-  }, [values, isEditMode, id, createVisitorCategoryUseCase, updateVisitorCategoryUseCase, listRolesUseCase, saveWorkflowUseCase, navigate, toast])
+  }, [values, isEditMode, id, createVisitorCategoryUseCase, updateVisitorCategoryUseCase, listRolesUseCase, saveWorkflowUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/visitor-categories')

@@ -29,7 +29,18 @@ export interface EditInvitationFields {
   checkedOutAt?: string
 }
 
-export interface ListVisitRequestsParams {
+// The dashboard drill-down filters (fix-dashboard-count-accuracy): with
+// them a list holds exactly the invitations a dashboard figure counted.
+// `visitDateFrom`/`visitDateTo` are YYYY-MM-DD visit days, inclusive.
+export interface InvitationDrillDown {
+  visitDateFrom?: string
+  visitDateTo?: string
+  upcoming?: boolean
+  excludeExpired?: boolean
+  branchId?: string
+}
+
+export interface ListVisitRequestsParams extends InvitationDrillDown {
   relevantToMe?: boolean
   status?: string
   registrationType?: string
@@ -49,7 +60,7 @@ export type InvitationExportFormat = 'csv' | 'xlsx'
 // `GET /invitations/export`: the list filters plus a status-matched date
 // range (`dateFrom`/`dateTo` as YYYY-MM-DD, inclusive). The API returns one
 // row per visitor; there's no pagination.
-export interface InvitationExportParams {
+export interface InvitationExportParams extends InvitationDrillDown {
   format: InvitationExportFormat
   status?: string
   dateFrom?: string

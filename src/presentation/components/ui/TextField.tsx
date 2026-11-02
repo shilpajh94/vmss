@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { useId, type ReactNode } from 'react'
 
 interface TextFieldProps {
   label: string
@@ -18,7 +18,15 @@ interface TextFieldProps {
   labelClassName?: string
   min?: string
   max?: string
+  // The API's column limit, so an over-long value is stopped at the keyboard
+  // rather than rejected by a 422 after submit.
+  maxLength?: number
+  inputMode?: 'text' | 'email' | 'tel' | 'numeric' | 'decimal' | 'url' | 'search'
   autoComplete?: string
+  // A control inside the field's right edge (e.g. a show-password toggle).
+  trailing?: ReactNode
+  // Extra classes for the input itself, e.g. a taller field.
+  inputClassName?: string
 }
 
 export function TextField({
@@ -36,9 +44,51 @@ export function TextField({
   labelClassName,
   min,
   max,
+  maxLength,
+  inputMode,
   autoComplete,
+  trailing,
+  inputClassName = '',
 }: TextFieldProps) {
   const inputId = useId()
+  const messageId = `${inputId}-message`
+  const hasMessage = Boolean(error || helperText)
+
+  const input = (
+    <input
+      id={inputId}
+      type={type}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={onBlur}
+      onClick={(event) => {
+        // Firefox (and some Chromium builds) only open the native date/time
+        // picker when the click lands exactly on the tiny calendar icon.
+        // Forcing showPicker() on any click makes the whole field clickable.
+        if (type === 'date' || type === 'time') {
+          try {
+            event.currentTarget.showPicker?.()
+          } catch {
+            // unsupported or blocked (e.g. no user-gesture context) — ignore
+          }
+        }
+      }}
+      placeholder={placeholder}
+      aria-required={required}
+      aria-invalid={error ? true : undefined}
+      aria-describedby={hasMessage ? messageId : undefined}
+      disabled={disabled}
+      readOnly={readOnly}
+      min={min}
+      max={max}
+      maxLength={maxLength}
+      inputMode={inputMode}
+      autoComplete={autoComplete}
+      className={`rounded-lg border px-3 py-2 text-body text-text max-sm:text-base max-lg:min-h-10 placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60 ${
+        readOnly ? 'cursor-default bg-border-subtle text-text-muted' : ''
+      } ${error ? 'border-danger' : 'border-border'} ${trailing ? 'w-full pr-11' : ''} ${inputClassName}`}
+    />
+  )
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -46,37 +96,24 @@ export function TextField({
         {label}
         {required && <span className="ml-1 text-danger">*</span>}
       </label>
-      <input
-        id={inputId}
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onBlur={onBlur}
-        onClick={(event) => {
-          // Firefox (and some Chromium builds) only open the native date/time
-          // picker when the click lands exactly on the tiny calendar icon.
-          // Forcing showPicker() on any click makes the whole field clickable.
-          if (type === 'date' || type === 'time') {
-            try {
-              event.currentTarget.showPicker?.()
-            } catch {
-              // unsupported or blocked (e.g. no user-gesture context) — ignore
-            }
-          }
-        }}
-        placeholder={placeholder}
-        aria-required={required}
-        disabled={disabled}
-        readOnly={readOnly}
-        min={min}
-        max={max}
-        autoComplete={autoComplete}
-        className={`rounded-lg border px-3 py-2 text-body text-text max-sm:text-base max-lg:min-h-10 placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-secondary-accent disabled:opacity-60 ${
-          readOnly ? 'cursor-default bg-border-subtle text-text-muted' : ''
-        } ${error ? 'border-danger' : 'border-border'}`}
-      />
-      {helperText && !error && <p className="text-caption text-text-muted">{helperText}</p>}
-      {error && <p className="text-caption text-danger">{error}</p>}
+      {trailing ? (
+        <div className="relative">
+          {input}
+          <div className="absolute inset-y-0 right-1.5 flex items-center">{trailing}</div>
+        </div>
+      ) : (
+        input
+      )}
+      {helperText && !error && (
+        <p id={messageId} className="text-caption text-text-muted">
+          {helperText}
+        </p>
+      )}
+      {error && (
+        <p id={messageId} className="text-caption text-danger">
+          {error}
+        </p>
+      )}
     </div>
   )
 }

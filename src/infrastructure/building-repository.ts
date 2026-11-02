@@ -5,6 +5,8 @@ import type { BranchRepository } from '../data/repositories/branch-repository'
 import type { BuildingRepository, BuildingsPage, ListBuildingsPageParams } from '../data/repositories/building-repository'
 import { BuildingListResponseSchema, BuildingResponseSchema, type BuildingOut } from '../domain/entities/building-out-schema'
 import type { Building, BuildingInput } from '../domain/entities/building-schema'
+import { fetchAllPages } from '../data/api/fetch-all-pages'
+import type { ListOptions } from '../data/repositories/list-options'
 
 export class HttpBuildingRepository implements BuildingRepository {
   private readonly apiClient: ApiClient
@@ -32,17 +34,19 @@ export class HttpBuildingRepository implements BuildingRepository {
     }
   }
 
-  async list(): Promise<Building[]> {
-    const [response, branchNameById] = await Promise.all([
-      this.apiClient.makeRequest({
-        endpointConfig: API_ENDPOINTS.LIST_BUILDINGS,
-        queryParams: { pageSize: 100 },
-        parserSchema: BuildingListResponseSchema,
-      }),
+  async list(options?: ListOptions): Promise<Building[]> {
+    const [buildings, branchNameById] = await Promise.all([
+      fetchAllPages((page, pageSize) =>
+        this.apiClient.makeRequest({
+          endpointConfig: API_ENDPOINTS.LIST_BUILDINGS,
+          queryParams: { page, pageSize, status: options?.activeOnly ? 'active' : undefined },
+          parserSchema: BuildingListResponseSchema,
+        }),
+      ),
       this.buildBranchNameById(),
     ])
 
-    return response.data.map((buildingOut) => this.toBuilding(buildingOut, branchNameById))
+    return buildings.map((buildingOut) => this.toBuilding(buildingOut, branchNameById))
   }
 
   async listPage({ page, pageSize, status, branchId }: ListBuildingsPageParams): Promise<BuildingsPage> {

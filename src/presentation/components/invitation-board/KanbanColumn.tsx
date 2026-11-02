@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
-import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { VisitRequestCard } from './VisitRequestCard'
 import { UserIcon } from '../icons'
@@ -11,7 +10,7 @@ import { useInfiniteScrollSentinel } from '../../hooks/use-infinite-scroll-senti
 
 export const ACCENT_CLASSES = {
   requested: { border: 'border-l-info', tint: 'bg-info/8', text: 'text-info', dragOver: 'border-info bg-info/5 ring-info/40' },
-  approved: { border: 'border-l-success', tint: 'bg-success/8', text: 'text-success', dragOver: 'border-success bg-success/5 ring-success/40' },
+  approved: { border: 'border-l-success', tint: 'bg-success/8', text: 'text-success-text', dragOver: 'border-success bg-success/5 ring-success/40' },
   checked_in: {
     border: 'border-l-secondary-accent',
     tint: 'bg-secondary-accent/8',
@@ -46,7 +45,6 @@ interface KanbanColumnProps {
   embedded?: boolean
   onDrop?: (id: string) => void
   approvingId?: string
-  invitationDetails?: Record<string, InvitationDetail>
   roleNameById?: Record<string, string>
   employeeNameById?: Record<string, string>
   workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
@@ -76,7 +74,6 @@ export function KanbanColumn({
   embedded = false,
   onDrop,
   approvingId,
-  invitationDetails,
   roleNameById,
   employeeNameById,
   workflowRulesByCategory,
@@ -155,7 +152,6 @@ export function KanbanColumn({
               request={request}
               isDraggable={status === 'requested'}
               isApproving={approvingId === request.id}
-              detail={invitationDetails?.[request.id]}
               roleNameById={roleNameById}
               employeeNameById={employeeNameById}
               workflowRulesByCategory={workflowRulesByCategory}
@@ -192,7 +188,7 @@ export function KanbanColumn({
               <button
                 type="button"
                 onClick={onLoadMore}
-                className="min-h-9 rounded-lg border border-border bg-surface px-3 font-body text-xs font-semibold text-text"
+                className="min-h-10 rounded-lg border border-border bg-surface px-3 font-body text-xs font-semibold text-text lg:min-h-9"
               >
                 Retry
               </button>

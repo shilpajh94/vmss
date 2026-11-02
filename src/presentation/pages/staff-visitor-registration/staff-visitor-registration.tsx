@@ -21,6 +21,7 @@ import { RegistrationStepper } from './Components/RegistrationStepper'
 import { RegistrationWorkspaceHeader } from './Components/RegistrationWorkspaceHeader'
 import { VisitorInfoStep } from './Components/VisitorInfoStep'
 import { useStaffVisitorRegistrationWizard } from './hooks/use-staff-visitor-registration-wizard'
+import { createInitialStaffFormState } from './types'
 import { useFormPageRefresh } from '../../hooks/use-form-page-refresh'
 
 export function StaffVisitorRegistrationPage() {
@@ -93,9 +94,9 @@ export function StaffVisitorRegistrationPage() {
     setIsMasterDataLoading(true)
     try {
       const [branchList, buildingList, categoryList] = await Promise.all([
-        listBranchesUseCase.execute(),
-        listBuildingsUseCase.execute(),
-        listVisitorCategoriesUseCase.execute(),
+        listBranchesUseCase.execute({ activeOnly: true }),
+        listBuildingsUseCase.execute({ activeOnly: true }),
+        listVisitorCategoriesUseCase.execute({ activeOnly: true }),
       ])
       setBranches(branchList)
       setBuildings(buildingList)
@@ -109,12 +110,8 @@ export function StaffVisitorRegistrationPage() {
   }, [listBranchesUseCase, listBuildingsUseCase, listVisitorCategoriesUseCase])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/staff/login', { replace: true })
-      return
-    }
     void loadVisitInfoMasterData()
-  }, [navigate, loadVisitInfoMasterData])
+  }, [loadVisitInfoMasterData])
 
   // The top-bar refresh starts the registration over from step 1 with fresh
   // master data; it asks first once anything has been entered.
@@ -127,11 +124,25 @@ export function StaffVisitorRegistrationPage() {
     void loadVisitInfoMasterData()
   }, [loadVisitInfoMasterData])
 
-  useFormPageRefresh({ values: formState, isLoading: isMasterDataLoading, reload: reloadRegistration })
+  // The baseline is the empty form: the wizard can be typed into while its
+  // option lists load. A submitted registration has nothing left unsaved.
+  const [initialFormState] = useState(createInitialStaffFormState)
+  const { release, confirmDiscard } = useFormPageRefresh({
+    values: formState,
+    isLoading: isMasterDataLoading,
+    reload: reloadRegistration,
+    baseline: initialFormState,
+    isComplete: submissionStatus === 'success',
+  })
 
+  // Cancel asks first once anything has been entered (QA: it used to
+  // discard silently).
   const cancelRegistration = () => {
-    reset()
-    navigate('/staff/invitations')
+    confirmDiscard(() => {
+      release()
+      reset()
+      navigate('/staff/invitations')
+    })
   }
 
   return (
@@ -146,27 +157,31 @@ export function StaffVisitorRegistrationPage() {
             <RegistrationStepper steps={stepLabels} currentStep={currentStep} onStepSelect={goToStep} />
           </>
         }
+        // The Review step has its own sticky Back/Submit bar; showing this
+        // one too stacked two sticky bars on a phone.
         footer={
-          <div className="sticky bottom-0 -mx-4 flex flex-none flex-wrap items-center justify-between gap-3 border-t border-border bg-surface px-4 pt-4 pb-1 lg:static lg:mx-0 lg:px-0 lg:pb-0">
-            <button
-              type="button"
-              onClick={cancelRegistration}
-              title="Cancel this registration"
-              className="cursor-pointer rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary transition-colors hover:bg-primary/10"
-            >
-              Cancel
-            </button>
-            {!isFormConfigLoading && !formConfigError && activeStep?.key !== 'review_confirm' && (
+          activeStep?.key === 'review_confirm' ? undefined : (
+            <div /* page-canvas */ className="sticky bottom-0 -mx-4 flex flex-none flex-wrap items-center justify-between gap-3 border-t border-border bg-bg px-4 pt-4 pb-1 lg:static lg:mx-0 lg:px-0 lg:pb-0">
               <button
                 type="button"
-                onClick={goNext}
-                title="Continue to the next step"
-                className="cursor-pointer rounded-lg bg-primary px-7 py-3 text-body font-semibold text-on-primary transition-colors hover:opacity-90"
+                onClick={cancelRegistration}
+                title="Cancel this registration"
+                className="cursor-pointer rounded-lg border border-primary px-6 py-3 text-body font-semibold text-primary transition-colors hover:bg-primary/10 dark:border-border-strong dark:text-text"
               >
-                {nextStepLabel ? `Next: ${nextStepLabel} →` : 'Next →'}
+                Cancel
               </button>
-            )}
-          </div>
+              {!isFormConfigLoading && !formConfigError && activeStep?.key !== 'review_confirm' && (
+                <button
+                  type="button"
+                  onClick={goNext}
+                  title="Continue to the next step"
+                  className="cursor-pointer rounded-lg bg-primary px-7 py-3 text-body font-semibold text-on-primary transition-colors hover:opacity-90"
+                >
+                  {nextStepLabel ? `Next: ${nextStepLabel} →` : 'Next →'}
+                </button>
+              )}
+            </div>
+          )
         }
       >
         <div className="flex flex-col overflow-x-clip rounded-2xl border border-border bg-surface p-4 md:p-6">
@@ -253,6 +268,7 @@ export function StaffVisitorRegistrationPage() {
             )}
             {!isFormConfigLoading && !formConfigError && activeStep?.key === 'review_confirm' && (
               <ReviewConfirmStep
+                stickyBarInsetClassName="-mx-4 -mb-4 px-4 md:-mx-6 md:-mb-6 md:px-6"
                 formState={formState}
                 status={submissionStatus}
                 trackingId={trackingId}

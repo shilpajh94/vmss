@@ -4,6 +4,8 @@ import type { ApiClient } from '../data/api/api-client'
 import type { FloorRepository, FloorsPage, ListFloorsPageParams } from '../data/repositories/floor-repository'
 import { FloorListResponseSchema, FloorResponseSchema, type FloorOut } from '../domain/entities/floor-out-schema'
 import type { Floor, FloorInput } from '../domain/entities/floor-schema'
+import { fetchAllPages } from '../data/api/fetch-all-pages'
+import type { ListOptions } from '../data/repositories/list-options'
 
 function toFloor(floorOut: FloorOut): Floor {
   return {
@@ -25,14 +27,16 @@ export class HttpFloorRepository implements FloorRepository {
     this.apiClient = apiClient
   }
 
-  async list(buildingId?: string): Promise<Floor[]> {
-    const response = await this.apiClient.makeRequest({
-      endpointConfig: API_ENDPOINTS.LIST_FLOORS,
-      queryParams: { pageSize: 100, buildingId },
-      parserSchema: FloorListResponseSchema,
-    })
+  async list(buildingId?: string, options?: ListOptions): Promise<Floor[]> {
+    const floors = await fetchAllPages((page, pageSize) =>
+      this.apiClient.makeRequest({
+        endpointConfig: API_ENDPOINTS.LIST_FLOORS,
+        queryParams: { page, pageSize, buildingId, status: options?.activeOnly ? 'active' : undefined },
+        parserSchema: FloorListResponseSchema,
+      }),
+    )
 
-    return response.data.map(toFloor)
+    return floors.map(toFloor)
   }
 
   async listPage({ page, pageSize, buildingId, status, accessLevel }: ListFloorsPageParams): Promise<FloorsPage> {

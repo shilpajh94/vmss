@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { PermissionOut } from '../../../../domain/entities/permission-out-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 export function useAdminRoleCreateForm() {
   const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listPermissionsUseCase, createRoleUseCase } = useAppDependencies()
+  const { listPermissionsUseCase, createRoleUseCase } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [permissions, setPermissions] = useState<PermissionOut[]>([])
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -26,8 +27,7 @@ export function useAdminRoleCreateForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, permissionCatalog] = await Promise.all([getCurrentStaffUserUseCase.execute(), listPermissionsUseCase.execute()])
-      setCurrentUser(user)
+      const permissionCatalog = await listPermissionsUseCase.execute()
       setPermissions(permissionCatalog)
     } catch (error) {
       console.error('Failed to load permission catalog', error)
@@ -36,16 +36,11 @@ export function useAdminRoleCreateForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listPermissionsUseCase, toast])
+  }, [listPermissionsUseCase, toast])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void load()
-  }, [navigate, load])
+  }, [load])
 
   const retry = useCallback(() => {
     void load()
@@ -61,7 +56,7 @@ export function useAdminRoleCreateForm() {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: { name, description, permissionCodes: [...selectedCodes].sort() }, isLoading, reload })
+  const { release } = useFormPageRefresh({ values: { name, description, permissionCodes: [...selectedCodes].sort() }, isLoading, reload })
 
   const togglePermission = useCallback((code: string, checked: boolean) => {
     setSelectedCodes((current) => {
@@ -91,13 +86,14 @@ export function useAdminRoleCreateForm() {
         permissionCodes: Array.from(selectedCodes),
       })
       toast.success('Role created.')
+      release()
       navigate('/admin/roles')
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Something went wrong creating this role. Please try again.')
+      toast.error(toUserMessage(error, 'Something went wrong creating this role. Please try again.'))
     } finally {
       setIsSaving(false)
     }
-  }, [name, description, selectedCodes, createRoleUseCase, navigate, toast])
+  }, [name, description, selectedCodes, createRoleUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/roles')

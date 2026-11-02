@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode, SVGProps } from 'react'
-import { SearchGlyphIcon, TagIcon, UsersIcon } from '../icons'
+import { SearchGlyphIcon, TagIcon, UsersIcon, XIcon } from '../icons'
 import type { DropdownOption } from '../ui/DropdownFilter'
 import { MultiSelectFilter } from '../ui/MultiSelectFilter'
 import { REGISTRATION_TYPE_OPTIONS } from './filter-options'
@@ -13,6 +13,12 @@ export interface BoardExtraFilter {
   ariaLabel: string
 }
 
+export interface BoardDashboardChip {
+  key: string
+  label: string
+  onRemove: () => void
+}
+
 interface BoardFilterBarProps {
   search: string
   onSearchChange: (value: string) => void
@@ -24,6 +30,8 @@ interface BoardFilterBarProps {
   onRegistrationTypeFilterChange: (values: string[]) => void
   /** Further dropdowns after Registration Type (e.g. the admin board's Status and Source). */
   extraFilters?: BoardExtraFilter[]
+  /** The dashboard drill-down the board was opened with, one removable chip per filter. */
+  dashboardChips?: BoardDashboardChip[]
   isFiltering?: boolean
   onClearFilters?: () => void
   /** Rendered last in the bar, e.g. the staff dashboard's Export button. */
@@ -42,6 +50,7 @@ export function BoardFilterBar({
   registrationTypeFilter,
   onRegistrationTypeFilterChange,
   extraFilters = [],
+  dashboardChips = [],
   isFiltering = false,
   onClearFilters,
   trailingAction,
@@ -52,10 +61,11 @@ export function BoardFilterBar({
   // 240px minimum means the controls still share one row whenever they fit.
   return (
     <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-      <div className="flex h-10 min-w-0 flex-none items-center gap-3 rounded-lg sm:flex-1 border border-border bg-surface px-3 sm:min-w-[240px]">
+      <div className="flex h-10 min-w-0 flex-none items-center gap-3 rounded-lg sm:flex-1 border border-border bg-surface px-3 sm:min-w-[240px] focus-within:ring-2 focus-within:ring-secondary-accent">
         <SearchGlyphIcon className="size-4 shrink-0 text-text-faint" />
         <input
           type="text"
+          aria-label="Search invitations by visitor or tracking ID"
           value={search}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder={searchPlaceholder}
@@ -101,6 +111,30 @@ export function BoardFilterBar({
         </button>
       ) : null}
       {trailingAction ? <div className="flex shrink-0 sm:ml-auto [&>*]:w-full sm:[&>*]:w-auto">{trailingAction}</div> : null}
+
+      {/* Its own full-width row, so the chips explain why the board shows
+          fewer cards than usual without crowding the controls. */}
+      {dashboardChips.length > 0 ? (
+        <div role="group" aria-label="From dashboard" className="flex min-w-0 flex-wrap items-center gap-2 sm:basis-full">
+          <span className="font-body text-xs font-semibold text-text-faint">From dashboard</span>
+          {dashboardChips.map((chip) => (
+            <span
+              key={chip.key}
+              className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-full border border-border bg-surface py-0.5 pr-1 pl-3 font-body text-xs font-semibold text-text"
+            >
+              <span className="truncate">{chip.label}</span>
+              <button
+                type="button"
+                onClick={chip.onRemove}
+                aria-label={`Remove filter ${chip.label}`}
+                className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-text-faint hover:bg-border-subtle hover:text-text"
+              >
+                <XIcon className="size-3.5" />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }

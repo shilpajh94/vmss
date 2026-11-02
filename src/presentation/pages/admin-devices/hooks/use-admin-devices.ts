@@ -1,20 +1,20 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useCallback, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
-import { usePageRefresh } from '../../../context/refresh-context'
-import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
+import { useLiveResource } from '../../../hooks/use-live-resource'
 import { ApiError } from '../../../../data/api/api-error'
 import type { Device, DeviceOperatingMode } from '../../../../domain/entities/managed-device-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { Building } from '../../../../domain/entities/building-schema'
 import { canManageDevices } from '../can-manage-devices'
 import { parseDeviceSort, statusFilterToQuery, type DeviceSort, type DeviceStatusFilter } from '../device-status-filter'
 
 const PAGE_SIZE = 20
+const EMPTY_DEVICES: Device[] = []
+const EMPTY_BRANCHES: Branch[] = []
+const EMPTY_BUILDINGS: Building[] = []
 
 type DeviceAction = 'approve' | 'enable' | 'disable'
 
@@ -25,9 +25,7 @@ const ACTION_SUCCESS: Record<DeviceAction, string> = {
 }
 
 export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string) {
-  const navigate = useNavigate()
   const {
-    getCurrentStaffUserUseCase,
     listDevicesPageUseCase,
     approveDeviceUseCase,
     enableDeviceUseCase,
@@ -38,14 +36,7 @@ export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [devices, setDevices] = useState<Device[]>([])
-  const [total, setTotal] = useState(0)
-  const [branches, setBranches] = useState<Branch[]>([])
-  const [buildings, setBuildings] = useState<Building[]>([])
-  const { phase, isRefreshing, begin } = useLoadTracker()
-  // Only shown when the first load fails; keeps the 403 vs generic wording.
-  const [loadErrorMessage, setLoadErrorMessage] = useState<string | undefined>(undefined)
+  const currentUser = useCurrentUser()
 
   const [pendingDelete, setPendingDelete] = useState<Device | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -61,77 +52,43 @@ export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string
 
   const canManage = canManageDevices(currentUser)
 
-  // `user` (default): filter/page/sort/retry/refresh/post-mutation - keeps the
-  // current rows on screen with a progress cue. `background`: the 15s poll.
-  const loadDevices = useCallback(
-    async (mode: LoadMode = 'user') => {
-      const request = begin(mode)
-
-      try {
-        const [user, devicePage, branchList, buildingList] = await Promise.all([
-          getCurrentStaffUserUseCase.execute(),
-          listDevicesPageUseCase.execute({
-            operatingMode,
-            page,
-            pageSize: PAGE_SIZE,
-            ...statusFilterToQuery(statusFilter),
-            branchId: branchFilter || undefined,
-            buildingId: buildingFilter || undefined,
-            ...parseDeviceSort(sort),
-          }),
-          listBranchesUseCase.execute(),
-          listBuildingsUseCase.execute(),
-        ])
-        if (!request.succeed()) return
-        setCurrentUser(user)
-        setDevices(devicePage.items)
-        setTotal(devicePage.total)
-        setBranches(branchList)
-        setBuildings(buildingList)
-      } catch (error) {
-        if (!request.fail()) return
-        const message =
-          error instanceof ApiError && error.status === 403
-            ? `You do not have permission to view ${noun}.`
-            : `Something went wrong loading the ${noun}. Please try again.`
-        setLoadErrorMessage(message)
-        toast.error(message)
-      }
-    },
-    [
-      begin,
-      getCurrentStaffUserUseCase,
-      listDevicesPageUseCase,
-      listBranchesUseCase,
-      listBuildingsUseCase,
-      operatingMode,
-      noun,
-      page,
-      statusFilter,
-      branchFilter,
-      buildingFilter,
-      sort,
-      toast,
-    ],
+  const loadErrorText = useCallback(
+    (error: unknown) =>
+      error instanceof ApiError && error.status === 403
+        ? `You do not have permission to view ${noun}.`
+        : `Something went wrong loading the ${noun}. Please try again.`,
+    [noun],
   )
 
-  useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
-    void loadDevices()
-  }, [navigate, loadDevices])
-
-  const retry = useCallback(() => {
-    void loadDevices()
-  }, [loadDevices])
-
+  // The device rows are the live data; the branch and building filter
+  // options load once. Polls skip while a dialog or row action is busy.
   const isActionInProgress = pendingDelete !== undefined || isDeleting || busyDeviceId !== undefined
-  usePolling(() => void loadDevices('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
-
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
+  const resource = useLiveResource({
+    load: () =>
+      listDevicesPageUseCase.execute({
+        operatingMode,
+        page,
+        pageSize: PAGE_SIZE,
+        ...statusFilterToQuery(statusFilter),
+        branchId: branchFilter || undefined,
+        buildingId: buildingFilter || undefined,
+        ...parseDeviceSort(sort),
+      }),
+    query: { operatingMode, page, statusFilter, branchFilter, buildingFilter, sort },
+    reference: async () => {
+      const [branches, buildings] = await Promise.all([listBranchesUseCase.execute(), listBuildingsUseCase.execute()])
+      return { branches, buildings }
+    },
+    errorMessage: loadErrorText,
+    isBusy: isActionInProgress,
+  })
+  const { phase, isRefreshing, retry, reload, setData } = resource
+  const devices = resource.data?.items ?? EMPTY_DEVICES
+  const total = resource.data?.total ?? 0
+  const branches = resource.reference?.branches ?? EMPTY_BRANCHES
+  const buildings = resource.reference?.buildings ?? EMPTY_BUILDINGS
+  // Only shown when the first load fails; keeps the 403 vs generic wording.
+  const loadErrorMessage = phase === 'error' ? loadErrorText(resource.error) : undefined
 
   const isFiltering = statusFilter !== '' || branchFilter !== '' || buildingFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])
@@ -183,17 +140,17 @@ export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string
     (error: unknown, fallback: string) => {
       if (error instanceof ApiError && error.status === 404) {
         toast.error('That device no longer exists.')
-        void loadDevices()
+        void reload()
       } else if (error instanceof ApiError && error.status === 409) {
         toast.error(error.message)
-        void loadDevices()
+        void reload()
       } else if (error instanceof ApiError && (error.status === 403 || error.status === 422)) {
         toast.error(error.message)
       } else {
         toast.error(fallback)
       }
     },
-    [toast, loadDevices],
+    [toast, reload],
   )
 
   const runAction = useCallback(
@@ -203,17 +160,17 @@ export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string
       setBusyDeviceId(device.id)
       try {
         const updated = await useCase.execute(device.id)
-        setDevices((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+        setData((current) => current && { ...current, items: current.items.map((item) => (item.id === updated.id ? updated : item)) })
         toast.success(ACTION_SUCCESS[action])
         // The updated row may no longer match the active status filter.
-        await loadDevices()
+        await reload()
       } catch (error) {
         reportMutationError(error, 'Something went wrong updating the device. Please try again.')
       } finally {
         setBusyDeviceId(undefined)
       }
     },
-    [approveDeviceUseCase, enableDeviceUseCase, disableDeviceUseCase, toast, loadDevices, reportMutationError],
+    [approveDeviceUseCase, enableDeviceUseCase, disableDeviceUseCase, toast, setData, reload, reportMutationError],
   )
 
   const approve = useCallback((device: Device) => runAction('approve', device), [runAction])
@@ -235,7 +192,7 @@ export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string
       if (devices.length === 1 && page > 1) {
         setPage(page - 1)
       } else {
-        await loadDevices()
+        await reload()
       }
     } catch (error) {
       setPendingDelete(undefined)
@@ -243,7 +200,7 @@ export function useAdminDevices(operatingMode: DeviceOperatingMode, noun: string
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, deleteDeviceUseCase, devices.length, page, setPage, toast, loadDevices, reportMutationError])
+  }, [pendingDelete, deleteDeviceUseCase, devices.length, page, setPage, toast, reload, reportMutationError])
 
   return {
     canManage,

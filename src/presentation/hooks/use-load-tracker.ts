@@ -25,7 +25,7 @@ export interface LoadRequest {
 // Splits a view's load state into "first load" vs "refresh"
 // (async-ui-states "Re-fetching keeps existing content visible") and
 // drops superseded responses ("Out-of-order responses never overwrite
-// newer results"). Generalised from useLiveResource's requestIdRef.
+// newer results"). Generalised from useDashboardResource's requestIdRef.
 // Page hooks keep their own data state; only the loading bookkeeping
 // moves here:
 //

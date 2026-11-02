@@ -1,8 +1,9 @@
 import { BRAND_NAME } from '../../brand'
 import { BrandLogo } from '../BrandLogo'
-import { PanelLeftCloseIcon, PanelLeftOpenIcon, XIcon } from '../icons'
+import { CollapseSidebarIcon, ExpandSidebarIcon, XIcon } from '../icons'
 import { NAV_DRAWER_ID, useNavDrawer } from '../../context/nav-drawer-context'
 import { useSidebarCollapse } from '../../context/sidebar-collapse-context'
+import { useRailTooltip } from './SidebarNavItem'
 
 interface SidebarHeaderProps {
   onHome: () => void
@@ -11,10 +12,16 @@ interface SidebarHeaderProps {
 
 // Logo (home link), the drawer's close button below `lg`, and the rail
 // toggle from `lg` up. Collapsed, the wordmark gives way to the "V" mark and
-// the toggle stacks beneath it so both fit the 48px rail interior.
+// the toggle stacks beneath it so both fit the 48px rail interior. The
+// toggle's two icons are stacked and cross-fade with a quarter turn, in step
+// with SidebarFrame's width transition.
 export function SidebarHeader({ onHome, className = '' }: SidebarHeaderProps) {
   const { closeNav } = useNavDrawer()
   const { isCollapsed, toggleCollapsed } = useSidebarCollapse()
+  const toggleLabel = isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'
+  const { handlers: tooltipHandlers, tooltip } = useRailTooltip(toggleLabel, true)
+  const iconClassName =
+    'absolute inset-0 size-[18px] transition-[opacity,rotate,scale] duration-standard ease-motion-out motion-reduce:transition-none'
 
   return (
     <div className={`flex shrink-0 items-center gap-2 ${isCollapsed ? 'flex-col' : 'justify-between'} ${className}`}>
@@ -32,13 +39,18 @@ export function SidebarHeader({ onHome, className = '' }: SidebarHeaderProps) {
       <button
         type="button"
         onClick={toggleCollapsed}
-        aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        aria-label={toggleLabel}
         aria-expanded={!isCollapsed}
         aria-controls={NAV_DRAWER_ID}
+        {...tooltipHandlers}
         className="hidden size-9 shrink-0 items-center justify-center rounded-lg text-sidebar-muted hover:bg-white/5 hover:text-white focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none lg:flex"
       >
-        {isCollapsed ? <PanelLeftOpenIcon className="size-[18px]" /> : <PanelLeftCloseIcon className="size-[18px]" />}
+        <span className="relative size-[18px]">
+          <CollapseSidebarIcon className={`${iconClassName} ${isCollapsed ? '-rotate-90 scale-75 opacity-0' : 'rotate-0 scale-100 opacity-100'}`} />
+          <ExpandSidebarIcon className={`${iconClassName} ${isCollapsed ? 'rotate-0 scale-100 opacity-100' : 'rotate-90 scale-75 opacity-0'}`} />
+        </span>
       </button>
+      {tooltip}
     </div>
   )
 }

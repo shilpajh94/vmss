@@ -2,6 +2,7 @@ import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
 import type {
   EditInvitationFields,
+  InvitationDrillDown,
   InvitationExportParams,
   ListVisitRequestsParams,
   VisitRequestSummaryRepository,
@@ -18,6 +19,17 @@ import {
   type InvitationDetail,
   type InvitationDetailResponse,
 } from '../domain/entities/invitation-detail-schema'
+
+// Unset or false values are omitted, like the other optional filters.
+function drillDownQuery(params: InvitationDrillDown | undefined) {
+  return {
+    visitDateFrom: params?.visitDateFrom,
+    visitDateTo: params?.visitDateTo,
+    upcoming: params?.upcoming ? true : undefined,
+    excludeExpired: params?.excludeExpired ? true : undefined,
+    branchId: params?.branchId,
+  }
+}
 
 export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRepository {
   private readonly apiClient: ApiClient
@@ -36,6 +48,7 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
         source: params?.source,
         search: params?.search,
         purposeOfVisit: params?.purposeOfVisit,
+        ...drillDownQuery(params),
         page: params?.page,
         pageSize: params?.pageSize,
         sortBy: params?.sortBy,
@@ -62,6 +75,7 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
         source: params.source,
         search: params.search,
         purposeOfVisit: params.purposeOfVisit,
+        ...drillDownQuery(params),
       },
     })
   }
@@ -99,7 +113,14 @@ export class HttpVisitRequestSummaryRepository implements VisitRequestSummaryRep
       // when the invitation has no POC yet, and an empty string fails the
       // backend's UUID parser ("expected length 32... found 0") instead of
       // being treated as "unchanged". Omit it entirely unless one was picked.
-      body: { ...fields, pocUserId: fields.pocUserId || undefined },
+      // An empty date or time is sent as `null` (cleared): `''` isn't a
+      // date, so the API answered it with a 422.
+      body: {
+        ...fields,
+        preferredVisitDate: fields.preferredVisitDate || null,
+        preferredVisitTime: fields.preferredVisitTime || null,
+        pocUserId: fields.pocUserId || undefined,
+      },
       parserSchema: InvitationActionResultSchema,
     })
 

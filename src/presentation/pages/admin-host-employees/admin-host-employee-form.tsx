@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { ChevronLeftIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminHostEmployeeForm } from './hooks/use-admin-host-employee-form'
+import { ErrorState } from '../../components/ui/ErrorState'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 const fieldLabelClassName = 'text-[13px] font-bold uppercase text-text-secondary'
 
@@ -46,32 +47,10 @@ export function AdminHostEmployeeFormPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={cancel}
-            aria-label="Back"
-            className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-          >
-            <ChevronLeftIcon className="size-4" />
-          </button>
-          <div className="flex flex-col gap-0.5">
-            <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Manage Employee Access' : 'Add Employee'}</h1>
-            <p className="font-body text-sm text-text-muted">
-              {isEditMode
-                ? 'View and manage this employee’s role and branch assignments'
-                : 'Authorize a new employee to sponsor and host corporate visitors'}
-            </p>
-          </div>
-        </div>
+        <FormPageHeader title={isEditMode ? 'Manage Employee Access' : 'Add Employee'} description={isEditMode ? 'View and manage this employee’s role and branch assignments' : 'Authorize a new employee to sponsor and host corporate visitors'} onBack={cancel} />
 
         {errorMessage ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
-            <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
-              Try again
-            </button>
-          </div>
+          <ErrorState message={errorMessage} onRetry={retry} />
         ) : isLoading ? (
           <FormSkeleton rows={isEditMode ? 3 : 4} label="Loading…" />
         ) : isEditMode && employee ? (
@@ -123,7 +102,7 @@ export function AdminHostEmployeeFormPage() {
                         onClick={() => void revokeRole(role.id)}
                         pending={revokingAssignmentId === role.id}
                         pendingLabel="Revoking…"
-                        className="rounded-full border border-danger/30 bg-danger/10 px-3.5 py-1.5 font-body text-xs font-semibold text-danger disabled:opacity-50"
+                        className="rounded-full border border-danger/30 bg-danger/10 px-3.5 py-1.5 font-body text-xs font-semibold text-danger max-lg:min-h-10 disabled:opacity-50"
                       >
                         Revoke
                       </PendingButton>
@@ -188,6 +167,7 @@ export function AdminHostEmployeeFormPage() {
                 value={createValues.fullName}
                 onChange={(fullName) => updateCreateField('fullName', fullName)}
                 error={createErrors.fullName}
+                maxLength={255}
                 labelClassName={fieldLabelClassName}
               />
               <TextField
@@ -197,6 +177,7 @@ export function AdminHostEmployeeFormPage() {
                 value={createValues.email}
                 onChange={(email) => updateCreateField('email', email)}
                 error={createErrors.email}
+                maxLength={255}
                 labelClassName={fieldLabelClassName}
               />
               <div className="flex flex-col gap-4 md:flex-row md:gap-6">
@@ -208,6 +189,7 @@ export function AdminHostEmployeeFormPage() {
                     value={createValues.employeeCode}
                     onChange={(employeeCode) => updateCreateField('employeeCode', employeeCode)}
                     error={createErrors.employeeCode}
+                    maxLength={50}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
@@ -216,6 +198,7 @@ export function AdminHostEmployeeFormPage() {
                     label="Designation"
                     value={createValues.designation ?? ''}
                     onChange={(designation) => updateCreateField('designation', designation || undefined)}
+                    maxLength={100}
                     placeholder="e.g. Facilities Manager"
                     labelClassName={fieldLabelClassName}
                   />
@@ -225,8 +208,11 @@ export function AdminHostEmployeeFormPage() {
                 <div className="flex-1">
                   <TextField
                     label="Phone Number"
+                    type="tel"
                     value={createValues.phoneNumber ?? ''}
                     onChange={(phoneNumber) => updateCreateField('phoneNumber', phoneNumber || undefined)}
+                    error={createErrors.phoneNumber}
+                    maxLength={50}
                     placeholder="e.g. +1 555 000 1234"
                     labelClassName={fieldLabelClassName}
                   />
@@ -234,10 +220,12 @@ export function AdminHostEmployeeFormPage() {
                 <div className="flex-1">
                   <SelectField
                     label="Department"
-                    value={createValues.departmentId ?? ''}
-                    onChange={(departmentId) => updateCreateField('departmentId', departmentId || undefined)}
+                    required
+                    value={createValues.departmentId}
+                    onChange={(departmentId) => updateCreateField('departmentId', departmentId)}
                     options={departmentOptions}
-                    placeholder="Select department (optional)..."
+                    error={createErrors.departmentId}
+                    placeholder="Select department..."
                     labelClassName={fieldLabelClassName}
                   />
                 </div>

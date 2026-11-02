@@ -29,7 +29,7 @@ export const HostEmployeeCreateInputSchema = z.object({
   employeeCode: z.string().min(1),
   phoneNumber: z.string().optional(),
   designation: z.string().optional(),
-  departmentId: z.string().optional(),
+  departmentId: z.string().min(1),
   roleId: z.string().optional(),
   branchId: z.string().optional(),
   password: z.string().optional(),

@@ -79,7 +79,7 @@ export function BulkAddCategoriesModal({ isOpen, onClose, onSubmit, isSubmitting
               <div key={`${item.name}-${index}`} className="flex items-center justify-between gap-3 font-body text-sm">
                 <span className="text-text">{item.name}</span>
                 {item.status === 'created' ? (
-                  <span className="text-success">Created</span>
+                  <span className="text-success-text">Created</span>
                 ) : (
                   <span className="text-text-muted">{item.reason}</span>
                 )}

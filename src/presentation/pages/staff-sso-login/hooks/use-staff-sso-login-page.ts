@@ -3,7 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { usePushNotifications } from '../../../hooks/use-push-notifications'
-import { landingPathFor } from '../../../utils/landing-path'
+import { postSignInPath, rememberSsoReturnPath, takeSsoReturnPath } from '../../../utils/return-path'
+import { loginErrorMessage } from '../../../utils/login-error-message'
 
 export type StaffSsoLoginStatus = 'idle' | 'redirecting' | 'completing' | 'error'
 
@@ -27,11 +28,12 @@ export function useStaffSsoLoginPage() {
         sessionStorage.setItem('token', token)
         void refreshRegistrationIfGranted()
         const user = await getCurrentStaffUserUseCase.execute()
-        navigate(landingPathFor(user))
-      } catch {
-        setErrorMessage('Sign-in could not be completed. Please try again.')
+        navigate(postSignInPath(user, takeSsoReturnPath(), window.location.origin))
+      } catch (error) {
+        const message = loginErrorMessage(error, 'Sign-in could not be completed. Please try again.')
+        setErrorMessage(message)
         setStatus('error')
-        toast.error('Sign-in could not be completed. Please try again.')
+        toast.error(message)
       }
     },
     [exchangeSsoCodeUseCase, getCurrentStaffUserUseCase, navigate, toast, refreshRegistrationIfGranted],
@@ -44,11 +46,32 @@ export function useStaffSsoLoginPage() {
     }
   }, [searchParams, completeSignIn])
 
+  // Already signed in (and not returning from the identity provider): go
+  // straight on instead of offering sign-in again.
+  useEffect(() => {
+    if (searchParams.get('code') || !sessionStorage.getItem('token')) return
+    let cancelled = false
+    getCurrentStaffUserUseCase
+      .execute()
+      .then((user) => {
+        if (!cancelled) navigate(postSignInPath(user, searchParams.get('from'), window.location.origin), { replace: true })
+      })
+      .catch(() => {
+        // A dead token is cleared by the API client; the page stays.
+      })
+    return () => {
+      cancelled = true
+    }
+    // Only on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const startSso = useCallback(() => {
     setStatus('redirecting')
     setErrorMessage(undefined)
+    rememberSsoReturnPath(searchParams.get('from'))
     window.location.assign(startSsoLoginUseCase.execute())
-  }, [startSsoLoginUseCase])
+  }, [startSsoLoginUseCase, searchParams])
 
   return {
     status,

@@ -1,4 +1,3 @@
-import type { PreferredContactMethod } from '../../../domain/entities/preferred-contact-method'
 import { toConsentAnswers, toFieldAnswers } from '../../components/dynamic-fields/field-answers'
 import { toGroupAnswers } from '../../components/dynamic-fields/field-group-visibility'
 import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
@@ -11,35 +10,15 @@ import type {
   RegistrationType,
   VehicleFormEntry,
   VisitInfoFormState,
+  VisitorFormEntry,
 } from '../visitor-request/types'
+import { createEmptyVisitorFormEntry } from '../visitor-request/types'
 
-export interface StaffVisitorFormEntry {
-  fullName: string
-  email: string
-  phone: string
-  visitorCategory: string
-  preferredContactMethod?: PreferredContactMethod
-  idProofType: string
-  idProofFileRef?: string
-  idProofFileName?: string
-  profileImageFileRef?: string
-  profileImageFileName?: string
-  // See visitor-request/types.ts's `VisitorFormEntry.customFieldValues`.
-  customFieldValues: CustomFieldValues
-}
-
-export function createEmptyStaffVisitorFormEntry(): StaffVisitorFormEntry {
-  return {
-    fullName: '',
-    email: '',
-    phone: '',
-    visitorCategory: '',
-    // Matches the Preferred Contact Method toggle's default visual selection.
-    preferredContactMethod: 'email',
-    idProofType: '',
-    customFieldValues: {},
-  }
-}
+// One visitor's answers have the same shape in both wizards, so the staff
+// wizard uses the visitor wizard's entry (and its empty-entry factory) rather
+// than a copy that could drift.
+export type StaffVisitorFormEntry = VisitorFormEntry
+export const createEmptyStaffVisitorFormEntry = createEmptyVisitorFormEntry
 
 export interface StaffVisitRequestFormState {
   registrationType: RegistrationType
@@ -77,9 +56,10 @@ export function createInitialStaffFormState(): StaffVisitRequestFormState {
 // `customFields` — see visitor-request/types.ts's matching `toVisitor`.
 function toStaffVisitor(entry: StaffVisitorFormEntry) {
   return {
-    fullName: entry.fullName,
-    email: entry.email,
-    phone: entry.phone,
+    // Trimmed so a stray space can't create a second "different" contact.
+    fullName: entry.fullName.trim(),
+    email: entry.email.trim(),
+    phone: entry.phone.trim(),
     preferredContactMethod: entry.preferredContactMethod,
     // See visitor-request/types.ts's matching comment.
     idProofType: entry.idProofType || undefined,

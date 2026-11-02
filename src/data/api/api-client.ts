@@ -1,5 +1,5 @@
 import type { ZodType } from 'zod'
-import { ApiError, extractErrorMessage } from './api-error'
+import { ApiError, extractErrorMessage, extractFieldErrors } from './api-error'
 import type { ApiEndpointDefinition } from './api-endpoints'
 
 // An array value is sent as a repeated key (`status=a&status=b`).
@@ -68,11 +68,20 @@ export class ApiClient {
   // sign-out on a permission-gated route the user is otherwise legitimately
   // logged into — throw a plain error instead and let the caller's normal
   // error handling (load-failure message, toast, etc.) take over.
-  private handleAuthFailure(response: Response, hasToken: boolean): void {
+  //
+  // Between the two: a `hasToken: false` endpoint that was still sent the
+  // staff token (see `attachSessionToken`) and answered 401 has rejected that
+  // token, so it is cleared — but the page may be a public one, so there is
+  // no redirect; the request fails through the plain-error path.
+  private handleAuthFailure(response: Response, hasToken: boolean, sentSessionToken: boolean): void {
     if (response.status === 401 && hasToken) {
       sessionStorage.removeItem('token')
       window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
       throw new ApiError('Session expired', response.status)
+    }
+
+    if (response.status === 401 && sentSessionToken) {
+      sessionStorage.removeItem('token')
     }
 
     if (response.status === 403) {
@@ -86,12 +95,28 @@ export class ApiClient {
   // parsing it with `parserSchema` would throw an opaque ZodError and bury
   // the backend's actual message. Surface that message instead, as an
   // `ApiError` so callers can still branch on the status.
-  private async ensureOk(response: Response, hasToken: boolean): Promise<void> {
-    this.handleAuthFailure(response, hasToken)
+  private async ensureOk(response: Response, hasToken: boolean, sentSessionToken: boolean): Promise<void> {
+    this.handleAuthFailure(response, hasToken, sentSessionToken)
     if (response.ok) return
 
     const body: unknown = await response.json().catch(() => undefined)
-    throw new ApiError(extractErrorMessage(body, response.status), response.status)
+    throw new ApiError(extractErrorMessage(body, response.status), response.status, extractFieldErrors(body))
+  }
+
+  // `hasToken: true` means the endpoint requires the staff session token;
+  // `hasToken: false` only means it doesn't. The token is still sent whenever
+  // a session exists, so endpoints that answer anonymous callers with less
+  // (master-data lists, the employee directory) give a signed-in user the
+  // full response. A caller-supplied `Authorization` (a visitor proof token)
+  // is never overwritten. Returns whether the session token was attached.
+  private attachSessionToken(headers: Record<string, string>, hasToken: boolean, endpoint: string): boolean {
+    const token = sessionStorage.getItem('token')
+    if (hasToken && !token) {
+      throw new Error(`Missing auth token for endpoint: ${endpoint}`)
+    }
+    if (!token || 'Authorization' in headers) return false
+    headers.Authorization = `Bearer ${token}`
+    return true
   }
 
   // Exposed for adapters that need to build a full-page-navigation URL (e.g. an
@@ -134,20 +159,14 @@ export class ApiClient {
       ...extraHeaders,
     }
 
-    if (hasToken) {
-      const token = sessionStorage.getItem('token')
-      if (!token) {
-        throw new Error(`Missing auth token for endpoint: ${endpoint}`)
-      }
-      headers.Authorization = `Bearer ${token}`
-    }
+    const sentSessionToken = this.attachSessionToken(headers, hasToken, endpoint)
 
     const response = await fetch(url, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
-    await this.ensureOk(response, hasToken)
+    await this.ensureOk(response, hasToken, sentSessionToken)
 
     if (response.status === 204) {
       return parserSchema.parse(undefined)
@@ -166,16 +185,10 @@ export class ApiClient {
 
     const headers: Record<string, string> = {}
 
-    if (hasToken) {
-      const token = sessionStorage.getItem('token')
-      if (!token) {
-        throw new Error(`Missing auth token for endpoint: ${endpoint}`)
-      }
-      headers.Authorization = `Bearer ${token}`
-    }
+    const sentSessionToken = this.attachSessionToken(headers, hasToken, endpoint)
 
     const response = await fetch(url, { method, headers })
-    await this.ensureOk(response, hasToken)
+    await this.ensureOk(response, hasToken, sentSessionToken)
 
     return response.blob()
   }
@@ -186,13 +199,7 @@ export class ApiClient {
 
     const headers: Record<string, string> = {}
 
-    if (hasToken) {
-      const token = sessionStorage.getItem('token')
-      if (!token) {
-        throw new Error(`Missing auth token for endpoint: ${endpoint}`)
-      }
-      headers.Authorization = `Bearer ${token}`
-    }
+    const sentSessionToken = this.attachSessionToken(headers, hasToken, endpoint)
 
     const formData = new FormData()
     formData.append('file', file)
@@ -202,7 +209,7 @@ export class ApiClient {
       headers,
       body: formData,
     })
-    await this.ensureOk(response, hasToken)
+    await this.ensureOk(response, hasToken, sentSessionToken)
 
     return parserSchema.parse(await response.json())
   }
@@ -215,20 +222,14 @@ export class ApiClient {
 
     const headers: Record<string, string> = { ...extraHeaders }
 
-    if (hasToken) {
-      const token = sessionStorage.getItem('token')
-      if (!token) {
-        throw new Error(`Missing auth token for endpoint: ${endpoint}`)
-      }
-      headers.Authorization = `Bearer ${token}`
-    }
+    const sentSessionToken = this.attachSessionToken(headers, hasToken, endpoint)
 
     const response = await fetch(url, {
       method,
       headers,
       body: formData,
     })
-    await this.ensureOk(response, hasToken)
+    await this.ensureOk(response, hasToken, sentSessionToken)
 
     return parserSchema.parse(await response.json())
   }

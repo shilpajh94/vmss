@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { Branch } from '../../../../domain/entities/branch-schema'
 import type { Department } from '../../../../domain/entities/department-schema'
 import type { BranchRoleAssignment, HostEmployee, HostEmployeeCreateInput } from '../../../../domain/entities/host-employee-schema'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
+import { isValidEmail } from '../../../utils/is-valid-email'
+import { isValidPhoneNumber } from '../../../utils/is-valid-phone-number'
 
 const MIN_PASSWORD_LENGTH = 8
 
@@ -17,7 +20,7 @@ const EMPTY_CREATE_VALUES: HostEmployeeCreateInput = {
   employeeCode: '',
   phoneNumber: undefined,
   designation: undefined,
-  departmentId: undefined,
+  departmentId: '',
   roleId: undefined,
   branchId: undefined,
   password: undefined,
@@ -29,7 +32,6 @@ export function useAdminHostEmployeeForm() {
   const isEditMode = id !== undefined
 
   const {
-    getCurrentStaffUserUseCase,
     listDepartmentsUseCase,
     listBranchesUseCase,
     listHostEmployeesUseCase,
@@ -40,7 +42,7 @@ export function useAdminHostEmployeeForm() {
   } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [departments, setDepartments] = useState<Department[]>([])
   const [branches, setBranches] = useState<Branch[]>([])
   const [roles, setRoles] = useState<RoleOut[]>([])
@@ -62,13 +64,11 @@ export function useAdminHostEmployeeForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, departmentList, branchList, roleList] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listDepartmentsUseCase.execute(),
-        listBranchesUseCase.execute(),
+      const [departmentList, branchList, roleList] = await Promise.all([
+        listDepartmentsUseCase.execute({ activeOnly: !isEditMode }),
+        listBranchesUseCase.execute({ activeOnly: !isEditMode }),
         listRolesUseCase.execute(),
       ])
-      setCurrentUser(user)
       setDepartments(departmentList)
       setBranches(branchList)
       setRoles(roleList)
@@ -90,16 +90,11 @@ export function useAdminHostEmployeeForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listDepartmentsUseCase, listBranchesUseCase, listRolesUseCase, listHostEmployeesUseCase, isEditMode, id, toast])
+  }, [listDepartmentsUseCase, listBranchesUseCase, listRolesUseCase, listHostEmployeesUseCase, isEditMode, id, toast])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void load()
-  }, [navigate, load])
+  }, [load])
 
   const retry = useCallback(() => {
     void load()
@@ -112,7 +107,7 @@ export function useAdminHostEmployeeForm() {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: { createValues, assignRoleId, assignBranchId }, isLoading, reload })
+  const { release } = useFormPageRefresh({ values: { createValues, assignRoleId, assignBranchId }, isLoading, reload })
 
   const departmentName = useMemo(
     () => (employee?.departmentId ? departments.find((department) => department.id === employee.departmentId)?.name : undefined),
@@ -129,10 +124,15 @@ export function useAdminHostEmployeeForm() {
     const nextErrors: Partial<Record<keyof HostEmployeeCreateInput, string>> = {}
     if (!createValues.fullName.trim()) nextErrors.fullName = 'Employee name is required.'
     if (!createValues.email.trim()) nextErrors.email = 'Email address is required.'
+    else if (!isValidEmail(createValues.email)) nextErrors.email = 'Enter a valid email address.'
+    if (createValues.phoneNumber?.trim() && !isValidPhoneNumber(createValues.phoneNumber)) {
+      nextErrors.phoneNumber = 'Enter a valid phone number.'
+    }
     if (!createValues.employeeCode.trim()) nextErrors.employeeCode = 'Employee code is required.'
     if (createValues.password && createValues.password.length < MIN_PASSWORD_LENGTH) {
       nextErrors.password = `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`
     }
+    if (!createValues.departmentId) nextErrors.departmentId = 'Department is required.'
 
     if (Object.keys(nextErrors).length > 0) {
       setCreateErrors(nextErrors)
@@ -149,13 +149,14 @@ export function useAdminHostEmployeeForm() {
         employeeCode: createValues.employeeCode.trim(),
       })
       toast.success('Employee created.')
+      release()
       navigate('/admin/host-employees')
-    } catch {
-      toast.error('Something went wrong creating the employee. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong creating the employee. Please try again.'))
     } finally {
       setIsSaving(false)
     }
-  }, [createValues, createHostEmployeeUseCase, navigate, toast])
+  }, [createValues, createHostEmployeeUseCase, navigate, toast, release])
 
   // Edit mode: role/branch assignment management
 
@@ -173,8 +174,8 @@ export function useAdminHostEmployeeForm() {
       setAssignRoleId('')
       setAssignBranchId('')
       toast.success('Role assigned.')
-    } catch {
-      toast.error('Something went wrong assigning the role. Please try again.')
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong assigning the role. Please try again.'))
     } finally {
       setIsAssigning(false)
     }
@@ -191,8 +192,8 @@ export function useAdminHostEmployeeForm() {
           current ? { ...current, branchRoles: current.branchRoles.filter((role) => role.id !== assignmentId) } : current,
         )
         toast.success('Role revoked.')
-      } catch {
-        toast.error('Something went wrong revoking the role. Please try again.')
+      } catch (error) {
+        toast.error(toUserMessage(error, 'Something went wrong revoking the role. Please try again.'))
       } finally {
         setRevokingAssignmentId(undefined)
       }

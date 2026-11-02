@@ -1,4 +1,5 @@
 import z from "zod"
+import { PaginationMetaSchema } from "./pagination-meta-schema"
 
 export const RoleOutSchema = z.object({
   id: z.string(),
@@ -20,12 +21,7 @@ export const RoleListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z.array(RoleOutSchema),
-  pagination: z.object({
-    page: z.number(),
-    pageSize: z.number(),
-    total: z.number(),
-    totalPages: z.number(),
-  }),
+  pagination: PaginationMetaSchema,
 })
 
 export type RoleListResponse = z.infer<typeof RoleListResponseSchema>

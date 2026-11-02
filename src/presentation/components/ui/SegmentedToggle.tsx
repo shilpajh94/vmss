@@ -1,3 +1,5 @@
+import { Select } from './Select'
+
 interface SegmentedToggleOption {
   value: string
   label: string
@@ -13,9 +15,29 @@ interface SegmentedToggleProps {
    * 'divided': full-width equal segments separated by a hairline divider (e.g. Preferred Contact Method).
    */
   variant?: 'inline' | 'pill' | 'divided'
+  // Names the dropdown that stands in for the segments on a phone.
+  ariaLabel?: string
 }
 
-export function SegmentedToggle({ options, value, onChange, variant = 'inline' }: SegmentedToggleProps) {
+// More segments than this don't fit side by side on a phone.
+const MAX_PHONE_SEGMENTS = 3
+
+export function SegmentedToggle(props: SegmentedToggleProps) {
+  if (props.options.length <= MAX_PHONE_SEGMENTS) return <Segments {...props} />
+  // Past three options: a dropdown below `sm`, the segments from `sm` up.
+  return (
+    <>
+      <div className="w-full sm:hidden">
+        <Select value={props.value} onChange={props.onChange} options={props.options} ariaLabel={props.ariaLabel} />
+      </div>
+      <div className="hidden sm:contents">
+        <Segments {...props} />
+      </div>
+    </>
+  )
+}
+
+function Segments({ options, value, onChange, variant = 'inline' }: SegmentedToggleProps) {
   if (variant === 'pill') {
     const activeIndex = options.findIndex((option) => option.value === value)
     return (

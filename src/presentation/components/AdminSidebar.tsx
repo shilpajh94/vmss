@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { useNavigate } from 'react-router'
 import {
   BuildingIcon,
@@ -17,10 +18,13 @@ import {
   UsersIcon,
 } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
+import { usePermissions } from '../context/current-user-context'
+import { PAGE_PERMISSIONS } from '../route-permissions'
 import { useSidebarCollapse } from '../context/sidebar-collapse-context'
 import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
+import { useScrollActivity } from '../hooks/use-scroll-activity'
 
 const BUILD_LABEL = [__APP_VERSION__ ? `v${__APP_VERSION__}` : '', __BUILD_SHA__].filter(Boolean).join(' · ')
 
@@ -72,6 +76,28 @@ const ADMIN_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: Ad
 // per-page prop could.
 export function resolveAdminActiveItem(pathname: string): AdminSidebarActiveItem {
   return ADMIN_ROUTE_ACTIVE_ITEMS.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? 'dashboard'
+}
+
+// The permission each entry's page requires (App.tsx's `requires`); an entry
+// the user can't open is hidden, and a section left empty with it.
+const NAV_ITEM_PERMISSIONS: Record<AdminSidebarActiveItem, string> = {
+  dashboard: PAGE_PERMISSIONS.adminDashboard,
+  'organisation-configs': PAGE_PERMISSIONS.organisationConfigs,
+  branches: PAGE_PERMISSIONS.branches,
+  departments: PAGE_PERMISSIONS.departments,
+  buildings: PAGE_PERMISSIONS.buildings,
+  floors: PAGE_PERMISSIONS.floors,
+  'reception-desks': PAGE_PERMISSIONS.receptionDesks,
+  'security-gates': PAGE_PERMISSIONS.securityGates,
+  kiosks: PAGE_PERMISSIONS.kiosks,
+  'host-employees': PAGE_PERMISSIONS.hostEmployees,
+  'visitor-categories': PAGE_PERMISSIONS.visitorCategories,
+  workflows: PAGE_PERMISSIONS.workflows,
+  invitations: PAGE_PERMISSIONS.adminInvitations,
+  calendar: PAGE_PERMISSIONS.calendar,
+  roles: PAGE_PERMISSIONS.roles,
+  'form-builder': PAGE_PERMISSIONS.formBuilder,
+  'audit-trail': PAGE_PERMISSIONS.auditTrail,
 }
 
 // Ordered by how often admins use each page, daily operations first and
@@ -133,8 +159,15 @@ export function adminNavLabelFor(pathname: string): string {
 
 export function AdminSidebar({ activeItem }: AdminSidebarProps) {
   const navigate = useNavigate()
+  const navRef = useRef<HTMLElement>(null)
+  useScrollActivity(navRef)
   const { closeNav } = useNavDrawer()
   const { isCollapsed } = useSidebarCollapse()
+  const { can } = usePermissions()
+  const sections = NAV_SECTIONS.map((section) => ({
+    label: section.label,
+    items: section.items.filter((item) => can(NAV_ITEM_PERMISSIONS[item.key])),
+  })).filter((section) => section.items.length > 0)
 
   const handleActivate = (key: AdminSidebarActiveItem) => {
     closeNav()
@@ -167,8 +200,8 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
         }}
       />
 
-      <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
-        {NAV_SECTIONS.map((section, index) => (
+      <nav ref={navRef} className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
+        {sections.map((section, index) => (
           // The group's aria-label names the section for screen readers, so
           // the visible label is aria-hidden; on the icon rail a thin divider
           // stands in for it.

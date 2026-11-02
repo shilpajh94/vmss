@@ -1,15 +1,9 @@
+import { ErrorState } from '../ui/ErrorState'
 import { CardSkeleton, KpiRowSkeleton, Skeleton } from '../ui/Skeleton'
 
 // The full-page states a dashboard shows before it has any data.
 export function DashboardLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface p-6 text-center md:p-12">
-      <p className="font-body text-sm text-danger">{message}</p>
-      <button type="button" onClick={onRetry} className="min-h-10 rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
-        Try again
-      </button>
-    </div>
-  )
+  return <ErrorState message={message} onRetry={onRetry} />
 }
 
 // Lays out the same rows the loaded dashboard renders (greeting card, KPI

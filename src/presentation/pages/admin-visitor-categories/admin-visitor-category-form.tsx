@@ -1,12 +1,14 @@
-import { ChevronLeftIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { TextareaField } from '../../components/ui/TextareaField'
+import { WholeNumberField } from '../../components/ui/WholeNumberField'
 import { usePageHeader } from '../../context/page-header-context'
 import { BadgeColorField } from './Components/BadgeColorField'
 import { useAdminVisitorCategoryForm } from './hooks/use-admin-visitor-category-form'
+import { ErrorState } from '../../components/ui/ErrorState'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 const NDA_REQUIREMENT_OPTIONS = [
   { value: 'digital', label: 'Yes (Digital)' },
@@ -32,30 +34,10 @@ export function AdminVisitorCategoryFormPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={cancel}
-            aria-label="Back"
-            className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-          >
-            <ChevronLeftIcon className="size-4" />
-          </button>
-          <div className="flex flex-col gap-0.5">
-            <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Category' : 'Add Category'}</h1>
-            <p className="font-body text-sm text-text-muted">
-              {isEditMode ? "Update this visitor category's classification and policy details" : 'Create a new visitor classification'}
-            </p>
-          </div>
-        </div>
+        <FormPageHeader title={isEditMode ? 'Edit Category' : 'Add Category'} description={isEditMode ? "Update this visitor category's classification and policy details" : 'Create a new visitor classification'} onBack={cancel} />
 
         {errorMessage ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
-            <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
-              Try again
-            </button>
-          </div>
+          <ErrorState message={errorMessage} onRetry={retry} />
         ) : isLoading ? (
           <FormSkeleton rows={4} columns={2} label="Loading visitor category…" />
         ) : (
@@ -69,6 +51,7 @@ export function AdminVisitorCategoryFormPage() {
                     value={values.name}
                     onChange={(name) => updateField('name', name)}
                     error={errors.name}
+                    maxLength={100}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
@@ -79,6 +62,7 @@ export function AdminVisitorCategoryFormPage() {
                     value={values.code}
                     onChange={(code) => updateField('code', code)}
                     error={errors.code}
+                    maxLength={50}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
@@ -87,6 +71,7 @@ export function AdminVisitorCategoryFormPage() {
                 label="Description"
                 value={values.description ?? ''}
                 onChange={(description) => updateField('description', description || undefined)}
+                maxLength={500}
                 placeholder="Brief summary of who this category covers..."
                 rows={3}
                 labelClassName={fieldLabelClassName}
@@ -120,12 +105,12 @@ export function AdminVisitorCategoryFormPage() {
                   />
                 </div>
               </div>
-              <TextField
+              <WholeNumberField
                 label="Max Duration (minutes)"
-                type="number"
-                value={values.maxDurationMinutes !== undefined ? String(values.maxDurationMinutes) : ''}
-                onChange={(value) => updateField('maxDurationMinutes', value ? Number(value) : undefined)}
+                value={values.maxDurationMinutes}
+                onChange={(maxDurationMinutes) => updateField('maxDurationMinutes', maxDurationMinutes)}
                 placeholder="e.g. 480"
+                error={errors.maxDurationMinutes}
                 labelClassName={fieldLabelClassName}
               />
             </div>

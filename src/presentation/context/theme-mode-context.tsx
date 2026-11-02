@@ -143,3 +143,14 @@ export function useApplyTheme(force?: ResolvedTheme): void {
     writeTheme(theme)
   }, [theme, force])
 }
+
+// Light without a provider, for the route error page: it replaces the tree
+// that holds ThemeModeProvider, so the pre-paint script's dark attribute
+// would otherwise stay (theme-mode "Public pages always render in the
+// light theme").
+export function useForceLightTheme(): void {
+  useLayoutEffect(() => {
+    pageScope = 'light'
+    writeTheme('light')
+  }, [])
+}

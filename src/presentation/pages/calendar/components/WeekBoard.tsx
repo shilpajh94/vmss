@@ -5,6 +5,7 @@ import { DayListStatus, PagedDayList } from './PagedDayList'
 import { eventsByDate } from './calendar-grouping'
 import { useDayPages } from '../hooks/use-day-pages'
 import { useFillHeight } from '../hooks/use-fill-height'
+import { useScrollTopOnKey } from '../hooks/use-scroll-top-on-key'
 import { PANEL_FLOOR, PER_DAY_LIMIT } from '../calendar-status'
 import type { BoardBasePath } from '../../../components/dashboard/dashboard-format'
 import type { CalendarDay, CalendarEvent, CalendarFeed } from '../../../../domain/entities/calendar-feed-schema'
@@ -87,6 +88,7 @@ function DayColumn({ day, seedEvents, isToday, feed, branchId, statuses, boardBa
     seedEvents,
     seedTotal: day.total,
   })
+  useScrollTopOnKey(bodyRef, `${day.date}|${branchId ?? ''}|${statuses?.join(',') ?? ''}`)
 
   return (
     <section

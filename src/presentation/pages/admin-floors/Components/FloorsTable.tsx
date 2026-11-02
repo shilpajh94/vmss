@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router'
 import { PencilIcon, TrashIcon } from '../../../components/icons'
 import type { FloorRow } from '../hooks/use-admin-floors'
 import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+import { StatusBadge } from '../../../components/ui/StatusBadge'
 
 // Below `md`: only the identifying, status, and actions columns stay visible.
 const TABLE_CLASS_NAME = responsiveTableClassName([2, 3, 4, 5])
@@ -61,14 +62,7 @@ export function FloorsTable({ floors, departmentNamesByFloorId, onDelete }: Floo
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                      floor.isActive ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
-                    }`}
-                  >
-                    <span className={`size-1.5 rounded-full ${floor.isActive ? 'bg-success' : 'bg-text-faint'}`} />
-                    {floor.isActive ? 'Active' : 'Inactive'}
-                  </span>
+                  <StatusBadge isActive={floor.isActive} />
                 </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center justify-end gap-2">

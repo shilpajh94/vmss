@@ -26,7 +26,7 @@ export function StepCard({ step, order, onToggleActive, onEditFields, onDelete, 
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-2">
           {dragHandle}
-          <span className="flex size-9 items-center justify-center rounded-lg bg-bg text-admin-accent">
+          <span className="flex size-9 items-center justify-center rounded-lg bg-surface-inset text-admin-accent">
             <Icon className="size-4.5" />
           </span>
         </div>
@@ -54,7 +54,7 @@ export function StepCard({ step, order, onToggleActive, onEditFields, onDelete, 
         <button
           type="button"
           onClick={onEditFields}
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-bg px-3 py-2 font-body text-[13px] font-semibold text-text"
+          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 font-body text-[13px] font-semibold text-text max-lg:min-h-10"
         >
           <PencilIcon className="size-3.5" />
           Edit Fields
@@ -63,7 +63,7 @@ export function StepCard({ step, order, onToggleActive, onEditFields, onDelete, 
           <button
             type="button"
             onClick={onDelete}
-            className="rounded-lg border border-border px-3 py-2 font-body text-[13px] font-semibold text-danger"
+            className="rounded-lg border border-border px-3 py-2 font-body text-[13px] font-semibold text-danger max-lg:min-h-10"
           >
             Remove
           </button>

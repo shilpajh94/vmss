@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { VisitorCategory } from '../../../../domain/entities/visitor-category-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 interface WorkflowLevelForm {
   approverRoleId: string
@@ -18,11 +19,11 @@ export function useAdminWorkflowForm() {
   const { visitorCategoryId } = useParams<{ visitorCategoryId: string }>()
   const isEditMode = visitorCategoryId !== undefined
 
-  const { getCurrentStaffUserUseCase, listVisitorCategoriesUseCase, listRolesUseCase, listApprovalWorkflowRulesUseCase, saveWorkflowUseCase } =
+  const { listVisitorCategoriesUseCase, listRolesUseCase, listApprovalWorkflowRulesUseCase, saveWorkflowUseCase } =
     useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [categoryOptions, setCategoryOptions] = useState<VisitorCategory[]>([])
   const [roles, setRoles] = useState<RoleOut[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -38,13 +39,11 @@ export function useAdminWorkflowForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, categories, roleList, allRules] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
-        listVisitorCategoriesUseCase.execute(),
+      const [categories, roleList, allRules] = await Promise.all([
+        listVisitorCategoriesUseCase.execute({ activeOnly: !isEditMode }),
         listRolesUseCase.execute(),
         listApprovalWorkflowRulesUseCase.execute(),
       ])
-      setCurrentUser(user)
       setRoles(roleList)
 
       // Level 1 is always Reception's step (stepOrder 0) throughout the rest
@@ -86,7 +85,6 @@ export function useAdminWorkflowForm() {
       setIsLoading(false)
     }
   }, [
-    getCurrentStaffUserUseCase,
     listVisitorCategoriesUseCase,
     listRolesUseCase,
     listApprovalWorkflowRulesUseCase,
@@ -96,19 +94,14 @@ export function useAdminWorkflowForm() {
   ])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void load()
-  }, [navigate, load])
+  }, [load])
 
   const retry = useCallback(() => {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: { selectedCategoryId, levels }, isLoading, reload: retry })
+  const { release } = useFormPageRefresh({ values: { selectedCategoryId, levels }, isLoading, reload: retry })
 
   const updateCategory = useCallback((categoryId: string) => {
     setSelectedCategoryId(categoryId)
@@ -155,13 +148,14 @@ export function useAdminWorkflowForm() {
     try {
       await saveWorkflowUseCase.execute(selectedCategoryId, levels)
       toast.success(isEditMode ? 'Workflow updated.' : 'Workflow created.')
+      release()
       navigate('/admin/workflows')
-    } catch {
-      toast.error(`Something went wrong ${isEditMode ? 'updating' : 'creating'} the workflow. Please try again.`)
+    } catch (error) {
+      toast.error(toUserMessage(error, `Something went wrong ${isEditMode ? 'updating' : 'creating'} the workflow. Please try again.`))
     } finally {
       setIsSaving(false)
     }
-  }, [levels, selectedCategoryId, isEditMode, saveWorkflowUseCase, navigate, toast])
+  }, [levels, selectedCategoryId, isEditMode, saveWorkflowUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/workflows')

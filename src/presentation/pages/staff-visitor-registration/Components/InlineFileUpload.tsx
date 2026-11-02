@@ -60,8 +60,8 @@ export function InlineFileUpload({
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <div className="flex min-w-0 items-center gap-2">
         {previewUrl && previewKind === 'image' && <img src={previewUrl} alt="" className="size-10 shrink-0 rounded-lg border border-border object-cover" />}
         {previewUrl && previewKind === 'pdf' && (
           <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-danger/10 text-danger">
@@ -70,10 +70,12 @@ export function InlineFileUpload({
         )}
         <label
           htmlFor={inputId}
-          className="flex h-10 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-border bg-surface px-4 text-[13px] font-semibold text-secondary-accent"
+          title={fileName}
+          className="flex h-10 min-w-0 cursor-pointer items-center justify-center gap-2 rounded-lg border border-border bg-surface px-4 text-[13px] font-semibold text-secondary-accent"
         >
-          <UploadIcon className="size-4" />
-          {uploading ? 'Uploading…' : (fileName ?? label)}
+          <UploadIcon className="size-4 shrink-0" />
+          {/* A long file name truncates rather than overflowing the row. */}
+          <span className="min-w-0 truncate">{uploading ? 'Uploading…' : (fileName ?? label)}</span>
           {required && !fileName && <span className="text-danger">*</span>}
         </label>
       </div>

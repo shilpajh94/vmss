@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { FormSkeleton } from '../ui/Skeleton'
 import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import type { EffectiveFormStep, FormField } from '../../../domain/entities/form-builder-schema'
@@ -13,8 +14,10 @@ import { Modal } from '../ui/Modal'
 import { SelectField } from '../ui/SelectField'
 import { TextField } from '../ui/TextField'
 import { TextareaField } from '../ui/TextareaField'
+import { todayAsDateInputValue } from '../../utils/local-date-input-value'
+import { useDiscardConfirm } from '../../hooks/use-unsaved-changes-guard'
 import { EXPECTED_DURATION_OPTIONS } from '../../utils/expected-duration-options'
-import { PURPOSE_OF_VISIT_OPTIONS } from '../../utils/purpose-of-visit-options'
+import { PURPOSE_OF_VISIT_OPTIONS, purposeLabel } from '../../utils/purpose-of-visit-options'
 import { canEditPointOfContact, resolvePointOfContactLabel } from '../../utils/approval-step-label'
 import { confirmSubject } from '../../utils/confirm-subject'
 import { dateTimeInputToOffsetIso, formatDateTimeInputValue, nowAsDateTimeInputValue, toDateTimeInputValue } from '../../utils/local-datetime-input'
@@ -140,7 +143,7 @@ function changedCustomRows(initial: Record<string, DynamicFieldValue>, current: 
 
 function toFormState(detail?: InvitationDetail): EditInvitationFields {
   return {
-    purposeOfVisit: detail?.purposeOfVisit ?? '',
+    purposeOfVisit: purposeLabel(detail?.purposeOfVisit) ?? '',
     preferredVisitDate: detail?.preferredVisitDate ?? '',
     preferredVisitTime: detail?.preferredVisitTime ?? '',
     expectedDuration: detail?.expectedDuration ?? '',
@@ -215,10 +218,12 @@ export function EditInvitationModal({
   } else if (isCheckedOut) {
     checkOutError = 'Enter a check-out time.'
   }
+  const { confirmDiscard } = useDiscardConfirm(isOpen && changedRows.length > 0)
 
+  // Closing asks before dropping edits (D-W6).
   const handleCancel = () => {
     if (isSaving) return
-    onCancel()
+    confirmDiscard(onCancel)
   }
 
   const handleConfirm = () => {
@@ -236,10 +241,7 @@ export function EditInvitationModal({
   return (
     <Modal isOpen={isOpen} onClose={handleCancel} title="Edit Invitation" maxWidthClassName="max-w-lg">
       {!detail ? (
-        <div className="flex flex-col items-center gap-2 py-8">
-          <div className="size-6 animate-spin rounded-full border-2 border-border-subtle border-t-secondary-accent" />
-          <p className="font-body text-sm text-text-muted">Loading invitation…</p>
-        </div>
+        <FormSkeleton bare rows={4} columns={2} label="Loading invitation…" />
       ) : isConfirming ? (
         <FormConfirmStep
           message={`Save these changes to the visit request for ${confirmSubject(detail.primaryContactFullName, detail.trackingId)}?`}
@@ -319,6 +321,7 @@ export function EditInvitationModal({
                 <TextField
                   label="Preferred Visit Date"
                   type="date"
+                  min={todayAsDateInputValue()}
                   value={fields.preferredVisitDate ?? ''}
                   onChange={(preferredVisitDate) => setFields({ ...fields, preferredVisitDate })}
                 />
@@ -330,6 +333,7 @@ export function EditInvitationModal({
                 />
                 <TextField
                   label="Department to Visit"
+                  maxLength={255}
                   placeholder="Enter department name"
                   value={fields.departmentToVisit ?? ''}
                   onChange={(departmentToVisit) => setFields({ ...fields, departmentToVisit })}
@@ -340,6 +344,7 @@ export function EditInvitationModal({
               ) : (
                 <TextareaField
                   label="Additional Notes / Special Requirements"
+                  maxLength={2000}
                   placeholder="Any special requirements, accessibility needs, or notes for the host…"
                   value={fields.additionalNotes ?? ''}
                   onChange={(additionalNotes) => setFields({ ...fields, additionalNotes })}

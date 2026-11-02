@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { HostEmployee } from '../../../domain/entities/host-employee-schema'
 import { employeeAtBranch, employeeHasRoleAtBranch } from '../../utils/role-name-match'
 import { Modal } from '../ui/Modal'
-import { SelectDropdown } from '../ui/SelectDropdown'
+import { Select } from '../ui/Select'
 import { confirmSubject } from '../../utils/confirm-subject'
 import { FormConfirmStep } from './FormConfirmStep'
 
@@ -147,14 +147,12 @@ export function DelegateInvitationModal({
               Assigning the actual host — any active host employee at this branch can be selected.
             </p>
           ) : null}
-          <div className="flex flex-col gap-1.5">
+          <label className="flex flex-col gap-1.5">
             <span className="font-body text-[13px] font-semibold text-text">{isApproveAndDelegate ? 'Assign next step to' : 'Delegate to'}</span>
-            <SelectDropdown
-              ariaLabel={isApproveAndDelegate ? 'Assign next step to' : 'Delegate to'}
+            <Select
               value={delegateUserId}
               onChange={setDelegateUserId}
               disabled={isApproveAndDelegate && isLoadingCandidates}
-              options={(delegateCandidates ?? []).map((employee) => ({ value: employee.id, label: employee.fullName }))}
               placeholder={
                 isApproveAndDelegate
                   ? isLoadingCandidates
@@ -168,8 +166,9 @@ export function DelegateInvitationModal({
                       ? `No one currently holds ${stepRoleName}`
                       : 'No active employees at this branch'
               }
+              options={delegateCandidates?.map((employee) => ({ value: employee.id, label: employee.fullName })) ?? []}
             />
-          </div>
+          </label>
 
           <div className="flex items-center justify-end gap-3">
             <button

@@ -1,6 +1,6 @@
+import { memo } from 'react'
 import { Avatar } from '../ui/Avatar'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
-import type { InvitationDetail } from '../../../domain/entities/invitation-detail-schema'
 import {
   isReceptionCurrentStep,
   resolveApproverLabel,
@@ -11,12 +11,14 @@ import {
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
 import { CalendarClockIcon, InfoIcon, PencilIcon, UndoIcon, UserCheckIcon } from '../icons'
 import { IconActionButton } from '../ui/IconActionButton'
+import { purposeLabel } from '../../utils/purpose-of-visit-options'
 
 // An archived no-show can be rescheduled or edited; the API sends it back for
 // re-approval when its date changes.
 const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved', 'archived'])
 
-const AVATAR_TINTS = ['#dbeafe', '#ffe4e6', '#d1fae5', '#fef3c7', '#f3e8ff', '#fee2e2']
+// Full class names (not built strings) so Tailwind generates them.
+const AVATAR_TINTS = ['bg-avatar-1', 'bg-avatar-2', 'bg-avatar-3', 'bg-avatar-4', 'bg-avatar-5', 'bg-avatar-6']
 
 function avatarTintFor(trackingId: string): string {
   const hash = trackingId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)
@@ -33,7 +35,6 @@ interface VisitRequestCardProps {
   request: VisitRequestSummary
   isDraggable?: boolean
   isApproving?: boolean
-  detail?: InvitationDetail
   roleNameById?: Record<string, string>
   employeeNameById?: Record<string, string>
   workflowRulesByCategory?: Record<string, ApprovalWorkflowRule[]>
@@ -55,11 +56,13 @@ interface VisitRequestCardProps {
   onMoveToDenied?: (id: string) => void
 }
 
-export function VisitRequestCard({
+// Memoised: a board re-renders on every poll, filter keystroke and dialog
+// toggle, and most cards' props (the row, the hook's stable callbacks, the
+// memoised name maps) haven't changed.
+export const VisitRequestCard = memo(function VisitRequestCard({
   request,
   isDraggable,
   isApproving,
-  detail,
   roleNameById,
   employeeNameById,
   workflowRulesByCategory,
@@ -75,37 +78,37 @@ export function VisitRequestCard({
   onMoveToApproved,
   onMoveToDenied,
 }: VisitRequestCardProps) {
-  const isReceptionStep = isReceptionCurrentStep(detail?.currentApprovalStep, detail?.visitorCategoryId, workflowRulesByCategory ?? {})
-  const pendingApproverLabel = detail?.currentApprovalStep
-    ? (resolveNextStepPreviewLabel(detail, workflowRulesByCategory ?? {}, roleNameById ?? {}) ??
-      resolveApproverLabel(detail.currentApprovalStep, roleNameById, employeeNameById))
+  // The list item carries the approval step (design D12), so a card never
+  // needs its own detail request.
+  const progress = request
+  const isReceptionStep = isReceptionCurrentStep(progress.currentApprovalStep, progress.visitorCategoryId, workflowRulesByCategory ?? {})
+  const pendingApproverLabel = progress.currentApprovalStep
+    ? (resolveNextStepPreviewLabel(progress, workflowRulesByCategory ?? {}, roleNameById ?? {}) ??
+      resolveApproverLabel(progress.currentApprovalStep, roleNameById, employeeNameById))
     : undefined
-  const totalSteps = detail?.currentApprovalStep ? resolveTotalSteps(detail, workflowRulesByCategory ?? {}) : undefined
+  const totalSteps = progress.currentApprovalStep ? resolveTotalSteps(progress, workflowRulesByCategory ?? {}) : undefined
   const canReschedule = Boolean(onRescheduleClick) && RESCHEDULABLE_STATUSES.has(request.status)
-  const canDelegate = Boolean(onDelegateClick) && Boolean(detail?.currentApprovalStep) && !isReceptionStep
+  const canDelegate = Boolean(onDelegateClick) && Boolean(progress.currentApprovalStep) && !isReceptionStep
   // Reception never uses drag-and-drop to approve — it always acts through an
   // explicit button, either "Approve & Delegate" (another level follows) or
   // plain "Approve" (Reception is the only/last level), so the outcome is
   // deliberate rather than an accidental card drag.
-  const isReceptionApprovalStep = isReceptionStep && Boolean(detail?.currentApprovalStep)
+  const isReceptionApprovalStep = isReceptionStep && Boolean(progress.currentApprovalStep)
   const isLockedToApproveAndDelegate = isReceptionApprovalStep && (totalSteps ?? 0) > 1
   const canApproveAndDelegate = Boolean(onApproveAndDelegateClick) && isLockedToApproveAndDelegate
   const canApprove = Boolean(onApproveClick) && isReceptionApprovalStep && (totalSteps ?? 0) <= 1
   const canEdit =
     Boolean(onEditClick) && (RESCHEDULABLE_STATUSES.has(request.status) || (request.status === 'checked_out' && Boolean(canEditCheckOutTime)))
   const canRevert = Boolean(onRevertClick) && request.status === 'approved'
-  // Before this card's detail has loaded, we don't yet know whether it's
-  // Reception's own step — default to not draggable rather than briefly
-  // allowing a drag that would then be blocked once the detail arrives.
-  // Same for the category's live workflow rules: until they've loaded,
+  // Until the category's live workflow rules have loaded,
   // `isReceptionStep`/`totalSteps` fall back to the step's own possibly-stale
   // `stepOrder`/`totalSteps` snapshot, which can misidentify Reception's step
   // as a later, freely-draggable one (`approve()` still hard-blocks this
   // case regardless — this just avoids the card visibly allowing a drag that
   // would immediately be rejected).
   const workflowRulesLoaded =
-    !detail?.currentApprovalStep || !detail.visitorCategoryId || workflowRulesByCategory?.[detail.visitorCategoryId] !== undefined
-  const isActionable = isDraggable && !isApproving && detail !== undefined && workflowRulesLoaded
+    !progress.currentApprovalStep || !progress.visitorCategoryId || workflowRulesByCategory?.[progress.visitorCategoryId] !== undefined
+  const isActionable = isDraggable && !isApproving && workflowRulesLoaded
   // Reception's own step approves through its dedicated buttons, but it can
   // still deny.
   const canTapApprove = isActionable && !isReceptionApprovalStep && Boolean(onMoveToApproved)
@@ -131,40 +134,40 @@ export function VisitRequestCard({
     canRevert && { label: 'Revert approval', icon: UndoIcon, onClick: () => onRevertClick?.(request.id) },
   ].filter((action): action is IconAction => Boolean(action))
 
-  const hostLabel = detail ? (detail.hostNameOrEmail ?? 'Unassigned — Front Office') : undefined
-  const metaLine = hostLabel ? `${request.purposeOfVisit} · ${hostLabel}` : request.purposeOfVisit
+  // The list item doesn't carry the host; Visitor Info shows it.
+  const metaLine = purposeLabel(request.purposeOfVisit) ?? 'No purpose given'
   const hasSchedule = Boolean(request.preferredVisitDate && request.preferredVisitTime)
 
   return (
-    <div
-      role={onVisitorInfoClick ? 'button' : undefined}
-      tabIndex={onVisitorInfoClick ? 0 : undefined}
-      aria-label={onVisitorInfoClick ? `Open visitor info for ${request.primaryContactFullName}, ${request.trackingId}` : undefined}
-      onClick={() => onVisitorInfoClick?.(request.id)}
-      onKeyDown={(event) => {
-        // Only the card itself — keys pressed on its buttons or menu items
-        // bubble up here too and must not also open Visitor Info.
-        if (event.target !== event.currentTarget || !onVisitorInfoClick) return
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          onVisitorInfoClick(request.id)
-        }
-      }}
+    // The visitor's name is the one control that opens Visitor Info; its
+    // `::after` stretches over the card so a click anywhere still opens it,
+    // while the action buttons sit above that overlay as separate controls
+    // (accessibility "Interactive Elements Are Not Nested").
+    <article
+      aria-label={`${request.primaryContactFullName}, ${request.trackingId}`}
       className={`relative flex w-full flex-col gap-2 rounded-xl border border-border bg-surface p-3 drop-shadow-[0px_4px_4px_rgba(15,23,42,0.03)] ${
-        onVisitorInfoClick
-          ? 'cursor-pointer transition-colors hover:border-secondary-accent/40 focus-visible:ring-2 focus-visible:ring-secondary-accent/40 focus-visible:outline-none'
-          : ''
+        onVisitorInfoClick ? 'cursor-pointer transition-colors hover:border-secondary-accent/40' : ''
       } ${isApproving ? 'opacity-60' : ''}`}
     >
       <div className="flex w-full items-center gap-2.5">
         <Avatar
           name={request.primaryContactFullName}
           size="md"
-          toneClassName="text-ink"
-          style={{ backgroundColor: avatarTintFor(request.trackingId) }}
+          toneClassName={`text-ink ${avatarTintFor(request.trackingId)}`}
         />
         <div className="flex min-w-0 flex-1 flex-col">
-          <p className="truncate font-body text-sm font-bold text-text">{request.primaryContactFullName}</p>
+          {onVisitorInfoClick ? (
+            <button
+              type="button"
+              onClick={() => onVisitorInfoClick(request.id)}
+              aria-label={`Open visitor info for ${request.primaryContactFullName}, ${request.trackingId}`}
+              className="truncate text-left font-body text-sm font-bold text-text after:absolute after:inset-0 after:rounded-xl after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-secondary-accent"
+            >
+              {request.primaryContactFullName}
+            </button>
+          ) : (
+            <p className="truncate font-body text-sm font-bold text-text">{request.primaryContactFullName}</p>
+          )}
           <span className="truncate font-body text-[11px] font-semibold text-text-faint">{request.trackingId}</span>
         </div>
       </div>
@@ -183,10 +186,10 @@ export function VisitRequestCard({
         ) : null}
       </div>
 
-      {detail?.currentApprovalStep ? (
+      {progress.currentApprovalStep ? (
         <div className="flex w-full items-center gap-1.5">
           <span className="flex shrink-0 items-center gap-1 rounded-full border border-info/30 bg-info/8 px-2 py-0.5 font-body text-[10px] font-bold whitespace-nowrap text-info">
-            Level {resolveCurrentLevel(detail.currentApprovalStep, detail.visitorCategoryId, workflowRulesByCategory ?? {})}/{totalSteps}
+            Level {resolveCurrentLevel(progress.currentApprovalStep, progress.visitorCategoryId, workflowRulesByCategory ?? {})}/{totalSteps}
           </span>
           <span className="truncate font-body text-[10px] text-text-faint">Pending: {pendingApproverLabel}</span>
         </div>
@@ -197,12 +200,12 @@ export function VisitRequestCard({
           Approving…
         </p>
       ) : hasPrimaryActions ? (
-        <div className="grid w-full grid-cols-2 gap-2" onClick={(event) => event.stopPropagation()}>
+        <div className="relative z-10 grid w-full grid-cols-2 gap-2">
           {approveAction ? (
             <button
               type="button"
               onClick={approveAction.onClick}
-              className={`truncate rounded-lg border border-success/40 bg-success/10 px-2 py-1.5 font-body text-[11px] font-semibold text-success transition-colors hover:bg-success/15 max-lg:min-h-10 max-lg:text-xs ${
+              className={`truncate rounded-lg border border-success/40 bg-success/10 px-2 py-1.5 font-body text-[11px] font-semibold text-success-text transition-colors hover:bg-success/15 max-lg:min-h-10 max-lg:text-xs ${
                 canTapDeny ? '' : 'col-span-full'
               }`}
             >
@@ -233,7 +236,7 @@ export function VisitRequestCard({
       ) : null}
 
       {iconActions.length > 0 ? (
-        <div className="-mx-1 -mb-1 flex w-full items-center gap-1" onClick={(event) => event.stopPropagation()}>
+        <div className="relative z-10 -mx-1 -mb-1 flex w-full flex-wrap items-center gap-1">
           {iconActions.map((action) => (
             <IconActionButton
               key={action.label}
@@ -245,6 +248,6 @@ export function VisitRequestCard({
           ))}
         </div>
       ) : null}
-    </div>
+    </article>
   )
-}
+})

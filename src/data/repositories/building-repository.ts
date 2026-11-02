@@ -1,4 +1,5 @@
 import type { Building, BuildingInput } from '../../domain/entities/building-schema'
+import type { ListOptions } from './list-options'
 
 export interface ListBuildingsPageParams {
   page: number
@@ -14,7 +15,7 @@ export interface BuildingsPage {
 }
 
 export interface BuildingRepository {
-  list(): Promise<Building[]>
+  list(options?: ListOptions): Promise<Building[]>
   listPage(params: ListBuildingsPageParams): Promise<BuildingsPage>
   create(input: BuildingInput): Promise<Building>
   update(id: string, input: BuildingInput): Promise<Building>

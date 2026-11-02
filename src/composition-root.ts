@@ -53,6 +53,7 @@ import { ApproveInvitationStepUseCase } from './data/use-cases/approve-invitatio
 import { RejectInvitationStepUseCase } from './data/use-cases/reject-invitation-step'
 import { DelegateInvitationStepUseCase } from './data/use-cases/delegate-invitation-step'
 import { GetCurrentStaffUserUseCase } from './data/use-cases/get-current-staff-user'
+import { LogoutStaffUseCase } from './data/use-cases/logout-staff'
 import { GetOrganisationConfigUseCase } from './data/use-cases/get-organisation-config'
 import { UpdateOrganisationConfigUseCase } from './data/use-cases/update-organisation-config'
 import { ListBranchesUseCase } from './data/use-cases/list-branches'
@@ -192,6 +193,7 @@ export interface AppDependencies {
   rejectInvitationStepUseCase: RejectInvitationStepUseCase
   delegateInvitationStepUseCase: DelegateInvitationStepUseCase
   getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase
+  logoutStaffUseCase: LogoutStaffUseCase
   submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase
   lookupStaffVisitorByEmailUseCase: LookupStaffVisitorByEmailUseCase
   lookupStaffVisitorByPhoneUseCase: LookupStaffVisitorByPhoneUseCase
@@ -320,6 +322,7 @@ export function createApp(): AppDependencies {
   let rejectInvitationStepUseCase: RejectInvitationStepUseCase | undefined
   let delegateInvitationStepUseCase: DelegateInvitationStepUseCase | undefined
   let getCurrentStaffUserUseCase: GetCurrentStaffUserUseCase | undefined
+  let logoutStaffUseCase: LogoutStaffUseCase | undefined
   let staffVisitRequestRepository: StaffVisitRequestRepository | undefined
   let submitStaffVisitRequestUseCase: SubmitStaffVisitRequestUseCase | undefined
   let staffVisitorLookupRepository: StaffVisitorLookupRepository | undefined
@@ -579,6 +582,11 @@ export function createApp(): AppDependencies {
   const resolveGetCurrentStaffUserUseCase = (): GetCurrentStaffUserUseCase => {
     getCurrentStaffUserUseCase ??= new GetCurrentStaffUserUseCase(resolveStaffAuthRepository())
     return getCurrentStaffUserUseCase
+  }
+
+  const resolveLogoutStaffUseCase = (): LogoutStaffUseCase => {
+    logoutStaffUseCase ??= new LogoutStaffUseCase(resolveStaffAuthRepository())
+    return logoutStaffUseCase
   }
 
   const resolveStaffVisitRequestRepository = (): StaffVisitRequestRepository => {
@@ -1222,6 +1230,9 @@ export function createApp(): AppDependencies {
     },
     get getCurrentStaffUserUseCase() {
       return resolveGetCurrentStaffUserUseCase()
+    },
+    get logoutStaffUseCase() {
+      return resolveLogoutStaffUseCase()
     },
     get submitStaffVisitRequestUseCase() {
       return resolveSubmitStaffVisitRequestUseCase()

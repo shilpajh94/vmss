@@ -9,7 +9,7 @@ import re
 
 from playwright.sync_api import Page, expect
 
-from conftest import Api, run_tag, wait_for
+from conftest import Api, choose_option, run_tag, wait_for
 
 
 def open_card(page: Page, name: str):
@@ -17,9 +17,10 @@ def open_card(page: Page, name: str):
     many other invitations exist."""
     page.goto("/staff/invitations")
     page.get_by_placeholder("Search visitor, tracking ID...").fill(name)
-    card = page.get_by_role(
-        "button", name=re.compile(rf"^Open visitor info for {re.escape(name)},")
-    )
+    # The card is an article named after the visitor; its title button is
+    # the control that opens Visitor Info (accessibility "Interactive
+    # Elements Are Not Nested").
+    card = page.get_by_role("article", name=re.compile(rf"^{re.escape(name)},"))
     expect(card).to_be_visible()
     return card
 
@@ -28,14 +29,14 @@ def register_visitor(page: Page, name: str, email: str) -> None:
     page.goto("/staff/visitors/new")
     page.get_by_label("Full Name").fill(name)
     page.get_by_label("Email Address").fill(email)
-    page.get_by_label("Visitor Category").select_option(label="QA Multi Step")
+    choose_option(page.get_by_label("Visitor Category"), "QA Multi Step")
     page.get_by_role("button", name="Next: Visit Details →").click()
 
-    page.get_by_label("Purpose of Visit").select_option(index=1)
+    choose_option(page.get_by_label("Purpose of Visit"), index=0)
     page.get_by_label("Preferred Visit Date").fill(str(datetime.date.today()))
     page.get_by_label("Preferred Visit Time").fill("10:00")
-    page.get_by_label("Location").select_option(label="Main Branch")
-    page.get_by_label("Building").select_option(index=1)
+    choose_option(page.get_by_label("Location"), "Main Branch")
+    choose_option(page.get_by_label("Building"), index=0)
     page.get_by_role("button", name="Next: Carried Items →").click()
     page.get_by_role("button", name="Next: Vehicle Info →").click()
     page.get_by_role("button", name="Next: Consent Agreement →").click()
@@ -59,7 +60,7 @@ def test_staff_invitation_lifecycle(as_role, api: Api) -> None:
     expect(card).to_contain_text("Level 1/2")
     card.get_by_role("button", name="Approve & Delegate").click()
     dialog = reception.get_by_role("dialog", name="Approve & Delegate")
-    dialog.get_by_label("Assign next step to").select_option(label="QA Approver")
+    choose_option(dialog.get_by_label("Assign next step to"), "QA Approver")
     dialog.get_by_role("button", name="Review").click()
     expect(dialog.get_by_text("QA Approver")).to_be_visible()
     dialog.get_by_role("button", name="Approve & delegate").click()
@@ -69,7 +70,10 @@ def test_staff_invitation_lifecycle(as_role, api: Api) -> None:
     approver = as_role("approver")
     card = open_card(approver, name)
     card.get_by_role("button", name="Approve", exact=True).click()
-    approver.get_by_role("dialog").get_by_role("button", name="Approve Request").click()
+    approver_dialog = approver.get_by_role("dialog")
+    approver_dialog.get_by_role("button", name="Approve Request").click()
+    # The dialog closes once the approval is saved; read the status after that.
+    expect(approver_dialog).to_be_hidden()
 
     invitation = next(
         row

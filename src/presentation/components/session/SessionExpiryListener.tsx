@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useNavigate } from 'react-router'
 import { SESSION_EXPIRED_EVENT } from '../../../data/api/api-client'
 import { useToast } from '../toast/toast-context'
+import { signInPathFor } from '../../utils/return-path'
 
 // PushNotificationsProvider (mounted app-wide, above <Routes>) keeps re-registering
 // the device on an interval/focus as long as a token is *present* in sessionStorage,
@@ -25,7 +26,9 @@ export function SessionExpiryListener() {
       if (!isProtectedRoute(window.location.pathname)) return
 
       toast.error('Your session has expired. Please sign in again.')
-      navigate(window.location.pathname.startsWith('/admin') ? '/admin/login' : '/staff/login')
+      // `?from=` brings the user back here once they sign in again.
+      const loginPath = window.location.pathname.startsWith('/admin') ? '/admin/login' : '/staff/login'
+      navigate(signInPathFor(loginPath, window.location))
     }
 
     window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)

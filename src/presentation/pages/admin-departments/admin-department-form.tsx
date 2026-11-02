@@ -1,4 +1,3 @@
-import { ChevronLeftIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
@@ -7,6 +6,8 @@ import { TextareaField } from '../../components/ui/TextareaField'
 import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminDepartmentForm } from './hooks/use-admin-department-form'
+import { ErrorState } from '../../components/ui/ErrorState'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 export function AdminDepartmentFormPage() {
   const {
@@ -32,32 +33,10 @@ export function AdminDepartmentFormPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-      <div className="flex items-center gap-4">
-        <button
-          type="button"
-          onClick={cancel}
-          aria-label="Back"
-          className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-        >
-          <ChevronLeftIcon className="size-4" />
-        </button>
-        <div className="flex flex-col gap-0.5">
-          <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Department' : 'Add Department'}</h1>
-          <p className="font-body text-sm text-text-muted">
-            {isEditMode
-              ? "Update this operational division's details"
-              : 'Create a new operational division inside your workplace directory'}
-          </p>
-        </div>
-      </div>
+      <FormPageHeader title={isEditMode ? 'Edit Department' : 'Add Department'} description={isEditMode ? "Update this operational division's details" : 'Create a new operational division inside your workplace directory'} onBack={cancel} />
 
       {errorMessage ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
-            <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
-              Try again
-            </button>
-          </div>
+          <ErrorState message={errorMessage} onRetry={retry} />
         ) : isLoading ? (
           <FormSkeleton rows={4} columns={1} label="Loading department…" />
         ) : (
@@ -71,6 +50,7 @@ export function AdminDepartmentFormPage() {
                     value={values.name}
                     onChange={(name) => updateField('name', name)}
                     error={errors.name}
+                    maxLength={255}
                     labelClassName={fieldLabelClassName}
                   />
                 </div>
@@ -81,6 +61,7 @@ export function AdminDepartmentFormPage() {
                     value={values.branchId}
                     onChange={(branchId) => updateField('branchId', branchId)}
                     options={branchOptions}
+                    disabled={isEditMode}
                     placeholder="Select target branch..."
                     error={errors.branchId}
                     labelClassName={fieldLabelClassName}
@@ -93,6 +74,7 @@ export function AdminDepartmentFormPage() {
                 value={values.code}
                 onChange={(code) => updateField('code', code)}
                 error={errors.code}
+                maxLength={50}
                 labelClassName={fieldLabelClassName}
               />
               <SelectField
@@ -107,11 +89,12 @@ export function AdminDepartmentFormPage() {
                 label="Description"
                 value={values.description ?? ''}
                 onChange={(description) => updateField('description', description)}
+                maxLength={2000}
                 placeholder="Brief summary of this department's function, coverage, and workspace rules..."
                 rows={3}
                 labelClassName={fieldLabelClassName}
               />
-              <div className="flex items-center justify-between py-2">
+              <div className="flex flex-col items-start gap-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-col gap-1">
                   <p className="font-body text-sm font-bold uppercase text-text">Department Status</p>
                   <p className="font-body text-[13px] text-text-muted">Set whether this department is active and accessible across workspace branches</p>

@@ -131,7 +131,7 @@ export function RepeatableFieldGroup({
       {instances.length > 0 && (
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-left text-body">
-            <thead className="bg-bg text-caption text-text-muted">
+            <thead className="bg-surface-inset text-caption text-text-muted">
               <tr>
                 <th className="px-4 py-2">#</th>
                 {fields.map((field) => (
@@ -139,7 +139,7 @@ export function RepeatableFieldGroup({
                     {field.label}
                   </th>
                 ))}
-                <th className="sticky right-0 bg-bg px-4 py-2">Actions</th>
+                <th className="sticky right-0 bg-surface-inset px-4 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -167,7 +167,7 @@ export function RepeatableFieldGroup({
       )}
 
       {draft && (
-        <div className="flex flex-col gap-4 rounded-lg border border-border-subtle bg-bg p-4">
+        <div className="flex flex-col gap-4 rounded-lg border border-border-subtle bg-surface-inset p-4">
           <h4 className="text-body font-semibold text-text">{editingIndex === null ? `Add ${groupName}` : `Edit ${groupName}`}</h4>
           {fields.length > 0 ? (
             <CustomFieldsSection fields={fields} value={draft} onChange={setDraft} uploadFile={uploadFile} getFilePreviewUrl={getFilePreviewUrl} />

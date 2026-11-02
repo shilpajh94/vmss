@@ -10,7 +10,7 @@ export function ExportInvitationsButton({ onClick }: ExportInvitationsButtonProp
     <button
       type="button"
       onClick={onClick}
-      className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 font-body text-[13px] font-semibold text-text hover:bg-bg"
+      className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 font-body text-[13px] font-semibold text-text hover:bg-surface-muted"
     >
       <DownloadIcon className="size-4 text-text-muted" />
       <span>Export</span>

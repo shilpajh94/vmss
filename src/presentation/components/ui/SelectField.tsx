@@ -1,12 +1,16 @@
 import { useId } from 'react'
-import { SelectDropdown } from './SelectDropdown'
-import type { DropdownOption } from './SelectDropdown'
+import { Select } from './Select'
+
+interface SelectOption {
+  value: string
+  label: string
+}
 
 interface SelectFieldProps {
   label: string
   value: string
   onChange: (value: string) => void
-  options: DropdownOption[]
+  options: SelectOption[]
   placeholder?: string
   error?: string
   required?: boolean
@@ -29,6 +33,8 @@ export function SelectField({
   placeholderSelectable,
 }: SelectFieldProps) {
   const selectId = useId()
+  const errorId = `${selectId}-error`
+  const prompt = placeholder ?? 'Select'
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -36,19 +42,22 @@ export function SelectField({
         {label}
         {required && <span className="ml-1 text-danger">*</span>}
       </label>
-      <SelectDropdown
+      <Select
         id={selectId}
-        ariaLabel={label}
-        options={options}
         value={value}
         onChange={onChange}
-        placeholder={placeholder ?? 'Select'}
-        placeholderSelectable={placeholderSelectable}
+        options={placeholderSelectable ? [{ value: '', label: prompt }, ...options] : options}
+        placeholder={prompt}
         required={required}
+        invalid={Boolean(error)}
+        ariaDescribedBy={error ? errorId : undefined}
         disabled={disabled}
-        error={Boolean(error)}
       />
-      {error && <p className="text-caption text-danger">{error}</p>}
+      {error && (
+        <p id={errorId} className="text-caption text-danger">
+          {error}
+        </p>
+      )}
     </div>
   )
 }

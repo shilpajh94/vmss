@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
 import type { PermissionOut } from '../../../../domain/entities/permission-out-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 export function useAdminRolePermissionsForm() {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
-  const { getCurrentStaffUserUseCase, listRolesUseCase, listPermissionsUseCase, updateRolePermissionsUseCase } = useAppDependencies()
+  const { listRolesUseCase, listPermissionsUseCase, updateRolePermissionsUseCase } = useAppDependencies()
   const toast = useToast()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
+  const currentUser = useCurrentUser()
   const [role, setRole] = useState<RoleOut | undefined>(undefined)
   const [permissions, setPermissions] = useState<PermissionOut[]>([])
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set())
@@ -26,12 +27,10 @@ export function useAdminRolePermissionsForm() {
     setErrorMessage(undefined)
 
     try {
-      const [user, roles, permissionCatalog] = await Promise.all([
-        getCurrentStaffUserUseCase.execute(),
+      const [roles, permissionCatalog] = await Promise.all([
         listRolesUseCase.execute(),
         listPermissionsUseCase.execute(),
       ])
-      setCurrentUser(user)
       setPermissions(permissionCatalog)
 
       const found = roles.find((candidate) => candidate.id === id)
@@ -48,22 +47,17 @@ export function useAdminRolePermissionsForm() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, listRolesUseCase, listPermissionsUseCase, id, toast])
+  }, [listRolesUseCase, listPermissionsUseCase, id, toast])
 
   useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
     void load()
-  }, [navigate, load])
+  }, [load])
 
   const retry = useCallback(() => {
     void load()
   }, [load])
 
-  useFormPageRefresh({ values: { permissionCodes: [...selectedCodes].sort() }, isLoading, reload: retry })
+  const { release } = useFormPageRefresh({ values: { permissionCodes: [...selectedCodes].sort() }, isLoading, reload: retry })
 
   const togglePermission = useCallback((code: string, checked: boolean) => {
     setSelectedCodes((current) => {
@@ -84,13 +78,14 @@ export function useAdminRolePermissionsForm() {
     try {
       await updateRolePermissionsUseCase.execute(role.id, Array.from(selectedCodes))
       toast.success('Role permissions updated.')
+      release()
       navigate('/admin/roles')
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Something went wrong updating this role. Please try again.')
+      toast.error(toUserMessage(error, 'Something went wrong updating this role. Please try again.'))
     } finally {
       setIsSaving(false)
     }
-  }, [role, selectedCodes, updateRolePermissionsUseCase, navigate, toast])
+  }, [role, selectedCodes, updateRolePermissionsUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/roles')

@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router'
 import { PencilIcon, TrashIcon } from '../../../components/icons'
 import type { Kiosk } from '../../../../domain/entities/kiosk-schema'
 import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+import { StatusBadge } from '../../../components/ui/StatusBadge'
 
 // Below `md`: only the identifying, status, and actions columns stay visible.
 const TABLE_CLASS_NAME = responsiveTableClassName([2])
@@ -66,13 +67,7 @@ export function KiosksTable({ kiosks, canManage, busyKioskId, onToggleActive, on
                       <span className="font-body text-[13px] font-semibold text-text-muted">{kiosk.isActive ? 'Active' : 'Inactive'}</span>
                     </button>
                   ) : (
-                    <span
-                      className={`inline-flex items-center rounded px-2.5 py-1 font-body text-[11px] font-bold ${
-                        kiosk.isActive ? 'bg-success/15 text-success' : 'bg-neutral-subtle text-text-muted'
-                      }`}
-                    >
-                      {kiosk.isActive ? 'Active' : 'Inactive'}
-                    </span>
+                    <StatusBadge isActive={kiosk.isActive} />
                   )}
                 </td>
                 {canManage && (

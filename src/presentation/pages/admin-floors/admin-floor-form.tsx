@@ -1,11 +1,14 @@
-import { ChevronLeftIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { TextField } from '../../components/ui/TextField'
 import { ToggleSwitch } from '../../components/ui/ToggleSwitch'
+import { WholeNumberField } from '../../components/ui/WholeNumberField'
+import { FLOOR_LIMITS } from './floor-form-validation'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminFloorForm } from './hooks/use-admin-floor-form'
+import { ErrorState } from '../../components/ui/ErrorState'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 const CAPACITY_TYPE_OPTIONS = [
   { value: 'guests', label: 'Guests' },
@@ -39,32 +42,24 @@ export function AdminFloorFormPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-      <div className="flex items-center gap-4">
-        <button
-          type="button"
-          onClick={cancel}
-          aria-label="Back"
-          className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-        >
-          <ChevronLeftIcon className="size-4" />
-        </button>
-        <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Floor' : 'Add Floor'}</h1>
-      </div>
+      <FormPageHeader title={isEditMode ? 'Edit Floor' : 'Add Floor'} onBack={cancel} />
 
       {errorMessage ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
-            <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
-              Try again
-            </button>
-          </div>
+          <ErrorState message={errorMessage} onRetry={retry} />
         ) : isLoading ? (
           <FormSkeleton rows={3} columns={2} label="Loading floor…" />
         ) : (
           <div className="flex w-full flex-col gap-6 rounded-2xl border border-border bg-surface px-6 py-8">
             <div className="flex flex-col gap-4 md:flex-row md:gap-6">
               <div className="flex-1">
-                <TextField label="Floor Name" required value={values.name} onChange={(name) => updateField('name', name)} error={errors.name} />
+                <TextField
+                  label="Floor Name"
+                  required
+                  value={values.name}
+                  onChange={(name) => updateField('name', name)}
+                  error={errors.name}
+                  maxLength={FLOOR_LIMITS.name}
+                />
               </div>
               <div className="flex-1">
                 <SelectField
@@ -73,6 +68,7 @@ export function AdminFloorFormPage() {
                   value={values.buildingId}
                   onChange={(buildingId) => updateField('buildingId', buildingId)}
                   options={buildingOptions}
+                  disabled={isEditMode}
                   placeholder="Select building..."
                   error={errors.buildingId}
                 />
@@ -80,19 +76,22 @@ export function AdminFloorFormPage() {
             </div>
             <div className="flex flex-col gap-4 md:flex-row md:gap-6">
               <div className="flex-1">
-                <TextField
+                <WholeNumberField
                   label="Floor Number"
-                  type="number"
-                  value={String(values.floorNumber)}
-                  onChange={(value) => updateField('floorNumber', Number(value) || 0)}
+                  required
+                  allowNegative
+                  value={values.floorNumber}
+                  onChange={(floorNumber) => updateField('floorNumber', floorNumber)}
+                  error={errors.floorNumber}
+                  helperText="0 is the ground floor; basements are negative."
                 />
               </div>
               <div className="flex-1">
-                <TextField
+                <WholeNumberField
                   label="Capacity"
-                  type="number"
-                  value={String(values.capacity)}
-                  onChange={(value) => updateField('capacity', Number(value) || 0)}
+                  value={values.capacity}
+                  onChange={(capacity) => updateField('capacity', capacity)}
+                  error={errors.capacity}
                 />
               </div>
               <div className="flex-1">

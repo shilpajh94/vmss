@@ -1,11 +1,15 @@
+import { useRef } from 'react'
 import { useNavigate } from 'react-router'
-import { CalendarIcon, CheckIcon, HomeIcon, UsersIcon } from './icons'
+import { CalendarIcon, HomeIcon, PlusIcon, UsersIcon } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
+import { usePermissions } from '../context/current-user-context'
+import { PAGE_PERMISSIONS } from '../route-permissions'
 import { SidebarFrame } from './sidebar/SidebarFrame'
 import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
+import { useScrollActivity } from '../hooks/use-scroll-activity'
 
-export type ReceptionSidebarActiveItem = 'dashboard' | 'visits' | 'calendar' | 'my-actions'
+export type ReceptionSidebarActiveItem = 'dashboard' | 'visits' | 'calendar' | 'register-visitor'
 
 interface ReceptionSidebarProps {
   activeItem: ReceptionSidebarActiveItem
@@ -15,7 +19,7 @@ interface ReceptionSidebarProps {
 // frequent task (app-shell "Sidebar menus are ordered by how often they are used").
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: HomeIcon },
-  { key: 'my-actions', label: 'My actions', icon: CheckIcon },
+  { key: 'register-visitor', label: 'Register Visitor', icon: PlusIcon },
   { key: 'visits', label: 'Invitations', icon: UsersIcon },
   { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
 ] as const satisfies ReadonlyArray<{
@@ -28,8 +32,16 @@ const RECEPTION_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item
   ['/reception/dashboard', 'dashboard'],
   ['/staff/invitations', 'visits'],
   ['/staff/calendar', 'calendar'],
-  ['/staff/visitors/new', 'my-actions'],
+  ['/staff/visitors/new', 'register-visitor'],
 ]
+
+// Entries the user can't open are hidden (app-shell "Admin and Staff Areas
+// and Their Actions Are Gated by the Caller's Permissions").
+const NAV_ITEM_PERMISSIONS: Partial<Record<ReceptionSidebarActiveItem, string>> = {
+  visits: PAGE_PERMISSIONS.staffInvitations,
+  calendar: PAGE_PERMISSIONS.calendar,
+  'register-visitor': PAGE_PERMISSIONS.registerVisitor,
+}
 
 // Derives which sidebar entry highlights from the current URL, so the active
 // item can never drift out of sync with the route table the way a hardcoded
@@ -40,14 +52,17 @@ export function resolveReceptionActiveItem(pathname: string): ReceptionSidebarAc
 
 export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
   const navigate = useNavigate()
+  const navRef = useRef<HTMLElement>(null)
+  useScrollActivity(navRef)
   const { closeNav } = useNavDrawer()
+  const { can } = usePermissions()
 
   const handleActivate = (key: ReceptionSidebarActiveItem) => {
     closeNav()
     if (key === 'dashboard') navigate('/reception/dashboard')
     if (key === 'visits') navigate('/staff/invitations')
     if (key === 'calendar') navigate('/staff/calendar')
-    if (key === 'my-actions') navigate('/staff/visitors/new')
+    if (key === 'register-visitor') navigate('/staff/visitors/new')
   }
 
   return (
@@ -60,8 +75,11 @@ export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
         }}
       />
 
-      <nav className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
-        {NAV_ITEMS.map(({ key, label, icon }) => (
+      <nav ref={navRef} className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
+        {NAV_ITEMS.filter(({ key }) => {
+          const requires = NAV_ITEM_PERMISSIONS[key]
+          return !requires || can(requires)
+        }).map(({ key, label, icon }) => (
           <SidebarNavItem
             key={key}
             icon={icon}

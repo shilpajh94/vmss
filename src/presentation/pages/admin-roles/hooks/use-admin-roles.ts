@@ -1,68 +1,35 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useCallback, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
-import { usePageRefresh } from '../../../context/refresh-context'
-import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
+import { useLiveResource } from '../../../hooks/use-live-resource'
 import type { RoleOut } from '../../../../domain/entities/role-out-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
 import type { RolePermissionResyncEntry } from '../../../../domain/entities/permission-out-schema'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 const PAGE_SIZE = 20
+const EMPTY_ROLES: RoleOut[] = []
 
 export function useAdminRoles() {
-  const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listRolesPageUseCase, resyncRolePermissionsUseCase } = useAppDependencies()
+  const { listRolesPageUseCase, resyncRolePermissionsUseCase } = useAppDependencies()
   const toast = useToast()
+  const currentUser = useCurrentUser()
 
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [roles, setRoles] = useState<RoleOut[]>([])
-  const [total, setTotal] = useState(0)
-  const { phase, isRefreshing, begin } = useLoadTracker()
   const [isResyncing, setIsResyncing] = useState(false)
   const [resyncResult, setResyncResult] = useState<RolePermissionResyncEntry[] | undefined>(undefined)
 
   const { page, goToNextPage, goToPrevPage } = usePagedList()
 
-  // `user` (default): page/retry/refresh/post-resync - keeps the current
-  // rows on screen with a progress cue. `background`: the 15s poll.
-  const loadRoles = useCallback(
-    async (mode: LoadMode = 'user') => {
-      const request = begin(mode)
-
-      try {
-        const [user, page_] = await Promise.all([getCurrentStaffUserUseCase.execute(), listRolesPageUseCase.execute({ page, pageSize: PAGE_SIZE })])
-        if (!request.succeed()) return
-        setCurrentUser(user)
-        setRoles(page_.items)
-        setTotal(page_.total)
-      } catch {
-        if (!request.fail()) return
-        toast.error('Something went wrong loading the roles. Please try again.')
-      }
-    },
-    [begin, getCurrentStaffUserUseCase, listRolesPageUseCase, page, toast],
-  )
-
-  useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
-    void loadRoles()
-  }, [navigate, loadRoles])
-
-  const retry = useCallback(() => {
-    void loadRoles()
-  }, [loadRoles])
-
-  const isActionInProgress = isResyncing
-  usePolling(() => void loadRoles('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
-
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
+  const resource = useLiveResource({
+    load: () => listRolesPageUseCase.execute({ page, pageSize: PAGE_SIZE }),
+    query: { page },
+    errorMessage: 'Something went wrong loading the roles. Please try again.',
+    isBusy: isResyncing,
+  })
+  const { phase, isRefreshing, retry, reload } = resource
+  const roles = resource.data?.items ?? EMPTY_ROLES
+  const total = resource.data?.total ?? 0
 
   const resyncPermissions = useCallback(async () => {
     setIsResyncing(true)
@@ -73,13 +40,13 @@ export function useAdminRoles() {
       setResyncResult(result)
       const grantedCount = result.reduce((sum, entry) => sum + entry.grantedPermissionCodes.length, 0)
       toast.success(grantedCount > 0 ? `Granted ${grantedCount} missing permission(s).` : 'All roles already have every catalog permission.')
-      await loadRoles()
+      await reload()
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Something went wrong resyncing permissions. Please try again.')
+      toast.error(toUserMessage(error, 'Something went wrong resyncing permissions. Please try again.'))
     } finally {
       setIsResyncing(false)
     }
-  }, [resyncRolePermissionsUseCase, loadRoles, toast])
+  }, [resyncRolePermissionsUseCase, reload, toast])
 
   return {
     currentUser,

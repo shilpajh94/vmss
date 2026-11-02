@@ -16,7 +16,8 @@ export function BackButton({ onClick, className }: BackButtonProps) {
       type="button"
       onClick={onClick}
       aria-label="Back"
-      className={className ?? 'flex size-9 items-center justify-center rounded-full border border-border bg-surface'}
+      // 40px below `lg`, where it is tapped (responsive-layout touch targets).
+      className={className ?? 'flex size-10 shrink-0 items-center justify-center rounded-full border border-border bg-surface lg:size-9'}
     >
       <ChevronLeftIcon className="size-4" />
     </button>

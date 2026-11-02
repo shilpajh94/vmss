@@ -1,6 +1,6 @@
-import heroImage from '../../../assets/images/lobby-hero.png'
-import { PortalFooter } from '../../components/PortalFooter'
-import { PortalHeader } from '../../components/PortalHeader'
+import { AuthErrorAlert } from '../../components/auth/AuthFormParts'
+import { SplitScreenLayout } from '../../components/layout/SplitScreenLayout'
+import { VISITOR_BRAND, visitorFooterLinks } from '../../components/layout/visitor-brand'
 import { CardSkeleton } from '../../components/ui/Skeleton'
 import { StatusPanel } from './Components/StatusPanel'
 import { TrackingLookupCard } from './Components/TrackingLookupCard'
@@ -10,37 +10,30 @@ export function VisitorTrackPage() {
   const { trackingId, setTrackingId, validationError, status, response, errorMessage, submit } = useVisitorTrackLookup()
 
   return (
-    <div className="flex min-h-screen w-full flex-col bg-[#f8fafc]">
-      <PortalHeader backTo="/" />
-      <div className="relative flex w-full flex-1 flex-col">
-        <div aria-hidden className="absolute inset-0">
-          <img src={heroImage} alt="" className="size-full object-cover" />
-          <div className="absolute inset-0 bg-primary/55" />
+    // The result appears under the form, so once a lookup has run the
+    // content starts at the top instead of re-centring as it grows.
+    <SplitScreenLayout
+      portalLabel="Visitor Portal"
+      brand={VISITOR_BRAND}
+      footerLinks={visitorFooterLinks()}
+      back={{ to: '/' }}
+      align={status === 'idle' ? 'center' : 'start'}
+      contentClassName="max-w-[520px]"
+    >
+      <TrackingLookupCard
+        trackingId={trackingId}
+        onTrackingIdChange={setTrackingId}
+        onSubmit={submit}
+        loading={status === 'loading'}
+        error={validationError}
+      />
+      {status === 'loading' && (
+        <div role="status" aria-label="Looking up your request…" className="w-full">
+          <CardSkeleton bodyClassName="h-32" />
         </div>
-        <h1 className="text-h1 relative px-4 md:px-12 pt-6 pb-6 md:pt-10 md:pb-8 text-white">Track Your Visit</h1>
-        <div className="relative flex flex-wrap justify-center gap-4 md:gap-8 px-4 md:px-12 pb-10 md:pb-16">
-          <TrackingLookupCard
-            trackingId={trackingId}
-            onTrackingIdChange={setTrackingId}
-            onSubmit={submit}
-            loading={status === 'loading'}
-            error={validationError}
-          />
-          {status === 'loading' && (
-            <div role="status" aria-label="Looking up your request…" className="w-full max-w-[480px]">
-              <CardSkeleton bodyClassName="h-32" />
-            </div>
-          )}
-          {status === 'success' && response && <StatusPanel response={response} />}
-          {status === 'error' && (
-            <div className="flex w-full max-w-[480px] flex-col gap-3 rounded-2xl border border-danger bg-surface p-5 md:p-8">
-              <h3 className="text-h3 text-text">No Result</h3>
-              <p className="text-body text-danger">{errorMessage}</p>
-            </div>
-          )}
-        </div>
-      </div>
-      <PortalFooter />
-    </div>
+      )}
+      {status === 'success' && response && <StatusPanel response={response} />}
+      {status === 'error' && <AuthErrorAlert title="No Result" message={errorMessage ?? ''} />}
+    </SplitScreenLayout>
   )
 }

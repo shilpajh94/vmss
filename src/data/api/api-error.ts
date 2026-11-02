@@ -79,14 +79,47 @@ function humanizeDetailArray(detail: unknown[]): string | undefined {
 // Lets callers branch on the HTTP status (e.g. 401 vs 429 vs 404) without
 // losing the humanized message above — extends `Error` so every existing
 // `err instanceof Error ? err.message : ...` call site keeps working.
+//
+// `fieldErrors` carries the envelope's per-field problems (`errors: [{field,
+// message}]`), keyed by the field path the API names, in the order it listed
+// them, so a form can show each next to its control.
 export class ApiError extends Error {
   readonly status: number
+  readonly fieldErrors: Readonly<Record<string, string>>
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, fieldErrors: Record<string, string> = {}) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.fieldErrors = fieldErrors
   }
+}
+
+// The message `extractErrorMessage` falls back to when a body carries none.
+export function isFallbackErrorMessage(message: string): boolean {
+  return /^Request failed with status \d+$/.test(message)
+}
+
+// "visitors.0.email" -> "Visitor #1 Email", for showing a field error on its own.
+export function describeApiField(field: string): string {
+  return describeFieldPath(field)
+}
+
+interface EnvelopeFieldError {
+  field?: unknown
+  message?: unknown
+}
+
+export function extractFieldErrors(body: unknown): Record<string, string> {
+  if (!body || typeof body !== 'object' || !('errors' in body)) return {}
+  const errors = (body as { errors: unknown }).errors
+  if (!Array.isArray(errors)) return {}
+  const fieldErrors: Record<string, string> = {}
+  for (const item of errors as EnvelopeFieldError[]) {
+    if (!item || typeof item.field !== 'string' || typeof item.message !== 'string') continue
+    if (!(item.field in fieldErrors)) fieldErrors[item.field] = cleanMessage(item.message)
+  }
+  return fieldErrors
 }
 
 export function extractErrorMessage(body: unknown, status: number): string {

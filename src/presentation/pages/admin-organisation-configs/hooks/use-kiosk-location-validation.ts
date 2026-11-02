@@ -2,17 +2,17 @@ import { useCallback, useEffect, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { ApiError } from '../../../../data/api/api-error'
+import { usePermissions } from '../../../context/current-user-context'
 
-// /auth/me doesn't expose permission codes yet, so `settings:manage` is
-// approximated by the Admin role; the backend still enforces the real
-// permission and a 403 on save surfaces as an error toast. A 403 on load
-// (no `settings:view`) hides the setting entirely.
+// Editing needs `settings:manage`; the backend still enforces it and a 403 on
+// save surfaces as an error toast. A 403 on load (no `settings:view`) hides
+// the setting entirely.
 export function useKioskLocationValidation() {
-  const { getCurrentStaffUserUseCase, getKioskLocationValidationUseCase, updateKioskLocationValidationUseCase } = useAppDependencies()
+  const { getKioskLocationValidationUseCase, updateKioskLocationValidationUseCase } = useAppDependencies()
   const toast = useToast()
 
   const [enforce, setEnforce] = useState<boolean | undefined>(undefined)
-  const [canManage, setCanManage] = useState(false)
+  const canManage = usePermissions().can('settings:manage')
   const [isVisible, setIsVisible] = useState(true)
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
@@ -22,9 +22,7 @@ export function useKioskLocationValidation() {
     setIsLoading(true)
     setErrorMessage(undefined)
     try {
-      const [user, value] = await Promise.all([getCurrentStaffUserUseCase.execute(), getKioskLocationValidationUseCase.execute()])
-      setCanManage(user.isAdmin)
-      setEnforce(value)
+      setEnforce(await getKioskLocationValidationUseCase.execute())
     } catch (error) {
       if (error instanceof ApiError && error.status === 403) {
         setIsVisible(false)
@@ -34,7 +32,7 @@ export function useKioskLocationValidation() {
     } finally {
       setIsLoading(false)
     }
-  }, [getCurrentStaffUserUseCase, getKioskLocationValidationUseCase])
+  }, [getKioskLocationValidationUseCase])
 
   useEffect(() => {
     void load()

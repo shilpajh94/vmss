@@ -1,26 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useCallback, useMemo, useState } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
+import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
-import { LIVE_REFRESH_INTERVAL_MS, usePolling } from '../../../hooks/use-polling'
 import { usePagedList } from '../../../hooks/use-paged-list'
-import { usePageRefresh } from '../../../context/refresh-context'
-import { useLoadTracker, type LoadMode } from '../../../hooks/use-load-tracker'
+import { useLiveResource } from '../../../hooks/use-live-resource'
 import type { Building } from '../../../../domain/entities/building-schema'
-import type { StaffUser } from '../../../../domain/entities/staff-user-schema'
+import { toUserMessage } from '../../../utils/to-user-message'
 
 const PAGE_SIZE = 20
+const EMPTY_BUILDINGS: Building[] = []
 
 export function useAdminBuildings() {
-  const navigate = useNavigate()
-  const { getCurrentStaffUserUseCase, listBuildingsPageUseCase, listBranchesUseCase, deleteBuildingUseCase } = useAppDependencies()
+  const { listBuildingsPageUseCase, listBranchesUseCase, deleteBuildingUseCase } = useAppDependencies()
   const toast = useToast()
-
-  const [currentUser, setCurrentUser] = useState<StaffUser | undefined>(undefined)
-  const [buildings, setBuildings] = useState<Building[]>([])
-  const [total, setTotal] = useState(0)
-  const [branchOptions, setBranchOptions] = useState<{ value: string; label: string }[]>([])
-  const { phase, isRefreshing, begin } = useLoadTracker()
+  const currentUser = useCurrentUser()
 
   const [pendingDelete, setPendingDelete] = useState<Building | undefined>(undefined)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -31,55 +24,29 @@ export function useAdminBuildings() {
 
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
-  // `user` (default): filter/page/retry/refresh/post-mutation - keeps the
-  // current rows on screen with a progress cue. `background`: the 15s poll.
-  const loadBuildings = useCallback(
-    async (mode: LoadMode = 'user') => {
-      const request = begin(mode)
-
-      try {
-        const [user, page_, branches] = await Promise.all([
-          getCurrentStaffUserUseCase.execute(),
-          listBuildingsPageUseCase.execute({
-            page,
-            pageSize: PAGE_SIZE,
-            status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
-            branchId: branchFilter || undefined,
-          }),
-          listBranchesUseCase.execute(),
-        ])
-        if (!request.succeed()) return
-        setCurrentUser(user)
-        setBuildings(page_.items)
-        setTotal(page_.total)
-        setBranchOptions(branches.map((branch) => ({ value: branch.id, label: branch.name })).sort((a, b) => a.label.localeCompare(b.label)))
-      } catch {
-        if (!request.fail()) return
-        toast.error('Something went wrong loading the buildings. Please try again.')
-      }
-    },
-    [begin, getCurrentStaffUserUseCase, listBuildingsPageUseCase, listBranchesUseCase, page, statusFilter, branchFilter, toast],
-  )
-
-  useEffect(() => {
-    if (!sessionStorage.getItem('token')) {
-      navigate('/admin/login', { replace: true })
-      return
-    }
-
-    void loadBuildings()
-  }, [navigate, loadBuildings])
-
-  const retry = useCallback(() => {
-    void loadBuildings()
-  }, [loadBuildings])
-
-  // Auto-refreshes the registry every 15s; skipped while a delete dialog is
-  // open so a background tick can't replace data underneath it.
+  // Polls skip while a delete dialog is open, so a background tick can't
+  // replace data underneath it. The branch options load once.
   const isActionInProgress = pendingDelete !== undefined || isDeleting
-  usePolling(() => void loadBuildings('background'), { intervalMs: LIVE_REFRESH_INTERVAL_MS, isBusy: isActionInProgress })
-
-  usePageRefresh({ refresh: retry, isRefreshing: phase === 'initial' || isRefreshing })
+  const resource = useLiveResource({
+    load: () =>
+      listBuildingsPageUseCase.execute({
+        page,
+        pageSize: PAGE_SIZE,
+        status: statusFilter === 'active' || statusFilter === 'inactive' ? statusFilter : undefined,
+        branchId: branchFilter || undefined,
+      }),
+    query: { page, statusFilter, branchFilter },
+    reference: () => listBranchesUseCase.execute(),
+    errorMessage: 'Something went wrong loading the buildings. Please try again.',
+    isBusy: isActionInProgress,
+  })
+  const { phase, isRefreshing, retry, reload } = resource
+  const buildings = resource.data?.items ?? EMPTY_BUILDINGS
+  const total = resource.data?.total ?? 0
+  const branchOptions = useMemo(
+    () => (resource.reference ?? []).map((branch) => ({ value: branch.id, label: branch.name })).sort((a, b) => a.label.localeCompare(b.label)),
+    [resource.reference],
+  )
 
   const requestDelete = useCallback((building: Building) => {
     setPendingDelete(building)
@@ -97,13 +64,13 @@ export function useAdminBuildings() {
       await deleteBuildingUseCase.execute(pendingDelete.id)
       toast.success('Building deleted.')
       setPendingDelete(undefined)
-      await loadBuildings()
-    } catch {
-      toast.error('Something went wrong deleting the building. Please try again.')
+      await reload()
+    } catch (error) {
+      toast.error(toUserMessage(error, 'Something went wrong deleting the building. Please try again.'))
     } finally {
       setIsDeleting(false)
     }
-  }, [pendingDelete, deleteBuildingUseCase, toast, loadBuildings])
+  }, [pendingDelete, deleteBuildingUseCase, toast, reload])
 
   const isFiltering = branchFilter !== '' || statusFilter !== ''
   const toggleFilterPanel = useCallback(() => setIsFilterPanelOpen((current) => !current), [])

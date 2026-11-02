@@ -5,11 +5,15 @@
   --color-border-subtle: #f1f5f9;
   --color-text: #0f172a;
   --color-text-muted: #64748b;
-  --color-text-faint: #94a3b8;
+  /* slate-500: 4.76:1 on white, so faint text meets WCAG AA (design D-W11). */
+  --color-text-faint: #64748b;
   --color-primary: #0f172a;
   --color-secondary-accent: #06b6d4;
   --color-admin-accent: #0b8b84;
   --color-success: #10b981;
+  /* Success-coloured text (Active badges, the Approved column): the
+     emerald-500 fill is 2.2:1 as text on its own tint; emerald-700 is 4.8:1. */
+  --color-success-text: #047857;
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
   --color-info: #3b82f6;
@@ -26,6 +30,14 @@
   /* Former hard-coded slate-300 field borders and slate-50 sunken tracks. */
   --color-border-strong: #cbd5e1;
   --color-surface-muted: #f8fafc;
+  /* Controls, pills, icon tiles and inset panels placed on a card. White in
+     light (the card's own colour); lifted above the card in dark, where the
+     page-canvas `bg` would read as a hole. `bg` is the page canvas only
+     (fix-dark-theme-rendering design.md D2). */
+  --color-surface-inset: #ffffff;
+  /* Pale cyan behind accent icons and badges on the always-light public and
+     sign-in pages (cyan-50). */
+  --color-secondary-accent-soft: #ecfeff;
   /* The sidebar is dark navy in both themes, so its colours are their own
      tokens that the dark override never touches (design.md "sidebar stays
      dark navy"); same values the sidebars used before. */
@@ -40,6 +52,14 @@
   --color-knob: #ffffff;
   /* Dark text on fixed pastel fills (board avatar tints), both themes. */
   --color-ink: #0f172a;
+  /* The board avatars' pastel fills, picked per tracking ID; fixed in both
+     themes since their initials are `ink`. */
+  --color-avatar-1: #dbeafe;
+  --color-avatar-2: #ffe4e6;
+  --color-avatar-3: #d1fae5;
+  --color-avatar-4: #fef3c7;
+  --color-avatar-5: #f3e8ff;
+  --color-avatar-6: #fee2e2;
 
   /* Dashboard trend series (dataviz reference palette slots 1-3, validated
      on the white surface; see components/dashboard/chart-theme.ts). */
@@ -75,14 +95,19 @@
   --color-neutral-subtle: #334155;
   --color-text: #f1f5f9;
   --color-text-muted: #94a3b8;
-  --color-text-faint: #64748b;
+  /* slate-400: 7:1 on the dark surface (design D-W11). */
+  --color-text-faint: #94a3b8;
   --color-text-secondary: #cbd5e1;
   --color-border-strong: #475569;
   --color-surface-muted: #1e293b;
-  --color-primary: #e2e8f0;
+  --color-surface-inset: #1e293b;
+  /* The cyan brand accent, not the inverted light grey, so primary buttons
+     don't read as glaring white slabs (fix-dark-theme-rendering D4). */
+  --color-primary: #22d3ee;
   --color-secondary-accent: #22d3ee;
   --color-admin-accent: #2dd4bf;
   --color-success: #34d399;
+  --color-success-text: #34d399;
   --color-warning: #fbbf24;
   --color-danger: #f87171;
   --color-info: #60a5fa;
@@ -213,12 +238,20 @@
   }
 }
 
-/* The route wrapper's trailing spacer: added to the gap-page-section before
-   it, this makes the bottom gap equal p-page-content (16/24/32px). */
+/* The route wrapper's trailing spacer: as tall as p-page-content
+   (16/24/32px), pulled up over the gap-page-section before it, so the bottom
+   gap equals the page padding. It is never zero-height: Chromium leaves an
+   empty box out of the scrollable area, which would put the gap before it
+   out of reach (fix-e2e-suite-green design.md D1). */
 @utility h-page-end-gap {
-  height: 0;
+  height: 1rem;
+  margin-top: -1rem;
+  @media (width >= 48rem) {
+    height: 1.5rem;
+    margin-top: -1.5rem;
+  }
   @media (width >= 64rem) {
-    height: 0.5rem;
+    height: 2rem;
   }
 }
 

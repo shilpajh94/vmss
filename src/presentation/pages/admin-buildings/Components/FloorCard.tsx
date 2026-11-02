@@ -19,7 +19,7 @@ export function FloorCard({ floor, departments, isExpanded, onToggleExpand, onEd
       }`}
     >
       <div className="flex w-full items-center justify-between">
-        <button type="button" onClick={onToggleExpand} className="flex items-center gap-2.5">
+        <button type="button" onClick={onToggleExpand} aria-expanded={isExpanded} className="flex min-h-10 min-w-0 items-center gap-2.5 lg:min-h-0">
           <span className="font-body text-sm font-semibold text-text">{floor.name}</span>
           <ChevronDownIcon className={`size-3.5 text-text-muted transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
         </button>
@@ -28,7 +28,7 @@ export function FloorCard({ floor, departments, isExpanded, onToggleExpand, onEd
             type="button"
             onClick={onEdit}
             aria-label={`Edit ${floor.name}`}
-            className="flex size-8 items-center justify-center rounded-lg border border-border bg-surface"
+            className="flex size-10 items-center justify-center rounded-lg border border-border bg-surface lg:size-8"
           >
             <PencilIcon className="size-4" />
           </button>
@@ -36,7 +36,7 @@ export function FloorCard({ floor, departments, isExpanded, onToggleExpand, onEd
             type="button"
             onClick={onDelete}
             aria-label={`Delete ${floor.name}`}
-            className="flex size-8 items-center justify-center rounded-lg border border-border bg-surface"
+            className="flex size-10 items-center justify-center rounded-lg border border-border bg-surface lg:size-8"
           >
             <TrashIcon className="size-4" />
           </button>

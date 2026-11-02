@@ -1,9 +1,11 @@
-import { ChevronLeftIcon, PlusIcon, TrashIcon } from '../../components/icons'
+import { PlusIcon, TrashIcon } from '../../components/icons'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
 import { usePageHeader } from '../../context/page-header-context'
 import { useAdminWorkflowForm } from './hooks/use-admin-workflow-form'
+import { ErrorState } from '../../components/ui/ErrorState'
+import { FormPageHeader } from '../../components/FormPageHeader'
 
 export function AdminWorkflowFormPage() {
   const {
@@ -33,25 +35,10 @@ export function AdminWorkflowFormPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6">
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={cancel}
-            aria-label="Back"
-            className="flex size-9 items-center justify-center rounded-full border border-border bg-surface"
-          >
-            <ChevronLeftIcon className="size-4" />
-          </button>
-          <h1 className="font-display text-xl font-bold md:text-2xl text-text">{isEditMode ? 'Edit Workflow' : 'Add Workflow'}</h1>
-        </div>
+        <FormPageHeader title={isEditMode ? 'Edit Workflow' : 'Add Workflow'} onBack={cancel} />
 
         {errorMessage ? (
-          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface p-4 md:p-6 text-center md:p-12">
-            <p className="font-body text-sm text-danger">{errorMessage}</p>
-            <button type="button" onClick={retry} className="rounded-lg bg-admin-accent px-4 py-2 font-body text-sm font-semibold text-on-accent">
-              Try again
-            </button>
-          </div>
+          <ErrorState message={errorMessage} onRetry={retry} />
         ) : isLoading ? (
           <FormSkeleton rows={4} columns={1} label="Loading workflow…" />
         ) : (
@@ -100,7 +87,7 @@ export function AdminWorkflowFormPage() {
                       onClick={() => removeLevel(index)}
                       disabled={index === 0 || levels.length <= 1}
                       aria-label={`Remove level ${index + 1}`}
-                      className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-danger/15 text-danger disabled:opacity-40"
+                      className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-danger/15 text-danger disabled:opacity-40 lg:size-9"
                     >
                       <TrashIcon className="size-3.5" />
                     </button>

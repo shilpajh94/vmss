@@ -4,6 +4,8 @@ import { Modal } from '../../../components/ui/Modal'
 import { SelectField } from '../../../components/ui/SelectField'
 import { TextField } from '../../../components/ui/TextField'
 import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
+import { WholeNumberField } from '../../../components/ui/WholeNumberField'
+import { FLOOR_LIMITS, toFloorNumbers, validateFloorNumbers, type FloorNumberDrafts, type FloorNumberErrors } from '../../admin-floors/floor-form-validation'
 import type { Floor } from '../../../../domain/entities/floor-schema'
 import type { FloorDetailsInput } from '../hooks/use-admin-building-form'
 
@@ -18,7 +20,9 @@ const ACCESS_LEVEL_OPTIONS = [
   { value: 'secure', label: 'Secure' },
 ]
 
-const EMPTY_DETAILS: FloorDetailsInput = {
+type FloorModalValues = Omit<FloorDetailsInput, 'floorNumber' | 'capacity'> & FloorNumberDrafts
+
+const EMPTY_DETAILS: FloorModalValues = {
   name: '',
   floorNumber: 0,
   capacity: 0,
@@ -36,45 +40,58 @@ interface FloorModalProps {
 }
 
 export function FloorModal({ isOpen, initialFloor, isSaving, onSave, onClose }: FloorModalProps) {
-  const [details, setDetails] = useState<FloorDetailsInput>(EMPTY_DETAILS)
+  const [details, setDetails] = useState<FloorModalValues>(EMPTY_DETAILS)
   const [error, setError] = useState<string | undefined>(undefined)
+  const [numberErrors, setNumberErrors] = useState<FloorNumberErrors>({})
   const isEditMode = initialFloor !== undefined
 
   useEffect(() => {
     if (!isOpen) return
     setDetails(initialFloor ? { ...initialFloor } : EMPTY_DETAILS)
     setError(undefined)
+    setNumberErrors({})
   }, [isOpen, initialFloor])
 
-  const updateField = <K extends keyof FloorDetailsInput>(key: K, value: FloorDetailsInput[K]) => {
+  const updateField = <K extends keyof FloorModalValues>(key: K, value: FloorModalValues[K]) => {
     setDetails((current) => ({ ...current, [key]: value }))
   }
 
   const handleSave = () => {
-    if (!details.name.trim()) {
-      setError('Floor name is required.')
-      return
-    }
-    onSave(details)
+    const nextNumberErrors = validateFloorNumbers(details)
+    const nameError = details.name.trim() ? undefined : 'Floor name is required.'
+    setError(nameError)
+    setNumberErrors(nextNumberErrors)
+    if (nameError || Object.keys(nextNumberErrors).length > 0) return
+    onSave({ ...details, ...toFloorNumbers(details) })
   }
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={isEditMode ? 'Edit Floor' : 'Add Floor'}>
       <div className="flex flex-col gap-4">
-        <TextField label="Floor Name" required value={details.name} onChange={(name) => updateField('name', name)} error={error} />
         <TextField
+          label="Floor Name"
+          required
+          value={details.name}
+          onChange={(name) => updateField('name', name)}
+          error={error}
+          maxLength={FLOOR_LIMITS.name}
+        />
+        <WholeNumberField
           label="Floor Number"
-          type="number"
-          value={String(details.floorNumber)}
-          onChange={(value) => updateField('floorNumber', Number(value) || 0)}
+          required
+          allowNegative
+          value={details.floorNumber}
+          onChange={(floorNumber) => updateField('floorNumber', floorNumber)}
+          error={numberErrors.floorNumber}
+          helperText="0 is the ground floor; basements are negative."
         />
         <div className="flex flex-col gap-4 sm:flex-row">
           <div className="flex-1">
-            <TextField
+            <WholeNumberField
               label="Capacity"
-              type="number"
-              value={String(details.capacity)}
-              onChange={(value) => updateField('capacity', Number(value) || 0)}
+              value={details.capacity}
+              onChange={(capacity) => updateField('capacity', capacity)}
+              error={numberErrors.capacity}
             />
           </div>
           <div className="flex-1">

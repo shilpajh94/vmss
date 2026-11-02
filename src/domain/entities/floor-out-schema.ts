@@ -1,4 +1,5 @@
 import z from "zod"
+import { PaginationMetaSchema } from "./pagination-meta-schema"
 
 export const FloorOutSchema = z.object({
   id: z.string(),
@@ -25,12 +26,7 @@ export const FloorListResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z.array(FloorOutSchema),
-  pagination: z.object({
-    page: z.number(),
-    pageSize: z.number(),
-    total: z.number(),
-    totalPages: z.number(),
-  }),
+  pagination: PaginationMetaSchema,
 })
 
 export type FloorListResponse = z.infer<typeof FloorListResponseSchema>

@@ -1,8 +1,10 @@
 import type { ComponentType, SVGProps } from 'react'
-import { SelectDropdown } from './SelectDropdown'
+import { Select } from './Select'
 
-export type { DropdownOption } from './SelectDropdown'
-import type { DropdownOption } from './SelectDropdown'
+export interface DropdownOption {
+  value: string
+  label: string
+}
 
 interface DropdownFilterProps {
   icon: ComponentType<SVGProps<SVGSVGElement>>
@@ -12,6 +14,12 @@ interface DropdownFilterProps {
   ariaLabel: string
 }
 
+// The icon and chevron sit inside Select's trigger button, so clicking either
+// opens the list (select-dropdowns "The whole trigger opens the dropdown").
 export function DropdownFilter({ icon, value, options, onChange, ariaLabel }: DropdownFilterProps) {
-  return <SelectDropdown variant="filter" icon={icon} value={value} options={options} onChange={onChange} ariaLabel={ariaLabel} />
+  return (
+    <div className="w-full shrink-0 sm:w-[200px]">
+      <Select icon={icon} size="sm" value={value} options={options} onChange={onChange} ariaLabel={ariaLabel} />
+    </div>
+  )
 }

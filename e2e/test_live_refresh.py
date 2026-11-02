@@ -136,7 +136,12 @@ def test_clock_hidden_on_phones(new_context, tokens) -> None:
     context.add_init_script(f"try {{ sessionStorage.setItem('token', {json.dumps(token)}) }} catch {{}}")
     page = context.new_page()
     page.goto("/admin/dashboard")
-    expect(refresh_control(page)).to_be_visible()
+    # On phones refresh lives in the "More options" menu (audit-and-harden §7.6).
+    more = page.get_by_role("button", name=re.compile(r"^More options"))
+    expect(more).to_be_visible()
+    more.click()
+    expect(page.get_by_role("menuitem", name="Refresh")).to_be_visible()
+    page.keyboard.press("Escape")
     expect(page.locator("header time")).to_be_hidden()
     assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
 

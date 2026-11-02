@@ -20,7 +20,6 @@ import type { BranchOption } from '../../hooks/use-branch-options'
 const LOAD_ERROR = 'Something went wrong loading the calendar. Please try again.'
 
 interface CalendarPageProps {
-  loginPath: '/admin/login' | '/staff/login'
   boardBasePath: BoardBasePath
 }
 
@@ -50,7 +49,7 @@ function CalendarSkeleton() {
 
 // The staff and admin Calendar page (add-staff-calendar). One component for
 // both portals; the API decides which visits the signed-in user sees.
-export function CalendarPage({ loginPath, boardBasePath }: CalendarPageProps) {
+export function CalendarPage({ boardBasePath }: CalendarPageProps) {
   const currentUser = useCurrentUser()
   // The visit timezone, learned from the first response; "today" follows it.
   const [timezone, setTimezone] = useState<string | undefined>(undefined)
@@ -60,7 +59,6 @@ export function CalendarPage({ loginPath, boardBasePath }: CalendarPageProps) {
     branchId: state.branchId,
     statuses: state.statuses,
     perDayLimit: PER_DAY_LIMIT[state.view],
-    loginPath,
   })
   const branchOptions = useBranchOptions(currentUser, feed?.scope === 'branch')
 
@@ -80,7 +78,7 @@ export function CalendarPage({ loginPath, boardBasePath }: CalendarPageProps) {
   return (
     <div className="flex w-full min-w-0 flex-col gap-4 md:gap-6">
       <header className="flex flex-col gap-1">
-        <h1 className="font-display text-2xl font-semibold text-text">Calendar</h1>
+        <h1 className="font-display text-xl font-semibold text-text md:text-2xl">Calendar</h1>
         <p className="font-body text-sm text-text-muted">{scopeSubtitle(feed, state.branchId, branchOptions)}</p>
       </header>
 

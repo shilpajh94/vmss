@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router'
 import { PencilIcon, TrashIcon } from '../../../components/icons'
 import type { WorkflowGroup } from '../hooks/use-admin-workflows'
 import { responsiveTableClassName } from '../../../components/ui/responsive-table'
+import { StatusBadge } from '../../../components/ui/StatusBadge'
 
 // Below `md`: only the identifying, status, and actions columns stay visible.
 const TABLE_CLASS_NAME = responsiveTableClassName([3, 4])
@@ -47,14 +48,7 @@ export function WorkflowListTable({
               <tr key={workflow.visitorCategoryId} className="border-b border-border-subtle last:border-b-0">
                 <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">{workflow.categoryName}</td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-body text-xs font-semibold ${
-                      workflow.status === 'active' ? 'bg-success/15 text-success' : 'bg-border-subtle text-text-muted'
-                    }`}
-                  >
-                    <span className={`size-1.5 rounded-full ${workflow.status === 'active' ? 'bg-success' : 'bg-text-faint'}`} />
-                    {workflow.status === 'active' ? 'Active' : 'Paused'}
-                  </span>
+                  <StatusBadge isActive={workflow.status === 'active'} inactiveLabel="Paused" />
                 </td>
                 <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">
                   {workflow.levels.map((level) => level.approverRoleName).join(' → ')}

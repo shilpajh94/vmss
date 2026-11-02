@@ -99,7 +99,13 @@ def test_public_pages_stay_light(as_role) -> None:
     _wait_for_shell(page)
     expect(_html(page)).to_have_attribute("data-theme", "dark")
 
+    # Signed out, with the same stored mode: a signed-in user opening a
+    # login page is sent back to their landing page (audit-and-harden §3.6).
+    public = as_role("anonymous")
+    _store_mode(public, "dark")
+    public.emulate_media(color_scheme="dark")
     for path in ("/staff/login", "/admin/login", "/"):
+        page = public
         page.goto(path)
         page.wait_for_load_state("networkidle")
         expect(_html(page)).not_to_have_attribute("data-theme", "dark")
@@ -142,9 +148,11 @@ def test_phone_top_bar_keeps_the_control_on_one_row(as_role) -> None:
     page = as_role("reception")
     page.set_viewport_size({"width": 360, "height": 740})
     page.goto("/staff/calendar")
-    _wait_for_shell(page)
     header = page.locator("header").first
-    theme = page.get_by_role("button", name=THEME_BUTTON)
+    # Below 640px the theme and refresh controls sit in the "More options"
+    # menu (audit-and-harden §7.6); that button is the row's last control.
+    theme = page.get_by_role("button", name=re.compile(r"^More options"))
+    expect(theme).to_be_visible()
     header_box, theme_box = header.bounding_box(), theme.bounding_box()
     assert header_box and theme_box
     assert header_box["height"] <= 72, header_box
@@ -194,8 +202,9 @@ def test_switch_repaints_everything_in_one_frame(as_role) -> None:
     sample = page.evaluate(_SWITCH_AND_SAMPLE)
     assert sample is not None, "the top bar never turned dark"
     assert sample["menuGoneAtClick"] is True
-    # The chart's muted tick colour is already the dark-theme value.
-    assert sample["tickFill"] == "#64748b", sample
+    # The chart's faint tick colour is already the dark-theme value
+    # (#94a3b8 since audit-and-harden §6 raised it to 4.5:1).
+    assert sample["tickFill"] == "#94a3b8", sample
     # Colour transitions are suspended while the new tokens land.
     assert sample["switching"] is True, sample
     assert sample["pressTransition"] == "0s", sample
@@ -226,3 +235,31 @@ def test_cross_fade_only_without_reduced_motion(as_role) -> None:
     reduced.get_by_role("menuitemradio", name="Dark").click()
     expect(_html(reduced)).to_have_attribute("data-theme", "dark")
     assert reduced.evaluate("window.__vt") == 0
+
+
+# --- modernize-visitor-flow-pages --------------------------------------------
+
+# The white-wordmark lockup (hashed in a build, plain in dev).
+ON_DARK_LOGO = re.compile(r"/logo-guestify-on-dark[^/]*\.svg$")
+
+
+def test_error_page_renders_light_in_dark_mode(as_role) -> None:
+    """theme-mode "Public pages always render in the light theme": the route
+    error page sits outside PublicLayout, so it forces light itself."""
+    page = as_role("host")
+    _store_mode(page, "dark")
+    page.emulate_media(color_scheme="dark")
+    # The staff layout is the first lazy chunk on this route; both its first
+    # load and lazyPage's one automatic reload fail, so the router's error
+    # page is reached. (A page chunk would not do: the layout chunk loading
+    # fine clears lazyPage's reload flag each time.)
+    page.route(re.compile(r"/components/StaffLayout\.tsx"), lambda route: route.abort())
+    page.goto("/staff/calendar")
+    expect(page.get_by_role("heading", name="Something went wrong")).to_be_visible()
+    expect(_html(page)).not_to_have_attribute("data-theme", "dark")
+    # One logo, on the navy brand panel (the strip's copy is hidden at this
+    # width), never the dark wordmark on a dark surface.
+    logo = page.locator("img[src*='logo-guestify']").filter(visible=True)
+    expect(logo).to_have_count(1)
+    expect(logo).to_have_attribute("src", ON_DARK_LOGO)
+

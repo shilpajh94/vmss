@@ -3,6 +3,7 @@ import { Modal } from '../ui/Modal'
 import { TextField } from '../ui/TextField'
 import { confirmSubject } from '../../utils/confirm-subject'
 import { formatDateTime } from '../../utils/format-time'
+import { todayAsDateInputValue } from '../../utils/local-date-input-value'
 import { FormConfirmStep } from './FormConfirmStep'
 
 interface RescheduleInvitationModalProps {
@@ -10,16 +11,19 @@ interface RescheduleInvitationModalProps {
   visitorName?: string
   trackingId?: string
   isRescheduling?: boolean
-  /** Earliest selectable date (YYYY-MM-DD) — set for an archived no-show, which the API only reschedules to today or later. */
-  minDate?: string
   onConfirm: (preferredVisitDate: string, preferredVisitTime: string) => void
   onCancel: () => void
 }
 
-export function RescheduleInvitationModal({ isOpen, visitorName, trackingId, isRescheduling, minDate, onConfirm, onCancel }: RescheduleInvitationModalProps) {
+// A visit is never rescheduled into the past, whatever its status (the API
+// enforces this for an archived no-show; gap G29 covers the rest).
+export function RescheduleInvitationModal({ isOpen, visitorName, trackingId, isRescheduling, onConfirm, onCancel }: RescheduleInvitationModalProps) {
   const [preferredVisitDate, setPreferredVisitDate] = useState('')
   const [preferredVisitTime, setPreferredVisitTime] = useState('')
   const [isConfirming, setIsConfirming] = useState(false)
+  const minDate = todayAsDateInputValue()
+  // `min` only limits the picker; a typed date can still be earlier.
+  const isPastDate = preferredVisitDate !== '' && preferredVisitDate < minDate
 
   const reset = () => {
     setPreferredVisitDate('')
@@ -59,6 +63,7 @@ export function RescheduleInvitationModal({ isOpen, visitorName, trackingId, isR
             min={minDate}
             value={preferredVisitDate}
             onChange={setPreferredVisitDate}
+            error={isPastDate ? 'Choose today or a later date.' : undefined}
           />
           <TextField
             label="New time"
@@ -78,7 +83,7 @@ export function RescheduleInvitationModal({ isOpen, visitorName, trackingId, isR
             </button>
             <button
               type="button"
-              disabled={!preferredVisitDate || !preferredVisitTime}
+              disabled={!preferredVisitDate || !preferredVisitTime || isPastDate}
               onClick={() => setIsConfirming(true)}
               className="rounded-full bg-secondary-accent px-4 py-2 font-body text-[13px] font-semibold text-on-accent disabled:opacity-50"
             >
