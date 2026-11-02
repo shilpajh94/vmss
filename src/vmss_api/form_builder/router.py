@@ -1,7 +1,7 @@
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.auth.models import User
 from vmss_api.core.deps import get_current_user, get_tenant, get_tenant_db
+from vmss_api.core.rate_limit import limiter
 from vmss_api.core.redis import get_redis
 from vmss_api.core.responses import success_response
 from vmss_api.core.schemas import Envelope
@@ -32,6 +33,7 @@ from vmss_api.form_builder.schemas import (
     FormStepUpdate,
     PublishOut,
     ReorderRequest,
+    VisibilityCondition,
 )
 from vmss_api.form_builder.snapshot import is_supported_field_type, supported_field_rows
 from vmss_api.form_builder.step_icons import resolve_step_icon
@@ -62,7 +64,11 @@ def _group_out(group: FormFieldGroup, fields: list[FormField]) -> FormFieldGroup
         is_repeatable=group.is_repeatable,
         min_instances=group.min_instances,
         max_instances=group.max_instances,
-        visibility_condition=group.visibility_condition,
+        visibility_condition=(
+            VisibilityCondition.model_validate(group.visibility_condition)
+            if group.visibility_condition is not None
+            else None
+        ),
         order_index=group.order_index,
         field_ids=[
             f.id for f in fields if f.group_id == group.id and is_supported_field_type(f.field_type)
@@ -118,13 +124,51 @@ async def list_steps(
     )
 
 
+class _FormAudit:
+    """Queues one audit-log entry per form-builder mutation, off the request
+    path (audit-trail delta "Form-Builder, Profile, and Platform Mutations
+    Are Audited"; security-architecture.md §5)."""
+
+    def __init__(self, background_tasks: BackgroundTasks, tenant: Tenant, user: User) -> None:
+        self._background_tasks = background_tasks
+        self._tenant = tenant
+        self._user = user
+
+    def record(
+        self,
+        action: str,
+        entity_type: str,
+        entity_id: uuid.UUID | None,
+        diff: dict[str, Any] | None = None,
+    ) -> None:
+        self._background_tasks.add_task(
+            record_audit_log,
+            self._tenant.schema_name,
+            actor_user_id=self._user.id,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            diff=diff,
+        )
+
+
+def _form_audit(
+    background_tasks: BackgroundTasks,
+    tenant: Annotated[Tenant, Depends(get_tenant)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> _FormAudit:
+    return _FormAudit(background_tasks, tenant, user)
+
+
 @router.post("/steps", response_model=Envelope[FormStepOut], status_code=status.HTTP_201_CREATED)
 async def create_step(
     payload: FormStepCreate,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> JSONResponse:
     step = await service.create_step(tenant_db, branch_id, payload)
+    audit.record("form_step_created", "FormStep", step.id, {"key": step.key})
     return success_response(data=_step_out(step, [], []), status_code=status.HTTP_201_CREATED)
 
 
@@ -134,10 +178,17 @@ async def update_step(
     payload: FormStepUpdate,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> JSONResponse:
     step = await service.get_step(tenant_db, step_id)
     _ensure_in_scope(step.branch_id, branch_id)
     step = await service.update_step(tenant_db, step_id, payload)
+    audit.record(
+        "form_step_updated",
+        "FormStep",
+        step.id,
+        payload.model_dump(exclude_unset=True, mode="json"),
+    )
     fields = await service.list_fields_for_steps(tenant_db, [step])
     groups = await service.list_groups_for_steps(tenant_db, [step])
     return success_response(data=_step_out(step, fields.get(step.id, []), groups.get(step.id, [])))
@@ -148,10 +199,12 @@ async def delete_step(
     step_id: uuid.UUID,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> None:
     step = await service.get_step(tenant_db, step_id)
     _ensure_in_scope(step.branch_id, branch_id)
     await service.delete_step(tenant_db, step_id)
+    audit.record("form_step_deleted", "FormStep", step_id)
 
 
 @router.post("/steps/reorder", response_model=Envelope[list[FormStepOut]])
@@ -159,8 +212,15 @@ async def reorder_steps(
     payload: ReorderRequest,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> JSONResponse:
     steps = await service.reorder_steps(tenant_db, branch_id, payload.ordered_ids)
+    audit.record(
+        "form_steps_reordered",
+        "FormStep",
+        None,
+        {"orderedIds": [str(i) for i in payload.ordered_ids]},
+    )
     fields_by_step = await service.list_fields_for_steps(tenant_db, steps)
     groups_by_step = await service.list_groups_for_steps(tenant_db, steps)
     return success_response(
@@ -195,10 +255,12 @@ async def create_field(
     payload: FormFieldCreate,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> JSONResponse:
     step = await service.get_step(tenant_db, step_id)
     _ensure_in_scope(step.branch_id, branch_id)
     field_row = await service.create_field(tenant_db, step_id, payload)
+    audit.record("form_field_created", "FormField", field_row.id, {"key": field_row.key})
     return success_response(
         data=FormFieldOut.model_validate(field_row), status_code=status.HTTP_201_CREATED
     )
@@ -210,6 +272,7 @@ async def update_field(
     payload: FormFieldUpdate,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> JSONResponse:
     field_row = await service.get_field(tenant_db, field_id)
     step = await service.get_step(tenant_db, field_row.step_id)
@@ -225,6 +288,12 @@ async def update_field(
             ),
         )
     field_row = await service.update_field(tenant_db, field_id, payload)
+    audit.record(
+        "form_field_updated",
+        "FormField",
+        field_id,
+        payload.model_dump(exclude_unset=True, mode="json"),
+    )
     return success_response(data=FormFieldOut.model_validate(field_row))
 
 
@@ -233,11 +302,13 @@ async def delete_field(
     field_id: uuid.UUID,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> None:
     field_row = await service.get_field(tenant_db, field_id)
     step = await service.get_step(tenant_db, field_row.step_id)
     _ensure_in_scope(step.branch_id, branch_id)
     await service.delete_field(tenant_db, field_id)
+    audit.record("form_field_deleted", "FormField", field_id)
 
 
 @router.post("/steps/{step_id}/fields/reorder", response_model=Envelope[list[FormFieldOut]])
@@ -246,10 +317,17 @@ async def reorder_fields(
     payload: ReorderRequest,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> JSONResponse:
     step = await service.get_step(tenant_db, step_id)
     _ensure_in_scope(step.branch_id, branch_id)
     fields = await service.reorder_fields(tenant_db, step_id, payload.ordered_ids)
+    audit.record(
+        "form_fields_reordered",
+        "FormStep",
+        step_id,
+        {"orderedIds": [str(i) for i in payload.ordered_ids]},
+    )
     return success_response(data=_fields_out(fields, source="admin_reorder"))
 
 
@@ -281,10 +359,12 @@ async def create_group(
     payload: FormFieldGroupCreate,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> JSONResponse:
     step = await service.get_step(tenant_db, step_id)
     _ensure_in_scope(step.branch_id, branch_id)
     group = await service.create_group(tenant_db, step_id, payload)
+    audit.record("form_group_created", "FormFieldGroup", group.id, {"key": group.key})
     return success_response(data=_group_out(group, []), status_code=status.HTTP_201_CREATED)
 
 
@@ -294,11 +374,18 @@ async def update_group(
     payload: FormFieldGroupUpdate,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> JSONResponse:
     group = await service.get_group(tenant_db, group_id)
     step = await service.get_step(tenant_db, group.step_id)
     _ensure_in_scope(step.branch_id, branch_id)
     group = await service.update_group(tenant_db, group_id, payload)
+    audit.record(
+        "form_group_updated",
+        "FormFieldGroup",
+        group_id,
+        payload.model_dump(exclude_unset=True, mode="json"),
+    )
     fields = (await service.list_fields_for_steps(tenant_db, [step])).get(step.id, [])
     return success_response(data=_group_out(group, fields))
 
@@ -308,11 +395,13 @@ async def delete_group(
     group_id: uuid.UUID,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> None:
     group = await service.get_group(tenant_db, group_id)
     step = await service.get_step(tenant_db, group.step_id)
     _ensure_in_scope(step.branch_id, branch_id)
     await service.delete_group(tenant_db, group_id)
+    audit.record("form_group_deleted", "FormFieldGroup", group_id)
 
 
 @router.post("/steps/{step_id}/groups/reorder", response_model=Envelope[list[FormFieldGroupOut]])
@@ -321,10 +410,17 @@ async def reorder_groups(
     payload: ReorderRequest,
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     branch_id: Annotated[uuid.UUID | None, Depends(require_form_scope("form-builder:manage"))],
+    audit: Annotated[_FormAudit, Depends(_form_audit)],
 ) -> JSONResponse:
     step = await service.get_step(tenant_db, step_id)
     _ensure_in_scope(step.branch_id, branch_id)
     groups = await service.reorder_groups(tenant_db, step_id, payload.ordered_ids)
+    audit.record(
+        "form_groups_reordered",
+        "FormStep",
+        step_id,
+        {"orderedIds": [str(i) for i in payload.ordered_ids]},
+    )
     fields = (await service.list_fields_for_steps(tenant_db, [step])).get(step.id, [])
     return success_response(data=[_group_out(g, fields) for g in groups])
 
@@ -361,7 +457,9 @@ async def publish(
 
 
 @router.get("/effective", response_model=Envelope[list[FormStepOut]])
+@limiter.limit("120/minute")
 async def get_effective_form_public(
+    request: Request,
     tenant: Annotated[Tenant, Depends(public_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     redis: Annotated[Redis, Depends(get_redis)],

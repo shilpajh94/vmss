@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.audit_trail.models import AuditReportJob
 from vmss_api.auth.models import AuditLog
-from vmss_api.core.database import TenantScopedRepository
+from vmss_api.core.database import TenantScopedRepository, order_clause
 from vmss_api.core.schemas import SortOrder
 
 _SORT_COLUMNS: dict[str, Any] = {
@@ -15,10 +15,6 @@ _SORT_COLUMNS: dict[str, Any] = {
     "action": AuditLog.action,
     "entity_type": AuditLog.entity_type,
 }
-
-
-def _order_clause(column: Any, sort_order: SortOrder) -> Any:
-    return column.desc() if sort_order == SortOrder.desc else column.asc()
 
 
 class AuditLogRepository:
@@ -59,7 +55,7 @@ class AuditLogRepository:
         stmt = (
             select(AuditLog)
             .where(*filters)
-            .order_by(_order_clause(column, sort_order))
+            .order_by(order_clause(column, sort_order))
             .limit(page_size)
             .offset((page - 1) * page_size)
         )

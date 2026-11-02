@@ -6,11 +6,12 @@ from collections.abc import Callable
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from structlog.testing import capture_logs
 
-from vmss_api.auth.models import User
+from vmss_api.auth.models import AuditLog, User
 from vmss_api.core.config import settings
 from vmss_api.core.redis import get_redis
 from vmss_api.form_builder.defaults import DEFAULT_STEP_SPECS
@@ -211,6 +212,52 @@ async def test_reorder_steps_persists(
     )
     assert response.status_code == 200
     assert [s["id"] for s in response.json()["data"]] == reordered_ids
+
+
+async def _audit_entries(db_session: AsyncSession, action: str) -> list[AuditLog]:
+    db_session.expire_all()
+    stmt = select(AuditLog).where(AuditLog.action == action)
+    return list((await db_session.execute(stmt)).scalars().all())
+
+
+async def test_form_builder_mutations_are_audited(
+    client: AsyncClient, user: User, issue_token: Callable[[User], str], db_session: AsyncSession
+) -> None:
+    """audit-trail delta "Form-Builder, Profile, and Platform Mutations Are
+    Audited": a field label update and a step reorder each leave an entry
+    naming the caller."""
+    user_id = user.id
+    token = issue_token(user)
+    steps = (await client.get("/api/v1/form-builder/steps", headers=_auth(token))).json()["data"]
+    ids = [s["id"] for s in steps]
+    reordered = ids[:2] + list(reversed(ids[2:5])) + ids[5:]
+    response = await client.post(
+        "/api/v1/form-builder/steps/reorder", json={"orderedIds": reordered}, headers=_auth(token)
+    )
+    assert response.status_code == 200, response.text
+    [reorder_entry] = await _audit_entries(db_session, "form_steps_reordered")
+    assert reorder_entry.actor_user_id == user_id
+    assert reorder_entry.diff == {"orderedIds": reordered}
+
+    created = await client.post(
+        f"/api/v1/form-builder/steps/{ids[2]}/fields",
+        json={"key": "audit_probe", "label": "Audit Probe", "fieldType": "text"},
+        headers=_auth(token),
+    )
+    assert created.status_code == 201, created.text
+    field = created.json()["data"]
+    [create_entry] = await _audit_entries(db_session, "form_field_created")
+    assert create_entry.diff == {"key": "audit_probe"}
+    response = await client.patch(
+        f"/api/v1/form-builder/fields/{field['id']}",
+        json={"label": "Renamed For Audit"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    [update_entry] = await _audit_entries(db_session, "form_field_updated")
+    assert str(update_entry.entity_id) == field["id"]
+    assert update_entry.actor_user_id == user_id
+    assert update_entry.diff == {"label": "Renamed For Audit"}
 
 
 async def test_reorder_steps_rejects_locked_step_reposition(
@@ -1793,7 +1840,7 @@ async def test_seeded_visitor_info_group_has_no_admin_editable_instance_range(
     `test_visitor_group_instance_range_cannot_be_set`. `isRepeatable` is now
     seeded `False` (a deliberate product decision to retire the
     group-visitor-count cap `maxInstances` used to enforce — see
-    `invitations/tests.py::test_create_group_invitation_exceeding_former_max_visitors_accepted`),
+    `invitations/tests/::test_create_group_invitation_exceeding_former_max_visitors_accepted`),
     so `maxInstances` is seeded but no longer enforces anything.
     """
     token = issue_token(user)
@@ -1803,6 +1850,47 @@ async def test_seeded_visitor_info_group_has_no_admin_editable_instance_range(
     assert group["isRepeatable"] is False
     assert group["minInstances"] is None
     assert group["maxInstances"] == settings.invitation_max_group_visitors
+
+
+async def test_reorder_groups_success_and_permission_denied(
+    client: AsyncClient,
+    user: User,
+    user_without_permissions: User,
+    issue_token: Callable[[User], str],
+) -> None:
+    """The one form-builder route with no test until now:
+    `POST /form-builder/steps/{stepId}/groups/reorder`."""
+    token = issue_token(user)
+    step = await _get_default_step(client, token, "carried_items")
+    created = []
+    for key in ("parcels", "tools"):
+        response = await client.post(
+            f"/api/v1/form-builder/steps/{step['id']}/groups",
+            json={"key": key, "name": key.title(), "isRepeatable": True},
+            headers=_auth(token),
+        )
+        assert response.status_code == 201, response.text
+        created.append(response.json()["data"]["id"])
+    listed = await client.get(
+        f"/api/v1/form-builder/steps/{step['id']}/groups", headers=_auth(token)
+    )
+    current = [g["id"] for g in listed.json()["data"]]
+    reordered = list(reversed(current))
+
+    response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups/reorder",
+        json={"orderedIds": reordered},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    assert [g["id"] for g in response.json()["data"]] == reordered
+
+    denied = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/groups/reorder",
+        json={"orderedIds": current},
+        headers=_auth(issue_token(user_without_permissions)),
+    )
+    assert denied.status_code == 403
 
 
 async def test_create_group_success(

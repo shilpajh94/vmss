@@ -40,6 +40,7 @@ arbitrary:
   generates.
 """
 
+import uuid
 from secrets import token_hex
 from typing import Any
 
@@ -51,6 +52,7 @@ from vmss_api.audit_trail.models import AuditReportJob
 from vmss_api.auth.models import AuditLog, Permission, Role, User, UserBranchRole
 from vmss_api.devices.models import Device
 from vmss_api.invitations.models import Invitation, InvitationVehicle, InvitationVisitor
+from vmss_api.kiosks.models import Kiosk
 from vmss_api.notifications.models import DeviceToken
 from vmss_api.org_structure.models import (
     Branch,
@@ -238,6 +240,10 @@ class InvitationFactory(SQLAlchemyFactory[Invitation]):
     # produce an empty string, which broke every test keying off tracking_id
     # in a URL path.
     tracking_id = Use(lambda: f"INV-{token_hex(4).upper()}")
+    # Unique, nullable: polyfactory's random string is sometimes `""`, and two
+    # `""` rows collide on `ix_invitations_checkin_code`. Tests that exercise
+    # code check-in set one explicitly.
+    checkin_code = None
     approved_at = None
     # auto-checkout-and-archive-no-shows: a random True/timestamp here would
     # make an ordinary row read as swept (e.g. the export's Checked Out By
@@ -345,6 +351,9 @@ class InvitationApprovalStepFactory(SQLAlchemyFactory[InvitationApprovalStep]):
 class InvitationVisitorFactory(SQLAlchemyFactory[InvitationVisitor]):
     __model__ = InvitationVisitor
     deleted_at = None
+    # Random None-or-string made document-URL assertions flake; tests that
+    # need an ID-proof key set one explicitly.
+    id_proof_storage_key = None
     # checkin-approval-workflow-improvements: nullable, optional — see
     # InvitationFactory.primary_contact_photo_storage_key above.
     photo_storage_key = None
@@ -359,6 +368,15 @@ class InvitationVehicleFactory(SQLAlchemyFactory[InvitationVehicle]):
     # restructure-walkin-payload-by-field-id: see
     # InvitationFactory.custom_field_values above.
     custom_field_values: dict[str, Any] = {}
+
+
+class KioskFactory(SQLAlchemyFactory[Kiosk]):
+    """Visible, active and not deleted unless a test says otherwise."""
+
+    __model__ = Kiosk
+    is_active = True
+    is_hidden = False
+    deleted_at = None
 
 
 class RegistrationDeviceKeyFactory(SQLAlchemyFactory[RegistrationDeviceKey]):
@@ -387,3 +405,78 @@ class VisitDurationFactory(SQLAlchemyFactory[VisitDuration]):
     __model__ = VisitDuration
     is_active = True
     deleted_at = None
+
+
+# --- Default visit location for invitation-creation test payloads ----------
+# `InvitationCreate` requires `visitDetails.branchId` and `buildingId` (since
+# 8ec5b06). Most create/walk-in tests don't care where the visit is, so the
+# payload helpers fill both in from the test's branch and this building,
+# instead of every test building one by hand.
+
+_TEST_TENANT_SCHEMA = "tenant_acme_test"
+_DEFAULT_BUILDING_NAMESPACE = uuid.UUID("6f1d6f63-6a1b-4d8e-9c55-4a4a0d1b2f10")
+
+
+async def ensure_default_location(
+    branch_id: uuid.UUID | None = None,
+) -> tuple[str, str] | None:
+    """`(branchId, buildingId)` for a payload: `branch_id`'s default building,
+    created idempotently through its own committed session so the request's
+    session sees it. With no `branch_id`, the tenant's only branch is used;
+    with zero or several branches there is no safe default and `None` is
+    returned. The `db_session` fixture's teardown deletes the row with every
+    other tenant table.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.dialects.postgresql import insert
+
+    from vmss_api.core.database import tenant_session_scope
+
+    async with tenant_session_scope(_TEST_TENANT_SCHEMA) as session:
+        if branch_id is None:
+            stmt = select(Branch.id).where(Branch.deleted_at.is_(None)).limit(2)
+            ids = (await session.execute(stmt)).scalars().all()
+            if len(ids) != 1:
+                return None
+            branch_id = ids[0]
+        building_id = uuid.uuid5(_DEFAULT_BUILDING_NAMESPACE, str(branch_id))
+        await session.execute(
+            insert(Building)
+            .values(
+                id=building_id,
+                branch_id=branch_id,
+                name="Default Test Building",
+                code=f"DEF-{building_id.hex[:6]}",
+                is_active=True,
+            )
+            .on_conflict_do_nothing(index_elements=["id"])
+        )
+        await session.commit()
+    return str(branch_id), str(building_id)
+
+
+async def with_default_location(payload: dict, branch_id: uuid.UUID | None = None) -> dict:
+    """Fills `visitDetails.branchId`/`buildingId` when a test left them out.
+    A test that sets its own branch but no building keeps its branch and
+    gets that branch's default building."""
+    visit_details = payload.get("visitDetails")
+    if not isinstance(visit_details, dict) or visit_details.get("buildingId"):
+        return payload
+    own_branch = visit_details.get("branchId")
+    location = await ensure_default_location(uuid.UUID(own_branch) if own_branch else branch_id)
+    if location is not None:
+        visit_details.setdefault("branchId", location[0])
+        visit_details["buildingId"] = location[1]
+    return payload
+
+
+def default_consents() -> list[dict[str, object]]:
+    """The three default Consent Agreement answers, referenced by the
+    deterministic default-form field id (restructure-walkin-payload-by-
+    field-id) — valid for any branch that never customised its form."""
+    from vmss_api.form_builder.defaults import _stable_id
+
+    return [
+        {"fieldId": str(_stable_id("field", "consent_agreement", key)), "accepted": True}
+        for key in ("terms_accepted", "data_processing_accepted", "safety_guidelines_accepted")
+    ]

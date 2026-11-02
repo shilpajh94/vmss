@@ -1,4 +1,6 @@
-from sqlalchemy.ext.asyncio import AsyncSession
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from vmss_api.core.schemas import PaginationMeta
 from vmss_api.core.storage import url_for as storage_url_for
@@ -9,6 +11,9 @@ from vmss_api.visitor_return_visit.schemas import (
     ReturningVisitorPrefill,
     VisitHistoryEntry,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _to_history_entry(invitation: Invitation) -> VisitHistoryEntry:
@@ -50,10 +55,5 @@ async def get_returning_visitor_data(
     return ReturningVisitorLookupOut(
         history=[_to_history_entry(inv) for inv in invitations],
         prefill=await _to_prefill(most_recent) if most_recent is not None else None,
-        pagination=PaginationMeta(
-            page=page,
-            page_size=page_size,
-            total=total,
-            total_pages=-(-total // page_size) if page_size else 0,
-        ),
+        pagination=PaginationMeta.build(page=page, page_size=page_size, total=total),
     )

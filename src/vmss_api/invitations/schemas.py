@@ -525,6 +525,11 @@ class InvitationListItemOut(CamelModel):
     archived_at: datetime | None = None
     checked_out_automatically: bool = False
     status_changed_at: datetime | None = None
+    # Additive (audit-and-harden-api-and-web): lets a board card show the
+    # schedule and approval level without a per-card detail request.
+    preferred_visit_date: date | None = None
+    preferred_visit_time: time | None = None
+    current_approval_step: CurrentApprovalStepOut | None = None
 
 
 # --- add-invitation-export ---------------------------------------------------
@@ -882,6 +887,10 @@ class InvitationDetailOut(CamelModel):
     watchlist_override_at: datetime | None
     watchlist_override_reason: str | None
     watchlist_override_by_user_id: uuid.UUID | None
+    # Additive (audit-and-harden-api-and-web): the registered devices that
+    # performed the check-in/out, same shape the check-in responses return.
+    check_in_device: DeviceBriefOut | None = None
+    check_out_device: DeviceBriefOut | None = None
     visitors: list[InvitationVisitorDetailOut]
     vehicles: list[InvitationVehicleOut]
 

@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from vmss_api.core.database import TenantScopedRepository
+from vmss_api.core.database import TenantScopedRepository, order_clause
 from vmss_api.core.schemas import SortOrder
 from vmss_api.devices.models import Device, TenantSettings
 from vmss_api.org_structure.models import Branch, Building
@@ -72,7 +72,7 @@ class DeviceRepository(TenantScopedRepository[Device]):
                 select(func.count()).select_from(select(Device.id).where(*filters).subquery())
             )
         ).scalar_one()
-        order = column.desc() if sort_order == SortOrder.desc else column.asc()
+        order = order_clause(column, sort_order)
         stmt = base.order_by(order, Device.id).limit(page_size).offset((page - 1) * page_size)
         rows = (await self.session.execute(stmt)).all()
         return [(d, b, bl) for d, b, bl in rows], total

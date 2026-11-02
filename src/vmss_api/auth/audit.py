@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-from vmss_api.auth.models import AuditLog
+from vmss_api.auth.repository import AuditLogWriter
 from vmss_api.core.database import tenant_session_scope
 
 
@@ -25,14 +25,11 @@ async def record_audit_log(
     `get_tenant_db`) has already been closed.
     """
     async with tenant_session_scope(schema_name) as session:
-        session.add(
-            AuditLog(
-                id=uuid.uuid4(),
-                actor_user_id=actor_user_id,
-                action=action,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                diff=diff,
-            )
+        AuditLogWriter(session).add(
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            diff=diff,
         )
         await session.commit()

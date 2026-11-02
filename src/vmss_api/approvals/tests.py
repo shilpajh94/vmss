@@ -17,10 +17,12 @@ from factories import (
     RoleFactory,
     UserFactory,
     VisitorCategoryFactory,
+    ensure_default_location,
 )
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
 from vmss_api.auth.repository import RoleRepository
+from vmss_api.form_builder.defaults import _stable_id as _form_builder_stable_id
 from vmss_api.invitations import tasks
 from vmss_api.invitations.models import Invitation
 from vmss_api.notifications import service as notifications_service
@@ -39,7 +41,7 @@ async def _default_host_role(db_session: AsyncSession) -> None:
     """`create_invitation` now always resolves the tenant's default host
     role (role-based-invitation-workflow) — this module exercises it
     directly (not just through the HTTP layer), same rationale as
-    `invitations/tests.py::_default_host_role`.
+    `invitations/tests/::_default_host_role`.
     """
     db_session.add(RoleFactory.build(id=uuid.uuid4(), name="reception", permissions=[]))
     await db_session.commit()
@@ -64,7 +66,7 @@ async def _get_or_create_permission(db_session: AsyncSession, code: str) -> Perm
 
 
 def _build_invitation(db_session: AsyncSession, branch_id: uuid.UUID, **overrides) -> Invitation:
-    """Same shape as `invitations/tests.py::_build_invitation` — a
+    """Same shape as `invitations/tests/::_build_invitation` — a
     workflow-backed invitation's steps are attached separately below, so the
     invitation row itself starts in the same "submitted, nothing has
     happened yet" state that helper already represents.
@@ -315,6 +317,12 @@ async def _host_and_role_invitation(
 
 
 # --- Happy path: approve every step in order ---------------------------------
+
+
+async def _default_building_id(branch_id: uuid.UUID) -> uuid.UUID:
+    location = await ensure_default_location(branch_id)
+    assert location is not None
+    return uuid.UUID(location[1])
 
 
 async def test_approve_step_non_final_unlocks_next_step_and_computes_its_clock(
@@ -2702,7 +2710,7 @@ async def test_category_with_no_active_rules_creates_only_the_ownership_step(
 
     from vmss_api.invitations import service as invitations_service
     from vmss_api.invitations.schemas import (
-        IdProofType,
+        ConsentValue,
         InvitationCreate,
         InvitationPrimaryContactCreate,
         RegistrationType,
@@ -2719,7 +2727,7 @@ async def test_category_with_no_active_rules_creates_only_the_ownership_step(
         primary_contact=InvitationPrimaryContactCreate(
             full_name="Test Visitor",
             email="test.visitor@example.com",
-            id_proof_type=IdProofType.passport,
+            id_proof_type="Passport",
         ),
         visit_details=VisitDetailsSubmit(
             purpose_of_visit="Test",
@@ -2727,12 +2735,15 @@ async def test_category_with_no_active_rules_creates_only_the_ownership_step(
             preferred_visit_time=time(10, 0, 0),
             expected_duration="< 1 hour",
             department_to_visit="Test",
+            branch_id=branch.id,
+            building_id=await _default_building_id(branch.id),
         ),
-        consents={
-            "terms_accepted": True,
-            "data_processing_accepted": True,
-            "safety_guidelines_accepted": True,
-        },
+        consents=[
+            ConsentValue(
+                field_id=_form_builder_stable_id("field", "consent_agreement", key), accepted=True
+            )
+            for key in ("terms_accepted", "data_processing_accepted", "safety_guidelines_accepted")
+        ],
     )
     invitation = await invitations_service.create_invitation(
         db_session,
@@ -2772,7 +2783,7 @@ async def test_category_with_configured_rules_snapshots_exactly_the_configured_c
 
     from vmss_api.invitations import service as invitations_service
     from vmss_api.invitations.schemas import (
-        IdProofType,
+        ConsentValue,
         InvitationCreate,
         InvitationPrimaryContactCreate,
         RegistrationType,
@@ -2804,7 +2815,7 @@ async def test_category_with_configured_rules_snapshots_exactly_the_configured_c
         primary_contact=InvitationPrimaryContactCreate(
             full_name="Test Visitor",
             email="test.visitor2@example.com",
-            id_proof_type=IdProofType.passport,
+            id_proof_type="Passport",
         ),
         visit_details=VisitDetailsSubmit(
             purpose_of_visit="Test",
@@ -2812,12 +2823,15 @@ async def test_category_with_configured_rules_snapshots_exactly_the_configured_c
             preferred_visit_time=time(10, 0, 0),
             expected_duration="< 1 hour",
             department_to_visit="Test",
+            branch_id=branch.id,
+            building_id=await _default_building_id(branch.id),
         ),
-        consents={
-            "terms_accepted": True,
-            "data_processing_accepted": True,
-            "safety_guidelines_accepted": True,
-        },
+        consents=[
+            ConsentValue(
+                field_id=_form_builder_stable_id("field", "consent_agreement", key), accepted=True
+            )
+            for key in ("terms_accepted", "data_processing_accepted", "safety_guidelines_accepted")
+        ],
     )
     invitation = await invitations_service.create_invitation(
         db_session,

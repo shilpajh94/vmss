@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 from enum import StrEnum
 
 from pydantic import Field
@@ -13,20 +12,6 @@ class InvitationApprovalStepStatus(StrEnum):
     rejected = "rejected"
     skipped = "skipped"
     auto_approved = "auto_approved"
-
-
-class InvitationApprovalStepOut(CamelModel):
-    id: uuid.UUID
-    step_order: int
-    approver_role_id: uuid.UUID | None
-    approver_user_id: uuid.UUID | None
-    is_mandatory: bool
-    status: InvitationApprovalStepStatus
-    acted_by_user_id: uuid.UUID | None
-    acted_at: datetime | None
-    escalates_at: datetime | None
-    auto_approves_at: datetime | None
-    delegated_to_user_id: uuid.UUID | None
 
 
 class CurrentApprovalStepOut(CamelModel):

@@ -1,5 +1,6 @@
 import uuid
-from typing import Annotated
+from collections.abc import Awaitable, Callable
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +12,7 @@ from vmss_api.core.schemas import BranchScope
 from vmss_api.org_structure.deps import authorize_branch_id
 
 
-def resolve_dashboard_branch_scope(permission_code: str):
+def resolve_dashboard_branch_scope(permission_code: str) -> Callable[..., Awaitable[Any]]:
     """Query-param counterpart to `org_structure.deps.require_branch_scope`
     (design.md Decision 2): narrows to one branch via `authorize_branch_id`
     when `branchId` is supplied in the query string, otherwise falls back to

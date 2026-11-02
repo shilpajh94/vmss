@@ -41,7 +41,7 @@ from PIL import Image
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from factories import UserFactory, VisitorCategoryFactory
+from factories import UserFactory, VisitorCategoryFactory, default_consents
 from vmss_api.auth.models import Role, UserBranchRole
 from vmss_api.core.config import settings
 from vmss_api.core.database import get_db, tenant_session_scope
@@ -135,7 +135,7 @@ class _RecordingSender:
 
 
 def _extract_otp_code(body: str) -> str:
-    match = re.search(r"code is (\d+)", body)
+    match = re.search(r"code(?: is|:) (\d+)", body)
     assert match is not None, body
     return match.group(1)
 
@@ -166,6 +166,8 @@ def _visit_details(**catalog_ids: str) -> dict:
 def _invitation_payload(
     full_name: str,
     *,
+    branch_id: str,
+    building_id: str,
     visitor_category_id: uuid.UUID = _DEFAULT_VISITOR_CATEGORY_ID,
     **catalog_ids: str,
 ) -> dict:
@@ -179,14 +181,14 @@ def _invitation_payload(
             "idProofType": "Passport",
         },
         "visitors": [],
-        "visitDetails": _visit_details(**catalog_ids),
+        "visitDetails": {
+            **_visit_details(**catalog_ids),
+            "branchId": branch_id,
+            "buildingId": building_id,
+        },
         "carriedItems": {"items": []},
         "vehicles": [],
-        "consents": {
-            "terms_accepted": True,
-            "data_processing_accepted": True,
-            "safety_guidelines_accepted": True,
-        },
+        "consents": default_consents(),
     }
 
 
@@ -282,6 +284,12 @@ async def _run_workflow_after_provisioning(
     assert provision_data["departmentsCreated"] == 1
     assert provision_data["receptionDesksCreated"] == 1
     assert provision_data["securityGatesCreated"] == 2
+    buildings_a_response = await client.get(
+        "/api/v1/buildings", headers={**admin_headers, "X-Branch-ID": branch_a_id}
+    )
+    assert buildings_a_response.status_code == 200, buildings_a_response.text
+    [building_a] = buildings_a_response.json()["data"]
+    building_a_id = building_a["id"]
 
     # --- Branch B, built entity-by-entity so the tenant genuinely has two
     # branches for everything below to scope across ------------------------
@@ -419,7 +427,13 @@ async def _run_workflow_after_provisioning(
     try:
         create_invitation_response = await client.post(
             "/api/v1/invitations",
-            data={"payload": json.dumps(_invitation_payload("Priya Nair"))},
+            data={
+                "payload": json.dumps(
+                    _invitation_payload(
+                        "Priya Nair", branch_id=branch_a_id, building_id=building_a_id
+                    )
+                )
+            },
             files=[
                 ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
                 ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
@@ -517,6 +531,8 @@ async def _run_workflow_after_provisioning(
                     "payload": json.dumps(
                         _invitation_payload(
                             "Dana Delegate Host",
+                            branch_id=branch_a_id,
+                            building_id=building_a_id,
                             visitor_category_id=uuid.UUID(visitor_category_id),
                         )
                     )
@@ -725,6 +741,8 @@ async def _run_workflow_after_provisioning(
                 "payload": json.dumps(
                     _invitation_payload(
                         "Walk In Visitor",
+                        branch_id=branch_b_id,
+                        building_id=building_b_id,
                         departmentId=department_b_id,
                         purposeId=purpose_id,
                         durationId=duration_id,

@@ -36,6 +36,14 @@ is identical for every tenant.
 | DELETE | `/api/v1/auth/roles/{id}` | `roles:manage` (company-wide) | — | Soft-deletes a custom role. Rejected for a standard role, or for any role with an active `UserBranchRole` grant. |
 | POST | `/api/v1/auth/roles/resync-permissions` | `roles:manage` (company-wide) | — | Backfills any catalog permission a standard role (Admin/Reception/Security/Host) is currently missing — see "Resyncing stale roles against the catalog" below. Returns each resynced role's newly granted codes (empty list if it already had everything). |
 
+## `permissionCodes` on `/auth/me`
+
+`GET /auth/me` returns, on each branch-role entry, `permissionCodes`: every
+permission code that role grants, sorted. Clients gate their UI on these,
+not on role names, so a tenant-defined role gets exactly the UI its grants
+allow. This field is specific to `/auth/me`. The `branchRoles` on employee
+responses keep the shorter shape.
+
 ## Creating a single employee
 
 `POST /auth/employees` (`auth/service.py::create_employee`) is the
@@ -299,6 +307,26 @@ code isn't in the catalog (`auth/service.py::_resolve_permission_codes`).
 - Superadmin login (a completely separate identity — not a member of any
   tenant's schema) lives in `platform/`, not here — see
   `docs/features/platform.md`.
+
+## Public endpoint hardening
+
+Some endpoints in this feature can still be called without the credential
+they will eventually require. This is controlled by the
+`PUBLIC_ENDPOINT_HARDENING` setting (default `false`), from the
+`audit-and-harden-api-and-web` change.
+
+- **While it is off:** these requests are served exactly as before, but the
+  response carries `Deprecation: true` and a `Link` header pointing at this
+  section.
+- **Once it is on:** the requirement in the table below is enforced.
+
+The target is to enable it in staging, then production, by **2026-12-31**,
+once the Flutter and kiosk teams confirm their clients send the credential.
+The web app already does.
+
+| Endpoint | Strict-mode requirement |
+|---|---|
+| `GET /auth/employees` | Callers without a bearer token holding `employees:view` get only `id`, `fullName`, `designation`, `departmentId` and `avatarUrl`: no email, phone, employee code or branch roles. |
 
 ## Disabling and deleting employees
 

@@ -30,3 +30,10 @@ schema: spec-driven
 #     archive:
 #       guidance:
 #         - Summarize the archive outcome before finishing
+
+operations:
+  apply:
+    guidance:
+      - Do not run the full pytest or e2e suite while implementing a change. Run only the changed feature's tests, plus tests of any area that depends on the changed code, plus tests/test_api_documentation.py for route or response-schema changes (.claude/rules/testing-standards.md §5).
+      - If a task says "full suite", run the targeted set instead and note the substitution in the task. Run the full suite only when the user explicitly asks; CI runs it before merge.
+      - In the completion summary, list the test modules run and any dependent area included, with the reason.

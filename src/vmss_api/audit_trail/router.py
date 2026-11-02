@@ -33,30 +33,13 @@ from vmss_api.audit_trail.service import (
 )
 from vmss_api.auth.models import User
 from vmss_api.core.deps import get_pagination, get_tenant, get_tenant_db, require_permission
-from vmss_api.core.idempotency import cache_response as _core_cache_response
-from vmss_api.core.idempotency import cached_response as _core_cached_response
+from vmss_api.core.idempotency import Idempotency, idempotency
 from vmss_api.core.logging import logger
 from vmss_api.core.responses import error_response, paginated_response, success_response
 from vmss_api.core.schemas import Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/audit-trail", tags=["audit-trail"])
-
-
-async def _cached_response(
-    tenant_id: uuid.UUID, idempotency_key: str | None
-) -> JSONResponse | None:
-    """api-conventions.md §3 — a retried report request with the same
-    `Idempotency-Key` returns the original response instead of enqueueing a
-    second Celery job.
-    """
-    return await _core_cached_response(tenant_id, "audit-trail", idempotency_key)
-
-
-async def _cache_response(
-    tenant_id: uuid.UUID, idempotency_key: str | None, response: JSONResponse
-) -> None:
-    await _core_cache_response(tenant_id, "audit-trail", idempotency_key, response)
 
 
 @router.get(
@@ -109,6 +92,7 @@ async def request_audit_report(
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(require_permission("audit-logs:export"))],
+    idem: Annotated[Idempotency, Depends(idempotency)],
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -121,7 +105,13 @@ async def request_audit_report(
         ),
     ] = None,
 ) -> JSONResponse:
-    cached = await _cached_response(tenant.id, idempotency_key)
+    cached = await idem.begin(
+        tenant.id,
+        "audit-trail",
+        idempotency_key,
+        caller=str(user.id),
+        body=payload.model_dump_json(),
+    )
     if cached is not None:
         return cached
 
@@ -141,7 +131,7 @@ async def request_audit_report(
     logger.info("audit_report_requested", job_id=str(job.id), formats=payload.formats)
     job_out = await service.to_report_job_out(job)
     response = success_response(data=job_out, status_code=status.HTTP_202_ACCEPTED)
-    await _cache_response(tenant.id, idempotency_key, response)
+    await idem.store(response)
     return response
 
 

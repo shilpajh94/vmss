@@ -4,7 +4,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from vmss_api.core.database import TenantScopedRepository
+from vmss_api.core.database import TenantScopedRepository, order_clause
 from vmss_api.core.schemas import SortOrder
 from vmss_api.visitors.models import ApprovalWorkflowRule, VisitorCategory
 from vmss_api.visitors.schemas import (
@@ -12,10 +12,6 @@ from vmss_api.visitors.schemas import (
     EscortRequirement,
     NdaRequirement,
 )
-
-
-def _order_clause(column: Any, sort_order: SortOrder) -> Any:
-    return column.desc() if sort_order == SortOrder.desc else column.asc()
 
 
 class VisitorCategoryRepository(TenantScopedRepository[VisitorCategory]):
@@ -103,7 +99,7 @@ class VisitorCategoryRepository(TenantScopedRepository[VisitorCategory]):
         return await super().paginate(
             page=page,
             page_size=page_size,
-            order_by=_order_clause(column, sort_order),
+            order_by=order_clause(column, sort_order),
             filters=filters,
         )
 
@@ -165,6 +161,6 @@ class ApprovalWorkflowRuleRepository(TenantScopedRepository[ApprovalWorkflowRule
         return await super().paginate(
             page=page,
             page_size=page_size,
-            order_by=_order_clause(column, sort_order),
+            order_by=order_clause(column, sort_order),
             filters=filters,
         )

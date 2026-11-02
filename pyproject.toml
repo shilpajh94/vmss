@@ -67,17 +67,49 @@ target-version = "py313"
 extend-exclude = ["alembic/versions", "alembic_tenant/versions", "openspec"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "ANN001", "ANN201", "ANN202"]
 
 [tool.ruff.lint.per-file-ignores]
 # `DATABASE_URL` must be swapped to `vmss_test` before any `vmss_api` import
 # — see the module docstring/comment in conftest.py for why.
-"conftest.py" = ["E402"]
+"conftest.py" = ["E402", "ANN"]
+# Signatures are mandatory in production code (project-rules.md); test
+# helpers and fixtures are exempt — pytest injects their arguments.
+"**/tests.py" = ["ANN"]
+"**/tests/*.py" = ["ANN"]
+"**/test_*.py" = ["ANN"]
+"tests/**" = ["ANN"]
+"factories.py" = ["ANN"]
+"scripts/**" = ["ANN"]
 
 [tool.mypy]
 python_version = "3.13"
 packages = ["vmss_api"]
 ignore_missing_imports = true
+
+# project-rules.md: strict typing on `core` and anything touching auth/PII.
+# Spelled out flag by flag: mypy's `strict` shorthand isn't scoped by
+# per-module overrides. Those packages' own test modules stay at the default
+# level (fixtures and fakes).
+[[tool.mypy.overrides]]
+module = ["vmss_api.core.*", "vmss_api.auth.*"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_untyped_decorators = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = ["vmss_api.core.tests", "vmss_api.auth.tests"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_any_generics = false
+disallow_untyped_decorators = false
+warn_return_any = false
+no_implicit_reexport = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

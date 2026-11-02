@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import re
 import uuid
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.rbac_catalog import NON_WORKFLOW_STEP_ROLE_NAMES
 from vmss_api.auth.repository import RoleRepository
@@ -24,6 +26,9 @@ from vmss_api.visitors.schemas import (
     VisitorCategoryOut,
     VisitorCategoryUpdate,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _commit_or_conflict(tenant_db: AsyncSession, conflict_detail: str) -> None:

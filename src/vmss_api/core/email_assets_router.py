@@ -10,10 +10,11 @@ the `/public/email-assets` prefix and `email-assets` tag.
 
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse
 
 from vmss_api.core.email_assets import LOGO_FILENAME, RETIRED_LOGO_FILENAMES
+from vmss_api.core.rate_limit import limiter
 
 router = APIRouter(prefix="/public/email-assets", tags=["email-assets"])
 
@@ -22,8 +23,10 @@ router = APIRouter(prefix="/public/email-assets", tags=["email-assets"])
 _LOGO_PATH = Path(__file__).parent / "email_assets" / "guestify-logo-on-dark.png"
 
 
+# Generous: mail-client image proxies fetch for many recipients from few IPs.
 @router.get(f"/{LOGO_FILENAME}", response_class=FileResponse)
-async def get_email_logo() -> FileResponse:
+@limiter.limit("600/minute")
+async def get_email_logo(request: Request) -> FileResponse:
     return FileResponse(
         _LOGO_PATH,
         media_type="image/png",

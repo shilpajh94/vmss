@@ -5,6 +5,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from factories import KioskFactory
 from vmss_api.auth.models import User
 from vmss_api.core.config import settings
 from vmss_api.kiosks.models import Kiosk
@@ -17,7 +18,7 @@ def _auth(user: User, issue_token: Callable[[User], str]) -> dict[str, str]:
 
 
 async def _make_kiosk(db_session: AsyncSession, name: str = "Lobby Kiosk", **kwargs) -> Kiosk:
-    kiosk = Kiosk(id=uuid.uuid4(), name=name, is_active=True, is_hidden=False, **kwargs)
+    kiosk = KioskFactory.build(id=uuid.uuid4(), name=name, **kwargs)
     db_session.add(kiosk)
     await db_session.commit()
     return kiosk

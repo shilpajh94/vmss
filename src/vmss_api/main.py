@@ -1,18 +1,20 @@
 from importlib.metadata import version
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from vmss_api.api import api_router, api_router_v2
 from vmss_api.core.config import settings
 from vmss_api.core.database import get_db, tenant_session_scope
 from vmss_api.core.logging import configure_logging
 from vmss_api.core.middleware import (
+    BodySizeLimitMiddleware,
     RequestIdMiddleware,
     http_exception_handler,
     unhandled_exception_handler,
@@ -228,7 +230,7 @@ def create_app(environment: str | None = None) -> FastAPI:
         openapi_tags=_TAGS_METADATA,
     )
 
-    def _rate_limit_exceeded_handler(request, exc):
+    def _rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:
         return error_response("Too many requests", 429)
 
     app.state.limiter = limiter
@@ -241,6 +243,7 @@ def create_app(environment: str | None = None) -> FastAPI:
     app.add_exception_handler(HTTPException, http_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
+    app.add_middleware(BodySizeLimitMiddleware)
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -252,6 +255,11 @@ def create_app(environment: str | None = None) -> FastAPI:
         # applied scope (improve-calendar-scale-and-theme-switch design.md A3).
         expose_headers=["X-Calendar-Scope"],
     )
+
+    # Added last, so it runs outermost: every other middleware and the rate
+    # limiter's per-IP key see the client address a trusted proxy forwarded,
+    # not the proxy's own. Forwarded headers from any other peer are ignored.
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.forwarded_allow_ips)
 
     app.include_router(api_router, prefix="/api/v1")
     app.include_router(api_router_v2, prefix="/api/v2")

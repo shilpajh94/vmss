@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Role, User
 from vmss_api.auth.rbac_catalog import NON_APPROVER_ROLE_NAMES
@@ -55,6 +56,9 @@ from vmss_api.org_structure.schemas import (
     SecurityLevel,
 )
 from vmss_api.registrations.repository import RegistrationDeviceKeyRepository
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 # --- Branch-resolution helpers -------------------------------------------
 #

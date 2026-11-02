@@ -1,5 +1,6 @@
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest_asyncio
 from httpx import AsyncClient
@@ -9,8 +10,10 @@ from factories import BranchFactory, InvitationFactory, PermissionFactory, RoleF
 from vmss_api.auth.models import User, UserBranchRole
 from vmss_api.core.schemas import SortOrder
 from vmss_api.core.security import hash_password
+from vmss_api.core.timezones import display_name, resolve_timezone
 from vmss_api.dashboard.repository import DashboardRepository
-from vmss_api.dashboard.service import _resolve_tenant_timezone, _today_bounds_utc
+from vmss_api.invitations.repository import VisitDayRange
+from vmss_api.invitations.service import _visit_timezone
 from vmss_api.org_structure.models import Branch
 from vmss_api.platform.models import TenantUserIndex
 from vmss_api.tenant.models import Tenant
@@ -22,11 +25,11 @@ async def _login(client: AsyncClient, email: str, password: str = "correct-passw
 
 
 def _build_invitation(db_session: AsyncSession, branch_id: uuid.UUID, **overrides):
-    """Same shape as `invitations/tests.py::_build_invitation` — builds (but
+    """Same shape as `invitations/tests/::_build_invitation` — builds (but
     does not add/commit) via the shared `InvitationFactory`
     (testing-standards.md §1) rather than a hand-built dict.
 
-    Unlike `invitations/tests.py`'s version, this also forces `created_at` to
+    Unlike `invitations/tests/`'s version, this also forces `created_at` to
     "now": `TimestampMixin.created_at` is a `server_default`, which
     polyfactory doesn't know about, so an unoverridden build gets a random
     historical Python-side datetime that SQLAlchemy then inserts verbatim
@@ -51,7 +54,7 @@ async def _branch_scoped_user(
 ) -> User:
     """A caller holding `permission_code` at exactly `branch_ids` (one role
     grant per branch, no company-wide `None` row) — same posture as
-    `invitations/tests.py::_branch_scoped_invitation_viewer`, generalized to
+    `invitations/tests/::_branch_scoped_invitation_viewer`, generalized to
     one-or-more branches so it also backs the "aggregates across every
     authorized branch" scenario.
     """
@@ -501,7 +504,7 @@ async def test_dashboard_repository_tenant_schema_isolation(
 ) -> None:
     """testing-standards.md §2: a query against a *different* tenant schema
     must not see this schema's invitations at all — same shape as
-    `invitations/tests.py::test_check_in_repository_tenant_schema_isolation`.
+    `invitations/tests/::test_check_in_repository_tenant_schema_isolation`.
     """
     now = datetime.now(UTC)
     invitation = _build_invitation(
@@ -521,11 +524,7 @@ async def test_dashboard_repository_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         repo = DashboardRepository(other_session)
         counts = await repo.overview_counts(
-            "all",
-            today=now.date(),
-            day_start_utc=now - timedelta(days=1),
-            day_end_utc=now + timedelta(days=1),
-            now_utc=now,
+            "all", today=VisitDayRange.local(now.date(), now.date(), ZoneInfo("UTC")), now_utc=now
         )
         assert counts["checked_in_count"] == 0
         assert counts["visits_today_count"] == 0
@@ -545,7 +544,7 @@ async def test_dashboard_repository_tenant_schema_isolation(
 
 # The dashboard's own check-in mutation is removed
 # (checkin-approval-workflow-improvements); check-in tenant-isolation is now
-# covered exclusively by `invitations/tests.py::
+# covered exclusively by `invitations/tests/::
 # test_check_in_repository_tenant_schema_isolation`, since check-in is
 # entirely an `invitations` capability concern once the dashboard wrapper is
 # gone.
@@ -554,25 +553,20 @@ async def test_dashboard_repository_tenant_schema_isolation(
 # --- "Today" boundary follows tenant timezone --------------------------------
 
 
-def test_today_bounds_utc_follows_tenant_timezone() -> None:
+def test_visit_day_range_bounds_follow_the_visit_timezone() -> None:
     """spec.md ""Today" boundary follows tenant timezone" — a pure-function
     check (testing-standards.md §3) at a moment where UTC and a non-UTC
-    tenant timezone disagree on the calendar date. `Pacific/Kiritimati` is a
-    fixed UTC+14 offset with no DST, so the expected bounds are exact.
+    timezone disagree on the calendar date. `Pacific/Kiritimati` is a fixed
+    UTC+14 offset with no DST, so the expected bounds are exact.
     """
-    tenant = Tenant(
-        id=uuid.uuid4(),
-        name="Kiritimati Co",
-        slug="kiritimati-co",
-        schema_name="tenant_kiritimati",
-        timezone="Pacific/Kiritimati",
-    )
-    now_utc = datetime(2026, 1, 1, 23, 0, tzinfo=UTC)
+    kiritimati = ZoneInfo("Pacific/Kiritimati")
+    today = datetime(2026, 1, 1, 23, 0, tzinfo=UTC).astimezone(kiritimati).date()
 
-    day_start_utc, day_end_utc = _today_bounds_utc(tenant, now_utc=now_utc)
+    bounds = VisitDayRange.local(today, today, kiritimati)
 
-    assert day_start_utc == datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
-    assert day_end_utc == datetime(2026, 1, 2, 10, 0, tzinfo=UTC)
+    assert today == date(2026, 1, 2)
+    assert bounds.starts_at == datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
+    assert bounds.ends_before == datetime(2026, 1, 2, 10, 0, tzinfo=UTC)
 
 
 def test_resolve_tenant_timezone_falls_back_to_utc_for_invalid_value() -> None:
@@ -584,7 +578,7 @@ def test_resolve_tenant_timezone_falls_back_to_utc_for_invalid_value() -> None:
         timezone="not-a-real-zone",
     )
 
-    assert _resolve_tenant_timezone(tenant).key == "UTC"
+    assert display_name(resolve_timezone(("tenant", tenant.timezone))) == "UTC"
 
 
 # --- restrict-delegated-invitation-visibility ----------------------------------
@@ -626,7 +620,7 @@ async def test_dashboard_endpoints_reject_host_holding_only_invitations_view(
 # spec.md "Personal Dashboard Overview Scoped to the Caller's Relevant
 # Invitations". Counted over the `relevantToMe` predicate, which resolves the
 # tenant's default host role — falling back to `reception`, seeded per test
-# below the same way `invitations/tests.py::_default_host_role` does.
+# below the same way `invitations/tests/::_default_host_role` does.
 
 _MY_OVERVIEW = "/api/v1/admin/dashboard/my-overview"
 
@@ -642,7 +636,10 @@ async def _host_user(db_session: AsyncSession) -> User:
 
 
 def _tenant_today(tenant: Tenant):
-    return datetime.now(UTC).astimezone(_resolve_tenant_timezone(tenant)).date()
+    """Today in the visit timezone — the tenant's, since these fixtures seed
+    no company row.
+    """
+    return datetime.now(UTC).astimezone(_visit_timezone(None, tenant)).date()
 
 
 async def test_my_overview_counts_only_the_callers_own_visits(
@@ -853,9 +850,18 @@ async def test_personal_overview_tenant_schema_isolation(
     async with open_tenant_session(other_schema) as other_session:
         repo = DashboardRepository(other_session)
         counts = await repo.personal_overview_counts(
-            user_id=host.id, default_host_role_id=uuid.uuid4(), today=now.date(), now_utc=now
+            user_id=host.id,
+            default_host_role_id=uuid.uuid4(),
+            today=VisitDayRange.local(now.date(), now.date(), ZoneInfo("UTC")),
+            now_utc=now,
         )
-        assert counts == {"visits_today": 0, "inside_now": 0, "awaiting_approval": 0, "upcoming": 0}
+        assert counts == {
+            "visits_today": 0,
+            "inside_now": 0,
+            "open_awaiting_approval": 0,
+            "awaiting_approval": 0,
+            "upcoming": 0,
+        }
         preview = await repo.personal_upcoming_preview(
             user_id=host.id, default_host_role_id=uuid.uuid4(), now_utc=now, limit=5
         )
@@ -1407,16 +1413,276 @@ async def test_analytics_repository_tenant_schema_isolation(
     await make_tenant_schema(other_schema)
     async with open_tenant_session(other_schema) as other_session:
         repo = DashboardRepository(other_session)
-        start, end = now.date() - timedelta(days=6), now.date()
-        assert await repo.daily_trend(None, start=start, end=end) == []
-        assert await repo.status_breakdown(None, timezone="UTC", start=start, end=end) == []
-        assert await repo.top_purposes(None, start=start, end=end) == []
-        assert (
-            await repo.hourly_check_ins(
-                None,
-                timezone="UTC",
-                day_start_utc=now - timedelta(days=1),
-                day_end_utc=now + timedelta(days=1),
-            )
-            == []
+        utc = ZoneInfo("UTC")
+        days = VisitDayRange.local(now.date() - timedelta(days=6), now.date(), utc)
+        today = VisitDayRange.local(now.date(), now.date(), utc)
+        assert await repo.daily_trend(None, days=days, timezone="UTC") == []
+        assert await repo.status_breakdown(None, days=days) == []
+        assert await repo.top_purposes(None, days=days) == []
+        assert await repo.hourly_check_ins(None, timezone="UTC", today=today) == []
+
+
+# --- fix-dashboard-count-accuracy ---------------------------------------------
+# Every count equals the total of the list it drills into, and figures on one
+# page agree. Rows pin `checkin_code`, check-in times, `created_at` and
+# `expires_at`, so the factory's random values can't leak into a count.
+
+
+def _visit(branch_id: uuid.UUID, **overrides):
+    now = datetime.now(UTC)
+    overrides.setdefault("checkin_code", None)
+    overrides.setdefault("check_in_status", "unused")
+    overrides.setdefault("checked_in_at", None)
+    overrides.setdefault("checked_out_at", None)
+    overrides.setdefault("submitted_at", now)
+    overrides.setdefault("expires_at", now + timedelta(hours=6))
+    return _build_invitation(None, branch_id, **overrides)  # type: ignore[arg-type]
+
+
+def _mixed_visits(branch_id: uuid.UUID, today: date) -> list:
+    """One of everything a dashboard figure can include or exclude."""
+    now = datetime.now(UTC)
+    past = now - timedelta(days=3)
+    tomorrow = today + timedelta(days=1)
+    return [
+        _visit(branch_id, status="approved", preferred_visit_date=today),
+        _visit(
+            branch_id,
+            status="checked_in",
+            check_in_status="checked_in",
+            checked_in_at=now,
+            preferred_visit_date=today,
+        ),
+        _visit(
+            branch_id,
+            status="checked_out",
+            check_in_status="checked_out",
+            checked_in_at=now,
+            checked_out_at=now,
+            preferred_visit_date=today,
+        ),
+        # Scheduled for tomorrow but checked in today: on site, not "expected".
+        _visit(
+            branch_id,
+            status="checked_in",
+            check_in_status="checked_in",
+            checked_in_at=now,
+            preferred_visit_date=tomorrow,
+        ),
+        _visit(branch_id, status="approved", preferred_visit_date=tomorrow),
+        _visit(
+            branch_id,
+            status="approved",
+            preferred_visit_date=today - timedelta(days=1),
+            expires_at=past,
+        ),
+        _visit(branch_id, status="archived", preferred_visit_date=today, expires_at=past),
+        _visit(branch_id, status="denied", preferred_visit_date=today),
+        _visit(branch_id, status="submitted", preferred_visit_date=today),
+        _visit(
+            branch_id,
+            status="submitted",
+            preferred_visit_date=today - timedelta(days=3),
+            expires_at=past,
+            submitted_at=past,
+        ),
+        # No visit date: dated by its creation day (today).
+        _visit(branch_id, status="approved", preferred_visit_date=None),
+    ]
+
+
+async def _list_total(client: AsyncClient, token: str, **params) -> int:
+    response = await client.get(
+        "/api/v1/invitations", params=params, headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["pagination"]["total"]
+
+
+async def test_overview_counts_equal_their_drill_down_lists(
+    client: AsyncClient,
+    user: User,
+    tenant: Tenant,
+    branch: Branch,
+    other_branch: Branch,
+    db_session: AsyncSession,
+) -> None:
+    """spec.md "Counts equal the totals of their drill-down lists" and
+    "Status breakdown equals its drill-down list", narrowed to one branch
+    while the other branch holds the same mix.
+    """
+    today = _tenant_today(tenant)
+    db_session.add_all([*_mixed_visits(branch.id, today), *_mixed_visits(other_branch.id, today)])
+    await db_session.commit()
+    token = await _login(client, user.email)
+    scope = {"branchId": str(branch.id)}
+
+    overview = await _get(client, _OVERVIEW, token, **scope)
+    day = today.isoformat()
+    expected_today = 0
+    for status in ("approved", "checked_in", "checked_out"):
+        expected_today += await _list_total(
+            client, token, status=status, visitDateFrom=day, visitDateTo=day, **scope
         )
+    assert overview["scheduledTodayCount"] == expected_today == 4
+    assert overview["checkedInCount"] == await _list_total(
+        client, token, status="checked_in", **scope
+    )
+    assert overview["openPendingApprovalCount"] == await _list_total(
+        client, token, status="submitted", excludeExpired="true", **scope
+    )
+    assert overview["upcomingVisitorCount"] == await _list_total(
+        client, token, upcoming="true", **scope
+    )
+
+    analytics = await _get(client, _ANALYTICS, token, range="7d", **scope)
+    first_day = analytics["dailyTrend"][0]["date"]
+    for row in analytics["statusBreakdown"]:
+        assert row["count"] == await _list_total(
+            client, token, status=row["status"], visitDateFrom=first_day, visitDateTo=day, **scope
+        ), row
+
+
+async def test_my_overview_counts_equal_their_drill_down_lists(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession, issue_token
+) -> None:
+    host = await _host_user(db_session)
+    today = _tenant_today(tenant)
+    own = _mixed_visits(branch.id, today)
+    for row in own:
+        row.host_id = host.id
+    db_session.add_all([*own, *_mixed_visits(branch.id, today)])
+    await db_session.commit()
+    token = issue_token(host)
+
+    data = await _get(client, _MY_OVERVIEW, token)
+    mine = {"relevantToMe": "true"}
+    day = today.isoformat()
+    visits_today = 0
+    for status in ("approved", "checked_in", "checked_out"):
+        visits_today += await _list_total(
+            client, token, status=status, visitDateFrom=day, visitDateTo=day, **mine
+        )
+    assert data["visitsToday"] == visits_today == 4
+    assert data["insideNow"] == await _list_total(client, token, status="checked_in", **mine)
+    assert data["openAwaitingApproval"] == await _list_total(
+        client, token, status="submitted", excludeExpired="true", **mine
+    )
+    assert data["openAwaitingApproval"] == 1
+    assert data["awaitingApproval"] == 2
+    assert data["upcoming"] == await _list_total(client, token, upcoming="true", **mine)
+
+
+async def test_overview_checked_in_so_far_never_exceeds_expected_today(
+    client: AsyncClient, user: User, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    today = _tenant_today(tenant)
+    now = datetime.now(UTC)
+    db_session.add_all(
+        [
+            _visit(branch.id, status="approved", preferred_visit_date=today),
+            _visit(
+                branch.id,
+                status="checked_in",
+                check_in_status="checked_in",
+                checked_in_at=now,
+                preferred_visit_date=today,
+            ),
+            _visit(
+                branch.id,
+                status="checked_in",
+                check_in_status="checked_in",
+                checked_in_at=now,
+                preferred_visit_date=today + timedelta(days=1),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    data = await _get(client, _OVERVIEW, await _login(client, user.email))
+    assert data["scheduledTodayCount"] == 2
+    assert data["scheduledTodayCheckedInCount"] == 1
+    assert data["checkedInTodayCount"] == 2
+
+
+async def test_overview_open_pending_excludes_expired_requests(
+    client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    now = datetime.now(UTC)
+    oldest_open = now - timedelta(hours=2)
+    expired_submitted = now - timedelta(days=5)
+    db_session.add_all(
+        [
+            _visit(branch.id, status="submitted", submitted_at=oldest_open),
+            _visit(branch.id, status="submitted", submitted_at=now - timedelta(hours=1)),
+            _visit(
+                branch.id,
+                status="submitted",
+                submitted_at=expired_submitted,
+                expires_at=now - timedelta(days=3),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    data = await _get(client, _OVERVIEW, await _login(client, user.email))
+    assert data["openPendingApprovalCount"] == 2
+    assert datetime.fromisoformat(data["oldestOpenPendingSubmittedAt"]) == oldest_open
+    assert data["pendingApprovalCount"] == 3
+    assert datetime.fromisoformat(data["oldestPendingSubmittedAt"]) == expired_submitted
+
+
+async def test_analytics_today_point_agrees_with_overview(
+    client: AsyncClient, user: User, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    today = _tenant_today(tenant)
+    db_session.add_all(_mixed_visits(branch.id, today))
+    await db_session.commit()
+    token = await _login(client, user.email)
+
+    overview = await _get(client, _OVERVIEW, token)
+    analytics = await _get(client, _ANALYTICS, token, range="7d")
+    today_point = analytics["dailyTrend"][-1]
+    assert today_point["date"] == today.isoformat()
+    assert today_point["checkedIn"] == overview["scheduledTodayCheckedInCount"]
+    assert today_point["scheduled"] == overview["scheduledTodayCount"] + today_point["noShow"]
+    by_status = {row["status"]: row["count"] for row in analytics["statusBreakdown"]}
+    # Today's, yesterday's expired one, and the undated one (dated by its
+    # creation day); tomorrow's is outside the range.
+    assert by_status["approved"] == 3
+
+
+async def test_dashboard_uses_the_company_timezone(
+    branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec.md "Dashboard uses the company's timezone, not only the
+    tenant's" — a UTC tenant whose company runs on Asia/Kolkata.
+    """
+    from factories import CompanyFactory
+    from vmss_api.dashboard.service import get_analytics, get_overview
+
+    kolkata = ZoneInfo("Asia/Kolkata")
+    db_session.add(CompanyFactory.build(id=uuid.uuid4(), default_timezone="Asia/Kolkata"))
+    tenant = Tenant(
+        id=uuid.uuid4(), name="UTC Co", slug="utc-co", schema_name="tenant_utc", timezone="UTC"
+    )
+    ist_today = datetime.now(kolkata).date()
+    checked_in_at = datetime.combine(ist_today, time(1, 30), tzinfo=kolkata).astimezone(UTC)
+    db_session.add(
+        _visit(
+            branch.id,
+            status="checked_in",
+            check_in_status="checked_in",
+            checked_in_at=checked_in_at,
+            preferred_visit_date=ist_today,
+        )
+    )
+    await db_session.commit()
+
+    overview = await get_overview(db_session, tenant, "all")
+    analytics = await get_analytics(db_session, tenant, "all", range_="7d")
+    assert overview.today == ist_today
+    assert overview.scheduled_today_count == 1
+    assert analytics.timezone == "Asia/Kolkata"
+    by_hour = {row.hour: row.count for row in analytics.hourly_check_ins_today}
+    assert by_hour[1] == 1

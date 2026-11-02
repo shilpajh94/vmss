@@ -27,6 +27,13 @@ touch its `DeviceToken` table or the FCM SDK directly; they call
 | PATCH | `/api/v1/notifications/{id}/read` | Any authenticated staff user | Marks one of the caller's notifications read. Already read: 200, original `readAt` kept. Another user's or an unknown id: 404. |
 | POST | `/api/v1/notifications/read-all` | Any authenticated staff user | Marks every unread notification of the caller read, in one statement. |
 
+The feed (`GET /notifications`) accepts `sortBy` (`createdAt` or `readAt`)
+and `sortOrder` (`asc` or `desc`, default `desc`). An unknown column is a 422.
+
+Notification tasks keep a per-recipient "sent" marker, keyed on the Celery
+task id (`core/notification_dedupe.py`). A retry or broker redelivery never
+messages the same person twice, while each new event still sends.
+
 ## Dispatch primitive
 
 `notifications/service.py` exposes three functions other features call:
@@ -128,6 +135,16 @@ carry a `Role`/`User` id already implied by which step is current, nothing
   visit-lifecycle sweep (every 15 minutes per tenant), in a commit separate
   from the sweep's own work. The sweep's log line reports
   `notifications_purged`.
+- **Tied to the invitation** (`prune-orphaned-notifications`).
+  A notification about an invitation stores its id in `invitation_id`, an
+  FK with `ON DELETE CASCADE`, alongside `data.invitationId`. Hard-deleting
+  the invitation by any path (retention purge, `qa_regression/reset_qa_data.py`,
+  raw SQL) deletes its notifications too. While an invitation is
+  soft-deleted its notifications are hidden from the list, `total` and
+  unread count, not deleted. A dispatch about an invitation deleted between
+  enqueue and run records nothing (the push still goes out). Tenant
+  revision `e6944d5e8ee2` backfilled the column and deleted the orphans
+  that existed before it.
 - **Portal bell.** Loads the feed and unread count from the API on sign-in,
   on tab focus, every 60 seconds while visible, and when a foreground push
   arrives (the push itself only triggers a refetch). Clicking an item marks

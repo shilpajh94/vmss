@@ -2,6 +2,7 @@ import uuid
 
 import structlog
 from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -47,7 +48,7 @@ class RequestIdMiddleware:
         await self.app(scope, receive, send_with_request_id)
 
 
-async def http_exception_handler(request: Request, exc: HTTPException):
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     """Every `raise HTTPException(...)` in the codebase (401/403/404/409, ...)
     otherwise falls through to FastAPI's default `{"detail": ...}` body,
     bypassing the `{success, message, errors}` envelope every other response
@@ -80,7 +81,7 @@ def _add_cors_headers(response: Response, request: Request) -> None:
         response.headers["Access-Control-Allow-Credentials"] = "true"
 
 
-async def unhandled_exception_handler(request: Request, exc: Exception):
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     request_id = structlog.contextvars.get_contextvars().get("request_id", "")
     logger.error(
         "unhandled_exception",
@@ -96,3 +97,75 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         response.headers["X-Request-ID"] = request_id
     _add_cors_headers(response, request)
     return response
+
+
+class _BodyTooLarge(Exception):
+    pass
+
+
+class BodySizeLimitMiddleware:
+    """Rejects a request body over `settings.max_request_body_bytes` with 413
+    before it is buffered (file-upload-handling.md §1): up front from
+    `Content-Length`, or as soon as a chunked body crosses the cap. A plain
+    ASGI callable for the same reason as `RequestIdMiddleware` above."""
+
+    def __init__(self, app: ASGIApp, max_bytes: int | None = None) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        limit = self.max_bytes if self.max_bytes is not None else settings.max_request_body_bytes
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        declared = Headers(scope=scope).get("content-length")
+        if declared is not None and declared.isdigit() and int(declared) > limit:
+            await _reject_too_large(scope, receive, send, limit)
+            return
+
+        received = 0
+        response_started = False
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    raise _BodyTooLarge
+            return message
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracking_send)
+        except _BodyTooLarge:
+            if response_started:
+                raise
+            await _reject_too_large(scope, receive, send, limit)
+
+
+async def _reject_too_large(scope: Scope, receive: Receive, send: Send, limit: int) -> None:
+    logger.warning("request_body_too_large", limit_bytes=limit, path=scope.get("path"))
+    response = error_response("The request is too large", status_code=413, errors=None)
+    await response(scope, receive, send)
+
+
+def enforce_upload_file_count(form_data: object) -> None:
+    """413 when a multipart request carries more file parts than
+    `settings.max_upload_files`. Reads the form FastAPI already parsed (and
+    Starlette cached), so nothing is parsed twice."""
+    from starlette.datastructures import FormData, UploadFile
+
+    if not isinstance(form_data, FormData):
+        return
+    files = sum(1 for _, value in form_data.multi_items() if isinstance(value, UploadFile))
+    if files > settings.max_upload_files:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many files in one request (at most {settings.max_upload_files})",
+        )

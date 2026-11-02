@@ -1,4 +1,3 @@
-import uuid
 from typing import Annotated
 
 from fastapi import (
@@ -18,18 +17,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.core.config import settings
-from vmss_api.core.idempotency import cache_response as _core_cache_response
-from vmss_api.core.idempotency import cached_response as _core_cached_response
+from vmss_api.core.idempotency import Idempotency, idempotency
+from vmss_api.core.middleware import enforce_upload_file_count
 from vmss_api.core.rate_limit import limiter
-from vmss_api.core.responses import error_response, success_response
+from vmss_api.core.responses import success_response, validation_error_response
 from vmss_api.core.schemas import Envelope
 from vmss_api.invitations import service as invitations_service
+from vmss_api.invitations.presenters import to_invitation_out
 from vmss_api.invitations.router import (
     _INVITATION_PAYLOAD_EXAMPLES,
     _NO_VISITOR_FILES,
     _NO_VISITOR_PHOTOS,
     _parse_prefixed_multipart_files,
-    to_invitation_out,
 )
 from vmss_api.invitations.router import _PAYLOAD_DESCRIPTION as _INVITATION_PAYLOAD_DESCRIPTION
 from vmss_api.registrations import service
@@ -48,22 +47,6 @@ router = APIRouter(prefix="/registrations", tags=["registrations"])
 _PAYLOAD_DESCRIPTION = _INVITATION_PAYLOAD_DESCRIPTION
 
 
-async def _cached_response(
-    tenant_id: uuid.UUID, idempotency_key: str | None
-) -> JSONResponse | None:
-    """api-conventions.md §3 — a flaky mobile connection retrying a walk-in
-    submission with the same `Idempotency-Key` gets the original response
-    back instead of creating a second registration.
-    """
-    return await _core_cached_response(tenant_id, "registrations", idempotency_key)
-
-
-async def _cache_response(
-    tenant_id: uuid.UUID, idempotency_key: str | None, response: JSONResponse
-) -> None:
-    await _core_cache_response(tenant_id, "registrations", idempotency_key, response)
-
-
 @router.post(
     "/walk-in",
     response_model=Envelope[WalkInRegistrationOut],
@@ -73,6 +56,7 @@ async def _cache_response(
 @limiter.limit("20/minute")
 async def create_walk_in_registration(
     request: Request,
+    idem: Annotated[Idempotency, Depends(idempotency)],
     background_tasks: BackgroundTasks,
     device: Annotated[RegistrationDeviceContext, Depends(get_registration_device)],
     tenant_db: Annotated[AsyncSession, Depends(get_registration_tenant_db)],
@@ -137,14 +121,20 @@ async def create_walk_in_registration(
     `visitorCustomFieldFiles[<fieldId>]`/`vehicleCustomFieldFiles[<fieldId>]`/
     `customFieldFiles[<fieldId>]` contract also documented there.
     """
-    cached = await _cached_response(device.tenant.id, idempotency_key)
+    cached = await idem.begin(
+        device.tenant.id,
+        "registrations",
+        idempotency_key,
+        caller=f"device-branch:{device.branch_id}",
+        body=payload,
+    )
     if cached is not None:
         return cached
 
     try:
         create_payload = WalkInRegistrationCreate.model_validate_json(payload)
     except ValidationError as exc:
-        return error_response(message=str(exc), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
+        return validation_error_response(exc)
 
     # Same "reject an oversized upload before it's fully buffered" guard
     # `POST /invitations` applies (file-upload-handling.md §1) — this
@@ -172,6 +162,7 @@ async def create_walk_in_registration(
     # triggered rather than re-reading the request body — identical to
     # `invitations/router.py::create_invitation`.
     form_data = await request.form()
+    enforce_upload_file_count(form_data)
     group_field_file_contents = await _parse_prefixed_multipart_files(
         form_data, "groupFieldFiles", limit=id_proof_limit
     )
@@ -218,5 +209,5 @@ async def create_walk_in_registration(
         data=to_invitation_out(invitation, current_approval_step),
         status_code=status.HTTP_201_CREATED,
     )
-    await _cache_response(device.tenant.id, idempotency_key, response)
+    await idem.store(response)
     return response

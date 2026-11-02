@@ -4,11 +4,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from factories import DeviceTokenFactory, RoleFactory, UserFactory
+from factories import DeviceTokenFactory, InvitationFactory, RoleFactory, UserFactory
 from vmss_api.auth.models import User, UserBranchRole
+from vmss_api.invitations.models import Invitation
+from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.notifications import fcm, service, tasks
 from vmss_api.notifications.models import Notification
 from vmss_api.notifications.repository import DeviceTokenRepository, NotificationRepository
@@ -298,7 +300,7 @@ async def test_send_push_exhausted_retries_logs_error(monkeypatch, tenant: Tenan
     logged = []
     monkeypatch.setattr(tasks.logger, "error", lambda event, **kw: logged.append((event, kw)))
     # `max_retries=0` means the first failure is already "exhausted" — see
-    # invitations/tests.py's identical pattern for why `.apply()` needs this
+    # invitations/tests/'s identical pattern for why `.apply()` needs this
     # rather than actually sleeping through a real `retry_backoff` delay.
     monkeypatch.setattr(tasks.send_push, "max_retries", 0)
 
@@ -597,7 +599,10 @@ def _send_push_kwargs(tenant: Tenant, user_ids: list[uuid.UUID], **overrides) ->
         "user_ids": [str(u) for u in user_ids],
         "title": "Invitation approved",
         "body": "Ada Visitor — tracking ID INV-1",
-        "data": {"invitationId": str(uuid.uuid4()), "action": "approved"},
+        # No `invitationId`: a dispatch naming one records only while that
+        # invitation exists (prune-orphaned-notifications D3),
+        # covered by the tests that build a real invitation.
+        "data": {"action": "approved"},
     }
     return {**kwargs, **overrides}
 
@@ -743,6 +748,36 @@ async def test_list_notifications_returns_only_callers_newest_first(
     assert first["data"] == {"action": "checked_in"}
 
 
+async def test_list_notifications_sorts_by_a_whitelisted_column(
+    client: AsyncClient,
+    user: User,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """api-conventions.md §1: `sortBy`/`sortOrder` with an explicit
+    whitelist; an unknown column is a 422, never passed to ORDER BY."""
+    now = datetime.now(UTC)
+    db_session.add_all(
+        [
+            _notification(user.id, title="Older", created_at=now - timedelta(hours=2)),
+            _notification(user.id, title="Newer", created_at=now - timedelta(minutes=5)),
+        ]
+    )
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {issue_token(user)}"}
+
+    response = await client.get(
+        "/api/v1/notifications", params={"sortOrder": "asc"}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+    assert [item["title"] for item in response.json()["data"]] == ["Older", "Newer"]
+
+    response = await client.get(
+        "/api/v1/notifications", params={"sortBy": "title"}, headers=headers
+    )
+    assert response.status_code == 422
+
+
 async def test_unread_filter_and_count_agree(
     client: AsyncClient,
     user: User,
@@ -872,3 +907,116 @@ async def test_purge_removes_only_notifications_older_than_90_days(
 
     assert purged == 1
     assert [row.title for row in await _rows_for(db_session, user_id)] == ["Fresh"]
+
+
+# --- Orphan pruning (prune-orphaned-notifications) ----------------------
+
+
+async def _add_invitation(
+    db_session: AsyncSession, branch: Branch, **overrides: object
+) -> Invitation:
+    overrides.setdefault("created_by_user_id", None)
+    overrides.setdefault("registration_type", "individual")
+    overrides.setdefault("source", "staff_pre_registration")
+    invitation = InvitationFactory.build(id=uuid.uuid4(), branch_id=branch.id, **overrides)
+    db_session.add(invitation)
+    await db_session.commit()
+    return invitation
+
+
+def _about(invitation_id: uuid.UUID, user_id: uuid.UUID, **overrides) -> Notification:
+    return _notification(
+        user_id,
+        invitation_id=invitation_id,
+        data={"invitationId": str(invitation_id), "action": "approved"},
+        **overrides,
+    )
+
+
+async def test_soft_deleted_invitations_notifications_are_hidden(
+    client: AsyncClient,
+    user: User,
+    branch: Branch,
+    db_session: AsyncSession,
+    issue_token: Callable[[User], str],
+) -> None:
+    """spec "A soft-deleted invitation's notifications are hidden" — list,
+    `total`, `unreadOnly` and the unread count all agree.
+    """
+    hidden = await _add_invitation(db_session, branch)
+    shown = await _add_invitation(db_session, branch)
+    hidden_id, shown_id = hidden.id, shown.id
+    db_session.add_all(
+        [_about(hidden_id, user.id) for _ in range(3)]
+        + [_about(shown_id, user.id) for _ in range(2)]
+        + [_notification(user.id, title="Not about an invitation", read_at=datetime.now(UTC))]
+    )
+    hidden.deleted_at = datetime.now(UTC)
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {issue_token(user)}"}
+
+    count = await client.get("/api/v1/notifications/unread-count", headers=headers)
+    unread = await client.get("/api/v1/notifications?unreadOnly=true", headers=headers)
+    listing = await client.get("/api/v1/notifications", headers=headers)
+
+    assert count.json()["data"] == {"unreadCount": 2}
+    assert [item["data"]["invitationId"] for item in unread.json()["data"]] == [str(shown_id)] * 2
+    assert unread.json()["pagination"]["total"] == 2
+    assert listing.json()["pagination"]["total"] == 3
+
+
+async def test_hard_deleting_an_invitation_deletes_its_notifications(
+    user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """spec "Retention purge removes the invitation's notifications" / "Raw
+    SQL delete of an invitation also removes its notifications" — the FK
+    cascade does it, for every recipient, whichever path deletes.
+    """
+    (other,) = await _make_users(db_session, 1)
+    purged = await _add_invitation(db_session, branch)
+    raw_deleted = await _add_invitation(db_session, branch)
+    kept = await _add_invitation(db_session, branch)
+    purged_id, raw_deleted_id, kept_id = purged.id, raw_deleted.id, kept.id
+    user_id, other_id = user.id, other.id
+    db_session.add_all(
+        [
+            _about(invitation_id, recipient)
+            for invitation_id in (purged_id, raw_deleted_id, kept_id)
+            for recipient in (user_id, other_id)
+        ]
+        + [_notification(user_id, title="Not about an invitation")]
+    )
+    await db_session.commit()
+
+    await InvitationRepository(db_session).delete_with_children([purged_id])
+    await db_session.execute(delete(Invitation).where(Invitation.id == raw_deleted_id))
+    await db_session.commit()
+
+    for recipient in (user_id, other_id):
+        rows = await _rows_for(db_session, recipient)
+        assert {row.invitation_id for row in rows} <= {kept_id, None}
+        assert sum(row.invitation_id == kept_id for row in rows) == 1
+    assert len(await _rows_for(db_session, user_id)) == 2
+
+
+async def test_send_push_links_the_invitation_and_skips_a_deleted_one(
+    tenant: Tenant, user: User, branch: Branch, db_session: AsyncSession
+) -> None:
+    """design.md D3 — a live invitation's id lands in `invitation_id`; a
+    dispatch about one deleted since enqueue records nothing, and doesn't
+    fail the push either.
+    """
+    invitation = await _add_invitation(db_session, branch)
+    invitation_id, user_id = invitation.id, user.id
+
+    for data in (
+        {"invitationId": str(invitation_id), "action": "approved"},
+        {"invitationId": str(uuid.uuid4()), "action": "approved"},
+    ):
+        result = await asyncio.to_thread(
+            tasks.send_push.apply, kwargs=_send_push_kwargs(tenant, [user_id], data=data)
+        )
+        result.get(propagate=True)
+
+    rows = await _rows_for(db_session, user_id)
+    assert [row.invitation_id for row in rows] == [invitation_id]

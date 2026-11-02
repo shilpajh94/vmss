@@ -3,12 +3,13 @@ from collections.abc import Collection, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, func, or_, select, update
+from sqlalchemy import ColumnElement, and_, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from vmss_api.auth.models import Permission, Role, User, UserBranchRole
+from vmss_api.auth.models import AuditLog, Permission, Role, User, UserBranchRole
 from vmss_api.auth.schemas import EmployeeStatus
-from vmss_api.core.database import TenantScopedRepository
+from vmss_api.core.database import TenantScopedRepository, order_clause
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.org_structure.models import Department
 
@@ -28,6 +29,22 @@ class UserRepository(TenantScopedRepository[User]):
 
     async def get_by_id(self, id_: uuid.UUID) -> User | None:
         return await self.get(id_)
+
+    async def get_with_permissions(self, id_: uuid.UUID) -> User | None:
+        """The authenticated-caller load (`core/tenancy.py::get_current_user`):
+        the user plus the full role -> permission chain every
+        `has_permission` check walks, loaded explicitly rather than relying
+        on the relationships' default strategy."""
+        stmt = (
+            select(User)
+            .options(
+                selectinload(User.branch_roles)
+                .selectinload(UserBranchRole.role)
+                .selectinload(Role.permissions)
+            )
+            .where(User.id == id_, User.deleted_at.is_(None))
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_email(self, email: str) -> User | None:
         stmt = select(User).where(User.email == email, User.deleted_at.is_(None))
@@ -192,7 +209,7 @@ class UserRepository(TenantScopedRepository[User]):
         uses the same `EXISTS` shape for the same reason.
         """
         column: Any = {"name": User.full_name, "created_at": User.created_at}[sort_by]
-        order = column.desc() if sort_order == SortOrder.desc else column.asc()
+        order = order_clause(column, sort_order)
         conditions: list[Any] = [User.deleted_at.is_(None)]
         if branch_scope != "all":
             conditions.append(
@@ -332,7 +349,7 @@ class UserRepository(TenantScopedRepository[User]):
         often unset here).
         """
         column: Any = {"name": User.full_name, "created_at": User.created_at}[sort_by]
-        order = column.desc() if sort_order == SortOrder.desc else column.asc()
+        order = order_clause(column, sort_order)
         conditions: list[Any] = [
             User.deleted_at.is_(None),
             User.is_active.is_(True),
@@ -369,7 +386,7 @@ class PermissionRepository:
         self, *, page: int, page_size: int, sort_by: str, sort_order: SortOrder
     ) -> tuple[list[Permission], int]:
         column = {"code": Permission.code}[sort_by]
-        order = column.desc() if sort_order == SortOrder.desc else column.asc()
+        order = order_clause(column, sort_order)
         total = (
             await self.session.execute(select(func.count()).select_from(Permission))
         ).scalar_one()
@@ -380,6 +397,10 @@ class PermissionRepository:
 
 class RoleRepository(TenantScopedRepository[Role]):
     model = Role
+
+    async def get_by_names(self, names: Collection[str]) -> list[Role]:
+        stmt = select(Role).where(Role.name.in_(list(names)), Role.deleted_at.is_(None))
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def get_by_name(self, name: str) -> Role | None:
         stmt = select(Role).where(Role.name == name, Role.deleted_at.is_(None))
@@ -399,7 +420,7 @@ class RoleRepository(TenantScopedRepository[Role]):
         self, *, page: int, page_size: int, sort_by: str, sort_order: SortOrder
     ) -> tuple[list[Role], int]:
         column = {"name": Role.name, "created_at": Role.created_at}[sort_by]
-        order = column.desc() if sort_order == SortOrder.desc else column.asc()
+        order = order_clause(column, sort_order)
         return await super().paginate(page=page, page_size=page_size, order_by=order)
 
     async def get_existing_permissions(self, codes: Collection[str]) -> list[Permission]:
@@ -415,3 +436,59 @@ class RoleRepository(TenantScopedRepository[Role]):
     async def has_active_grants(self, role_id: uuid.UUID) -> bool:
         stmt = select(UserBranchRole.id).where(UserBranchRole.role_id == role_id).limit(1)
         return (await self.session.execute(stmt)).scalar_one_or_none() is not None
+
+
+class AuditLogWriter:
+    """The one place `audit_logs` rows are written (database-architecture.md
+    §3). Reads live in `audit_trail/repository.py::AuditLogRepository`.
+    Append-only: there is no update or delete."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    def add(
+        self,
+        *,
+        actor_user_id: uuid.UUID | None,
+        action: str,
+        entity_type: str,
+        entity_id: uuid.UUID | None,
+        diff: dict[str, Any] | None,
+    ) -> None:
+        self.session.add(
+            AuditLog(
+                id=uuid.uuid4(),
+                actor_user_id=actor_user_id,
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                diff=diff,
+            )
+        )
+
+    async def add_system_entries(
+        self,
+        entity_ids: list[uuid.UUID],
+        *,
+        action: str,
+        entity_type: str,
+        diff: dict[str, Any],
+    ) -> None:
+        """One actor-less row per entity in a single bulk insert, in the
+        caller's transaction."""
+        if not entity_ids:
+            return
+        await self.session.execute(
+            insert(AuditLog),
+            [
+                {
+                    "id": uuid.uuid4(),
+                    "actor_user_id": None,
+                    "action": action,
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "diff": diff,
+                }
+                for entity_id in entity_ids
+            ],
+        )

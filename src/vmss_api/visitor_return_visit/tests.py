@@ -13,6 +13,7 @@ from vmss_api.core.security import create_access_token, create_identity_verified
 from vmss_api.invitations.models import Invitation
 from vmss_api.org_structure.models import Branch
 from vmss_api.tenant.models import Tenant
+from vmss_api.visitor_return_visit.repository import VisitorReturnVisitRepository
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -27,7 +28,7 @@ def _default_tenant_slug_matches_test_tenant(monkeypatch):
 
 def _build_invitation(branch_id: uuid.UUID, **overrides) -> Invitation:
     """Builds (but does not add/commit) an `Invitation` row — same rationale
-    as `invitations/tests.py::_build_invitation`: real FK-safe defaults for
+    as `invitations/tests/::_build_invitation`: real FK-safe defaults for
     columns this feature never touches, one commit per test setup.
     """
     overrides.setdefault("created_by_user_id", None)
@@ -304,3 +305,21 @@ async def test_walk_in_registration_and_invitation_endpoints_are_unaffected(
 
     response = await client.post("/api/v1/registrations/walk-in", data={"payload": "{}"})
     assert response.status_code in (401, 422)
+
+
+async def test_returning_visitor_lookup_is_tenant_isolated(
+    make_tenant_schema, open_tenant_session, branch: Branch, db_session: AsyncSession
+) -> None:
+    """testing-standards.md §2: a session bound to another tenant's schema
+    can't see this tenant's prior visits for the same contact."""
+    db_session.add(_build_invitation(branch.id, primary_contact_email="repeat@example.com"))
+    await db_session.commit()
+    assert await VisitorReturnVisitRepository(db_session).get_most_recent("repeat@example.com")
+
+    other_schema = "tenant_other_return_visit"
+    await make_tenant_schema(other_schema)
+    async with open_tenant_session(other_schema) as other_session:
+        repo = VisitorReturnVisitRepository(other_session)
+        assert await repo.get_most_recent("repeat@example.com") is None
+        history, total = await repo.list_history("repeat@example.com", page=1, page_size=20)
+        assert (history, total) == ([], 0)

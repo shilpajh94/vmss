@@ -13,19 +13,41 @@ XLSX gets native date cells and no CSV-only formula guard
 
 import csv
 import io
+import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time, tzinfo
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 
+import anyio
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet._write_only import WriteOnlyWorksheet
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.invitations.models import Invitation
-from vmss_api.invitations.repository import InvitationExportNames
+from vmss_api.core.config import settings
+from vmss_api.core.schemas import BranchScope
+from vmss_api.core.timezones import display_name as display_tz_name
+from vmss_api.invitations.common import (
+    ListDrillDown,
+    _drill_down_filters,
+    resolve_visit_timezone,
+)
+from vmss_api.invitations.models import (
+    Invitation,
+)
+from vmss_api.invitations.repository import (
+    InvitationExportCriteria,
+    InvitationExportNames,
+    InvitationRepository,
+)
+from vmss_api.invitations.schemas import (
+    ExportFormat,
+    InvitationExportDateRange,
+)
+from vmss_api.tenant.models import Tenant
 
 type ExportValue = str | date | datetime | time | None
 type ExportRow = dict[str, ExportValue]
@@ -300,3 +322,95 @@ def render_xlsx(rows: Sequence[ExportRow], columns: Sequence[ExportColumn], tz_n
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
+
+
+class ExportTooLargeError(Exception):
+    """`GET /invitations/export` would exceed
+    `settings.invitation_export_max_rows` — rejected rather than truncated
+    (add-invitation-export/design.md Decision 1).
+    """
+
+    def __init__(self, row_count: int, max_rows: int) -> None:
+        super().__init__(
+            f"This export would contain {row_count} rows, more than the maximum of "
+            f"{max_rows}. Narrow the filters (for example the date range) and try again."
+        )
+
+
+@dataclass(frozen=True)
+class InvitationExportFile:
+    content: bytes
+    media_type: str
+    filename: str
+    row_count: int
+
+
+_EXPORT_MEDIA_TYPES = {
+    ExportFormat.csv: "text/csv; charset=utf-8",
+    ExportFormat.xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+async def export_invitations(
+    tenant_db: AsyncSession,
+    tenant: Tenant,
+    *,
+    branch_scope: BranchScope,
+    relevant_to_user_id: uuid.UUID | None,
+    default_host_role_id: uuid.UUID | None,
+    status: str | None,
+    registration_type: str | None,
+    source: str | None,
+    search: str | None,
+    purpose_of_visit: str | None,
+    date_range: InvitationExportDateRange,
+    export_format: ExportFormat,
+    drill_down: ListDrillDown | None = None,
+) -> InvitationExportFile:
+    """Backs `GET /invitations/export` (specs/invitation-export/spec.md).
+    `dateFrom`/`dateTo` are inclusive calendar dates in the visit timezone,
+    turned into half-open UTC bounds here so the repository only ever
+    compares instants (design.md Decision 3).
+    """
+    tz = await resolve_visit_timezone(tenant_db, tenant)
+
+    def _local_midnight_utc(day: date) -> datetime:
+        return datetime.combine(day, time.min, tzinfo=tz).astimezone(UTC)
+
+    criteria = InvitationExportCriteria(
+        branch_scope=branch_scope,
+        relevant_to_user_id=relevant_to_user_id,
+        default_host_role_id=default_host_role_id,
+        status=status,
+        registration_type=registration_type,
+        source=source,
+        search=search,
+        purpose_of_visit=purpose_of_visit,
+        starts_at=_local_midnight_utc(date_range.date_from) if date_range.date_from else None,
+        ends_before=(
+            _local_midnight_utc(date_range.date_to + timedelta(days=1))
+            if date_range.date_to
+            else None
+        ),
+        **(await _drill_down_filters(tenant_db, tenant, drill_down) if drill_down else {}),
+    )
+    repository = InvitationRepository(tenant_db)
+    row_count = await repository.count_export_rows(criteria)
+    max_rows = settings.invitation_export_max_rows
+    if row_count > max_rows:
+        raise ExportTooLargeError(row_count, max_rows)
+
+    invitations = await repository.list_for_export(criteria)
+    rows = build_rows(invitations, tz)
+    renderer = render_xlsx if export_format == ExportFormat.xlsx else render_csv
+    content = await anyio.to_thread.run_sync(
+        renderer, rows, columns_for(status), display_tz_name(tz)
+    )
+    status_slug = (status or "all").replace("_", "-")
+    filename = f"invitations-{status_slug}-{datetime.now(tz):%Y-%m-%d}.{export_format.value}"
+    return InvitationExportFile(
+        content=content,
+        media_type=_EXPORT_MEDIA_TYPES[export_format],
+        filename=filename,
+        row_count=len(rows),
+    )

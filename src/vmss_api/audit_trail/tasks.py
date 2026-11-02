@@ -14,6 +14,7 @@ from datetime import datetime
 
 import anyio
 import structlog
+from celery import Task
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
@@ -22,24 +23,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.audit_trail.models import AuditReportJob
 from vmss_api.audit_trail.repository import AuditLogRepository, AuditReportJobRepository
 from vmss_api.auth.models import AuditLog
-from vmss_api.core.celery_app import celery_app
+from vmss_api.core.celery_app import DEFAULT_RETRY_KWARGS, celery_app
 from vmss_api.core.database import engine, tenant_session_scope
 from vmss_api.core.logging import logger
 from vmss_api.core.storage import save as storage_save
 
-_RETRY_KWARGS = {
-    "autoretry_for": (Exception,),
-    "retry_backoff": True,
-    "retry_backoff_max": 600,
-    "max_retries": 5,
-}
+_RETRY_KWARGS = DEFAULT_RETRY_KWARGS
 
 _REPORT_HEADERS = ["id", "actor_user_id", "action", "entity_type", "entity_id", "created_at"]
 
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
 def generate_audit_report(
-    self, *, job_id: str, tenant_id: str, tenant_schema: str, request_id: str
+    self: Task, *, job_id: str, tenant_id: str, tenant_schema: str, request_id: str
 ) -> None:
     structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
     try:

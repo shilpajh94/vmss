@@ -3,6 +3,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
+import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -170,10 +171,10 @@ async def test_branch_rollup_repository_tenant_schema_isolation(
 # against the real `tenant_acme_test` schema and real Redis
 # (testing-standards.md §3's "unit-style tests still run against the real
 # database" — there's no fake session substitute for the multi-query
-# `get_cross_branch_rollup` call the way `invitations/tests.py` fakes a
+# `get_cross_branch_rollup` call the way `invitations/tests/` fakes a
 # single `session.get()`). Going through the public Celery task (`.apply()`,
 # which internally spins a *second* event loop via `asyncio.run()` — hence
-# `invitations/tests.py`'s `asyncio.to_thread` wrapping) is only needed to
+# `invitations/tests/`'s `asyncio.to_thread` wrapping) is only needed to
 # exercise `self.request.retries`, so only the exhaustion test below does
 # that, with the DB/email layer faked to avoid handing the shared
 # `core.database.engine` connection pool between two different event loops.
@@ -244,6 +245,23 @@ async def test_reports_snapshot_redelivered_task_does_not_send_twice(
     assert len(sender.calls) == 1
 
 
+async def test_reports_snapshot_failed_send_is_delivered_on_retry(
+    monkeypatch, tenant: Tenant, user: User
+) -> None:
+    """Regression: the day marker used to be set before sending, so every
+    retry after a failed send returned early and the snapshot never went
+    out (background-jobs.md §2/§4)."""
+    monkeypatch.setattr(tasks, "email_sender", _FailingEmailSender())
+    with pytest.raises(RuntimeError):
+        await tasks._send_tenant_rollup_snapshot(str(tenant.id), tenant.schema_name)
+
+    sender = _RecordingEmailSender()
+    monkeypatch.setattr(tasks, "email_sender", sender)
+    await tasks._send_tenant_rollup_snapshot(str(tenant.id), tenant.schema_name)
+
+    assert [call["to"] for call in sender.calls] == [user.email]
+
+
 async def test_reports_snapshot_no_admin_recipients_logs_info_and_sends_nothing(
     monkeypatch, tenant: Tenant
 ) -> None:
@@ -299,7 +317,7 @@ async def test_reports_snapshot_retry_exhaustion_logs_error_with_tenant_context(
     # `max_retries=0` — the first failure is already "exhausted", so
     # `.apply()` hits the exhaustion branch immediately instead of actually
     # sleeping through `retry_backoff`'s delay (same trick
-    # `invitations/tests.py::test_send_visit_confirmation_exhausted_retries_logs_error`
+    # `invitations/tests/::test_send_visit_confirmation_exhausted_retries_logs_error`
     # uses).
     monkeypatch.setattr(tasks.send_tenant_rollup_snapshot, "max_retries", 0)
 
@@ -356,7 +374,7 @@ async def test_dispatch_daily_rollup_snapshots_enqueues_every_active_tenant(
 # `aiosmtplib.send` goes out over the loopback SMTP port DDEV intercepts,
 # then asks Mailpit's own HTTP API whether the message actually arrived —
 # same pattern as
-# `invitations/tests.py::test_send_approval_notification_delivers_email_with_qr_via_mailpit`.
+# `invitations/tests/::test_send_approval_notification_delivers_email_with_qr_via_mailpit`.
 
 _MAILPIT_BASE_URL = "http://localhost:8025/api/v1"
 _MAILPIT_API_URL = f"{_MAILPIT_BASE_URL}/messages"
@@ -422,5 +440,5 @@ async def test_reports_snapshot_delivers_email_via_mailpit(
         assert f"Buildings: {expected.total_buildings}" in body_text
         assert f"Active employees: {expected.total_active_employees}" in body_text
     # Deliberately not deleted from Mailpit afterward, matching
-    # invitations/tests.py's Mailpit test — harmless to accumulate since
+    # invitations/tests/'s Mailpit test — harmless to accumulate since
     # each run uses a fresh, unique recipient address.

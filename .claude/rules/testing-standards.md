@@ -49,3 +49,30 @@ contract, auth, and status codes.
 Track via `pytest --cov`; no hard-coded numeric gate exists yet. A PR that adds an
 endpoint or service method without a corresponding test in §2's list should be
 treated as incomplete, not as "coverage number didn't drop enough to block."
+
+## 5. Test Scope While Implementing a Change
+
+When implementing a change request or a suggestion task (including `/opsx:apply`),
+do **not** run the full `pytest` or e2e suite. Run only the targeted set:
+
+- the tests of every feature package the change edits;
+- the tests of any other area that depends on the changed code — it imports it,
+  calls it, or consumes its output (a shared `core/` helper, a schema reused
+  elsewhere, a Celery task, a tenant migration, a response shape the web client
+  reads). Find these by grepping for imports of the changed module/symbol
+  (`grep -rn "from vmss_api.<feature>" src tests`) and following its consumers;
+- `tests/test_api_documentation.py` when a route or response schema is added,
+  removed, or registered.
+
+If nothing else depends on the changed code, the change's own feature tests are
+enough. Run the targeted set as one sequential
+`ddev exec uv run pytest <paths>` invocation, never parallel processes (they race
+on the shared test DB).
+
+If a `tasks.md` step says "run the full suite", run the targeted set instead and
+say so in the task's completion note. The full suite still runs in the CI merge
+gate (`git-workflow.md` §4) and whenever the user explicitly asks for it.
+
+When reporting verification, list the test modules run and their result, and name
+each dependent area included and why — that's what lets a reviewer spot one that
+was missed.

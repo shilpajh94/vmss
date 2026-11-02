@@ -18,25 +18,21 @@ import asyncio
 import uuid
 
 import structlog
+from celery import Task
 from sqlalchemy.exc import SQLAlchemyError
 
-from vmss_api.core.celery_app import celery_app
+from vmss_api.core.celery_app import DEFAULT_RETRY_KWARGS, celery_app
 from vmss_api.core.database import engine, tenant_session_scope
 from vmss_api.core.logging import logger
 from vmss_api.notifications import fcm
 from vmss_api.notifications.repository import DeviceTokenRepository, NotificationRepository
 
-_RETRY_KWARGS = {
-    "autoretry_for": (Exception,),
-    "retry_backoff": True,
-    "retry_backoff_max": 600,
-    "max_retries": 5,
-}
+_RETRY_KWARGS = DEFAULT_RETRY_KWARGS
 
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
 def send_push(
-    self,
+    self: Task,
     *,
     request_id: str,
     tenant_schema: str,

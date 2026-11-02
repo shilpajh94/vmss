@@ -11,18 +11,22 @@ works) — this route deliberately takes no `get_current_user`/
 already decided, at that moment, that the current caller may see this file.
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import Response
 from starlette import status
 
 from vmss_api.core import storage
+from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import error_response
 
 router = APIRouter(prefix="/files", tags=["file-storage"])
 
 
+# Generous: email image proxies fetch on behalf of many recipients from few IPs.
 @router.get("/local/{key:path}")
+@limiter.limit("300/minute")
 async def get_local_file(
+    request: Request,
     key: str,
     exp: int,
     sig: str = Query(...),

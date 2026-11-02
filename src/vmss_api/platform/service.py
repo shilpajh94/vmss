@@ -12,13 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from alembic import command
 from vmss_api.auth.rbac_catalog import seed_default_roles
 from vmss_api.core.config import settings
-from vmss_api.core.database import get_db, tenant_session_scope
+from vmss_api.core.database import AsyncSessionLocal, get_db, tenant_session_scope
 from vmss_api.core.logging import logger
+from vmss_api.core.masking import mask_identifier
 from vmss_api.core.security import create_platform_access_token, verify_password
 from vmss_api.core.tenancy import get_bearer_payload
 from vmss_api.form_builder.service import seed_default_form_config
 from vmss_api.platform.models import SuperAdmin
 from vmss_api.platform.repository import (
+    PlatformAuditRepository,
     SuperAdminRepository,
     TenantSchemaVersionRepository,
 )
@@ -238,11 +240,29 @@ async def authenticate_superadmin(db: AsyncSession, email: str, password: str) -
         status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
     )
     admin = await SuperAdminRepository(db).get_by_email(email)
+
+    async def _audit_failure(reason: str) -> None:
+        # Inline, not a background task: FastAPI skips background tasks
+        # when the route raises, and a failed login is the event that most
+        # needs to be on the platform trail.
+        PlatformAuditRepository(db).add(
+            action="platform_login_failed",
+            actor_superadmin_id=admin.id if admin is not None else None,
+            metadata={"email": mask_identifier(email), "reason": reason},
+        )
+        await db.commit()
+
     if admin is None or not admin.is_active:
-        logger.warning("platform_login_failed", email=email, reason="not_found_or_inactive")
+        logger.warning(
+            "platform_login_failed", email=mask_identifier(email), reason="not_found_or_inactive"
+        )
+        await _audit_failure("not_found_or_inactive")
         raise invalid_credentials
     if not verify_password(password, admin.hashed_password):
-        logger.warning("platform_login_failed", email=email, reason="invalid_password")
+        logger.warning(
+            "platform_login_failed", email=mask_identifier(email), reason="invalid_password"
+        )
+        await _audit_failure("invalid_password")
         raise invalid_credentials
     return admin
 
@@ -268,3 +288,26 @@ async def get_current_superadmin(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Superadmin not found or inactive"
         )
     return admin
+
+
+async def list_tenants(db: AsyncSession) -> list[Tenant]:
+    return await TenantRepository(db).list()
+
+
+async def record_platform_event(
+    *,
+    action: str,
+    actor_superadmin_id: uuid.UUID | None = None,
+    target_tenant_id: uuid.UUID | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Background-task writer for a platform audit event, with its own
+    global-schema session (the request's has closed by the time it runs)."""
+    async with AsyncSessionLocal() as session:
+        PlatformAuditRepository(session).add(
+            action=action,
+            actor_superadmin_id=actor_superadmin_id,
+            target_tenant_id=target_tenant_id,
+            metadata=metadata,
+        )
+        await session.commit()

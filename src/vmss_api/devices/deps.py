@@ -1,4 +1,5 @@
-from typing import Annotated
+from collections.abc import Awaitable, Callable
+from typing import Annotated, Any
 
 from fastapi import Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +8,9 @@ from vmss_api.devices import service
 from vmss_api.devices.models import Device
 
 
-def make_device_dependency(db_dependency):
+def make_device_dependency(
+    db_dependency: Callable[..., Any],
+) -> Callable[..., Awaitable[Device | None]]:
     """Builds the optional `device-id` header dependency bound to a route's
     own tenant-session dependency (staff routes use `get_tenant_db`, public
     ones `track_default_tenant_db`). Returns `None` when the header is

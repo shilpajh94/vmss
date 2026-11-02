@@ -1,6 +1,7 @@
-import uuid
+from __future__ import annotations
 
-from sqlalchemy.ext.asyncio import AsyncSession
+import uuid
+from typing import TYPE_CHECKING
 
 from vmss_api.auth.repository import UserRepository
 from vmss_api.org_structure.repository import DepartmentRepository
@@ -12,6 +13,9 @@ from vmss_api.visit_info.schemas import (
     VisitInfoOptionsOut,
     VisitPurposeOut,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def search_hosts(

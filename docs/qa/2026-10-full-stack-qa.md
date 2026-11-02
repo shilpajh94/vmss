@@ -45,7 +45,7 @@ found it was re-run and passes:
   the runner's branch-scoped reception cases, and the e2e lifecycle's
   "Level 1/2" assertion.
 - **F9:** `platform/tests.py::test_create_tenant_provisions_real_schema`.
-- **F10:** `invitations/tests.py::test_qr_check_in_response_includes_id_proof_type_but_never_a_document_url`
+- **F10:** `invitations/tests/::test_qr_check_in_response_includes_id_proof_type_but_never_a_document_url`
   and a live QR check-in.
 
 Also fixed, not a blocker: `266793e` makes invitation QR rendering 3.5×
@@ -121,6 +121,61 @@ follow-up should:
 - profile and cache the per-request permission load,
 - size workers and replicas for the expected desk and kiosk count,
 - re-run this test on staging-like hardware.
+
+## Status after `audit-and-harden-api-and-web` (2026-10-22)
+
+| id | Status |
+|---|---|
+| F1, F4, F9, F10 | Fixed earlier (regression tests above). |
+| F2 | Open. A breaking envelope change, tracked as gap G22. |
+| F3 | Open. A product decision, tracked as G25. |
+| F5 | Open. Changes a status code, tracked as G23. |
+| F6 | Open. Tracked as G24; it will fold into public-endpoint-hardening strict mode. |
+| F7 | Web half of this change: permission-gated `AdminLayout` (web D-W3). |
+| F8 | Web half: the web spec now says only a 401 ends the session. |
+| F11, F12, F13 | Web half (purpose label, required markers, dirty tracking). |
+| L1 | Partly addressed: the S3 presigner is cached and the current user loads through one explicit loader. Caching the per-request permission load (the ~45% CPU hot spot) is tracked as G41. |
+| T1 | **Fixed.** The test client's `get_db` gets its own session, so `get_tenant`'s rollback no longer expires shared objects. |
+| T2 | **Fixed.** `factories.with_default_location` fills `visitDetails.branchId`/`buildingId`. |
+| T3 | **Fixed.** The stale `IdProofType` import and dict-shaped `consents` are gone, and the OTP regex is updated. |
+| T4 | **Fixed** (`isolate-test-storage-and-cache`): a temporary storage root and Redis db 15. |
+
+Full suite: **240 failed → 0 failed** (1772 passed on 2026-10-22; an
+intermittent teardown-race 401 still shows up occasionally and passes in
+isolation). The G38 xfail was resolved later the same day: a zero-visitor
+group registration is now rejected.
+
+### L1 re-run (2026-10-22)
+
+The same 50-user, 1-process set-up, but the absolute numbers are **not
+comparable** to the L1 table above. The workstation was busier: the
+dev `--reload` server, the auto-reloading Celery worker and Vite, with a
+load average of about 6.6. `tenant_default` also held 832 invitations
+instead of an empty table. So the change was judged by an A/B on the
+same machine, minutes apart: HEAD (`f7ba135`) served from a worktree
+against the same database, then the working tree.
+
+| Build | Requests (2 min) | p50 | p95 | p99 | Errors | 5xx |
+|---|---|---|---|---|---|---|
+| HEAD, run 1 | 1877 | 1300 ms | 3200 ms | 4600 ms | 0 | 0 |
+| This change | 1797 | 1400 ms | 3600 ms | 4800 ms | 1¹ | 0 |
+| HEAD, run 2 | 1759 | 1400 ms | 3900 ms | 5200 ms | 0 | 0 |
+
+¹ A connection reset when locust stopped at the run-time limit, not a
+server error.
+
+This change sits between the two HEAD runs, so there is **no measurable
+throughput regression**. A py-spy profile under load still shows ORM
+loading as the main cost. The explicit permission loader
+(`get_with_permissions`) accounts for about 6% of request CPU. The
+throughput ceiling is still L1's single process, and G41 plus worker
+sizing are the follow-ups.
+
+## Releasing
+
+The merge preconditions, deploy order and rollback for this work are in
+`docs/release/2026-10-audit-and-harden.md`. The changes the Flutter app has
+to make are in `docs/clients/mobile-app-migration.md`.
 
 ## Reproducing
 

@@ -1,27 +1,28 @@
+from __future__ import annotations
+
 import uuid
 from collections.abc import Collection
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
-import structlog
 from fastapi import HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
 from vmss_api.auth.repository import RoleRepository, UserRepository
-from vmss_api.core.logging import logger
+from vmss_api.core.logging import current_request_id, logger
+from vmss_api.core.schemas import SortOrder
 from vmss_api.notifications import tasks
 from vmss_api.notifications.models import DeviceToken, Notification
 from vmss_api.notifications.repository import DeviceTokenRepository, NotificationRepository
 from vmss_api.notifications.schemas import DevicePlatform
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 # In-app notifications are disposable UI state; anything older is purged by
 # the recurring visit-lifecycle sweep (fix-web-push-and-add-notification-
 # feed design.md D4).
 NOTIFICATION_RETENTION = timedelta(days=90)
-
-
-def _current_request_id() -> str:
-    return structlog.contextvars.get_contextvars().get("request_id", "")
 
 
 async def register_device(
@@ -63,7 +64,7 @@ async def notify_user(
     triggered it.
     """
     tasks.send_push.delay(
-        request_id=_current_request_id(),
+        request_id=current_request_id(),
         tenant_schema=tenant_schema,
         dispatch_id=str(uuid.uuid4()),
         user_ids=[str(user_id)],
@@ -113,7 +114,7 @@ async def notify_role_at_branch(
         )
         return
     tasks.send_push.delay(
-        request_id=_current_request_id(),
+        request_id=current_request_id(),
         tenant_schema=tenant_schema,
         dispatch_id=str(uuid.uuid4()),
         user_ids=[str(user_id) for user_id in user_ids],
@@ -179,10 +180,22 @@ async def notify_step_approver(
 
 
 async def list_notifications(
-    tenant_db: AsyncSession, *, user_id: uuid.UUID, unread_only: bool, page: int, page_size: int
+    tenant_db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    unread_only: bool,
+    page: int,
+    page_size: int,
+    sort_by: str = "created_at",
+    sort_order: SortOrder = SortOrder.desc,
 ) -> tuple[list[Notification], int]:
     return await NotificationRepository(tenant_db).list_page(
-        user_id, unread_only=unread_only, page=page, page_size=page_size
+        user_id,
+        unread_only=unread_only,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 

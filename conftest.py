@@ -1,4 +1,6 @@
 import os
+import shutil
+import tempfile
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -14,6 +16,17 @@ os.environ.setdefault("APP_ENV", "test")
 # (e.g. in a fixture) can't reach the already-built engine, so this has to
 # happen first, the same way `ENVIRONMENT` is set above.
 os.environ["DB_NAME"] = "vmss_test"
+
+# Same reasoning for storage and the cache Redis (isolate-test-storage-and-
+# cache): both are read at import time, and a test run must never write into
+# the dev `var/storage` tree or the dev cache database. `.env` leaves
+# `REDIS_URL` blank and sets `REDIS_HOST`, so the cache index alone picks the
+# database; the empty `REDIS_URL` guards against a shell that exported one.
+_TEST_STORAGE_ROOT = tempfile.mkdtemp(prefix="vmss-test-storage-")
+os.environ["STORAGE_ROOT"] = _TEST_STORAGE_ROOT
+_TEST_REDIS_DB = 15
+os.environ["REDIS_CACHE_DB"] = str(_TEST_REDIS_DB)
+os.environ["REDIS_URL"] = ""
 
 import pytest
 import pytest_asyncio
@@ -126,6 +139,25 @@ def staff_lifecycle_email_calls(monkeypatch) -> list[dict]:
         lambda **kwargs: calls.append(kwargs),
     )
     return calls
+
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def _isolated_test_cache_and_storage() -> AsyncGenerator[None]:
+    """Flushes the test cache database (never the dev one) at both ends of
+    the session, and removes the temporary storage root afterwards."""
+    from redis.asyncio import from_url as redis_from_url
+
+    assert settings.storage_root == _TEST_STORAGE_ROOT, settings.storage_root
+    client = redis_from_url(settings.redis_url, decode_responses=True)
+    try:
+        db_index = client.connection_pool.connection_kwargs.get("db")
+        assert db_index == _TEST_REDIS_DB, f"tests must use Redis db 15, got {db_index}"
+        await client.flushdb()
+        yield
+        await client.flushdb()
+    finally:
+        await client.aclose()
+        shutil.rmtree(_TEST_STORAGE_ROOT, ignore_errors=True)
 
 
 @pytest_asyncio.fixture
@@ -370,7 +402,20 @@ async def superadmin(db_session: AsyncSession) -> SuperAdmin:
 
 @pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
+    # `get_db` (the global registry session) gets a session of its own per
+    # request, as in production. Sharing `db_session` here let
+    # `get_tenant`'s registry `rollback()` expire every object the test and
+    # the request's tenant work held in that one session — the cause of the
+    # suite's `MissingGreenlet` failures (QA T1). Global rows a test commits
+    # are still visible to it, and `db_session`'s teardown still wipes them.
+    registry_engine = create_async_engine(_test_url)
+    registry_sessions = async_sessionmaker(registry_engine, expire_on_commit=False)
+
     async def _override_get_db() -> AsyncGenerator[AsyncSession]:
+        async with registry_sessions() as session:
+            yield session
+
+    async def _override_get_tenant_db() -> AsyncGenerator[AsyncSession]:
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
@@ -381,8 +426,9 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     # see the module-level `DATABASE_URL` swap above, but still a separate
     # session) keeps everything a request touches visible to, and cleaned up
     # by, one fixture.
-    app.dependency_overrides[get_tenant_db] = _override_get_db
+    app.dependency_overrides[get_tenant_db] = _override_get_tenant_db
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
+    await registry_engine.dispose()

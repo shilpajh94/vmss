@@ -1,10 +1,16 @@
 import uuid
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vmss_api.platform.models import SuperAdmin, TenantSchemaVersion, TenantUserIndex
+from vmss_api.platform.models import (
+    PlatformAuditEvent,
+    SuperAdmin,
+    TenantSchemaVersion,
+    TenantUserIndex,
+)
 
 
 class SuperAdminRepository:
@@ -31,9 +37,12 @@ class TenantUserIndexRepository:
     async def delete_by_email(self, email: str) -> None:
         await self.session.execute(delete(TenantUserIndex).where(TenantUserIndex.email == email))
 
-    async def create(self, *, email: str, tenant_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    async def create(
+        self, *, email: str, tenant_id: uuid.UUID, user_id: uuid.UUID, flush: bool = True
+    ) -> None:
         self.session.add(TenantUserIndex(email=email, tenant_id=tenant_id, user_id=user_id))
-        await self.session.flush()
+        if flush:
+            await self.session.flush()
 
 
 class TenantSchemaVersionRepository:
@@ -62,3 +71,30 @@ class TenantSchemaVersionRepository:
         stmt = select(TenantSchemaVersion.tenant_id, TenantSchemaVersion.revision)
         rows = (await self.session.execute(stmt)).all()
         return {tenant_id: revision for tenant_id, revision in rows}
+
+
+class PlatformAuditRepository:
+    """Writes `platform_audit_events` (global schema): superadmin logins and
+    tenant provisioning (audit-trail spec "Form-Builder, Profile, and
+    Platform Mutations Are Audited"). Append-only."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    def add(
+        self,
+        *,
+        action: str,
+        actor_superadmin_id: uuid.UUID | None = None,
+        target_tenant_id: uuid.UUID | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.session.add(
+            PlatformAuditEvent(
+                id=uuid.uuid4(),
+                actor_superadmin_id=actor_superadmin_id,
+                action=action,
+                target_tenant_id=target_tenant_id,
+                metadata_=metadata,
+            )
+        )

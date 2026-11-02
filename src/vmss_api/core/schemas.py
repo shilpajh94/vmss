@@ -1,3 +1,4 @@
+import math
 import uuid
 from enum import StrEnum
 from typing import Literal
@@ -61,6 +62,16 @@ class PaginationMeta(CamelModel):
     page_size: int
     total: int
     total_pages: int
+
+    @classmethod
+    def build(cls, *, page: int, page_size: int, total: int) -> "PaginationMeta":
+        """The same `totalPages` arithmetic `paginated_response` uses."""
+        return cls(
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=math.ceil(total / page_size) if page_size else 0,
+        )
 
 
 class PaginatedEnvelope[T](CamelModel):

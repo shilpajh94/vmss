@@ -16,6 +16,7 @@ from factories import (
     BuildingFactory,
     DepartmentFactory,
     FloorFactory,
+    PermissionFactory,
     RoleFactory,
     UserFactory,
 )
@@ -86,7 +87,7 @@ async def test_login_rate_limit_trips(client: AsyncClient, user: User, monkeypat
     (`core/rate_limit.py`: `enabled=settings.environment != "test"`) —
     flipped on here for just this one test to exercise the 429 path
     (security-architecture.md §2), mirroring
-    `invitations/tests.py::test_track_rate_limit_trips`.
+    `invitations/tests/::test_track_rate_limit_trips`.
     """
     monkeypatch.setattr(limiter, "enabled", True)
     responses = [
@@ -152,6 +153,79 @@ async def test_get_my_profile(client: AsyncClient, user: User) -> None:
     body = response.json()["data"]
     assert body["email"] == user.email
     assert any(r["roleName"] == "admin" and r["branchId"] is None for r in body["branchRoles"])
+
+
+async def test_get_my_profile_lists_each_roles_permission_codes(
+    client: AsyncClient, user: User
+) -> None:
+    """auth spec "The Current-User Profile Surfaces Effective Permission
+    Codes" — a standard role lists what it grants; existing fields stay."""
+    token = await _login(client, user.email)
+    response = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    [admin_role] = [r for r in body["branchRoles"] if r["roleName"] == "admin"]
+    assert {"id", "roleName", "branchId", "permissionCodes"} <= set(admin_role)
+    assert "invitations:checkout" in admin_role["permissionCodes"]
+    assert admin_role["permissionCodes"] == sorted(admin_role["permissionCodes"])
+    assert {"id", "email", "fullName", "isActive", "avatarUrl"} <= set(body)
+
+
+async def test_get_my_profile_tenant_defined_role_lists_exactly_its_grants(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    tenant: Tenant,
+    branch: Branch,
+    issue_token: Callable[[User], str],
+) -> None:
+    existing = (
+        await db_session.execute(
+            select(Permission).where(Permission.code == "invitations:view-all")
+        )
+    ).scalar_one_or_none()
+    permission = existing or PermissionFactory.build(
+        id=uuid.uuid4(), code="invitations:view-all", description="view all"
+    )
+    role = RoleFactory.build(id=uuid.uuid4(), name="front-office-lead", permissions=[permission])
+    custom = UserFactory.build(
+        id=uuid.uuid4(),
+        email=f"lead-{uuid.uuid4().hex[:8]}@acme-test.example",
+        hashed_password=hash_password("correct-password"),
+        branch_roles=[UserBranchRole(id=uuid.uuid4(), role=role, branch_id=branch.id)],
+    )
+    db_session.add_all([role, custom])
+    await db_session.flush()
+    db_session.add(TenantUserIndex(email=custom.email, tenant_id=tenant.id, user_id=custom.id))
+    await db_session.commit()
+    # Password login is admin-only (others use SSO), so mint the token.
+    token = issue_token(custom)
+
+    response = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200, response.text
+    [entry] = response.json()["data"]["branchRoles"]
+    assert entry["permissionCodes"] == ["invitations:view-all"]
+
+
+async def test_avatar_upload_is_audited(
+    client: AsyncClient, user: User, db_session: AsyncSession
+) -> None:
+    user_id = user.id
+    token = await _login(client, user.email)
+    response = await client.post(
+        "/api/v1/auth/me/avatar",
+        files={"file": ("me.jpg", _jpeg_bytes(), "image/jpeg")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    db_session.expire_all()
+    entries = (
+        (await db_session.execute(select(AuditLog).where(AuditLog.action == "user_avatar_updated")))
+        .scalars()
+        .all()
+    )
+    assert [(e.actor_user_id, e.entity_id, e.entity_type) for e in entries] == [
+        (user_id, user_id, "User")
+    ]
 
 
 async def test_get_my_profile_requires_auth(client: AsyncClient) -> None:
@@ -2566,7 +2640,7 @@ async def test_get_current_user_tenant_schema_isolation(
     (conftest.py's `client` fixture), so an HTTP-level test through `client`
     can't actually exercise cross-schema resolution here — this calls the
     dependency directly against a session bound to a *different* tenant's
-    schema instead, the same way `invitations/tests.py` exercises a service
+    schema instead, the same way `invitations/tests/` exercises a service
     function directly with `pytest.raises(HTTPException)`.
     """
     other_schema = "tenant_other_test_current_user"

@@ -50,6 +50,12 @@ class Notification(Base):
     by the 90-day purge, not soft-deleted — disposable UI state with no
     compliance value, the same posture as `DeviceToken`, hence no
     `TimestampMixin` (which carries `deleted_at`).
+
+    `invitation_id` mirrors `data["invitationId"]` as a real FK with
+    `ON DELETE CASCADE`, so hard-deleting an invitation by any path (the
+    retention purge, the QA reset script, raw SQL) takes its notifications
+    with it (prune-orphaned-notifications design.md D1).
+    `NULL` for a notification that isn't about an invitation.
     """
 
     __tablename__ = "notifications"
@@ -66,6 +72,9 @@ class Notification(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id"))
     dispatch_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    invitation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("invitations.id", ondelete="CASCADE"), index=True
+    )
     title: Mapped[str] = mapped_column(String(255))
     body: Mapped[str] = mapped_column(Text)
     data: Mapped[dict[str, Any]] = mapped_column(JSONB)

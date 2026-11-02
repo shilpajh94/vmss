@@ -2,20 +2,27 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Date, cast, extract, func, select
+from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import User
+from vmss_api.core.database import order_clause
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.tenancy import branch_filter as _core_branch_filter
 from vmss_api.invitations.models import Invitation
-from vmss_api.invitations.repository import relevant_to_me_clause
+from vmss_api.invitations.repository import (
+    VISIT_DAY_STATUSES,
+    VisitDayRange,
+    not_expired_filter,
+    relevant_to_me_clause,
+    upcoming_filters,
+    visit_day,
+    visit_day_filter,
+)
 from vmss_api.org_structure.models import Department
 from vmss_api.visit_info.models import VisitPurpose
 
 _CHECKED_IN_STATUSES = ("checked_in", "checked_out")
-# A visit "happening today" — denied/archived/still-pending ones aren't.
-_VISIT_TODAY_STATUSES = ("approved", "checked_in", "checked_out")
 # A "scheduled visit" for analytics: everything that was approved for its
 # date, including no-shows the sweep has since archived (design.md Context —
 # `archived` is reached only from approved-and-never-admitted).
@@ -28,19 +35,6 @@ def _branch_filter(branch_scope: BranchScope) -> Any | None:
     `core.tenancy.branch_filter`.
     """
     return _core_branch_filter(Invitation.branch_id, branch_scope)
-
-
-def _order_clause(column: Any, sort_order: SortOrder) -> Any:
-    return column.desc() if sort_order == SortOrder.desc else column.asc()
-
-
-def _upcoming_filters(now_utc: datetime) -> tuple[Any, ...]:
-    """Approved, never admitted, not yet expired."""
-    return (
-        Invitation.status == "approved",
-        Invitation.check_in_status == "unused",
-        Invitation.expires_at > now_utc,
-    )
 
 
 class DashboardRepository:
@@ -74,37 +68,47 @@ class DashboardRepository:
         self,
         branch_scope: BranchScope,
         *,
-        today: date,
-        day_start_utc: datetime,
-        day_end_utc: datetime,
+        today: VisitDayRange,
         now_utc: datetime,
     ) -> dict[str, Any]:
         """Every KPI figure in one `COUNT(*) FILTER (...)` statement, same
-        shape as `personal_overview_counts` (query-performance.md §2).
-        `upcoming_visitor_count` shares `_upcoming_filters` with the preview
-        list so the two can't disagree.
+        shape as `personal_overview_counts` (query-performance.md §2). Each
+        non-deprecated figure uses the same helper as the list filter that
+        drills into it (fix-dashboard-count-accuracy design.md D3), so a
+        count and its list can't disagree.
         """
+        scheduled_today = (
+            visit_day_filter(today),
+            Invitation.status.in_(VISIT_DAY_STATUSES),
+        )
+        open_pending = (Invitation.status == "submitted", not_expired_filter(now_utc))
+        submitted_or_created = func.coalesce(Invitation.submitted_at, Invitation.created_at)
         stmt = select(
             func.count()
-            .filter(Invitation.created_at >= day_start_utc, Invitation.created_at < day_end_utc)
-            .label("visits_today_count"),
-            func.count()
             .filter(
-                Invitation.preferred_visit_date == today,
-                Invitation.status.in_(_VISIT_TODAY_STATUSES),
+                Invitation.created_at >= today.starts_at, Invitation.created_at < today.ends_before
             )
-            .label("scheduled_today_count"),
+            .label("visits_today_count"),
+            func.count().filter(*scheduled_today).label("scheduled_today_count"),
+            func.count()
+            .filter(*scheduled_today, Invitation.checked_in_at.is_not(None))
+            .label("scheduled_today_checked_in_count"),
             func.count()
             .filter(
-                Invitation.checked_in_at >= day_start_utc, Invitation.checked_in_at < day_end_utc
+                Invitation.checked_in_at >= today.starts_at,
+                Invitation.checked_in_at < today.ends_before,
             )
             .label("checked_in_today_count"),
             func.count().filter(Invitation.status == "checked_in").label("checked_in_count"),
+            func.count().filter(*open_pending).label("open_pending_approval_count"),
+            func.min(submitted_or_created)
+            .filter(*open_pending)
+            .label("oldest_open_pending_submitted_at"),
             func.count().filter(Invitation.status == "submitted").label("pending_approval_count"),
-            func.min(func.coalesce(Invitation.submitted_at, Invitation.created_at))
+            func.min(submitted_or_created)
             .filter(Invitation.status == "submitted")
             .label("oldest_pending_submitted_at"),
-            func.count().filter(*_upcoming_filters(now_utc)).label("upcoming_visitor_count"),
+            func.count().filter(*upcoming_filters(now_utc)).label("upcoming_visitor_count"),
         ).where(*self._scoped(_branch_filter(branch_scope)))
         return dict((await self.session.execute(stmt)).one()._mapping)
 
@@ -119,7 +123,7 @@ class DashboardRepository:
         stmt = (
             select(Invitation, User.full_name)
             .outerjoin(User, User.id == Invitation.host_id)
-            .where(*self._scoped(_branch_filter(branch_scope)), *_upcoming_filters(now_utc))
+            .where(*self._scoped(_branch_filter(branch_scope)), *upcoming_filters(now_utc))
             .order_by(Invitation.expires_at.asc())
             .limit(limit)
         )
@@ -130,7 +134,7 @@ class DashboardRepository:
         *,
         user_id: uuid.UUID,
         default_host_role_id: uuid.UUID,
-        today: date,
+        today: VisitDayRange,
         now_utc: datetime,
     ) -> dict[str, int]:
         """dashboard spec "Personal Dashboard Overview Scoped to the Caller's
@@ -139,14 +143,14 @@ class DashboardRepository:
         """
         stmt = select(
             func.count()
-            .filter(
-                Invitation.preferred_visit_date == today,
-                Invitation.status.in_(_VISIT_TODAY_STATUSES),
-            )
+            .filter(visit_day_filter(today), Invitation.status.in_(VISIT_DAY_STATUSES))
             .label("visits_today"),
             func.count().filter(Invitation.status == "checked_in").label("inside_now"),
+            func.count()
+            .filter(Invitation.status == "submitted", not_expired_filter(now_utc))
+            .label("open_awaiting_approval"),
             func.count().filter(Invitation.status == "submitted").label("awaiting_approval"),
-            func.count().filter(*_upcoming_filters(now_utc)).label("upcoming"),
+            func.count().filter(*upcoming_filters(now_utc)).label("upcoming"),
         ).where(
             Invitation.deleted_at.is_(None),
             relevant_to_me_clause(user_id, default_host_role_id),
@@ -166,7 +170,7 @@ class DashboardRepository:
             .where(
                 Invitation.deleted_at.is_(None),
                 relevant_to_me_clause(user_id, default_host_role_id),
-                *_upcoming_filters(now_utc),
+                *upcoming_filters(now_utc),
             )
             .order_by(
                 Invitation.preferred_visit_date.asc().nulls_last(),
@@ -209,7 +213,7 @@ class DashboardRepository:
             select(Invitation, User.full_name)
             .outerjoin(User, User.id == Invitation.host_id)
             .where(*filters)
-            .order_by(_order_clause(column, sort_order))
+            .order_by(order_clause(column, sort_order))
             .limit(page_size)
             .offset((page - 1) * page_size)
         )
@@ -243,23 +247,31 @@ class DashboardRepository:
     # missing days/hours/statuses is the service's job.
 
     async def daily_trend(
-        self, scope_clause: Any | None, *, start: date, end: date
+        self, scope_clause: Any | None, *, days: VisitDayRange, timezone: str
     ) -> list[tuple[date, int, int, int]]:
-        stmt = (
+        """Grouped over a subquery: the visit day carries the timezone as a
+        bind parameter, and Postgres won't match a SELECT-list parameter to
+        a GROUP BY one (same as `calendar_day_totals`).
+        """
+        dated = (
             select(
-                Invitation.preferred_visit_date,
-                func.count(),
-                func.count().filter(Invitation.checked_in_at.is_not(None)),
-                func.count().filter(Invitation.status == "archived"),
+                visit_day(timezone).label("day"),
+                Invitation.checked_in_at,
+                Invitation.status,
             )
             .where(
                 *self._scoped(scope_clause),
                 Invitation.status.in_(_SCHEDULED_STATUSES),
-                Invitation.preferred_visit_date >= start,
-                Invitation.preferred_visit_date <= end,
+                visit_day_filter(days),
             )
-            .group_by(Invitation.preferred_visit_date)
+            .subquery()
         )
+        stmt = select(
+            dated.c.day,
+            func.count(),
+            func.count().filter(dated.c.checked_in_at.is_not(None)),
+            func.count().filter(dated.c.status == "archived"),
+        ).group_by(dated.c.day)
         return [(r[0], r[1], r[2], r[3]) for r in (await self.session.execute(stmt)).all()]
 
     async def hourly_check_ins(
@@ -267,50 +279,43 @@ class DashboardRepository:
         scope_clause: Any | None,
         *,
         timezone: str,
-        day_start_utc: datetime,
-        day_end_utc: datetime,
+        today: VisitDayRange,
     ) -> list[tuple[int, int]]:
         hour = extract("hour", func.timezone(timezone, Invitation.checked_in_at))
         stmt = (
             select(hour, func.count())
             .where(
                 *self._scoped(scope_clause),
-                Invitation.checked_in_at >= day_start_utc,
-                Invitation.checked_in_at < day_end_utc,
+                Invitation.checked_in_at >= today.starts_at,
+                Invitation.checked_in_at < today.ends_before,
             )
             .group_by(hour)
         )
         return [(int(r[0]), r[1]) for r in (await self.session.execute(stmt)).all()]
 
     async def status_breakdown(
-        self, scope_clause: Any | None, *, timezone: str, start: date, end: date
+        self, scope_clause: Any | None, *, days: VisitDayRange
     ) -> list[tuple[str, int]]:
-        """Dated by the scheduled visit date, falling back to the tenant-local
-        creation date for an invitation that has none.
+        """Dated by visit day — the same filter as the list's
+        `visitDateFrom`/`visitDateTo`, so each row equals its drill-down.
         """
-        visit_day = func.coalesce(
-            Invitation.preferred_visit_date,
-            cast(func.timezone(timezone, Invitation.created_at), Date),
-        )
         stmt = (
             select(Invitation.status, func.count())
             .where(
                 *self._scoped(scope_clause),
                 Invitation.status.in_(BREAKDOWN_STATUSES),
-                visit_day >= start,
-                visit_day <= end,
+                visit_day_filter(days),
             )
             .group_by(Invitation.status)
         )
         return [(r[0], r[1]) for r in (await self.session.execute(stmt)).all()]
 
     async def top_purposes(
-        self, scope_clause: Any | None, *, start: date, end: date
+        self, scope_clause: Any | None, *, days: VisitDayRange
     ) -> list[tuple[str | None, int]]:
         return await self._label_counts(
             scope_clause,
-            start=start,
-            end=end,
+            days=days,
             configured_name=VisitPurpose.name,
             free_text=Invitation.purpose_of_visit,
             join_target=VisitPurpose,
@@ -318,12 +323,11 @@ class DashboardRepository:
         )
 
     async def top_departments(
-        self, scope_clause: Any | None, *, start: date, end: date
+        self, scope_clause: Any | None, *, days: VisitDayRange
     ) -> list[tuple[str | None, int]]:
         return await self._label_counts(
             scope_clause,
-            start=start,
-            end=end,
+            days=days,
             configured_name=Department.name,
             free_text=Invitation.department_to_visit,
             join_target=Department,
@@ -334,8 +338,7 @@ class DashboardRepository:
         self,
         scope_clause: Any | None,
         *,
-        start: date,
-        end: date,
+        days: VisitDayRange,
         configured_name: Any,
         free_text: Any,
         join_target: Any,
@@ -359,8 +362,7 @@ class DashboardRepository:
             .where(
                 *self._scoped(scope_clause),
                 Invitation.status.in_(_SCHEDULED_STATUSES),
-                Invitation.preferred_visit_date >= start,
-                Invitation.preferred_visit_date <= end,
+                visit_day_filter(days),
             )
             .group_by(key)
         )

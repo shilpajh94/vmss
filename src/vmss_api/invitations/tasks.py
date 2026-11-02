@@ -28,25 +28,28 @@ inline only as the fallback.
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from functools import partial
 from typing import Any, Literal
 
 import structlog
+from celery import Task
 from redis.asyncio import from_url as redis_from_url
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import AuditLog
 from vmss_api.auth.repository import UserRepository
 from vmss_api.core import portal_links
-from vmss_api.core.celery_app import celery_app
+from vmss_api.core.celery_app import DEFAULT_RETRY_KWARGS, celery_app
 from vmss_api.core.config import settings
 from vmss_api.core.database import AsyncSessionLocal, engine, tenant_session_scope
 from vmss_api.core.email_assets import base_url as email_asset_base_url
 from vmss_api.core.email_assets import sign_qr_url
 from vmss_api.core.email_rendering import TemplateRenderError, display_name, render_email
 from vmss_api.core.logging import logger
+from vmss_api.core.notification_dedupe import send_once
 from vmss_api.core.sms import SmsInvalidNumberError, SmsNotConfiguredError, SmsTemplate
 from vmss_api.core.whatsapp import WhatsAppTemplate
 from vmss_api.form_builder import validation as form_builder_validation
@@ -60,7 +63,6 @@ from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.notifications import service as notifications_service
 from vmss_api.org_structure.models import Branch
 from vmss_api.org_structure.repository import CompanyRepository
-from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
 
 # `cid:` content id the confirmation and reschedule templates' QR block
@@ -329,31 +331,54 @@ def _render_or_fallback(
     return rendered.subject, rendered.text, rendered.html
 
 
+async def _load_invitation(session: AsyncSession, invitation_id: str) -> Invitation | None:
+    """A task's invitation by its serialized id. Deliberately `session.get`,
+    not a soft-delete-filtering repository read: every task already checks
+    the row's state itself, and that behaviour predates this helper."""
+    return await session.get(Invitation, uuid.UUID(invitation_id))
+
+
+def _run_task(
+    task: Task,
+    event: str,
+    work: Callable[[], Coroutine[Any, Any, None]],
+    *,
+    request_id: str,
+    tenant_schema: str,
+    **log_fields: object,
+) -> None:
+    """The body every notification task shares: bind the enqueuing
+    request's id (logging-observability.md §1), run `work`, and log at
+    ERROR once retries are exhausted (background-jobs.md §4) before
+    re-raising so Celery's autoretry sees the failure."""
+    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
+    try:
+        asyncio.run(work())
+    except Exception:
+        if task.request.retries >= task.max_retries:
+            logger.error(f"{event}_dispatch_exhausted", tenant_schema=tenant_schema, **log_fields)
+        raise
+
+
 _RETRY_KWARGS = {
-    "autoretry_for": (Exception,),
+    **DEFAULT_RETRY_KWARGS,
     # A blank setting or an unusable number fails identically on every retry.
     "dont_autoretry_for": (SmsNotConfiguredError, SmsInvalidNumberError),
-    "retry_backoff": True,
-    "retry_backoff_max": 600,
-    "max_retries": 5,
 }
 
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
 def send_approval_notification(
-    self, *, request_id: str, tenant_schema: str, invitation_id: str, qr_token: str
+    self: Task, *, request_id: str, tenant_schema: str, invitation_id: str, qr_token: str
 ) -> None:
-    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
-    try:
-        asyncio.run(_send_approval_notification(tenant_schema, invitation_id, qr_token))
-    except Exception:
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "approval_notification_dispatch_exhausted",
-                tenant_schema=tenant_schema,
-                invitation_id=invitation_id,
-            )
-        raise
+    _run_task(
+        self,
+        "approval_notification",
+        lambda: _send_approval_notification(tenant_schema, invitation_id, qr_token),
+        request_id=request_id,
+        tenant_schema=tenant_schema,
+        invitation_id=invitation_id,
+    )
 
 
 async def _send_approval_notification(
@@ -361,7 +386,7 @@ async def _send_approval_notification(
 ) -> None:
     try:
         async with tenant_session_scope(tenant_schema) as session:
-            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            invitation = await _load_invitation(session, invitation_id)
             # Idempotent against redelivery/retry (background-jobs.md §2): a
             # missing invitation (the row somehow removed since the task was
             # enqueued) has nothing left to notify about. There's no separate
@@ -408,6 +433,7 @@ async def _send_approval_notification(
             # the gateway as media) plus name / tracking ID / date variables.
             await _dispatch(
                 invitation,
+                tenant_schema=tenant_schema,
                 subject=subject,
                 body=body,
                 sms_template=sms_template,
@@ -439,76 +465,101 @@ async def _send_approval_notification(
         await engine.dispose()
 
 
-@celery_app.task(bind=True, **_RETRY_KWARGS)
-def send_tracking_notification(
-    self, *, request_id: str, tenant_schema: str, invitation_id: str
+@dataclass(frozen=True)
+class _VisitorNotice:
+    """One email/SMS/WhatsApp notice to an invitation's primary contact.
+    Each send renders `template` (falling back to a plain message with
+    `fallback_subject`) and hands it to `_dispatch` on the contact's
+    preferred channel."""
+
+    template: str
+    fallback_subject: str
+    sms_template: SmsTemplate
+    sms_variables: Callable[[Invitation, dict[str, Any]], list[object]]
+    extra_context: Callable[[Invitation], dict[str, Any]] = lambda _invitation: {}
+    whatsapp_variables: Callable[[Invitation, dict[str, Any]], list[object]] | None = None
+    # Fills `context["qr_src"]` and returns the inline images to attach.
+    qr: (
+        Callable[
+            [AsyncSession, str, Invitation, dict[str, Any]],
+            Coroutine[Any, Any, list[notifications.InlineImage]],
+        ]
+        | None
+    ) = None
+
+
+def _update_variables(invitation: Invitation, context: dict[str, Any]) -> list[object]:
+    return _visitor_update_variables(invitation, context.get("contact_name"))
+
+
+async def _reschedule_qr(
+    session: AsyncSession, tenant_schema: str, invitation: Invitation, context: dict[str, Any]
+) -> list[notifications.InlineImage]:
+    """invitations spec "Reschedule Dispatches a Notification to the
+    Primary Contact": an approved visit gets its existing QR (same token as
+    at approval — a reschedule never re-issues one) re-embedded inline; a
+    still-submitted one has no QR yet."""
+    if invitation.status != "approved":
+        return []
+    qr_code = await InvitationRepository(session).get_qr_code(invitation.id)
+    if qr_code is None:
+        logger.warning(
+            "reschedule_notification_qr_missing",
+            tenant_schema=tenant_schema,
+            invitation_id=str(invitation.id),
+        )
+        return []
+    context["qr_src"], qr_images = await _qr_source(
+        session, tenant_schema, invitation, qr_code.qr_token
+    )
+    return qr_images
+
+
+_TRACKING_NOTICE = _VisitorNotice(
+    template="tracking_only",
+    fallback_subject="We've received your visit request",
+    sms_template=SmsTemplate.registration_pending,
+    sms_variables=_update_variables,
+)
+# add-invitation-lifecycle-actions/design.md Decision 7.
+_DENIAL_NOTICE = _VisitorNotice(
+    template="denial",
+    fallback_subject="Your visit request wasn't approved",
+    sms_template=SmsTemplate.registration_denied,
+    sms_variables=lambda invitation, _context: _denial_variables(invitation),
+    extra_context=lambda invitation: {"denial_reason": invitation.denial_reason},
+)
+# add-reschedule-notification/design.md.
+_RESCHEDULE_NOTICE = _VisitorNotice(
+    template="reschedule",
+    fallback_subject="Your visit has been rescheduled",
+    sms_template=SmsTemplate.visit_rescheduled,
+    sms_variables=_update_variables,
+    qr=_reschedule_qr,
+)
+# role-based-invitation-workflow: fires on a successful `PATCH
+# /invitations/{id}/edit`. The resolved host, if any, is told by push
+# (`invitations/edit.py::edit_invitation`), not by this email.
+_EDIT_NOTICE = _VisitorNotice(
+    template="edit",
+    fallback_subject="Your visit details have changed",
+    sms_template=SmsTemplate.visit_details_changed,
+    sms_variables=lambda invitation, _context: [
+        invitation.tracking_id,
+        invitation.preferred_visit_date,
+        invitation.preferred_visit_time,
+    ],
+    extra_context=lambda invitation: {"poc_name": invitation.poc_name},
+    whatsapp_variables=_update_variables,
+)
+
+
+async def _send_visitor_notice(
+    tenant_schema: str, invitation_id: str, notice: _VisitorNotice
 ) -> None:
-    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
-    try:
-        asyncio.run(_send_tracking_notification(tenant_schema, invitation_id))
-    except Exception:
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "tracking_notification_dispatch_exhausted",
-                tenant_schema=tenant_schema,
-                invitation_id=invitation_id,
-            )
-        raise
-
-
-async def _send_tracking_notification(tenant_schema: str, invitation_id: str) -> None:
     try:
         async with tenant_session_scope(tenant_schema) as session:
-            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
-            if invitation is None:
-                return
-            context = await _invitation_email_context(
-                session,
-                invitation,
-                recipient_name=invitation.primary_contact_full_name,
-                recipient_email=invitation.primary_contact_email,
-            )
-            subject, body, html_body = _render_or_fallback(
-                "tracking_only", context, fallback_subject="We've received your visit request"
-            )
-            await _dispatch(
-                invitation,
-                subject=subject,
-                body=body,
-                sms_template=SmsTemplate.registration_pending,
-                sms_variables=_visitor_update_variables(invitation, context.get("contact_name")),
-                html_body=html_body,
-            )
-    finally:
-        await engine.dispose()
-
-
-@celery_app.task(bind=True, **_RETRY_KWARGS)
-def send_denial_notification(
-    self, *, request_id: str, tenant_schema: str, invitation_id: str
-) -> None:
-    """add-invitation-lifecycle-actions/design.md Decision 7: structurally
-    identical to `send_tracking_notification` above — same tenant-scoped
-    session, `request_id` context binding, retry policy, and `_dispatch`
-    helper — only the subject/body differ.
-    """
-    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
-    try:
-        asyncio.run(_send_denial_notification(tenant_schema, invitation_id))
-    except Exception:
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "denial_notification_dispatch_exhausted",
-                tenant_schema=tenant_schema,
-                invitation_id=invitation_id,
-            )
-        raise
-
-
-async def _send_denial_notification(tenant_schema: str, invitation_id: str) -> None:
-    try:
-        async with tenant_session_scope(tenant_schema) as session:
-            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            invitation = await _load_invitation(session, invitation_id)
             if invitation is None:
                 return
             context = {
@@ -518,26 +569,69 @@ async def _send_denial_notification(tenant_schema: str, invitation_id: str) -> N
                     recipient_name=invitation.primary_contact_full_name,
                     recipient_email=invitation.primary_contact_email,
                 ),
-                "denial_reason": invitation.denial_reason,
+                **notice.extra_context(invitation),
             }
+            qr_images = (
+                await notice.qr(session, tenant_schema, invitation, context) if notice.qr else []
+            )
             subject, body, html_body = _render_or_fallback(
-                "denial", context, fallback_subject="Your visit request wasn't approved"
+                notice.template, context, fallback_subject=notice.fallback_subject
             )
             await _dispatch(
                 invitation,
+                tenant_schema=tenant_schema,
                 subject=subject,
                 body=body,
-                sms_template=SmsTemplate.registration_denied,
-                sms_variables=_denial_variables(invitation),
+                sms_template=notice.sms_template,
+                sms_variables=notice.sms_variables(invitation, context),
                 html_body=html_body,
+                inline_images=qr_images if html_body is not None else [],
+                whatsapp_variables=(
+                    notice.whatsapp_variables(invitation, context)
+                    if notice.whatsapp_variables
+                    else None
+                ),
             )
     finally:
         await engine.dispose()
 
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_tracking_notification(
+    self: Task, *, request_id: str, tenant_schema: str, invitation_id: str
+) -> None:
+    _run_task(
+        self,
+        "tracking_notification",
+        lambda: _send_visitor_notice(tenant_schema, invitation_id, _TRACKING_NOTICE),
+        request_id=request_id,
+        tenant_schema=tenant_schema,
+        invitation_id=invitation_id,
+    )
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
+def send_denial_notification(
+    self: Task, *, request_id: str, tenant_schema: str, invitation_id: str
+) -> None:
+    """add-invitation-lifecycle-actions/design.md Decision 7: structurally
+    identical to `send_tracking_notification` above — same tenant-scoped
+    session, `request_id` context binding, retry policy, and `_dispatch`
+    helper — only the subject/body differ.
+    """
+    _run_task(
+        self,
+        "denial_notification",
+        lambda: _send_visitor_notice(tenant_schema, invitation_id, _DENIAL_NOTICE),
+        request_id=request_id,
+        tenant_schema=tenant_schema,
+        invitation_id=invitation_id,
+    )
+
+
+@celery_app.task(bind=True, **_RETRY_KWARGS)
 def send_approval_revert_notification(
-    self, *, request_id: str, tenant_schema: str, invitation_id: str
+    self: Task, *, request_id: str, tenant_schema: str, invitation_id: str
 ) -> None:
     """add-invitation-approval-revert/design.md Decision 8: same shape as
     `send_denial_notification`. Idempotent per `background-jobs.md` §2 — it
@@ -545,23 +639,20 @@ def send_approval_revert_notification(
     redelivery after a quick re-approval doesn't tell the visitor their
     (now valid again) pass is on hold.
     """
-    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
-    try:
-        asyncio.run(_send_approval_revert_notification(tenant_schema, invitation_id))
-    except Exception:
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "approval_revert_notification_dispatch_exhausted",
-                tenant_schema=tenant_schema,
-                invitation_id=invitation_id,
-            )
-        raise
+    _run_task(
+        self,
+        "approval_revert_notification",
+        lambda: _send_approval_revert_notification(tenant_schema, invitation_id),
+        request_id=request_id,
+        tenant_schema=tenant_schema,
+        invitation_id=invitation_id,
+    )
 
 
 async def _send_approval_revert_notification(tenant_schema: str, invitation_id: str) -> None:
     try:
         async with tenant_session_scope(tenant_schema) as session:
-            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            invitation = await _load_invitation(session, invitation_id)
             if (
                 invitation is None
                 or invitation.status != "submitted"
@@ -580,92 +671,74 @@ async def _send_approval_revert_notification(tenant_schema: str, invitation_id: 
                 ),
                 fallback_subject="Your visit approval has been withdrawn",
             )
-            await _dispatch(
-                invitation,
-                subject=subject,
-                body=body,
-                sms_template=SmsTemplate.approval_reverted,
-                sms_variables=[
-                    invitation.primary_contact_full_name,
-                    invitation.tracking_id,
-                    _visit_when(invitation),
-                ],
-                html_body=html_body,
+            # No DLT/WhatsApp template is registered for this notice yet, so a
+            # phone-preferring contact falls back to email until one is
+            # (audit-and-harden-api-and-web design.md D2).
+            method = invitation.primary_contact_preferred_contact_method
+            prefix = "fast2sms_whatsapp_template_" if method == "whatsapp" else "fast2sms_template_"
+            phone_template_ready = bool(
+                getattr(settings, f"{prefix}{SmsTemplate.approval_reverted.value}")
             )
+            if method == "email" or phone_template_ready:
+                await _dispatch(
+                    invitation,
+                    tenant_schema=tenant_schema,
+                    subject=subject,
+                    body=body,
+                    sms_template=SmsTemplate.approval_reverted,
+                    sms_variables=[
+                        invitation.primary_contact_full_name,
+                        invitation.tracking_id,
+                        _visit_when(invitation),
+                    ],
+                    html_body=html_body,
+                )
+            elif invitation.primary_contact_email:
+                await send_once(
+                    tenant_scope=tenant_schema,
+                    channel="email",
+                    recipient=invitation.primary_contact_email,
+                    send=partial(
+                        notifications.email_sender.send,
+                        to=invitation.primary_contact_email,
+                        subject=subject,
+                        body=body,
+                        html_body=html_body,
+                    ),
+                )
+            else:
+                logger.warning(
+                    "approval_revert_notification_skipped_no_channel",
+                    tenant_schema=tenant_schema,
+                    invitation_id=invitation_id,
+                    preferred_contact_method=method,
+                )
     finally:
         await engine.dispose()
 
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
 def send_reschedule_notification(
-    self, *, request_id: str, tenant_schema: str, invitation_id: str
+    self: Task, *, request_id: str, tenant_schema: str, invitation_id: str
 ) -> None:
     """add-reschedule-notification/design.md: structurally identical to
     `send_denial_notification` above — same tenant-scoped session,
     `request_id` context binding, retry policy, and `_dispatch` helper —
     only the subject/body differ.
     """
-    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
-    try:
-        asyncio.run(_send_reschedule_notification(tenant_schema, invitation_id))
-    except Exception:
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "reschedule_notification_dispatch_exhausted",
-                tenant_schema=tenant_schema,
-                invitation_id=invitation_id,
-            )
-        raise
-
-
-async def _send_reschedule_notification(tenant_schema: str, invitation_id: str) -> None:
-    try:
-        async with tenant_session_scope(tenant_schema) as session:
-            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
-            if invitation is None:
-                return
-            context = await _invitation_email_context(
-                session,
-                invitation,
-                recipient_name=invitation.primary_contact_full_name,
-                recipient_email=invitation.primary_contact_email,
-            )
-            # invitations spec "Reschedule Dispatches a Notification to the
-            # Primary Contact": an approved visit gets its existing QR (same
-            # token as at approval — a reschedule never re-issues one)
-            # re-embedded inline; a still-submitted one has no QR yet.
-            qr_images: list[notifications.InlineImage] = []
-            if invitation.status == "approved":
-                qr_code = await InvitationRepository(session).get_qr_code(invitation.id)
-                if qr_code is None:
-                    logger.warning(
-                        "reschedule_notification_qr_missing",
-                        tenant_schema=tenant_schema,
-                        invitation_id=invitation_id,
-                    )
-                else:
-                    context["qr_src"], qr_images = await _qr_source(
-                        session, tenant_schema, invitation, qr_code.qr_token
-                    )
-            subject, body, html_body = _render_or_fallback(
-                "reschedule", context, fallback_subject="Your visit has been rescheduled"
-            )
-            await _dispatch(
-                invitation,
-                subject=subject,
-                body=body,
-                sms_template=SmsTemplate.visit_rescheduled,
-                sms_variables=_visitor_update_variables(invitation, context.get("contact_name")),
-                html_body=html_body,
-                inline_images=qr_images if html_body is not None else [],
-            )
-    finally:
-        await engine.dispose()
+    _run_task(
+        self,
+        "reschedule_notification",
+        lambda: _send_visitor_notice(tenant_schema, invitation_id, _RESCHEDULE_NOTICE),
+        request_id=request_id,
+        tenant_schema=tenant_schema,
+        invitation_id=invitation_id,
+    )
 
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
 def send_edit_notification(
-    self, *, request_id: str, tenant_schema: str, invitation_id: str
+    self: Task, *, request_id: str, tenant_schema: str, invitation_id: str
 ) -> None:
     """role-based-invitation-workflow: structurally identical to
     `send_reschedule_notification` above — same tenant-scoped session,
@@ -675,59 +748,19 @@ def send_edit_notification(
     any) is separately notified via push (`invitations/service.py::
     edit_invitation`), not this email.
     """
-    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
-    try:
-        asyncio.run(_send_edit_notification(tenant_schema, invitation_id))
-    except Exception:
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "edit_notification_dispatch_exhausted",
-                tenant_schema=tenant_schema,
-                invitation_id=invitation_id,
-            )
-        raise
-
-
-async def _send_edit_notification(tenant_schema: str, invitation_id: str) -> None:
-    try:
-        async with tenant_session_scope(tenant_schema) as session:
-            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
-            if invitation is None:
-                return
-            context = {
-                **await _invitation_email_context(
-                    session,
-                    invitation,
-                    recipient_name=invitation.primary_contact_full_name,
-                    recipient_email=invitation.primary_contact_email,
-                ),
-                "poc_name": invitation.poc_name,
-            }
-            subject, body, html_body = _render_or_fallback(
-                "edit", context, fallback_subject="Your visit details have changed"
-            )
-            await _dispatch(
-                invitation,
-                subject=subject,
-                body=body,
-                sms_template=SmsTemplate.visit_details_changed,
-                sms_variables=[
-                    invitation.tracking_id,
-                    invitation.preferred_visit_date,
-                    invitation.preferred_visit_time,
-                ],
-                html_body=html_body,
-                whatsapp_variables=_visitor_update_variables(
-                    invitation, context.get("contact_name")
-                ),
-            )
-    finally:
-        await engine.dispose()
+    _run_task(
+        self,
+        "edit_notification",
+        lambda: _send_visitor_notice(tenant_schema, invitation_id, _EDIT_NOTICE),
+        request_id=request_id,
+        tenant_schema=tenant_schema,
+        invitation_id=invitation_id,
+    )
 
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
 def send_submission_role_email_notification(
-    self,
+    self: Task,
     *,
     request_id: str,
     tenant_schema: str,
@@ -742,22 +775,17 @@ def send_submission_role_email_notification(
     role-identified for — always true for a non-auto-approved invitation now
     (`invitations/service.py::_build_approval_steps`).
     """
-    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
-    try:
-        asyncio.run(
-            _send_submission_role_email_notification(
-                tenant_schema, invitation_id, role_id, branch_id
-            )
-        )
-    except Exception:
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "submission_role_email_notification_dispatch_exhausted",
-                tenant_schema=tenant_schema,
-                invitation_id=invitation_id,
-                role_id=role_id,
-            )
-        raise
+    _run_task(
+        self,
+        "submission_role_email_notification",
+        lambda: _send_submission_role_email_notification(
+            tenant_schema, invitation_id, role_id, branch_id
+        ),
+        request_id=request_id,
+        tenant_schema=tenant_schema,
+        invitation_id=invitation_id,
+        role_id=role_id,
+    )
 
 
 async def _send_submission_role_email_notification(
@@ -765,7 +793,7 @@ async def _send_submission_role_email_notification(
 ) -> None:
     try:
         async with tenant_session_scope(tenant_schema) as session:
-            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            invitation = await _load_invitation(session, invitation_id)
             if invitation is None:
                 return
             users = await UserRepository(session).list_users_holding_role_at_branch(
@@ -806,8 +834,17 @@ async def _send_submission_role_email_notification(
                     },
                     fallback_subject="New visit request awaiting triage",
                 )
-                await notifications.email_sender.send(
-                    to=role_user.email, subject=subject, body=body, html_body=html_body
+                await send_once(
+                    tenant_scope=tenant_schema,
+                    channel="email",
+                    recipient=role_user.email,
+                    send=partial(
+                        notifications.email_sender.send,
+                        to=role_user.email,
+                        subject=subject,
+                        body=body,
+                        html_body=html_body,
+                    ),
                 )
     finally:
         await engine.dispose()
@@ -815,7 +852,7 @@ async def _send_submission_role_email_notification(
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
 def send_host_creation_notification(
-    self, *, request_id: str, tenant_schema: str, invitation_id: str, host_id: str
+    self: Task, *, request_id: str, tenant_schema: str, invitation_id: str, host_id: str
 ) -> None:
     """Emails the newly resolved host that they've been named host of an
     invitation — a distinct task from the visitor confirmation dispatch
@@ -831,18 +868,15 @@ def send_host_creation_notification(
     always names which host went unnotified even if the invitation itself
     has since changed.
     """
-    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
-    try:
-        asyncio.run(_send_host_creation_notification(tenant_schema, invitation_id, host_id))
-    except Exception:
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "host_creation_notification_dispatch_exhausted",
-                tenant_schema=tenant_schema,
-                invitation_id=invitation_id,
-                host_id=host_id,
-            )
-        raise
+    _run_task(
+        self,
+        "host_creation_notification",
+        lambda: _send_host_creation_notification(tenant_schema, invitation_id, host_id),
+        request_id=request_id,
+        tenant_schema=tenant_schema,
+        invitation_id=invitation_id,
+        host_id=host_id,
+    )
 
 
 async def _send_host_creation_notification(
@@ -850,7 +884,7 @@ async def _send_host_creation_notification(
 ) -> None:
     try:
         async with tenant_session_scope(tenant_schema) as session:
-            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            invitation = await _load_invitation(session, invitation_id)
             # Idempotent against redelivery (background-jobs.md §2): a
             # missing invitation or a host who's since been deactivated/
             # deleted has nothing left to notify.
@@ -876,8 +910,17 @@ async def _send_host_creation_notification(
                 ),
                 fallback_subject="You've been named host for a visit",
             )
-            await notifications.email_sender.send(
-                to=host.email, subject=subject, body=body, html_body=html_body
+            await send_once(
+                tenant_scope=tenant_schema,
+                channel="email",
+                recipient=host.email,
+                send=partial(
+                    notifications.email_sender.send,
+                    to=host.email,
+                    subject=subject,
+                    body=body,
+                    html_body=html_body,
+                ),
             )
     finally:
         await engine.dispose()
@@ -885,7 +928,7 @@ async def _send_host_creation_notification(
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
 def send_poc_creation_notification(
-    self, *, request_id: str, tenant_schema: str, invitation_id: str, poc_id: str
+    self: Task, *, request_id: str, tenant_schema: str, invitation_id: str, poc_id: str
 ) -> None:
     """add-invitation-point-of-contact: structurally identical to
     `send_host_creation_notification` above — emails the newly-named point
@@ -901,18 +944,15 @@ def send_poc_creation_notification(
     unnotified even if the invitation's point of contact has since changed
     again.
     """
-    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
-    try:
-        asyncio.run(_send_poc_creation_notification(tenant_schema, invitation_id, poc_id))
-    except Exception:
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "poc_creation_notification_dispatch_exhausted",
-                tenant_schema=tenant_schema,
-                invitation_id=invitation_id,
-                poc_id=poc_id,
-            )
-        raise
+    _run_task(
+        self,
+        "poc_creation_notification",
+        lambda: _send_poc_creation_notification(tenant_schema, invitation_id, poc_id),
+        request_id=request_id,
+        tenant_schema=tenant_schema,
+        invitation_id=invitation_id,
+        poc_id=poc_id,
+    )
 
 
 async def _send_poc_creation_notification(
@@ -920,7 +960,7 @@ async def _send_poc_creation_notification(
 ) -> None:
     try:
         async with tenant_session_scope(tenant_schema) as session:
-            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            invitation = await _load_invitation(session, invitation_id)
             # Idempotent against redelivery (background-jobs.md §2): a
             # missing invitation or a POC who's since been deactivated/
             # deleted has nothing left to notify.
@@ -946,8 +986,17 @@ async def _send_poc_creation_notification(
                 },
                 fallback_subject="You're the point of contact for a visit",
             )
-            await notifications.email_sender.send(
-                to=poc.email, subject=subject, body=body, html_body=html_body
+            await send_once(
+                tenant_scope=tenant_schema,
+                channel="email",
+                recipient=poc.email,
+                send=partial(
+                    notifications.email_sender.send,
+                    to=poc.email,
+                    subject=subject,
+                    body=body,
+                    html_body=html_body,
+                ),
             )
     finally:
         await engine.dispose()
@@ -976,7 +1025,7 @@ def _staff_event_still_current(invitation: Invitation, event: StaffLifecycleEven
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
 def send_staff_lifecycle_notification(
-    self,
+    self: Task,
     *,
     request_id: str,
     tenant_schema: str,
@@ -992,23 +1041,18 @@ def send_staff_lifecycle_notification(
     retry never re-sends to someone already emailed, and an
     exhausted-retries log names who went unnotified.
     """
-    structlog.contextvars.bind_contextvars(request_id=request_id, tenant_schema=tenant_schema)
-    try:
-        asyncio.run(
-            _send_staff_lifecycle_notification(
-                tenant_schema, invitation_id, recipient_user_id, actor_user_id, event
-            )
-        )
-    except Exception:
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "staff_lifecycle_notification_dispatch_exhausted",
-                tenant_schema=tenant_schema,
-                invitation_id=invitation_id,
-                recipient_user_id=recipient_user_id,
-                lifecycle_event=event,
-            )
-        raise
+    _run_task(
+        self,
+        "staff_lifecycle_notification",
+        lambda: _send_staff_lifecycle_notification(
+            tenant_schema, invitation_id, recipient_user_id, actor_user_id, event
+        ),
+        request_id=request_id,
+        tenant_schema=tenant_schema,
+        invitation_id=invitation_id,
+        recipient_user_id=recipient_user_id,
+        lifecycle_event=event,
+    )
 
 
 async def _send_staff_lifecycle_notification(
@@ -1020,7 +1064,7 @@ async def _send_staff_lifecycle_notification(
 ) -> None:
     try:
         async with tenant_session_scope(tenant_schema) as session:
-            invitation = await session.get(Invitation, uuid.UUID(invitation_id))
+            invitation = await _load_invitation(session, invitation_id)
             if invitation is None or not _staff_event_still_current(invitation, event):
                 return
             users = UserRepository(session)
@@ -1061,8 +1105,17 @@ async def _send_staff_lifecycle_notification(
                 },
                 fallback_subject=_STAFF_LIFECYCLE_FALLBACK_SUBJECTS[event],
             )
-            await notifications.email_sender.send(
-                to=recipient.email, subject=subject, body=body, html_body=html_body
+            await send_once(
+                tenant_scope=tenant_schema,
+                channel="email",
+                recipient=recipient.email,
+                send=partial(
+                    notifications.email_sender.send,
+                    to=recipient.email,
+                    subject=subject,
+                    body=body,
+                    html_body=html_body,
+                ),
             )
     finally:
         await engine.dispose()
@@ -1078,6 +1131,7 @@ _STAFF_LIFECYCLE_FALLBACK_SUBJECTS: dict[str, str] = {
 async def _dispatch(
     invitation: Invitation,
     *,
+    tenant_schema: str,
     subject: str,
     body: str,
     sms_template: SmsTemplate,
@@ -1100,28 +1154,48 @@ async def _dispatch(
     """
     method = invitation.primary_contact_preferred_contact_method
     if method == "email":
-        assert invitation.primary_contact_email is not None
-        await notifications.email_sender.send(
-            to=invitation.primary_contact_email,
-            subject=subject,
-            body=body,
-            html_body=html_body,
-            inline_images=inline_images,
+        email = invitation.primary_contact_email
+        assert email is not None
+        await send_once(
+            tenant_scope=tenant_schema,
+            channel="email",
+            recipient=email,
+            send=partial(
+                notifications.email_sender.send,
+                to=email,
+                subject=subject,
+                body=body,
+                html_body=html_body,
+                inline_images=inline_images,
+            ),
         )
-    elif method == "whatsapp":
-        assert invitation.primary_contact_phone is not None
-        await notifications.whatsapp_sender.send(
-            to=invitation.primary_contact_phone,
-            template=WhatsAppTemplate(sms_template.value),
-            variables=sms_variables if whatsapp_variables is None else whatsapp_variables,
-            header_image_png=whatsapp_header_image_png,
+        return
+    phone = invitation.primary_contact_phone
+    assert phone is not None
+    if method == "whatsapp":
+        await send_once(
+            tenant_scope=tenant_schema,
+            channel="whatsapp",
+            recipient=phone,
+            send=partial(
+                notifications.whatsapp_sender.send,
+                to=phone,
+                template=WhatsAppTemplate(sms_template.value),
+                variables=sms_variables if whatsapp_variables is None else whatsapp_variables,
+                header_image_png=whatsapp_header_image_png,
+            ),
         )
     else:
-        assert invitation.primary_contact_phone is not None
-        await notifications.sms_sender.send(
-            to=invitation.primary_contact_phone,
-            template=sms_template,
-            variables=sms_variables,
+        await send_once(
+            tenant_scope=tenant_schema,
+            channel="sms",
+            recipient=phone,
+            send=partial(
+                notifications.sms_sender.send,
+                to=phone,
+                template=sms_template,
+                variables=sms_variables,
+            ),
         )
 
 
@@ -1133,7 +1207,7 @@ async def _dispatch(
 
 
 @celery_app.task(bind=True)
-def dispatch_visit_lifecycle_sweep(self) -> None:
+def dispatch_visit_lifecycle_sweep(self: Task) -> None:
     structlog.contextvars.bind_contextvars(task="dispatch_visit_lifecycle_sweep")
     asyncio.run(_dispatch_visit_lifecycle_sweep())
 
@@ -1141,8 +1215,7 @@ def dispatch_visit_lifecycle_sweep(self) -> None:
 async def _dispatch_visit_lifecycle_sweep() -> None:
     try:
         async with AsyncSessionLocal() as session:
-            stmt = select(Tenant).where(Tenant.is_active.is_(True), Tenant.deleted_at.is_(None))
-            tenants = list((await session.execute(stmt)).scalars().all())
+            tenants = await TenantRepository(session).list_active()
     finally:
         await engine.dispose()
     for tenant in tenants:
@@ -1159,7 +1232,7 @@ async def _dispatch_visit_lifecycle_sweep() -> None:
 
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
-def sweep_tenant_visit_lifecycle(self, *, tenant_id: str, tenant_schema: str) -> None:
+def sweep_tenant_visit_lifecycle(self: Task, *, tenant_id: str, tenant_schema: str) -> None:
     structlog.contextvars.bind_contextvars(tenant_id=tenant_id, tenant_schema=tenant_schema)
     try:
         asyncio.run(_sweep_tenant_visit_lifecycle(tenant_schema))
@@ -1225,7 +1298,7 @@ _PURGE_LOCK_TTL_SECONDS = 60 * 60
 
 
 @celery_app.task(bind=True)
-def dispatch_invitation_purge(self) -> None:
+def dispatch_invitation_purge(self: Task) -> None:
     structlog.contextvars.bind_contextvars(task="dispatch_invitation_purge")
     if settings.invitation_retention_days <= 0:
         return
@@ -1235,8 +1308,7 @@ def dispatch_invitation_purge(self) -> None:
 async def _dispatch_invitation_purge() -> None:
     try:
         async with AsyncSessionLocal() as session:
-            stmt = select(Tenant).where(Tenant.is_active.is_(True), Tenant.deleted_at.is_(None))
-            tenants = list((await session.execute(stmt)).scalars().all())
+            tenants = await TenantRepository(session).list_active()
     finally:
         await engine.dispose()
     for tenant in tenants:
@@ -1253,7 +1325,7 @@ async def _dispatch_invitation_purge() -> None:
 
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
-def purge_tenant_invitations(self, *, tenant_id: str, tenant_schema: str) -> None:
+def purge_tenant_invitations(self: Task, *, tenant_id: str, tenant_schema: str) -> None:
     structlog.contextvars.bind_contextvars(tenant_id=tenant_id, tenant_schema=tenant_schema)
     try:
         asyncio.run(_purge_tenant_invitations(tenant_id, tenant_schema))
@@ -1380,7 +1452,7 @@ def purge_lock_key(tenant_id: str) -> str:
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
 def clear_tenant_invitations(
-    self,
+    self: Task,
     *,
     tenant_id: str,
     tenant_schema: str,

@@ -21,6 +21,25 @@ class InvitationApprovalStepRepository(TenantScopedRepository[InvitationApproval
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def list_for_invitations(
+        self, invitation_ids: list[uuid.UUID]
+    ) -> list[InvitationApprovalStep]:
+        """Every live step of several invitations in one query, ordered by
+        invitation then `step_order` — the list view's batch counterpart of
+        `get_current_pending` + `count_for_invitation` (query-performance.md
+        §2: never one query per row)."""
+        if not invitation_ids:
+            return []
+        stmt = (
+            select(InvitationApprovalStep)
+            .where(
+                InvitationApprovalStep.invitation_id.in_(invitation_ids),
+                InvitationApprovalStep.deleted_at.is_(None),
+            )
+            .order_by(InvitationApprovalStep.invitation_id, InvitationApprovalStep.step_order)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def get_current_pending(self, invitation_id: uuid.UUID) -> InvitationApprovalStep | None:
         """The single step with the lowest `step_order` still `pending` for
         this invitation — the only step actionable at any given time (specs/

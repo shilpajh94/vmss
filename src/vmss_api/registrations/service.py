@@ -1,11 +1,15 @@
-import uuid
+from __future__ import annotations
 
-from sqlalchemy.ext.asyncio import AsyncSession
+import uuid
+from typing import TYPE_CHECKING
 
 from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.models import Invitation
 from vmss_api.invitations.schemas import InvitationCreate, RegistrationSource
 from vmss_api.tenant.models import Tenant
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def create_walk_in_registration(

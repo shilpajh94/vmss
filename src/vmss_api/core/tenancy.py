@@ -1,15 +1,15 @@
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import User
+from vmss_api.auth.repository import UserRepository
 from vmss_api.core.config import settings
 from vmss_api.core.database import get_db, tenant_session_scope
 from vmss_api.core.logging import logger
@@ -157,12 +157,7 @@ async def get_current_user(
             detail="Invalid user ID in token",
         ) from None
 
-    stmt = select(User).where(
-        User.id == user_id,
-        User.deleted_at.is_(None),
-    )
-
-    user = (await db.execute(stmt)).scalar_one_or_none()
+    user = await UserRepository(db).get_with_permissions(user_id)
 
     if user is None or not user.is_active:
         raise HTTPException(
@@ -178,7 +173,7 @@ async def get_current_user(
     return user
 
 
-def require_permission(permission_code: str):
+def require_permission(permission_code: str) -> Callable[..., User]:
     """Dependency factory for RBAC checks."""
 
     def _check(
@@ -199,7 +194,7 @@ def require_permission(permission_code: str):
     return _check
 
 
-def require_permission_anywhere(permission_code: str):
+def require_permission_anywhere(permission_code: str) -> Callable[..., User]:
     """RBAC check for reading tenant-wide configuration (workflow rules, the
     role catalog, visitor categories) that isn't tied to any one branch: a
     grant at any branch is enough. `require_permission` only accepts a

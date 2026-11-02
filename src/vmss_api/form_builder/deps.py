@@ -11,7 +11,7 @@ each public-endpoint feature keeps its own.
 """
 
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
@@ -31,7 +31,7 @@ from vmss_api.tenant.repository import TenantRepository
 _optional_bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def require_form_scope(permission_code: str):
+def require_form_scope(permission_code: str) -> Callable[..., Awaitable[uuid.UUID | None]]:
     """Resolves the caller's target scope from an optional `X-Branch-ID`
     header and checks `permission_code` against it: a company-wide grant
     is required for the tenant-default scope (no header), a company-wide or

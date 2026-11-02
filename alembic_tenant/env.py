@@ -1,7 +1,9 @@
 import asyncio
 from logging.config import fileConfig
 
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.schema import SchemaItem
 
 from alembic import context
 
@@ -56,7 +58,13 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def include_object(object_, name, type_, reflected, compare_to):
+def include_object(
+    object_: SchemaItem,
+    name: str | None,
+    type_: str,
+    reflected: bool,
+    compare_to: SchemaItem | None,
+) -> bool:
     """Restricts autogenerate to tenant-scoped (schema-less) tables — see the
     import comment above.
     """
@@ -101,7 +109,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def _do_run_migrations(connection, schema: str) -> None:
+def _do_run_migrations(connection: Connection, schema: str) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,

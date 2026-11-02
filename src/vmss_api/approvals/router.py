@@ -16,7 +16,7 @@ from vmss_api.core.deps import get_current_user, get_tenant, get_tenant_db
 from vmss_api.core.responses import success_response
 from vmss_api.core.schemas import Envelope
 from vmss_api.invitations import service as invitations_service
-from vmss_api.invitations.router import to_invitation_out
+from vmss_api.invitations.presenters import to_invitation_out
 from vmss_api.invitations.schemas import InvitationOut
 from vmss_api.org_structure.deps import authorize_branch_id_tolerant
 from vmss_api.tenant.models import Tenant

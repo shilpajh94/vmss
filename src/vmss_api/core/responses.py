@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 
 def success_response(
@@ -58,3 +59,23 @@ def mark_deprecated(response: JSONResponse) -> JSONResponse:
     client library can surface the signal without parsing the docs note."""
     response.headers["Deprecation"] = "true"
     return response
+
+
+def validation_error_response(exc: ValidationError) -> JSONResponse:
+    """422 for a payload that failed model validation, naming each failing
+    field and why — without `str(exc)`'s echo of the submitted input values
+    (which can carry PII) or its pydantic docs URL."""
+    problems = []
+    for error in exc.errors(include_url=False, include_input=False):
+        location = ".".join(str(part) for part in error["loc"]) or "payload"
+        message = str(error["msg"]).removeprefix("Value error, ")
+        problems.append({"field": location, "message": message})
+    summary = "; ".join(
+        p["message"] if p["field"] == "payload" else f"{p['field']}: {p['message']}"
+        for p in problems
+    )
+    return error_response(
+        message=f"Invalid request: {summary}" if summary else "Invalid request",
+        status_code=422,
+        errors=problems,
+    )

@@ -1,7 +1,12 @@
-from sqlalchemy.ext.asyncio import AsyncSession
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from vmss_api.reports.repository import BranchRollupRepository
 from vmss_api.reports.schemas import BranchRollupOut, CrossBranchRollupOut
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def get_cross_branch_rollup(tenant_db: AsyncSession) -> CrossBranchRollupOut:

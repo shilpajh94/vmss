@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import secrets
 import uuid
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import Permission, Role, User, UserBranchRole
 from vmss_api.auth.rbac_catalog import STANDARD_ROLE_NAMES, seed_default_roles
@@ -24,6 +26,7 @@ from vmss_api.auth.schemas import (
 from vmss_api.core.config import settings
 from vmss_api.core.database import tenant_session_scope
 from vmss_api.core.logging import logger
+from vmss_api.core.masking import mask_identifier
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.security import (
     create_access_token,
@@ -37,6 +40,9 @@ from vmss_api.org_structure.repository import BranchRepository, DepartmentReposi
 from vmss_api.platform.repository import TenantUserIndexRepository
 from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def has_admin_role(user: User) -> bool:
@@ -65,25 +71,36 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> tupl
 
     index_entry = await TenantUserIndexRepository(db).get_by_email(email)
     if index_entry is None:
-        logger.warning("login_failed", email=email, reason="no_tenant_for_email")
+        logger.warning("login_failed", email=mask_identifier(email), reason="no_tenant_for_email")
         raise invalid_credentials
 
     tenant = await TenantRepository(db).get(index_entry.tenant_id)
     if tenant is None or not tenant.is_active:
-        logger.warning("login_failed", email=email, reason="tenant_not_found_or_inactive")
+        logger.warning(
+            "login_failed", email=mask_identifier(email), reason="tenant_not_found_or_inactive"
+        )
         raise invalid_credentials
 
     async with tenant_session_scope(tenant.schema_name) as tenant_db:
         user = await UserRepository(tenant_db).get_by_id(index_entry.user_id)
 
     if user is None or not user.is_active:
-        logger.warning("login_failed", email=email, reason="user_not_found_or_inactive")
+        logger.warning(
+            "login_failed", email=mask_identifier(email), reason="user_not_found_or_inactive"
+        )
         raise invalid_credentials
     if not verify_password(password, user.hashed_password):
-        logger.warning("login_failed", email=email, reason="invalid_password", user_id=str(user.id))
+        logger.warning(
+            "login_failed",
+            email=mask_identifier(email),
+            reason="invalid_password",
+            user_id=str(user.id),
+        )
         raise invalid_credentials
     if not has_admin_role(user):
-        logger.warning("login_rejected_non_admin", email=email, user_id=str(user.id))
+        logger.warning(
+            "login_rejected_non_admin", email=mask_identifier(email), user_id=str(user.id)
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This account must sign in via your organization's SSO login",
@@ -110,6 +127,7 @@ async def create_user(
     designation: str | None = None,
     phone_number: str | None = None,
     department_id: uuid.UUID | None = None,
+    flush: bool = True,
 ) -> User:
     """Creates a `User` in the tenant schema `tenant_db` is bound to, grants
     it any `(role, branch_id)` pairs in `role_assignments` (`branch_id=None`
@@ -145,9 +163,13 @@ async def create_user(
         department_id=department_id,
     )
     tenant_db.add(user)
-    await tenant_db.flush()
+    if flush:
+        await tenant_db.flush()
+    # `flush=False` lets a batch caller (`sync_employee_directory`) flush
+    # every new user and index row once: ids are client-assigned, and the
+    # index row has no foreign key onto the tenant's `users` table.
     await TenantUserIndexRepository(tenant_db).create(
-        email=email, tenant_id=tenant_id, user_id=user.id
+        email=email, tenant_id=tenant_id, user_id=user.id, flush=flush
     )
     return user
 
@@ -378,11 +400,9 @@ async def resync_role_permissions(tenant_db: AsyncSession) -> dict[str, list[str
     repo = RoleRepository(tenant_db)
     roles_by_name: dict[str, Role] = {}
     before_codes: dict[str, set[str]] = {}
-    for name in _RESYNCABLE_ROLE_NAMES:
-        role = await repo.get_by_name(name)
-        if role is not None:
-            roles_by_name[name] = role
-            before_codes[name] = {p.code for p in role.permissions}
+    for role in await repo.get_by_names(_RESYNCABLE_ROLE_NAMES):
+        roles_by_name[role.name] = role
+        before_codes[role.name] = {p.code for p in role.permissions}
 
     await seed_default_roles(tenant_db)
     await tenant_db.commit()
@@ -438,11 +458,10 @@ async def sync_employee_directory(
         for item in items:
             existing = existing_by_email.get(item.email)
             if existing is None:
-                # `create_user` flushes internally (to register the global
-                # tenant_user_index row against a real user id) — a
-                # duplicate employee_code/email within this batch can raise
-                # IntegrityError right here, not just at the final commit
-                # below, so the whole loop has to be inside this try.
+                # Not flushed per row: the single flush after the loop writes
+                # every new user and index row, and a duplicate
+                # employee_code/email still surfaces there as the same
+                # IntegrityError -> 409 the per-row flush used to raise.
                 await create_user(
                     tenant_db,
                     tenant_id=tenant_id,
@@ -453,6 +472,7 @@ async def sync_employee_directory(
                     designation=item.designation,
                     phone_number=item.phone_number,
                     department_id=item.department_id,
+                    flush=False,
                 )
                 created.append(item.email)
             else:

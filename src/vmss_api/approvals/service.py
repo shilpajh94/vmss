@@ -1,6 +1,5 @@
 import uuid
 
-import structlog
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,16 +8,13 @@ from vmss_api.approvals.repository import InvitationApprovalStepRepository
 from vmss_api.auth.models import User
 from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
 from vmss_api.auth.repository import RoleRepository, UserRepository
+from vmss_api.core.logging import current_request_id
 from vmss_api.invitations import push_notifications, tasks
 from vmss_api.invitations import service as invitations_service
 from vmss_api.invitations.models import Invitation
 from vmss_api.invitations.repository import InvitationRepository
 from vmss_api.notifications import service as notifications_service
 from vmss_api.tenant.models import Tenant
-
-
-def _current_request_id() -> str:
-    return structlog.contextvars.get_contextvars().get("request_id", "")
 
 
 async def _user_holds_role_at_branch(
@@ -391,7 +387,7 @@ async def delegate_step(
         data=data,
     )
     tasks.send_host_creation_notification.delay(
-        request_id=_current_request_id(),
+        request_id=current_request_id(),
         tenant_schema=tenant.schema_name,
         invitation_id=str(invitation.id),
         host_id=str(delegate_user.id),

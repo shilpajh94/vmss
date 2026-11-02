@@ -27,7 +27,7 @@ from httpx import AsyncClient
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from factories import RoleFactory, VisitorCategoryFactory
+from factories import RoleFactory, VisitorCategoryFactory, default_consents, with_default_location
 from vmss_api.auth.models import User
 from vmss_api.core.config import settings
 from vmss_api.identity_verification import senders
@@ -40,7 +40,7 @@ from vmss_api.org_structure.models import Branch
 from vmss_api.registrations.tests import registration_device_raw_key  # noqa: F401
 
 # invitation-multi-step-approval: same fixed-id/autouse-fixture pattern as
-# `invitations/tests.py`/`registrations/tests.py` -- this file builds its own
+# `invitations/tests/`/`registrations/tests.py` -- this file builds its own
 # payloads locally rather than importing theirs, so it needs its own category
 # fixture too (an autouse fixture defined in another test module doesn't
 # apply here just because one of that module's other fixtures is imported).
@@ -63,7 +63,7 @@ async def _default_visitor_category(db_session: AsyncSession) -> None:
 async def _default_host_role(db_session: AsyncSession) -> None:
     """`create_invitation` now always resolves the tenant's default host
     role (role-based-invitation-workflow) — same rationale as
-    `invitations/tests.py::_default_host_role`; this file builds its own
+    `invitations/tests/::_default_host_role`; this file builds its own
     copy for the same reason `_default_visitor_category` above does.
     """
     db_session.add(RoleFactory.build(id=uuid.uuid4(), name="reception", permissions=[]))
@@ -74,7 +74,7 @@ async def _default_host_role(db_session: AsyncSession) -> None:
 def _default_tenant_slug_matches_test_tenant(monkeypatch):
     """`GET /invitations/track` and the identity-verification public
     endpoints have no bearer token to resolve a tenant from and fall back to
-    `settings.default_tenant_slug`. Mirrors `invitations/tests.py` and
+    `settings.default_tenant_slug`. Mirrors `invitations/tests/` and
     `identity_verification/tests.py`'s fixture of the same name so this
     default resolves to the same `acme-test` tenant the `tenant` fixture
     creates.
@@ -84,7 +84,7 @@ def _default_tenant_slug_matches_test_tenant(monkeypatch):
 
 @pytest_asyncio.fixture(autouse=True)
 def _stub_visit_confirmation_dispatch(monkeypatch):
-    """Matches the pattern `invitations/tests.py` already uses: the
+    """Matches the pattern `invitations/tests/` already uses: the
     confirmation email is a Celery task dispatch, not something this chain
     needs to actually deliver to assert the workflow composes correctly.
     Stubs both notification tasks — no `Company` profile is configured in
@@ -136,11 +136,7 @@ def _individual_payload(full_name: str) -> dict:
         },
         "carriedItems": {"items": []},
         "vehicles": [],
-        "consents": {
-            "terms_accepted": True,
-            "data_processing_accepted": True,
-            "safety_guidelines_accepted": True,
-        },
+        "consents": default_consents(),
     }
 
 
@@ -150,7 +146,7 @@ async def _login(client: AsyncClient, email: str, password: str = "correct-passw
 
 
 def _extract_otp_code(body: str) -> str:
-    match = re.search(r"code is (\d+)", body)
+    match = re.search(r"code(?: is|:) (\d+)", body)
     assert match is not None, body
     return match.group(1)
 
@@ -172,7 +168,11 @@ async def test_invitation_created_visitor_workflow_end_to_end(
     token = await _login(client, user.email)
     create_response = await client.post(
         "/api/v1/invitations",
-        data={"payload": json.dumps(_individual_payload("Meera Krishnan"))},
+        data={
+            "payload": json.dumps(
+                await with_default_location(_individual_payload("Meera Krishnan"), branch.id)
+            )
+        },
         files=[
             ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
             ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
@@ -227,9 +227,10 @@ async def test_walk_in_visitor_workflow_end_to_end(
 ) -> None:
     # Step 1 (variant): a device-key-authenticated kiosk registers the
     # visitor directly, with no staff-created invitation and no bearer token.
+    walk_in_payload = _individual_payload("Walk In Visitor")
     walk_in_response = await client.post(
         "/api/v1/registrations/walk-in",
-        data={"payload": json.dumps(_individual_payload("Walk In Visitor"))},
+        data={"payload": json.dumps(await with_default_location(walk_in_payload))},
         files=[
             ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
             ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),

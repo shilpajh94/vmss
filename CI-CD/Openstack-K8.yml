@@ -32,6 +32,11 @@ stringData:
   REFRESH_TOKEN_EXPIRE_MINUTES: "$(REFRESH_TOKEN_EXPIRE_MINUTES)"
 
   CORS_ALLOWED_ORIGINS: '$(CORS_ALLOWED_ORIGINS)'
+  # Address range of the ingress (Kong) pods, so per-IP rate limits key on
+  # the real client and not on the ingress. Unset (the literal reference)
+  # trusts no proxy, which is today's behaviour. See
+  # docs/release/2026-10-audit-and-harden.md.
+  FORWARDED_ALLOW_IPS: "$(FORWARDED_ALLOW_IPS)"
 
   DEFAULT_TENANT_SLUG: "$(DEFAULT_TENANT_SLUG)"
   GLOBAL_SCHEMA_NAME: "$(GLOBAL_SCHEMA_NAME)"

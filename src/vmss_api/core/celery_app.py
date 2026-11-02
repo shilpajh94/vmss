@@ -18,6 +18,16 @@ cron_queue = os.getenv(
 default_queue = f"{os.getenv('ENVIRONMENT', 'local')}_vmss_api"
 
 
+# The retry policy every task calling an external system declares
+# (background-jobs.md §3): bounded, exponential, capped at 10 minutes.
+DEFAULT_RETRY_KWARGS: dict[str, object] = {
+    "autoretry_for": (Exception,),
+    "retry_backoff": True,
+    "retry_backoff_max": 600,
+    "max_retries": 5,
+}
+
+
 celery_app = Celery(
     "vmss_api",
     broker=settings.celery_broker_url,

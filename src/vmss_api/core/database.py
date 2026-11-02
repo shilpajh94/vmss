@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from vmss_api.core.config import settings
+from vmss_api.core.schemas import SortOrder
 
 engine = create_async_engine(
     settings.database_url,
@@ -232,3 +233,9 @@ class TenantScopedRepository[ModelT: _SoftDeletableModel]:
     async def soft_delete(self, obj: ModelT) -> None:
         obj.deleted_at = datetime.now(UTC)  # type: ignore[assignment]
         await self.session.flush()
+
+
+def order_clause(column: Any, sort_order: SortOrder) -> Any:
+    """`ORDER BY` direction from a validated `sortOrder` query param
+    (api-conventions.md §1)."""
+    return column.desc() if sort_order == SortOrder.desc else column.asc()

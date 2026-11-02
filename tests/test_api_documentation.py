@@ -217,6 +217,13 @@ def test_protected_routes_declare_bearer_security() -> None:
                 "visitorCategoryBadgeColor",
             },
         ),
+        # audit-and-harden-api-and-web additive fields
+        (
+            "InvitationListItemOut",
+            {"preferredVisitDate", "preferredVisitTime", "currentApprovalStep"},
+        ),
+        ("InvitationDetailOut", {"checkInDevice", "checkOutDevice"}),
+        ("MyBranchRoleOut", {"roleName", "branchId", "permissionCodes"}),
     ],
 )
 def test_response_schemas_render_camel_case(schema_name: str, expected_camel_props: set) -> None:
@@ -271,7 +278,7 @@ async def test_rate_limit_exceeded_returns_standard_error_envelope(
     shape, so a regression in `main.py`'s `_rate_limit_exceeded_handler`
     (e.g. reverting to slowapi's raw default body) would go undetected.
     `GET /invitations/track` has no auth to fake, matching the pattern in
-    `invitations/tests.py::test_track_rate_limit_trips`.
+    `invitations/tests/::test_track_rate_limit_trips`.
     """
     monkeypatch.setattr(settings, "default_tenant_slug", tenant.slug)
     monkeypatch.setattr(limiter, "enabled", True)

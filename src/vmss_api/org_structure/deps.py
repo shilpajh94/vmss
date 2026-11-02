@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Annotated
 
 import structlog
@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import User
+from vmss_api.auth.repository import UserRepository
 from vmss_api.core.config import settings
 from vmss_api.core.database import get_db, tenant_session_scope
 from vmss_api.core.deps import get_current_user, get_tenant_db
@@ -19,7 +20,8 @@ from vmss_api.org_structure.repository import BranchRepository
 from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
 
-_optional_bearer_scheme = HTTPBearer(auto_error=False)
+optional_bearer_scheme = HTTPBearer(auto_error=False)
+_optional_bearer_scheme = optional_bearer_scheme
 
 
 def _authorize_branch(
@@ -70,7 +72,7 @@ async def get_branch_context(
     return _authorize_branch(branch, user)
 
 
-def require_branch_permission(permission_code: str):
+def require_branch_permission(permission_code: str) -> Callable[..., Branch]:
     """Branch-scoped counterpart to `core.deps.require_permission` — grants
     if the caller has `permission_code` either company-wide (a branch-less
     role assignment) or specifically at the resolved branch.
@@ -145,7 +147,7 @@ async def resolve_branch_scope(
     return scope
 
 
-def require_branch_scope(permission_code: str):
+def require_branch_scope(permission_code: str) -> Callable[..., Awaitable[BranchScope]]:
     """List-endpoint counterpart to `require_branch_permission` with an
     optional `X-Branch-ID`: narrows to that one branch when it's supplied
     (identical 404/403 checks to today), otherwise falls back to every
@@ -231,3 +233,38 @@ async def public_branch_scope(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found")
         return frozenset({branch.id})
     return "all"
+
+
+async def public_optional_caller(
+    tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(_optional_bearer_scheme)
+    ] = None,
+) -> User | None:
+    """The signed-in caller of a public endpoint, or `None` — never raises,
+    same as `public_tenant_db`'s token handling: an absent, expired or
+    foreign token just means "anonymous". Lets a public listing return its
+    full fields to a permitted caller and the reduced ones to everyone else
+    (public-endpoint-hardening)."""
+    return await optional_caller(tenant_db, credentials)
+
+
+async def optional_caller(
+    tenant_db: AsyncSession, credentials: HTTPAuthorizationCredentials | None
+) -> User | None:
+    """`public_optional_caller`'s resolution, for a route whose tenant
+    session comes from a different dependency (e.g. the tracking-ID
+    check-in's `track_default_tenant_db`)."""
+    if credentials is None:
+        return None
+    try:
+        payload = decode_token(credentials.credentials)
+        user_id = uuid.UUID(payload["sub"])
+    except (HTTPException, KeyError, ValueError, TypeError):
+        return None
+    if payload.get("type") != "access":
+        return None
+    user = await UserRepository(tenant_db).get(user_id)
+    if user is None or not user.is_active:
+        return None
+    return user

@@ -104,7 +104,7 @@ async def test_local_backend_url_rejects_expired_signature(
 # Faking the boundary (`storage._s3_client`) instead proves our own
 # save/url_for wiring (bucket, key, body, content-type all passed through
 # correctly) — the same "fake the external boundary" approach
-# `invitations/tests.py`'s `_fake_tenant_session_scope` already uses for
+# `invitations/tests/`'s `_fake_tenant_session_scope` already uses for
 # Celery task tests.
 
 
@@ -124,7 +124,8 @@ class _FakeS3Client:
 
         return {"Body": _Body(), "ContentType": content_type}
 
-    async def generate_presigned_url(self, _operation: str, *, Params: dict, ExpiresIn: int) -> str:
+    def generate_presigned_url(self, _operation: str, *, Params: dict, ExpiresIn: int) -> str:
+        # Sync, like the cached botocore presigner `url_for` now uses.
         return f"https://{Params['Bucket']}.example.com/{Params['Key']}?ttl={ExpiresIn}"
 
 
@@ -136,7 +137,18 @@ def _install_fake_s3_client(monkeypatch) -> _FakeS3Client:
         yield fake_client
 
     monkeypatch.setattr(storage, "_s3_client", _fake_s3_client)
+    monkeypatch.setattr(storage, "_s3_presigner", lambda region, endpoint_url: fake_client)
     return fake_client
+
+
+def test_s3_presigner_is_built_once_and_reused() -> None:
+    """List endpoints presign one URL per row; the signing client must not
+    be rebuilt for each (audit-and-harden-api-and-web design.md D8)."""
+    storage._s3_presigner.cache_clear()
+    first = storage._s3_presigner("ap-south-1", None)
+    assert storage._s3_presigner("ap-south-1", None) is first
+    assert storage._s3_presigner.cache_info().hits == 1
+    storage._s3_presigner.cache_clear()
 
 
 async def test_s3_backend_save_and_retrieve_round_trip(monkeypatch) -> None:

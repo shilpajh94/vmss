@@ -2,9 +2,9 @@ import uuid
 from collections.abc import Collection
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from vmss_api.core.database import TenantScopedRepository
+from vmss_api.core.database import TenantScopedRepository, order_clause
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.tenancy import branch_filter as _branch_filter
 from vmss_api.org_structure.models import (
@@ -25,10 +25,6 @@ from vmss_api.org_structure.schemas import (
 )
 
 
-def _order_clause(column: Any, sort_order: SortOrder) -> Any:
-    return column.desc() if sort_order == SortOrder.desc else column.asc()
-
-
 class CompanyRepository(TenantScopedRepository[Company]):
     model = Company
 
@@ -45,6 +41,12 @@ class CompanyRepository(TenantScopedRepository[Company]):
 
 class BranchRepository(TenantScopedRepository[Branch]):
     model = Branch
+
+    async def is_active(self, branch_id: uuid.UUID) -> bool:
+        stmt = select(Branch.id).where(
+            Branch.id == branch_id, Branch.is_active.is_(True), Branch.deleted_at.is_(None)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none() is not None
 
     async def get_by_code(self, code: str) -> Branch | None:
         stmt = select(Branch).where(Branch.code == code, Branch.deleted_at.is_(None))
@@ -130,13 +132,22 @@ class BranchRepository(TenantScopedRepository[Branch]):
         return await super().paginate(
             page=page,
             page_size=page_size,
-            order_by=_order_clause(column, sort_order),
+            order_by=order_clause(column, sort_order),
             filters=filters,
         )
 
 
 class BuildingRepository(TenantScopedRepository[Building]):
     model = Building
+
+    async def is_active_in_branch(self, building_id: uuid.UUID, branch_id: uuid.UUID) -> bool:
+        stmt = select(Building.id).where(
+            Building.id == building_id,
+            Building.branch_id == branch_id,
+            Building.is_active.is_(True),
+            Building.deleted_at.is_(None),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none() is not None
 
     async def get_by_code(self, branch_id: uuid.UUID, code: str) -> Building | None:
         stmt = select(Building).where(
@@ -184,7 +195,7 @@ class BuildingRepository(TenantScopedRepository[Building]):
         return await super().paginate(
             page=page,
             page_size=page_size,
-            order_by=_order_clause(column, sort_order),
+            order_by=order_clause(column, sort_order),
             filters=filters,
         )
 
@@ -241,7 +252,7 @@ class FloorRepository(TenantScopedRepository[Floor]):
         return await self.paginate_with_joins(
             page=page,
             page_size=page_size,
-            order_by=_order_clause(column, sort_order),
+            order_by=order_clause(column, sort_order),
             joins=[(Building, Floor.building_id == Building.id)],
             filters=conditions,
         )
@@ -249,6 +260,17 @@ class FloorRepository(TenantScopedRepository[Floor]):
 
 class DepartmentRepository(TenantScopedRepository[Department]):
     model = Department
+
+    async def active_ids_named(self, branch_id: uuid.UUID, name: str) -> list[uuid.UUID]:
+        """Active departments at `branch_id` whose name matches
+        case-insensitively — a free-text "department to visit" lookup."""
+        stmt = select(Department.id).where(
+            Department.branch_id == branch_id,
+            Department.is_active.is_(True),
+            Department.deleted_at.is_(None),
+            func.lower(Department.name) == name.strip().lower(),
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     async def get_by_code(self, branch_id: uuid.UUID, code: str) -> Department | None:
         """Uniqueness is scoped by `branch_id` directly (a real column on
@@ -299,7 +321,7 @@ class DepartmentRepository(TenantScopedRepository[Department]):
         return await super().paginate(
             page=page,
             page_size=page_size,
-            order_by=_order_clause(column, sort_order),
+            order_by=order_clause(column, sort_order),
             filters=filters,
         )
 
@@ -384,7 +406,7 @@ class ReceptionDeskRepository(TenantScopedRepository[ReceptionDesk]):
         return await self.paginate_with_joins(
             page=page,
             page_size=page_size,
-            order_by=_order_clause(column, sort_order),
+            order_by=order_clause(column, sort_order),
             joins=[
                 (Floor, ReceptionDesk.floor_id == Floor.id),
                 (Building, Floor.building_id == Building.id),
@@ -431,6 +453,6 @@ class SecurityGateRepository(TenantScopedRepository[SecurityGate]):
         return await super().paginate(
             page=page,
             page_size=page_size,
-            order_by=_order_clause(column, sort_order),
+            order_by=order_clause(column, sort_order),
             filters=filters,
         )

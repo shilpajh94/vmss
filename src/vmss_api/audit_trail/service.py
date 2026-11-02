@@ -1,18 +1,22 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
-
-import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import TYPE_CHECKING
 
 from vmss_api.audit_trail import tasks
 from vmss_api.audit_trail.models import AuditReportJob
 from vmss_api.audit_trail.repository import AuditLogRepository, AuditReportJobRepository
 from vmss_api.audit_trail.schemas import AuditReportJobOut
 from vmss_api.auth.models import AuditLog
+from vmss_api.core.logging import current_request_id
 from vmss_api.core.schemas import SortOrder
 from vmss_api.core.storage import StorageBackendError
 from vmss_api.core.storage import content_type_for as storage_content_type_for
 from vmss_api.core.storage import load as storage_load
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ReportJobNotFoundError(Exception):
@@ -43,10 +47,6 @@ class ReportStorageError(Exception):
     as an unhandled 500 (which the client can't distinguish from a genuine
     CORS misconfiguration — see security-architecture.md §4).
     """
-
-
-def _current_request_id() -> str:
-    return structlog.contextvars.get_contextvars().get("request_id", "")
 
 
 async def list_audit_logs(
@@ -119,7 +119,7 @@ async def request_audit_report(
         job_id=str(job.id),
         tenant_id=str(tenant_id),
         tenant_schema=tenant_schema,
-        request_id=_current_request_id(),
+        request_id=current_request_id(),
     )
     return job
 

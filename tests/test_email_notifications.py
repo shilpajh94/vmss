@@ -3,7 +3,7 @@
 visimio-brand, rebranded by rebrand-to-guestify). Pure rendering — no
 database or SMTP — so they sit in the
 "unit-ish" tier (`testing-standards.md` §3); the real SMTP round trips live
-in `invitations/tests.py`'s Mailpit tests.
+in `invitations/tests/`'s Mailpit tests.
 """
 
 import re

@@ -28,6 +28,12 @@ class TenantRepository:
         stmt = select(Tenant).where(Tenant.schema_name == schema_name, Tenant.deleted_at.is_(None))
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def list_active(self) -> list[Tenant]:
+        """Every active, non-deleted tenant — the fan-out set for per-tenant
+        scheduled jobs (`invitations/tasks.py`, `reports/tasks.py`)."""
+        stmt = select(Tenant).where(Tenant.is_active.is_(True), Tenant.deleted_at.is_(None))
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def list(self, *, limit: int = 50, offset: int = 0) -> list[Tenant]:
         stmt = select(Tenant).where(Tenant.deleted_at.is_(None)).limit(limit).offset(offset)
         return list((await self.session.execute(stmt)).scalars().all())

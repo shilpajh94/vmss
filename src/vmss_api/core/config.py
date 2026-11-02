@@ -1,8 +1,9 @@
+import warnings
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Self
 from urllib.parse import quote_plus
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # `DB_CONNECTION` mirrors the Laravel-style env var convention this project's
@@ -21,6 +22,14 @@ class Settings(BaseSettings):
 
     app_name: str = f"{BRAND_NAME} API"
     environment: str = Field(default="local", alias="APP_ENV")
+    # Comma-separated addresses/CIDRs of the load balancer or reverse proxy
+    # whose X-Forwarded-For is trusted for the client IP (rate-limit keys,
+    # logs). Default trusts only a same-host proxy; "*" trusts everyone.
+    forwarded_allow_ips: str = Field(default="127.0.0.1", alias="FORWARDED_ALLOW_IPS")
+    # public-endpoint-hardening: off keeps today's unauthenticated contracts
+    # (flagged as deprecated); on enforces the credentials each covered
+    # endpoint will require. Turn on once the Flutter/kiosk clients migrate.
+    public_endpoint_hardening: bool = Field(default=False, alias="PUBLIC_ENDPOINT_HARDENING")
     debug: bool = Field(default=True, alias="APP_DEBUG")
 
     @property
@@ -221,6 +230,7 @@ class Settings(BaseSettings):
     fast2sms_template_registration_denied: str | None = None
     fast2sms_template_visit_rescheduled: str | None = None
     fast2sms_template_visit_details_changed: str | None = None
+    # Blank until DLT approves it; the revert notice then falls back to email.
     fast2sms_template_approval_reverted: str | None = None
     # WhatsApp: the sending number's id, Graph-style API version, template
     # language, and the approved template *names* (not ids).
@@ -254,6 +264,17 @@ class Settings(BaseSettings):
     # from `invitation_max_upload_size_bytes` (ID proof scans), per
     # file-upload-handling.md §1's "tune per artifact type".
     invitation_max_photo_size_bytes: int = 2 * 1024 * 1024
+
+    # Whole-request caps for multipart uploads (api-compliance-hardening
+    # "Multipart Uploads Are Bounded in Total Size and File Count"). Sized for
+    # the largest legitimate request: a 20-visitor group, each with an ID scan
+    # and a photo, plus custom-field files. Per-file limits above still apply.
+    max_request_body_bytes: int = Field(default=160 * 1024 * 1024, alias="MAX_REQUEST_BODY_BYTES")
+    max_upload_files: int = Field(default=100, alias="MAX_UPLOAD_FILES")
+    # Off: a weak JWT_SECRET_KEY in a deployed environment only warns at
+    # startup, so rolling this out can't take down a server whose secret
+    # hasn't been checked yet. Turn on per environment once it has.
+    enforce_secret_check: bool = Field(default=False, alias="ENFORCE_SECRET_CHECK")
 
     # Visitor rows per `GET /invitations/export` (add-invitation-export/
     # design.md Decision 1) — an over-cap export is rejected with 422, never
@@ -355,6 +376,47 @@ class Settings(BaseSettings):
     # the Fast2SMS settings above — `notifications/fcm.py` fails loudly
     # rather than silently no-op'ing when a push is actually attempted.
     fcm_credentials_path: str | None = Field(default=None, alias="FCM_CREDENTIALS_PATH")
+
+    @model_validator(mode="after")
+    def _refuse_placeholder_secrets(self) -> Self:
+        """environment-configuration "Placeholder Secrets Are Refused Outside
+        Local and Testing": tokens, OTP hashes and signed URLs all derive
+        from this key, so a deployment that forgot to set it must not start.
+        Names the setting, never its value."""
+        if self.environment.lower() in _NON_DEPLOYED_ENVIRONMENTS:
+            return self
+        if _is_placeholder_secret(self.jwt_secret_key):
+            message = (
+                "JWT_SECRET_KEY is unset, a placeholder, or shorter than "
+                f"{_MIN_SECRET_LENGTH} characters in APP_ENV={self.environment!r}"
+            )
+            if not self.enforce_secret_check:
+                warnings.warn(f"{message}; set a strong secret", RuntimeWarning, stacklevel=2)
+                return self
+            # Not a ValueError: pydantic would wrap that in a ValidationError
+            # whose text echoes the input — including the secret.
+            raise InsecureConfigurationError(f"{message}; refusing to start")
+        return self
+
+
+class InsecureConfigurationError(RuntimeError):
+    """A deployed environment is configured with an unsafe placeholder."""
+
+
+_NON_DEPLOYED_ENVIRONMENTS = frozenset({"local", "test", "testing"})
+_MIN_SECRET_LENGTH = 32
+_PLACEHOLDER_SECRETS = frozenset({"change-me-in-env", "changeme", "secret"})
+
+
+def _is_placeholder_secret(value: str | None) -> bool:
+    if not value or len(value) < _MIN_SECRET_LENGTH:
+        return True
+    lowered = value.lower()
+    return (
+        lowered in _PLACEHOLDER_SECRETS
+        or "placeholder" in lowered
+        or (value.startswith("__") and value.endswith("__"))
+    )
 
 
 @lru_cache

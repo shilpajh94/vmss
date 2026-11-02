@@ -2,7 +2,9 @@ import asyncio
 from logging.config import fileConfig
 
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.schema import SchemaItem
 
 from alembic import context
 
@@ -26,7 +28,13 @@ if config.config_file_name is not None:
 target_metadata = GlobalBase.metadata
 
 
-def include_object(object_, name, type_, reflected, compare_to):
+def include_object(
+    object_: SchemaItem,
+    name: str | None,
+    type_: str,
+    reflected: bool,
+    compare_to: SchemaItem | None,
+) -> bool:
     """Restricts autogenerate to the global schema — see the import comment
     above for why `target_metadata` alone isn't enough of a filter anymore.
     """
@@ -49,7 +57,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def _do_run_migrations(connection) -> None:
+def _do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,

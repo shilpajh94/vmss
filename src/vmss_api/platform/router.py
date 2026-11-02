@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,6 @@ from vmss_api.platform.schemas import (
     TenantSortableField,
     TenantSummaryOut,
 )
-from vmss_api.tenant.repository import TenantRepository
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -28,12 +27,16 @@ async def platform_login(
     request: Request,
     payload: PlatformLoginRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    background_tasks: BackgroundTasks,
 ) -> JSONResponse:
     """Rate-limited (5/min per IP) — public, unauthenticated endpoint, same
     reasoning as `/auth/login`. See security-architecture.md §2.
     """
     admin = await service.authenticate_superadmin(db, payload.email, payload.password)
     token = service.issue_platform_token(admin)
+    background_tasks.add_task(
+        service.record_platform_event, action="platform_login", actor_superadmin_id=admin.id
+    )
     return success_response(data=PlatformTokenResponse(access_token=token))
 
 
@@ -43,7 +46,8 @@ async def create_tenant(
     request: Request,
     payload: TenantCreateRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    _admin: Annotated[SuperAdmin, Depends(service.get_current_superadmin)],
+    admin: Annotated[SuperAdmin, Depends(service.get_current_superadmin)],
+    background_tasks: BackgroundTasks,
 ) -> JSONResponse:
     """Provisions a new tenant — its own Postgres schema, every tenant
     migration applied, and a `tenants` registry row. See
@@ -59,6 +63,13 @@ async def create_tenant(
     unauthenticated endpoints specifically.
     """
     tenant = await service.create_tenant(db, name=payload.name, slug=payload.slug)
+    background_tasks.add_task(
+        service.record_platform_event,
+        action="tenant_provisioned",
+        actor_superadmin_id=admin.id,
+        target_tenant_id=tenant.id,
+        metadata={"slug": tenant.slug},
+    )
     return success_response(
         data=TenantSummaryOut.model_validate(tenant), status_code=201, message="Tenant provisioned"
     )
@@ -83,7 +94,7 @@ async def list_tenants(
     `ORDER BY` addition to `tenant/repository.py`, which belongs to a
     different feature package.
     """
-    tenants = await TenantRepository(db).list()
+    tenants = await service.list_tenants(db)
     reverse = sort_order == SortOrder.desc
     key_fn = {
         "name": lambda t: t.name.lower(),

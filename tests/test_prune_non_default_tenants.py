@@ -5,7 +5,6 @@ same way the migration tests load their revision files.
 """
 
 import importlib.util
-import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -68,11 +67,13 @@ async def other_tenant(
 
 @pytest_asyncio.fixture
 async def redis() -> AsyncIterator[Redis]:
-    """A Redis database of its own (db 15), not the dev one: orphan cleanup
-    deletes every `vmss:<uuid>:*` key whose tenant isn't registered in the
-    *test* DB, which would otherwise include the local dev tenant's keys.
+    """The suite-wide test cache database (conftest pins it to db 15), never
+    the dev one: orphan cleanup deletes every `vmss:<uuid>:*` key whose
+    tenant isn't registered in the *test* DB. A client of its own rather than
+    `get_redis()`'s shared one, whose pooled connections can't cross the
+    per-test event loops.
     """
-    client = from_url(re.sub(r"/\d+$", "/15", settings.redis_url), decode_responses=True)
+    client = from_url(settings.redis_url, decode_responses=True)
     await client.flushdb()
     yield client
     await client.flushdb()

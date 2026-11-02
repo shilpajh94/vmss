@@ -22,3 +22,10 @@ def configure_logging(debug: bool, log_level: str = "INFO") -> None:
 
 
 logger = structlog.get_logger("vmss_api")
+
+
+def current_request_id() -> str:
+    """The request id bound by `core/middleware.py::RequestIdMiddleware`, or
+    "" outside a request — passed to Celery tasks so they can rebind it
+    (logging-observability.md §1)."""
+    return str(structlog.contextvars.get_contextvars().get("request_id", ""))

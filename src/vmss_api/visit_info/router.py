@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.core.public_access import flag_legacy_access, strict_public_access
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import error_response, success_response
 from vmss_api.core.schemas import Envelope
@@ -57,7 +58,18 @@ async def search_hosts(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     hosts = await service.search_hosts(tenant_db, query=normalized_query, limit=limit)
-    return success_response(data=HostSearchOut(hosts=hosts))
+    # public-endpoint-hardening: a provisioned device (validated by
+    # `get_registration_tenant_db`) may see host emails; an anonymous caller
+    # gets them only while hardening is off, flagged as deprecated.
+    if request.headers.get("X-Device-Key"):
+        return success_response(data=HostSearchOut(hosts=hosts))
+    if strict_public_access():
+        return success_response(
+            data=HostSearchOut(hosts=[host.model_copy(update={"email": None}) for host in hosts])
+        )
+    return flag_legacy_access(
+        success_response(data=HostSearchOut(hosts=hosts)), feature_doc="visit_info.md"
+    )
 
 
 @router.get("/visit-info/departments", response_model=Envelope[DepartmentLookupListOut])
@@ -71,7 +83,8 @@ async def list_departments(
     selectable list scoped to the kiosk's resolved branch (spec.md
     "Department Listing Is Scoped to the Kiosk's Resolved Branch"). Not
     `GET /departments` — that path already belongs to `org_structure`'s
-    authenticated, branch-scoped admin endpoint.
+    public master-data listing (org-structure spec "Master-Data Listing
+    Endpoints Are Public"), which isn't scoped to a device's branch.
     """
     departments = await service.list_departments(tenant_db, branch_id=device.branch_id)
     return success_response(data=DepartmentLookupListOut(departments=departments))

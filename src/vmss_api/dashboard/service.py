@@ -1,12 +1,11 @@
-from datetime import UTC, date, datetime, timedelta
-from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from __future__ import annotations
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import UTC, date, datetime, timedelta, tzinfo
+from typing import TYPE_CHECKING, Any
 
 from vmss_api.auth.models import User
-from vmss_api.core.logging import logger
 from vmss_api.core.schemas import BranchScope, SortOrder
+from vmss_api.core.timezones import display_name, sql_name
 from vmss_api.dashboard.repository import BREAKDOWN_STATUSES, DashboardRepository
 from vmss_api.dashboard.schemas import (
     DailyTrendPointOut,
@@ -24,8 +23,13 @@ from vmss_api.dashboard.schemas import (
     UpcomingVisitorOut,
 )
 from vmss_api.invitations.models import Invitation
+from vmss_api.invitations.repository import VisitDayRange
+from vmss_api.invitations.service import resolve_visit_timezone
 from vmss_api.org_structure.service import get_default_host_role
 from vmss_api.tenant.models import Tenant
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 _UPCOMING_PREVIEW_LIMIT = 10
 _SEARCH_RESULT_LIMIT = 10
@@ -36,35 +40,16 @@ _NOT_SPECIFIED_LABEL = "Not specified"
 _OTHER_LABEL = "Other"
 
 
-def _resolve_tenant_timezone(tenant: Tenant) -> ZoneInfo:
-    """`Tenant.timezone` is a free-text column with no DB-level `CHECK`
-    constraint (database-architecture.md §4 doesn't require one, and this
-    is the first feature to interpret it as a real IANA zone name) — falls
-    back to UTC rather than a 500 if it doesn't resolve, logging a
-    `WARNING` per logging-observability.md §3's "recoverable anomaly".
+async def _visit_clock(
+    tenant_db: AsyncSession, tenant: Tenant, *, now_utc: datetime
+) -> tuple[tzinfo, date]:
+    """The visit timezone (company default, else tenant, else UTC) and
+    today's date in it — the zone that decides every invitation's visit
+    day and expiry, so "today" here is the day the rest of the system uses
+    (fix-dashboard-count-accuracy design.md D1).
     """
-    try:
-        return ZoneInfo(tenant.timezone)
-    except ZoneInfoNotFoundError:
-        logger.warning("dashboard_invalid_tenant_timezone", tenant_timezone=tenant.timezone)
-        return ZoneInfo("UTC")
-
-
-def _today_bounds_utc(tenant: Tenant, *, now_utc: datetime) -> tuple[datetime, datetime]:
-    """ "Today" per the tenant's own configured timezone (design.md
-    Decision 5), converted back to a plain UTC range so the repository's
-    query stays one indexed `created_at` range scan rather than a per-row
-    Python filter.
-    """
-    tz = _resolve_tenant_timezone(tenant)
-    local_day_start = now_utc.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-    day_start_utc = local_day_start.astimezone(UTC)
-    day_end_utc = (local_day_start + timedelta(days=1)).astimezone(UTC)
-    return day_start_utc, day_end_utc
-
-
-def _local_today(tenant: Tenant, *, now_utc: datetime) -> date:
-    return now_utc.astimezone(_resolve_tenant_timezone(tenant)).date()
+    tz = await resolve_visit_timezone(tenant_db, tenant)
+    return tz, now_utc.astimezone(tz).date()
 
 
 def _to_upcoming_visitor_out(
@@ -113,15 +98,10 @@ async def get_overview(
     tenant_db: AsyncSession, tenant: Tenant, branch_scope: BranchScope
 ) -> DashboardOverviewOut:
     now_utc = datetime.now(UTC)
-    day_start_utc, day_end_utc = _today_bounds_utc(tenant, now_utc=now_utc)
-    today = _local_today(tenant, now_utc=now_utc)
+    tz, today = await _visit_clock(tenant_db, tenant, now_utc=now_utc)
     repository = DashboardRepository(tenant_db)
     counts = await repository.overview_counts(
-        branch_scope,
-        today=today,
-        day_start_utc=day_start_utc,
-        day_end_utc=day_end_utc,
-        now_utc=now_utc,
+        branch_scope, today=VisitDayRange.local(today, today, tz), now_utc=now_utc
     )
     upcoming = await repository.upcoming_visitors_preview(
         branch_scope, now_utc=now_utc, limit=_UPCOMING_PREVIEW_LIMIT
@@ -144,11 +124,14 @@ async def get_my_overview(
     D6). The default host role is resolved here exactly as that list does.
     """
     now_utc = datetime.now(UTC)
-    today = _local_today(tenant, now_utc=now_utc)
+    tz, today = await _visit_clock(tenant_db, tenant, now_utc=now_utc)
     default_host_role_id = (await get_default_host_role(tenant_db)).id
     repository = DashboardRepository(tenant_db)
     counts = await repository.personal_overview_counts(
-        user_id=user.id, default_host_role_id=default_host_role_id, today=today, now_utc=now_utc
+        user_id=user.id,
+        default_host_role_id=default_host_role_id,
+        today=VisitDayRange.local(today, today, tz),
+        now_utc=now_utc,
     )
     upcoming = await repository.personal_upcoming_preview(
         user_id=user.id,
@@ -239,20 +222,18 @@ async def _common_analytics(
     repository: DashboardRepository,
     scope_clause: Any | None,
     *,
-    tenant: Tenant,
+    tz: tzinfo,
+    today: date,
     range_: DashboardRange,
     now_utc: datetime,
 ) -> dict[str, Any]:
-    timezone = _resolve_tenant_timezone(tenant).key
-    today = _local_today(tenant, now_utc=now_utc)
     start, end = _range_bounds(today, range_)
-    trend_rows = await repository.daily_trend(scope_clause, start=start, end=end)
-    status_rows = await repository.status_breakdown(
-        scope_clause, timezone=timezone, start=start, end=end
-    )
+    days = VisitDayRange.local(start, end, tz)
+    trend_rows = await repository.daily_trend(scope_clause, days=days, timezone=sql_name(tz))
+    status_rows = await repository.status_breakdown(scope_clause, days=days)
     return {
         "range": range_,
-        "timezone": timezone,
+        "timezone": display_name(tz),
         "today": today,
         "generated_at": now_utc,
         "daily_trend": _zero_filled_trend(trend_rows, start=start, end=end),
@@ -264,19 +245,17 @@ async def get_analytics(
     tenant_db: AsyncSession, tenant: Tenant, branch_scope: BranchScope, *, range_: DashboardRange
 ) -> DashboardAnalyticsOut:
     now_utc = datetime.now(UTC)
+    tz, today = await _visit_clock(tenant_db, tenant, now_utc=now_utc)
     repository = DashboardRepository(tenant_db)
     scope_clause = repository.branch_scope_clause(branch_scope)
     common = await _common_analytics(
-        repository, scope_clause, tenant=tenant, range_=range_, now_utc=now_utc
+        repository, scope_clause, tz=tz, today=today, range_=range_, now_utc=now_utc
     )
-    start, end = _range_bounds(common["today"], range_)
-    day_start_utc, day_end_utc = _today_bounds_utc(tenant, now_utc=now_utc)
+    start, end = _range_bounds(today, range_)
+    days = VisitDayRange.local(start, end, tz)
     hourly = dict(
         await repository.hourly_check_ins(
-            scope_clause,
-            timezone=common["timezone"],
-            day_start_utc=day_start_utc,
-            day_end_utc=day_end_utc,
+            scope_clause, timezone=sql_name(tz), today=VisitDayRange.local(today, today, tz)
         )
     )
     return DashboardAnalyticsOut(
@@ -284,10 +263,8 @@ async def get_analytics(
         hourly_check_ins_today=[
             HourlyCheckInsOut(hour=hour, count=hourly.get(hour, 0)) for hour in range(24)
         ],
-        top_purposes=_top_labels(await repository.top_purposes(scope_clause, start=start, end=end)),
-        top_departments=_top_labels(
-            await repository.top_departments(scope_clause, start=start, end=end)
-        ),
+        top_purposes=_top_labels(await repository.top_purposes(scope_clause, days=days)),
+        top_departments=_top_labels(await repository.top_departments(scope_clause, days=days)),
     )
 
 
@@ -296,10 +273,11 @@ async def get_my_analytics(
 ) -> MyDashboardAnalyticsOut:
     """Same relevance rule as `get_my_overview` — no branch scope."""
     now_utc = datetime.now(UTC)
+    tz, today = await _visit_clock(tenant_db, tenant, now_utc=now_utc)
     default_host_role_id = (await get_default_host_role(tenant_db)).id
     repository = DashboardRepository(tenant_db)
     scope_clause = repository.personal_scope_clause(user.id, default_host_role_id)
     common = await _common_analytics(
-        repository, scope_clause, tenant=tenant, range_=range_, now_utc=now_utc
+        repository, scope_clause, tz=tz, today=today, range_=range_, now_utc=now_utc
     )
     return MyDashboardAnalyticsOut(**common)

@@ -11,13 +11,17 @@ import hashlib
 import hmac
 import time
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 import aioboto3
 import anyio
 import magic
+from botocore import session as botocore_session
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import HTTPException, status
 
@@ -106,7 +110,7 @@ _s3_session = aioboto3.Session()
 
 
 @asynccontextmanager
-async def _s3_client():
+async def _s3_client() -> AsyncIterator[Any]:
     if not settings.storage_s3_bucket:
         raise StorageBackendError("storage_s3_bucket is not configured")
     async with _s3_session.client(
@@ -177,6 +181,11 @@ async def save(tenant_id: uuid.UUID, category: str, content: bytes, content_type
     return key
 
 
+async def url_for_optional(key: str | None) -> str | None:
+    """`url_for`, or `None` for an unset storage key."""
+    return await url_for(key) if key is not None else None
+
+
 async def url_for(key: str) -> str:
     """A client-fetchable, pre-signed, time-boxed URL for `key` — via S3's
     own presigned-URL mechanism for the `s3` backend, via a locally signed
@@ -231,19 +240,37 @@ async def _s3_load(key: str) -> bytes:
         async with _s3_client() as client:
             response = await client.get_object(Bucket=settings.storage_s3_bucket, Key=key)
             async with response["Body"] as stream:
-                return await stream.read()
+                body: bytes = await stream.read()
+                return body
     except (BotoCoreError, ClientError) as exc:
         raise StorageBackendError(f"Failed to load {key!r} from S3: {exc}") from exc
 
 
+@lru_cache(maxsize=4)
+def _s3_presigner(region: str | None, endpoint_url: str | None) -> Any:
+    """One long-lived *sync* botocore client, used only to sign URLs.
+    Presigning is local HMAC work with no network call, yet opening an
+    aiobotocore client per URL (as list endpoints did, once per row) costs a
+    credential/endpoint resolution each time. Sync botocore clients are
+    thread-safe and loop-independent, so this is safe from request handlers
+    and from Celery's per-task `asyncio.run` alike."""
+    return botocore_session.get_session().create_client(
+        "s3", region_name=region, endpoint_url=endpoint_url
+    )
+
+
 async def _s3_presigned_url(key: str) -> str:
+    if not settings.storage_s3_bucket:
+        raise StorageBackendError("storage_s3_bucket is not configured")
     try:
-        async with _s3_client() as client:
-            return await client.generate_presigned_url(
+        client = _s3_presigner(settings.storage_s3_region, settings.storage_s3_endpoint_url)
+        return str(
+            client.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": settings.storage_s3_bucket, "Key": key},
                 ExpiresIn=settings.storage_s3_presigned_url_ttl_seconds,
             )
+        )
     except (BotoCoreError, ClientError) as exc:
         raise StorageBackendError(f"Failed to generate a URL for {key!r}: {exc}") from exc
 

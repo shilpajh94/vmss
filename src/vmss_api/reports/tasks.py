@@ -17,32 +17,29 @@ one tenant's failure can't block another's (`background-jobs` capability's
 
 import asyncio
 from datetime import UTC, datetime
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 
 import structlog
+from celery import Task
 from redis.asyncio import from_url as redis_from_url
-from sqlalchemy import select
 
-from vmss_api.core.celery_app import celery_app
+from vmss_api.core.celery_app import DEFAULT_RETRY_KWARGS, celery_app
 from vmss_api.core.config import settings
 from vmss_api.core.database import AsyncSessionLocal, engine, tenant_session_scope
 from vmss_api.core.email_rendering import TemplateRenderError, render_email
 from vmss_api.core.emailing import email_sender
 from vmss_api.core.logging import logger
+from vmss_api.core.notification_dedupe import send_once
 from vmss_api.org_structure.models import Company
 from vmss_api.org_structure.repository import CompanyRepository
 from vmss_api.reports import service
 from vmss_api.reports.repository import BranchRollupRepository
 from vmss_api.reports.schemas import CrossBranchRollupOut
-from vmss_api.tenant.models import Tenant
+from vmss_api.tenant.repository import TenantRepository
 
-_RETRY_KWARGS = {
-    "autoretry_for": (Exception,),
-    "retry_backoff": True,
-    "retry_backoff_max": 600,
-    "max_retries": 5,
-}
+_RETRY_KWARGS = DEFAULT_RETRY_KWARGS
 
 # A little over one day, so a retry near a UTC-midnight boundary can't fall
 # through the marker expiring before the same scheduled run finishes.
@@ -50,7 +47,7 @@ _SNAPSHOT_MARKER_TTL_SECONDS = 26 * 60 * 60
 
 
 @celery_app.task(bind=True)
-def dispatch_daily_rollup_snapshots(self) -> None:
+def dispatch_daily_rollup_snapshots(self: Task) -> None:
     structlog.contextvars.bind_contextvars(task="dispatch_daily_rollup_snapshots")
     asyncio.run(_dispatch_daily_rollup_snapshots())
 
@@ -58,8 +55,7 @@ def dispatch_daily_rollup_snapshots(self) -> None:
 async def _dispatch_daily_rollup_snapshots() -> None:
     try:
         async with AsyncSessionLocal() as session:
-            stmt = select(Tenant).where(Tenant.is_active.is_(True), Tenant.deleted_at.is_(None))
-            tenants = list((await session.execute(stmt)).scalars().all())
+            tenants = await TenantRepository(session).list_active()
     finally:
         # Same cross-event-loop connection-reuse hazard `invitations/tasks.py`
         # documents: this coroutine runs via a fresh `asyncio.run()` per beat
@@ -82,7 +78,7 @@ async def _dispatch_daily_rollup_snapshots() -> None:
 
 
 @celery_app.task(bind=True, **_RETRY_KWARGS)
-def send_tenant_rollup_snapshot(self, *, tenant_id: str, tenant_schema: str) -> None:
+def send_tenant_rollup_snapshot(self: Task, *, tenant_id: str, tenant_schema: str) -> None:
     structlog.contextvars.bind_contextvars(tenant_id=tenant_id, tenant_schema=tenant_schema)
     try:
         asyncio.run(_send_tenant_rollup_snapshot(tenant_id, tenant_schema))
@@ -106,13 +102,12 @@ async def _send_tenant_rollup_snapshot(tenant_id: str, tenant_schema: str) -> No
     # connection from a prior execution's loop can't be reused on this one.
     redis = redis_from_url(settings.redis_url, decode_responses=True)
     try:
-        acquired = await redis.set(marker_key, "1", nx=True, ex=_SNAPSHOT_MARKER_TTL_SECONDS)
+        already_sent = await redis.exists(marker_key)
     finally:
         await redis.aclose()
-    if not acquired:
+    if already_sent:
         # Idempotent against redelivery (background-jobs.md §2): another
-        # execution of this same task, for this tenant and day, already
-        # sent the snapshot.
+        # execution of this task already sent today's snapshot.
         return
     try:
         async with tenant_session_scope(tenant_schema) as session:
@@ -134,11 +129,29 @@ async def _send_tenant_rollup_snapshot(tenant_id: str, tenant_schema: str) -> No
                     rollup,
                     {**context, "recipient_name": admin.full_name, "recipient_email": admin.email},
                 )
-                await email_sender.send(
-                    to=admin.email, subject=subject, body=body, html_body=html_body
+                # Per-recipient marker: a retry after a mid-loop failure
+                # skips the admins already emailed (design.md D3).
+                await send_once(
+                    tenant_scope=tenant_id,
+                    channel="email",
+                    recipient=admin.email,
+                    send=partial(
+                        email_sender.send,
+                        to=admin.email,
+                        subject=subject,
+                        body=body,
+                        html_body=html_body,
+                    ),
                 )
     finally:
         await engine.dispose()
+    # Marked only once every recipient succeeded, so a failed send is retried
+    # instead of being swallowed by a marker written up front.
+    redis = redis_from_url(settings.redis_url, decode_responses=True)
+    try:
+        await redis.set(marker_key, "1", ex=_SNAPSHOT_MARKER_TTL_SECONDS)
+    finally:
+        await redis.aclose()
 
 
 def _snapshot_context(rollup: CrossBranchRollupOut, company: Company | None) -> dict[str, Any]:

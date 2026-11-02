@@ -22,7 +22,7 @@ from vmss_api.tenant.models import Tenant
 
 @pytest_asyncio.fixture(autouse=True)
 def _default_tenant_slug_matches_test_tenant(monkeypatch):
-    """Mirrors `invitations/tests.py`'s fixture of the same name — this
+    """Mirrors `invitations/tests/`'s fixture of the same name — this
     feature's public endpoints have no token and resolve
     `settings.default_tenant_slug` the same way `GET /invitations/track`
     does.
@@ -99,7 +99,7 @@ async def test_request_and_verify_otp_over_email_success(
 #
 # The test above proves the endpoint *calls* the sender correctly, not that a
 # real email is deliverable — see
-# `invitations/tests.py::test_send_approval_notification_delivers_email_
+# `invitations/tests/::test_send_approval_notification_delivers_email_
 # with_qr_via_mailpit` for the established pattern this mirrors. Highest
 # priority of the Mailpit additions (proposal.md finding #2): OTP-over-email
 # is the one channel with an actual live dev-server incident history
@@ -771,3 +771,37 @@ async def test_email_otp_falls_back_to_one_line_body_when_template_fails(
     assert call["html_body"] is None
     assert logged == [("email_template_render_failed", {"template_name": "verification_code"})]
     assert all(code not in str(kw) for _, kw in logged)
+
+
+async def test_failed_attempt_lockout_is_isolated_per_tenant(
+    tenant: Tenant, db_session: AsyncSession, monkeypatch
+) -> None:
+    """A second tenant-isolation case (testing-standards.md §2): burning
+    tenant A's verify attempts for an identifier must not lock that same
+    identifier out of tenant B."""
+    tenant_b = TenantFactory.build(
+        id=uuid.uuid4(),
+        name="Lockout Tenant",
+        slug=f"lockout-tenant-{uuid.uuid4().hex[:8]}",
+        schema_name=f"tenant_lockout_{uuid.uuid4().hex[:8]}",
+    )
+    db_session.add(tenant_b)
+    await db_session.commit()
+    monkeypatch.setattr(settings, "otp_max_attempts", 1)
+    recorder = _RecordingSender()
+    monkeypatch.setattr(senders, "email_sender", recorder)
+    identifier = _unique_email()
+
+    await service.request_otp(tenant_id=tenant.id, identifier=identifier, channel=Channel.email)
+    await service.request_otp(tenant_id=tenant_b.id, identifier=identifier, channel=Channel.email)
+    code_b = _extract_code(recorder.calls[1]["body"])
+
+    with pytest.raises(service.InvalidOrExpiredCode):
+        await service.verify_otp(
+            tenant_id=tenant.id, identifier=identifier, channel=Channel.email, code="000000"
+        )
+
+    result = await service.verify_otp(
+        tenant_id=tenant_b.id, identifier=identifier, channel=Channel.email, code=code_b
+    )
+    assert result.proof_token

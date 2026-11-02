@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import JSONResponse
@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vmss_api.auth.models import User
 from vmss_api.core.deps import get_current_user, get_pagination, get_tenant_db
 from vmss_api.core.responses import paginated_response, success_response
-from vmss_api.core.schemas import Envelope, PaginatedEnvelope
+from vmss_api.core.schemas import Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.notifications import service
 from vmss_api.notifications.schemas import (
     DeviceOut,
@@ -16,6 +16,8 @@ from vmss_api.notifications.schemas import (
     NotificationOut,
     UnreadCountOut,
 )
+
+NotificationSortableField = Literal["created_at", "read_at"]
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -71,10 +73,18 @@ async def list_notifications(
     user: Annotated[User, Depends(get_current_user)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     unread_only: Annotated[bool, Query(alias="unreadOnly")] = False,
+    sort_by: Annotated[NotificationSortableField, Query(alias="sortBy")] = "created_at",
+    sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.desc,
 ) -> JSONResponse:
     page, page_size = pagination
     notifications, total = await service.list_notifications(
-        tenant_db, user_id=user.id, unread_only=unread_only, page=page, page_size=page_size
+        tenant_db,
+        user_id=user.id,
+        unread_only=unread_only,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     return paginated_response(
         data=[NotificationOut.model_validate(n) for n in notifications],

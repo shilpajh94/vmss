@@ -1,11 +1,12 @@
+from __future__ import annotations
+
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException, status
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.form_builder.defaults import DEFAULT_EFFECTIVE_FORM, DEFAULT_STEP_SPECS
 from vmss_api.form_builder.models import FormConfigVersion, FormField, FormFieldGroup, FormStep
@@ -27,6 +28,9 @@ from vmss_api.form_builder.schemas import (
 )
 from vmss_api.form_builder.snapshot import normalize_snapshot
 from vmss_api.form_builder.step_icons import infer_step_icon, resolve_step_icon
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 _CACHE_TTL_SECONDS = 300
 
@@ -55,11 +59,15 @@ async def seed_default_form_config(tenant_db: AsyncSession) -> None:
 async def _materialize_defaults_if_empty(
     tenant_db: AsyncSession, branch_id: uuid.UUID | None
 ) -> None:
+    """Seeds the built-in default form. Flushed once per table tier (steps,
+    then groups; the caller's commit flushes fields) rather than once per
+    row: ids are assigned client-side, so the only ordering that matters is
+    parent table before child table."""
     step_repo = FormStepRepository(tenant_db)
     if await step_repo.count_for_scope(branch_id) > 0:
         return
-    for step_order, step_spec in enumerate(DEFAULT_STEP_SPECS):
-        step = FormStep(
+    steps = [
+        FormStep(
             id=uuid.uuid4(),
             branch_id=branch_id,
             key=step_spec.key,
@@ -71,8 +79,12 @@ async def _materialize_defaults_if_empty(
             is_active=True,
             order_index=step_order,
         )
-        tenant_db.add(step)
-        await tenant_db.flush()
+        for step_order, step_spec in enumerate(DEFAULT_STEP_SPECS)
+    ]
+    tenant_db.add_all(steps)
+    await tenant_db.flush()
+    group_ids_by_step: list[dict[str, uuid.UUID]] = []
+    for step, step_spec in zip(steps, DEFAULT_STEP_SPECS, strict=True):
         group_ids_by_key: dict[str, uuid.UUID] = {}
         for group_order, group_spec in enumerate(step_spec.groups):
             group = FormFieldGroup(
@@ -90,8 +102,12 @@ async def _materialize_defaults_if_empty(
                 order_index=group_order,
             )
             tenant_db.add(group)
-            await tenant_db.flush()
             group_ids_by_key[group_spec.key] = group.id
+        group_ids_by_step.append(group_ids_by_key)
+    await tenant_db.flush()
+    for step, step_spec, group_ids_by_key in zip(
+        steps, DEFAULT_STEP_SPECS, group_ids_by_step, strict=True
+    ):
         for field_order, field_spec in enumerate(step_spec.fields):
             tenant_db.add(
                 FormField(
@@ -139,7 +155,19 @@ async def _ensure_scope_seeded(tenant_db: AsyncSession, branch_id: uuid.UUID | N
         source_steps = await step_repo.list_for_scope(None)
     field_repo = FormFieldRepository(tenant_db)
     group_repo = FormFieldGroupRepository(tenant_db)
-    for source_step in source_steps:
+    # Every read happens before the first write, so autoflush never fires
+    # mid-clone; writes then flush once per table tier (steps, then groups)
+    # instead of once per row.
+    sources = [
+        (
+            source_step,
+            await group_repo.list_for_step(source_step.id),
+            await field_repo.list_for_step(source_step.id),
+        )
+        for source_step in source_steps
+    ]
+    new_steps = []
+    for source_step, _groups, _fields in sources:
         new_step = FormStep(
             id=uuid.uuid4(),
             branch_id=branch_id,
@@ -153,9 +181,11 @@ async def _ensure_scope_seeded(tenant_db: AsyncSession, branch_id: uuid.UUID | N
             order_index=source_step.order_index,
         )
         tenant_db.add(new_step)
-        await tenant_db.flush()
-        new_group_ids_by_source_id: dict[uuid.UUID, uuid.UUID] = {}
-        for source_group in await group_repo.list_for_step(source_step.id):
+        new_steps.append(new_step)
+    await tenant_db.flush()
+    new_group_ids_by_source_id: dict[uuid.UUID, uuid.UUID] = {}
+    for new_step, (_step, source_groups, _fields) in zip(new_steps, sources, strict=True):
+        for source_group in source_groups:
             new_group = FormFieldGroup(
                 id=uuid.uuid4(),
                 step_id=new_step.id,
@@ -178,9 +208,10 @@ async def _ensure_scope_seeded(tenant_db: AsyncSession, branch_id: uuid.UUID | N
                 order_index=source_group.order_index,
             )
             tenant_db.add(new_group)
-            await tenant_db.flush()
             new_group_ids_by_source_id[source_group.id] = new_group.id
-        for source_field in await field_repo.list_for_step(source_step.id):
+    await tenant_db.flush()
+    for new_step, (_step, _groups, source_fields) in zip(new_steps, sources, strict=True):
+        for source_field in source_fields:
             tenant_db.add(
                 FormField(
                     id=uuid.uuid4(),

@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any, NamedTuple
 
 from sqlalchemy import (
@@ -12,18 +12,18 @@ from sqlalchemy import (
     delete,
     exists,
     func,
-    insert,
     literal_column,
     or_,
     select,
     update,
 )
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import aliased, load_only, selectinload
 
 from vmss_api.approvals.models import InvitationApprovalStep
-from vmss_api.auth.models import AuditLog, Role, User, UserBranchRole
+from vmss_api.auth.models import Role, User, UserBranchRole
 from vmss_api.auth.rbac_catalog import DELEGATION_ONLY_ROLE_NAMES
-from vmss_api.core.database import TenantScopedRepository
+from vmss_api.auth.repository import AuditLogWriter
+from vmss_api.core.database import TenantScopedRepository, order_clause
 from vmss_api.core.schemas import BranchScope, SortOrder
 from vmss_api.core.tenancy import branch_filter as _core_branch_filter
 from vmss_api.invitations.models import (
@@ -198,6 +198,77 @@ def relevant_to_me_clause(user_id: uuid.UUID, default_host_role_id: uuid.UUID) -
     return _relevant_to_me_filter(user_id, default_host_role_id)
 
 
+# --- Shared figure definitions (fix-dashboard-count-accuracy design.md D2/D3)
+# Each dashboard count and the list filter that drills into it are built from
+# these, so the two can't disagree.
+
+# A visit "happening" on its day — denied/archived/still-pending ones aren't.
+VISIT_DAY_STATUSES = ("approved", "checked_in", "checked_out")
+
+
+@dataclass(frozen=True)
+class VisitDayRange:
+    """Inclusive visit-day bounds (either may be open), plus the half-open
+    UTC bounds of the same local days for invitations with no visit date.
+    """
+
+    date_from: date | None
+    date_to: date | None
+    starts_at: datetime | None
+    ends_before: datetime | None
+
+    @classmethod
+    def local(cls, date_from: date | None, date_to: date | None, tz: tzinfo) -> "VisitDayRange":
+        def _midnight_utc(day: date) -> datetime:
+            return datetime.combine(day, time.min, tzinfo=tz).astimezone(UTC)
+
+        return cls(
+            date_from=date_from,
+            date_to=date_to,
+            starts_at=_midnight_utc(date_from) if date_from is not None else None,
+            ends_before=_midnight_utc(date_to + timedelta(days=1)) if date_to is not None else None,
+        )
+
+
+def visit_day(timezone: str) -> Any:
+    """An invitation's visit day: its visit date, else the visit-timezone
+    date it was created. For grouping; filter with `visit_day_filter`.
+    """
+    return func.coalesce(
+        Invitation.preferred_visit_date,
+        cast(func.timezone(timezone, Invitation.created_at), Date),
+    )
+
+
+def visit_day_filter(day_range: VisitDayRange) -> Any:
+    """`visit_day(...)` within `day_range`, as two OR arms (like
+    `_calendar_filters`) so the dated arm stays on
+    `ix_invitations_branch_visit_date`.
+    """
+    dated: list[Any] = [Invitation.preferred_visit_date.is_not(None)]
+    undated: list[Any] = [Invitation.preferred_visit_date.is_(None)]
+    if day_range.date_from is not None:
+        dated.append(Invitation.preferred_visit_date >= day_range.date_from)
+        undated.append(Invitation.created_at >= day_range.starts_at)
+    if day_range.date_to is not None:
+        dated.append(Invitation.preferred_visit_date <= day_range.date_to)
+        undated.append(Invitation.created_at < day_range.ends_before)
+    return or_(and_(*dated), and_(*undated))
+
+
+def not_expired_filter(now: datetime) -> Any:
+    return Invitation.expires_at > now
+
+
+def upcoming_filters(now: datetime) -> tuple[Any, ...]:
+    """Approved, never admitted, not yet expired."""
+    return (
+        Invitation.status == "approved",
+        Invitation.check_in_status == "unused",
+        not_expired_filter(now),
+    )
+
+
 def _list_filters(
     *,
     branch_scope: BranchScope | None,
@@ -208,13 +279,20 @@ def _list_filters(
     source: str | None,
     search: str | None,
     purpose_of_visit: str | None,
+    visit_days: VisitDayRange | None = None,
+    upcoming: bool = False,
+    exclude_expired: bool = False,
+    now: datetime | None = None,
+    branch_id: uuid.UUID | None = None,
 ) -> list[Any]:
     """The one filter set `GET /invitations` and `GET /invitations/export`
     share, so the two can't drift (add-invitation-export/design.md
     Decision 2). The branch scope and the `relevantToMe` predicate are
     ANDed when both are given: the list passes exactly one, the export
     always passes its `invitations:export` branch scope and adds
-    `relevantToMe` on top.
+    `relevantToMe` on top. The dashboard drill-down filters (`visit_days`,
+    `upcoming`, `exclude_expired`, `branch_id`) use the same definitions as
+    the dashboard counts; `now` is required by `upcoming`/`exclude_expired`.
     """
     filters: list[Any] = []
     if branch_scope is not None:
@@ -240,6 +318,16 @@ def _list_filters(
                 Invitation.tracking_id.ilike(pattern),
             )
         )
+    if visit_days is not None:
+        filters.append(visit_day_filter(visit_days))
+    if upcoming:
+        assert now is not None
+        filters.extend(upcoming_filters(now))
+    elif exclude_expired:  # already implied by `upcoming`
+        assert now is not None
+        filters.append(not_expired_filter(now))
+    if branch_id is not None:
+        filters.append(Invitation.branch_id == branch_id)
     return filters
 
 
@@ -332,6 +420,11 @@ class InvitationExportCriteria:
     purpose_of_visit: str | None
     starts_at: datetime | None
     ends_before: datetime | None
+    visit_days: VisitDayRange | None = None
+    upcoming: bool = False
+    exclude_expired: bool = False
+    now: datetime | None = None
+    branch_id: uuid.UUID | None = None
 
 
 def _export_filters(criteria: InvitationExportCriteria) -> list[Any]:
@@ -344,6 +437,11 @@ def _export_filters(criteria: InvitationExportCriteria) -> list[Any]:
         source=criteria.source,
         search=criteria.search,
         purpose_of_visit=criteria.purpose_of_visit,
+        visit_days=criteria.visit_days,
+        upcoming=criteria.upcoming,
+        exclude_expired=criteria.exclude_expired,
+        now=criteria.now,
+        branch_id=criteria.branch_id,
     )
     column = _EXPORT_DATE_COLUMNS[criteria.status]
     if criteria.starts_at is not None:
@@ -351,10 +449,6 @@ def _export_filters(criteria: InvitationExportCriteria) -> list[Any]:
     if criteria.ends_before is not None:
         filters.append(column < criteria.ends_before)
     return filters
-
-
-def _order_clause(column: Any, sort_order: SortOrder) -> Any:
-    return column.desc() if sort_order == SortOrder.desc else column.asc()
 
 
 def _status_changed_at_expr() -> Any:
@@ -815,6 +909,10 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         per table. Returns the number of invitations deleted. Dependent
         tables are exactly the four with an FK to `invitations.id`; audit
         entries only store the id and are deliberately left in place.
+        `notifications` also references `invitations.id`, but with `ON
+        DELETE CASCADE`, so Postgres removes those rows itself and they're
+        not backed up — disposable UI state
+        (prune-orphaned-notifications design.md D1).
         """
         deleted = 0
         for model, key in reversed(_PURGE_TABLES_PARENT_FIRST):
@@ -831,21 +929,8 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         D2) — unlike `auth/audit.py::record_audit_log`, which opens its own
         session because it runs after a request's session has closed.
         """
-        if not invitation_ids:
-            return
-        await self.session.execute(
-            insert(AuditLog),
-            [
-                {
-                    "id": uuid.uuid4(),
-                    "actor_user_id": None,
-                    "action": action,
-                    "entity_type": "invitation",
-                    "entity_id": invitation_id,
-                    "diff": diff,
-                }
-                for invitation_id in invitation_ids
-            ],
+        await AuditLogWriter(self.session).add_system_entries(
+            invitation_ids, action=action, entity_type="invitation", diff=diff
         )
 
     async def edit_if_eligible(
@@ -1038,8 +1123,12 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         children here, since that endpoint only ever returns tracking id +
         status, never visitor/vehicle detail.
         """
-        stmt = select(Invitation).where(
-            Invitation.primary_contact_email == email, Invitation.deleted_at.is_(None)
+        stmt = (
+            select(Invitation)
+            # Only what the endpoint returns: a public lookup shouldn't pull
+            # every column (PII included) into memory for each match.
+            .options(load_only(Invitation.id, Invitation.tracking_id, Invitation.status))
+            .where(Invitation.primary_contact_email == email, Invitation.deleted_at.is_(None))
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
@@ -1124,6 +1213,11 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
         sort_by: str,
         sort_order: SortOrder,
         purpose_of_visit: str | None = None,
+        visit_days: VisitDayRange | None = None,
+        upcoming: bool = False,
+        exclude_expired: bool = False,
+        now: datetime | None = None,
+        branch_id: uuid.UUID | None = None,
     ) -> tuple[list[Invitation], int]:
         """Backs `GET /invitations` (design.md Decision 2) — deliberately no
         `selectinload` of visitors/vehicles here (unlike `_with_children`
@@ -1159,13 +1253,18 @@ class InvitationRepository(TenantScopedRepository[Invitation]):
             source=source,
             search=search,
             purpose_of_visit=purpose_of_visit,
+            visit_days=visit_days,
+            upcoming=upcoming,
+            exclude_expired=exclude_expired,
+            now=now,
+            branch_id=branch_id,
         )
         return await super().paginate(
             page=page,
             page_size=page_size,
             # `id` breaks timestamp ties so offset paging never repeats or
             # skips a row (design.md Decision 3).
-            order_by=(_order_clause(column, sort_order).nulls_last(), Invitation.id.asc()),
+            order_by=(order_clause(column, sort_order).nulls_last(), Invitation.id.asc()),
             filters=filters,
         )
 

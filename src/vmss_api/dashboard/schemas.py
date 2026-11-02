@@ -40,10 +40,24 @@ class DashboardOverviewOut(CamelModel):
     (docs/features/dashboard.md; live-dashboards-and-analytics design.md D2).
     """
     scheduled_today_count: int
+    scheduled_today_checked_in_count: int
+    """`scheduledTodayCount` visits checked in at least once — never more
+    than it (fix-dashboard-count-accuracy).
+    """
     checked_in_today_count: int
+    """Every check-in today, whatever the visit day; equals the sum of the
+    hourly arrivals chart.
+    """
     checked_in_count: int
-    pending_approval_count: int
-    oldest_pending_submitted_at: datetime | None
+    open_pending_approval_count: int
+    """`submitted` and not yet expired."""
+    oldest_open_pending_submitted_at: datetime | None
+    pending_approval_count: int = Field(
+        deprecated="Includes expired requests; use openPendingApprovalCount.",
+    )
+    oldest_pending_submitted_at: datetime | None = Field(
+        deprecated="Includes expired requests; use oldestOpenPendingSubmittedAt.",
+    )
     upcoming_visitor_count: int
     upcoming_visitors: list[UpcomingVisitorOut]
     today: date
@@ -69,7 +83,11 @@ class MyDashboardOverviewOut(CamelModel):
 
     visits_today: int
     inside_now: int
-    awaiting_approval: int
+    open_awaiting_approval: int
+    """`submitted` and not yet expired."""
+    awaiting_approval: int = Field(
+        deprecated="Includes expired requests; use openAwaitingApproval.",
+    )
     upcoming: int
     upcoming_preview: list[MyUpcomingVisitorOut]
     today: date

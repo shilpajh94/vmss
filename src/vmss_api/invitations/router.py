@@ -17,12 +17,13 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, ValidationError
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import FormData
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from vmss_api.approvals.schemas import CurrentApprovalStepOut
 from vmss_api.auth.audit import record_audit_log
 from vmss_api.auth.models import User
 from vmss_api.core.config import settings
@@ -33,23 +34,35 @@ from vmss_api.core.deps import (
     get_tenant_db,
     require_permission,
 )
-from vmss_api.core.idempotency import cache_response as _core_cache_response
-from vmss_api.core.idempotency import cached_response as _core_cached_response
+from vmss_api.core.idempotency import Idempotency, idempotency
 from vmss_api.core.logging import logger
+from vmss_api.core.middleware import enforce_upload_file_count
+from vmss_api.core.public_access import flag_legacy_access, strict_public_access
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import (
     error_response,
     paginated_response,
     success_response,
+    validation_error_response,
 )
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
-from vmss_api.core.storage import url_for as storage_url_for
-from vmss_api.devices import service as device_service
+from vmss_api.core.security import decode_token
+from vmss_api.core.tenancy import get_token_payload
 from vmss_api.devices.deps import make_device_dependency
 from vmss_api.devices.models import Device
 from vmss_api.invitations import service
 from vmss_api.invitations.deps import track_default_tenant, track_default_tenant_db
-from vmss_api.invitations.repository import phone_digits
+from vmss_api.invitations.presenters import (
+    _attach_devices,
+    _device_diff,
+    _to_badge_out,
+    _to_check_in_out,
+    _to_invitation_detail_out,
+    _to_list_item_out,
+    _to_qr_check_in_out,
+    _to_tracking_out,
+    to_invitation_out,
+)
 from vmss_api.invitations.schemas import (
     BadgeOut,
     CalendarDateRange,
@@ -60,17 +73,10 @@ from vmss_api.invitations.schemas import (
     CheckInCodeRequest,
     ClearInvitationsOut,
     ClearInvitationsRequest,
-    ConsentValue,
-    ContactMethod,
-    CustomFieldValue,
     ExportFormat,
-    FieldGroupValuesOut,
-    InvitationBranchOut,
-    InvitationBuildingOut,
     InvitationCheckInOut,
     InvitationCreate,
     InvitationDenyRequest,
-    InvitationDepartmentOut,
     InvitationDetailOut,
     InvitationEditRequest,
     InvitationExportDateRange,
@@ -86,9 +92,6 @@ from vmss_api.invitations.schemas import (
     InvitationStatus,
     InvitationTrackingOut,
     InvitationTrackingSummaryOut,
-    InvitationVehicleOut,
-    InvitationVisitorDetailOut,
-    InvitationVisitorOut,
     RegistrationSource,
     RegistrationType,
     VehicleSubmit,
@@ -99,9 +102,10 @@ from vmss_api.invitations.schemas import (
 from vmss_api.org_structure.deps import (
     authorize_branch_id,
     authorize_branch_id_tolerant,
+    optional_bearer_scheme,
+    optional_caller,
     require_branch_scope,
 )
-from vmss_api.org_structure.models import Branch, Building, Department
 from vmss_api.org_structure.service import get_default_host_role
 from vmss_api.tenant.models import Tenant
 
@@ -331,813 +335,8 @@ _PAYLOAD_DESCRIPTION = (
 )
 
 
-def to_invitation_out(
-    invitation, current_approval_step: CurrentApprovalStepOut | None = None
-) -> InvitationOut:
-    return InvitationOut(
-        id=invitation.id,
-        tracking_id=invitation.tracking_id,
-        registration_type=RegistrationType(invitation.registration_type),
-        source=RegistrationSource(invitation.source),
-        status=invitation.status,
-        visitor_category_id=invitation.visitor_category_id,
-        host_id=invitation.host_id,
-        poc_user_id=invitation.poc_user_id,
-        poc_role_id=invitation.poc_role_id,
-        poc_name=invitation.poc_name,
-        building_id=invitation.building_id,
-        department_id=invitation.department_id,
-        department_to_visit=invitation.department_to_visit,
-        expires_at=invitation.expires_at,
-        submitted_at=invitation.submitted_at,
-        approved_at=invitation.approved_at,
-        current_approval_step=current_approval_step,
-        approval_reverted_at=invitation.approval_reverted_at,
-        approval_reverted_by_user_id=invitation.approval_reverted_by_user_id,
-        approval_revert_reason=invitation.approval_revert_reason,
-        archived_at=invitation.archived_at,
-        checked_out_automatically=invitation.checked_out_automatically,
-    )
-
-
-async def _resolve_photo_url(storage_key: str | None) -> str | None:
-    return await storage_url_for(storage_key) if storage_key is not None else None
-
-
-async def _resolve_document_url(storage_key: str | None) -> str | None:
-    """Same resolution as `_resolve_photo_url`, kept as a separate function
-    so every call site is a visible, greppable instance of "this resolves a
-    raw ID-proof document" — callers MUST only invoke this once the caller
-    is confirmed to hold `documents:view` (enrich-invitation-checkin-and-
-    detail-views/design.md Decision 4); never call it unconditionally.
-    """
-    return await storage_url_for(storage_key) if storage_key is not None else None
-
-
-async def _resolve_custom_field_file_values(
-    values: dict[str, Any], file_ids: set[str], *, include_documents: bool
-) -> dict[str, Any]:
-    """Rewrites `values` (a `{fieldId: value}`-shaped map — a persisted
-    `customFieldValues`/`primaryContactCustomFieldValues`, or one
-    `groupFieldValues` instance — restructure-walkin-payload-by-field-id)
-    so every `file_upload`-typed field in it (`file_ids`) holds a signed,
-    viewable URL instead of the raw storage key `service.create_invitation`
-    persisted for it (add-generic-custom-field-file-url-resolution) —
-    mirrors how `primary_contact_photo_url`/`id_proof_url` are already
-    resolved before serializing rather than left as opaque keys.
-
-    Gated by `include_documents` the same as `_resolve_document_url`: a
-    caller without `documents:view` for this invitation's branch gets
-    `None` for these ids rather than the raw key or a resolved URL, since
-    a generic file-upload field is exactly the kind of place an ID scan or
-    other sensitive document can end up.
-
-    `file_ids` reflects the branch's *current* effective form, not the form
-    as it was when `values` was persisted — if a field's type was changed to
-    `file_upload` after an older invitation already stored a non-file value
-    under that id, `values[field_id]` may be a bool/number/list/dict rather
-    than a storage key. `_resolve_document_url` -> `storage_url_for` ->
-    `quote()` crashes on anything that isn't `str`/`bytes`, so such values
-    are treated as "no file" (`None`) rather than passed to it.
-    """
-    if not file_ids:
-        return values
-    resolved = dict(values)
-    for field_id in file_ids:
-        if field_id not in resolved:
-            continue
-        storage_key = resolved[field_id]
-        resolved[field_id] = (
-            await _resolve_document_url(storage_key)
-            if include_documents and isinstance(storage_key, str)
-            else None
-        )
-    return resolved
-
-
-async def _resolve_group_field_values(
-    group_field_values: dict[str, list[dict[str, Any]]],
-    group_file_ids: dict[str, set[str]],
-    *,
-    include_documents: bool,
-) -> dict[str, list[dict[str, Any]]]:
-    """Applies `_resolve_custom_field_file_values` to every instance of
-    every group in `group_field_values` (keyed by group id) — the same
-    per-group-instance resolution `_to_invitation_detail_out` needs,
-    factored out so the check-in/QR/tracking responses
-    (add-generic-custom-field-file-url-resolution) can share it instead of
-    re-deriving the dict comprehension.
-    """
-    return {
-        group_id: [
-            await _resolve_custom_field_file_values(
-                instance, group_file_ids.get(group_id, set()), include_documents=include_documents
-            )
-            for instance in instances
-        ]
-        for group_id, instances in group_field_values.items()
-    }
-
-
-def _dict_to_custom_fields(
-    field_meta: dict[str, dict[str, str]], values: dict[str, Any]
-) -> list[CustomFieldValue]:
-    """`{str(fieldId): value}` -> the wire's `list[{fieldId, value}]` shape
-    (restructure-walkin-payload-by-field-id) — the response-side
-    counterpart of `invitations/schemas.py::_custom_fields_to_dict`."""
-    return [
-        CustomFieldValue(
-            field_id=uuid.UUID(fid),
-            field_name=field_meta.get(fid, {}).get("label"),
-            field_key=field_meta.get(fid, {}).get("key"),
-            value=value,
-        )
-        for fid, value in values.items()
-    ]
-
-
-def _dict_to_consents(
-    field_meta: dict[str, dict[str, str]], values: dict[str, bool]
-) -> list[ConsentValue]:
-    return [
-        ConsentValue(
-            field_id=uuid.UUID(fid),
-            field_name=field_meta.get(fid, {}).get("label"),
-            field_key=field_meta.get(fid, {}).get("key"),
-            accepted=accepted,
-        )
-        for fid, accepted in values.items()
-    ]
-
-
-def _dict_to_groups(
-    field_meta: dict[str, dict[str, str]],
-    values: dict[str, list[dict[str, Any]]],
-    group_names: dict[str, str],
-) -> list[FieldGroupValuesOut]:
-    return [
-        FieldGroupValuesOut(
-            group_id=uuid.UUID(group_id),
-            group_name=group_names.get(group_id),
-            instances=[_dict_to_custom_fields(field_meta, instance) for instance in instances],
-        )
-        for group_id, instances in values.items()
-    ]
-
-
-async def _to_visitor_outs(
-    visitors, visitor_info_file_ids: set[str], field_meta: dict[str, dict[str, str]]
-) -> list[InvitationVisitorOut]:
-    """Used by every response except the staff detail view — deliberately
-    produces `InvitationVisitorOut`, which has no ID-proof document field
-    at all (see that schema's docstring). None of these callers are ever
-    behind a `documents:view` check (public check-in/QR/tracking endpoints,
-    add-generic-custom-field-file-url-resolution) — `include_documents` is
-    always `False`, so a `file_upload`-typed field's raw storage key never
-    reaches an unauthenticated caller; it's dropped to `None` the same way
-    `InvitationVisitorOut` already omits `idProofUrl` entirely.
-    """
-    return [
-        InvitationVisitorOut(
-            id=v.id,
-            full_name=v.full_name,
-            email=v.email,
-            phone=v.phone,
-            id_proof_type=v.id_proof_type,
-            photo_url=await _resolve_photo_url(v.photo_storage_key),
-            custom_fields=_dict_to_custom_fields(
-                field_meta,
-                await _resolve_custom_field_file_values(
-                    v.custom_field_values, visitor_info_file_ids, include_documents=False
-                ),
-            ),
-        )
-        for v in visitors
-    ]
-
-
-async def _to_visitor_detail_outs(
-    visitors,
-    *,
-    include_documents: bool,
-    visitor_info_file_ids: set[str],
-    field_meta: dict[str, dict[str, str]],
-) -> list[InvitationVisitorDetailOut]:
-    """Staff detail view (`GET /invitations/{id}`) only. `include_documents`
-    is the caller's already-resolved `documents:view` grant — when `False`,
-    `id_proof_url` is left `None` without ever calling
-    `_resolve_document_url` (no storage lookup for a document the caller
-    can't see)."""
-    return [
-        InvitationVisitorDetailOut(
-            id=v.id,
-            full_name=v.full_name,
-            email=v.email,
-            phone=v.phone,
-            id_proof_type=v.id_proof_type,
-            id_proof_url=(
-                await _resolve_document_url(v.id_proof_storage_key) if include_documents else None
-            ),
-            photo_url=await _resolve_photo_url(v.photo_storage_key),
-            custom_fields=_dict_to_custom_fields(
-                field_meta,
-                await _resolve_custom_field_file_values(
-                    v.custom_field_values,
-                    visitor_info_file_ids,
-                    include_documents=include_documents,
-                ),
-            ),
-        )
-        for v in visitors
-    ]
-
-
-def _to_location_outs(
-    branch: Branch,
-    department: Department | None,
-    building: Building | None,
-    department_to_visit: str | None = None,
-) -> tuple[InvitationBranchOut, InvitationBuildingOut | None, InvitationDepartmentOut | None]:
-    branch_out = InvitationBranchOut(
-        id=branch.id,
-        name=branch.name,
-        code=branch.code,
-        address=branch.address,
-        city=branch.city,
-    )
-    building_out = (
-        InvitationBuildingOut(id=building.id, name=building.name, code=building.code)
-        if building is not None
-        else None
-    )
-    department_out = (
-        InvitationDepartmentOut(id=department.id, name=department.name, code=department.code)
-        if department is not None
-        else InvitationDepartmentOut(name=department_to_visit)
-        if department_to_visit
-        else None
-    )
-    return branch_out, building_out, department_out
-
-
-async def _to_qr_check_in_out(
-    invitation,
-    *,
-    branch: Branch,
-    department: Department | None,
-    building: Building | None,
-    form_context: service.InvitationDetailFormContext,
-) -> InvitationQrCheckInOut:
-    """Public, unauthenticated QR check-in/check-out. There is no
-    `documents:view` caller to gate on, so no ID-proof document or
-    `file_upload` field resolves to a URL here (spec.md "QR Check-In
-    Response Surfaces Full Invitation Detail": that stays exclusive to the
-    authenticated staff detail view). Visitors use `InvitationVisitorOut`,
-    which has no `idProofUrl` key at all. Raw storage keys are never
-    returned."""
-    branch_out, building_out, department_out = _to_location_outs(
-        branch, department, building, invitation.department_to_visit
-    )
-    return InvitationQrCheckInOut(
-        id=invitation.id,
-        branch_id=invitation.branch_id,
-        tracking_id=invitation.tracking_id,
-        status=invitation.status,
-        check_in_status=invitation.check_in_status,
-        registration_type=invitation.registration_type,
-        source=invitation.source,
-        visitor_category_id=invitation.visitor_category_id,
-        branch=branch_out,
-        building=building_out,
-        department=department_out,
-        primary_contact_full_name=invitation.primary_contact_full_name,
-        primary_contact_photo_url=await _resolve_photo_url(
-            invitation.primary_contact_photo_storage_key
-        ),
-        primary_contact_preferred_contact_method=ContactMethod(
-            invitation.primary_contact_preferred_contact_method
-        ),
-        primary_contact_id_proof_type=invitation.primary_contact_id_proof_type,
-        primary_contact_email=invitation.primary_contact_email,
-        primary_contact_phone=invitation.primary_contact_phone,
-        host_id=invitation.host_id,
-        host_name_or_email=invitation.host_name_or_email,
-        poc_user_id=invitation.poc_user_id,
-        poc_role_id=invitation.poc_role_id,
-        poc_name=invitation.poc_name,
-        purpose_of_visit=invitation.purpose_of_visit,
-        purpose_id=invitation.purpose_id,
-        duration_id=invitation.duration_id,
-        department_id=invitation.department_id,
-        department_to_visit=invitation.department_to_visit,
-        preferred_visit_date=invitation.preferred_visit_date,
-        preferred_visit_time=invitation.preferred_visit_time,
-        expected_duration=invitation.expected_duration,
-        additional_notes=invitation.additional_notes,
-        carried_items=invitation.carried_items,
-        carried_items_description=invitation.carried_items_description,
-        consents=_dict_to_consents(form_context.field_meta, invitation.consents),
-        consent_recorded_at=invitation.consent_recorded_at,
-        custom_fields=_dict_to_custom_fields(
-            form_context.field_meta,
-            {
-                **await _resolve_custom_field_file_values(
-                    invitation.primary_contact_custom_field_values,
-                    form_context.visitor_info_file_ids,
-                    include_documents=False,
-                ),
-                **await _resolve_custom_field_file_values(
-                    invitation.custom_field_values,
-                    form_context.invitation_scope_file_ids,
-                    include_documents=False,
-                ),
-            },
-        ),
-        groups=_dict_to_groups(
-            form_context.field_meta,
-            await _resolve_group_field_values(
-                invitation.group_field_values, form_context.group_file_ids, include_documents=False
-            ),
-            form_context.group_names,
-        ),
-        submitted_at=invitation.submitted_at,
-        approved_at=invitation.approved_at,
-        checked_in_at=invitation.checked_in_at,
-        checked_out_at=invitation.checked_out_at,
-        expires_at=invitation.expires_at,
-        visitors=[
-            InvitationVisitorOut(**visitor.model_dump(exclude={"id_proof_url"}))
-            for visitor in [
-                *await _to_visitor_detail_outs(
-                    invitation.visitors,
-                    include_documents=False,
-                    visitor_info_file_ids=form_context.visitor_info_file_ids,
-                    field_meta=form_context.field_meta,
-                ),
-                *await _group_collected_visitor_detail_outs(
-                    invitation,
-                    form_context.visitor_info_groups,
-                    include_documents=False,
-                    field_meta=form_context.field_meta,
-                ),
-            ]
-        ],
-        vehicles=[
-            InvitationVehicleOut(
-                id=v.id,
-                vehicle_type=v.vehicle_type,
-                license_plate=v.license_plate,
-                make_model=v.make_model,
-                color=v.color,
-                custom_fields=_dict_to_custom_fields(
-                    form_context.field_meta,
-                    await _resolve_custom_field_file_values(
-                        v.custom_field_values,
-                        form_context.vehicle_info_file_ids,
-                        include_documents=False,
-                    ),
-                ),
-            )
-            for v in invitation.vehicles
-        ],
-        archived_at=invitation.archived_at,
-        checked_out_automatically=invitation.checked_out_automatically,
-    )
-
-
-async def _to_list_item_out(invitation) -> InvitationListItemOut:
-    return InvitationListItemOut(
-        id=invitation.id,
-        tracking_id=invitation.tracking_id,
-        registration_type=RegistrationType(invitation.registration_type),
-        source=RegistrationSource(invitation.source),
-        status=invitation.status,
-        visitor_category_id=invitation.visitor_category_id,
-        primary_contact_full_name=invitation.primary_contact_full_name,
-        primary_contact_email=invitation.primary_contact_email,
-        primary_contact_phone=invitation.primary_contact_phone,
-        primary_contact_photo_url=await _resolve_photo_url(
-            invitation.primary_contact_photo_storage_key
-        ),
-        purpose_of_visit=invitation.purpose_of_visit,
-        department_to_visit=invitation.department_to_visit,
-        department_id=invitation.department_id,
-        building_id=invitation.building_id,
-        expires_at=invitation.expires_at,
-        submitted_at=invitation.submitted_at,
-        approved_at=invitation.approved_at,
-        archived_at=invitation.archived_at,
-        checked_out_automatically=invitation.checked_out_automatically,
-        status_changed_at=service.status_changed_at(invitation),
-    )
-
-
-async def _to_tracking_out(
-    invitation,
-    current_approval_step: CurrentApprovalStepOut | None = None,
-    *,
-    form_context: service.InvitationDetailFormContext,
-) -> InvitationTrackingOut:
-    """Public, unauthenticated tracking lookup — see `_to_visitor_outs` on
-    why every `file_upload` field resolves with `include_documents=False`."""
-    return InvitationTrackingOut(
-        tracking_id=invitation.tracking_id,
-        status=invitation.status,
-        registration_type=invitation.registration_type,
-        source=invitation.source,
-        visitor_category_id=invitation.visitor_category_id,
-        current_approval_step=current_approval_step,
-        primary_contact_full_name=invitation.primary_contact_full_name,
-        primary_contact_photo_url=await _resolve_photo_url(
-            invitation.primary_contact_photo_storage_key
-        ),
-        purpose_of_visit=invitation.purpose_of_visit,
-        host_name_or_email=invitation.host_name_or_email,
-        poc_user_id=invitation.poc_user_id,
-        poc_role_id=invitation.poc_role_id,
-        poc_name=invitation.poc_name,
-        preferred_visit_date=invitation.preferred_visit_date,
-        preferred_visit_time=invitation.preferred_visit_time,
-        expected_duration=invitation.expected_duration,
-        department_to_visit=invitation.department_to_visit,
-        additional_notes=invitation.additional_notes,
-        carried_items=invitation.carried_items,
-        carried_items_description=invitation.carried_items_description,
-        custom_fields=_dict_to_custom_fields(
-            form_context.field_meta,
-            {
-                **await _resolve_custom_field_file_values(
-                    invitation.primary_contact_custom_field_values,
-                    form_context.visitor_info_file_ids,
-                    include_documents=False,
-                ),
-                **await _resolve_custom_field_file_values(
-                    invitation.custom_field_values,
-                    form_context.invitation_scope_file_ids,
-                    include_documents=False,
-                ),
-            },
-        ),
-        groups=_dict_to_groups(
-            form_context.field_meta,
-            await _resolve_group_field_values(
-                invitation.group_field_values, form_context.group_file_ids, include_documents=False
-            ),
-            form_context.group_names,
-        ),
-        expires_at=invitation.expires_at,
-        submitted_at=invitation.submitted_at,
-        approved_at=invitation.approved_at,
-        visitors=await _to_visitor_outs(
-            invitation.visitors, form_context.visitor_info_file_ids, form_context.field_meta
-        ),
-        vehicles=[
-            InvitationVehicleOut(
-                id=v.id,
-                vehicle_type=v.vehicle_type,
-                license_plate=v.license_plate,
-                make_model=v.make_model,
-                color=v.color,
-                custom_fields=_dict_to_custom_fields(
-                    form_context.field_meta,
-                    await _resolve_custom_field_file_values(
-                        v.custom_field_values,
-                        form_context.vehicle_info_file_ids,
-                        include_documents=False,
-                    ),
-                ),
-            )
-            for v in invitation.vehicles
-        ],
-        archived_at=invitation.archived_at,
-        checked_out_automatically=invitation.checked_out_automatically,
-    )
-
-
-async def _to_check_in_out(
-    invitation,
-    current_approval_step: CurrentApprovalStepOut | None = None,
-    *,
-    form_context: service.InvitationDetailFormContext,
-) -> InvitationCheckInOut:
-    """Public, unauthenticated staff/desk check-in — see `_to_visitor_outs`
-    on why every `file_upload` field resolves with `include_documents=False`."""
-    return InvitationCheckInOut(
-        id=invitation.id,
-        tracking_id=invitation.tracking_id,
-        registration_type=RegistrationType(invitation.registration_type),
-        source=RegistrationSource(invitation.source),
-        status=invitation.status,
-        visitor_category_id=invitation.visitor_category_id,
-        host_id=invitation.host_id,
-        poc_user_id=invitation.poc_user_id,
-        poc_role_id=invitation.poc_role_id,
-        poc_name=invitation.poc_name,
-        expires_at=invitation.expires_at,
-        submitted_at=invitation.submitted_at,
-        approved_at=invitation.approved_at,
-        current_approval_step=current_approval_step,
-        primary_contact_full_name=invitation.primary_contact_full_name,
-        primary_contact_photo_url=await _resolve_photo_url(
-            invitation.primary_contact_photo_storage_key
-        ),
-        purpose_of_visit=invitation.purpose_of_visit,
-        host_name_or_email=invitation.host_name_or_email,
-        preferred_visit_date=invitation.preferred_visit_date,
-        preferred_visit_time=invitation.preferred_visit_time,
-        expected_duration=invitation.expected_duration,
-        department_to_visit=invitation.department_to_visit,
-        additional_notes=invitation.additional_notes,
-        carried_items=invitation.carried_items,
-        carried_items_description=invitation.carried_items_description,
-        custom_fields=_dict_to_custom_fields(
-            form_context.field_meta,
-            {
-                **await _resolve_custom_field_file_values(
-                    invitation.primary_contact_custom_field_values,
-                    form_context.visitor_info_file_ids,
-                    include_documents=False,
-                ),
-                **await _resolve_custom_field_file_values(
-                    invitation.custom_field_values,
-                    form_context.invitation_scope_file_ids,
-                    include_documents=False,
-                ),
-            },
-        ),
-        groups=_dict_to_groups(
-            form_context.field_meta,
-            await _resolve_group_field_values(
-                invitation.group_field_values, form_context.group_file_ids, include_documents=False
-            ),
-            form_context.group_names,
-        ),
-        visitors=await _to_visitor_outs(
-            invitation.visitors, form_context.visitor_info_file_ids, form_context.field_meta
-        ),
-        vehicles=[
-            InvitationVehicleOut(
-                id=v.id,
-                vehicle_type=v.vehicle_type,
-                license_plate=v.license_plate,
-                make_model=v.make_model,
-                color=v.color,
-                custom_fields=_dict_to_custom_fields(
-                    form_context.field_meta,
-                    await _resolve_custom_field_file_values(
-                        v.custom_field_values,
-                        form_context.vehicle_info_file_ids,
-                        include_documents=False,
-                    ),
-                ),
-            )
-            for v in invitation.vehicles
-        ],
-        archived_at=invitation.archived_at,
-        checked_out_automatically=invitation.checked_out_automatically,
-    )
-
-
-async def _group_collected_visitor_detail_outs(
-    invitation,
-    visitor_info_groups: dict[str, dict[str, Any]],
-    *,
-    include_documents: bool,
-    field_meta: dict[str, dict[str, str]],
-) -> list[InvitationVisitorDetailOut]:
-    """A branch that collects additional visitors through an admin-defined
-    repeatable group on Visitor Info instead of the fixed `visitors` list
-    (the built-in "Visitors" system group is no longer admin-configurable
-    — `form_builder/defaults.py`) has that data in `group_field_values`,
-    not `visitors`. Synthesizes a visitor-shaped entry per submitted
-    instance of such a group so it surfaces through the same `visitors`
-    array/UI rendering, with no separate response shape for the frontend to
-    special-case.
-
-    There's no reserved "this is the name field" marker on a group — an
-    admin's fields are arbitrary — so `fullName` falls back to the group's
-    first-configured field's value (`fieldIds[0]`, the only ordering signal
-    available — restructure-walkin-payload-by-field-id). `email`/`phone`
-    instead use Form Builder's own typed field system: the group's first
-    field of `fieldType` `"email"`/`"phone"` (there can be at most a
-    handful of fields per group, so "first" only matters if an admin adds
-    more than one of the same type). Every field the client actually
-    submitted is still in `customFields` regardless.
-
-    `idProofUrl` (add-group-field-file-upload) resolves the same way:
-    `service.create_invitation` already overwrote the group's first
-    `file_upload`-typed field's value with a storage key at submission
-    time (never a client-supplied value — see
-    `service.py::_group_field_file_id`), so this only has to resolve that
-    id to a URL, gated by `include_documents` (`documents:view`) the same
-    as `_to_visitor_detail_outs`'s `idProofUrl`. `idProofType` has no
-    `fieldType` of its own to key off the way email/phone do, so it's
-    populated only when the group happens to define a field literally keyed
-    `id_proof_type` — the same key the fixed `visitors`/`primaryContact`
-    system field uses — rather than inventing a new convention.
-    """
-    results: list[InvitationVisitorDetailOut] = []
-    for group_id, instances in invitation.group_field_values.items():
-        group = visitor_info_groups.get(group_id)
-        if group is None:
-            continue
-        fields = group.get("fields") or []
-        name_field_id = next(iter(group.get("fieldIds", [])), None)
-        email_field_id = next((f["id"] for f in fields if f["fieldType"] == "email"), None)
-        phone_field_id = next((f["id"] for f in fields if f["fieldType"] == "phone"), None)
-        id_proof_url_field_id = next(
-            (f["id"] for f in fields if f["fieldType"] == "file_upload"), None
-        )
-        id_proof_type_field_id = next(
-            (f["id"] for f in fields if f["key"] == "id_proof_type"), None
-        )
-        group_file_ids = {f["id"] for f in fields if f["fieldType"] == "file_upload"}
-        for index, instance in enumerate(instances):
-            display_name = instance.get(name_field_id) if name_field_id else None
-            email = instance.get(email_field_id) if email_field_id else None
-            phone = instance.get(phone_field_id) if phone_field_id else None
-            id_proof_type = instance.get(id_proof_type_field_id) if id_proof_type_field_id else None
-            id_proof_storage_key = (
-                instance.get(id_proof_url_field_id) if id_proof_url_field_id else None
-            )
-            results.append(
-                InvitationVisitorDetailOut(
-                    id=uuid.uuid5(invitation.id, f"{group_id}:{index}"),
-                    full_name=str(display_name) if display_name else "Additional Visitor",
-                    email=str(email) if email else None,
-                    phone=str(phone) if phone else None,
-                    id_proof_type=str(id_proof_type) if id_proof_type else None,
-                    id_proof_url=(
-                        await _resolve_document_url(id_proof_storage_key)
-                        if isinstance(id_proof_storage_key, str) and include_documents
-                        else None
-                    ),
-                    photo_url=None,
-                    custom_fields=_dict_to_custom_fields(
-                        field_meta,
-                        await _resolve_custom_field_file_values(
-                            instance, group_file_ids, include_documents=include_documents
-                        ),
-                    ),
-                )
-            )
-    return results
-
-
-async def _to_invitation_detail_out(
-    invitation,
-    current_approval_step: CurrentApprovalStepOut | None = None,
-    *,
-    branch: Branch,
-    department: Department | None,
-    building: Building | None,
-    include_documents: bool,
-    form_context: service.InvitationDetailFormContext,
-) -> InvitationDetailOut:
-    branch_out, building_out, department_out = _to_location_outs(
-        branch, department, building, invitation.department_to_visit
-    )
-    resolved_group_field_values = await _resolve_group_field_values(
-        invitation.group_field_values,
-        form_context.group_file_ids,
-        include_documents=include_documents,
-    )
-    return InvitationDetailOut(
-        id=invitation.id,
-        branch_id=invitation.branch_id,
-        branch=branch_out,
-        building=building_out,
-        department=department_out,
-        source=RegistrationSource(invitation.source),
-        created_by_user_id=invitation.created_by_user_id,
-        tracking_id=invitation.tracking_id,
-        status=invitation.status,
-        registration_type=invitation.registration_type,
-        visitor_category_id=invitation.visitor_category_id,
-        current_approval_step=current_approval_step,
-        primary_contact_full_name=invitation.primary_contact_full_name,
-        primary_contact_email=invitation.primary_contact_email,
-        primary_contact_phone=invitation.primary_contact_phone,
-        primary_contact_preferred_contact_method=ContactMethod(
-            invitation.primary_contact_preferred_contact_method
-        ),
-        primary_contact_photo_url=await _resolve_photo_url(
-            invitation.primary_contact_photo_storage_key
-        ),
-        primary_contact_id_proof_type=invitation.primary_contact_id_proof_type,
-        primary_contact_id_proof_url=(
-            await _resolve_document_url(invitation.primary_contact_id_proof_storage_key)
-            if include_documents
-            else None
-        ),
-        purpose_of_visit=invitation.purpose_of_visit,
-        purpose_id=invitation.purpose_id,
-        host_name_or_email=invitation.host_name_or_email,
-        host_id=invitation.host_id,
-        duration_id=invitation.duration_id,
-        department_id=invitation.department_id,
-        poc_user_id=invitation.poc_user_id,
-        poc_role_id=invitation.poc_role_id,
-        poc_name=invitation.poc_name,
-        preferred_visit_date=invitation.preferred_visit_date,
-        preferred_visit_time=invitation.preferred_visit_time,
-        previous_preferred_visit_date=invitation.previous_preferred_visit_date,
-        previous_preferred_visit_time=invitation.previous_preferred_visit_time,
-        rescheduled_at=invitation.rescheduled_at,
-        reschedule_count=invitation.reschedule_count,
-        expected_duration=invitation.expected_duration,
-        department_to_visit=invitation.department_to_visit,
-        additional_notes=invitation.additional_notes,
-        carried_items=invitation.carried_items,
-        carried_items_description=invitation.carried_items_description,
-        consents=_dict_to_consents(form_context.field_meta, invitation.consents),
-        consent_recorded_at=invitation.consent_recorded_at,
-        custom_fields=_dict_to_custom_fields(
-            form_context.field_meta,
-            {
-                **await _resolve_custom_field_file_values(
-                    invitation.primary_contact_custom_field_values,
-                    form_context.visitor_info_file_ids,
-                    include_documents=include_documents,
-                ),
-                **await _resolve_custom_field_file_values(
-                    invitation.custom_field_values,
-                    form_context.invitation_scope_file_ids,
-                    include_documents=include_documents,
-                ),
-            },
-        ),
-        groups=_dict_to_groups(
-            form_context.field_meta, resolved_group_field_values, form_context.group_names
-        ),
-        expires_at=invitation.expires_at,
-        submitted_at=invitation.submitted_at,
-        approved_at=invitation.approved_at,
-        approval_reverted_at=invitation.approval_reverted_at,
-        approval_reverted_by_user_id=invitation.approval_reverted_by_user_id,
-        approval_revert_reason=invitation.approval_revert_reason,
-        denial_reason=invitation.denial_reason,
-        denied_at=invitation.denied_at,
-        checked_in_at=invitation.checked_in_at,
-        checked_in_by_user_id=invitation.checked_in_by_user_id,
-        checked_out_at=invitation.checked_out_at,
-        checked_out_by_user_id=invitation.checked_out_by_user_id,
-        badge_number=invitation.badge_number,
-        badge_issued_at=invitation.badge_issued_at,
-        badge_reprint_count=invitation.badge_reprint_count,
-        watchlist_flagged=invitation.watchlist_flagged,
-        watchlist_override_at=invitation.watchlist_override_at,
-        watchlist_override_reason=invitation.watchlist_override_reason,
-        watchlist_override_by_user_id=invitation.watchlist_override_by_user_id,
-        visitors=[
-            *await _to_visitor_detail_outs(
-                invitation.visitors,
-                include_documents=include_documents,
-                visitor_info_file_ids=form_context.visitor_info_file_ids,
-                field_meta=form_context.field_meta,
-            ),
-            *await _group_collected_visitor_detail_outs(
-                invitation,
-                form_context.visitor_info_groups,
-                include_documents=include_documents,
-                field_meta=form_context.field_meta,
-            ),
-        ],
-        vehicles=[
-            InvitationVehicleOut(
-                id=v.id,
-                vehicle_type=v.vehicle_type,
-                license_plate=v.license_plate,
-                make_model=v.make_model,
-                color=v.color,
-                custom_fields=_dict_to_custom_fields(
-                    form_context.field_meta,
-                    await _resolve_custom_field_file_values(
-                        v.custom_field_values,
-                        form_context.vehicle_info_file_ids,
-                        include_documents=include_documents,
-                    ),
-                ),
-            )
-            for v in invitation.vehicles
-        ],
-        archived_at=invitation.archived_at,
-        checked_out_automatically=invitation.checked_out_automatically,
-    )
-
-
-async def _to_badge_out(invitation) -> BadgeOut:
-    assert invitation.badge_number is not None and invitation.badge_issued_at is not None
-    return BadgeOut(
-        badge_number=invitation.badge_number,
-        badge_url=await storage_url_for(invitation.badge_storage_key),
-        issued_at=invitation.badge_issued_at,
-        reprint_count=invitation.badge_reprint_count,
-    )
-
-
 async def _parse_prefixed_multipart_files(
-    form_data, prefix: str, *, limit: int
+    form_data: FormData, prefix: str, *, limit: int
 ) -> dict[str, list[bytes]]:
     """Parses every `<prefix>[<key>]` multipart list part into
     `{key: [bytes, ...]}` — the shared convention `groupFieldFiles`
@@ -1168,23 +367,6 @@ async def _parse_prefixed_multipart_files(
     return result
 
 
-async def _cached_response(
-    tenant_id: uuid.UUID, idempotency_key: str | None
-) -> JSONResponse | None:
-    """api-conventions.md §3 — a retried multipart submission with the same
-    `Idempotency-Key` returns the original response instead of re-processing
-    (which would otherwise create duplicate visitor rows and send a second
-    confirmation email).
-    """
-    return await _core_cached_response(tenant_id, "invitations", idempotency_key)
-
-
-async def _cache_response(
-    tenant_id: uuid.UUID, idempotency_key: str | None, response: JSONResponse
-) -> None:
-    await _core_cache_response(tenant_id, "invitations", idempotency_key, response)
-
-
 # --- API-09: employee creates a fully completed invitation ------------------
 
 
@@ -1196,6 +378,7 @@ async def _cache_response(
 )
 async def create_invitation(
     request: Request,
+    idem: Annotated[Idempotency, Depends(idempotency)],
     background_tasks: BackgroundTasks,
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
@@ -1296,14 +479,16 @@ async def create_invitation(
     any other value for it is rejected with `422`, never silently
     overwritten; the file is the only valid source of that field's answer.
     """
-    cached = await _cached_response(tenant.id, idempotency_key)
+    cached = await idem.begin(
+        tenant.id, "invitations", idempotency_key, caller=str(user.id), body=payload
+    )
     if cached is not None:
         return cached
 
     try:
         create_payload = InvitationCreate.model_validate_json(payload)
     except ValidationError as exc:
-        return error_response(message=str(exc), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
+        return validation_error_response(exc)
 
     branch_id = x_branch_id if x_branch_id is not None else create_payload.effective_branch_id
     if branch_id is None:
@@ -1342,6 +527,7 @@ async def create_invitation(
     # `primary_contact_*`/`visitor_*` params above already triggered rather
     # than re-reading the request body.
     form_data = await request.form()
+    enforce_upload_file_count(form_data)
     group_field_file_contents = await _parse_prefixed_multipart_files(
         form_data, "groupFieldFiles", limit=id_proof_limit
     )
@@ -1387,7 +573,7 @@ async def create_invitation(
         data=to_invitation_out(invitation, current_approval_step),
         status_code=status.HTTP_201_CREATED,
     )
-    await _cache_response(tenant.id, idempotency_key, response)
+    await idem.store(response)
     return response
 
 
@@ -1509,20 +695,6 @@ _public_device = make_device_dependency(track_default_tenant_db)
 _staff_device = make_device_dependency(get_tenant_db)
 
 
-async def _attach_devices(out, invitation, tenant_db: AsyncSession):
-    """Fills `checkInDevice`/`checkOutDevice` with one lookup for both ids."""
-    briefs = await device_service.device_briefs(
-        tenant_db, invitation.check_in_device_id, invitation.check_out_device_id
-    )
-    out.check_in_device = briefs.get(invitation.check_in_device_id)
-    out.check_out_device = briefs.get(invitation.check_out_device_id)
-    return out
-
-
-def _device_diff(device: Device | None) -> dict[str, str] | None:
-    return {"device_id": device.device_id} if device else None
-
-
 # Registered before `/{tracking_id}/check-in`: `/code/check-in` would otherwise be
 # captured by it with `tracking_id="code"`.
 @router_v2.patch(
@@ -1537,6 +709,7 @@ async def check_in_by_code(
     tenant: Annotated[Tenant, Depends(track_default_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
     device: Annotated[Device | None, Depends(_public_device)],
+    idem: Annotated[Idempotency, Depends(idempotency)],
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -1554,7 +727,13 @@ async def check_in_by_code(
     response as `PATCH /api/v2/invitations/qr/{token}/check-in`; repeated
     failed codes from one IP lock that IP out (429).
     """
-    cached = await _cached_response(tenant.id, idempotency_key)
+    cached = await idem.begin(
+        tenant.id,
+        "invitations",
+        idempotency_key,
+        caller=str(device.id) if device else "anonymous",
+        body=payload.model_dump_json(),
+    )
     if cached is not None:
         return cached
 
@@ -1585,7 +764,7 @@ async def check_in_by_code(
     response = success_response(
         data=await _attach_devices(out, invitation, tenant_db), message=message
     )
-    await _cache_response(tenant.id, idempotency_key, response)
+    await idem.store(response)
     return response
 
 
@@ -1601,6 +780,7 @@ async def check_out_by_code(
     tenant: Annotated[Tenant, Depends(track_default_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
     device: Annotated[Device | None, Depends(_public_device)],
+    idem: Annotated[Idempotency, Depends(idempotency)],
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -1613,7 +793,13 @@ async def check_out_by_code(
     "Public Check-Out by Code"). Same rules as the QR check-out: never
     expiry-blocked, 409 unless currently `checked_in`.
     """
-    cached = await _cached_response(tenant.id, idempotency_key)
+    cached = await idem.begin(
+        tenant.id,
+        "invitations",
+        idempotency_key,
+        caller=str(device.id) if device else "anonymous",
+        body=payload.model_dump_json(),
+    )
     if cached is not None:
         return cached
 
@@ -1643,7 +829,7 @@ async def check_out_by_code(
     response = success_response(
         data=await _attach_devices(out, invitation, tenant_db), message=message
     )
-    await _cache_response(tenant.id, idempotency_key, response)
+    await idem.store(response)
     return response
 
 
@@ -1659,6 +845,7 @@ async def check_in_invitation_by_tracking_id(
     tenant: Annotated[Tenant, Depends(track_default_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
     device: Annotated[Device | None, Depends(_public_device)],
+    idem: Annotated[Idempotency, Depends(idempotency)],
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -1672,6 +859,9 @@ async def check_in_invitation_by_tracking_id(
                 "api-conventions.md §3."
             ),
         ),
+    ] = None,
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(optional_bearer_scheme)
     ] = None,
 ) -> JSONResponse:
     """The single staff/desk-facing check-in endpoint (spec.md "Staff
@@ -1688,9 +878,32 @@ async def check_in_invitation_by_tracking_id(
     Surfaces Full Invitation Detail"). No branch authorization check, since
     there is no authenticated caller to check it against.
     """
-    cached = await _cached_response(tenant.id, idempotency_key)
+    cached = await idem.begin(
+        tenant.id,
+        "invitations",
+        idempotency_key,
+        caller=str(device.id) if device else "anonymous",
+        body="",
+    )
     if cached is not None:
         return cached
+
+    trusted = device is not None
+    if not trusted:
+        # public-endpoint-hardening: anonymous remote check-in by tracking ID
+        # is allowed only while hardening is off (and flagged as deprecated).
+        caller = await optional_caller(tenant_db, credentials)
+        branch_id = await service.branch_of_tracking_id(tenant_db, tracking_id)
+        trusted = (
+            caller is not None
+            and branch_id is not None
+            and caller.has_permission("invitations:checkin", branch_id)
+        )
+        if not trusted and strict_public_access():
+            return error_response(
+                "A registered device or staff sign-in is required to check in",
+                status.HTTP_401_UNAUTHORIZED,
+            )
 
     invitation, changed = await service.check_in_invitation_by_tracking_id(
         tenant_db, tracking_id, tenant=tenant, device=device
@@ -1710,8 +923,8 @@ async def check_in_invitation_by_tracking_id(
     )
     out = await _to_check_in_out(invitation, form_context=form_context)
     response = success_response(data=await _attach_devices(out, invitation, tenant_db))
-    await _cache_response(tenant.id, idempotency_key, response)
-    return response
+    await idem.store(response)
+    return response if trusted else flag_legacy_access(response, feature_doc="invitations.md")
 
 
 @router_v2.patch(
@@ -1726,6 +939,7 @@ async def check_in_by_qr_token(
     tenant: Annotated[Tenant, Depends(track_default_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
     device: Annotated[Device | None, Depends(_public_device)],
+    idem: Annotated[Idempotency, Depends(idempotency)],
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -1754,7 +968,13 @@ async def check_in_by_qr_token(
     read/write the same `checkInStatus` column, so a visitor checked in via
     one is recognized as already-checked-in by the other.
     """
-    cached = await _cached_response(tenant.id, idempotency_key)
+    cached = await idem.begin(
+        tenant.id,
+        "invitations",
+        idempotency_key,
+        caller=str(device.id) if device else "anonymous",
+        body="",
+    )
     if cached is not None:
         return cached
 
@@ -1785,7 +1005,7 @@ async def check_in_by_qr_token(
     response = success_response(
         data=await _attach_devices(out, invitation, tenant_db), message=message
     )
-    await _cache_response(tenant.id, idempotency_key, response)
+    await idem.store(response)
     return response
 
 
@@ -1801,6 +1021,7 @@ async def check_out_by_qr_token(
     tenant: Annotated[Tenant, Depends(track_default_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
     device: Annotated[Device | None, Depends(_public_device)],
+    idem: Annotated[Idempotency, Depends(idempotency)],
     idempotency_key: Annotated[
         str | None,
         Header(
@@ -1822,7 +1043,13 @@ async def check_out_by_qr_token(
     closed out). Rejects with 409 when the invitation isn't currently
     `checked_in`.
     """
-    cached = await _cached_response(tenant.id, idempotency_key)
+    cached = await idem.begin(
+        tenant.id,
+        "invitations",
+        idempotency_key,
+        caller=str(device.id) if device else "anonymous",
+        body="",
+    )
     if cached is not None:
         return cached
 
@@ -1852,7 +1079,7 @@ async def check_out_by_qr_token(
     response = success_response(
         data=await _attach_devices(out, invitation, tenant_db), message=message
     )
-    await _cache_response(tenant.id, idempotency_key, response)
+    await idem.store(response)
     return response
 
 
@@ -1867,12 +1094,22 @@ async def check_out_invitation(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
     device: Annotated[Device | None, Depends(_staff_device)],
+    idem: Annotated[Idempotency, Depends(idempotency)],
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", description="Optional — see check-in.")
+    ] = None,
 ) -> JSONResponse:
     """Transitions a `checked_in` invitation to `checked_out`, closing the
-    visit (spec.md "A Checked-In Invitation Can Be Checked Out"). Re-running
-    it on an already checked-out invitation is rejected by the service, so no
-    `Idempotency-Key` is needed here.
+    visit (spec.md "A Checked-In Invitation Can Be Checked Out"). The optional
+    `Idempotency-Key` is scoped to this route and caller, so a key reused from
+    check-in can't replay the check-in response here.
     """
+    cached = await idem.begin(
+        tenant.id, "invitations", idempotency_key, caller=str(user.id), body=""
+    )
+    if cached is not None:
+        return cached
+
     invitation = await service.get_invitation(tenant_db, invitation_id)
     await authorize_branch_id_tolerant(
         tenant_db, user, "invitations:checkout", invitation.branch_id
@@ -1890,7 +1127,9 @@ async def check_out_invitation(
         diff=_device_diff(device),
     )
     out = await _attach_devices(to_invitation_out(invitation), invitation, tenant_db)
-    return success_response(data=out)
+    response = success_response(data=out)
+    await idem.store(response)
+    return response
 
 
 @router.patch(
@@ -2055,6 +1294,7 @@ async def issue_badge(
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
+    idem: Annotated[Idempotency, Depends(idempotency)],
     idempotency_key: Annotated[
         str | None, Header(alias="Idempotency-Key", description="Optional — see check-in.")
     ] = None,
@@ -2062,7 +1302,9 @@ async def issue_badge(
     """Issues a printable badge for an `approved`/`checked_in` invitation
     (spec.md "A Badge Can Be Printed for an Approved or Active Visit").
     """
-    cached = await _cached_response(tenant.id, idempotency_key)
+    cached = await idem.begin(
+        tenant.id, "invitations", idempotency_key, caller=str(user.id), body=""
+    )
     if cached is not None:
         return cached
 
@@ -2080,7 +1322,7 @@ async def issue_badge(
     response = success_response(
         data=await _to_badge_out(invitation), status_code=status.HTTP_201_CREATED
     )
-    await _cache_response(tenant.id, idempotency_key, response)
+    await idem.store(response)
     return response
 
 
@@ -2149,14 +1391,55 @@ async def override_watchlist(
 # --- Employee listing ---------------------------------------------------------
 
 
+def _list_drill_down(
+    visit_date_from: Annotated[date | None, Query(alias="visitDateFrom")] = None,
+    visit_date_to: Annotated[date | None, Query(alias="visitDateTo")] = None,
+    upcoming: Annotated[bool, Query()] = False,
+    exclude_expired: Annotated[bool, Query(alias="excludeExpired")] = False,
+    branch_id: Annotated[uuid.UUID | None, Query(alias="branchId")] = None,
+) -> service.ListDrillDown | None:
+    """specs/invitations/spec.md "Invitation List Supports Dashboard
+    Drill-Down Filters" — shared by the list and the export. `None` when
+    none is given, so the existing paths stay untouched.
+    """
+    if visit_date_from and visit_date_to and visit_date_from > visit_date_to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="visitDateFrom must not be later than visitDateTo",
+        )
+    drill_down = service.ListDrillDown(
+        visit_date_from=visit_date_from,
+        visit_date_to=visit_date_to,
+        upcoming=upcoming,
+        exclude_expired=exclude_expired,
+        branch_id=branch_id,
+    )
+    return None if drill_down == service.ListDrillDown() else drill_down
+
+
+def _drill_down_audit(drill_down: service.ListDrillDown | None) -> dict[str, Any]:
+    """The export audit entry's drill-down filters, JSON-ready."""
+    if drill_down is None:
+        return {}
+    return {
+        "visit_date_from": drill_down.visit_date_from and drill_down.visit_date_from.isoformat(),
+        "visit_date_to": drill_down.visit_date_to and drill_down.visit_date_to.isoformat(),
+        "upcoming": drill_down.upcoming,
+        "exclude_expired": drill_down.exclude_expired,
+        "branch_id": drill_down.branch_id and str(drill_down.branch_id),
+    }
+
+
 @router.get(
     "",
     response_model=PaginatedEnvelope[InvitationListItemOut],
 )
 async def list_invitations(
+    token_payload: Annotated[dict[str, Any], Depends(get_token_payload)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(get_current_user)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    drill_down: Annotated[service.ListDrillDown | None, Depends(_list_drill_down)],
     x_branch_id: Annotated[uuid.UUID | None, Header(alias="X-Branch-ID")] = None,
     relevant_to_me: Annotated[bool, Query(alias="relevantToMe")] = False,
     sort_by: Annotated[InvitationSortableField, Query(alias="sortBy")] = "submitted_at",
@@ -2192,6 +1475,10 @@ async def list_invitations(
         )
     else:
         default_host_role_id = (await get_default_host_role(tenant_db)).id
+    if drill_down is not None and drill_down.branch_id is not None and not relevant_to_me:
+        # Narrowing only: `branchId` must lie inside the caller's view-all
+        # scope (404/403 otherwise). Under relevantToMe it just filters.
+        await authorize_branch_id(tenant_db, user, "invitations:view-all", drill_down.branch_id)
     invitations, total = await service.list_invitations_page(
         tenant_db,
         branch_scope=branch_scope,
@@ -2206,9 +1493,19 @@ async def list_invitations(
         sort_by=sort_by,
         sort_order=sort_order,
         purpose_of_visit=purpose_of_visit,
+        # The tenant id, not `get_tenant`: the tenant itself is only needed
+        # for a visit-date filter's timezone, so the service loads it then.
+        # (`get_tenant` here would also roll back the shared session under
+        # the test client and expire objects the list tests still hold.)
+        tenant_id=uuid.UUID(token_payload["tenant_id"]),
+        drill_down=drill_down,
     )
+    current_steps = await service.current_approval_steps(tenant_db, invitations)
     return paginated_response(
-        data=[await _to_list_item_out(invitation) for invitation in invitations],
+        data=[
+            await _to_list_item_out(invitation, current_steps.get(invitation.id))
+            for invitation in invitations
+        ],
         page=page,
         page_size=page_size,
         total=total,
@@ -2226,6 +1523,7 @@ async def list_invitations(
 )
 async def clear_invitations(
     payload: ClearInvitationsRequest,
+    idem: Annotated[Idempotency, Depends(idempotency)],
     tenant: Annotated[Tenant, Depends(get_tenant)],
     user: Annotated[User, Depends(require_permission("invitations:clear-all"))],
     idempotency_key: Annotated[
@@ -2243,7 +1541,13 @@ async def clear_invitations(
     caller's tenant, or only those whose visit date falls in `month` /
     `fromDate`..`toDate`. Runs in the background.
     """
-    cached = await _cached_response(tenant.id, idempotency_key)
+    cached = await idem.begin(
+        tenant.id,
+        "invitations",
+        idempotency_key,
+        caller=str(user.id),
+        body=payload.model_dump_json(),
+    )
     if cached is not None:
         return cached
     try:
@@ -2254,7 +1558,7 @@ async def clear_invitations(
             status_code=status.HTTP_409_CONFLICT,
         )
     response = success_response(data=result, status_code=status.HTTP_202_ACCEPTED)
-    await _cache_response(tenant.id, idempotency_key, response)
+    await idem.store(response)
     return response
 
 
@@ -2292,6 +1596,7 @@ async def export_invitations(
     purpose_of_visit: Annotated[str | None, Query(alias="purposeOfVisit", max_length=255)] = None,
     date_from: Annotated[date | None, Query(alias="dateFrom")] = None,
     date_to: Annotated[date | None, Query(alias="dateTo")] = None,
+    drill_down: Annotated[service.ListDrillDown | None, Depends(_list_drill_down)] = None,
 ) -> Response:
     """specs/invitation-export/spec.md — a raw file download, so it's the
     documented exception to `success_response`; every error path is still
@@ -2303,8 +1608,10 @@ async def export_invitations(
     try:
         date_range = InvitationExportDateRange(date_from=date_from, date_to=date_to)
     except ValidationError as exc:
-        return error_response(message=str(exc), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
+        return validation_error_response(exc)
 
+    if drill_down is not None and drill_down.branch_id is not None:
+        await authorize_branch_id(tenant_db, user, "invitations:export", drill_down.branch_id)
     default_host_role_id = (await get_default_host_role(tenant_db)).id if relevant_to_me else None
     filters: dict[str, Any] = {
         "relevant_to_me": relevant_to_me,
@@ -2315,6 +1622,7 @@ async def export_invitations(
         "purpose_of_visit": purpose_of_visit,
         "date_from": date_from.isoformat() if date_from is not None else None,
         "date_to": date_to.isoformat() if date_to is not None else None,
+        **_drill_down_audit(drill_down),
     }
     try:
         export_file = await service.export_invitations(
@@ -2330,6 +1638,7 @@ async def export_invitations(
             purpose_of_visit=purpose_of_visit,
             date_range=date_range,
             export_format=export_format,
+            drill_down=drill_down,
         )
     except service.ExportTooLargeError as exc:
         logger.warning("invitations_export_too_large", format=export_format.value)
@@ -2392,7 +1701,7 @@ async def get_invitation_calendar(
     try:
         date_range = CalendarDateRange(date_from=date_from, date_to=date_to)
     except ValidationError as exc:
-        return error_response(message=str(exc), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
+        return validation_error_response(exc)
 
     feed = await service.get_calendar_feed(
         tenant_db,
@@ -2480,7 +1789,7 @@ async def lookup_invitation_by_phone(
     branch scoping, and `documents:view` gate on `idProofUrl`; `email` is
     included so the Reception form can fill it from a phone number.
     """
-    digits = phone_digits(phone)
+    digits = service.phone_digits(phone)
     if len(digits) < _MIN_PHONE_DIGITS:
         return error_response(
             message=f"phone must contain at least {_MIN_PHONE_DIGITS} digits",
@@ -2504,6 +1813,9 @@ async def track_invitation(
     tenant_db: Annotated[AsyncSession, Depends(track_default_tenant_db)],
     tracking_id: Annotated[str | None, Query(alias="trackingId")] = None,
     email: Annotated[str | None, Query()] = None,
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(optional_bearer_scheme)
+    ] = None,
 ) -> JSONResponse:
     if (tracking_id is None) == (email is None):
         return error_response(
@@ -2524,12 +1836,38 @@ async def track_invitation(
         )
 
     assert email is not None  # exactly one of the two is guaranteed set above
+    # public-endpoint-hardening: listing an address's tracking IDs needs proof
+    # the caller controls that address (an OTP proof token) once hardening is
+    # on; until then it's served as before and flagged as deprecated.
+    proven = _proves_ownership_of(credentials, email)
+    if not proven and strict_public_access():
+        return error_response(
+            "Verify this email address with a one-time code first",
+            status.HTTP_401_UNAUTHORIZED,
+        )
     invitations = await service.track_by_email(tenant_db, email)
-    return success_response(
+    response = success_response(
         data=[
             InvitationTrackingSummaryOut(tracking_id=inv.tracking_id, status=inv.status)
             for inv in invitations
         ]
+    )
+    return response if proven else flag_legacy_access(response, feature_doc="invitations.md")
+
+
+def _proves_ownership_of(credentials: HTTPAuthorizationCredentials | None, email: str) -> bool:
+    """A valid `identity_verified` proof token (OTP verify) issued for this
+    same email address. Never raises: anything else is simply "no proof"."""
+    if credentials is None:
+        return False
+    try:
+        payload = decode_token(credentials.credentials)
+    except HTTPException:
+        return False
+    subject = str(payload.get("sub", ""))
+    return (
+        payload.get("type") == "identity_verified"
+        and subject.strip().lower() == email.strip().lower()
     )
 
 
@@ -2590,14 +1928,13 @@ async def get_invitation_detail(
         tenant_db, tenant, invitation.branch_id
     )
     include_documents = user.has_permission("documents:view", invitation.branch_id)
-    return success_response(
-        data=await _to_invitation_detail_out(
-            invitation,
-            current_approval_step,
-            branch=branch,
-            department=department,
-            building=building,
-            include_documents=include_documents,
-            form_context=form_context,
-        )
+    out = await _to_invitation_detail_out(
+        invitation,
+        current_approval_step,
+        branch=branch,
+        department=department,
+        building=building,
+        include_documents=include_documents,
+        form_context=form_context,
     )
+    return success_response(data=await _attach_devices(out, invitation, tenant_db))

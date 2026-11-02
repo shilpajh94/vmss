@@ -2,7 +2,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from vmss_api.core.database import TenantScopedRepository
+from vmss_api.core.database import TenantScopedRepository, order_clause
 from vmss_api.core.schemas import SortOrder
 from vmss_api.kiosks.models import Kiosk
 from vmss_api.org_structure.schemas import ActiveStatus
@@ -36,6 +36,6 @@ class KioskRepository(TenantScopedRepository[Kiosk]):
         return await super().paginate(
             page=page,
             page_size=page_size,
-            order_by=column.desc() if sort_order == SortOrder.desc else column.asc(),
+            order_by=order_clause(column, sort_order),
             filters=filters,
         )

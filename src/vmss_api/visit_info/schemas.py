@@ -6,7 +6,8 @@ from vmss_api.core.schemas import CamelModel
 class HostSearchResultOut(CamelModel):
     id: uuid.UUID
     name: str
-    email: str
+    # Null only for an anonymous caller once PUBLIC_ENDPOINT_HARDENING is on.
+    email: str | None
     department: str | None = None
 
 

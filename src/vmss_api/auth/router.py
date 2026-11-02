@@ -22,6 +22,8 @@ from vmss_api.auth.schemas import (
     EmployeeSyncRequest,
     EmployeeSyncResult,
     LoginRequest,
+    MeOut,
+    MyBranchRoleOut,
     PermissionOut,
     PermissionSortableField,
     RoleCreateRequest,
@@ -44,12 +46,17 @@ from vmss_api.core.deps import (
     require_permission,
     require_permission_anywhere,
 )
+from vmss_api.core.public_access import flag_legacy_access, strict_public_access
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import paginated_response, success_response
 from vmss_api.core.schemas import BranchScope, Envelope, PaginatedEnvelope, SortOrder
-from vmss_api.core.storage import url_for as storage_url_for
+from vmss_api.core.storage import url_for_optional
 from vmss_api.core.tenancy import get_token_payload
-from vmss_api.org_structure.deps import public_branch_scope, public_tenant_db
+from vmss_api.org_structure.deps import (
+    public_branch_scope,
+    public_optional_caller,
+    public_tenant_db,
+)
 from vmss_api.tenant.models import Tenant
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -105,7 +112,7 @@ async def logout(
 
 
 async def _resolve_avatar_url(storage_key: str | None) -> str | None:
-    return await storage_url_for(storage_key) if storage_key is not None else None
+    return await url_for_optional(storage_key)
 
 
 async def _to_user_out(user: User) -> UserOut:
@@ -122,14 +129,29 @@ async def _to_user_out(user: User) -> UserOut:
     )
 
 
-@router.get("/me", response_model=Envelope[UserOut])
+@router.get("/me", response_model=Envelope[MeOut])
 async def get_my_profile(user: Annotated[User, Depends(get_current_user)]) -> JSONResponse:
-    return success_response(data=await _to_user_out(user))
+    out = await _to_user_out(user)
+    return success_response(
+        data=MeOut(
+            **out.model_dump(exclude={"branch_roles"}),
+            branch_roles=[
+                MyBranchRoleOut(
+                    id=a.id,
+                    role_name=a.role.name,
+                    branch_id=a.branch_id,
+                    permission_codes=sorted(p.code for p in a.role.permissions),
+                )
+                for a in user.branch_roles
+            ],
+        )
+    )
 
 
 @router.post("/me/avatar", response_model=Envelope[AvatarUploadOut])
 async def upload_my_avatar(
     file: Annotated[UploadFile, File(...)],
+    background_tasks: BackgroundTasks,
     tenant: Annotated[Tenant, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     actor: Annotated[User, Depends(get_current_user)],
@@ -142,6 +164,14 @@ async def upload_my_avatar(
     content = await file.read(settings.avatar_max_upload_size_bytes + 1)
     updated = await service.upload_avatar(
         tenant_db, tenant_id=tenant.id, user=actor, content=content
+    )
+    background_tasks.add_task(
+        record_audit_log,
+        tenant.schema_name,
+        actor_user_id=actor.id,
+        action="user_avatar_updated",
+        entity_type="User",
+        entity_id=actor.id,
     )
     return success_response(
         data=AvatarUploadOut(avatar_url=await _resolve_avatar_url(updated.avatar_url))
@@ -420,6 +450,7 @@ async def list_employees(
     branch_scope: Annotated[BranchScope, Depends(public_branch_scope)],
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    caller: Annotated[User | None, Depends(public_optional_caller)],
     department_id: Annotated[uuid.UUID | None, Query(alias="departmentId")] = None,
     email: Annotated[EmailStr | None, Query()] = None,
     role: Annotated[str | None, Query(max_length=100)] = None,
@@ -462,8 +493,18 @@ async def list_employees(
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    employee_outs = [await _to_employee_out(e) for e in employees]
-    return paginated_response(data=employee_outs, page=page, page_size=page_size, total=total)
+    # public-endpoint-hardening: contact PII is for callers holding
+    # `employees:view`. Anyone else gets it only while hardening is off, and
+    # the response says that contract is deprecated.
+    permitted = caller is not None and bool(caller.authorized_branch_ids("employees:view"))
+    if permitted or not strict_public_access():
+        employee_outs = [await _to_employee_out(e) for e in employees]
+        response = paginated_response(
+            data=employee_outs, page=page, page_size=page_size, total=total
+        )
+        return response if permitted else flag_legacy_access(response, feature_doc="auth.md")
+    directory_outs = [await _to_employee_directory_out(e) for e in employees]
+    return paginated_response(data=directory_outs, page=page, page_size=page_size, total=total)
 
 
 async def _to_employee_directory_out(user: User) -> EmployeeDirectoryOut:

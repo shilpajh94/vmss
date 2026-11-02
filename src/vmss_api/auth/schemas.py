@@ -52,6 +52,19 @@ class UserOut(CamelModel):
     branch_roles: list[BranchRoleOut]
 
 
+class MyBranchRoleOut(BranchRoleOut):
+    """`GET /auth/me`'s branch role, with every permission code the role
+    grants — so a client gates UI by permission, not by role name, and a
+    tenant-defined role gets exactly the UI its grants allow (auth spec "The
+    Current-User Profile Surfaces Effective Permission Codes")."""
+
+    permission_codes: list[str]
+
+
+class MeOut(UserOut):
+    branch_roles: list[MyBranchRoleOut]  # type: ignore[assignment]
+
+
 class RoleCreateRequest(CamelModel):
     name: str = Field(max_length=100)
     description: str | None = Field(default=None, max_length=255)

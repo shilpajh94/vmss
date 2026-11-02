@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import uuid
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.core.schemas import SortOrder
 from vmss_api.kiosks.models import Kiosk
 from vmss_api.kiosks.repository import KioskRepository
 from vmss_api.kiosks.schemas import KioskCreate, KioskUpdate
 from vmss_api.org_structure.schemas import ActiveStatus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 _DUPLICATE_NAME = "A kiosk with this name already exists"
 

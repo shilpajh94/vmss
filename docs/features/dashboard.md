@@ -36,12 +36,40 @@ endpoints return `today` (the tenant-local date the figures are for) and
 
 | Field | Meaning |
 |---|---|
-| `scheduledTodayCount` | Scheduled visit date is today, status `approved`/`checked_in`/`checked_out`. Use this for "Expected today". |
-| `checkedInTodayCount` | Most recent check-in time falls today. |
+| `scheduledTodayCount` | Visit day is today, status `approved`/`checked_in`/`checked_out`. Use this for "Expected today". |
+| `scheduledTodayCheckedInCount` | Those of `scheduledTodayCount` checked in at least once — the "checked in so far" line. Never more than `scheduledTodayCount`. |
+| `checkedInTodayCount` | Most recent check-in time falls today, whatever the visit day. Equals the sum of the analytics `hourlyCheckInsToday`, so it can exceed `scheduledTodayCount` (a visitor scheduled for tomorrow who came today). |
 | `checkedInCount` | Currently `checked_in`. |
-| `pendingApprovalCount` / `oldestPendingSubmittedAt` | `submitted` invitations, and the oldest one's submission time (null when none). |
+| `openPendingApprovalCount` / `oldestOpenPendingSubmittedAt` | `submitted` invitations whose `expiresAt` is still in the future, and the oldest one's submission time (null when none). Use these for "Pending approval". |
+| `pendingApprovalCount` / `oldestPendingSubmittedAt` | **Deprecated.** Every `submitted` invitation, including requests whose visit window closed long ago (nothing ever closes those). Flagged `deprecated: true` in OpenAPI; removal on **2027-01-26**. Migrate to the `open…` fields. |
 | `upcomingVisitorCount` | `approved`, never checked in, not expired. Same filter as the preview list. |
 | `visitsTodayCount` | **Deprecated.** Invitations *created* today. It keeps that meaning for existing clients, is flagged `deprecated: true` in OpenAPI, and is scheduled for removal on **2027-01-14**. Migrate to `scheduledTodayCount`. |
+
+### Every count equals the list it drills into
+
+`fix-dashboard-count-accuracy`. Each count and its list filter are built
+from the same helper in `invitations/repository.py` (`visit_day_filter`,
+`not_expired_filter`, `upcoming_filters`), so for the same caller, scope
+and moment:
+
+| Count | `GET /invitations` with |
+|---|---|
+| `scheduledTodayCount` | `visitDateFrom` = `visitDateTo` = `today`, summed over `status` = `approved`, `checked_in`, `checked_out` |
+| `checkedInCount` | `status=checked_in` |
+| `openPendingApprovalCount` | `status=submitted&excludeExpired=true` |
+| `upcomingVisitorCount` | `upcoming=true` |
+| a `statusBreakdown` row | that `status`, `visitDateFrom` = first `dailyTrend` date, `visitDateTo` = `today` |
+
+Add `branchId` to both sides for a single branch. `my-overview` maps the
+same way with `relevantToMe=true` (`visitsToday`, `insideNow`,
+`openAwaitingApproval`, `upcoming`). `upcoming`/`excludeExpired` compare
+against each request's own clock, so a dashboard poll and a list load
+seconds apart can differ by an invitation that expired in between.
+
+Reception's board is a `relevantToMe` list. It matches the branch-scoped
+reception dashboard because the default host role sees every invitation at
+its branches (`relevantToMe` clause (e)). That holds as long as reception
+holds that role wherever it holds `invitations:view-all`.
 
 Upcoming-preview and check-ins rows carry `hostFullName`, joined
 server-side, so clients don't need to resolve host ids from the employee
@@ -90,10 +118,13 @@ instead.
   whole authorization. There is no `branchId` param, and `X-Branch-ID` is
   ignored.
 - **Figures**:
-  - `visitsToday` counts invitations scheduled today (tenant timezone) in
+  - `visitsToday` counts invitations whose visit day is today in
     `approved`, `checked_in` or `checked_out`.
   - `insideNow` counts `checked_in` invitations.
-  - `awaitingApproval` counts `submitted` invitations.
+  - `openAwaitingApproval` counts `submitted` invitations whose
+    `expiresAt` is still in the future. `awaitingApproval` (every
+    `submitted` one, expired included) is **deprecated**, removal on
+    **2027-01-26**.
   - `upcoming` counts invitations that are `approved`, never checked in,
     and not yet expired.
   - The preview lists upcoming invitations by scheduled date and time.
@@ -134,16 +165,22 @@ The dashboard no longer exposes its own check-in mutation. The admin portal's
 other staff/desk check-in flow uses. `Idempotency-Key` and the resulting
 audit-trail entry behave exactly as they do for that endpoint.
 
-## "Today" follows the tenant's configured timezone
+## "Today" follows the visit timezone
 
-Every "today" figure (scheduled-today, checked-in-today, the deprecated
-visits-created-today count, and the analytics day and hour buckets) uses
-the tenant's timezone. The overview's "visits created today" count converts `Invitation.created_at`
-(stored UTC) into the resolved tenant's `Tenant.timezone` to determine the day
-boundary (`dashboard/service.py::_today_bounds_utc`, stdlib `zoneinfo`), then
-queries with a plain UTC range — one indexed `created_at` range scan, not a
-per-row Python filter. `Tenant.timezone` has no DB-level validation, so an
-unresolvable value falls back to UTC with a `WARNING` log rather than a 500.
+Every "today" figure, every analytics day and hour bucket, and the
+`timezone` each response reports use the **visit timezone**:
+`Company.defaultTimezone`, else `Tenant.timezone`, else UTC, with an
+invalid name skipped and logged at `WARNING`. It's the same zone that sets
+each invitation's `expiresAt` (`invitations/service.py::resolve_visit_timezone`),
+so "today" on the dashboard is the day the rest of the system uses.
+Before `fix-dashboard-count-accuracy`, the dashboard read `Tenant.timezone`
+only, which put "today" and the hourly chart off by the company's UTC
+offset.
+
+A visit's **day** is its scheduled visit date or, when it has none, the
+visit-timezone date it was created. Counts and list filters test it as two
+OR arms, so the dated arm stays on `ix_invitations_branch_visit_date`.
+Charts group by `coalesce(...)` over a subquery.
 
 ## Non-goals
 

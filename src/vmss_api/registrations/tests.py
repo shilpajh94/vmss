@@ -19,6 +19,7 @@ from factories import (
     CompanyFactory,
     RoleFactory,
     VisitorCategoryFactory,
+    with_default_location,
 )
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.approvals.repository import InvitationApprovalStepRepository
@@ -35,7 +36,7 @@ from vmss_api.org_structure.models import Branch
 from vmss_api.registrations.models import RegistrationDeviceKey
 from vmss_api.tenant.models import Tenant
 
-# Same fixed-id/autouse-fixture pattern as `invitations/tests.py` — walk-in
+# Same fixed-id/autouse-fixture pattern as `invitations/tests/` — walk-in
 # registration shares `InvitationCreate` (aliased `WalkInRegistrationCreate`)
 # verbatim, so it now needs a valid `visitorCategoryId` too.
 _DEFAULT_VISITOR_CATEGORY_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
@@ -56,7 +57,7 @@ async def _default_host_role(db_session: AsyncSession) -> None:
     """`create_invitation` (shared verbatim by walk-in registration) now
     always resolves the tenant's default host role
     (role-based-invitation-workflow) — same rationale as
-    `invitations/tests.py::_default_host_role`.
+    `invitations/tests/::_default_host_role`.
     """
     db_session.add(RoleFactory.build(id=uuid.uuid4(), name="reception", permissions=[]))
     await db_session.commit()
@@ -93,7 +94,7 @@ def _jpeg_bytes() -> bytes:
 
 @pytest_asyncio.fixture(autouse=True)
 def _reset_live_consent_field_ids():
-    """See `invitations/tests.py`'s fixture of the same name — resets the
+    """See `invitations/tests/`'s fixture of the same name — resets the
     module-level cache `_record_live_consent_field_ids` populates before
     every test."""
     global _live_consent_field_ids
@@ -105,7 +106,7 @@ _live_consent_field_ids: dict[str, str] | None = None
 
 
 def _record_live_consent_field_ids(steps: list[dict]) -> None:
-    """See `invitations/tests.py::_record_live_consent_field_ids` — called
+    """See `invitations/tests/::_record_live_consent_field_ids` — called
     by admin-side setup helpers right after publishing, since that seeds
     the branch's default Consent Agreement fields as real (random-id)
     database rows, no longer matching `_default_consent_field_id`'s
@@ -118,7 +119,7 @@ def _record_live_consent_field_ids(steps: list[dict]) -> None:
 
 
 def _default_consent_field_id(key: str) -> str:
-    """See `invitations/tests.py::_default_consent_field_id` — the
+    """See `invitations/tests/::_default_consent_field_id` — the
     branch's own real id if a test has published anything for it
     (`_live_consent_field_ids`), otherwise the deterministic default-form
     id, since walk-in registration falls back to the same unpublished
@@ -182,6 +183,7 @@ async def _create_walk_in(
         headers["X-Device-Key"] = device_key
     if idempotency_key is not None:
         headers["Idempotency-Key"] = idempotency_key
+    payload = await with_default_location(payload)
     files = [
         ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
         ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
@@ -234,7 +236,7 @@ async def _create_and_publish_custom_field(
     help_text: str | None = None,
 ) -> str:
     """Admin-side setup shared by the custom-field tests below — same
-    pattern as `invitations/tests.py::_create_and_publish_custom_field`,
+    pattern as `invitations/tests/::_create_and_publish_custom_field`,
     duplicated here since walk-in registration has no staff bearer token of
     its own to reuse an imported helper's auth with. Returns the created
     field's id (restructure-walkin-payload-by-field-id) — the caller must
@@ -320,7 +322,7 @@ async def test_create_group_walk_in_registration_success(
 # --- dedupe-repeat-visitor-registrations: returning primary contact --------
 # Walk-in registration shares `invitations/service.py::create_invitation`
 # verbatim, so the returning-primary-contact name lock
-# (`invitations/tests.py`'s own coverage) must hold here too — see
+# (`invitations/tests/`'s own coverage) must hold here too — see
 # `specs/invitations/spec.md` (delta) "Walk-in registration applies the
 # same lock".
 
@@ -410,24 +412,22 @@ async def test_walk_in_registration_response_has_no_check_in_state(
     data = await _create_walk_in_success(
         client, registration_device_raw_key, payload=_individual_payload()
     )
-    assert set(data.keys()) == {
+    # The response has gained additive fields over time; what this spec
+    # scenario pins is that none of them carries check-in state.
+    assert {
         "id",
         "trackingId",
         "registrationType",
         "source",
         "status",
-        "visitorCategoryId",
-        "hostId",
-        "pocUserId",
-        "pocRoleId",
-        "pocName",
         "expiresAt",
         "submittedAt",
-        "approvedAt",
-        "currentApprovalStep",
-        "archivedAt",
-        "checkedOutAutomatically",
-    }
+    } <= set(data)
+    assert data["status"] == "submitted"
+    assert data.get("checkedInAt") is None
+    assert data.get("checkInDevice") is None
+    assert data.get("checkOutDevice") is None
+    assert data.get("checkInStatus") in (None, "unused")
 
 
 async def test_walk_in_registration_visitor_list_mismatch_rejected(
@@ -478,7 +478,7 @@ async def test_walk_in_registration_oversized_file_rejected(
 async def test_walk_in_registration_oversized_file_read_is_bounded(
     client: AsyncClient, registration_device_raw_key: str, monkeypatch
 ) -> None:
-    """Sibling of `invitations/tests.py::test_create_invitation_oversized_file_read_is_bounded`
+    """Sibling of `invitations/tests/::test_create_invitation_oversized_file_read_is_bounded`
     — `POST /registrations/walk-in` accepts the identical multipart contract
     and must bound each `UploadFile.read()` call the same way
     (file-upload-handling.md §1), not just eventually reject an oversized
@@ -506,7 +506,7 @@ async def test_walk_in_registration_oversized_file_read_is_bounded(
 # spec.md "Walk-in registration inherits the same optional photo capture" —
 # `POST /registrations/walk-in` accepts the identical file-part contract
 # `POST /invitations` does; validation itself is covered exhaustively by
-# `invitations/tests.py`, so this only confirms the pass-through works.
+# `invitations/tests/`, so this only confirms the pass-through works.
 
 
 async def test_walk_in_registration_with_primary_contact_photo_succeeds(
@@ -518,7 +518,7 @@ async def test_walk_in_registration_with_primary_contact_photo_succeeds(
     ]
     response = await client.post(
         "/api/v1/registrations/walk-in",
-        data={"payload": json.dumps(_individual_payload())},
+        data={"payload": json.dumps(await with_default_location(_individual_payload()))},
         files=files,
         headers={"X-Device-Key": registration_device_raw_key},
     )
@@ -562,7 +562,7 @@ async def test_walk_in_registration_disguised_photo_rejected(
 
 # --- Role-based invitation ownership (role-based-invitation-workflow) --------
 # Walk-in registration shares `create_invitation` verbatim with `POST
-# /invitations` (see `invitations/tests.py`'s equivalent coverage), but as a
+# /invitations` (see `invitations/tests/`'s equivalent coverage), but as a
 # separate, unauthenticated caller it gets its own explicit test evidence
 # rather than relying on the shared service function alone.
 
@@ -611,7 +611,7 @@ async def test_walk_in_registration_dispatches_tracking_notification(
 ) -> None:
     """Confirms the branded tracking/creation email dispatch (template
     content itself is covered generically by
-    `invitations/tests.py::test_every_notification_template_renders_without_error`)
+    `invitations/tests/::test_every_notification_template_renders_without_error`)
     actually fires for the walk-in channel, exactly as it does for the other
     two invitation-creation callers.
     """
@@ -814,7 +814,7 @@ async def test_walk_in_registration_rate_limit_trips(
 ) -> None:
     """`slowapi`'s `Limiter` is disabled outright in the test environment
     (`core/rate_limit.py`), flipped on here for just this test — same
-    approach `invitations/tests.py::test_track_rate_limit_trips` uses.
+    approach `invitations/tests/::test_track_rate_limit_trips` uses.
     """
     monkeypatch.setattr(limiter, "enabled", True)
     responses = [
@@ -890,7 +890,7 @@ async def test_walk_in_registration_tenant_schema_isolation(
 
 # --- visit-info-lookup-api: walk-in inherits the optional catalog id fields ---
 # (the resolve/validate/overwrite behavior itself is `invitations.service`'s —
-# already covered in `invitations/tests.py` — this only confirms the walk-in
+# already covered in `invitations/tests/` — this only confirms the walk-in
 # endpoint, which shares the identical `VisitDetailsSubmit` schema, actually
 # wires it through the same way. spec.md "Walk-in registration inherits the
 # same optional fields".)
@@ -929,7 +929,7 @@ async def test_walk_in_registration_with_no_department_succeeds_and_leaves_it_un
 ) -> None:
     """allow-optional-department-at-creation spec.md "Submission with no
     department succeeds and leaves it unset" — same behavior as
-    `invitations/tests.py`'s equivalent, confirmed through the walk-in
+    `invitations/tests/`'s equivalent, confirmed through the walk-in
     endpoint since it shares the identical `VisitDetailsSubmit` schema.
     """
     payload = _individual_payload()
@@ -948,7 +948,7 @@ async def test_walk_in_registration_with_no_department_succeeds_and_leaves_it_un
 # specs/registrations/spec.md (delta) "Walk-in registration accepts the
 # same visit-record contract as staff pre-registration" — walk-in shares
 # `InvitationCreate` verbatim, so its custom-field capture is exercised
-# through the same `create_invitation` path invitations/tests.py covers
+# through the same `create_invitation` path invitations/tests/ covers
 # directly; these confirm that sharing actually holds through the walk-in
 # endpoint too.
 
@@ -1017,7 +1017,7 @@ async def test_walk_in_registration_static_text_field_needs_no_submitted_value(
     resolves the exact same effective form `create_invitation` does (both
     call the identical `resolve_effective_form`) — a `static_text` field
     collects no answer, so a walk-in submission with no value for its key
-    still succeeds, same as `invitations/tests.py::
+    still succeeds, same as `invitations/tests/::
     test_create_invitation_static_text_field_needs_no_submitted_value`."""
     admin_token = await _login(client, user.email)
     await _create_and_publish_custom_field(
@@ -1048,7 +1048,7 @@ async def test_walk_in_registration_missing_default_host_role_fails_as_server_mi
     """Confirms the shared `create_invitation` path
     (org_structure/service.py::get_default_host_role) fails identically for
     the walk-in entry point as it does for staff pre-registration — see
-    `invitations/tests.py::test_create_invitation_missing_default_host_role_fails_as_server_misconfiguration`.
+    `invitations/tests/::test_create_invitation_missing_default_host_role_fails_as_server_misconfiguration`.
     Bypasses `auth/service.py`'s rename/delete protection for the standard
     "reception" role directly at the repository layer (this state isn't
     reachable via the walk-in registration API itself — see design.md).
@@ -1073,7 +1073,7 @@ async def test_walk_in_registration_missing_default_host_role_fails_as_server_mi
     assert entry["log_level"] == "error"
     assert entry["tenant_id"] == str(tenant.id)
 
-    # Same rollback-on-exit stand-in as `invitations/tests.py`'s counterpart
+    # Same rollback-on-exit stand-in as `invitations/tests/`'s counterpart
     # test and `org_structure/tests.py`'s
     # `test_provision_branch_rolls_back_partial_tree_on_mid_transaction_conflict`
     # — the test client's `get_tenant_db` override hands every request the
@@ -1122,10 +1122,11 @@ async def test_walk_in_registration_branch_config_mismatch_logs_enforced_branch(
         is_required=True,
     )
 
+    # Two branches exist, so name the device's own branch: the test is about
+    # its consent config, not about defaulting the visit location.
+    payload = await with_default_location(_individual_payload(), branch.id)
     with capture_logs() as captured:
-        response = await _create_walk_in(
-            client, registration_device_raw_key, payload=_individual_payload()
-        )
+        response = await _create_walk_in(client, registration_device_raw_key, payload=payload)
 
     assert response.status_code == 422
 
@@ -1137,7 +1138,8 @@ async def test_walk_in_registration_branch_config_mismatch_logs_enforced_branch(
     assert entry["log_level"] == "warning"
     assert entry["branch_id"] == str(branch.id)
     assert entry["branch_id"] != str(other_branch.id)
-    assert entry["check"] == "consent_key"
+    # Renamed with restructure-walkin-payload-by-field-id (consents by fieldId).
+    assert entry["check"] == "consent_field_id"
 
 
 # --- add-repeatable-field-groups: group instance-count enforcement ----------
@@ -1153,7 +1155,7 @@ async def _update_and_publish_group_range(
     min_instances: int | None = None,
     max_instances: int | None = None,
 ) -> None:
-    """Same pattern as `invitations/tests.py`'s helper of the same name,
+    """Same pattern as `invitations/tests/`'s helper of the same name,
     duplicated here for the reason `_create_and_publish_custom_field` above
     already documents."""
     headers = {"Authorization": f"Bearer {admin_token}", "X-Branch-ID": str(branch.id)}
@@ -1236,7 +1238,7 @@ async def test_walk_in_group_instance_count_mismatch_is_logged_with_enforced_bra
 async def _create_and_publish_additional_visitors_group(
     client: AsyncClient, admin_token: str, branch: Branch
 ) -> tuple[str, str, str]:
-    """Same pattern as `invitations/tests.py::_create_and_publish_additional_visitors_group`,
+    """Same pattern as `invitations/tests/::_create_and_publish_additional_visitors_group`,
     duplicated here for the reason `_create_and_publish_custom_field` above
     already documents: a repeatable "Additional Visitors" group on Visitor
     Info with a required `name` field and its own `file_upload`-typed field
@@ -1312,7 +1314,7 @@ async def test_walk_in_registration_group_file_upload_stored_and_surfaced_on_rea
     ]
     response = await client.post(
         "/api/v1/registrations/walk-in",
-        data={"payload": json.dumps(payload)},
+        data={"payload": json.dumps(await with_default_location(payload))},
         files=[
             ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
             ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),

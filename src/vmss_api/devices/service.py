@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.core.logging import logger
 from vmss_api.core.schemas import SortOrder
@@ -18,6 +20,9 @@ from vmss_api.devices.schemas import (
     OperatingMode,
 )
 from vmss_api.org_structure.repository import BranchRepository, BuildingRepository
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _get_or_404(repo: DeviceRepository, device_pk: uuid.UUID) -> Device:

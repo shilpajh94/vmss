@@ -7,7 +7,7 @@ Exclude Sensitive Visitor Data" rule — every payload is built from
 document data, so it can't be bypassed per call site.
 """
 
-from zoneinfo import ZoneInfo
+from datetime import tzinfo
 
 from vmss_api.core.email_rendering import visit_datetime
 from vmss_api.invitations.models import Invitation
@@ -53,7 +53,7 @@ def checked_out(invitation: Invitation) -> tuple[str, str, dict[str, str]]:
     return _build(invitation, title="Visitor checked out", action="checked_out")
 
 
-def extended(invitation: Invitation, *, tz: ZoneInfo) -> tuple[str, str, dict[str, str]]:
+def extended(invitation: Invitation, *, tz: tzinfo) -> tuple[str, str, dict[str, str]]:
     """invitations spec "Invitation Expiry Extension Notifies the Host via
     Push" — names the new expiry in the visit timezone, formatted the same
     way the emails format a visit time.

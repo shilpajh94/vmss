@@ -52,6 +52,20 @@ branch from the request body via the same `authorize_branch_id` helper.
 | POST | `/api/v1/invitations/{id}/badge/reprint` | `invitations:badge` at the invitation's branch | — | Re-renders an already-issued badge from current data and increments its reprint count. 409 if none issued yet. |
 | POST | `/api/v1/invitations/{id}/watchlist-override` | `invitations:watchlist-override` (admin only by default) at the invitation's branch | — | Clears a `watchlistFlagged` invitation, with a mandatory `reason`, so check-in can proceed. 409 if not currently flagged. Does not itself check the invitation in. |
 
+## Idempotency keys are scoped per request
+
+An `Idempotency-Key` replays a cached response only for the same tenant,
+method, route, caller and request body (`core/idempotency.py`). The caller
+is the user, the device, or for OTP the identifier.
+- A key reused for a different request gets a **422**.
+- A duplicate sent while the first is still running gets a **409**.
+- A failed attempt releases its lock, so it can be retried with the same
+  key.
+
+Multipart creates are also capped by `MAX_REQUEST_BODY_BYTES` and
+`MAX_UPLOAD_FILES` (413). Branch, building and department are checked before
+any file is stored, so a 422 for a bad location leaves no orphaned uploads.
+
 ## Links in invitation emails
 
 Every visitor- and staff-facing invitation email (received, confirmed,
@@ -168,6 +182,12 @@ range (`GET /form-builder/effective`'s Vehicle Info step, `groups[].key ==
 "vehicles"`) instead of being unconditionally unlimited — a branch that
 has never configured a minimum/maximum still accepts any number of
 vehicles, including zero, unchanged from before this change.
+
+A `group` registration must have at least one visitor: either a
+`visitors[]` entry or a field group with instances (for a branch that
+collects extra visitors in its own Visitor Info group). Otherwise it is
+rejected with 422 "A group registration must list at least one visitor"
+(`audit-and-harden-api-and-web` G38).
 
 The number of `visitors[]` entries a `group` registration may declare is
 similarly checked against Visitor Info's field group's `maxInstances`
@@ -694,6 +714,12 @@ until the visitor first enters:
 approved ──revert-approval──> submitted   (only while checkInStatus = unused)
 ```
 
+- **Visitor notice**: the primary contact is told the approval was
+  withdrawn, on their preferred channel when an approved template exists
+  for it (`FAST2SMS_TEMPLATE_APPROVAL_REVERTED`, or the WhatsApp
+  equivalent). Until DLT approves that template, SMS and WhatsApp contacts
+  get the notice by email when they have an address. A contact with no
+  email is skipped with a WARNING (`approval_revert_notification_skipped_no_channel`).
 - **Request**: `PATCH /api/v1/invitations/{id}/revert-approval` with body
   `{"reason": "..."}`. A reason that is missing, empty or whitespace-only,
   or longer than 500 characters, returns 422.
@@ -912,6 +938,13 @@ touch the tracking-ID check-in (`PATCH /api/v2/invitations/{trackingId}
 
 ## Listing invitations
 
+Each list item also carries `preferredVisitDate`, `preferredVisitTime` and
+`currentApprovalStep`, the same shape as the detail view. A board card can
+therefore show the schedule and approval level without a request per card.
+Current steps for a page are loaded in one batch query.
+`GET /invitations/{id}` also returns `checkInDevice` and `checkOutDevice`.
+
+
 `GET /invitations` gives an authenticated, `invitations:view-all`-gated caller a
 paginated, filterable, sortable view of invitations — for browsing/triage
 (e.g. "who's expected today at my branch"), not for looking up one
@@ -936,6 +969,14 @@ Query params:
 | `search` | string (max 255) | unset | Case-insensitive substring match against primary contact name **or** tracking ID. |
 | `purposeOfVisit` | string (max 255) | unset | Exact (case-sensitive) match against the invitation's purpose of visit. Used by the paged web board's purpose dropdown so filtering — and `pagination.total` — happens server-side (`add-invitation-purpose-filter`). |
 | `relevantToMe` | bool | `false` | See "Relevant to me" below — a different filter mode entirely, not a narrower branch scope. |
+| `visitDateFrom` / `visitDateTo` | date (`YYYY-MM-DD`) | unset | Inclusive range on the visit day: the scheduled visit date, else the visit-timezone creation date. Either may be given alone; `visitDateFrom` later than `visitDateTo` is a 422 (`fix-dashboard-count-accuracy`). |
+| `upcoming` | bool | `false` | Only `approved`, never-checked-in, not-expired invitations — the dashboard's "upcoming" filter. |
+| `excludeExpired` | bool | `false` | Only invitations whose `expiresAt` is in the future. |
+| `branchId` | uuid | unset | Narrows to one branch. In the default mode it must lie inside the caller's `invitations:view-all` scope (404/403 otherwise); under `relevantToMe` it only filters the caller's own set and never widens it. |
+
+The last four are the dashboard drill-down filters: each dashboard count
+equals the `pagination.total` of this list with the matching filters (see
+`docs/features/dashboard.md`, "Every count equals the list it drills into").
 
 Each row is an `InvitationListItemOut` — tracking ID, registration type,
 source, status, `visitorCategoryId`, primary contact name,
@@ -992,7 +1033,9 @@ caller — unlike the list, it never replaces the permission check.
 
 Query params — every filter of [Listing invitations](#listing-invitations)
 with the same meaning (`status`, `registrationType`, `source`, `search`,
-`purposeOfVisit`, `relevantToMe`), plus:
+`purposeOfVisit`, `relevantToMe`, and the drill-down filters
+`visitDateFrom`/`visitDateTo`/`upcoming`/`excludeExpired`/`branchId`, with
+`branchId` checked against the `invitations:export` scope), plus:
 
 | Param | Type | Default | Notes |
 |---|---|---|---|
@@ -1470,7 +1513,7 @@ and never delay their triggering request.
 **No Celery worker runs by default in this DDEV dev environment** — a
 created invitation's notification task will sit queued in Redis until
 something consumes it. To manually verify dispatch outside the automated
-test suite (`invitations/tests.py::test_send_approval_notification_delivers_email_with_qr_via_mailpit`
+test suite (`invitations/tests/::test_send_approval_notification_delivers_email_with_qr_via_mailpit`
 already does this for you, against real SMTP), start one:
 
 ```
@@ -1593,3 +1636,24 @@ authenticated by a branch's device credential rather than a staff bearer
 token. It reuses this feature's exact `InvitationCreate` contract and writes
 to the same `Invitation` table, tagged `source: "visitor_walk_in"` instead of
 `"staff_pre_registration"`.
+
+## Public endpoint hardening
+
+Some endpoints in this feature can still be called without the credential
+they will eventually require. This is controlled by the
+`PUBLIC_ENDPOINT_HARDENING` setting (default `false`), from the
+`audit-and-harden-api-and-web` change.
+
+- **While it is off:** these requests are served exactly as before, but the
+  response carries `Deprecation: true` and a `Link` header pointing at this
+  section.
+- **Once it is on:** the requirement in the table below is enforced.
+
+The target is to enable it in staging, then production, by **2026-12-31**,
+once the Flutter and kiosk teams confirm their clients send the credential.
+The web app already does.
+
+| Endpoint | Strict-mode requirement |
+|---|---|
+| `PATCH /api/v2/invitations/{trackingId}/check-in` | An approved `device-id`, or a bearer token holding `invitations:checkin` at the invitation's branch. Otherwise 401, with no state change and no visitor data. |
+| `GET /invitations/track?email=` | `Authorization: Bearer <proofToken>` from `POST /identity-verification/otp/verify` for the same email. Otherwise 401. |

@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import json
 import secrets
 import uuid
+from typing import TYPE_CHECKING
 
 from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth import service as auth_service
 from vmss_api.auth.audit import record_audit_log
@@ -34,6 +36,9 @@ from vmss_api.sso.schemas import (
 )
 from vmss_api.tenant.models import Tenant
 from vmss_api.tenant.repository import TenantRepository
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 _HOST_DEFAULT_ROLE_NAME = "host"
 

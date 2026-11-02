@@ -90,3 +90,23 @@ resolve/validate/overwrite behavior when one is supplied.
 - **Host search does not require `employeeCode`.** Any active `User` matches
   regardless of whether it has employee-directory metadata — a deliberate
   choice (visit-info-lookup-api/design.md "Decisions"), not an oversight.
+
+## Public endpoint hardening
+
+Some endpoints in this feature can still be called without the credential
+they will eventually require. This is controlled by the
+`PUBLIC_ENDPOINT_HARDENING` setting (default `false`), from the
+`audit-and-harden-api-and-web` change.
+
+- **While it is off:** these requests are served exactly as before, but the
+  response carries `Deprecation: true` and a `Link` header pointing at this
+  section.
+- **Once it is on:** the requirement in the table below is enforced.
+
+The target is to enable it in staging, then production, by **2026-12-31**,
+once the Flutter and kiosk teams confirm their clients send the credential.
+The web app already does.
+
+| Endpoint | Strict-mode requirement |
+|---|---|
+| `GET /hosts/search` | Without an `X-Device-Key`, each result's `email` is `null`. |

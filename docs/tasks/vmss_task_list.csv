@@ -1,0 +1,42 @@
+﻿ID,Module,Task,Priority,Week,Status
+1,Badge Printing Flow,"(Parent) Badge printing flow behind a feature flag; new code only, QR on the printed badge generated at reception",High,1-4,
+1.1,Config,"Add BADGE_PRINT_FLOW_ENABLED (default false) to config.py, .env.example and docs/features/configuration.md; flag dependency returns 404 when off",High,1,To Do
+1.2,Tenant,"Per-tenant toggle: boolean on tenant profile + migration, editable by admins",High,1,To Do
+1.3,checkin,"Scaffold checkin/ package; register in api.py, _TAGS_METADATA, docs test; add visitors:print_badge for Reception and Admin",High,1,To Do
+1.4,checkin,"Reception visit search by name, phone, invitation code or OTP (read-only reuse of existing queries)",High,1,To Do
+1.5,checkin,"Print gate: approved, checked in, photo captured, ID verified",High,2,To Do
+1.6,checkin,"badge_prints table + migration (append-only: visit, printed_by, time, jti, active, reprint reason)",High,2,To Do
+1.7,checkin,"Badge QR token generated at reception: signed, valid for that visit day only, with jti",High,2,To Do
+1.8,checkin,"PDF badge renderer (name, host, photo, date, QR) via anyio.to_thread; existing PNG badge untouched",High,2,To Do
+1.9,checkin,"POST /checkin/{visit_id}/badge returns PDF; Idempotency-Key, permission, OpenAPI docs",High,3,To Do
+1.10,checkin,GET /checkin/{visit_id}/badge reprint; old QR invalidated; policy per reprint decision,High,3,To Do
+1.11,checkin,Audit every print and reprint via background task,High,3,To Do
+1.12,notifications,"Approval text 'approved, bring your ID' only when flag is on (small branch in existing path; needs approval)",Medium,3,To Do
+1.13,checkin,"Checkout by badge QR scan (fallback: reception search); closes visit, deactivates token; rate-limited, audited",High,4,To Do
+1.14,checkin,"Same-day re-entry by badge QR scan, gated by flag",Medium,4,To Do
+1.15,Tests/Docs,"Flag-off unchanged, permission-denied, tenant isolation, gating, reprint invalidation, idempotency, expired token; docs/features/checkin_badge.md",High,4,To Do
+2,Visitor Timeline,(Parent) Visitor timeline behind a feature flag,Medium,5-6,
+2.1,Config,TIMELINE_ENABLED flag and new visitors/timeline module (no changes to existing endpoints),Medium,5,To Do
+2.2,Timeline,"Event types: invited, approved, ID verified, photo captured, check-in/out, badge printed/reprinted, zone entry/exit, notifications, overstay",Medium,5,To Do
+2.3,Timeline,"Query merging audit_trail, visit_info, badge_prints, notifications (single IN query, selectinload, no N+1)",Medium,5,To Do
+2.4,Timeline,"GET /visitors/{id}/timeline and /invitations/{id}/timeline: pagination, date filter, sort whitelist, Envelope, permission, PII masked",Medium,6,To Do
+2.5,Tests/Docs,"Ordering, permission-denied, tenant isolation, flag off; docs/features/timeline.md",Medium,6,To Do
+3,Zone-Based Access Control,(Parent) Zone-based access control behind a feature flag,Medium,6-8,
+3.1,Config,ZONE_ACCESS_ENABLED flag and access_control/ scaffold registered in the three places,Medium,6,To Do
+3.2,access_control,"zones and zone_gates models + migration, linked to branch/building/floor and SecurityGate",Medium,6,To Do
+3.3,access_control,"Zone CRUD with zones:manage, soft delete",Medium,7,To Do
+3.4,access_control,Allowed zones per visitor type and per invitation (new join tables),Medium,7,To Do
+3.5,access_control,"can_enter(visit, zone) decision: status, time window, approval, blacklist, with reason",Medium,7,To Do
+3.6,access_control,"Gate scan endpoint using badge QR: rate-limited, entry/exit log",Medium,8,To Do
+3.7,access_control,"Denied-entry handling: WARNING log, audit entry, alert to security",Medium,8,To Do
+3.8,emergency,Who's inside by zone; zone events in timeline,Medium,8,To Do
+3.9,Tests/Docs,"Allow/deny matrix, permission-denied, tenant isolation, flag off; docs/features/access_control.md",Medium,8,To Do
+4,Other Suggestions of Existing Features,(Parent) Improvements to existing features; each change needs approval,High,1-9,
+4.1,All,"Read-only audit of existing endpoints vs rules (response_model, idempotency, rate limits, eager loading, uploads); produces the real list",High,1,To Do
+4.2,invitations,"Idempotency-Key on check-in/out, invitation create, OTP endpoints where missing",High,2,To Do
+4.3,Public endpoints,Confirm slowapi limits and OTP rules on all unauthenticated endpoints,High,2,To Do
+4.4,Uploads,"Magic-byte validation, size limits, malware-scan hook on photos and ID scans",High,3,To Do
+4.5,invitations,Bulk actions as a single UPDATE ... IN,Medium,4,To Do
+4.6,notifications,Pending-approval reminders; arrival and overstay alerts to host,Medium,5,To Do
+4.7,reports/dashboard,Fix N+1 queries and add missing indexes,Medium,5,To Do
+4.8,Product,"Items needing a product decision (recurring invites, host rating)",Low,9,To Do

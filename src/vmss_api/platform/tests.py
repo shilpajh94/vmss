@@ -10,7 +10,7 @@ from vmss_api.auth.rbac_catalog import ROLE_PERMISSIONS
 from vmss_api.core.database import tenant_session_scope
 from vmss_api.core.rate_limit import limiter
 from vmss_api.platform import service
-from vmss_api.platform.models import SuperAdmin, TenantSchemaVersion
+from vmss_api.platform.models import PlatformAuditEvent, SuperAdmin, TenantSchemaVersion
 from vmss_api.tenant.models import Tenant
 
 
@@ -29,6 +29,42 @@ async def test_platform_login_wrong_password(client: AsyncClient, superadmin: Su
         json={"email": superadmin.email, "password": "wrong-password"},
     )
     assert response.status_code == 401
+
+
+async def _platform_events(db_session: AsyncSession, action: str) -> list[PlatformAuditEvent]:
+    db_session.expire_all()
+    stmt = select(PlatformAuditEvent).where(PlatformAuditEvent.action == action)
+    return list((await db_session.execute(stmt)).scalars().all())
+
+
+async def test_platform_login_is_recorded_as_a_platform_event(
+    client: AsyncClient, superadmin: SuperAdmin, db_session: AsyncSession
+) -> None:
+    """audit-trail delta "Form-Builder, Profile, and Platform Mutations Are
+    Audited" — superadmin login, success and failure."""
+    superadmin_id = superadmin.id
+    response = await client.post(
+        "/api/v1/platform/auth/login",
+        json={"email": superadmin.email, "password": "correct-password"},
+    )
+    assert response.status_code == 200
+    [event] = await _platform_events(db_session, "platform_login")
+    assert event.actor_superadmin_id == superadmin_id
+
+
+async def test_failed_platform_login_is_recorded_with_a_masked_email(
+    client: AsyncClient, superadmin: SuperAdmin, db_session: AsyncSession
+) -> None:
+    email = superadmin.email
+    response = await client.post(
+        "/api/v1/platform/auth/login", json={"email": email, "password": "wrong-password"}
+    )
+    assert response.status_code == 401
+    [event] = await _platform_events(db_session, "platform_login_failed")
+    assert event.metadata_ is not None
+    assert event.metadata_["reason"] == "invalid_password"
+    assert event.metadata_["email"] != email
+    assert event.metadata_["email"].endswith(email.split("@")[1])
 
 
 async def test_platform_login_password_too_long_rejected(
@@ -53,7 +89,7 @@ async def test_platform_login_rate_limit_trips(
     (`core/rate_limit.py`: `enabled=settings.environment != "test"`) —
     flipped on here for just this one test to exercise the 429 path
     (security-architecture.md §2), mirroring
-    `invitations/tests.py::test_track_rate_limit_trips`.
+    `invitations/tests/::test_track_rate_limit_trips`.
     """
     monkeypatch.setattr(limiter, "enabled", True)
     responses = [
@@ -144,6 +180,8 @@ async def test_create_tenant_success_via_endpoint(
         assert data["slug"] == slug
         assert data["isActive"] is True
         assert uuid.UUID(data["id"])
+        [event] = await _platform_events(db_session, "tenant_provisioned")
+        assert str(event.target_tenant_id) == data["id"]
     finally:
         await db_session.execute(text(f'DROP SCHEMA IF EXISTS "tenant_{slug}" CASCADE'))
         await db_session.commit()

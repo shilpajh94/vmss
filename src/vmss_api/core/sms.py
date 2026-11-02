@@ -12,6 +12,7 @@ import httpx
 
 from vmss_api.core.config import settings
 from vmss_api.core.logging import logger
+from vmss_api.core.masking import mask_phone
 
 __all__ = [
     "Fast2SmsSender",
@@ -56,10 +57,6 @@ class SmsInvalidNumberError(SmsDispatchError):
     """The recipient can't be normalised to a valid mobile number. Not worth
     retrying — the same number will fail the same way.
     """
-
-
-def mask_phone(number: str) -> str:
-    return f"***{number[-2:]}" if len(number) >= 2 else "***"
 
 
 def normalise_indian_mobile(number: str) -> str:

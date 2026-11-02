@@ -762,7 +762,7 @@ async def test_provision_or_resolve_user_concurrent_first_login_resolves_to_one_
     commits, and the second's insert then hits `User.email`'s unique
     constraint. Simulated (not a real thread race, matching this
     project's established pattern — see
-    `invitations/tests.py::test_approve_invitation_concurrent_requests_
+    `invitations/tests/::test_approve_invitation_concurrent_requests_
     transition_exactly_once`) by making the second call's own internal
     existence check return a stale `None` even though the first call's
     row has already committed. See

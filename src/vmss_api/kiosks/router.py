@@ -14,8 +14,9 @@ from vmss_api.core.deps import (
     get_tenant_db,
     require_permission,
 )
+from vmss_api.core.public_access import flag_legacy_access, strict_public_access
 from vmss_api.core.rate_limit import limiter
-from vmss_api.core.responses import paginated_response, success_response
+from vmss_api.core.responses import error_response, paginated_response, success_response
 from vmss_api.core.schemas import Envelope, PaginatedEnvelope, SortOrder
 from vmss_api.kiosks import service
 from vmss_api.kiosks.schemas import (
@@ -25,7 +26,7 @@ from vmss_api.kiosks.schemas import (
     KioskVisibilityUpdate,
     SortableField,
 )
-from vmss_api.org_structure.deps import public_tenant_db
+from vmss_api.org_structure.deps import public_optional_caller, public_tenant_db
 from vmss_api.org_structure.schemas import ActiveStatus
 from vmss_api.tenant.models import Tenant
 
@@ -79,27 +80,39 @@ async def list_kiosks(
     request: Request,
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
+    caller: Annotated[User | None, Depends(public_optional_caller)],
     kiosk_status: Annotated[ActiveStatus | None, Query(alias="status")] = None,
     include_hidden: Annotated[bool, Query(alias="includeHidden")] = False,
     sort_by: Annotated[SortableField, Query(alias="sortBy")] = "name",
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
+    # kiosks spec: reads require `kiosks:view`. Strict public-endpoint
+    # hardening enforces that; until then anonymous reads are served (and
+    # flagged deprecated) but can never reveal hidden kiosks.
+    permitted = _can_view_kiosks(caller)
+    if not permitted and strict_public_access():
+        return error_response("Not authenticated", status.HTTP_401_UNAUTHORIZED)
     page, page_size = pagination
     kiosks, total = await service.list_kiosks_page(
         tenant_db,
         status=kiosk_status,
-        include_hidden=include_hidden,
+        include_hidden=include_hidden and permitted,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    return paginated_response(
+    response = paginated_response(
         data=[KioskOut.model_validate(k) for k in kiosks],
         page=page,
         page_size=page_size,
         total=total,
     )
+    return response if permitted else flag_legacy_access(response, feature_doc="kiosks.md")
+
+
+def _can_view_kiosks(caller: User | None) -> bool:
+    return caller is not None and bool(caller.authorized_branch_ids("kiosks:view"))
 
 
 @router.get(
@@ -111,9 +124,14 @@ async def get_kiosk(
     request: Request,
     kiosk_id: uuid.UUID,
     tenant_db: Annotated[AsyncSession, Depends(public_tenant_db)],
+    caller: Annotated[User | None, Depends(public_optional_caller)],
 ) -> JSONResponse:
+    permitted = _can_view_kiosks(caller)
+    if not permitted and strict_public_access():
+        return error_response("Not authenticated", status.HTTP_401_UNAUTHORIZED)
     kiosk = await service.get_kiosk(tenant_db, kiosk_id)
-    return success_response(data=KioskOut.model_validate(kiosk))
+    response = success_response(data=KioskOut.model_validate(kiosk))
+    return response if permitted else flag_legacy_access(response, feature_doc="kiosks.md")
 
 
 @router.put(

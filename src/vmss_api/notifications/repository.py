@@ -3,11 +3,20 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy import CursorResult, Select, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.core.database import order_clause
+from vmss_api.core.schemas import SortOrder
+from vmss_api.invitations.models import Invitation
 from vmss_api.notifications.models import DeviceToken, Notification
+
+# The router's `sortBy` whitelist (api-conventions.md §1) maps onto these.
+_SORT_COLUMNS: dict[str, Any] = {
+    "created_at": Notification.created_at,
+    "read_at": Notification.read_at,
+}
 
 
 class DeviceTokenRepository:
@@ -106,9 +115,19 @@ class NotificationRepository:
         """One bulk insert per dispatch (query-performance.md §3). The unique
         `(dispatch_id, user_id)` makes a redelivered dispatch a no-op
         (background-jobs.md §2).
+
+        A dispatch about an invitation deleted since it was enqueued records
+        nothing (prune-orphaned-notifications design.md D3). A
+        delete racing this insert fails it on the FK instead, which the
+        caller already logs without blocking the push.
         """
         if not user_ids:
             return
+        invitation_id = None
+        if "invitationId" in data:
+            invitation_id = await self._existing_invitation_id(data["invitationId"])
+            if invitation_id is None:
+                return
         stmt = (
             insert(Notification)
             .values(
@@ -116,6 +135,7 @@ class NotificationRepository:
                     {
                         "id": uuid.uuid4(),
                         "dispatch_id": dispatch_id,
+                        "invitation_id": invitation_id,
                         "user_id": user_id,
                         "title": title,
                         "body": body,
@@ -128,28 +148,63 @@ class NotificationRepository:
         )
         await self.session.execute(stmt)
 
+    async def _existing_invitation_id(self, raw_id: str) -> uuid.UUID | None:
+        try:
+            invitation_id = uuid.UUID(raw_id)
+        except ValueError:
+            return None
+        stmt = select(Invitation.id).where(Invitation.id == invitation_id)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    @staticmethod
+    def _visible_to(user_id: uuid.UUID) -> list[Any]:
+        """Conditions for the caller's visible notifications: their own,
+        minus any about a soft-deleted invitation. A hard-deleted one is
+        already gone via the FK cascade. Requires the query to
+        `LEFT JOIN invitations` (see `_with_invitation`) — list, total and
+        unread count all share this so they always agree (design.md D2).
+        """
+        return [
+            Notification.user_id == user_id,
+            or_(Notification.invitation_id.is_(None), Invitation.deleted_at.is_(None)),
+        ]
+
+    @staticmethod
+    def _with_invitation(stmt: Select[Any]) -> Select[Any]:
+        return stmt.outerjoin(Invitation, Invitation.id == Notification.invitation_id)
+
     async def list_page(
-        self, user_id: uuid.UUID, *, unread_only: bool, page: int, page_size: int
+        self,
+        user_id: uuid.UUID,
+        *,
+        unread_only: bool,
+        page: int,
+        page_size: int,
+        sort_by: str = "created_at",
+        sort_order: SortOrder = SortOrder.desc,
     ) -> tuple[list[Notification], int]:
-        conditions = [Notification.user_id == user_id]
+        conditions = self._visible_to(user_id)
         if unread_only:
             conditions.append(Notification.read_at.is_(None))
-        total_stmt = select(func.count()).select_from(Notification).where(*conditions)
+        total_stmt = self._with_invitation(select(func.count()).select_from(Notification)).where(
+            *conditions
+        )
         total = (await self.session.execute(total_stmt)).scalar_one()
         stmt = (
-            select(Notification)
+            self._with_invitation(select(Notification))
             .where(*conditions)
-            .order_by(Notification.created_at.desc(), Notification.id.desc())
+            .order_by(
+                order_clause(_SORT_COLUMNS[sort_by], sort_order),
+                order_clause(Notification.id, sort_order),
+            )
             .limit(page_size)
             .offset((page - 1) * page_size)
         )
         return list((await self.session.execute(stmt)).scalars().all()), total
 
     async def count_unread(self, user_id: uuid.UUID) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(Notification)
-            .where(Notification.user_id == user_id, Notification.read_at.is_(None))
+        stmt = self._with_invitation(select(func.count()).select_from(Notification)).where(
+            *self._visible_to(user_id), Notification.read_at.is_(None)
         )
         return (await self.session.execute(stmt)).scalar_one()
 

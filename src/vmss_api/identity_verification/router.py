@@ -9,8 +9,7 @@ import structlog
 from fastapi import APIRouter, Depends, Header, Request, status
 from fastapi.responses import JSONResponse
 
-from vmss_api.core.idempotency import cache_response as _core_cache_response
-from vmss_api.core.idempotency import cached_response as _core_cached_response
+from vmss_api.core.idempotency import Idempotency, idempotency
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.responses import error_response, success_response
 from vmss_api.core.schemas import Envelope
@@ -40,27 +39,13 @@ _IDEMPOTENCY_KEY_HEADER = Header(
 )
 
 
-async def _cached_response(
-    tenant_id: uuid.UUID, idempotency_key: str | None
-) -> JSONResponse | None:
-    """api-conventions.md §3 — mirrors
-    `invitations/router.py`'s `_cached_response`/`_cache_response` pair.
-    """
-    return await _core_cached_response(tenant_id, "identity-verification", idempotency_key)
-
-
-async def _cache_response(
-    tenant_id: uuid.UUID, idempotency_key: str | None, response: JSONResponse
-) -> None:
-    await _core_cache_response(tenant_id, "identity-verification", idempotency_key, response)
-
-
 @router.post("/otp/request", response_model=Envelope[OtpRequestOut])
 @limiter.limit("20/minute")
 async def request_otp(
     request: Request,
     payload: OtpRequestIn,
     tenant_id: Annotated[uuid.UUID, Depends(default_tenant_id)],
+    idem: Annotated[Idempotency, Depends(idempotency)],
     idempotency_key: Annotated[str | None, _IDEMPOTENCY_KEY_HEADER] = None,
 ) -> JSONResponse:
     """A visitor requests a one-time code for an email or phone identifier,
@@ -70,7 +55,13 @@ async def request_otp(
     """
     structlog.contextvars.bind_contextvars(tenant_id=str(tenant_id))
 
-    cached = await _cached_response(tenant_id, idempotency_key)
+    cached = await idem.begin(
+        tenant_id,
+        "identity-verification",
+        idempotency_key,
+        caller=payload.identifier.strip().lower(),
+        body=payload.model_dump_json(),
+    )
     if cached is not None:
         return cached
 
@@ -87,7 +78,7 @@ async def request_otp(
             "This delivery channel is not available right now",
             status.HTTP_503_SERVICE_UNAVAILABLE,
         )
-        await _cache_response(tenant_id, idempotency_key, response)
+        await idem.store(response)
         return response
     except (SmsDispatchError, EmailDispatchError):
         # Transient (design.md's Idempotency-Key refinement) — deliberately
@@ -101,7 +92,7 @@ async def request_otp(
     response = success_response(
         data=OtpRequestOut(identifier=result.identifier, channel=result.channel)
     )
-    await _cache_response(tenant_id, idempotency_key, response)
+    await idem.store(response)
     return response
 
 
@@ -111,6 +102,7 @@ async def verify_otp(
     request: Request,
     payload: OtpVerifyIn,
     tenant_id: Annotated[uuid.UUID, Depends(default_tenant_id)],
+    idem: Annotated[Idempotency, Depends(idempotency)],
     idempotency_key: Annotated[str | None, _IDEMPOTENCY_KEY_HEADER] = None,
 ) -> JSONResponse:
     """A visitor submits the code they received to prove control of the
@@ -118,7 +110,13 @@ async def verify_otp(
     """
     structlog.contextvars.bind_contextvars(tenant_id=str(tenant_id))
 
-    cached = await _cached_response(tenant_id, idempotency_key)
+    cached = await idem.begin(
+        tenant_id,
+        "identity-verification",
+        idempotency_key,
+        caller=payload.identifier.strip().lower(),
+        body=payload.model_dump_json(),
+    )
     if cached is not None:
         return cached
 
@@ -135,7 +133,7 @@ async def verify_otp(
         # third-party call, so a retry with the same key must not count a
         # second attempt against the failed-attempt cap.
         response = error_response("Invalid or expired code", status.HTTP_400_BAD_REQUEST)
-        await _cache_response(tenant_id, idempotency_key, response)
+        await idem.store(response)
         return response
 
     response = success_response(
@@ -145,5 +143,5 @@ async def verify_otp(
             proof_token=result.proof_token,
         )
     )
-    await _cache_response(tenant_id, idempotency_key, response)
+    await idem.store(response)
     return response

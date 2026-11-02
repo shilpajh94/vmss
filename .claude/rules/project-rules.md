@@ -130,8 +130,11 @@ fallback hack. See `fastapi-architecture.md` §1.
   same DDEV Postgres instance), not mocks or SQLite — SQLAlchemy dialect quirks
   (JSONB, array columns, `ON CONFLICT`) don't show up under SQLite and would give a
   false sense of safety.
-- Run: `ddev exec uv run pytest`. All tests must pass before proposing significant
-  changes.
+- Run: `ddev exec uv run pytest`. While implementing a change request or
+  suggestion, run only the changed feature's tests plus those of any area that
+  depends on the changed code — not the full suite (`testing-standards.md` §5).
+  The full suite is the CI gate's job (`git-workflow.md` §4), or run it when
+  explicitly asked.
 
 ## New Features
 
