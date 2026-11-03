@@ -25,13 +25,15 @@ secret is needed. Optionally set `BADGE_SCAN_RATE_LIMIT` (default
 |---|---|---|---|
 | GET | `/search?q=` | `visitors:print_badge` | Find visits by name, phone (digits-only), `trackingId`, or numeric check-in code. Branch-scoped, paginated, read-only. |
 | POST | `/{visit_id}/verify-id` | `visitors:print_badge` | Reception confirms the physical ID. Idempotent (keeps the first timestamp). |
-| POST | `/{visit_id}/badge` | `visitors:print_badge` | First print; returns `application/pdf`. Accepts `Idempotency-Key`. |
-| GET | `/{visit_id}/badge?reason=` | `visitors:print_badge` | Reprint (see below). |
+| POST | `/{visit_id}/badge` | `visitors:print_badge` | First print; returns the badge card as JSON (`{data: {token, visitorName, purpose, hostName, photoUrl}}`). Accepts `Idempotency-Key`; a replay rebuilds the same card. |
+| GET | `/{visit_id}/badge?reason=` | `visitors:print_badge` | Reprint (see below); same JSON card, new token. |
 | POST | `/badge/check-out` | badge token | Scan checkout; closes the visit and deactivates the badge. Rate-limited. |
 | POST | `/badge/re-enter` | badge token | Same-day re-entry for a visitor stepped out. Rate-limited. |
 
 Scan endpoints take `{"token": "..."}` in the body (so it stays out of access
 logs). The token is the credential; the tenant comes from its signed `tid` claim.
+
+`photoUrl` is a `data:` URL (the stored photo is behind auth, so an `<img>` couldn't load a plain URL); `purpose`, `hostName` and `photoUrl` may be null. `token` is the visit's invitation QR token when one exists (so the `/api/v2/invitations/qr/{token}/check-in|check-out` scanners work on the card); a visit with no stored QR gets the jti-bound badge token below. Only that fallback token is accepted by `/checkin/badge/*` and killed by a reprint — an invitation QR token is not. The frontend draws the card; the server no longer renders a PDF.
 
 ## Print gate
 
@@ -41,8 +43,8 @@ the ID is verified. Otherwise `409`, with every unmet condition named
 
 ## Badge token
 
-PyJWT HS256 with claims `sub` (visit), `tid` (tenant), `day` (tenant-local date
-of printing), `jti`, `typ=badge`, `exp` (end of that day + 1h). A scan is valid
+A compact binary token (base64url, ~98 chars, HMAC-SHA256 truncated to 128 bits — not a JWT, so the QR stays sparse and scannable) carrying visit, tenant, `day` (tenant-local date
+of printing), `jti`, `exp` (end of that day + 1h). A scan is valid
 only if the signature checks, `day` is today in the tenant's timezone, and the
 `badge_prints` row for that `jti` is still active. Every failure returns the same
 `400 Invalid badge token`.

@@ -20,7 +20,7 @@ from vmss_api.checkin.repository import CheckinRepository
 from vmss_api.core.config import settings
 from vmss_api.core.rate_limit import limiter
 from vmss_api.core.storage import save as storage_save
-from vmss_api.invitations.models import Invitation
+from vmss_api.invitations.models import Invitation, InvitationQRCode
 from vmss_api.invitations.tests.helpers import _build_invitation
 from vmss_api.org_structure.models import Branch
 from vmss_api.tenant.models import Tenant
@@ -277,7 +277,7 @@ async def test_print_gate_rejects_unapproved_visit(
 # --- print / reprint ----------------------------------------------------------
 
 
-async def test_print_returns_pdf_and_records_row_and_audit(
+async def test_print_returns_card_json_and_records_row_and_audit(
     flow_on, client, user, issue_token, db_session, tenant, branch
 ) -> None:
     visit = await _visit(db_session, tenant.id, branch)
@@ -285,14 +285,36 @@ async def test_print_returns_pdf_and_records_row_and_audit(
         f"/api/v1/checkin/{visit.id}/badge", headers=_auth(issue_token, user)
     )
     assert response.status_code == 200
-    assert response.headers["content-type"] == "application/pdf"
-    assert response.content.startswith(b"%PDF")
+    assert response.headers["content-type"] == "application/json"
     assert response.headers["cache-control"] == "no-store"
+    card = response.json()["data"]
+    assert card["visitorName"] == visit.primary_contact_full_name
+    assert card["photoUrl"].startswith("data:image/")
+    assert set(card) == {"token", "visitorName", "purpose", "hostName", "photoUrl"}
+    claims = badge_token.verify_badge_token(card["token"])
+    assert claims is not None and claims.visit_id == visit.id
 
     rows = await _prints(db_session, visit.id)
     assert len(rows) == 1 and rows[0].active and rows[0].reprint_reason is None
     actions = (await db_session.execute(select(AuditLog.action))).scalars().all()
     assert "badge_printed" in actions
+
+
+async def test_card_token_is_invitation_qr_token_when_one_exists(
+    flow_on, client, user, issue_token, db_session, tenant, branch
+) -> None:
+    visit = await _visit(db_session, tenant.id, branch)
+    db_session.add(
+        InvitationQRCode(
+            invitation_id=visit.id, qr_token="invitation-qr-token", image_storage_key="k"
+        )
+    )
+    await db_session.commit()
+    response = await client.post(
+        f"/api/v1/checkin/{visit.id}/badge", headers=_auth(issue_token, user)
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["token"] == "invitation-qr-token"
 
 
 async def test_print_permission_denied(
@@ -314,7 +336,7 @@ async def test_print_idempotency_key_replays_without_second_row(
     first = await client.post(f"/api/v1/checkin/{visit.id}/badge", headers=headers)
     second = await client.post(f"/api/v1/checkin/{visit.id}/badge", headers=headers)
     assert first.status_code == second.status_code == 200
-    assert second.content.startswith(b"%PDF")
+    assert second.json()["data"] == first.json()["data"]
     assert len(await _prints(db_session, visit.id)) == 1
 
 
@@ -347,8 +369,11 @@ async def test_reprint_invalidates_old_badge(
         f"/api/v1/checkin/{visit_id}/badge", params={"reason": "lost"}, headers=headers
     )
     assert reprint.status_code == 200
-    assert reprint.content.startswith(b"%PDF")
     assert reprint.headers["cache-control"] == "no-store"
+    new_claims = badge_token.verify_badge_token(reprint.json()["data"]["token"])
+    assert (
+        new_claims is not None and new_claims.jti != badge_token.verify_badge_token(old_token).jti
+    )
 
     db_session.expire_all()
     rows = await _prints(db_session, visit_id)

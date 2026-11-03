@@ -1,9 +1,9 @@
 import json
 import uuid
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Header, Query, Request, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.audit import record_audit_log
@@ -12,6 +12,7 @@ from vmss_api.checkin import service
 from vmss_api.checkin.badge_token import verify_badge_token
 from vmss_api.checkin.repository import CheckinRepository
 from vmss_api.checkin.schemas import (
+    BadgeCardOut,
     BadgePrintRef,
     BadgeScanOut,
     BadgeScanRequest,
@@ -39,26 +40,13 @@ _PERMISSION = "visitors:print_badge"
 
 router = APIRouter(prefix="/checkin", tags=["checkin"])
 
-_PDF_RESPONSE: dict[int | str, dict[str, Any]] = {
-    200: {
-        "description": "The badge as a PDF (A6 portrait).",
-        "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}},
-    }
-}
 
-
-def _pdf_response(pdf: bytes, *, tracking_id: str, print_id: uuid.UUID) -> Response:
-    return Response(
-        content=pdf,
-        media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'inline; filename="badge-{tracking_id}.pdf"',
-            "X-Badge-Print-Id": str(print_id),
-            # A reprint mutates state, and a print response holds a live QR:
-            # neither may be cached or replayed by an intermediary.
-            "Cache-Control": "no-store",
-        },
-    )
+def _card_response(card: BadgeCardOut) -> JSONResponse:
+    response = success_response(data=card)
+    # A reprint mutates state, and a print response holds a live QR token:
+    # neither may be cached or replayed by an intermediary.
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _to_search_out(visit, has_active_badge: bool) -> VisitSearchOut:  # noqa: ANN001
@@ -180,8 +168,7 @@ async def upload_photo(
 
 @router.post(
     "/{visit_id}/badge",
-    response_class=Response,
-    responses=_PDF_RESPONSE,
+    response_model=Envelope[BadgeCardOut],
     dependencies=[Depends(require_badge_print_flow)],
 )
 async def print_badge(
@@ -196,13 +183,13 @@ async def print_badge(
         Header(
             alias="Idempotency-Key",
             description=(
-                "Optional. A retry with the same key returns the same PDF and never "
+                "Optional. A retry with the same key returns the same card and never "
                 "creates a second badge row."
             ),
         ),
     ] = None,
-) -> Response:
-    """Prints the visit's first badge as a PDF. Needs an approved/checked-in
+) -> JSONResponse:
+    """Prints the visit's first badge, returning the card data as JSON. Needs an approved/checked-in
     visit with a photo and a verified ID (`409` names every unmet condition).
     A second print while a badge is active is a `409`; use the reprint endpoint."""
     cached = await idem.begin(
@@ -214,7 +201,7 @@ async def print_badge(
 
     visit = await service.get_visit_or_404(CheckinRepository(tenant_db), visit_id)
     await authorize_branch_id_tolerant(tenant_db, user, _PERMISSION, visit.branch_id)
-    row, pdf = await service.print_badge(tenant_db, visit, user=user, tenant=tenant)
+    row, card = await service.print_badge(tenant_db, visit, user=user, tenant=tenant)
     background_tasks.add_task(
         record_audit_log,
         tenant.schema_name,
@@ -225,13 +212,13 @@ async def print_badge(
         diff={"jti": row.jti},
     )
     await idem.store(success_response(data=BadgePrintRef(badge_print_id=row.id)))
-    return _pdf_response(pdf, tracking_id=visit.tracking_id, print_id=row.id)
+    return _card_response(card)
 
 
 async def _replay(
     tenant_db: AsyncSession, cached: JSONResponse, *, tenant: TenantContext
-) -> Response | None:
-    """A cached print response is `{data: {badgePrintId}}`; rebuild the PDF
+) -> JSONResponse | None:
+    """A cached print response is `{data: {badgePrintId}}`; rebuild the card
     from that row. Anything else cached (an in-flight 409, say) is returned as-is."""
     try:
         body = json.loads(bytes(cached.body))
@@ -241,16 +228,13 @@ async def _replay(
     rendered = await service.render_existing_print(tenant_db, print_id, tenant=tenant)
     if rendered is None:
         return None
-    row, pdf = rendered
-    visit = await CheckinRepository(tenant_db).get_visit(row.visit_id)
-    assert visit is not None
-    return _pdf_response(pdf, tracking_id=visit.tracking_id, print_id=row.id)
+    _, card = rendered
+    return _card_response(card)
 
 
 @router.get(
     "/{visit_id}/badge",
-    response_class=Response,
-    responses=_PDF_RESPONSE,
+    response_model=Envelope[BadgeCardOut],
     dependencies=[Depends(require_badge_print_flow)],
 )
 async def reprint_badge(
@@ -262,7 +246,7 @@ async def reprint_badge(
     reason: Annotated[
         str, Query(min_length=1, max_length=255, description="Why, e.g. lost or damaged.")
     ],
-) -> Response:
+) -> JSONResponse:
     """Reprints the badge. **State-changing despite being a GET:** the previous
     QR is deactivated and a new one issued, so the response is `no-store` and a
     `reason` is mandatory. Unlimited reprints; every one is audited."""
@@ -270,7 +254,7 @@ async def reprint_badge(
         return _blank_reason()
     visit = await service.get_visit_or_404(CheckinRepository(tenant_db), visit_id)
     await authorize_branch_id_tolerant(tenant_db, user, _PERMISSION, visit.branch_id)
-    row, pdf = await service.reprint_badge(
+    row, card = await service.reprint_badge(
         tenant_db, visit, user=user, tenant=tenant, reason=reason.strip()
     )
     background_tasks.add_task(
@@ -282,10 +266,10 @@ async def reprint_badge(
         entity_id=visit.id,
         diff={"jti": row.jti, "reason": reason.strip()},
     )
-    return _pdf_response(pdf, tracking_id=visit.tracking_id, print_id=row.id)
+    return _card_response(card)
 
 
-def _blank_reason() -> Response:
+def _blank_reason() -> JSONResponse:
     return error_response("reason must not be blank", 422)
 
 

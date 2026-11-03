@@ -90,6 +90,7 @@ PERMISSION_CODES = [
 ROLE_PERMISSIONS: dict[str, list[str]] = {
     "admin": PERMISSION_CODES,
     "reception": [
+        "tenants:read",
         "branches:view",
         "buildings:view",
         "departments:view",
@@ -115,6 +116,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "roles:view",
     ],
     "security": [
+        "tenants:read",
         "branches:view",
         "buildings:view",
         "departments:view",
@@ -129,6 +131,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "documents:view",
     ],
     "host": [
+        "tenants:read",
         "branches:view",
         "buildings:view",
         "departments:view",

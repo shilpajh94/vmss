@@ -41,3 +41,16 @@ class BadgePrintRef(CamelModel):
     re-renders the PDF from this row rather than caching PDF bytes."""
 
     badge_print_id: uuid.UUID
+
+
+class BadgeCardOut(CamelModel):
+    """What the frontend needs to draw the ID-card badge itself. `token` is the
+    signed, jti-bound badge token the QR must carry; `photo_url` is a `data:`
+    URL because the stored photo sits behind auth and an `<img>` can't send
+    a bearer header."""
+
+    token: str
+    visitor_name: str
+    purpose: str | None
+    host_name: str | None
+    photo_url: str | None

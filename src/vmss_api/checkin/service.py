@@ -5,6 +5,7 @@ reused from `invitations.checkin` rather than duplicated, so `status` and
 `check_in_status` stay in step with every other entry/exit path.
 """
 
+import base64
 import uuid
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -14,15 +15,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import User
-from vmss_api.checkin import badge_pdf, badge_token
+from vmss_api.checkin import badge_token
 from vmss_api.checkin.badge_token import BadgeClaims
 from vmss_api.checkin.models import BadgePrint
 from vmss_api.checkin.repository import CheckinRepository
+from vmss_api.checkin.schemas import BadgeCardOut
 from vmss_api.core.config import settings
 from vmss_api.core.logging import logger
+from vmss_api.core.storage import content_type_for, validate_image_only
 from vmss_api.core.storage import load as storage_load
 from vmss_api.core.storage import save as storage_save
-from vmss_api.core.storage import validate_image_only
 from vmss_api.core.tenancy import TenantContext
 from vmss_api.invitations.checkin import _check_out_resolved, _perform_check_in
 from vmss_api.invitations.models import Invitation
@@ -89,40 +91,44 @@ async def attach_photo(
     return updated
 
 
-async def _render(
+async def _build_card(
     tenant_db: AsyncSession, visit: Invitation, row: BadgePrint, *, tenant: TenantContext
-) -> bytes:
-    # The badge carries the visit's existing check-in QR, so the existing
-    # check-in/check-out scanners work on it. A visit with no stored QR (none
-    # was issued) falls back to the signed badge token.
+) -> BadgeCardOut:
+    # The card carries the visit's existing check-in QR token so the existing
+    # `/api/v2/invitations/qr/{token}/...` scanners work on it. A visit with no
+    # stored QR falls back to the signed badge token. Consequence: a reprint
+    # does not invalidate an invitation QR token (only the badge-token fallback
+    # is jti-bound), and the `/checkin/badge/*` routes only accept the fallback.
     qr_code = await InvitationRepository(tenant_db).get_qr_code(visit.id)
-    if qr_code is not None:
-        token = qr_code.qr_token
-    else:
-        token = badge_token.issue_badge_token(
+    token = (
+        qr_code.qr_token
+        if qr_code is not None
+        else badge_token.issue_badge_token(
             visit_id=visit.id,
             tenant_id=tenant.id,
             day=row.day,
             jti=row.jti,
             timezone=tenant.timezone,
         )
+    )
     assert visit.primary_contact_photo_storage_key is not None  # guaranteed by the gate
-    photo = await storage_load(visit.primary_contact_photo_storage_key)
-    return await badge_pdf.render_badge_pdf(
+    key = visit.primary_contact_photo_storage_key
+    photo = await storage_load(key)
+    photo_url = f"data:{content_type_for(key)};base64,{base64.b64encode(photo).decode()}"
+    return BadgeCardOut(
+        token=token,
         visitor_name=visit.primary_contact_full_name,
-        host_name=visit.host_name_or_email or "-",
-        visit_date=row.day,
-        photo_bytes=photo,
-        qr_token=token,
-        organisation_name=tenant.name,
-        tracking_id=visit.tracking_id,
+        purpose=visit.purpose_of_visit,
+        host_name=visit.host_name_or_email,
+        photo_url=photo_url,
     )
 
 
 async def render_existing_print(
     tenant_db: AsyncSession, print_id: uuid.UUID, *, tenant: TenantContext
-) -> tuple[BadgePrint, bytes] | None:
-    """Idempotent replay: the same PDF, rebuilt from the stored row."""
+) -> tuple[BadgePrint, BadgeCardOut] | None:
+    """Idempotent replay: the same card, rebuilt from the stored row (the
+    token is deterministic for a given row)."""
     repo = CheckinRepository(tenant_db)
     row = await repo.get_print(print_id)
     if row is None:
@@ -130,7 +136,7 @@ async def render_existing_print(
     visit = await repo.get_visit(row.visit_id)
     if visit is None or not visit.primary_contact_photo_storage_key:
         return None
-    return row, await _render(tenant_db, visit, row, tenant=tenant)
+    return row, await _build_card(tenant_db, visit, row, tenant=tenant)
 
 
 async def _create_print(
@@ -140,7 +146,7 @@ async def _create_print(
     user: User,
     tenant: TenantContext,
     reprint_reason: str | None,
-) -> tuple[BadgePrint, bytes]:
+) -> tuple[BadgePrint, BadgeCardOut]:
     unmet = unmet_print_conditions(visit)
     if unmet:
         raise HTTPException(
@@ -170,8 +176,8 @@ async def _create_print(
             day=tenant_today(tenant),
             reprint_reason=reprint_reason,
         )
-        # Render before commit: a render failure leaves the old badge active.
-        pdf = await _render(tenant_db, visit, row, tenant=tenant)
+        # Build before commit: a photo-load failure leaves the old badge active.
+        card = await _build_card(tenant_db, visit, row, tenant=tenant)
         await tenant_db.commit()
     except IntegrityError:
         await tenant_db.rollback()
@@ -181,12 +187,12 @@ async def _create_print(
     except Exception:
         await tenant_db.rollback()
         raise
-    return row, pdf
+    return row, card
 
 
 async def print_badge(
     tenant_db: AsyncSession, visit: Invitation, *, user: User, tenant: TenantContext
-) -> tuple[BadgePrint, bytes]:
+) -> tuple[BadgePrint, BadgeCardOut]:
     return await _create_print(tenant_db, visit, user=user, tenant=tenant, reprint_reason=None)
 
 
@@ -197,7 +203,7 @@ async def reprint_badge(
     user: User,
     tenant: TenantContext,
     reason: str,
-) -> tuple[BadgePrint, bytes]:
+) -> tuple[BadgePrint, BadgeCardOut]:
     return await _create_print(tenant_db, visit, user=user, tenant=tenant, reprint_reason=reason)
 
 
