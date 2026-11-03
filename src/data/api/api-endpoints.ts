@@ -631,13 +631,13 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: true,
   },
-  // Returns a PDF, not JSON.
+  // Returns badge JSON (assumed contract; see BadgeCardSchema).
   CHECKIN_PRINT_BADGE: {
     endpoint: "/checkin/:visitId/badge",
     method: "POST",
     hasToken: true,
   },
-  // A state-changing GET (invalidates the previous badge) that returns a PDF:
+  // A state-changing GET (invalidates the previous badge) that returns badge JSON:
   // only ever called from an explicit, confirmed user action.
   CHECKIN_REPRINT_BADGE: {
     endpoint: "/checkin/:visitId/badge",

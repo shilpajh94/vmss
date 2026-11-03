@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useToast } from '../../../components/toast/toast-context'
 import { ApiError } from '../../../../data/api/api-error'
-import type { CheckinSearchRow } from '../../../../domain/entities/checkin-schema'
+import type { BadgeCard, BadgeOutput, CheckinSearchRow } from '../../../../domain/entities/checkin-schema'
 import { describePrintError, isFeatureOff } from '../../../utils/badge-print-errors'
 
 const PAGE_SIZE = 20
@@ -21,6 +21,8 @@ export function useBadgePrinting() {
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [isUnavailable, setIsUnavailable] = useState(false)
   const [busyId, setBusyId] = useState<string | undefined>(undefined)
+  // Held only until the print dialog closes: the token is a credential.
+  const [badge, setBadge] = useState<BadgeCard | undefined>(undefined)
   const [pdfLink, setPdfLink] = useState<string | undefined>(undefined)
   const [reprintTarget, setReprintTarget] = useState<CheckinSearchRow | undefined>(undefined)
   const [reason, setReason] = useState('')
@@ -52,10 +54,34 @@ export function useBadgePrinting() {
     if (query !== undefined) void load(query, page)
   }, [query, page, load])
 
-  // Revoke the object URL behind the fallback link when it is replaced or the page unmounts.
   useEffect(() => () => {
     if (pdfLink) URL.revokeObjectURL(pdfLink)
   }, [pdfLink])
+
+  const showBadge = useCallback((output: BadgeOutput) => {
+    if (output.kind === 'card') {
+      setBadge(output.card)
+      return
+    }
+    const url = URL.createObjectURL(output.blob)
+    if (window.open(url, '_blank')) {
+      window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000)
+      setPdfLink(undefined)
+    } else setPdfLink(url)
+  }, [])
+
+  const clearBadge = useCallback(() => setBadge(undefined), [])
+
+  useEffect(() => {
+    if (!badge) return
+    window.addEventListener('afterprint', clearBadge, { once: true })
+    // Wait a frame so the card is in the DOM before the print dialog opens.
+    const frame = window.requestAnimationFrame(() => window.print())
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('afterprint', clearBadge)
+    }
+  }, [badge, clearBadge])
 
   const submitSearch = useCallback(
     (event: FormEvent) => {
@@ -69,18 +95,6 @@ export function useBadgePrinting() {
     },
     [draft, query, page, load],
   )
-
-  const openPdf = useCallback((blob: Blob) => {
-    const url = URL.createObjectURL(blob)
-    const opened = window.open(url, '_blank')
-    if (opened) {
-      // Revoked later: the new tab needs the URL while it loads the PDF.
-      window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000)
-      setPdfLink(undefined)
-    } else {
-      setPdfLink(url)
-    }
-  }, [])
 
   const refreshRows = useCallback(() => (query !== undefined ? load(query, page) : Promise.resolve()), [query, page, load])
 
@@ -105,7 +119,7 @@ export function useBadgePrinting() {
     async (row: CheckinSearchRow) => {
       setBusyId(row.id)
       try {
-        openPdf(await printVisitorBadgeUseCase.execute(row.id))
+        showBadge(await printVisitorBadgeUseCase.execute(row.id))
         toast.success(`Badge printed for ${row.fullName}.`)
         await refreshRows()
       } catch (error) {
@@ -118,7 +132,7 @@ export function useBadgePrinting() {
         setBusyId(undefined)
       }
     },
-    [printVisitorBadgeUseCase, openPdf, toast, refreshRows],
+    [printVisitorBadgeUseCase, showBadge, toast, refreshRows],
   )
 
   const uploadPhoto = useCallback(
@@ -157,7 +171,7 @@ export function useBadgePrinting() {
     if (!reprintTarget || !reasonValid) return
     setBusyId(reprintTarget.id)
     try {
-      openPdf(await reprintVisitorBadgeUseCase.execute(reprintTarget.id, trimmedReason))
+      showBadge(await reprintVisitorBadgeUseCase.execute(reprintTarget.id, trimmedReason))
       toast.success(`Badge reprinted for ${reprintTarget.fullName}. The previous badge no longer works.`)
       setReprintTarget(undefined)
       await refreshRows()
@@ -169,7 +183,7 @@ export function useBadgePrinting() {
     } finally {
       setBusyId(undefined)
     }
-  }, [reprintTarget, reasonValid, trimmedReason, reprintVisitorBadgeUseCase, openPdf, toast, refreshRows])
+  }, [reprintTarget, reasonValid, trimmedReason, reprintVisitorBadgeUseCase, showBadge, toast, refreshRows])
 
   return {
     draft,
@@ -187,6 +201,7 @@ export function useBadgePrinting() {
     retry: refreshRows,
     isUnavailable,
     busyId,
+    badge,
     pdfLink,
     verifyId,
     uploadPhoto,

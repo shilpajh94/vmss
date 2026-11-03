@@ -1,14 +1,14 @@
-import type { BadgeScanResult, CheckinSearchPage, CheckinSearchRow } from '../../domain/entities/checkin-schema'
+import type { BadgeOutput, BadgeScanResult, CheckinSearchPage, CheckinSearchRow } from '../../domain/entities/checkin-schema'
 
 export interface CheckinRepository {
   search(params: { q: string; page: number; pageSize: number }): Promise<CheckinSearchPage>
   verifyId(visitId: string): Promise<void>
   /** Captures a photo for a visit that has none; returns the refreshed row. */
   uploadPhoto(visitId: string, file: File): Promise<CheckinSearchRow>
-  /** Returns the badge PDF. Sends no custom headers (the API's CORS preflight rejects `Idempotency-Key`). */
-  printBadge(visitId: string): Promise<Blob>
+  /** Returns the badge data to render. Sends no custom headers (the API's CORS preflight rejects `Idempotency-Key`). */
+  printBadge(visitId: string): Promise<BadgeOutput>
   /** Invalidates the previous badge; only call from a confirmed user action. */
-  reprintBadge(visitId: string, reason: string): Promise<Blob>
+  reprintBadge(visitId: string, reason: string): Promise<BadgeOutput>
   checkOutWithBadge(token: string): Promise<BadgeScanResult>
   checkInWithBadge(token: string): Promise<BadgeScanResult>
   reEnterWithBadge(token: string): Promise<BadgeScanResult>

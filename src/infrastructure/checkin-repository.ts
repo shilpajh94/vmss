@@ -2,10 +2,12 @@ import { API_ENDPOINTS } from '../data/api/api-endpoints'
 import type { ApiClient } from '../data/api/api-client'
 import type { CheckinRepository } from '../data/repositories/checkin-repository'
 import {
+  BadgeCardResponseSchema,
   BadgeScanResponseSchema,
   CheckinPhotoResponseSchema,
   CheckinSearchResponseSchema,
   CheckinVerifyIdResponseSchema,
+  type BadgeOutput,
   type BadgeScanResult,
   type CheckinSearchPage,
   type CheckinSearchRow,
@@ -47,19 +49,26 @@ export class HttpCheckinRepository implements CheckinRepository {
     return response.data
   }
 
-  async printBadge(visitId: string): Promise<Blob> {
-    return this.apiClient.downloadBlob({
-      endpointConfig: API_ENDPOINTS.CHECKIN_PRINT_BADGE,
-      pathParams: { visitId },
-    })
+  async printBadge(visitId: string): Promise<BadgeOutput> {
+    return this.toBadgeOutput(
+      await this.apiClient.downloadBlob({ endpointConfig: API_ENDPOINTS.CHECKIN_PRINT_BADGE, pathParams: { visitId } }),
+    )
   }
 
-  async reprintBadge(visitId: string, reason: string): Promise<Blob> {
-    return this.apiClient.downloadBlob({
-      endpointConfig: API_ENDPOINTS.CHECKIN_REPRINT_BADGE,
-      pathParams: { visitId },
-      queryParams: { reason },
-    })
+  async reprintBadge(visitId: string, reason: string): Promise<BadgeOutput> {
+    return this.toBadgeOutput(
+      await this.apiClient.downloadBlob({
+        endpointConfig: API_ENDPOINTS.CHECKIN_REPRINT_BADGE,
+        pathParams: { visitId },
+        queryParams: { reason },
+      }),
+    )
+  }
+
+  // JSON -> render the ID card; anything else (today's PDF) is passed through.
+  private async toBadgeOutput(blob: Blob): Promise<BadgeOutput> {
+    if (!blob.type.includes('json')) return { kind: 'pdf', blob }
+    return { kind: 'card', card: BadgeCardResponseSchema.parse(JSON.parse(await blob.text())) }
   }
 
   async checkOutWithBadge(token: string): Promise<BadgeScanResult> {

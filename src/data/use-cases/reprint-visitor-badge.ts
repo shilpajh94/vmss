@@ -1,3 +1,4 @@
+import type { BadgeOutput } from '../../domain/entities/checkin-schema'
 import type { CheckinRepository } from '../repositories/checkin-repository'
 
 export class ReprintVisitorBadgeUseCase {
@@ -7,7 +8,7 @@ export class ReprintVisitorBadgeUseCase {
     this.repository = repository
   }
 
-  async execute(visitId: string, reason: string): Promise<Blob> {
+  async execute(visitId: string, reason: string): Promise<BadgeOutput> {
     return this.repository.reprintBadge(visitId, reason)
   }
 }

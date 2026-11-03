@@ -57,3 +57,23 @@ export type BadgeScanResult = z.infer<typeof BadgeScanResultSchema>
 export const BadgeScanResponseSchema = z
   .union([z.object({ data: BadgeScanResultSchema }).transform((value) => value.data), BadgeScanResultSchema])
   .pipe(BadgeScanResultSchema)
+
+// ASSUMED contract (not yet confirmed by the backend): print/reprint return the
+// badge data as JSON so the frontend can render the ID card. `token` is the
+// signed credential the scan page accepts; it is encoded in the QR only.
+export const BadgeCardSchema = z.object({
+  token: z.string().min(1),
+  visitorName: z.string(),
+  purpose: z.string().nullable().optional(),
+  hostName: z.string().nullable().optional(),
+  photoUrl: z.string().nullable().optional(),
+})
+
+export type BadgeCard = z.infer<typeof BadgeCardSchema>
+
+export const BadgeCardResponseSchema = z
+  .union([z.object({ data: BadgeCardSchema }).transform((value) => value.data), BadgeCardSchema])
+  .pipe(BadgeCardSchema)
+
+// Until the backend ships badge JSON, print/reprint still answer with a PDF.
+export type BadgeOutput = { kind: 'card'; card: BadgeCard } | { kind: 'pdf'; blob: Blob }

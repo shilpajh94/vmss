@@ -486,3 +486,33 @@
     transition: none;
   }
 }
+
+/* Visitor badge: print only the ID card, at ID-card size. */
+.badge-card {
+  width: 80mm;
+  height: 80mm;
+}
+
+@page {
+  size: 80mm 80mm;
+  margin: 0;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #badge-print-root,
+  #badge-print-root * {
+    visibility: visible;
+  }
+  #badge-print-root {
+    display: block !important;
+    position: fixed;
+    inset: 0;
+  }
+  .badge-card {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}

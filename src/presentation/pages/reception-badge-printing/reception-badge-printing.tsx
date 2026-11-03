@@ -9,6 +9,7 @@ import { TextField } from '../../components/ui/TextField'
 import { Pagination } from '../../components/Pagination'
 import { useBadgePrinting } from './hooks/use-badge-printing'
 import { BadgeResultRow } from './Components/BadgeResultRow'
+import { BadgeCardPrint } from './Components/BadgeCardPrint'
 import { ReprintDialog } from './Components/ReprintDialog'
 
 // Rendered inside StaffLayout. Gated by the tenant toggle plus
@@ -99,6 +100,8 @@ export function ReceptionBadgePrintingPage() {
           />
         </>
       )}
+
+      {printing.badge && <BadgeCardPrint badge={printing.badge} />}
 
       <ReprintDialog
         target={printing.reprintTarget}
