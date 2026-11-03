@@ -25,13 +25,9 @@ from vmss_api.invitations.tests.helpers import _build_invitation
 from vmss_api.org_structure.models import Branch
 from vmss_api.tenant.models import Tenant
 
-_SECRET = "test-badge-secret-" + "x" * 32
-
 
 @pytest.fixture
 async def flow_on(monkeypatch, db_session: AsyncSession, tenant: Tenant) -> None:
-    monkeypatch.setattr(settings, "badge_print_flow_enabled", True)
-    monkeypatch.setattr(settings, "badge_token_secret", _SECRET)
     tenant.badge_print_flow_enabled = True
     await db_session.commit()
 
@@ -97,20 +93,9 @@ def _token(
 # --- flag gating --------------------------------------------------------------
 
 
-async def test_global_flag_off_returns_404(
-    client: AsyncClient, user: User, issue_token, tenant: Tenant, monkeypatch
-) -> None:
-    monkeypatch.setattr(settings, "badge_print_flow_enabled", False)
-    response = await client.get(
-        "/api/v1/checkin/search", params={"q": "alice"}, headers=_auth(issue_token, user)
-    )
-    assert response.status_code == 404
-
-
 async def test_tenant_flag_off_returns_404(
-    client: AsyncClient, user: User, issue_token, tenant: Tenant, monkeypatch
+    client: AsyncClient, user: User, issue_token, tenant: Tenant
 ) -> None:
-    monkeypatch.setattr(settings, "badge_print_flow_enabled", True)
     response = await client.get(
         "/api/v1/checkin/search", params={"q": "alice"}, headers=_auth(issue_token, user)
     )
@@ -120,8 +105,6 @@ async def test_tenant_flag_off_returns_404(
 async def test_scan_endpoints_404_when_flag_off(
     client: AsyncClient, tenant: Tenant, db_session: AsyncSession, monkeypatch
 ) -> None:
-    monkeypatch.setattr(settings, "badge_token_secret", _SECRET)
-    monkeypatch.setattr(settings, "badge_print_flow_enabled", False)
     token = badge_token.issue_badge_token(
         visit_id=uuid.uuid4(),
         tenant_id=tenant.id,
@@ -501,8 +484,7 @@ async def test_wrong_day_token_is_rejected(
     assert response.status_code == 400
 
 
-async def test_expired_token_is_rejected(monkeypatch, tenant: Tenant) -> None:
-    monkeypatch.setattr(settings, "badge_token_secret", _SECRET)
+async def test_expired_token_is_rejected(tenant: Tenant) -> None:
     token = badge_token.issue_badge_token(
         visit_id=uuid.uuid4(),
         tenant_id=tenant.id,
@@ -514,7 +496,6 @@ async def test_expired_token_is_rejected(monkeypatch, tenant: Tenant) -> None:
 
 
 async def test_token_signed_with_other_secret_is_rejected(monkeypatch, tenant: Tenant) -> None:
-    monkeypatch.setattr(settings, "badge_token_secret", _SECRET)
     token = badge_token.issue_badge_token(
         visit_id=uuid.uuid4(),
         tenant_id=tenant.id,
@@ -522,7 +503,7 @@ async def test_token_signed_with_other_secret_is_rejected(monkeypatch, tenant: T
         jti="j",
         timezone="UTC",
     )
-    monkeypatch.setattr(settings, "badge_token_secret", "another-secret-" + "y" * 32)
+    monkeypatch.setattr(settings, "jwt_secret_key", "another-secret-" + "y" * 32)
     assert badge_token.verify_badge_token(token) is None
 
 

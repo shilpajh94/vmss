@@ -10,15 +10,14 @@ untouched.
 
 ## Enabling it
 
-Two switches, both must be on, otherwise every route below returns `404`:
+One switch: the tenant's toggle ("Enable badge printing" under Organisation
+Configs), `PATCH /api/v1/tenants/me/settings` with
+`{"badgePrintFlowEnabled": true}` (needs `tenants:update`, Admin). While it is
+off, every route below returns `404` and the previous check-in flow applies.
 
-1. `BADGE_PRINT_FLOW_ENABLED=true` (deploy-level; default `false`).
-2. The tenant's toggle: `PATCH /api/v1/tenants/me/settings` with
-   `{"badgePrintFlowEnabled": true}` (needs `tenants:update`, Admin).
-
-Also set `BADGE_TOKEN_SECRET` (signs the badge QR; separate from
-`QR_TOKEN_ENCRYPTION_KEY`) and optionally `BADGE_SCAN_RATE_LIMIT`
-(default `30/minute`, per IP). See `docs/features/configuration.md`.
+The badge QR is signed with a key derived from `JWT_SECRET_KEY`; no extra
+secret is needed. Optionally set `BADGE_SCAN_RATE_LIMIT` (default
+`30/minute`, per IP). See `docs/features/configuration.md`.
 
 ## Endpoints (`/api/v1/checkin`)
 

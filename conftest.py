@@ -323,6 +323,7 @@ ADMIN_PERMISSION_CODES = [
     "audit-logs:export",
     "tenants:update",
     "visitors:print_badge",
+    "timeline:view",
 ]
 
 

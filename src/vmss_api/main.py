@@ -33,6 +33,14 @@ _APP_VERSION = version("vmss-api")
 _TAGS_METADATA = [
     {"name": "health", "description": "Liveness/readiness probes for the running process."},
     {
+        "name": "timeline",
+        "description": (
+            "Read-only chronological history of a visit (invited, approved, ID "
+            "verified, check-in/out, badge prints, notifications), by invitation "
+            "or by co-visitor."
+        ),
+    },
+    {
         "name": "auth",
         "description": (
             "Tenant-user login, access/refresh token issuance, the caller's own "

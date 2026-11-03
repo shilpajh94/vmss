@@ -2332,12 +2332,11 @@ async def test_rejected_qr_check_in_sends_no_poc_push(
 # --- add-badge-print-flow: email-only "bring your ID" callout ------------------
 
 
-async def _approval_email_parts(monkeypatch, *, global_flag: bool, tenant_flag: bool) -> dict:
+async def _approval_email_parts(monkeypatch, *, tenant_flag: bool) -> dict:
     """Runs the approval task body with `_dispatch` captured, returning what it
     would have sent. Only the tenant lookup is stubbed; template rendering is real."""
     from types import SimpleNamespace
 
-    monkeypatch.setattr(settings, "badge_print_flow_enabled", global_flag)
     fake_invitation = _FakeInvitation(
         id=uuid.uuid4(),
         status="approved",
@@ -2371,20 +2370,13 @@ async def _approval_email_parts(monkeypatch, *, global_flag: bool, tenant_flag: 
 
 
 async def test_approval_email_has_bring_id_callout_only_when_flow_on(monkeypatch) -> None:
-    sent = await _approval_email_parts(monkeypatch, global_flag=True, tenant_flag=True)
+    sent = await _approval_email_parts(monkeypatch, tenant_flag=True)
     assert "Please bring your ID" in sent["html_body"]
     assert "Please bring your ID" in sent["body"]
 
 
-@pytest.mark.parametrize(
-    ("global_flag", "tenant_flag"), [(False, True), (True, False), (False, False)]
-)
-async def test_approval_email_unchanged_when_flow_off(
-    monkeypatch, global_flag: bool, tenant_flag: bool
-) -> None:
-    sent = await _approval_email_parts(
-        monkeypatch, global_flag=global_flag, tenant_flag=tenant_flag
-    )
+async def test_approval_email_unchanged_when_flow_off(monkeypatch) -> None:
+    sent = await _approval_email_parts(monkeypatch, tenant_flag=False)
     assert "Please bring your ID" not in sent["html_body"]
     assert "Please bring your ID" not in sent["body"]
     # The standing checklist line is still there, as before.

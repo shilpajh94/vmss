@@ -1203,6 +1203,18 @@ async def create_invitation(
         if field_id not in visitor_info_field_ids
     }
 
+    # System-field answers (by key) an ungrouped field's own
+    # `visibilityCondition` may watch.
+    system_field_values: dict[str, Any] = {
+        "registration_type": payload.registration_type,
+        "purpose_of_visit": visit_details["purpose_of_visit"],
+        "expected_duration": visit_details["expected_duration"],
+        "department_to_visit": visit_details["department_to_visit"],
+        "additional_notes": payload.visit_details.additional_notes,
+        "items": payload.carried_items.items,
+        "item_description": payload.carried_items.item_description,
+    }
+
     def _validate_custom_fields(
         fields: list[dict[str, Any]],
         values: dict[str, Any],
@@ -1212,7 +1224,11 @@ async def create_invitation(
     ) -> None:
         try:
             form_builder_validation.validate_custom_field_values(
-                fields, values, scope=scope, skip_required=skip_required
+                fields,
+                values,
+                scope=scope,
+                skip_required=skip_required,
+                visibility_context=system_field_values,
             )
         except HTTPException:
             logger.warning(

@@ -23,6 +23,7 @@ PERMISSION_CODES = [
     "tenants:read",
     "tenants:update",
     "visitors:print_badge",
+    "timeline:view",
     "branches:manage",
     "branches:view",
     "branches:provision",
@@ -109,6 +110,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:badge",
         "invitations:export",
         "visitors:print_badge",
+        "timeline:view",
         "documents:view",
         "roles:view",
     ],
@@ -123,6 +125,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "invitations:checkin",
         "invitations:checkout",
         "invitations:export",
+        "timeline:view",
         "documents:view",
     ],
     "host": [

@@ -2758,3 +2758,36 @@ async def test_inferred_step_icon_tenant_schema_isolation(
 
     async with open_tenant_session(other_schema) as other_session:
         assert await FormStepRepository(other_session).get(uuid.UUID(created["id"])) is None
+
+
+def _custom_field(field_id: str, key: str, *, required: bool, condition=None) -> dict:
+    return {
+        "id": field_id,
+        "key": key,
+        "label": key,
+        "fieldType": "text",
+        "isRequired": required,
+        "isSystem": False,
+        "options": None,
+        "validationRules": None,
+        "visibilityCondition": condition,
+    }
+
+
+def test_hidden_ungrouped_required_field_is_not_required() -> None:
+    from fastapi import HTTPException
+
+    from vmss_api.form_builder import validation
+
+    condition = {"fieldKey": "registration_type", "operator": "equals", "value": "group"}
+    fields = [_custom_field("f1", "company", required=True, condition=condition)]
+
+    # Condition false -> hidden -> no "missing required" rejection.
+    validation.validate_custom_field_values(
+        fields, {}, scope="the invitation", visibility_context={"registration_type": "individual"}
+    )
+    # Condition true -> visible -> still required.
+    with pytest.raises(HTTPException):
+        validation.validate_custom_field_values(
+            fields, {}, scope="the invitation", visibility_context={"registration_type": "group"}
+        )

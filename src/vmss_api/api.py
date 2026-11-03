@@ -22,6 +22,7 @@ from vmss_api.registrations.router import router as registrations_router
 from vmss_api.reports.router import router as reports_router
 from vmss_api.sso.router import router as sso_router
 from vmss_api.tenant.router import router as tenant_router
+from vmss_api.timeline.router import router as timeline_router
 from vmss_api.visit_info.router import router as visit_info_router
 from vmss_api.visitor_return_visit.router import router as visitor_return_visit_router
 from vmss_api.visitors.router import router as visitors_router
@@ -36,6 +37,7 @@ api_router.include_router(devices_router)
 api_router.include_router(device_settings_router)
 api_router.include_router(platform_router)
 api_router.include_router(visitors_router)
+api_router.include_router(timeline_router)
 api_router.include_router(form_builder_router)
 api_router.include_router(invitations_router)
 api_router.include_router(approvals_router)

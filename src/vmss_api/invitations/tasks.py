@@ -382,10 +382,7 @@ def send_approval_notification(
 
 
 async def _badge_flow_active(session: AsyncSession, tenant_schema: str) -> bool:
-    """True when the badge print flow is on for this tenant (server flag AND
-    tenant toggle)."""
-    if not settings.badge_print_flow_enabled:
-        return False
+    """True when the tenant has the badge print flow toggled on."""
     tenant = await TenantRepository(session).get_by_schema_name(tenant_schema)
     return tenant is not None and tenant.badge_print_flow_enabled
 

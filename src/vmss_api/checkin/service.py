@@ -293,7 +293,7 @@ async def resolve_scan_tenant(db: AsyncSession, claims: BadgeClaims) -> TenantCo
     tenant = await TenantRepository(db).get(claims.tenant_id)
     if tenant is None or not tenant.is_active:
         raise invalid_token()
-    if not (settings.badge_print_flow_enabled and tenant.badge_print_flow_enabled):
+    if not tenant.badge_print_flow_enabled:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not Found")
     return TenantContext(
         id=tenant.id,

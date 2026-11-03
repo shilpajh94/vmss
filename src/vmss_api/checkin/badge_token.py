@@ -1,7 +1,7 @@
 """Signed, day-bound badge QR tokens (add-badge-print-flow design Decision 7).
 
-PyJWT HS256 keyed by `settings.badge_token_secret` — deliberately not
-`qr_token_encryption_key`, so rotating one secret never invalidates the other.
+PyJWT HS256 keyed by a domain-separated HMAC of `settings.jwt_secret_key`, so
+the signing key is never the raw JWT key and no extra env secret is needed.
 Claims: `sub` (visit id), `tid` (tenant id), `day` (tenant-local ISO date the
 badge is valid for), `jti` (matches `badge_prints.jti`), `typ="badge"`, `exp`.
 
@@ -13,6 +13,8 @@ active, and whether `day` is today, are checked by the service against the DB
 and the tenant's clock; this module only proves the token is ours and intact.
 """
 
+import hashlib
+import hmac
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -27,10 +29,6 @@ _TYPE = "badge"
 _EXPIRY_GRACE = timedelta(hours=1)
 
 
-class BadgeTokenSecretNotConfigured(RuntimeError):
-    pass
-
-
 @dataclass(frozen=True)
 class BadgeClaims:
     visit_id: uuid.UUID
@@ -39,14 +37,10 @@ class BadgeClaims:
     jti: str
 
 
-def _secret() -> str:
-    if not settings.badge_token_secret:
-        raise BadgeTokenSecretNotConfigured(
-            "BADGE_TOKEN_SECRET is not set — generate one with "
-            '`python -c "import secrets; print(secrets.token_urlsafe(48))"` '
-            "before printing any badge."
-        )
-    return settings.badge_token_secret
+def _secret() -> bytes:
+    return hmac.new(
+        settings.jwt_secret_key.encode(), b"vmss:badge-token:v1", hashlib.sha256
+    ).digest()
 
 
 def new_jti() -> str:

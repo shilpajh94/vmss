@@ -456,6 +456,7 @@ def validate_custom_field_values(
     *,
     scope: str,
     skip_required: bool = False,
+    visibility_context: dict[str, Any] | None = None,
 ) -> None:
     """specs/invitations/spec.md (delta) "Invitation Creation Captures
     Admin-Defined Custom Field Answers" (restructure-walkin-payload-by-
@@ -477,8 +478,24 @@ def validate_custom_field_values(
     effective form) — is rejected identically: there is no distinct code
     path for "wrong branch" versus "doesn't exist", by design (design.md
     Decision 5).
+
+    A field carrying its own `visibilityCondition` that currently evaluates
+    to hidden is not required and its (stale) value is not validated, same as
+    a hidden group. The condition references a field by *key*, so it is
+    evaluated against `visibility_context` (system-field answers by key)
+    merged with this scope's own answers re-keyed from field id to key.
     """
     fields_by_id = {field["id"]: field for field in fields}
+    keyed_values = {
+        **(visibility_context or {}),
+        **{fields_by_id[fid]["key"]: val for fid, val in values.items() if fid in fields_by_id},
+    }
+    hidden_ids = {
+        field["id"]
+        for field in fields
+        if field.get("visibilityCondition") is not None
+        and not is_group_visible(field, keyed_values)
+    }
     unknown_ids = set(values) - set(fields_by_id)
     if unknown_ids:
         raise HTTPException(
@@ -486,7 +503,9 @@ def validate_custom_field_values(
             detail=f"Unknown custom field id(s) for {scope}: {', '.join(sorted(unknown_ids))}",
         )
     if not skip_required:
-        missing_required = {field["id"] for field in fields if field["isRequired"]} - set(values)
+        missing_required = {
+            field["id"] for field in fields if field["isRequired"] and field["id"] not in hidden_ids
+        } - set(values)
         if missing_required:
             missing_labels = sorted(_field_label(fields_by_id[fid]) for fid in missing_required)
             raise HTTPException(
@@ -496,4 +515,6 @@ def validate_custom_field_values(
                 ),
             )
     for field_id, value in values.items():
+        if field_id in hidden_ids:
+            continue
         _validate_value_against_field(fields_by_id[field_id], value)
