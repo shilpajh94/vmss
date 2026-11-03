@@ -8,7 +8,7 @@ const origin = 'https://app.example.com'
 function staff(codes: string[], extra: Partial<StaffUser> = {}): StaffUser {
   return {
     name: 'Test',
-    role: 'Host',
+    roles: ['Host'],
     isAdmin: false,
     isReception: false,
     branchRoles: [{ roleName: 'Host', branchId: null, permissionCodes: codes }],

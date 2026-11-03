@@ -4,7 +4,7 @@ import type { StaffUser } from '../../src/domain/entities/staff-user-schema'
 import { ADMIN_AREA_PERMISSIONS, permissionsFor } from '../../src/presentation/utils/permissions'
 
 function user(branchRoles: StaffUser['branchRoles']): StaffUser {
-  return { name: 'Test', role: branchRoles[0]?.roleName ?? 'Staff', isAdmin: false, isReception: false, branchRoles }
+  return { name: 'Test', roles: [branchRoles[0]?.roleName ?? 'Staff'], isAdmin: false, isReception: false, branchRoles }
 }
 
 describe('permissionsFor (design D-W1)', () => {
