@@ -23,3 +23,11 @@ export function purposeLabel(value: string | null | undefined): string | null | 
 export function purposeLabel(value: string | null | undefined): string | null | undefined {
   return value ? (LABEL_BY_SLUG.get(value) ?? value) : value
 }
+
+/** Every spelling an invitation may store a purpose under: its label, plus the
+ * legacy slug older rows kept. The purpose filter queries all of them, since
+ * the API matches the stored value exactly. */
+export function purposeStoredValues(label: string): string[] {
+  const slug = PURPOSES.find((purpose) => purpose.label === label)?.slug
+  return slug ? [label, slug] : [label]
+}

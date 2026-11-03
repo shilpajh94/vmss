@@ -15,7 +15,7 @@ import type { HostEmployee } from '../../domain/entities/host-employee-schema'
 import type { ApprovalWorkflowRule } from '../../domain/entities/approval-workflow-rule-schema'
 import type { EditInvitationFields, InvitationDrillDown } from '../../data/repositories/visit-request-summary-repository'
 import { drillDownChips, parseDeepLinkStatuses, parseDrillDown } from '../components/invitation-board/board-drill-down'
-import { PURPOSE_OF_VISIT_OPTIONS } from '../utils/purpose-of-visit-options'
+import { PURPOSE_OF_VISIT_OPTIONS, purposeStoredValues } from '../utils/purpose-of-visit-options'
 import { saveBlob } from '../utils/save-blob'
 import { REGISTRATION_TYPE_OPTIONS, SOURCE_OPTIONS, exportFilename, optionLabel } from '../components/invitation-board/filter-options'
 import type { InvitationExportChoice } from '../components/invitation-board/ExportInvitationsModal'
@@ -61,12 +61,6 @@ function describeApprovalOutcome(
   const approverLabel = resolveApproverLabel(nextStep, roleNameById, employeeNameById)
   const nextLevel = resolveCurrentLevel(nextStep, visitorCategoryId, workflowRulesByCategory)
   return `Level ${approvedLevel} of ${totalSteps} approved — now waiting on ${approverLabel} (level ${nextLevel} of ${totalSteps}).`
-}
-
-// Every spelling an invitation may store a purpose under.
-function purposeStoredValues(label: string): string[] {
-  const slug = PURPOSE_OF_VISIT_OPTIONS.find((option) => option.label === label)?.value
-  return slug && slug !== label ? [label, slug] : [label]
 }
 
 // Shared Kanban-board data/actions behind the staff dashboard and the admin

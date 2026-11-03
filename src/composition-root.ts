@@ -2,6 +2,9 @@ import { ApiClient } from './data/api/api-client'
 import type { VisitRequestRepository } from './data/repositories/visit-request-repository'
 import type { VisitRequestSummaryRepository } from './data/repositories/visit-request-summary-repository'
 import type { VisitTrackingRepository } from './data/repositories/visit-tracking-repository'
+import type { VisitTimelineRepository } from './data/repositories/visit-timeline-repository'
+import { GetVisitTimelineUseCase } from './data/use-cases/get-visit-timeline'
+import { HttpVisitTimelineRepository } from './infrastructure/visit-timeline-repository'
 import type { VisitorOtpRepository } from './data/repositories/visitor-otp-repository'
 import type { VisitorPortalRepository } from './data/repositories/visitor-portal-repository'
 import type { StaffAuthRepository } from './data/repositories/staff-auth-repository'
@@ -198,6 +201,7 @@ export interface AppDependencies {
   setBadgePrintFlowEnabledUseCase: SetBadgePrintFlowEnabledUseCase
   submitVisitRequestUseCase: SubmitVisitRequestUseCase
   trackVisitRequestUseCase: TrackVisitRequestUseCase
+  getVisitTimelineUseCase: GetVisitTimelineUseCase
   requestVisitorOtpUseCase: RequestVisitorOtpUseCase
   verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase
   getVisitorPortalMeUseCase: GetVisitorPortalMeUseCase
@@ -327,6 +331,8 @@ export function createApp(): AppDependencies {
   let ssoAuthRepository: SsoAuthRepository | undefined
   let submitVisitRequestUseCase: SubmitVisitRequestUseCase | undefined
   let trackVisitRequestUseCase: TrackVisitRequestUseCase | undefined
+  let visitTimelineRepository: VisitTimelineRepository | undefined
+  let getVisitTimelineUseCase: GetVisitTimelineUseCase | undefined
   let requestVisitorOtpUseCase: RequestVisitorOtpUseCase | undefined
   let verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase | undefined
   let getVisitorPortalMeUseCase: GetVisitorPortalMeUseCase | undefined
@@ -488,6 +494,16 @@ export function createApp(): AppDependencies {
   const resolveVisitTrackingRepository = (): VisitTrackingRepository => {
     visitTrackingRepository ??= new HttpVisitTrackingRepository(resolveApiClient())
     return visitTrackingRepository
+  }
+
+  const resolveVisitTimelineRepository = (): VisitTimelineRepository => {
+    visitTimelineRepository ??= new HttpVisitTimelineRepository(resolveApiClient())
+    return visitTimelineRepository
+  }
+
+  const resolveGetVisitTimelineUseCase = (): GetVisitTimelineUseCase => {
+    getVisitTimelineUseCase ??= new GetVisitTimelineUseCase(resolveVisitTimelineRepository())
+    return getVisitTimelineUseCase
   }
 
   const resolveSubmitVisitRequestUseCase = (): SubmitVisitRequestUseCase => {
@@ -1266,6 +1282,9 @@ export function createApp(): AppDependencies {
     },
     get submitVisitRequestUseCase() {
       return resolveSubmitVisitRequestUseCase()
+    },
+    get getVisitTimelineUseCase() {
+      return resolveGetVisitTimelineUseCase()
     },
     get trackVisitRequestUseCase() {
       return resolveTrackVisitRequestUseCase()

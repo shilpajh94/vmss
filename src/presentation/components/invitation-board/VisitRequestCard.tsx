@@ -2,20 +2,16 @@ import { memo } from 'react'
 import { Avatar } from '../ui/Avatar'
 import type { VisitRequestSummary } from '../../../domain/entities/visit-request-summary-schema'
 import {
-  isReceptionCurrentStep,
   resolveApproverLabel,
   resolveCurrentLevel,
   resolveNextStepPreviewLabel,
   resolveTotalSteps,
 } from '../../utils/approval-step-label'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
-import { CalendarClockIcon, InfoIcon, PencilIcon, UndoIcon, UserCheckIcon } from '../icons'
+import { CalendarClockIcon } from '../icons'
+import { deriveInvitationActions } from './invitation-actions'
 import { IconActionButton } from '../ui/IconActionButton'
 import { purposeLabel } from '../../utils/purpose-of-visit-options'
-
-// An archived no-show can be rescheduled or edited; the API sends it back for
-// re-approval when its date changes.
-const RESCHEDULABLE_STATUSES = new Set(['submitted', 'approved', 'archived'])
 
 // Full class names (not built strings) so Tailwind generates them.
 const AVATAR_TINTS = ['bg-avatar-1', 'bg-avatar-2', 'bg-avatar-3', 'bg-avatar-4', 'bg-avatar-5', 'bg-avatar-6']
@@ -23,12 +19,6 @@ const AVATAR_TINTS = ['bg-avatar-1', 'bg-avatar-2', 'bg-avatar-3', 'bg-avatar-4'
 function avatarTintFor(trackingId: string): string {
   const hash = trackingId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)
   return AVATAR_TINTS[hash % AVATAR_TINTS.length]
-}
-
-interface IconAction {
-  label: string
-  icon: typeof InfoIcon
-  onClick: () => void
 }
 
 interface VisitRequestCardProps {
@@ -81,58 +71,27 @@ export const VisitRequestCard = memo(function VisitRequestCard({
   // The list item carries the approval step (design D12), so a card never
   // needs its own detail request.
   const progress = request
-  const isReceptionStep = isReceptionCurrentStep(progress.currentApprovalStep, progress.visitorCategoryId, workflowRulesByCategory ?? {})
   const pendingApproverLabel = progress.currentApprovalStep
     ? (resolveNextStepPreviewLabel(progress, workflowRulesByCategory ?? {}, roleNameById ?? {}) ??
       resolveApproverLabel(progress.currentApprovalStep, roleNameById, employeeNameById))
     : undefined
   const totalSteps = progress.currentApprovalStep ? resolveTotalSteps(progress, workflowRulesByCategory ?? {}) : undefined
-  const canReschedule = Boolean(onRescheduleClick) && RESCHEDULABLE_STATUSES.has(request.status)
-  const canDelegate = Boolean(onDelegateClick) && Boolean(progress.currentApprovalStep) && !isReceptionStep
-  // Reception never uses drag-and-drop to approve — it always acts through an
-  // explicit button, either "Approve & Delegate" (another level follows) or
-  // plain "Approve" (Reception is the only/last level), so the outcome is
-  // deliberate rather than an accidental card drag.
-  const isReceptionApprovalStep = isReceptionStep && Boolean(progress.currentApprovalStep)
-  const isLockedToApproveAndDelegate = isReceptionApprovalStep && (totalSteps ?? 0) > 1
-  const canApproveAndDelegate = Boolean(onApproveAndDelegateClick) && isLockedToApproveAndDelegate
-  const canApprove = Boolean(onApproveClick) && isReceptionApprovalStep && (totalSteps ?? 0) <= 1
-  const canEdit =
-    Boolean(onEditClick) && (RESCHEDULABLE_STATUSES.has(request.status) || (request.status === 'checked_out' && Boolean(canEditCheckOutTime)))
-  const canRevert = Boolean(onRevertClick) && request.status === 'approved'
-  // Until the category's live workflow rules have loaded,
-  // `isReceptionStep`/`totalSteps` fall back to the step's own possibly-stale
-  // `stepOrder`/`totalSteps` snapshot, which can misidentify Reception's step
-  // as a later, freely-draggable one (`approve()` still hard-blocks this
-  // case regardless — this just avoids the card visibly allowing a drag that
-  // would immediately be rejected).
-  const workflowRulesLoaded =
-    !progress.currentApprovalStep || !progress.visitorCategoryId || workflowRulesByCategory?.[progress.visitorCategoryId] !== undefined
-  const isActionable = isDraggable && !isApproving && workflowRulesLoaded
-  // Reception's own step approves through its dedicated buttons, but it can
-  // still deny.
-  const canTapApprove = isActionable && !isReceptionApprovalStep && Boolean(onMoveToApproved)
-  const canTapDeny = isActionable && Boolean(onMoveToDenied)
-
-
-  // Only the actions that decide the request's next state are labelled
-  // buttons; the rest are a compact icon row so cards stay short.
-  const approveAction = canApproveAndDelegate
-    ? { label: 'Approve & Delegate', onClick: () => onApproveAndDelegateClick?.(request.id) }
-    : canApprove
-      ? { label: 'Approve', onClick: () => onApproveClick?.(request.id) }
-      : canTapApprove
-        ? { label: 'Approve', onClick: () => onMoveToApproved?.(request.id) }
-        : undefined
+  const { approveAction, canTapDeny, iconActions } = deriveInvitationActions(request, {
+    isDraggable,
+    isApproving,
+    workflowRulesByCategory,
+    onRescheduleClick,
+    onDelegateClick,
+    onApproveAndDelegateClick,
+    onApproveClick,
+    onEditClick,
+    canEditCheckOutTime,
+    onVisitorInfoClick,
+    onRevertClick,
+    onMoveToApproved,
+    onMoveToDenied,
+  })
   const hasPrimaryActions = Boolean(approveAction) || canTapDeny || Boolean(onCheckOutClick)
-
-  const iconActions = [
-    onVisitorInfoClick && { label: 'Visitor info', icon: InfoIcon, onClick: () => onVisitorInfoClick(request.id) },
-    canReschedule && { label: 'Reschedule', icon: CalendarClockIcon, onClick: () => onRescheduleClick?.(request.id) },
-    canEdit && { label: 'Edit', icon: PencilIcon, onClick: () => onEditClick?.(request.id) },
-    canDelegate && { label: 'Delegate', icon: UserCheckIcon, onClick: () => onDelegateClick?.(request.id) },
-    canRevert && { label: 'Revert approval', icon: UndoIcon, onClick: () => onRevertClick?.(request.id) },
-  ].filter((action): action is IconAction => Boolean(action))
 
   // The list item doesn't carry the host; Visitor Info shows it.
   const metaLine = purposeLabel(request.purposeOfVisit) ?? 'No purpose given'

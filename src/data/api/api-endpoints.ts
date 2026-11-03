@@ -96,6 +96,16 @@ export const API_ENDPOINTS = {
     method: "GET",
     hasToken: true,
   },
+  GET_INVITATION_TIMELINE: {
+    endpoint: "/invitations/:invitationId/timeline",
+    method: "GET",
+    hasToken: true,
+  },
+  GET_VISITOR_TIMELINE: {
+    endpoint: "/visitors/:visitorId/timeline",
+    method: "GET",
+    hasToken: true,
+  },
   RESCHEDULE_INVITATION: {
     endpoint: "/invitations/:id/reschedule",
     method: "PATCH",

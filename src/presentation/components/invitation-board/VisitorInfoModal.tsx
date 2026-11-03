@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { InvitationDetail, InvitationVehicle } from '../../../domain/entities/invitation-detail-schema'
 import { FormSkeleton } from '../ui/Skeleton'
 import type { ApprovalWorkflowRule } from '../../../domain/entities/approval-workflow-rule-schema'
@@ -11,6 +12,9 @@ import { formatDateTime } from '../../utils/format-time'
 import { resolvePointOfContactLabel } from '../../utils/approval-step-label'
 import { prettifyKey } from '../../utils/prettify-key'
 import { useEffectiveForm, findFieldById, findGroupById } from '../../hooks/use-effective-form'
+import { useAppDependencies } from '../../context/app-dependencies-context'
+import { usePermissions } from '../../context/current-user-context'
+import { VisitTimeline } from './VisitTimeline'
 import { purposeLabel } from '../../utils/purpose-of-visit-options'
 
 interface VisitorInfoModalProps {
@@ -220,8 +224,50 @@ export function VisitorInfoModal({
   // keys (see `formatRawFieldValue`/`CustomFieldValueFields`) rather than
   // blocking the rest of the modal.
   const { steps: formSteps } = useEffectiveForm(detail?.branchId ?? undefined)
+  const [isTimelineOpen, setIsTimelineOpen] = useState(false)
+  const [branchName, setBranchName] = useState<string | undefined>()
+  const [buildingName, setBuildingName] = useState<string | undefined>()
+  const { listBranchesUseCase, getCalendarFeedUseCase } = useAppDependencies()
+  const timelineVisitDate = detail?.preferredVisitDate?.slice(0, 10)
+  const timelineInvitationId = detail?.id
+  const timelineBranchId = detail?.branchId
+  // The timeline dialog names the branch the visit is at; the detail only
+  // carries its id, so look it up once the dialog opens. A failed lookup just
+  // leaves the branch out.
+  useEffect(() => {
+    if (!isTimelineOpen || !timelineBranchId) return
+    let isCurrent = true
+    listBranchesUseCase
+      .execute()
+      .then((branches) => {
+        if (isCurrent) setBranchName(branches.find((branch) => branch.id === timelineBranchId)?.name)
+      })
+      .catch((error: unknown) => console.error('Failed to load the branch name for the timeline', error))
+    return () => {
+      isCurrent = false
+    }
+  }, [isTimelineOpen, timelineBranchId, listBranchesUseCase])
+
+  // The invitation detail has no building, but the calendar feed names one for
+  // each visit, so read that day's feed and pick this invitation out of it.
+  // Missing (a truncated feed, a denied visit, no date) just omits the row.
+  useEffect(() => {
+    if (!isTimelineOpen || !timelineVisitDate || !timelineInvitationId) return
+    let isCurrent = true
+    getCalendarFeedUseCase
+      .execute({ from: timelineVisitDate, to: timelineVisitDate, branchId: timelineBranchId ?? undefined })
+      .then((feed) => {
+        if (isCurrent) setBuildingName(feed.events.find((event) => event.id === timelineInvitationId)?.buildingName ?? undefined)
+      })
+      .catch((error: unknown) => console.error('Failed to load the building for the timeline', error))
+    return () => {
+      isCurrent = false
+    }
+  }, [isTimelineOpen, timelineVisitDate, timelineInvitationId, timelineBranchId, getCalendarFeedUseCase])
+  const canViewTimeline = usePermissions().can('timeline:view', detail?.branchId)
 
   return (
+    <>
     <Modal isOpen={isOpen} onClose={onClose} title="Visitor Info" maxWidthClassName="max-w-lg">
       {hasError ? (
         <div role="alert" className="flex flex-col items-center gap-3 py-8 text-center">
@@ -382,6 +428,15 @@ export function VisitorInfoModal({
                 </div>
               ) : null}
             </div>
+            {canViewTimeline ? (
+              <button
+                type="button"
+                onClick={() => setIsTimelineOpen(true)}
+                className="min-h-9 self-start rounded-lg border border-border-subtle px-3 font-body text-[12px] font-semibold text-secondary-accent"
+              >
+                View full timeline
+              </button>
+            ) : null}
           </div>
 
           {detail.badgeNumber ? (
@@ -406,5 +461,22 @@ export function VisitorInfoModal({
         </div>
       )}
     </Modal>
+    {detail && canViewTimeline ? (
+      <Modal isOpen={isOpen && isTimelineOpen} onClose={() => setIsTimelineOpen(false)} title="Visit timeline" maxWidthClassName="max-w-lg">
+        {/* Wrapped so Modal's pinned-actions styling (last child with a direct button) doesn't catch the "Load more" button. */}
+        <div>
+          <VisitTimeline
+            invitationId={detail.id}
+            visitLocation={[
+              { label: 'Branch', value: branchName },
+              { label: 'Building', value: buildingName },
+              { label: 'Host', value: detail.hostNameOrEmail },
+              { label: 'Department', value: detail.departmentToVisit },
+            ]}
+          />
+        </div>
+      </Modal>
+    ) : null}
+    </>
   )
 }

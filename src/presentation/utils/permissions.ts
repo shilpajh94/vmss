@@ -60,6 +60,7 @@ const FALLBACK_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'invitations:badge',
     'invitations:export',
     'visitors:print_badge',
+    'timeline:view',
     'documents:view',
     'roles:view',
   ],
@@ -74,6 +75,7 @@ const FALLBACK_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'invitations:checkin',
     'invitations:checkout',
     'invitations:export',
+    'timeline:view',
     'documents:view',
   ],
   host: [

@@ -10,7 +10,10 @@ import { DelegateInvitationModal } from '../../components/invitation-board/Deleg
 import { EditInvitationModal } from '../../components/invitation-board/EditInvitationModal'
 import { VisitorInfoModal } from '../../components/invitation-board/VisitorInfoModal'
 import { AsyncRegion } from '../../components/AsyncRegion'
-import { BoardSkeleton } from '../../components/ui/Skeleton'
+import { BoardSkeleton, TableSkeleton } from '../../components/ui/Skeleton'
+import { InvitationListView } from '../../components/invitation-board/InvitationListView'
+import { InvitationViewToggle } from '../../components/invitation-board/InvitationViewToggle'
+import { useInvitationView } from '../../hooks/use-invitation-view'
 import { BoardFilterBar } from '../../components/invitation-board/BoardFilterBar'
 import { boardExtraFilters } from '../../components/invitation-board/board-extra-filters'
 import { ExportInvitationsButton } from '../../components/invitation-board/ExportInvitationsButton'
@@ -119,6 +122,8 @@ export function AdminInvitationsPage() {
 
   usePageHeader({ description: 'Monitor visitor invitations, approval status, and check-in progress' })
 
+  const [view, setView] = useInvitationView('admin')
+
   return (
     <PageContentLayout
       header={
@@ -127,7 +132,10 @@ export function AdminInvitationsPage() {
               dropdowns already need the full row on wide screens. */}
           <div className="flex items-center justify-between gap-3">
             <h1 className="font-display text-xl font-bold md:text-2xl text-text">Invitations</h1>
-            {canExport ? <ExportInvitationsButton onClick={openExport} /> : null}
+            <div className="flex items-center gap-2">
+              <InvitationViewToggle value={view} onChange={setView} />
+              {canExport ? <ExportInvitationsButton onClick={openExport} /> : null}
+            </div>
           </div>
           <BoardFilterBar
             search={search}
@@ -150,13 +158,36 @@ export function AdminInvitationsPage() {
       <AsyncRegion
         phase={phase}
         isRefreshing={isRefreshing}
-        skeleton={<BoardSkeleton />}
+        skeleton={view === 'list' ? <TableSkeleton columns={6} label="Loading invitations…" /> : <BoardSkeleton />}
         errorMessage="Something went wrong loading the dashboard. Please try again."
         onRetry={refresh}
         className="lg:h-full"
       >
         {/* PageContentLayout's data region has a definite height on desktop;
             filling it lets each column scroll under its own fixed header. */}
+        {view === 'list' ? (
+          <div className="lg:h-full lg:overflow-y-auto">
+            <InvitationListView
+              columns={columns}
+              isFiltering={isFiltering}
+              approvingId={approvingId}
+              workflowRulesByCategory={workflowRulesByCategory}
+              getHandlers={(status) => ({
+                onMoveToApproved: status === 'requested' && actionPermissions.approve ? requestApprove : undefined,
+                onMoveToDenied: status === 'requested' && actionPermissions.deny ? requestDeny : undefined,
+                onRescheduleClick: actionPermissions.reschedule ? requestReschedule : undefined,
+                onDelegateClick: actionPermissions.delegate ? requestDelegate : undefined,
+                onApproveAndDelegateClick: actionPermissions.approve ? requestApproveAndDelegate : undefined,
+                onApproveClick: actionPermissions.approve ? requestApprove : undefined,
+                onEditClick: actionPermissions.edit ? requestEdit : undefined,
+                canEditCheckOutTime: canCheckOut,
+                onVisitorInfoClick: viewVisitorInfo,
+                onCheckOutClick: status === 'checked_in' && canCheckOut ? requestCheckOut : undefined,
+                onRevertClick: status === 'approved' && actionPermissions.revert ? requestRevert : undefined,
+              })}
+            />
+          </div>
+        ) : (
         <div className="flex flex-col lg:h-full">
           <ResponsiveBoard
             boardKey="admin"
@@ -202,6 +233,7 @@ export function AdminInvitationsPage() {
             )}
           />
         </div>
+        )}
       </AsyncRegion>
 
       <ApproveInvitationModal

@@ -1,5 +1,8 @@
 import { AsyncRegion } from '../../components/AsyncRegion'
-import { BoardSkeleton } from '../../components/ui/Skeleton'
+import { BoardSkeleton, TableSkeleton } from '../../components/ui/Skeleton'
+import { InvitationListView } from '../../components/invitation-board/InvitationListView'
+import { InvitationViewToggle } from '../../components/invitation-board/InvitationViewToggle'
+import { useInvitationView } from '../../hooks/use-invitation-view'
 import { KanbanColumn } from '../../components/invitation-board/KanbanColumn'
 import { ResponsiveBoard } from '../../components/invitation-board/ResponsiveBoard'
 import { CLOSED_BOARD_STATUSES } from '../../hooks/use-invitations-board'
@@ -116,6 +119,8 @@ export function StaffInvitationsPage() {
     closeVisitorInfo,
   } = useStaffInvitations()
 
+  const [view, setView] = useInvitationView('staff')
+
   return (
     <PageContentLayout
       header={
@@ -124,7 +129,10 @@ export function StaffInvitationsPage() {
               filter bar holds only search, filters and Clear filters. */}
           <div className="flex items-center justify-between gap-3">
             <h1 className="font-display text-xl font-bold md:text-2xl text-text">Invitations</h1>
-            {canExport ? <ExportInvitationsButton onClick={openExport} /> : null}
+            <div className="flex items-center gap-2">
+              <InvitationViewToggle value={view} onChange={setView} />
+              {canExport ? <ExportInvitationsButton onClick={openExport} /> : null}
+            </div>
           </div>
           <BoardFilterBar
             search={search}
@@ -146,13 +154,36 @@ export function StaffInvitationsPage() {
       <AsyncRegion
         phase={phase}
         isRefreshing={isRefreshing}
-        skeleton={<BoardSkeleton />}
+        skeleton={view === 'list' ? <TableSkeleton columns={6} label="Loading invitations…" /> : <BoardSkeleton />}
         errorMessage="Something went wrong loading the dashboard. Please try again."
         onRetry={refresh}
         className="lg:h-full"
       >
         {/* PageContentLayout's data region has a definite height on desktop;
             filling it lets each column scroll under its own fixed header. */}
+        {view === 'list' ? (
+          <div className="lg:h-full lg:overflow-y-auto">
+            <InvitationListView
+              columns={columns}
+              isFiltering={isFiltering}
+              approvingId={approvingId}
+              workflowRulesByCategory={workflowRulesByCategory}
+              getHandlers={(status) => ({
+                onMoveToApproved: status === 'requested' && actionPermissions.approve ? requestApprove : undefined,
+                onMoveToDenied: status === 'requested' && actionPermissions.deny ? requestDeny : undefined,
+                onRescheduleClick: actionPermissions.reschedule ? requestReschedule : undefined,
+                onDelegateClick: actionPermissions.delegate ? requestDelegate : undefined,
+                onApproveAndDelegateClick: actionPermissions.approve ? requestApproveAndDelegate : undefined,
+                onApproveClick: actionPermissions.approve ? requestApprove : undefined,
+                onEditClick: actionPermissions.edit ? requestEdit : undefined,
+                canEditCheckOutTime: canCheckOut,
+                onVisitorInfoClick: viewVisitorInfo,
+                onCheckOutClick: status === 'checked_in' && canCheckOut ? requestCheckOut : undefined,
+                onRevertClick: status === 'approved' && actionPermissions.revert ? requestRevert : undefined,
+              })}
+            />
+          </div>
+        ) : (
         <div className="flex flex-col lg:h-full">
           <ResponsiveBoard
             boardKey="staff"
@@ -198,6 +229,7 @@ export function StaffInvitationsPage() {
             )}
           />
         </div>
+        )}
       </AsyncRegion>
 
       <ApproveInvitationModal
