@@ -25,10 +25,6 @@ export function useBadgePrinting() {
   const [reprintTarget, setReprintTarget] = useState<CheckinSearchRow | undefined>(undefined)
   const [reason, setReason] = useState('')
 
-  // One Idempotency-Key per print attempt on a visit: reused for network/5xx
-  // retries, dropped after any 4xx (a fixed precondition must not replay a
-  // cached failure) and after success.
-  const keysRef = useRef(new Map<string, string>())
   const requestRef = useRef(0)
 
   const load = useCallback(
@@ -107,12 +103,9 @@ export function useBadgePrinting() {
 
   const printBadge = useCallback(
     async (row: CheckinSearchRow) => {
-      const key = keysRef.current.get(row.id) ?? crypto.randomUUID()
-      keysRef.current.set(row.id, key)
       setBusyId(row.id)
       try {
-        openPdf(await printVisitorBadgeUseCase.execute(row.id, key))
-        keysRef.current.delete(row.id)
+        openPdf(await printVisitorBadgeUseCase.execute(row.id))
         toast.success(`Badge printed for ${row.fullName}.`)
         await refreshRows()
       } catch (error) {
@@ -120,7 +113,6 @@ export function useBadgePrinting() {
           setIsUnavailable(true)
           return
         }
-        if (error instanceof ApiError && error.status >= 400 && error.status < 500) keysRef.current.delete(row.id)
         toast.error(describePrintError(error, 'print'))
       } finally {
         setBusyId(undefined)

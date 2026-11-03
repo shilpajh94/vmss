@@ -5,8 +5,8 @@ export interface CheckinRepository {
   verifyId(visitId: string): Promise<void>
   /** Captures a photo for a visit that has none; returns the refreshed row. */
   uploadPhoto(visitId: string, file: File): Promise<CheckinSearchRow>
-  /** Returns the badge PDF. `idempotencyKey` is reused by the caller for retries. */
-  printBadge(visitId: string, idempotencyKey: string): Promise<Blob>
+  /** Returns the badge PDF. Sends no custom headers (the API's CORS preflight rejects `Idempotency-Key`). */
+  printBadge(visitId: string): Promise<Blob>
   /** Invalidates the previous badge; only call from a confirmed user action. */
   reprintBadge(visitId: string, reason: string): Promise<Blob>
   checkOutWithBadge(token: string): Promise<BadgeScanResult>

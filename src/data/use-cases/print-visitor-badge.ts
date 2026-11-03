@@ -7,7 +7,7 @@ export class PrintVisitorBadgeUseCase {
     this.repository = repository
   }
 
-  async execute(visitId: string, idempotencyKey: string): Promise<Blob> {
-    return this.repository.printBadge(visitId, idempotencyKey)
+  async execute(visitId: string): Promise<Blob> {
+    return this.repository.printBadge(visitId)
   }
 }

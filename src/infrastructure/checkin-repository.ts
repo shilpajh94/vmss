@@ -47,11 +47,10 @@ export class HttpCheckinRepository implements CheckinRepository {
     return response.data
   }
 
-  async printBadge(visitId: string, idempotencyKey: string): Promise<Blob> {
+  async printBadge(visitId: string): Promise<Blob> {
     return this.apiClient.downloadBlob({
       endpointConfig: API_ENDPOINTS.CHECKIN_PRINT_BADGE,
       pathParams: { visitId },
-      headers: { 'Idempotency-Key': idempotencyKey },
     })
   }
 
