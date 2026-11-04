@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from vmss_api.approvals.router import router as approvals_router
 from vmss_api.audit_trail.router import router as audit_trail_router
 from vmss_api.auth.router import router as auth_router
+from vmss_api.checkin.kiosk_router import router as kiosk_checkin_router
 from vmss_api.checkin.router import router as checkin_router
 from vmss_api.core.email_assets_router import router as email_assets_router
 from vmss_api.core.storage_router import router as storage_router
@@ -53,6 +54,7 @@ api_router.include_router(email_assets_router)
 api_router.include_router(invitation_email_assets_router)
 api_router.include_router(visitor_return_visit_router)
 api_router.include_router(checkin_router)
+api_router.include_router(kiosk_checkin_router)
 
 # --- add-public-checkin-endpoint: minimal /api/v2 mount ----------------------
 # Scoped to this one endpoint, not a wholesale re-exposure of every v1 route

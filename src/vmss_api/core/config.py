@@ -311,6 +311,9 @@ class Settings(BaseSettings):
     # `jwt_secret_key` (`checkin/badge_token.py`), so no separate secret exists.
     # Per-IP slowapi limit string for the unauthenticated badge-scan endpoints.
     badge_scan_rate_limit: str = Field(default="30/minute", alias="BADGE_SCAN_RATE_LIMIT")
+    # Applied twice to every kiosk badge route: once per client IP, once per
+    # `device-id` header value (add-kiosk-badge-print-flow).
+    kiosk_badge_rate_limit: str = Field(default="30/minute", alias="KIOSK_BADGE_RATE_LIMIT")
 
     # `registrations` feature config (API-13, add-walkin-visitor-registration).
     # Fallback tenant/branch for `POST /registrations/walk-in` when the

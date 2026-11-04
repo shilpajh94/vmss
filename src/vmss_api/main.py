@@ -72,6 +72,15 @@ _TAGS_METADATA = [
         ),
     },
     {
+        "name": "kiosk-checkin",
+        "description": (
+            "Kiosk badge print flow (feature-flagged): device-authenticated "
+            "(`device-id` header, no bearer token) visit lookup by exact code, ID "
+            "confirmation, photo capture and badge print/reprint. 404 unless the flow "
+            "is enabled; 403 unless the device is an approved, enabled kiosk."
+        ),
+    },
+    {
         "name": "kiosks",
         "description": ("Admin management of kiosks: create, edit, hide/unhide, and soft-delete."),
     },

@@ -26,6 +26,8 @@ from vmss_api.core.storage import content_type_for, validate_image_only
 from vmss_api.core.storage import load as storage_load
 from vmss_api.core.storage import save as storage_save
 from vmss_api.core.tenancy import TenantContext
+from vmss_api.devices import service as device_service
+from vmss_api.devices.models import Device
 from vmss_api.invitations.checkin import _check_out_resolved, _perform_check_in
 from vmss_api.invitations.models import Invitation
 from vmss_api.invitations.repository import InvitationRepository
@@ -61,8 +63,18 @@ async def get_visit_or_404(repo: CheckinRepository, visit_id: uuid.UUID) -> Invi
     return visit
 
 
-async def verify_id(tenant_db: AsyncSession, visit: Invitation, *, user: User) -> Invitation:
-    updated = await CheckinRepository(tenant_db).mark_id_verified(visit.id, user_id=user.id)
+async def verify_id(
+    tenant_db: AsyncSession,
+    visit: Invitation,
+    *,
+    user: User | None = None,
+    device: Device | None = None,
+) -> Invitation:
+    updated = await CheckinRepository(tenant_db).mark_id_verified(
+        visit.id,
+        user_id=user.id if user else None,
+        device_id=device.id if device else None,
+    )
     if updated is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Visit not found")
     await tenant_db.commit()
@@ -143,7 +155,8 @@ async def _create_print(
     tenant_db: AsyncSession,
     visit: Invitation,
     *,
-    user: User,
+    user: User | None,
+    device: Device | None,
     tenant: TenantContext,
     reprint_reason: str | None,
 ) -> tuple[BadgePrint, BadgeCardOut]:
@@ -171,7 +184,8 @@ async def _create_print(
             await repo.deactivate_active_for_visit(visit.id)
         row = await repo.insert_print(
             visit_id=visit.id,
-            printed_by_user_id=user.id,
+            printed_by_user_id=user.id if user else None,
+            printed_by_device_id=device.id if device else None,
             jti=badge_token.new_jti(),
             day=tenant_today(tenant),
             reprint_reason=reprint_reason,
@@ -191,20 +205,77 @@ async def _create_print(
 
 
 async def print_badge(
-    tenant_db: AsyncSession, visit: Invitation, *, user: User, tenant: TenantContext
+    tenant_db: AsyncSession,
+    visit: Invitation,
+    *,
+    user: User | None = None,
+    device: Device | None = None,
+    tenant: TenantContext,
 ) -> tuple[BadgePrint, BadgeCardOut]:
-    return await _create_print(tenant_db, visit, user=user, tenant=tenant, reprint_reason=None)
+    return await _create_print(
+        tenant_db, visit, user=user, device=device, tenant=tenant, reprint_reason=None
+    )
 
 
 async def reprint_badge(
     tenant_db: AsyncSession,
     visit: Invitation,
     *,
-    user: User,
+    user: User | None = None,
+    device: Device | None = None,
     tenant: TenantContext,
     reason: str,
 ) -> tuple[BadgePrint, BadgeCardOut]:
-    return await _create_print(tenant_db, visit, user=user, tenant=tenant, reprint_reason=reason)
+    return await _create_print(
+        tenant_db, visit, user=user, device=device, tenant=tenant, reprint_reason=reason
+    )
+
+
+# --- kiosk scope ----------------------------------------------------------------
+
+
+def _visit_not_found() -> HTTPException:
+    return HTTPException(status.HTTP_404_NOT_FOUND, detail="Visit not found")
+
+
+async def kiosk_visit_in_scope(
+    tenant_db: AsyncSession, device: Device, visit: Invitation | None, *, tenant: TenantContext
+) -> Invitation:
+    """A kiosk may only touch a visit in its own branch dated today (or
+    undated). Out of scope is a `404`, never `403`, so a kiosk can't probe other
+    branches. With location enforcement on, the building must match too."""
+    if (
+        visit is None
+        or visit.branch_id != device.branch_id
+        or (
+            visit.preferred_visit_date is not None
+            and visit.preferred_visit_date != tenant_today(tenant)
+        )
+    ):
+        raise _visit_not_found()
+    if await device_service.get_enforce_location_validation(tenant_db):
+        device_service.check_device_location(
+            device,
+            invitation_branch_id=visit.branch_id,
+            invitation_building_id=visit.building_id,
+        )
+    return visit
+
+
+async def get_kiosk_visit(
+    tenant_db: AsyncSession, device: Device, visit_id: uuid.UUID, *, tenant: TenantContext
+) -> Invitation:
+    visit = await CheckinRepository(tenant_db).get_visit(visit_id)
+    return await kiosk_visit_in_scope(tenant_db, device, visit, tenant=tenant)
+
+
+async def find_kiosk_visit(
+    tenant_db: AsyncSession, device: Device, code: str, *, tenant: TenantContext
+) -> Invitation:
+    visit = await CheckinRepository(tenant_db).find_kiosk_visit(
+        code, branch_id=device.branch_id, today=tenant_today(tenant)
+    )
+    return await kiosk_visit_in_scope(tenant_db, device, visit, tenant=tenant)
 
 
 # --- badge scan ---------------------------------------------------------------

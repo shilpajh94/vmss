@@ -186,6 +186,19 @@ async def resolve_usable_device(tenant_db: AsyncSession, device_id: str) -> Devi
     return device
 
 
+async def resolve_usable_kiosk(tenant_db: AsyncSession, device_id: str | None) -> Device:
+    """Required-header variant for kiosk routes: absent header, an unusable
+    device, and a non-`kiosk` operating mode all give the same `403`."""
+    if device_id is None:
+        logger.warning("device_not_authorized", reason="missing_header")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Device is not authorized")
+    device = await resolve_usable_device(tenant_db, device_id)
+    if device.operating_mode != OperatingMode.kiosk.value:
+        logger.warning("device_not_authorized", device_id=device_id, reason="not_kiosk")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Device is not authorized")
+    return device
+
+
 async def device_briefs(
     tenant_db: AsyncSession, *device_pks: uuid.UUID | None
 ) -> dict[uuid.UUID, DeviceBriefOut]:

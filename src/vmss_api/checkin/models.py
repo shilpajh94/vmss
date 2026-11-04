@@ -1,7 +1,18 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, String, Uuid, func, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Uuid,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from vmss_api.core.database import Base
@@ -18,6 +29,10 @@ class BadgePrint(Base):
 
     __tablename__ = "badge_prints"
     __table_args__ = (
+        CheckConstraint(
+            "num_nonnulls(printed_by_user_id, printed_by_device_id) <= 1",
+            name="ck_badge_prints_single_actor",
+        ),
         Index(
             "uq_badge_prints_one_active_per_visit",
             "visit_id",
@@ -29,6 +44,8 @@ class BadgePrint(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     visit_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("invitations.id"), index=True)
     printed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+    # Set (and `printed_by_user_id` null) for a kiosk print (add-kiosk-badge-print-flow).
+    printed_by_device_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("devices.id"))
     printed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     jti: Mapped[str] = mapped_column(String(64), unique=True)
     day: Mapped[date] = mapped_column(Date())

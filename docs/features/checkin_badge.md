@@ -35,6 +35,32 @@ logs). The token is the credential; the tenant comes from its signed `tid` claim
 
 `photoUrl` is a `data:` URL (the stored photo is behind auth, so an `<img>` couldn't load a plain URL); `purpose`, `hostName` and `photoUrl` may be null. `token` is the visit's invitation QR token when one exists (so the `/api/v2/invitations/qr/{token}/check-in|check-out` scanners work on the card); a visit with no stored QR gets the jti-bound badge token below. Only that fallback token is accepted by `/checkin/badge/*` and killed by a reprint — an invitation QR token is not. The frontend draws the card; the server no longer renders a PDF.
 
+## Kiosk endpoints (`/api/v1/kiosk/checkin`)
+
+The same flow for a self-service kiosk, with **no bearer token**. Add-kiosk-badge-print-flow.
+The credential is the required `device-id` header: the device must be registered, `approved`,
+enabled and in `kiosk` operating mode. A missing header, unknown, pending, disabled, deleted or
+`security`-mode device all return the same `403`. Same flag as the staff flow (`404` when off).
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/search?q=` | **Exact** `trackingId` or numeric check-in code only (no name/phone search). Returns one `KioskVisitOut` (first name, status, photo/ID/badge flags, `unmetConditions`) — no phone, email or ID document URLs. `404` if nothing matches. |
+| POST | `/{visit_id}/verify-id` | The visitor's ID, **self-attested by the device** (no receptionist). Stored as `id_verified_by_device_id`. Idempotent. |
+| POST | `/{visit_id}/photo` | Photo capture (JPEG/PNG, size-limited, `409 photo_already_captured`). Returns the refreshed kiosk row. |
+| POST | `/{visit_id}/badge` | First print; same card JSON and gate as staff. Accepts `Idempotency-Key` (keyed on the device). |
+| GET | `/{visit_id}/badge?reason=` | Reprint (state-changing GET, mandatory reason, `no-store`). |
+
+Scope comes from the device, not a user: only visits in the device's branch, dated today (or
+undated). Anything else is `404`. With tenant location enforcement on, the device's building must
+match too. Printed rows record `badge_prints.printed_by_device_id` (and a null user). Audit actions
+are `kiosk_badge_printed`, `kiosk_badge_reprinted`, `kiosk_visit_id_verified`,
+`kiosk_visit_photo_captured`, with the `device_id` in the entry. Rate limit
+`KIOSK_BADGE_RATE_LIMIT`, per client IP and per `device-id` value.
+
+**Limitation:** `device-id` is a static identifier, not a secret — anyone who learns it can act as
+that kiosk (within the narrow, exact-match scope above). Disable the device to cut it off. A
+per-device secret is a possible follow-up.
+
 ## Print gate
 
 A badge prints only when the visit is `approved`/`checked_in`, has a photo, and

@@ -274,6 +274,10 @@ class Invitation(Base, TimestampMixin):
     # having an ID-proof document uploaded; gates badge printing only.
     id_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     id_verified_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.id"))
+    # Kiosk self-attestation (add-kiosk-badge-print-flow): the device, not a user.
+    id_verified_by_device_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("devices.id")
+    )
 
     # --- Lifecycle: archive (auto-checkout-and-archive-no-shows) ---------------
     # Set when the sweep moves an approved, never-admitted invitation to

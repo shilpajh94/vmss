@@ -71,8 +71,28 @@ class CheckinRepository:
         ).scalar_one()
         return rows, total
 
+    async def find_kiosk_visit(
+        self, code: str, *, branch_id: uuid.UUID, today: date
+    ) -> Invitation | None:
+        """Exact `tracking_id` / `checkin_code` match only (never LIKE), limited
+        to the device's branch and to visits dated today (or undated)."""
+        stmt = select(Invitation).where(
+            Invitation.deleted_at.is_(None),
+            Invitation.branch_id == branch_id,
+            or_(Invitation.tracking_id == code, Invitation.checkin_code == code),
+            or_(
+                Invitation.preferred_visit_date.is_(None),
+                Invitation.preferred_visit_date == today,
+            ),
+        )
+        return (await self.session.execute(stmt)).scalars().first()
+
     async def mark_id_verified(
-        self, visit_id: uuid.UUID, *, user_id: uuid.UUID
+        self,
+        visit_id: uuid.UUID,
+        *,
+        user_id: uuid.UUID | None = None,
+        device_id: uuid.UUID | None = None,
     ) -> Invitation | None:
         """`COALESCE` keeps the original timestamp/verifier on a repeat call
         (the endpoint is idempotent)."""
@@ -82,6 +102,9 @@ class CheckinRepository:
             .values(
                 id_verified_at=func.coalesce(Invitation.id_verified_at, datetime.now(UTC)),
                 id_verified_by_user_id=func.coalesce(Invitation.id_verified_by_user_id, user_id),
+                id_verified_by_device_id=func.coalesce(
+                    Invitation.id_verified_by_device_id, device_id
+                ),
             )
             .returning(Invitation)
             .execution_options(populate_existing=True)
@@ -148,7 +171,8 @@ class CheckinRepository:
         self,
         *,
         visit_id: uuid.UUID,
-        printed_by_user_id: uuid.UUID,
+        printed_by_user_id: uuid.UUID | None,
+        printed_by_device_id: uuid.UUID | None = None,
         jti: str,
         day: date,
         reprint_reason: str | None,
@@ -157,6 +181,7 @@ class CheckinRepository:
             id=uuid.uuid4(),
             visit_id=visit_id,
             printed_by_user_id=printed_by_user_id,
+            printed_by_device_id=printed_by_device_id,
             printed_at=datetime.now(UTC),
             jti=jti,
             day=day,

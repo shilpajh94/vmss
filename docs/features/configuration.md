@@ -83,7 +83,9 @@ The reception badge-printing flow (`docs/features/checkin_badge.md`) is live
 for a tenant only when its own `badgePrintFlowEnabled` toggle is on;
 otherwise every `/checkin` endpoint returns `404`. The day-bound badge QR
 token key is derived from `JWT_SECRET_KEY`. `BADGE_SCAN_RATE_LIMIT` (default
-`30/minute`) limits the unauthenticated scan endpoints per IP.
+`30/minute`) limits the unauthenticated scan endpoints per IP. `KIOSK_BADGE_RATE_LIMIT`
+(default `30/minute`) limits the kiosk badge endpoints, once per client IP and once
+per `device-id` header value.
 
 ## Provisioning the default tenant/branch
 
