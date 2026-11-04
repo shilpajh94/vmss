@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { useNavigate } from 'react-router'
-import { CalendarIcon, HomeIcon, PlusIcon, UsersIcon } from './icons'
+import { CalendarIcon, HomeIcon, MapPinIcon, PlusIcon, UsersIcon } from './icons'
+import { useZoneFeature } from '../context/zone-feature-context'
 import { useNavDrawer } from '../context/nav-drawer-context'
 import { usePermissions } from '../context/current-user-context'
 import { PAGE_PERMISSIONS } from '../route-permissions'
@@ -9,7 +10,7 @@ import { SidebarHeader } from './sidebar/SidebarHeader'
 import { SidebarNavItem } from './sidebar/SidebarNavItem'
 import { useScrollActivity } from '../hooks/use-scroll-activity'
 
-export type DashboardSidebarActiveItem = 'dashboard' | 'all-visitors' | 'calendar' | 'register-visitor'
+export type DashboardSidebarActiveItem = 'dashboard' | 'all-visitors' | 'calendar' | 'register-visitor' | 'inside-by-zone'
 
 interface DashboardSidebarProps {
   activeItem: DashboardSidebarActiveItem
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { key: 'register-visitor', label: 'Register Visitor', icon: PlusIcon },
   { key: 'all-visitors', label: 'Invitations', icon: UsersIcon },
   { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
+  { key: 'inside-by-zone', label: 'Inside by Zone', icon: MapPinIcon },
 ] as const
 
 const STAFF_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: DashboardSidebarActiveItem]> = [
@@ -29,6 +31,7 @@ const STAFF_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: Da
   ['/staff/invitations', 'all-visitors'],
   ['/staff/calendar', 'calendar'],
   ['/staff/visitors/new', 'register-visitor'],
+  ['/emergency/inside', 'inside-by-zone'],
 ]
 
 // Entries the user can't open are hidden (app-shell "Admin and Staff Areas
@@ -37,6 +40,7 @@ const NAV_ITEM_PERMISSIONS: Partial<Record<DashboardSidebarActiveItem, string>> 
   'all-visitors': PAGE_PERMISSIONS.staffInvitations,
   calendar: PAGE_PERMISSIONS.calendar,
   'register-visitor': PAGE_PERMISSIONS.registerVisitor,
+  'inside-by-zone': PAGE_PERMISSIONS.emergencyInside,
 }
 
 // Derives which sidebar entry highlights from the current URL, so the active
@@ -60,6 +64,7 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
   useScrollActivity(navRef)
   const { closeNav } = useNavDrawer()
   const { can } = usePermissions()
+  const zoneFeature = useZoneFeature()
 
   const handleActivate = (key: DashboardSidebarActiveItem) => {
     closeNav()
@@ -67,6 +72,7 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
     if (key === 'all-visitors') navigate('/staff/invitations')
     if (key === 'calendar') navigate('/staff/calendar')
     if (key === 'register-visitor') navigate('/staff/visitors/new')
+    if (key === 'inside-by-zone') navigate('/emergency/inside')
   }
 
   return (
@@ -81,6 +87,7 @@ export function DashboardSidebar({ activeItem }: DashboardSidebarProps) {
       <nav ref={navRef} className="sidebar-nav-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
         {NAV_ITEMS.filter(({ key }) => {
           const requires = NAV_ITEM_PERMISSIONS[key]
+          if (key === 'inside-by-zone' && !zoneFeature.enabled) return false
           return !requires || can(requires)
         }).map(({ key, label, icon }) => (
           <SidebarNavItem

@@ -30,6 +30,7 @@ export const ADMIN_AREA_PERMISSIONS = [
   'devices:manage',
   'settings:manage',
   'sso-config:manage',
+  'zones:manage',
 ] as const
 
 // Fallback for an API that doesn't send `permissionCodes` yet: the standard
@@ -63,6 +64,8 @@ const FALLBACK_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'timeline:view',
     'documents:view',
     'roles:view',
+    'zones:view',
+    'emergency:view',
   ],
   security: [
     'branches:view',
@@ -77,6 +80,8 @@ const FALLBACK_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'invitations:export',
     'timeline:view',
     'documents:view',
+    'zones:view',
+    'emergency:view',
   ],
   host: [
     'branches:view',

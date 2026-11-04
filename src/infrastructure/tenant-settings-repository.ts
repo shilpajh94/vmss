@@ -19,6 +19,23 @@ export class HttpTenantSettingsRepository implements TenantSettingsRepository {
     return response.data.badgePrintFlowEnabled
   }
 
+  async getZoneAccessEnabled(): Promise<boolean> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.GET_TENANT_ME,
+      parserSchema: TenantMeResponseSchema,
+    })
+
+    return response.data.zoneAccessEnabled
+  }
+
+  async setZoneAccessEnabled(enabled: boolean): Promise<void> {
+    await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.UPDATE_TENANT_SETTINGS,
+      body: { zoneAccessEnabled: enabled },
+      parserSchema: TenantSettingsResponseSchema,
+    })
+  }
+
   async setBadgePrintFlowEnabled(enabled: boolean): Promise<void> {
     await this.apiClient.makeRequest({
       endpointConfig: API_ENDPOINTS.UPDATE_TENANT_SETTINGS,

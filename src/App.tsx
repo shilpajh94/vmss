@@ -59,6 +59,9 @@ const StaffLayout = lazyPage(() => import('./presentation/components/StaffLayout
 const AdminDashboardPage = lazyPage(() => import('./presentation/pages/admin-dashboard/admin-dashboard'), 'AdminDashboardPage')
 const ReceptionDashboardPage = lazyPage(() => import('./presentation/pages/reception-dashboard/reception-dashboard'), 'ReceptionDashboardPage')
 const ReceptionBadgePrintingPage = lazyPage(() => import('./presentation/pages/reception-badge-printing/reception-badge-printing'), 'ReceptionBadgePrintingPage')
+const AdminZonesPage = lazyPage(() => import('./presentation/pages/admin-zones/admin-zones'), 'AdminZonesPage')
+const AdminZoneFormPage = lazyPage(() => import('./presentation/pages/admin-zones/admin-zone-form'), 'AdminZoneFormPage')
+const EmergencyInsidePage = lazyPage(() => import('./presentation/pages/emergency-inside/emergency-inside'), 'EmergencyInsidePage')
 const BadgeScanPage = lazyPage(() => import('./presentation/pages/badge-scan/badge-scan'), 'BadgeScanPage')
 const StaffDashboardPage = lazyPage(() => import('./presentation/pages/staff-dashboard/staff-dashboard'), 'StaffDashboardPage')
 // add-staff-calendar: one page for both portals (design.md W5).
@@ -97,6 +100,10 @@ const ADMIN_ROUTES: PageRoute[] = [
   { path: '/admin/reception-desks/*', element: <Navigate to="/admin/reception-desks" replace /> },
   { path: '/admin/security-gates', requires: PAGE_PERMISSIONS.securityGates, element: <AdminSecurityGatesPage /> },
   { path: '/admin/security-gates/*', element: <Navigate to="/admin/security-gates" replace /> },
+  { path: '/admin/emergency-inside', requires: PAGE_PERMISSIONS.emergencyInside, element: <EmergencyInsidePage /> },
+  { path: '/admin/zones', requires: PAGE_PERMISSIONS.zones, element: <AdminZonesPage /> },
+  { path: '/admin/zones/new', requires: PAGE_PERMISSIONS.zonesManage, element: <AdminZoneFormPage /> },
+  { path: '/admin/zones/:id/edit', requires: PAGE_PERMISSIONS.zonesManage, element: <AdminZoneFormPage /> },
   { path: '/admin/kiosks', requires: PAGE_PERMISSIONS.kiosks, element: <AdminKiosksPage /> },
   { path: '/admin/kiosks/new', requires: PAGE_PERMISSIONS.kiosks, element: <AdminKioskFormPage /> },
   { path: '/admin/kiosks/:id/edit', requires: PAGE_PERMISSIONS.kiosks, element: <AdminKioskFormPage /> },
@@ -133,6 +140,7 @@ const STAFF_ROUTES: PageRoute[] = [
     element: <ReceptionDashboardPage />,
   },
   { path: '/reception/badge-printing', requires: PAGE_PERMISSIONS.badgePrinting, element: <ReceptionBadgePrintingPage /> },
+  { path: '/emergency/inside', requires: PAGE_PERMISSIONS.emergencyInside, element: <EmergencyInsidePage /> },
   { path: '/staff/invitations', requires: PAGE_PERMISSIONS.staffInvitations, element: <StaffInvitationsPage /> },
   {
     path: '/staff/calendar',

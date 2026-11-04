@@ -11,6 +11,7 @@ import { useStaffSession } from './session/use-staff-session'
 import { PageHeaderProvider, usePageHeaderContext } from '../context/page-header-context'
 import { RefreshProvider } from '../context/refresh-context'
 import { CurrentUserProvider } from '../context/current-user-context'
+import { ZoneFeatureProvider } from '../context/zone-feature-context'
 import { useApplyTheme } from '../context/theme-mode-context'
 import { landingPathFor } from '../utils/landing-path'
 import { ADMIN_AREA_PERMISSIONS, permissionsFor } from '../utils/permissions'
@@ -36,28 +37,30 @@ function AdminLayoutContent() {
 
   return (
     <CurrentUserProvider user={currentUser}>
-      <AppShell
-        sidebar={<AdminSidebar activeItem={resolveAdminActiveItem(location.pathname)} />}
-        topBar={
-          <AppTopBar
-            title="Organization Admin"
-            description={header.description}
-            breadcrumb={header.breadcrumb}
-            currentUser={currentUser}
-            navLabelFor={adminNavLabelFor}
-            loginPath="/admin/login"
-          />
-        }
-      >
-        <SessionGateContent session={session} onRetry={retry}>
-          <RouteTransition withEndGap>
-            {/* A page's chunk loads on its first visit (design D13). */}
-            <Suspense fallback={<LoadingState label="Loading…" className="flex-1" />}>
-              <Outlet />
-            </Suspense>
-          </RouteTransition>
-        </SessionGateContent>
-      </AppShell>
+      <ZoneFeatureProvider>
+        <AppShell
+          sidebar={<AdminSidebar activeItem={resolveAdminActiveItem(location.pathname)} />}
+          topBar={
+            <AppTopBar
+              title="Organization Admin"
+              description={header.description}
+              breadcrumb={header.breadcrumb}
+              currentUser={currentUser}
+              navLabelFor={adminNavLabelFor}
+              loginPath="/admin/login"
+            />
+          }
+        >
+          <SessionGateContent session={session} onRetry={retry}>
+            <RouteTransition withEndGap>
+              {/* A page's chunk loads on its first visit (design D13). */}
+              <Suspense fallback={<LoadingState label="Loading…" className="flex-1" />}>
+                <Outlet />
+              </Suspense>
+            </RouteTransition>
+          </SessionGateContent>
+        </AppShell>
+      </ZoneFeatureProvider>
     </CurrentUserProvider>
   )
 }

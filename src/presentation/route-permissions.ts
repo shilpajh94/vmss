@@ -23,4 +23,7 @@ export const PAGE_PERMISSIONS = {
   staffInvitations: 'invitations:view',
   registerVisitor: 'invitations:create',
   badgePrinting: 'visitors:print_badge',
+  zones: 'zones:view',
+  zonesManage: 'zones:manage',
+  emergencyInside: 'emergency:view',
 } as const

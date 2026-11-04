@@ -4,6 +4,7 @@ import { ErrorState } from '../ui/ErrorState'
 import { Skeleton } from '../ui/Skeleton'
 import {
   AlertCircleIcon,
+  AlertTriangleIcon,
   BellIcon,
   CameraIcon,
   CheckIcon,
@@ -12,6 +13,7 @@ import {
   IdCardIcon,
   LogOutIcon,
   MailIcon,
+  MapPinIcon,
   RefreshCcwIcon,
   TagIcon,
   UndoIcon,
@@ -42,6 +44,9 @@ const EVENT_STYLES: Record<string, EventStyle> = {
   badge_printed: { label: 'Badge printed', Icon: TagIcon, toneClass: 'bg-info/10 text-info' },
   badge_reprinted: { label: 'Badge reprinted', Icon: RefreshCcwIcon, toneClass: 'bg-warning/10 text-warning' },
   notification_sent: { label: 'Notification sent', Icon: BellIcon, toneClass: 'bg-secondary-accent/10 text-secondary-accent' },
+  zone_entered: { label: 'Entered zone', Icon: MapPinIcon, toneClass: 'bg-success/10 text-success-text' },
+  zone_exited: { label: 'Exited zone', Icon: LogOutIcon, toneClass: 'bg-text-faint/15 text-text-muted' },
+  zone_entry_denied: { label: 'Zone entry denied', Icon: AlertTriangleIcon, toneClass: 'bg-warning/10 text-warning' },
 }
 
 // An event type this build doesn't know (the API adds them over time) is a

@@ -1,3 +1,7 @@
+import { useParams } from 'react-router'
+import { ZoneSetSection } from '../../components/zones/ZoneSetSection'
+import { usePermissions } from '../../context/current-user-context'
+import { PAGE_PERMISSIONS } from '../../route-permissions'
 import { FormSkeleton } from '../../components/ui/Skeleton'
 import { PendingButton } from '../../components/ui/PendingButton'
 import { SelectField } from '../../components/ui/SelectField'
@@ -27,6 +31,8 @@ const ESCORT_REQUIREMENT_OPTIONS = [
 export function AdminVisitorCategoryFormPage() {
   const { isEditMode, isLoading, errorMessage, retry, values, errors, isSaving, updateField, submit, cancel } =
     useAdminVisitorCategoryForm()
+  const { id } = useParams<{ id: string }>()
+  const canManageZones = usePermissions().can(PAGE_PERMISSIONS.zonesManage)
 
   const fieldLabelClassName = 'text-[13px] font-bold uppercase text-text-secondary'
 
@@ -114,6 +120,13 @@ export function AdminVisitorCategoryFormPage() {
                 labelClassName={fieldLabelClassName}
               />
             </div>
+
+            {/* Zones are saved on their own (PUT /visitor-categories/{id}/zones), so only an existing category has them. */}
+            {isEditMode && id && (
+              <div className="border-t border-border pt-6">
+                <ZoneSetSection scope={{ kind: 'category', id }} title="Default zones" canEdit={canManageZones} />
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
               <button type="button" onClick={cancel} className="rounded-full border border-border bg-surface px-6 py-2.5 font-body text-sm font-semibold text-text">

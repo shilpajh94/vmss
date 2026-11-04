@@ -140,6 +140,7 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[], buildings
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus>('idle')
   const [trackingId, setTrackingId] = useState<string | undefined>(undefined)
+  const [invitationId, setInvitationId] = useState<string | undefined>(undefined)
   const [confirmedFullName, setConfirmedFullName] = useState<string | undefined>(undefined)
   const [submissionError, setSubmissionError] = useState<string | undefined>(undefined)
 
@@ -467,6 +468,7 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[], buildings
     setSubmissionStatus('idle')
     setTrackingId(undefined)
     setConfirmedFullName(undefined)
+    setInvitationId(undefined)
     setSubmissionError(undefined)
   }
 
@@ -584,6 +586,7 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[], buildings
         },
       )
       setTrackingId(response.trackingId)
+      setInvitationId(response.invitationId)
       setSubmissionStatus('success')
       toast.success('Visitor registered successfully.')
       // Best-effort: see use-visitor-request-wizard.ts's matching call —
@@ -616,6 +619,8 @@ export function useStaffVisitorRegistrationWizard(branches?: Branch[], buildings
     getFilePreviewUrl,
     submissionStatus,
     trackingId,
+    invitationId,
+    branchId,
     confirmedFullName,
     submissionError,
     submit,

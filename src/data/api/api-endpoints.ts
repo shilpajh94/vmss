@@ -660,6 +660,56 @@ export const API_ENDPOINTS = {
     method: "POST",
     hasToken: false,
   },
+  LIST_ZONES: {
+    endpoint: "/zones",
+    method: "GET",
+    hasToken: true,
+  },
+  CREATE_ZONE: {
+    endpoint: "/zones",
+    method: "POST",
+    hasToken: true,
+  },
+  GET_ZONE: {
+    endpoint: "/zones/:id",
+    method: "GET",
+    hasToken: true,
+  },
+  UPDATE_ZONE: {
+    endpoint: "/zones/:id",
+    method: "PUT",
+    hasToken: true,
+  },
+  DELETE_ZONE: {
+    endpoint: "/zones/:id",
+    method: "DELETE",
+    hasToken: true,
+  },
+  GET_CATEGORY_ZONES: {
+    endpoint: "/visitor-categories/:id/zones",
+    method: "GET",
+    hasToken: true,
+  },
+  SET_CATEGORY_ZONES: {
+    endpoint: "/visitor-categories/:id/zones",
+    method: "PUT",
+    hasToken: true,
+  },
+  GET_INVITATION_ZONES: {
+    endpoint: "/invitations/:id/zones",
+    method: "GET",
+    hasToken: true,
+  },
+  SET_INVITATION_ZONES: {
+    endpoint: "/invitations/:id/zones",
+    method: "PUT",
+    hasToken: true,
+  },
+  GET_EMERGENCY_INSIDE: {
+    endpoint: "/emergency/inside",
+    method: "GET",
+    hasToken: true,
+  },
 } as const
 
 export type ApiEndpointDefinition = (typeof API_ENDPOINTS)[keyof typeof API_ENDPOINTS]

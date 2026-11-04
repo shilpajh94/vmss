@@ -5,6 +5,12 @@ import type { VisitTrackingRepository } from './data/repositories/visit-tracking
 import type { VisitTimelineRepository } from './data/repositories/visit-timeline-repository'
 import { GetVisitTimelineUseCase } from './data/use-cases/get-visit-timeline'
 import { HttpVisitTimelineRepository } from './infrastructure/visit-timeline-repository'
+import type { ZoneRepository } from './data/repositories/zone-repository'
+import type { EmergencyInsideRepository } from './data/repositories/emergency-inside-repository'
+import { GetZoneUseCase, ListZonesUseCase, CreateZoneUseCase, UpdateZoneUseCase, DeleteZoneUseCase, GetCategoryZonesUseCase, SetCategoryZonesUseCase, GetInvitationZonesUseCase, SetInvitationZonesUseCase } from './data/use-cases/zone-use-cases'
+import { GetEmergencyInsideUseCase } from './data/use-cases/get-emergency-inside'
+import { HttpZoneRepository } from './infrastructure/zone-repository'
+import { HttpEmergencyInsideRepository } from './infrastructure/emergency-inside-repository'
 import type { VisitorOtpRepository } from './data/repositories/visitor-otp-repository'
 import type { VisitorPortalRepository } from './data/repositories/visitor-portal-repository'
 import type { StaffAuthRepository } from './data/repositories/staff-auth-repository'
@@ -186,6 +192,7 @@ import { CheckInWithBadgeUseCase } from './data/use-cases/check-in-with-badge'
 import { ReEnterWithBadgeUseCase } from './data/use-cases/re-enter-with-badge'
 import { GetBadgePrintFlowEnabledUseCase } from './data/use-cases/get-badge-print-flow-enabled'
 import { SetBadgePrintFlowEnabledUseCase } from './data/use-cases/set-badge-print-flow-enabled'
+import { GetZoneAccessEnabledUseCase, SetZoneAccessEnabledUseCase } from './data/use-cases/zone-access-setting'
 
 export interface AppDependencies {
   apiClient: ApiClient
@@ -199,9 +206,21 @@ export interface AppDependencies {
   checkInWithBadgeUseCase: CheckInWithBadgeUseCase
   getBadgePrintFlowEnabledUseCase: GetBadgePrintFlowEnabledUseCase
   setBadgePrintFlowEnabledUseCase: SetBadgePrintFlowEnabledUseCase
+  getZoneAccessEnabledUseCase: GetZoneAccessEnabledUseCase
+  setZoneAccessEnabledUseCase: SetZoneAccessEnabledUseCase
   submitVisitRequestUseCase: SubmitVisitRequestUseCase
   trackVisitRequestUseCase: TrackVisitRequestUseCase
   getVisitTimelineUseCase: GetVisitTimelineUseCase
+  listZonesUseCase: ListZonesUseCase
+  createZoneUseCase: CreateZoneUseCase
+  updateZoneUseCase: UpdateZoneUseCase
+  deleteZoneUseCase: DeleteZoneUseCase
+  getCategoryZonesUseCase: GetCategoryZonesUseCase
+  setCategoryZonesUseCase: SetCategoryZonesUseCase
+  getInvitationZonesUseCase: GetInvitationZonesUseCase
+  setInvitationZonesUseCase: SetInvitationZonesUseCase
+  getEmergencyInsideUseCase: GetEmergencyInsideUseCase
+  getZoneUseCase: GetZoneUseCase
   requestVisitorOtpUseCase: RequestVisitorOtpUseCase
   verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase
   getVisitorPortalMeUseCase: GetVisitorPortalMeUseCase
@@ -333,6 +352,18 @@ export function createApp(): AppDependencies {
   let trackVisitRequestUseCase: TrackVisitRequestUseCase | undefined
   let visitTimelineRepository: VisitTimelineRepository | undefined
   let getVisitTimelineUseCase: GetVisitTimelineUseCase | undefined
+  let zoneRepository: ZoneRepository | undefined
+  let emergencyInsideRepository: EmergencyInsideRepository | undefined
+  let listZonesUseCase: ListZonesUseCase | undefined
+  let createZoneUseCase: CreateZoneUseCase | undefined
+  let updateZoneUseCase: UpdateZoneUseCase | undefined
+  let deleteZoneUseCase: DeleteZoneUseCase | undefined
+  let getCategoryZonesUseCase: GetCategoryZonesUseCase | undefined
+  let setCategoryZonesUseCase: SetCategoryZonesUseCase | undefined
+  let getInvitationZonesUseCase: GetInvitationZonesUseCase | undefined
+  let setInvitationZonesUseCase: SetInvitationZonesUseCase | undefined
+  let getEmergencyInsideUseCase: GetEmergencyInsideUseCase | undefined
+  let getZoneUseCase: GetZoneUseCase | undefined
   let requestVisitorOtpUseCase: RequestVisitorOtpUseCase | undefined
   let verifyVisitorOtpUseCase: VerifyVisitorOtpUseCase | undefined
   let getVisitorPortalMeUseCase: GetVisitorPortalMeUseCase | undefined
@@ -473,6 +504,8 @@ export function createApp(): AppDependencies {
   let checkInWithBadgeUseCase: CheckInWithBadgeUseCase | undefined
   let getBadgePrintFlowEnabledUseCase: GetBadgePrintFlowEnabledUseCase | undefined
   let setBadgePrintFlowEnabledUseCase: SetBadgePrintFlowEnabledUseCase | undefined
+  let getZoneAccessEnabledUseCase: GetZoneAccessEnabledUseCase | undefined
+  let setZoneAccessEnabledUseCase: SetZoneAccessEnabledUseCase | undefined
   let notificationRepository: NotificationRepository | undefined
   let registerDeviceUseCase: RegisterDeviceUseCase | undefined
   let unregisterDeviceUseCase: UnregisterDeviceUseCase | undefined
@@ -499,6 +532,66 @@ export function createApp(): AppDependencies {
   const resolveVisitTimelineRepository = (): VisitTimelineRepository => {
     visitTimelineRepository ??= new HttpVisitTimelineRepository(resolveApiClient())
     return visitTimelineRepository
+  }
+
+  const resolveZoneRepository = (): ZoneRepository => {
+    zoneRepository ??= new HttpZoneRepository(resolveApiClient())
+    return zoneRepository
+  }
+
+  const resolveEmergencyInsideRepository = (): EmergencyInsideRepository => {
+    emergencyInsideRepository ??= new HttpEmergencyInsideRepository(resolveApiClient())
+    return emergencyInsideRepository
+  }
+
+  const resolveListZonesUseCase = (): ListZonesUseCase => {
+    listZonesUseCase ??= new ListZonesUseCase(resolveZoneRepository())
+    return listZonesUseCase
+  }
+
+  const resolveCreateZoneUseCase = (): CreateZoneUseCase => {
+    createZoneUseCase ??= new CreateZoneUseCase(resolveZoneRepository())
+    return createZoneUseCase
+  }
+
+  const resolveUpdateZoneUseCase = (): UpdateZoneUseCase => {
+    updateZoneUseCase ??= new UpdateZoneUseCase(resolveZoneRepository())
+    return updateZoneUseCase
+  }
+
+  const resolveDeleteZoneUseCase = (): DeleteZoneUseCase => {
+    deleteZoneUseCase ??= new DeleteZoneUseCase(resolveZoneRepository())
+    return deleteZoneUseCase
+  }
+
+  const resolveGetCategoryZonesUseCase = (): GetCategoryZonesUseCase => {
+    getCategoryZonesUseCase ??= new GetCategoryZonesUseCase(resolveZoneRepository())
+    return getCategoryZonesUseCase
+  }
+
+  const resolveSetCategoryZonesUseCase = (): SetCategoryZonesUseCase => {
+    setCategoryZonesUseCase ??= new SetCategoryZonesUseCase(resolveZoneRepository())
+    return setCategoryZonesUseCase
+  }
+
+  const resolveGetInvitationZonesUseCase = (): GetInvitationZonesUseCase => {
+    getInvitationZonesUseCase ??= new GetInvitationZonesUseCase(resolveZoneRepository())
+    return getInvitationZonesUseCase
+  }
+
+  const resolveSetInvitationZonesUseCase = (): SetInvitationZonesUseCase => {
+    setInvitationZonesUseCase ??= new SetInvitationZonesUseCase(resolveZoneRepository())
+    return setInvitationZonesUseCase
+  }
+
+  const resolveGetZoneUseCase = (): GetZoneUseCase => {
+    getZoneUseCase ??= new GetZoneUseCase(resolveZoneRepository())
+    return getZoneUseCase
+  }
+
+  const resolveGetEmergencyInsideUseCase = (): GetEmergencyInsideUseCase => {
+    getEmergencyInsideUseCase ??= new GetEmergencyInsideUseCase(resolveEmergencyInsideRepository())
+    return getEmergencyInsideUseCase
   }
 
   const resolveGetVisitTimelineUseCase = (): GetVisitTimelineUseCase => {
@@ -1256,6 +1349,16 @@ export function createApp(): AppDependencies {
     return getBadgePrintFlowEnabledUseCase
   }
 
+  const resolveGetZoneAccessEnabledUseCase = (): GetZoneAccessEnabledUseCase => {
+    getZoneAccessEnabledUseCase ??= new GetZoneAccessEnabledUseCase(resolveTenantSettingsRepository())
+    return getZoneAccessEnabledUseCase
+  }
+
+  const resolveSetZoneAccessEnabledUseCase = (): SetZoneAccessEnabledUseCase => {
+    setZoneAccessEnabledUseCase ??= new SetZoneAccessEnabledUseCase(resolveTenantSettingsRepository())
+    return setZoneAccessEnabledUseCase
+  }
+
   const resolveSetBadgePrintFlowEnabledUseCase = (): SetBadgePrintFlowEnabledUseCase => {
     setBadgePrintFlowEnabledUseCase ??= new SetBadgePrintFlowEnabledUseCase(resolveTenantSettingsRepository())
     return setBadgePrintFlowEnabledUseCase
@@ -1285,6 +1388,36 @@ export function createApp(): AppDependencies {
     },
     get getVisitTimelineUseCase() {
       return resolveGetVisitTimelineUseCase()
+    },
+    get listZonesUseCase() {
+      return resolveListZonesUseCase()
+    },
+    get createZoneUseCase() {
+      return resolveCreateZoneUseCase()
+    },
+    get updateZoneUseCase() {
+      return resolveUpdateZoneUseCase()
+    },
+    get deleteZoneUseCase() {
+      return resolveDeleteZoneUseCase()
+    },
+    get getCategoryZonesUseCase() {
+      return resolveGetCategoryZonesUseCase()
+    },
+    get setCategoryZonesUseCase() {
+      return resolveSetCategoryZonesUseCase()
+    },
+    get getInvitationZonesUseCase() {
+      return resolveGetInvitationZonesUseCase()
+    },
+    get setInvitationZonesUseCase() {
+      return resolveSetInvitationZonesUseCase()
+    },
+    get getZoneUseCase() {
+      return resolveGetZoneUseCase()
+    },
+    get getEmergencyInsideUseCase() {
+      return resolveGetEmergencyInsideUseCase()
     },
     get trackVisitRequestUseCase() {
       return resolveTrackVisitRequestUseCase()
@@ -1612,6 +1745,12 @@ export function createApp(): AppDependencies {
     },
     get getBadgePrintFlowEnabledUseCase() {
       return resolveGetBadgePrintFlowEnabledUseCase()
+    },
+    get getZoneAccessEnabledUseCase() {
+      return resolveGetZoneAccessEnabledUseCase()
+    },
+    get setZoneAccessEnabledUseCase() {
+      return resolveSetZoneAccessEnabledUseCase()
     },
     get setBadgePrintFlowEnabledUseCase() {
       return resolveSetBadgePrintFlowEnabledUseCase()

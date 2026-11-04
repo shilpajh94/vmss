@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { useNavigate } from 'react-router'
-import { CalendarIcon, HomeIcon, IdCardIcon, PlusIcon, UsersIcon } from './icons'
+import { CalendarIcon, HomeIcon, IdCardIcon, MapPinIcon, PlusIcon, UsersIcon } from './icons'
+import { useZoneFeature } from '../context/zone-feature-context'
 import { useNavDrawer } from '../context/nav-drawer-context'
 import { usePermissions } from '../context/current-user-context'
 import { PAGE_PERMISSIONS } from '../route-permissions'
@@ -10,7 +11,7 @@ import { SidebarNavItem } from './sidebar/SidebarNavItem'
 import { useScrollActivity } from '../hooks/use-scroll-activity'
 import { useBadgePrintFlow } from '../hooks/use-badge-print-flow'
 
-export type ReceptionSidebarActiveItem = 'dashboard' | 'visits' | 'calendar' | 'register-visitor' | 'badge-printing'
+export type ReceptionSidebarActiveItem = 'dashboard' | 'visits' | 'calendar' | 'register-visitor' | 'badge-printing' | 'inside-by-zone'
 
 interface ReceptionSidebarProps {
   activeItem: ReceptionSidebarActiveItem
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { key: 'visits', label: 'Invitations', icon: UsersIcon },
   { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
   { key: 'badge-printing', label: 'Badge Printing', icon: IdCardIcon },
+  { key: 'inside-by-zone', label: 'Inside by Zone', icon: MapPinIcon },
 ] as const satisfies ReadonlyArray<{
   key: ReceptionSidebarActiveItem
   label: string
@@ -36,6 +38,7 @@ const RECEPTION_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item
   ['/staff/calendar', 'calendar'],
   ['/staff/visitors/new', 'register-visitor'],
   ['/reception/badge-printing', 'badge-printing'],
+  ['/emergency/inside', 'inside-by-zone'],
 ]
 
 // Entries the user can't open are hidden (app-shell "Admin and Staff Areas
@@ -45,6 +48,7 @@ const NAV_ITEM_PERMISSIONS: Partial<Record<ReceptionSidebarActiveItem, string>> 
   calendar: PAGE_PERMISSIONS.calendar,
   'register-visitor': PAGE_PERMISSIONS.registerVisitor,
   'badge-printing': PAGE_PERMISSIONS.badgePrinting,
+  'inside-by-zone': PAGE_PERMISSIONS.emergencyInside,
 }
 
 // Derives which sidebar entry highlights from the current URL, so the active
@@ -61,6 +65,7 @@ export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
   const { closeNav } = useNavDrawer()
   const { can } = usePermissions()
   const badgePrintFlow = useBadgePrintFlow()
+  const zoneFeature = useZoneFeature()
 
   const handleActivate = (key: ReceptionSidebarActiveItem) => {
     closeNav()
@@ -69,6 +74,7 @@ export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
     if (key === 'calendar') navigate('/staff/calendar')
     if (key === 'register-visitor') navigate('/staff/visitors/new')
     if (key === 'badge-printing') navigate('/reception/badge-printing')
+    if (key === 'inside-by-zone') navigate('/emergency/inside')
   }
 
   return (
@@ -85,6 +91,7 @@ export function ReceptionSidebar({ activeItem }: ReceptionSidebarProps) {
         {NAV_ITEMS.filter(({ key }) => {
           const requires = NAV_ITEM_PERMISSIONS[key]
           if (key === 'badge-printing' && badgePrintFlow !== 'on') return false
+          if (key === 'inside-by-zone' && !zoneFeature.enabled) return false
           return !requires || can(requires)
         }).map(({ key, label, icon }) => (
           <SidebarNavItem

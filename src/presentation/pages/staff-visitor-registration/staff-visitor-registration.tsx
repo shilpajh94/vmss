@@ -23,6 +23,26 @@ import { VisitorInfoStep } from './Components/VisitorInfoStep'
 import { useStaffVisitorRegistrationWizard } from './hooks/use-staff-visitor-registration-wizard'
 import { createInitialStaffFormState } from './types'
 import { useFormPageRefresh } from '../../hooks/use-form-page-refresh'
+import { ZoneSetSection } from '../../components/zones/ZoneSetSection'
+import { usePermissions } from '../../context/current-user-context'
+import { useZoneFeature } from '../../context/zone-feature-context'
+
+// Zones aren't part of the invitation-create payload, so once the visit exists
+// the user can map it to zones here (PUT /invitations/{id}/zones). A failure
+// leaves the visit as registered; the same picker is in its detail view.
+function PostRegistrationZones({ invitationId, branchId, categoryId }: { invitationId: string; branchId: string; categoryId?: string }) {
+  const { enabled } = useZoneFeature()
+  const canEdit = usePermissions().can('invitations:edit', branchId)
+  if (!enabled || !canEdit) return null
+  return (
+    <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-border bg-surface p-5">
+      <p className="font-body text-sm text-text-muted">
+        The visit is registered. Choose the zones this visitor may enter now, or do it later from the visit's details.
+      </p>
+      <ZoneSetSection scope={{ kind: 'invitation', id: invitationId, branchId, categoryId }} canEdit compact />
+    </div>
+  )
+}
 
 export function StaffVisitorRegistrationPage() {
   const navigate = useNavigate()
@@ -44,6 +64,8 @@ export function StaffVisitorRegistrationPage() {
     getFilePreviewUrl,
     submissionStatus,
     trackingId,
+    invitationId,
+    branchId,
     confirmedFullName,
     submissionError,
     submit,
@@ -292,6 +314,9 @@ export function StaffVisitorRegistrationPage() {
                 onGoHome={cancelRegistration}
                 homeLabel="Back to Dashboard"
               />
+            )}
+            {submissionStatus === 'success' && invitationId && branchId && activeStep?.key === 'review_confirm' && (
+              <PostRegistrationZones invitationId={invitationId} branchId={branchId} categoryId={formState.primaryContact.visitorCategory || undefined} />
             )}
             {!isFormConfigLoading && !formConfigError && activeStep && !isCanonicalStepKey(activeStep.key) && (
               <GenericConfiguredStep

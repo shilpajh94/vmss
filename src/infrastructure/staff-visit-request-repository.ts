@@ -55,6 +55,7 @@ export class HttpStaffVisitRequestRepository implements StaffVisitRequestReposit
 
     return {
       trackingId: envelope.data.trackingId,
+      invitationId: envelope.data.id,
       status: envelope.data.status,
       submittedAt: envelope.data.submittedAt ?? envelope.data.expiresAt,
     }

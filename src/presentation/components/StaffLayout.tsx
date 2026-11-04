@@ -12,6 +12,7 @@ import { useStaffSession } from './session/use-staff-session'
 import { PageHeaderProvider, usePageHeaderContext } from '../context/page-header-context'
 import { RefreshProvider } from '../context/refresh-context'
 import { CurrentUserProvider } from '../context/current-user-context'
+import { ZoneFeatureProvider } from '../context/zone-feature-context'
 import { useApplyTheme } from '../context/theme-mode-context'
 
 // Persists the sidebar and top bar across every /staff/* route so navigating
@@ -37,27 +38,29 @@ function StaffLayoutContent() {
 
   return (
     <CurrentUserProvider user={currentUser}>
-      <AppShell
-        sidebar={sidebar}
-        topBar={
-          <AppTopBar
-            title={currentUser?.isReception ? 'Reception Desk' : 'Staff Workspace'}
-            description={header.description}
-            currentUser={currentUser}
-            navLabelFor={staffNavLabelFor}
-            loginPath="/staff/login"
-          />
-        }
-      >
-        <SessionGateContent session={session} onRetry={retry}>
-          <RouteTransition withEndGap>
-            {/* A page's chunk loads on its first visit (design D13). */}
-            <Suspense fallback={<LoadingState label="Loading…" className="flex-1" />}>
-              <Outlet />
-            </Suspense>
-          </RouteTransition>
-        </SessionGateContent>
-      </AppShell>
+      <ZoneFeatureProvider>
+        <AppShell
+          sidebar={sidebar}
+          topBar={
+            <AppTopBar
+              title={currentUser?.isReception ? 'Reception Desk' : 'Staff Workspace'}
+              description={header.description}
+              currentUser={currentUser}
+              navLabelFor={staffNavLabelFor}
+              loginPath="/staff/login"
+            />
+          }
+        >
+          <SessionGateContent session={session} onRetry={retry}>
+            <RouteTransition withEndGap>
+              {/* A page's chunk loads on its first visit (design D13). */}
+              <Suspense fallback={<LoadingState label="Loading…" className="flex-1" />}>
+                <Outlet />
+              </Suspense>
+            </RouteTransition>
+          </SessionGateContent>
+        </AppShell>
+      </ZoneFeatureProvider>
     </CurrentUserProvider>
   )
 }

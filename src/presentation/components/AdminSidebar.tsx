@@ -10,6 +10,7 @@ import {
   IdCardIcon,
   LayersIcon,
   ListChecksIcon,
+  MapPinIcon,
   MonitorIcon,
   PencilIcon,
   SettingsIcon,
@@ -20,6 +21,7 @@ import {
 } from './icons'
 import { useNavDrawer } from '../context/nav-drawer-context'
 import { usePermissions } from '../context/current-user-context'
+import { useZoneFeature } from '../context/zone-feature-context'
 import { PAGE_PERMISSIONS } from '../route-permissions'
 import { useSidebarCollapse } from '../context/sidebar-collapse-context'
 import { SidebarFrame } from './sidebar/SidebarFrame'
@@ -39,6 +41,8 @@ export type AdminSidebarActiveItem =
   | 'floors'
   | 'reception-desks'
   | 'security-gates'
+  | 'zones'
+  | 'emergency-inside'
   | 'kiosks'
   | 'host-employees'
   | 'visitor-categories'
@@ -63,6 +67,8 @@ const ADMIN_ROUTE_ACTIVE_ITEMS: ReadonlyArray<readonly [prefix: string, item: Ad
   ['/admin/floors', 'floors'],
   ['/admin/reception-desks', 'reception-desks'],
   ['/admin/security-gates', 'security-gates'],
+  ['/admin/zones', 'zones'],
+  ['/admin/emergency-inside', 'emergency-inside'],
   ['/admin/kiosks', 'kiosks'],
   ['/admin/host-employees', 'host-employees'],
   ['/admin/visitor-categories', 'visitor-categories'],
@@ -93,6 +99,8 @@ const NAV_ITEM_PERMISSIONS: Record<AdminSidebarActiveItem, string> = {
   floors: PAGE_PERMISSIONS.floors,
   'reception-desks': PAGE_PERMISSIONS.receptionDesks,
   'security-gates': PAGE_PERMISSIONS.securityGates,
+  zones: PAGE_PERMISSIONS.zones,
+  'emergency-inside': PAGE_PERMISSIONS.emergencyInside,
   kiosks: PAGE_PERMISSIONS.kiosks,
   'host-employees': PAGE_PERMISSIONS.hostEmployees,
   'visitor-categories': PAGE_PERMISSIONS.visitorCategories,
@@ -117,6 +125,7 @@ const NAV_SECTIONS = [
       { key: 'calendar', label: 'Calendar', icon: CalendarIcon },
       { key: 'badge-printing', label: 'Badge Printing', icon: IdCardIcon },
       { key: 'audit-trail', label: 'Audit Trail', icon: ClockIcon },
+      { key: 'emergency-inside', label: 'Inside by Zone', icon: MapPinIcon },
     ],
   },
   {
@@ -143,6 +152,7 @@ const NAV_SECTIONS = [
       { key: 'departments', label: 'Departments', icon: UsersIcon },
       { key: 'reception-desks', label: 'Reception Desks', icon: MonitorIcon },
       { key: 'security-gates', label: 'Security Gates', icon: ShieldIcon },
+      { key: 'zones', label: 'Zones', icon: MapPinIcon },
       { key: 'kiosks', label: 'Kiosk Features', icon: MonitorIcon },
       { key: 'organisation-configs', label: 'Organisation Configs', icon: SettingsIcon },
     ],
@@ -171,10 +181,11 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
   const { isCollapsed } = useSidebarCollapse()
   const { can } = usePermissions()
   const badgePrintFlow = useBadgePrintFlow()
+  const zoneFeature = useZoneFeature()
   const sections = NAV_SECTIONS.map((section) => ({
     label: section.label,
     // Badge printing also needs the tenant flag on (see useBadgePrintFlow).
-    items: section.items.filter((item) => can(NAV_ITEM_PERMISSIONS[item.key]) && (item.key !== 'badge-printing' || badgePrintFlow === 'on')),
+    items: section.items.filter((item) => can(NAV_ITEM_PERMISSIONS[item.key]) && (item.key !== 'badge-printing' || badgePrintFlow === 'on') && ((item.key !== 'zones' && item.key !== 'emergency-inside') || zoneFeature.enabled)),
   })).filter((section) => section.items.length > 0)
 
   const handleActivate = (key: AdminSidebarActiveItem) => {
@@ -188,6 +199,8 @@ export function AdminSidebar({ activeItem }: AdminSidebarProps) {
     if (key === 'host-employees') navigate('/admin/host-employees')
     if (key === 'reception-desks') navigate('/admin/reception-desks')
     if (key === 'security-gates') navigate('/admin/security-gates')
+    if (key === 'zones') navigate('/admin/zones')
+    if (key === 'emergency-inside') navigate('/admin/emergency-inside')
     if (key === 'kiosks') navigate('/admin/kiosks')
     if (key === 'visitor-categories') navigate('/admin/visitor-categories')
     if (key === 'workflows') navigate('/admin/workflows')

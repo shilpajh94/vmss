@@ -4,6 +4,7 @@ import { PendingButton } from '../../components/ui/PendingButton'
 import { usePageHeader } from '../../context/page-header-context'
 import { GeneralInformationCard } from './Components/GeneralInformationCard'
 import { BadgePrintFlowCard } from './Components/BadgePrintFlowCard'
+import { ZoneAccessCard } from './Components/ZoneAccessCard'
 import { KioskLocationValidationCard } from './Components/KioskLocationValidationCard'
 import { VisitorPolicyCard } from './Components/VisitorPolicyCard'
 import { useAdminOrganisationConfigs } from './hooks/use-admin-organisation-configs'
@@ -73,6 +74,7 @@ export function AdminOrganisationConfigsPage() {
 
       <KioskLocationValidationCard />
       <BadgePrintFlowCard />
+      <ZoneAccessCard />
     </>
   )
 }

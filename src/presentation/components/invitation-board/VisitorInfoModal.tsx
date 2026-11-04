@@ -15,6 +15,7 @@ import { useEffectiveForm, findFieldById, findGroupById } from '../../hooks/use-
 import { useAppDependencies } from '../../context/app-dependencies-context'
 import { usePermissions } from '../../context/current-user-context'
 import { VisitTimeline } from './VisitTimeline'
+import { ZoneSetSection } from '../zones/ZoneSetSection'
 import { purposeLabel } from '../../utils/purpose-of-visit-options'
 
 interface VisitorInfoModalProps {
@@ -264,7 +265,9 @@ export function VisitorInfoModal({
       isCurrent = false
     }
   }, [isTimelineOpen, timelineVisitDate, timelineInvitationId, timelineBranchId, getCalendarFeedUseCase])
-  const canViewTimeline = usePermissions().can('timeline:view', detail?.branchId)
+  const permissions = usePermissions()
+  const canViewTimeline = permissions.can('timeline:view', detail?.branchId)
+  const canEditZones = permissions.can('invitations:edit', detail?.branchId)
 
   return (
     <>
@@ -456,6 +459,16 @@ export function VisitorInfoModal({
               {detail.watchlistOverrideReason ? (
                 <span className="font-body text-[12px] text-danger/80">{detail.watchlistOverrideReason}</span>
               ) : null}
+            </div>
+          ) : null}
+
+          {detail.branchId ? (
+            <div className="border-t border-border-subtle pt-4">
+              <ZoneSetSection
+                scope={{ kind: 'invitation', id: detail.id, branchId: detail.branchId, categoryId: detail.visitorCategoryId ?? undefined }}
+                canEdit={canEditZones}
+                compact
+              />
             </div>
           ) : null}
         </div>

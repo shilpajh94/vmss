@@ -62,6 +62,8 @@ export const VisitRequestResponseSchema = z.object({
   trackingId: z.string().min(1),
   status: z.string().min(1),
   submittedAt: z.string().min(1),
+  // The created invitation's id, when the create call returns it (staff registration), so follow-up calls like PUT /invitations/{id}/zones can address it.
+  invitationId: z.string().min(1).optional(),
 })
 
 export type VisitRequestResponse = z.infer<typeof VisitRequestResponseSchema>

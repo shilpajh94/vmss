@@ -17,6 +17,9 @@ export const KNOWN_TIMELINE_EVENT_TYPES = [
   'badge_printed',
   'badge_reprinted',
   'notification_sent',
+  'zone_entered',
+  'zone_exited',
+  'zone_entry_denied',
 ] as const
 
 export const VisitTimelineEventSchema = z.object({
