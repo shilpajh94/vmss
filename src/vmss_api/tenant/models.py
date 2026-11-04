@@ -31,3 +31,7 @@ class Tenant(GlobalBase, TimestampMixin):
     badge_print_flow_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=sa.false()
     )
+    # Sole gate for zone access control (add-zone-access-control).
+    zone_access_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.false()
+    )

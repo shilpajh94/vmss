@@ -7,10 +7,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vmss_api.auth.models import User
-from vmss_api.core.deps import get_pagination, get_tenant_db, require_permission
+from vmss_api.core.deps import get_pagination, get_tenant, get_tenant_db, require_permission
 from vmss_api.core.logging import logger
 from vmss_api.core.responses import error_response, paginated_response
 from vmss_api.core.schemas import PaginatedEnvelope, SortOrder
+from vmss_api.core.tenancy import TenantContext
 from vmss_api.timeline import service
 from vmss_api.timeline.schemas import TimelineEventOut, TimelineSortField
 
@@ -28,6 +29,7 @@ _NOT_FOUND = "Timeline not found"
 )
 async def get_invitation_timeline(
     invitation_id: uuid.UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(require_permission("timeline:view"))],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
@@ -47,6 +49,7 @@ async def get_invitation_timeline(
             page_size=page_size,
             sort_by=sort_by.value,
             sort_order=sort_order,
+            include_zones=tenant.zone_access_enabled,
         )
     except service.TimelineNotFoundError:
         return error_response(_NOT_FOUND, 404)
@@ -61,6 +64,7 @@ async def get_invitation_timeline(
 )
 async def get_visitor_timeline(
     visitor_id: uuid.UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant)],
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     user: Annotated[User, Depends(require_permission("timeline:view"))],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
@@ -80,6 +84,7 @@ async def get_visitor_timeline(
             page_size=page_size,
             sort_by=sort_by.value,
             sort_order=sort_order,
+            include_zones=tenant.zone_access_enabled,
         )
     except service.TimelineNotFoundError:
         return error_response(_NOT_FOUND, 404)

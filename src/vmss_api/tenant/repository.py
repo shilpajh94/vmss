@@ -44,14 +44,14 @@ class TenantRepository:
         await self.session.flush()
         return tenant
 
-    async def set_badge_print_flow(self, id_: uuid.UUID, *, enabled: bool) -> Tenant | None:
+    async def set_flags(self, id_: uuid.UUID, **flags: bool) -> Tenant | None:
         """Guarded single-statement update (rather than load-mutate) so the
         change doesn't depend on the registry session's state after
-        `get_tenant`'s rollback."""
+        `get_tenant`'s rollback. `flags` are `Tenant` boolean columns."""
         stmt = (
             update(Tenant)
             .where(Tenant.id == id_, Tenant.deleted_at.is_(None))
-            .values(badge_print_flow_enabled=enabled)
+            .values(**flags)
             .returning(Tenant)
             .execution_options(populate_existing=True)
         )

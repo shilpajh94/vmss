@@ -311,6 +311,14 @@ class Settings(BaseSettings):
     # `jwt_secret_key` (`checkin/badge_token.py`), so no separate secret exists.
     # Per-IP slowapi limit string for the unauthenticated badge-scan endpoints.
     badge_scan_rate_limit: str = Field(default="30/minute", alias="BADGE_SCAN_RATE_LIMIT")
+    # `access_control` (add-zone-access-control). The on/off switch is the per-tenant
+    # `zone_access_enabled` toggle (Organisation Configs), not an env var.
+    # Per-IP slowapi limit for the authenticated gate-scan endpoint.
+    zone_scan_rate_limit: str = Field(default="60/minute", alias="ZONE_SCAN_RATE_LIMIT")
+    # Window in which repeat denials of the same visit/zone/reason alert Security once.
+    zone_denial_alert_dedupe_seconds: int = Field(
+        default=300, alias="ZONE_DENIAL_ALERT_DEDUPE_SECONDS"
+    )
     # Applied twice to every kiosk badge route: once per client IP, once per
     # `device-id` header value (add-kiosk-badge-print-flow).
     kiosk_badge_rate_limit: str = Field(default="30/minute", alias="KIOSK_BADGE_RATE_LIMIT")

@@ -33,6 +33,22 @@ _APP_VERSION = version("vmss-api")
 _TAGS_METADATA = [
     {"name": "health", "description": "Liveness/readiness probes for the running process."},
     {
+        "name": "access_control",
+        "description": (
+            "Zones, the gates that serve them, allowed-zone mapping per visitor "
+            "category and per invitation, and the badge-QR gate scan that decides "
+            "entry. Disabled (404) until the tenant turns zone access on "
+            "(PATCH /tenants/me/settings)."
+        ),
+    },
+    {
+        "name": "emergency",
+        "description": (
+            "Who is inside right now, grouped by zone. Disabled (404) until "
+            "the tenant turns zone access on."
+        ),
+    },
+    {
         "name": "timeline",
         "description": (
             "Read-only chronological history of a visit (invited, approved, ID "

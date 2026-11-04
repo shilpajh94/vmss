@@ -37,12 +37,22 @@ async def update_my_tenant_settings(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
-    """Per-tenant switch for the badge print flow (add-badge-print-flow). The
-    tenant is the caller's own, from the token — never a path/body value."""
-    previous = tenant.badge_print_flow_enabled
-    updated = await TenantRepository(db).set_badge_print_flow(
-        tenant.id, enabled=body.badge_print_flow_enabled
-    )
+    """Per-tenant feature switches: the badge print flow (add-badge-print-flow)
+    and zone access control (add-zone-access-control). Only the switches present
+    in the body change. The tenant is the caller's own, from the token — never a
+    path/body value."""
+    changes = {
+        name: value
+        for name, value in (
+            ("badge_print_flow_enabled", body.badge_print_flow_enabled),
+            ("zone_access_enabled", body.zone_access_enabled),
+        )
+        if value is not None
+    }
+    if not changes:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="No settings provided")
+    previous = {name: getattr(tenant, name) for name in changes}
+    updated = await TenantRepository(db).set_flags(tenant.id, **changes)
     if updated is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Tenant not found")
     await db.commit()
@@ -54,11 +64,6 @@ async def update_my_tenant_settings(
         action="tenant_settings_updated",
         entity_type="Tenant",
         entity_id=tenant.id,
-        diff={
-            "badge_print_flow_enabled": {
-                "before": previous,
-                "after": body.badge_print_flow_enabled,
-            }
-        },
+        diff={name: {"before": previous[name], "after": value} for name, value in changes.items()},
     )
     return success_response(data=out)

@@ -12,6 +12,13 @@ from alembic import context
 # metadata. `include_object` below (not the import list) is what actually
 # keeps this environment's autogenerate scoped to tenant tables only — see
 # `alembic/env.py`'s matching comment for the global side of this.
+from vmss_api.access_control.models import (  # noqa: F401
+    InvitationZone,
+    VisitorCategoryZone,
+    Zone,
+    ZoneAccessEvent,
+    ZoneGate,
+)
 from vmss_api.approvals.models import InvitationApprovalStep  # noqa: F401
 from vmss_api.audit_trail.models import AuditReportJob  # noqa: F401
 from vmss_api.auth.models import (  # noqa: F401

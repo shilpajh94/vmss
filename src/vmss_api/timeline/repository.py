@@ -5,6 +5,7 @@ from typing import Any, NamedTuple
 from sqlalchemy import Select, case, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vmss_api.access_control.models import Zone, ZoneAccessEvent
 from vmss_api.auth.models import AuditLog, User
 from vmss_api.checkin.models import BadgePrint
 from vmss_api.core.database import order_clause
@@ -51,7 +52,7 @@ class TimelineRepository:
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     @staticmethod
-    def _merged(invitation_id: uuid.UUID) -> Any:
+    def _merged(invitation_id: uuid.UUID, *, include_zones: bool) -> Any:
         audit_type = case(
             {action: event.value for action, event in AUDIT_ACTION_TO_EVENT.items()},
             value=AuditLog.action,
@@ -94,7 +95,35 @@ class TimelineRepository:
             .distinct(Notification.dispatch_id)
             .order_by(Notification.dispatch_id, Notification.created_at)
         )
-        return union_all(audit, badge, notification.subquery().select()).subquery("timeline")
+        branches = [audit, badge, notification.subquery().select()]
+        if include_zones:
+            # add-zone-access-control: gate scans. Skipped while the tenant's toggle
+            # is off, so a disabled feature leaves no trace in the timeline.
+            zone_type = case(
+                (ZoneAccessEvent.decision == "denied", TimelineEventType.zone_entry_denied.value),
+                (ZoneAccessEvent.direction == "exit", TimelineEventType.zone_exited.value),
+                else_=TimelineEventType.zone_entered.value,
+            )
+            zone_detail = case(
+                (
+                    ZoneAccessEvent.reason.is_not(None),
+                    func.concat(Zone.name, " (", ZoneAccessEvent.reason, ")"),
+                ),
+                else_=Zone.name,
+            )
+            branches.append(
+                select(
+                    ZoneAccessEvent.occurred_at.label("occurred_at"),
+                    zone_type.label("event_type"),
+                    literal("zone").label("source"),
+                    ZoneAccessEvent.id.label("source_id"),
+                    ZoneAccessEvent.scanned_by_user_id.label("actor_user_id"),
+                    zone_detail.label("detail"),
+                )
+                .join(Zone, Zone.id == ZoneAccessEvent.zone_id)
+                .where(ZoneAccessEvent.invitation_id == invitation_id)
+            )
+        return union_all(*branches).subquery("timeline")
 
     async def list_page(
         self,
@@ -106,8 +135,9 @@ class TimelineRepository:
         page_size: int,
         sort_by: str,
         sort_order: SortOrder,
+        include_zones: bool = False,
     ) -> tuple[list[TimelineRow], int]:
-        merged = self._merged(invitation_id)
+        merged = self._merged(invitation_id, include_zones=include_zones)
         filters = []
         if occurred_after is not None:
             filters.append(merged.c.occurred_at >= occurred_after)

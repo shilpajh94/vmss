@@ -32,6 +32,7 @@ class TenantContext:
     is_active: bool
     timezone: str
     badge_print_flow_enabled: bool = False
+    zone_access_enabled: bool = False
 
 
 class DefaultTenantUnresolved(Exception):
@@ -123,6 +124,7 @@ async def get_tenant(
             is_active=tenant.is_active,
             timezone=tenant.timezone,
             badge_print_flow_enabled=tenant.badge_print_flow_enabled,
+            zone_access_enabled=tenant.zone_access_enabled,
         )
 
     finally:

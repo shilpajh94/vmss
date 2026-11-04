@@ -235,6 +235,12 @@ async def _check_in_resolved(
         raise HTTPException(
             status.HTTP_410_GONE, detail="Verification failed — visit window expired"
         )
+    # add-zone-access-control: a check-in from a security device tied to one zone
+    # is also an entry into that zone (judged and logged here, before the commit).
+    if tenant.zone_access_enabled:
+        from vmss_api.access_control.checkin_gate import enforce_checkin_zone
+
+        await enforce_checkin_zone(tenant_db, tenant, invitation, device, today_local=today_local)
     updated = await InvitationRepository(tenant_db).check_in_by_qr_if_eligible(
         invitation.id, today_local=today_local, device_pk=device.id if device else None
     )

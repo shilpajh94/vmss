@@ -16,6 +16,9 @@ class TimelineEventType(StrEnum):
     badge_printed = "badge_printed"
     badge_reprinted = "badge_reprinted"
     notification_sent = "notification_sent"
+    zone_entered = "zone_entered"
+    zone_exited = "zone_exited"
+    zone_entry_denied = "zone_entry_denied"
 
 
 class TimelineSortField(StrEnum):

@@ -47,6 +47,7 @@ from typing import Any
 from polyfactory import Use
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
+from vmss_api.access_control.models import Zone
 from vmss_api.approvals.models import InvitationApprovalStep
 from vmss_api.audit_trail.models import AuditReportJob
 from vmss_api.auth.models import AuditLog, Permission, Role, User, UserBranchRole
@@ -203,6 +204,15 @@ class SecurityGateFactory(SQLAlchemyFactory[SecurityGate]):
     __model__ = SecurityGate
     high_security = False
     deleted_at = None
+
+
+class ZoneFactory(SQLAlchemyFactory[Zone]):
+    __model__ = Zone
+    is_active = True
+    deleted_at = None
+    building_id = None
+    floor_id = None
+    description = None
 
 
 class VisitorCategoryFactory(SQLAlchemyFactory[VisitorCategory]):

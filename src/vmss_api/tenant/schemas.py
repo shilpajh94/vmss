@@ -10,6 +10,7 @@ class TenantOut(CamelModel):
     timezone: str
     is_active: bool
     badge_print_flow_enabled: bool = False
+    zone_access_enabled: bool = False
 
 
 class TenantSettingsUpdate(CamelModel):
@@ -17,4 +18,5 @@ class TenantSettingsUpdate(CamelModel):
     `TenantOut` (database-architecture.md §4) so a client can never set
     `id`/`slug`/`isActive` through it."""
 
-    badge_print_flow_enabled: bool
+    badge_print_flow_enabled: bool | None = None
+    zone_access_enabled: bool | None = None
