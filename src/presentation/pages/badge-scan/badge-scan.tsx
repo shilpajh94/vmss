@@ -57,6 +57,11 @@ export function BadgeScanPage() {
           {scan.outcome.message}
         </p>
       )}
+      {scan.outcome?.kind === 'id-required' && (
+        <p role="alert" className="font-body text-sm text-danger">
+          ID verification required. Please see reception to have your ID verified, then check in again.
+        </p>
+      )}
       {scan.outcome?.kind === 'unavailable' && (
         <p role="status" className="font-body text-sm text-text-muted">
           Badge scanning is not available right now.

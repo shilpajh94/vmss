@@ -3,13 +3,14 @@ import { useSearchParams } from 'react-router'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { ApiError } from '../../../../data/api/api-error'
 import type { BadgeScanResult } from '../../../../domain/entities/checkin-schema'
-import { isFeatureOff } from '../../../utils/badge-print-errors'
+import { isFeatureOff, isIdNotVerifiedError } from '../../../utils/badge-print-errors'
 
 export type ScanAction = 'check-in' | 'check-out' | 're-enter'
 
 export type ScanOutcome =
   | { kind: 'success'; action: ScanAction; result: BadgeScanResult }
   | { kind: 'error'; message: string }
+  | { kind: 'id-required' }
   | { kind: 'unavailable' }
 
 function describeScanError(error: unknown): string {
@@ -42,7 +43,15 @@ export function useBadgeScan() {
         setOutcome({ kind: 'success', action, result: await useCase.execute(value) })
         setToken('')
       } catch (error) {
-        setOutcome(isFeatureOff(error) ? { kind: 'unavailable' } : { kind: 'error', message: describeScanError(error) })
+        // Verification is a staff attestation and this page has no staff session or visit id,
+        // so the visitor is sent to reception rather than offered a Verify ID action.
+        setOutcome(
+          isFeatureOff(error)
+            ? { kind: 'unavailable' }
+            : action === 'check-in' && isIdNotVerifiedError(error)
+              ? { kind: 'id-required' }
+              : { kind: 'error', message: describeScanError(error) },
+        )
       } finally {
         setPending(undefined)
       }

@@ -2,7 +2,7 @@ import { ToggleSwitch } from '../../../components/ui/ToggleSwitch'
 import { useBadgePrintFlowSetting } from '../hooks/use-badge-print-flow-setting'
 
 export function BadgePrintFlowCard() {
-  const { enabled, canManage, isLoading, errorMessage, isSaving, retry, change } = useBadgePrintFlowSetting()
+  const { enabled, canManage, isLoading, errorMessage, isSaving, retry, change, requiresId, isSavingRequiresId, changeRequiresId } = useBadgePrintFlowSetting()
 
   if (!canManage) return null
 
@@ -28,6 +28,22 @@ export function BadgePrintFlowCard() {
       ) : (
         <div className={isSaving ? 'pointer-events-none opacity-60' : undefined}>
           <ToggleSwitch label="Enable badge printing" checked={enabled} onChange={(next) => void change(next)} />
+        </div>
+      )}
+
+      {!errorMessage && !isLoading && enabled !== undefined && (
+        <div className={`flex flex-col gap-1 ${isSavingRequiresId ? 'pointer-events-none opacity-60' : ''}`}>
+          <ToggleSwitch
+            label="Require ID verification before printing badge"
+            checked={requiresId}
+            disabled={!enabled}
+            onChange={(next) => void changeRequiresId(next)}
+          />
+          <p className="font-body text-[13px] text-text-muted">
+            {enabled
+              ? 'When off, badges can be printed before the visitor’s ID is verified; ID must then be verified at check-in.'
+              : 'Turn on badge printing to change this setting.'}
+          </p>
         </div>
       )}
     </section>

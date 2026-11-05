@@ -12,7 +12,7 @@ export function isFeatureOff(error: unknown): boolean {
 const PREREQUISITE_COPY: ReadonlyArray<readonly [code: string, copy: string]> = [
   ['visit_not_approved', 'This visit is not approved yet, so a badge cannot be printed.'],
   ['photo_missing', "A photo has not been captured for this visitor yet."],
-  ['id_not_verified', 'Confirm the visitor’s physical ID first ("ID verified"), then print.'],
+  ['id_not_verified', 'ID verification is currently required before printing. Turn off "Require ID verification before printing badge" in Organisation Configs to verify at check-in instead.'],
 ]
 
 // Print/reprint 409s name what is missing in the message; anything else is the
@@ -29,4 +29,10 @@ export function describePrintError(error: unknown, mode: 'print' | 'reprint'): s
     return error.message
   }
   return error.message || 'Something went wrong. Please try again.'
+}
+
+// Check-in 409 when the tenant enforces ID verification at check-in instead of
+// at print time ("ID not verified; verify ID before check-in ...").
+export function isIdNotVerifiedError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409 && /id not verified/i.test(error.message)
 }

@@ -36,7 +36,7 @@ export function BadgeResultRow({ row, busy, onVerifyId, onUploadPhoto, onPrint, 
         <div className="flex flex-wrap gap-2">
           <Indicator ok label={row.checkInStatus ? `${row.status} · ${row.checkInStatus}` : row.status} />
           <Indicator ok={row.hasPhoto} label={row.hasPhoto ? 'Photo captured' : 'No photo'} />
-          <Indicator ok={idVerified} label={idVerified ? 'ID verified' : 'ID not verified'} />
+          <Indicator ok={idVerified} label={idVerified ? 'ID verified' : 'ID pending'} />
           <Indicator ok={row.hasActiveBadge} label={row.hasActiveBadge ? 'Badge active' : 'No badge'} />
         </div>
       </div>

@@ -19,6 +19,23 @@ export class HttpTenantSettingsRepository implements TenantSettingsRepository {
     return response.data.badgePrintFlowEnabled
   }
 
+  async getBadgePrintRequiresIdVerification(): Promise<boolean> {
+    const response = await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.GET_TENANT_ME,
+      parserSchema: TenantMeResponseSchema,
+    })
+
+    return response.data.badgePrintRequiresIdVerification
+  }
+
+  async setBadgePrintRequiresIdVerification(required: boolean): Promise<void> {
+    await this.apiClient.makeRequest({
+      endpointConfig: API_ENDPOINTS.UPDATE_TENANT_SETTINGS,
+      body: { badgePrintRequiresIdVerification: required },
+      parserSchema: TenantSettingsResponseSchema,
+    })
+  }
+
   async getZoneAccessEnabled(): Promise<boolean> {
     const response = await this.apiClient.makeRequest({
       endpointConfig: API_ENDPOINTS.GET_TENANT_ME,

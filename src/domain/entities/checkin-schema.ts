@@ -7,6 +7,8 @@ export const TenantMeResponseSchema = z.object({
   success: z.boolean().optional(),
   data: z.object({
     badgePrintFlowEnabled: z.boolean().optional().default(false),
+    // Absent on a backend that predates the setting, so it defaults to today's behaviour (required).
+    badgePrintRequiresIdVerification: z.boolean().optional().default(true),
     // Absent on a backend without zone access control, so it defaults to off.
     zoneAccessEnabled: z.boolean().optional().default(false),
   }),
@@ -14,7 +16,7 @@ export const TenantMeResponseSchema = z.object({
 
 export const TenantSettingsResponseSchema = z.object({
   success: z.boolean().optional(),
-  data: z.object({ badgePrintFlowEnabled: z.boolean().optional(), zoneAccessEnabled: z.boolean().optional() }).optional(),
+  data: z.object({ badgePrintFlowEnabled: z.boolean().optional(), badgePrintRequiresIdVerification: z.boolean().optional(), zoneAccessEnabled: z.boolean().optional() }).optional(),
 })
 
 export const CheckinSearchRowSchema = z.object({

@@ -192,6 +192,8 @@ import { CheckInWithBadgeUseCase } from './data/use-cases/check-in-with-badge'
 import { ReEnterWithBadgeUseCase } from './data/use-cases/re-enter-with-badge'
 import { GetBadgePrintFlowEnabledUseCase } from './data/use-cases/get-badge-print-flow-enabled'
 import { SetBadgePrintFlowEnabledUseCase } from './data/use-cases/set-badge-print-flow-enabled'
+import { GetBadgePrintRequiresIdVerificationUseCase } from './data/use-cases/get-badge-print-requires-id-verification'
+import { SetBadgePrintRequiresIdVerificationUseCase } from './data/use-cases/set-badge-print-requires-id-verification'
 import { GetZoneAccessEnabledUseCase, SetZoneAccessEnabledUseCase } from './data/use-cases/zone-access-setting'
 
 export interface AppDependencies {
@@ -206,6 +208,8 @@ export interface AppDependencies {
   checkInWithBadgeUseCase: CheckInWithBadgeUseCase
   getBadgePrintFlowEnabledUseCase: GetBadgePrintFlowEnabledUseCase
   setBadgePrintFlowEnabledUseCase: SetBadgePrintFlowEnabledUseCase
+  getBadgePrintRequiresIdVerificationUseCase: GetBadgePrintRequiresIdVerificationUseCase
+  setBadgePrintRequiresIdVerificationUseCase: SetBadgePrintRequiresIdVerificationUseCase
   getZoneAccessEnabledUseCase: GetZoneAccessEnabledUseCase
   setZoneAccessEnabledUseCase: SetZoneAccessEnabledUseCase
   submitVisitRequestUseCase: SubmitVisitRequestUseCase
@@ -504,6 +508,8 @@ export function createApp(): AppDependencies {
   let checkInWithBadgeUseCase: CheckInWithBadgeUseCase | undefined
   let getBadgePrintFlowEnabledUseCase: GetBadgePrintFlowEnabledUseCase | undefined
   let setBadgePrintFlowEnabledUseCase: SetBadgePrintFlowEnabledUseCase | undefined
+  let getBadgePrintRequiresIdVerificationUseCase: GetBadgePrintRequiresIdVerificationUseCase | undefined
+  let setBadgePrintRequiresIdVerificationUseCase: SetBadgePrintRequiresIdVerificationUseCase | undefined
   let getZoneAccessEnabledUseCase: GetZoneAccessEnabledUseCase | undefined
   let setZoneAccessEnabledUseCase: SetZoneAccessEnabledUseCase | undefined
   let notificationRepository: NotificationRepository | undefined
@@ -1359,6 +1365,16 @@ export function createApp(): AppDependencies {
     return setZoneAccessEnabledUseCase
   }
 
+  const resolveGetBadgePrintRequiresIdVerificationUseCase = (): GetBadgePrintRequiresIdVerificationUseCase => {
+    getBadgePrintRequiresIdVerificationUseCase ??= new GetBadgePrintRequiresIdVerificationUseCase(resolveTenantSettingsRepository())
+    return getBadgePrintRequiresIdVerificationUseCase
+  }
+
+  const resolveSetBadgePrintRequiresIdVerificationUseCase = (): SetBadgePrintRequiresIdVerificationUseCase => {
+    setBadgePrintRequiresIdVerificationUseCase ??= new SetBadgePrintRequiresIdVerificationUseCase(resolveTenantSettingsRepository())
+    return setBadgePrintRequiresIdVerificationUseCase
+  }
+
   const resolveSetBadgePrintFlowEnabledUseCase = (): SetBadgePrintFlowEnabledUseCase => {
     setBadgePrintFlowEnabledUseCase ??= new SetBadgePrintFlowEnabledUseCase(resolveTenantSettingsRepository())
     return setBadgePrintFlowEnabledUseCase
@@ -1751,6 +1767,12 @@ export function createApp(): AppDependencies {
     },
     get setZoneAccessEnabledUseCase() {
       return resolveSetZoneAccessEnabledUseCase()
+    },
+    get getBadgePrintRequiresIdVerificationUseCase() {
+      return resolveGetBadgePrintRequiresIdVerificationUseCase()
+    },
+    get setBadgePrintRequiresIdVerificationUseCase() {
+      return resolveSetBadgePrintRequiresIdVerificationUseCase()
     },
     get setBadgePrintFlowEnabledUseCase() {
       return resolveSetBadgePrintFlowEnabledUseCase()

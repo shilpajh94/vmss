@@ -4,18 +4,20 @@ interface ToggleSwitchProps {
   checked: boolean
   onChange: (checked: boolean) => void
   label: string
+  disabled?: boolean
 }
 
 interface SwitchControlProps {
   id: string
   checked: boolean
+  disabled?: boolean
   onChange: (checked: boolean) => void
   labelledBy?: string
 }
 
 // The visual switch alone, shared by the inline `ToggleSwitch` row and the
 // form-field `SwitchField` layout.
-function SwitchControl({ id, checked, onChange, labelledBy }: SwitchControlProps) {
+function SwitchControl({ id, checked, onChange, labelledBy, disabled }: SwitchControlProps) {
   return (
     <span className="relative inline-flex shrink-0">
       <input
@@ -23,6 +25,7 @@ function SwitchControl({ id, checked, onChange, labelledBy }: SwitchControlProps
         type="checkbox"
         role="switch"
         checked={checked}
+        disabled={disabled}
         aria-labelledby={labelledBy}
         onChange={(event) => onChange(event.target.checked)}
         className="peer sr-only"
@@ -42,13 +45,13 @@ function SwitchControl({ id, checked, onChange, labelledBy }: SwitchControlProps
   )
 }
 
-export function ToggleSwitch({ checked, onChange, label }: ToggleSwitchProps) {
+export function ToggleSwitch({ checked, onChange, label, disabled }: ToggleSwitchProps) {
   const switchId = useId()
 
   return (
-    <label htmlFor={switchId} className="flex w-full cursor-pointer items-center justify-between gap-3">
+    <label htmlFor={switchId} className={`flex w-full items-center justify-between gap-3 ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
       <span className={`text-body font-semibold ${checked ? 'text-admin-accent' : 'text-text-faint'}`}>{label}</span>
-      <SwitchControl id={switchId} checked={checked} onChange={onChange} />
+      <SwitchControl id={switchId} checked={checked} onChange={onChange} disabled={disabled} />
     </label>
   )
 }

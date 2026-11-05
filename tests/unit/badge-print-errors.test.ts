@@ -5,7 +5,7 @@ import { describePrintError, isFeatureOff } from '../../src/presentation/utils/b
 
 describe('badge print errors', () => {
   it('maps each missing prerequisite on a 409', () => {
-    assert.match(describePrintError(new ApiError('id_not_verified', 409), 'print'), /ID verified/)
+    assert.match(describePrintError(new ApiError('id_not_verified', 409), 'print'), /Require ID verification before printing/)
     assert.match(describePrintError(new ApiError('photo_missing', 409), 'print'), /photo/i)
     assert.match(describePrintError(new ApiError('visit_not_approved', 409), 'print'), /not approved/)
   })
@@ -22,5 +22,16 @@ describe('badge print errors', () => {
     assert.equal(isFeatureOff(new ApiError('Not found', 404)), true)
     assert.equal(isFeatureOff(new ApiError('Conflict', 409)), false)
     assert.equal(isFeatureOff(new ApiError('Visit not found', 404)), false)
+  })
+})
+
+describe('id not verified at check-in', () => {
+  it('recognises the 409 only', async () => {
+    const { isIdNotVerifiedError } = await import('../../src/presentation/utils/badge-print-errors.ts')
+    const message = 'ID not verified; verify ID before check-in if the visit has no idVerifiedAt'
+    assert.equal(isIdNotVerifiedError(new ApiError(message, 409)), true)
+    assert.equal(isIdNotVerifiedError(new ApiError(message, 400)), false)
+    assert.equal(isIdNotVerifiedError(new ApiError('Visit already checked in', 409)), false)
+    assert.equal(isIdNotVerifiedError(new Error(message)), false)
   })
 })
