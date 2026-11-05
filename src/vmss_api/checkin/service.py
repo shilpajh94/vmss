@@ -51,8 +51,6 @@ def unmet_print_conditions(invitation: Invitation) -> list[str]:
         unmet.append("visit_not_approved")
     if not invitation.primary_contact_photo_storage_key:
         unmet.append("photo_missing")
-    if invitation.id_verified_at is None:
-        unmet.append("id_not_verified")
     return unmet
 
 
@@ -380,4 +378,5 @@ async def resolve_scan_tenant(db: AsyncSession, claims: BadgeClaims) -> TenantCo
         is_active=tenant.is_active,
         timezone=tenant.timezone,
         badge_print_flow_enabled=tenant.badge_print_flow_enabled,
+        badge_print_requires_id_verification=tenant.badge_print_requires_id_verification,
     )

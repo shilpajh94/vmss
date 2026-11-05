@@ -63,9 +63,19 @@ per-device secret is a possible follow-up.
 
 ## Print gate
 
-A badge prints only when the visit is `approved`/`checked_in`, has a photo, and
-the ID is verified. Otherwise `409`, with every unmet condition named
-(`visit_not_approved`, `photo_missing`, `id_not_verified`).
+A badge prints when the visit is `approved`/`checked_in` and has a photo.
+Otherwise `409`, with every unmet condition named (`visit_not_approved`,
+`photo_missing`). Printing and reprinting never check ID verification.
+
+### ID verification at check-in
+
+An admin sets `{"badgePrintRequiresIdVerification": ...}` via
+`PATCH /api/v1/tenants/me/settings` (default `true`; `tenants:update`). While it
+is `true` and the badge flow is enabled, any check-in (badge scan, QR token,
+check-in code, desk, tracking-ID) of a visit without `idVerifiedAt` is a `409`
+("ID not verified; verify ID before check-in") until
+`POST /{visit_id}/verify-id` is called. When `false`, check-in does not check
+ID. Check-out is never blocked.
 
 ## Badge token
 

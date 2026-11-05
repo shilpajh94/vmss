@@ -281,7 +281,7 @@ async def test_print_gate_lists_every_unmet_condition(
     visit = await _visit(db_session, tenant.id, branch, photo=False, verified=False)
     response = await client.post(f"{_BASE}/{visit.id}/badge", headers=_h(device))
     assert response.status_code == 409
-    assert "photo_missing" in response.text and "id_not_verified" in response.text
+    assert "photo_missing" in response.text and "id_not_verified" not in response.text
 
 
 async def test_print_idempotency_key_creates_one_row(

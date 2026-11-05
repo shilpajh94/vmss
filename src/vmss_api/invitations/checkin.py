@@ -53,6 +53,21 @@ async def _enforce_device_location(
 _ARCHIVED_CHECK_IN_DETAIL = "Invitation is archived; reschedule it to admit the visitor"
 
 
+def _enforce_id_verified_at_check_in(invitation: Invitation, tenant: Tenant) -> None:
+    """Badge printing never checks ID; check-in does, when the admin toggle
+    `badge_print_requires_id_verification` is on (badge flow enabled). Shared by
+    the tracking-ID, QR-token, check-in-code and badge-scan paths.
+    """
+    if (
+        tenant.badge_print_flow_enabled
+        and tenant.badge_print_requires_id_verification
+        and invitation.id_verified_at is None
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="ID not verified; verify ID before check-in"
+        )
+
+
 async def _perform_check_in(
     tenant_db: AsyncSession,
     invitation: Invitation,
@@ -100,6 +115,7 @@ async def _perform_check_in(
         )
     if invitation.status not in ("approved", "checked_in", "checked_out"):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Invitation is not approved")
+    _enforce_id_verified_at_check_in(invitation, tenant)
     updated = await InvitationRepository(tenant_db).check_in_if_eligible(
         invitation.id, user_id=actor_user_id, device_pk=device.id if device else None
     )
@@ -235,6 +251,7 @@ async def _check_in_resolved(
         raise HTTPException(
             status.HTTP_410_GONE, detail="Verification failed — visit window expired"
         )
+    _enforce_id_verified_at_check_in(invitation, tenant)
     # add-zone-access-control: a check-in from a security device tied to one zone
     # is also an entry into that zone (judged and logged here, before the commit).
     if tenant.zone_access_enabled:

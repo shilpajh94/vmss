@@ -96,3 +96,22 @@ async def test_patch_tenant_settings_requires_permission(
         headers={"Authorization": f"Bearer {issue_token(user_without_permissions)}"},
     )
     assert response.status_code == 403
+
+
+async def test_patch_tenant_settings_toggles_badge_print_id_verification(
+    client: AsyncClient, user: User, tenant: Tenant, issue_token: Callable[[User], str]
+) -> None:
+    headers = {"Authorization": f"Bearer {issue_token(user)}"}
+
+    before = await client.get("/api/v1/tenants/me", headers=headers)
+    assert before.json()["data"]["badgePrintRequiresIdVerification"] is True
+
+    response = await client.patch(
+        "/api/v1/tenants/me/settings",
+        json={"badgePrintRequiresIdVerification": False},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["badgePrintRequiresIdVerification"] is False
+    # Untouched switches keep their value.
+    assert response.json()["data"]["badgePrintFlowEnabled"] is False

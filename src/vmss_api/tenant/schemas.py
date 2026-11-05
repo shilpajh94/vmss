@@ -10,6 +10,7 @@ class TenantOut(CamelModel):
     timezone: str
     is_active: bool
     badge_print_flow_enabled: bool = False
+    badge_print_requires_id_verification: bool = True
     zone_access_enabled: bool = False
 
 
@@ -19,4 +20,5 @@ class TenantSettingsUpdate(CamelModel):
     `id`/`slug`/`isActive` through it."""
 
     badge_print_flow_enabled: bool | None = None
+    badge_print_requires_id_verification: bool | None = None
     zone_access_enabled: bool | None = None

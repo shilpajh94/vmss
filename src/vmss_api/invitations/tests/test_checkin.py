@@ -2473,3 +2473,64 @@ async def test_host_cannot_check_out_visitor(
 
     await db_session.refresh(invitation)
     assert invitation.status == "checked_in"
+
+
+# --- ID verification at check-in (optional-id-verification-for-badge-print) ------
+
+
+async def _id_gate_tenant(db_session: AsyncSession, tenant: Tenant, *, requires: bool) -> None:
+    tenant.badge_print_flow_enabled = True
+    tenant.badge_print_requires_id_verification = requires
+    await db_session.commit()
+
+
+async def test_qr_check_in_requires_verified_id_when_toggle_on(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    await _id_gate_tenant(db_session, tenant, requires=True)
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+
+    blocked = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert blocked.status_code == 409
+    assert "ID not verified" in blocked.json()["message"]
+
+    invitation.id_verified_at = datetime.now(UTC)
+    await db_session.commit()
+    allowed = await client.patch(f"/api/v2/invitations/qr/{token}/check-in")
+    assert allowed.status_code == 200
+
+
+async def test_code_check_in_requires_verified_id_when_toggle_on(
+    client: AsyncClient,
+    tenant: Tenant,
+    branch: Branch,
+    db_session: AsyncSession,
+    fake_lockout_redis,
+) -> None:
+    await _id_gate_tenant(db_session, tenant, requires=True)
+    invitation = _sms_invitation(db_session, branch.id, "33334444")
+    db_session.add(invitation)
+    await db_session.commit()
+    body = {"code": "33334444"}
+
+    blocked = await client.patch("/api/v2/invitations/code/check-in", json=body)
+    assert blocked.status_code == 409
+    assert "ID not verified" in blocked.json()["message"]
+
+    invitation.id_verified_at = datetime.now(UTC)
+    await db_session.commit()
+    assert (await client.patch("/api/v2/invitations/code/check-in", json=body)).status_code == 200
+
+
+async def test_qr_check_in_has_no_id_gate_when_toggle_off(
+    client: AsyncClient, tenant: Tenant, branch: Branch, db_session: AsyncSession
+) -> None:
+    await _id_gate_tenant(db_session, tenant, requires=False)
+    invitation = _approved_invitation(db_session, branch.id)
+    db_session.add(invitation)
+    await db_session.commit()
+    token = qr_token.encrypt_invitation_token(invitation.id)
+    assert (await client.patch(f"/api/v2/invitations/qr/{token}/check-in")).status_code == 200

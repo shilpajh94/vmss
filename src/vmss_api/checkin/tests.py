@@ -260,7 +260,7 @@ async def test_print_gate_lists_every_unmet_condition(
     assert response.status_code == 409
     message = response.json()["message"]
     assert "photo_missing" in message
-    assert "id_not_verified" in message
+    assert "id_not_verified" not in message
 
 
 async def test_print_gate_rejects_unapproved_visit(
@@ -593,3 +593,100 @@ async def test_checkin_repository_tenant_schema_isolation(
         rows, total = await repo.search_visits("alice", "all", limit=10, offset=0)
         assert rows == [] and total == 0
         assert await repo.get_active_print(visit.id) is None
+
+
+# --- optional ID verification (optional-id-verification-for-badge-print) --------
+
+
+@pytest.fixture
+async def id_check_off(db_session: AsyncSession, tenant: Tenant) -> None:
+    tenant.badge_print_requires_id_verification = False
+    await db_session.commit()
+
+
+async def test_print_without_verified_id_regardless_of_toggle(
+    flow_on, client, user, issue_token, db_session, tenant, branch
+) -> None:
+    visit = await _visit(db_session, tenant.id, branch, verified=False)
+    response = await client.post(
+        f"/api/v1/checkin/{visit.id}/badge", headers=_auth(issue_token, user)
+    )
+    assert response.status_code == 200
+
+
+async def test_photo_still_required_regardless_of_toggle(
+    flow_on, client, user, issue_token, db_session, tenant, branch
+) -> None:
+    visit = await _visit(db_session, tenant.id, branch, photo=False, verified=False)
+    response = await client.post(
+        f"/api/v1/checkin/{visit.id}/badge", headers=_auth(issue_token, user)
+    )
+    assert response.status_code == 409
+    message = response.json()["message"]
+    assert "photo_missing" in message and "id_not_verified" not in message
+
+
+async def test_reprint_without_verified_id_regardless_of_toggle(
+    flow_on, client, user, issue_token, db_session, tenant, branch
+) -> None:
+    visit = await _visit(db_session, tenant.id, branch, verified=False)
+    headers = _auth(issue_token, user)
+    assert (
+        await client.post(f"/api/v1/checkin/{visit.id}/badge", headers=headers)
+    ).status_code == 200
+    response = await client.get(
+        f"/api/v1/checkin/{visit.id}/badge", params={"reason": "lost"}, headers=headers
+    )
+    assert response.status_code == 200
+
+
+async def test_badge_check_in_blocked_until_id_verified(
+    flow_on, client, user, issue_token, db_session, tenant, branch
+) -> None:
+    visit = await _visit(db_session, tenant.id, branch, verified=False)
+    headers = _auth(issue_token, user)
+    printed = await client.post(f"/api/v1/checkin/{visit.id}/badge", headers=headers)
+    token = printed.json()["data"]["token"]
+
+    blocked = await client.post("/api/v1/checkin/badge/check-in", json={"token": token})
+    assert blocked.status_code == 409
+    assert "ID not verified" in blocked.json()["message"]
+
+    verified = await client.post(f"/api/v1/checkin/{visit.id}/verify-id", headers=headers)
+    assert verified.status_code == 200
+    allowed = await client.post("/api/v1/checkin/badge/check-in", json={"token": token})
+    assert allowed.status_code == 200
+    assert allowed.json()["data"]["checkInStatus"] == "checked_in"
+
+
+async def test_check_in_has_no_id_gate_when_toggle_off(
+    flow_on, id_check_off, client, user, issue_token, db_session, tenant, branch
+) -> None:
+    visit = await _visit(db_session, tenant.id, branch, verified=False)
+    printed = await client.post(
+        f"/api/v1/checkin/{visit.id}/badge", headers=_auth(issue_token, user)
+    )
+    response = await client.post(
+        "/api/v1/checkin/badge/check-in", json={"token": printed.json()["data"]["token"]}
+    )
+    assert response.status_code == 200
+
+
+async def test_check_out_not_blocked_by_skipped_verification(
+    flow_on, client, user, issue_token, db_session, tenant, branch
+) -> None:
+    visit = await _visit(
+        db_session,
+        tenant.id,
+        branch,
+        verified=False,
+        status="checked_in",
+        check_in_status="checked_in",
+    )
+    printed = await client.post(
+        f"/api/v1/checkin/{visit.id}/badge", headers=_auth(issue_token, user)
+    )
+    response = await client.post(
+        "/api/v1/checkin/badge/check-out", json={"token": printed.json()["data"]["token"]}
+    )
+    assert response.status_code == 200

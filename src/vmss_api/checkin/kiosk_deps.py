@@ -54,6 +54,7 @@ async def get_kiosk_context(
         is_active=tenant.is_active,
         timezone=tenant.timezone,
         badge_print_flow_enabled=tenant.badge_print_flow_enabled,
+        badge_print_requires_id_verification=tenant.badge_print_requires_id_verification,
     )
     async with tenant_session_scope(tenant.schema_name) as tenant_db:
         device = await device_service.resolve_usable_kiosk(tenant_db, device_id)

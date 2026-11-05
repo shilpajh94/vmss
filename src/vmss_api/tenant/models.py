@@ -31,6 +31,11 @@ class Tenant(GlobalBase, TimestampMixin):
     badge_print_flow_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=sa.false()
     )
+    # When false, a badge prints without a verified ID and check-in requires
+    # one instead (optional-id-verification-for-badge-print).
+    badge_print_requires_id_verification: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=sa.true()
+    )
     # Sole gate for zone access control (add-zone-access-control).
     zone_access_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=sa.false()

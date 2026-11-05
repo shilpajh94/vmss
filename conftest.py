@@ -248,6 +248,8 @@ async def tenant(db_session: AsyncSession) -> Tenant:
         # Same reasoning as `timezone` above: polyfactory would otherwise pick a
         # random bool for the badge print flow toggle.
         badge_print_flow_enabled=False,
+        # Same reasoning: print requires a verified ID unless a test opts out.
+        badge_print_requires_id_verification=True,
         # Same reasoning: zone access control stays off unless a test turns it on.
         zone_access_enabled=False,
     )

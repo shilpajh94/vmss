@@ -32,6 +32,7 @@ class TenantContext:
     is_active: bool
     timezone: str
     badge_print_flow_enabled: bool = False
+    badge_print_requires_id_verification: bool = True
     zone_access_enabled: bool = False
 
 
@@ -124,6 +125,7 @@ async def get_tenant(
             is_active=tenant.is_active,
             timezone=tenant.timezone,
             badge_print_flow_enabled=tenant.badge_print_flow_enabled,
+            badge_print_requires_id_verification=tenant.badge_print_requires_id_verification,
             zone_access_enabled=tenant.zone_access_enabled,
         )
 

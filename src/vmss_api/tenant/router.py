@@ -45,6 +45,10 @@ async def update_my_tenant_settings(
         name: value
         for name, value in (
             ("badge_print_flow_enabled", body.badge_print_flow_enabled),
+            (
+                "badge_print_requires_id_verification",
+                body.badge_print_requires_id_verification,
+            ),
             ("zone_access_enabled", body.zone_access_enabled),
         )
         if value is not None
