@@ -1,4 +1,5 @@
 import { useParams } from 'react-router'
+import { ZoneDraftSection } from '../../components/zones/ZoneDraftSection'
 import { ZoneSetSection } from '../../components/zones/ZoneSetSection'
 import { usePermissions } from '../../context/current-user-context'
 import { PAGE_PERMISSIONS } from '../../route-permissions'
@@ -29,7 +30,7 @@ const ESCORT_REQUIREMENT_OPTIONS = [
 ]
 
 export function AdminVisitorCategoryFormPage() {
-  const { isEditMode, isLoading, errorMessage, retry, values, errors, isSaving, updateField, submit, cancel } =
+  const { isEditMode, isLoading, errorMessage, retry, values, errors, isSaving, updateField, submit, cancel, showCreateZones, zones, branchNames, zoneDraft, zonePhase, toggleZone, retryZones } =
     useAdminVisitorCategoryForm()
   const { id } = useParams<{ id: string }>()
   const canManageZones = usePermissions().can(PAGE_PERMISSIONS.zonesManage)
@@ -125,6 +126,12 @@ export function AdminVisitorCategoryFormPage() {
             {isEditMode && id && (
               <div className="border-t border-border pt-6">
                 <ZoneSetSection scope={{ kind: 'category', id }} title="Default zones" canEdit={canManageZones} />
+              </div>
+            )}
+
+            {showCreateZones && (
+              <div className="border-t border-border pt-6">
+                <ZoneDraftSection zones={zones} selectedIds={zoneDraft} onToggle={toggleZone} phase={zonePhase} onRetry={() => void retryZones()} branchNames={branchNames} />
               </div>
             )}
 

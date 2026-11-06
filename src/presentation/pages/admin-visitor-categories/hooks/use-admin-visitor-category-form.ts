@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
+import { fetchAllPages } from '../../../../data/api/fetch-all-pages'
+import { ApiError } from '../../../../data/api/api-error'
+import type { Zone } from '../../../../domain/entities/zone-schema'
+import { useZoneFeature } from '../../../context/zone-feature-context'
+import { PAGE_PERMISSIONS } from '../../../route-permissions'
+import { usePermissions } from '../../../context/current-user-context'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useCurrentUser } from '../../../context/current-user-context'
 import { useToast } from '../../../components/toast/toast-context'
@@ -29,6 +35,9 @@ export function useAdminVisitorCategoryForm() {
     updateVisitorCategoryUseCase,
     listRolesUseCase,
     saveWorkflowUseCase,
+    listZonesUseCase,
+    listBranchesUseCase,
+    setCategoryZonesUseCase,
   } = useAppDependencies()
   const toast = useToast()
 
@@ -39,6 +48,48 @@ export function useAdminVisitorCategoryForm() {
   const [values, setValues] = useState<VisitorCategoryInput>(EMPTY_VALUES)
   const [errors, setErrors] = useState<Partial<Record<keyof VisitorCategoryInput, string>>>({})
   const [isSaving, setIsSaving] = useState(false)
+
+  // Zones for a new category: a local draft saved after the category exists.
+  const { enabled: zonesEnabled, reportDisabled } = useZoneFeature()
+  const canManageZones = usePermissions().can(PAGE_PERMISSIONS.zonesManage)
+  const showCreateZones = !isEditMode && zonesEnabled && canManageZones
+  const [zones, setZones] = useState<Zone[]>([])
+  const [branchNames, setBranchNames] = useState<Map<string, string>>(new Map())
+  const [zoneDraft, setZoneDraft] = useState<string[]>([])
+  const [zonePhase, setZonePhase] = useState<'loading' | 'ready' | 'error'>('loading')
+
+  const loadZones = useCallback(async () => {
+    setZonePhase('loading')
+    try {
+      const [zoneList, branches] = await Promise.all([
+        fetchAllPages((page, pageSize) => listZonesUseCase.execute({ page, pageSize, isActive: true, sortBy: 'name', sortOrder: 'asc' }), { pageSize: 100 }),
+        listBranchesUseCase.execute().catch(() => []),
+      ])
+      setZones(zoneList)
+      setBranchNames(new Map(branches.map((branch) => [branch.id, branch.name])))
+      setZonePhase('ready')
+      // The branch default starts ticked. A failed lookup just leaves nothing ticked.
+      try {
+        const defaults = await listZonesUseCase.execute({ page: 1, pageSize: 1, isDefault: true, isActive: true })
+        const defaultZone = defaults.data[0]
+        if (defaultZone) setZoneDraft((current) => (current.includes(defaultZone.id) ? current : [...current, defaultZone.id]))
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) reportDisabled()
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) reportDisabled()
+      setZonePhase('error')
+    }
+  }, [listZonesUseCase, listBranchesUseCase, reportDisabled])
+
+  // Seeded once per mount of the form; unticking is never overwritten.
+  useEffect(() => {
+    if (showCreateZones) void loadZones()
+  }, [showCreateZones, loadZones])
+
+  const toggleZone = useCallback((zoneId: string, checked: boolean) => {
+    setZoneDraft((current) => (checked ? [...current.filter((existing) => existing !== zoneId), zoneId] : current.filter((existing) => existing !== zoneId)))
+  }, [])
 
   const load = useCallback(async () => {
     setIsLoading(true)
@@ -109,6 +160,20 @@ export function useAdminVisitorCategoryForm() {
         const created = await createVisitorCategoryUseCase.execute(values)
         toast.success('Visitor category created.')
 
+        // The category now exists, so its zones can be saved (PUT replaces the whole set).
+        // A failure keeps the category and sends the admin to Edit to retry.
+        if (showCreateZones && zoneDraft.length > 0) {
+          try {
+            await setCategoryZonesUseCase.execute(created.id, zoneDraft)
+          } catch (zoneError) {
+            console.error('Failed to save the new category zones', zoneError)
+            toast.error('Category created, but zones could not be saved. Set them from the Edit page.')
+            release()
+            navigate(`/admin/visitor-categories/${created.id}/edit`)
+            return
+          }
+        }
+
         // Every category should have at least Reception approval by
         // default — additional levels are an opt-in the admin adds later via
         // /admin/workflows, but a category should never silently start with
@@ -132,7 +197,7 @@ export function useAdminVisitorCategoryForm() {
     } finally {
       setIsSaving(false)
     }
-  }, [values, isEditMode, id, createVisitorCategoryUseCase, updateVisitorCategoryUseCase, listRolesUseCase, saveWorkflowUseCase, navigate, toast, release])
+  }, [values, isEditMode, id, createVisitorCategoryUseCase, updateVisitorCategoryUseCase, listRolesUseCase, saveWorkflowUseCase, setCategoryZonesUseCase, showCreateZones, zoneDraft, navigate, toast, release])
 
   const cancel = useCallback(() => {
     navigate('/admin/visitor-categories')
@@ -147,6 +212,13 @@ export function useAdminVisitorCategoryForm() {
     values,
     errors,
     isSaving,
+    showCreateZones,
+    zones,
+    branchNames,
+    zoneDraft,
+    zonePhase,
+    toggleZone,
+    retryZones: loadZones,
     updateField,
     submit,
     cancel,

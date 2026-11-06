@@ -27,7 +27,7 @@ surfaces, not dark-theme surfaces.
   and the "Something went wrong" page is shown
 - **THEN** that page renders in the light theme, its content panel is
   light, and its brand panel (or top strip) shows exactly one visible
-  Guestify logo, the white-wordmark variant
+  Visimio logo, the white-wordmark variant
 
 #### Scenario: Error page on a dark device
 - **WHEN** the "Something went wrong" page is shown with System selected

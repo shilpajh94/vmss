@@ -1,14 +1,17 @@
-import logoLight from '../assets/brand/logo-guestify.svg'
-import logoOnDark from '../assets/brand/logo-guestify-on-dark.svg'
-import logoMark from '../assets/brand/logo-guestify-mark.svg'
+import logoLight from '../assets/brand/logo-visimio.png'
+import logoLight2x from '../assets/brand/logo-visimio@2x.png'
+import logoOnDark from '../assets/brand/logo-visimio-on-dark.png'
+import logoOnDark2x from '../assets/brand/logo-visimio-on-dark@2x.png'
+import logoMark from '../assets/brand/logo-visimio-mark.png'
+import logoMark2x from '../assets/brand/logo-visimio-mark@2x.png'
 import { configuredEmail, configuredUrl } from './utils/configured-value'
 
 // The one place the product's name and logo live (brand-identity
-// capability). The SVGs are generated from the master logo in
-// VMSS_API/brand/ by VMSS_API/scripts/build_brand_assets.py --web-out;
-// regenerate rather than hand-edit. `public/firebase-messaging-sw.js` can't import this module and
+// capability). The PNGs are generated from the supplied logo by
+// VMSS_API/scripts/build_brand_assets.py --web-out; regenerate rather than
+// hand-edit. `public/firebase-messaging-sw.js` can't import this module and
 // keeps its own copy of BRAND_NAME.
-export const BRAND_NAME = 'Guestify'
+export const BRAND_NAME = 'Visimio'
 
 // Per-deployment support address; the portal footer hides its support
 // line when this is unset rather than showing a made-up address.
@@ -32,14 +35,14 @@ export function footerLinks(links: Array<{ label: string; href: string | null }>
 
 export const BRAND_LOGOS = {
   // Dark wordmark, for light surfaces.
-  light: { src: logoLight },
+  light: { src: logoLight, src2x: logoLight2x },
   // White wordmark, for the navy sidebars and staff headers.
-  'on-dark': { src: logoOnDark },
+  'on-dark': { src: logoOnDark, src2x: logoOnDark2x },
   // Follows the theme: dark wordmark in light, white wordmark in dark. For
   // surfaces that change with the theme.
-  themed: { src: logoLight, darkSrc: logoOnDark },
-  // The "G" pin mark alone.
-  mark: { src: logoMark },
+  themed: { src: logoLight, src2x: logoLight2x, darkSrc: logoOnDark, darkSrc2x: logoOnDark2x },
+  // The Visimio mark alone.
+  mark: { src: logoMark, src2x: logoMark2x },
 } as const
 
 export type BrandLogoVariant = keyof typeof BRAND_LOGOS

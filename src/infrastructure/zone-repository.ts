@@ -18,10 +18,10 @@ export class HttpZoneRepository implements ZoneRepository {
     this.apiClient = apiClient
   }
 
-  list({ page, pageSize, isActive, sortBy, sortOrder, branchId }: ListZonesParams): Promise<ZoneListResponse> {
+  list({ page, pageSize, isActive, isDefault, sortBy, sortOrder, branchId }: ListZonesParams): Promise<ZoneListResponse> {
     return this.apiClient.makeRequest({
       endpointConfig: API_ENDPOINTS.LIST_ZONES,
-      queryParams: { page, pageSize, isActive, sortBy, sortOrder },
+      queryParams: { page, pageSize, isActive, isDefault, sortBy, sortOrder },
       headers: branchId ? { 'X-Branch-ID': branchId } : undefined,
       parserSchema: ZoneListResponseSchema,
     })

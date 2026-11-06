@@ -98,6 +98,8 @@ export function useZoneSet(scope: ZoneSetScope, enabled: boolean) {
 
   const usingCategoryDefaults = !isCategory && savedIds.length === 0 && categoryIds.length > 0
   const effectiveIds = savedIds.length > 0 ? savedIds : categoryIds
+  // A visit's branch default zone is implicitly allowed; it is never part of the saved set.
+  const defaultZone = isCategory ? undefined : zones.find((zone) => zone.isDefault && zone.isActive)
 
   return {
     zones,
@@ -107,7 +109,8 @@ export function useZoneSet(scope: ZoneSetScope, enabled: boolean) {
     effectiveIds,
     usingCategoryDefaults,
     // Nothing mapped on the visit or its category (or on the category itself): the backend denies every zone.
-    deniesEverything: effectiveIds.length === 0,
+    deniesEverything: effectiveIds.length === 0 && !defaultZone,
+    defaultZone,
     draft,
     isDirty,
     phase,

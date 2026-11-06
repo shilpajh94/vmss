@@ -12,6 +12,8 @@ export const ZoneSchema = z.object({
   floorId: z.string().nullish(),
   gateIds: z.array(z.string()).nullish().transform((ids) => ids ?? []),
   isActive: z.boolean().default(true),
+  // The branch's default zone is always allowed for every visitor. Absent on a backend that predates it.
+  isDefault: z.boolean().default(false),
 })
 
 export type Zone = z.infer<typeof ZoneSchema>
@@ -54,6 +56,7 @@ export interface ZoneInput {
   floorId?: string | null
   gateIds: string[]
   isActive?: boolean
+  isDefault?: boolean
 }
 
 export type ZoneSortBy = "name" | "created_at"

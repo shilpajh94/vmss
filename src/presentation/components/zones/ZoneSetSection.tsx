@@ -63,12 +63,15 @@ export function ZoneSetSection({ scope, title = 'Zone access', canEdit, compact 
                 : 'No zones are mapped to this visit or its category. Every zone will be denied for this visit.'}
             </Notice>
           )}
+          {!zoneSet.deniesEverything && zoneSet.effectiveIds.length === 0 && zoneSet.defaultZone && (
+            <Notice tone="info">No other zones are mapped, so only the branch default zone is allowed for this visit.</Notice>
+          )}
           {zoneSet.usingCategoryDefaults && <Notice tone="info">This visit has no zones of its own, so its category defaults apply.</Notice>}
 
           {canEdit ? (
-            <ZonePicker zones={zoneSet.zones} selectedIds={zoneSet.draft} onToggle={zoneSet.toggle} mode="edit" branchNames={isCategory ? zoneSet.branchNames : undefined} />
+            <ZonePicker zones={zoneSet.zones} selectedIds={zoneSet.draft} onToggle={zoneSet.toggle} mode="edit" alwaysAllowed={zoneSet.defaultZone} branchNames={isCategory ? zoneSet.branchNames : undefined} />
           ) : (
-            <ZonePicker zones={zoneSet.zones} selectedIds={zoneSet.effectiveIds} onToggle={() => {}} mode="readonly" branchNames={isCategory ? zoneSet.branchNames : undefined} />
+            <ZonePicker zones={zoneSet.zones} selectedIds={zoneSet.effectiveIds} onToggle={() => {}} mode="readonly" alwaysAllowed={zoneSet.defaultZone} branchNames={isCategory ? zoneSet.branchNames : undefined} />
           )}
 
           {zoneSet.saveError && (

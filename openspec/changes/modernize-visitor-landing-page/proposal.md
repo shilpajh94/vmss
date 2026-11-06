@@ -1,11 +1,11 @@
 ## Why
 
-The admin and staff sign-in pages now use a modern split-screen design (`modernize-login-pages`). The visitor portal landing page (`/`) still has the older layout: a white header bar, a darkened full-width photo with two white cards, and a white footer bar. It no longer looks like the same product. The landing page is the first screen every visitor sees, so it should share the new Guestify look.
+The admin and staff sign-in pages now use a modern split-screen design (`modernize-login-pages`). The visitor portal landing page (`/`) still has the older layout: a white header bar, a darkened full-width photo with two white cards, and a white footer bar. It no longer looks like the same product. The landing page is the first screen every visitor sees, so it should share the new Visimio look.
 
 ## What Changes
 
 - Rebuild `/` on the same split-screen layout as the sign-in pages:
-  - **Brand panel** (left, from 1024px wide): the lobby photo under a navy gradient and the Guestify on-dark logo. It also carries the headline "Welcome to the Visitor Portal", the existing tagline, three visitor-focused highlights, and the copyright line.
+  - **Brand panel** (left, from 1024px wide): the lobby photo under a navy gradient and the Visimio on-dark logo. It also carries the headline "Welcome to the Visitor Portal", the existing tagline, three visitor-focused highlights, and the copyright line.
   - **Action panel** (right): a "Visitor Portal" tag, a short heading, the two entry points as modern, fully clickable action cards, and the Privacy Policy, Terms of Service and support contact links.
   - **Narrow screens:** the brand panel collapses to the slim navy strip with the logo and tag, as the sign-in pages do.
 - The "Request a Visit" card becomes the highlighted primary choice: a cyan accent and a cyan call-to-action. "Track Your Visit" is the secondary, outlined choice. Each card keeps its title, description and call-to-action label ("Request Visit" / "Track Request"), and the whole card is clickable.
@@ -26,7 +26,7 @@ None.
 
 - `visitor-portal-landing`:
   - the entry-points requirement now describes cards that are clickable as a whole;
-  - the product-identity requirement moves the logo and copyright from the header and footer to the brand panel or top strip. The Guestify and configured-support wording from `rebrand-to-guestify` is carried over;
+  - the product-identity requirement moves the logo and copyright from the header and footer to the brand panel or top strip. The Visimio and configured-support wording from `rebrand-to-guestify` is carried over;
   - the fits-the-viewport requirement is rewritten for the split layout.
 - `responsive-layout`: the "Public Portal Footer Is Compact" requirement no longer lists the landing page among the pages that use the shared footer. Its landing-page scenario moves to the track page.
 

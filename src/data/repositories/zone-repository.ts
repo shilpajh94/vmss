@@ -4,6 +4,7 @@ export interface ListZonesParams {
   page: number
   pageSize: number
   isActive?: boolean
+  isDefault?: boolean
   sortBy?: ZoneSortBy
   sortOrder?: 'asc' | 'desc'
   /** Sent as `X-Branch-ID` to narrow the list to one branch. */

@@ -22,10 +22,10 @@ export function BrandLogo({ variant, className = 'h-8', decorative = false }: Br
     // `display: none`, so only one alt is announced.
     return (
       <>
-        <img src={logo.src} alt={alt} className={`block dark:hidden ${sizing}`} />
-        <img src={logo.darkSrc} alt={alt} className={`hidden dark:block ${sizing}`} />
+        <img src={logo.src} srcSet={`${logo.src} 1x, ${logo.src2x} 2x`} alt={alt} className={`block dark:hidden ${sizing}`} />
+        <img src={logo.darkSrc} srcSet={`${logo.darkSrc} 1x, ${logo.darkSrc2x} 2x`} alt={alt} className={`hidden dark:block ${sizing}`} />
       </>
     )
   }
-  return <img src={logo.src} alt={alt} className={`block ${sizing}`} />
+  return <img src={logo.src} srcSet={`${logo.src} 1x, ${logo.src2x} 2x`} alt={alt} className={`block ${sizing}`} />
 }

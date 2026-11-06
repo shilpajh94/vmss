@@ -78,6 +78,18 @@ export function AdminZonesPage() {
                 />
               </div>
               <div className="w-full sm:w-48">
+                <SelectField
+                  label="Default zone"
+                  value={zonesPage.defaultFilter}
+                  onChange={zonesPage.setDefaultFilter}
+                  placeholder="All"
+                  options={[
+                    { value: 'default', label: 'Default' },
+                    { value: 'not-default', label: 'Not default' },
+                  ]}
+                />
+              </div>
+              <div className="w-full sm:w-48">
                 <SelectField label="Sort by" value={zonesPage.sort} onChange={zonesPage.setSort} options={ZONE_SORT_OPTIONS} />
               </div>
               {isFiltering && (

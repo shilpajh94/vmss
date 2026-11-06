@@ -65,7 +65,7 @@ export function VisitorFieldsForm({
     (visitorCategoriesState.status === 'loaded' && visitorCategoriesState.categories.length === 0)
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2">
       <TextField
         label="Full Name"
         maxLength={255}
@@ -126,7 +126,7 @@ export function VisitorFieldsForm({
         </div>
       )}
       {showContactMethod && (
-        <div className="flex flex-col gap-1.5">
+        <div className="col-span-full flex flex-col gap-1.5">
           <span className="text-body font-medium text-text">Preferred Contact Method</span>
           <SegmentedToggle
             options={[
@@ -168,6 +168,7 @@ export function VisitorFieldsForm({
         </>
       )}
       {showExtendedFields && visitorInfoFields.profilePhotoActive && (
+        <div className="col-span-full">
         <FileUploadField
           label="Profile Image"
           helperText="PNG or JPG (max 5MB)"
@@ -181,6 +182,7 @@ export function VisitorFieldsForm({
           error={errors?.profileImageFileRef}
           required={visitorInfoFields.profilePhotoRequired}
         />
+        </div>
       )}
       {customFields.length > 0 && (
         <div className="col-span-full">

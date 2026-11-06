@@ -44,7 +44,12 @@ export function ZonesTable({ zones, names, canManage, onDelete }: ZonesTableProp
             const gateNames = zone.gateIds.map((id) => names.gate.get(id) ?? 'Unknown gate')
             return (
               <tr key={zone.id} className="border-b border-border-subtle">
-                <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">{zone.name}</td>
+                <td className="px-6 py-4 font-body text-sm font-semibold text-text whitespace-nowrap">
+                  {zone.name}
+                  {zone.isDefault && (
+                    <span className="ml-2 rounded-full bg-admin-accent/15 px-2 py-0.5 align-middle text-[11px] font-bold text-admin-accent">Default</span>
+                  )}
+                </td>
                 <td className="px-6 py-4 font-body text-sm text-text-faint whitespace-nowrap">{zone.code}</td>
                 <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{names.branch.get(zone.branchId) ?? '—'}</td>
                 <td className="px-6 py-4 font-body text-sm text-text-muted whitespace-nowrap">{(zone.buildingId && names.building.get(zone.buildingId)) || '—'}</td>

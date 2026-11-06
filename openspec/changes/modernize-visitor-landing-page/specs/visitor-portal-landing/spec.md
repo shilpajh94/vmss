@@ -34,21 +34,21 @@ The whole card SHALL be one link to its route, so a click anywhere on the card n
 ### Requirement: Landing page identifies the product and provides support/legal links
 The system SHALL display the product name and a way to reach support or legal information on the landing page.
 
-The Guestify logo SHALL appear in:
+The Visimio logo SHALL appear in:
 - the brand panel, from 1024px wide;
 - the top strip, below 1024px wide.
 
-The copyright line "© {current year} Guestify. All rights reserved." SHALL appear in the brand panel from 1024px wide, and in the action panel's footer below that.
+The copyright line "© {current year} Visimio. All rights reserved." SHALL appear in the brand panel from 1024px wide, and in the action panel's footer below that.
 
 The support contact email SHALL come from deployment configuration, never a hard-coded address. The footer SHALL show no support contact when none is configured. No retired brand name or domain ("VisitorPass", "Visimio") SHALL appear on the page.
 
 #### Scenario: Product identity is shown
 - **WHEN** a visitor loads the landing page in a viewport 1440px wide
-- **THEN** the Guestify logo (alt text "Guestify") and "© {current year} Guestify. All rights reserved." are visible in the brand panel
+- **THEN** the Visimio logo (alt text "Visimio") and "© {current year} Visimio. All rights reserved." are visible in the brand panel
 
 #### Scenario: Product identity on a phone
 - **WHEN** a visitor loads the landing page in a viewport 360px wide
-- **THEN** the Guestify logo is visible in the top strip and the copyright line is shown at the bottom of the page
+- **THEN** the Visimio logo is visible in the top strip and the copyright line is shown at the bottom of the page
 
 #### Scenario: Support and legal links are present
 - **WHEN** a visitor loads the landing page

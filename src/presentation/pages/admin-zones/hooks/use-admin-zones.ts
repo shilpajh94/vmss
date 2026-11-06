@@ -8,7 +8,7 @@ import { useZoneFeature } from '../../../context/zone-feature-context'
 import { useLiveResource } from '../../../hooks/use-live-resource'
 import { usePagedList } from '../../../hooks/use-paged-list'
 import { PAGE_PERMISSIONS } from '../../../route-permissions'
-import { toUserMessage } from '../../../utils/to-user-message'
+import { zoneWriteMessage } from '../zone-errors'
 import { loadZoneReferenceData } from '../zone-reference-data'
 
 const PAGE_SIZE = 20
@@ -39,6 +39,7 @@ export function useAdminZones() {
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [branchFilter, setBranchFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [defaultFilter, setDefaultFilter] = useState('')
   const [sort, setSort] = useState(ZONE_SORT_OPTIONS[0].value)
   const { page, goToNextPage, goToPrevPage, resetToFirstPage } = usePagedList()
 
@@ -49,10 +50,11 @@ export function useAdminZones() {
         page,
         pageSize: PAGE_SIZE,
         isActive: statusFilter === '' ? undefined : statusFilter === 'active',
+        isDefault: defaultFilter === '' ? undefined : defaultFilter === 'default',
         branchId: branchFilter || undefined,
         ...parseSort(sort),
       }),
-    query: { page, statusFilter, branchFilter, sort },
+    query: { page, statusFilter, defaultFilter, branchFilter, sort },
     reference: () => loadZoneReferenceData(dependencies),
     errorMessage: (error) =>
       error instanceof ApiError && error.status === 404 ? 'Zone access is not enabled.' : 'Something went wrong loading the zones. Please try again.',
@@ -93,7 +95,7 @@ export function useAdminZones() {
       setPendingDelete(undefined)
       await reload()
     } catch (deleteError) {
-      toast.error(toUserMessage(deleteError, 'Something went wrong deleting the zone. Please try again.'))
+      toast.error(zoneWriteMessage(deleteError, 'Something went wrong deleting the zone. Please try again.'))
     } finally {
       setIsDeleting(false)
     }
@@ -113,6 +115,13 @@ export function useAdminZones() {
     },
     [resetToFirstPage],
   )
+  const changeDefaultFilter = useCallback(
+    (value: string) => {
+      setDefaultFilter(value)
+      resetToFirstPage()
+    },
+    [resetToFirstPage],
+  )
   const changeSort = useCallback(
     (value: string) => {
       setSort(value)
@@ -123,6 +132,7 @@ export function useAdminZones() {
   const clearFilters = useCallback(() => {
     setBranchFilter('')
     setStatusFilter('')
+    setDefaultFilter('')
     resetToFirstPage()
   }, [resetToFirstPage])
 
@@ -146,10 +156,12 @@ export function useAdminZones() {
     setBranchFilter: changeBranchFilter,
     statusFilter,
     setStatusFilter: changeStatusFilter,
+    defaultFilter,
+    setDefaultFilter: changeDefaultFilter,
     sort,
     setSort: changeSort,
     clearFilters,
-    isFiltering: branchFilter !== '' || statusFilter !== '',
+    isFiltering: branchFilter !== '' || statusFilter !== '' || defaultFilter !== '',
     pendingDelete,
     isDeleting,
     requestDelete: setPendingDelete,

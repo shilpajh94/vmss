@@ -31,7 +31,7 @@ function buildInvitationUrl(data, isAdminContext) {
 messaging.onBackgroundMessage((payload) => {
   // Keep in sync with BRAND_NAME in src/presentation/brand.ts (a service
   // worker can't import app modules).
-  const notificationTitle = (payload.notification && payload.notification.title) || 'Guestify'
+  const notificationTitle = (payload.notification && payload.notification.title) || 'Visimio'
   const notificationBody = (payload.notification && payload.notification.body) || ''
 
   self.registration.showNotification(notificationTitle, {

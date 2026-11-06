@@ -87,7 +87,7 @@ Both lift 1px on hover with a stronger shadow, using `--motion-fast`. Focus uses
 
 ### D5. Absorbing `rebrand-to-guestify`'s landing delta
 
-This change's identity requirement already carries the rebrand's Guestify and configured-support wording. Before this change is synced, delete `rebrand-to-guestify/specs/visitor-portal-landing/` and update its proposal line. The two changes can then archive in either order, the same resolution used for `staff-login`.
+This change's identity requirement already carries the rebrand's Visimio and configured-support wording. Before this change is synced, delete `rebrand-to-guestify/specs/visitor-portal-landing/` and update its proposal line. The two changes can then archive in either order, the same resolution used for `staff-login`.
 
 ## Risks / Trade-offs
 

@@ -45,7 +45,7 @@ Move every remaining public screen onto the shared split-screen layout:
 - `visitor-otp-verification`: "OTP screens share the portal's visual theme" now requires the shared split-screen layout instead of the shared header and footer.
 - `visitor-request-wizard`: "Step navigation adapts to narrow viewports" now places the step list in the navy panel from 1024px wide (today the rail is hidden below `lg`, not 768px as the spec says) and the compact progress header below that.
 - `responsive-layout`: "The Public Portal Footer Is Compact" is rewritten for the split-screen footer, now the only public footer. This builds on `modernize-visitor-landing-page`'s version of the requirement.
-- `brand-identity`: "Logo Variant Matches Its Background" no longer cites the visitor portal header as a light surface. Public pages now carry the white-wordmark logo on navy, and the phone navigation bar is the remaining light surface. The Guestify wording from `rebrand-to-guestify` is carried over.
+- `brand-identity`: "Logo Variant Matches Its Background" no longer cites the visitor portal header as a light surface. Public pages now carry the white-wordmark logo on navy, and the phone navigation bar is the remaining light surface. The Visimio wording from `rebrand-to-guestify` is carried over.
 - `theme-mode`: the error-page scenario of "Public pages always render in the light theme" changes from "header and footer logos" to the split-screen brand panel or strip.
 
 ## Impact

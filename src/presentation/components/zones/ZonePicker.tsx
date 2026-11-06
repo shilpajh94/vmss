@@ -9,6 +9,8 @@ interface ZonePickerProps {
   mode: 'edit' | 'readonly'
   /** Shown beside a zone when zones from several branches are listed. */
   branchNames?: Map<string, string>
+  /** The branch default zone: shown as a locked chip, never selectable or part of the selection. */
+  alwaysAllowed?: Zone
 }
 
 function zoneLabel(zone: Zone, branchNames?: Map<string, string>): string {
@@ -19,15 +21,22 @@ function zoneLabel(zone: Zone, branchNames?: Map<string, string>): string {
 // A checkbox list of zones. An inactive zone can't be newly picked (the
 // backend denies it anyway) but stays visible and unticking-able when
 // already selected, so a stale choice can be removed.
-export function ZonePicker({ zones, selectedIds, onToggle, mode, branchNames }: ZonePickerProps) {
+export function ZonePicker({ zones, selectedIds, onToggle, mode, branchNames, alwaysAllowed }: ZonePickerProps) {
   const selected = new Set(selectedIds)
+  const chip = alwaysAllowed ? (
+    <span className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-border-subtle px-3 py-1 font-body text-[13px] font-semibold text-text">
+      {zoneLabel(alwaysAllowed)}
+      <span className="rounded-full bg-admin-accent/15 px-2 py-0.5 text-[11px] font-bold text-admin-accent">Always allowed</span>
+    </span>
+  ) : null
+  const selectable = alwaysAllowed ? zones.filter((zone) => zone.id !== alwaysAllowed.id) : zones
 
   if (mode === 'readonly') {
-    const chosen = zones.filter((zone) => selected.has(zone.id))
-    return chosen.length === 0 ? (
-      <p className="font-body text-sm text-text-faint">No zones.</p>
-    ) : (
+    const chosen = selectable.filter((zone) => selected.has(zone.id))
+    if (chosen.length === 0) return chip ?? <p className="font-body text-sm text-text-faint">No zones.</p>
+    return (
       <ul className="flex flex-wrap gap-2">
+        {chip && <li>{chip}</li>}
         {chosen.map((zone) => (
           <li key={zone.id} className="rounded-full bg-border-subtle px-3 py-1 font-body text-[13px] font-semibold text-text">
             {zoneLabel(zone, branchNames)}
@@ -37,12 +46,14 @@ export function ZonePicker({ zones, selectedIds, onToggle, mode, branchNames }: 
     )
   }
 
-  if (zones.length === 0) return <p className="font-body text-sm text-text-faint">No zones are defined for this selection yet.</p>
+  if (selectable.length === 0) return chip ?? <p className="font-body text-sm text-text-faint">No zones are defined for this selection yet.</p>
 
   // Active zones first, each group by name.
-  const ordered = [...zones].sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name))
+  const ordered = [...selectable].sort((a, b) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name))
   return (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+    <div className="flex flex-col gap-3">
+      {chip}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
       {ordered.map((zone) => {
         const isSelected = selected.has(zone.id)
         const isLocked = !zone.isActive && !isSelected
@@ -54,6 +65,7 @@ export function ZonePicker({ zones, selectedIds, onToggle, mode, branchNames }: 
           </div>
         )
       })}
+      </div>
     </div>
   )
 }

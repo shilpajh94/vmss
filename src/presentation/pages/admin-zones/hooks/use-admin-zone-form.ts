@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { ApiError } from '../../../../data/api/api-error'
 import type { ZoneInput } from '../../../../domain/entities/zone-schema'
@@ -6,10 +6,11 @@ import { useToast } from '../../../components/toast/toast-context'
 import { useAppDependencies } from '../../../context/app-dependencies-context'
 import { useZoneFeature } from '../../../context/zone-feature-context'
 import { useFormPageRefresh } from '../../../hooks/use-form-page-refresh'
-import { apiFieldErrors, toUserMessage } from '../../../utils/to-user-message'
+import { apiFieldErrors } from '../../../utils/to-user-message'
+import { DEFAULT_ZONE_CONFLICT_MESSAGE, zoneWriteMessage } from '../zone-errors'
 import { loadZoneReferenceData, type ZoneReferenceData } from '../zone-reference-data'
 
-const EMPTY_DETAILS: ZoneInput = { branchId: '', name: '', code: '', buildingId: null, floorId: null, gateIds: [], isActive: true }
+const EMPTY_DETAILS: ZoneInput = { branchId: '', name: '', code: '', buildingId: null, floorId: null, gateIds: [], isActive: true, isDefault: false }
 const EMPTY_REFERENCES: ZoneReferenceData = { branches: [], buildings: [], floors: [], gates: [] }
 
 type FieldErrors = Partial<Record<'branchId' | 'name' | 'code', string>>
@@ -29,6 +30,8 @@ export function useAdminZoneForm() {
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
   const [errors, setErrors] = useState<FieldErrors>({})
   const [isSaving, setIsSaving] = useState(false)
+  const detailsRef = useRef(details)
+  detailsRef.current = details
 
   const load = useCallback(async () => {
     setIsLoading(true)
@@ -49,6 +52,7 @@ export function useAdminZoneForm() {
               floorId: zone.floorId ?? null,
               gateIds: zone.gateIds,
               isActive: zone.isActive,
+              isDefault: zone.isDefault,
             }
           : EMPTY_DETAILS,
       )
@@ -75,8 +79,13 @@ export function useAdminZoneForm() {
   const { release } = useFormPageRefresh({ values: details, isLoading, reload: retry, baseline: isEditMode ? undefined : EMPTY_DETAILS })
 
   const updateField = useCallback(<K extends keyof ZoneInput>(key: K, value: ZoneInput[K]) => {
+    // The default zone cannot be deactivated; the user must pick another default first.
+    if (key === 'isActive' && value === false && detailsRef.current.isDefault) {
+      toast.error(DEFAULT_ZONE_CONFLICT_MESSAGE)
+      return
+    }
     setDetails((current) => ({ ...current, [key]: value }))
-  }, [])
+  }, [toast])
 
   // Choices narrow branch → building → floor, and gates follow the building (or the branch when none is chosen).
   const changeBranch = useCallback((branchId: string) => {
@@ -136,7 +145,7 @@ export function useAdminZoneForm() {
       // The user stays on the form with what they typed; field messages show next to their controls.
       const fieldErrors = apiFieldErrors(error)
       setErrors({ name: fieldErrors.name, code: fieldErrors.code })
-      toast.error(toUserMessage(error, `Something went wrong ${isEditMode ? 'updating' : 'creating'} the zone. Please try again.`))
+      toast.error(zoneWriteMessage(error, `Something went wrong ${isEditMode ? 'updating' : 'creating'} the zone. Please try again.`))
     } finally {
       setIsSaving(false)
     }

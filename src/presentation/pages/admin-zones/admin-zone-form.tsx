@@ -114,6 +114,21 @@ export function AdminZoneFormPage() {
             )}
           </div>
 
+          <div className="flex flex-col items-start gap-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-1">
+              <p className="font-body text-sm font-semibold text-text-muted">Default zone</p>
+              <p className="max-w-xl font-body text-xs text-text-faint">
+                Always allowed for every visitor at this branch. Only one per branch: turning it on moves it from the current default. It still needs a linked gate.
+              </p>
+            </div>
+            <ToggleSwitch
+              label={details.isDefault ? 'Default' : 'Not default'}
+              checked={details.isDefault ?? false}
+              disabled={details.isActive === false}
+              onChange={(checked) => form.updateField('isDefault', checked)}
+            />
+          </div>
+
           {isEditMode && (
             <div className="flex flex-col items-start gap-3 py-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-col gap-1">

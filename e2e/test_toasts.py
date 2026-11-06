@@ -18,7 +18,7 @@ PUSH = """(bodies) => bodies.forEach((body) => navigator.serviceWorker.dispatchE
     new MessageEvent('message', { data: {
         isFirebaseMessaging: true,
         messageType: 'push-received',
-        notification: { title: 'Guestify', body },
+        notification: { title: 'Visimio', body },
         data: {},
     } })
 ))"""

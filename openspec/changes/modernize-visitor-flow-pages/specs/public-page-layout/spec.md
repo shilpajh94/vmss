@@ -16,7 +16,7 @@ The system SHALL render each of the following screens on the shared split-screen
 
 The layout SHALL be:
 - **From 1024px wide:** a navy brand panel on the left and a light content panel on the right.
-- **Below 1024px wide:** a navy top strip with the Guestify on-dark logo and the page's portal tag, with the content panel below it.
+- **Below 1024px wide:** a navy top strip with the Visimio on-dark logo and the page's portal tag, with the content panel below it.
 
 No public screen SHALL show the former white header bar, the white footer bar, or a lobby photo behind its content.
 
@@ -26,7 +26,7 @@ No public screen SHALL show the former white header bar, the white footer bar, o
 
 #### Scenario: Track page on a phone
 - **WHEN** a visitor opens `/visitor/track` at 360×640
-- **THEN** the navy top strip with the Guestify logo is at the top, the tracking form is below it, and no lobby photo is shown
+- **THEN** the navy top strip with the Visimio logo is at the top, the tracking form is below it, and no lobby photo is shown
 
 #### Scenario: Not-found page
 - **WHEN** a visitor opens an unknown path at 1440×900
@@ -80,7 +80,7 @@ The content panel's footer on every visitor screen SHALL show:
 - the configured Terms of Service link;
 - the configured "Support Contact: {address}" link.
 
-Each link SHALL be hidden while its setting is unset. The copyright line "© {current year} Guestify. All rights reserved." SHALL appear in the brand panel from 1024px wide, and in the content panel's footer below that.
+Each link SHALL be hidden while its setting is unset. The copyright line "© {current year} Visimio. All rights reserved." SHALL appear in the brand panel from 1024px wide, and in the content panel's footer below that.
 
 #### Scenario: Same brand panel across the flow
 - **WHEN** a visitor moves from `/` to `/visitor/request` and then to `/visitor/track` at 1440×900
