@@ -137,20 +137,6 @@ export function useAdminFormBuilderStepEditor() {
   // this as fire-and-forget the way `toggleFieldRequired`/`createField` do.
   const saveFieldProperties = useCallback(
     async (fieldId: string, input: FormFieldUpdateInput): Promise<string | undefined> => {
-      if (input.fieldType === 'file_upload') {
-        const field = fields.find((f) => f.id === fieldId)
-        const groupId = field?.groupId
-        if (groupId) {
-          const groupAlreadyHasFileUpload = fields.some(
-            (f) => f.id !== fieldId && f.groupId === groupId && f.fieldType === 'file_upload',
-          )
-          if (groupAlreadyHasFileUpload) {
-            const message = 'This group already has a file upload field. A group can only contain one.'
-            toast.error(message)
-            return message
-          }
-        }
-      }
       try {
         const updated = await updateFormFieldUseCase.execute(fieldId, input, branchId)
         setFields((current) => current.map((f) => (f.id === updated.id ? updated : f)))
@@ -163,32 +149,15 @@ export function useAdminFormBuilderStepEditor() {
         return message
       }
     },
-    [fields, updateFormFieldUseCase, branchId, toast, markDirty],
+    [updateFormFieldUseCase, branchId, toast, markDirty],
   )
 
   // Assigns (or clears, via `groupId: null`) a field's group from the row's
   // own group-select dropdown (add-repeatable-field-groups) — a lighter-weight
   // sibling of `saveFieldProperties` that only ever touches `groupId`, so it
   // doesn't need the full properties-panel save flow.
-  //
-  // Only one `file_upload` field per group is ever actually wired end-to-end
-  // (frontend's `groupFileFieldKey`/backend's `_group_field_file_key` both
-  // only extract the first such field's answer as a real uploaded file) — a
-  // second one renders a working-looking control whose file silently never
-  // reaches the backend. Blocked here client-side rather than left to a
-  // backend rejection, since the backend currently accepts it silently too.
   const assignFieldGroup = useCallback(
     async (fieldId: string, groupId: string | null) => {
-      const field = fields.find((f) => f.id === fieldId)
-      if (groupId && field?.fieldType === 'file_upload') {
-        const groupAlreadyHasFileUpload = fields.some(
-          (f) => f.id !== fieldId && f.groupId === groupId && f.fieldType === 'file_upload',
-        )
-        if (groupAlreadyHasFileUpload) {
-          toast.error('This group already has a file upload field. A group can only contain one.')
-          return
-        }
-      }
       try {
         const updated = await updateFormFieldUseCase.execute(fieldId, { groupId }, branchId)
         setFields((current) => current.map((f) => (f.id === updated.id ? updated : f)))
@@ -197,7 +166,7 @@ export function useAdminFormBuilderStepEditor() {
         toast.error(toUserMessage(error, 'Something went wrong assigning this field to a group. Please try again.'))
       }
     },
-    [fields, updateFormFieldUseCase, branchId, toast, markDirty],
+    [updateFormFieldUseCase, branchId, toast, markDirty],
   )
 
   const requestDeleteField = useCallback((field: FormField) => setPendingDelete(field), [])
@@ -231,16 +200,6 @@ export function useAdminFormBuilderStepEditor() {
   const createField = useCallback(
     async (input: FormFieldCreateInput): Promise<string | undefined> => {
       if (!stepId) return undefined
-      if (input.groupId && input.fieldType === 'file_upload') {
-        const groupAlreadyHasFileUpload = fields.some(
-          (f) => f.groupId === input.groupId && f.fieldType === 'file_upload',
-        )
-        if (groupAlreadyHasFileUpload) {
-          const message = 'This group already has a file upload field. A group can only contain one.'
-          toast.error(message)
-          return message
-        }
-      }
       try {
         const created = await createFormFieldUseCase.execute(stepId, input, branchId)
         setFields((current) => [...current, created].sort((a, b) => a.orderIndex - b.orderIndex))
@@ -255,7 +214,7 @@ export function useAdminFormBuilderStepEditor() {
         return message
       }
     },
-    [stepId, fields, createFormFieldUseCase, branchId, toast, markDirty],
+    [stepId, createFormFieldUseCase, branchId, toast, markDirty],
   )
 
   const reorderFields = useCallback(

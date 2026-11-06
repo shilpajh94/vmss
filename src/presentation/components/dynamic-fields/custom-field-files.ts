@@ -10,7 +10,7 @@ function isFileValue(value: DynamicFieldValue): value is DynamicFieldFileValue {
  * `customFieldValues`-shaped map must travel as a multipart file instead of a
  * JSON value (backend's "inline file-upload custom fields" contract,
  * 2026-09-24). Grouped file fields are unaffected — they still go through
- * `extractGroupFieldFiles`/`groupFieldFiles[<groupId>]`.
+ * `extractGroupFieldFiles`/`groupFieldFiles[<fieldId>]`.
  */
 export function fileUploadFieldsOf<T extends Pick<FormField, 'key' | 'fieldType'>>(fields: T[]): T[] {
   return fields.filter((field) => field.fieldType === 'file_upload')

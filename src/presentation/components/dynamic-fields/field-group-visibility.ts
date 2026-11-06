@@ -61,26 +61,18 @@ function groupMemberFields(group: EffectiveFormFieldGroup, stepFields: Effective
   return stepFields.filter((field) => field.groupId === group.id)
 }
 
-/** A group's first `file_upload`-typed field — mirrors VMSS_API's
- * `invitations/service.py::_group_field_file_key` exactly: only that one
- * field is ever eligible to travel as a multipart file. */
-function groupFileField(group: EffectiveFormFieldGroup, stepFields: EffectiveFormStep['fields']): FormField | undefined {
-  return groupMemberFields(group, stepFields).find((field) => field.fieldType === 'file_upload')
-}
-
-/** Pulls each admin-defined field group's `file_upload` field answer out of
- * `groupValues` and resolves it to the real `File` `uploadFile` registered
- * in `fileRegistry` (add-group-field-file-upload). The backend only ever
- * accepts that field's answer as a multipart `groupFieldFiles[<groupId>]`
- * list, order-matched to that group's instances — the same "list,
- * order-matched to instances" convention already used for
- * `visitorIdProofFiles` — and rejects the instance outright (422) if the
- * field is still present as a JSON value, so it must be stripped from every
- * instance here rather than merely left alongside the resolved file (see
- * VMSS_API's `docs/features/invitations.md` "Repeatable group file
- * uploads"). `sanitizedGroupValues` stays keyed by the group's `key`
- * (internal wizard state); only the returned `groupFieldFiles` map is keyed
- * by `id` (the wire contract's file part key).
+/** Pulls every `file_upload` field's answer of each admin-defined field group
+ * out of `groupValues` and resolves it to the real `File` `uploadFile`
+ * registered in `fileRegistry`. The backend accepts these as multipart
+ * `groupFieldFiles[<fieldId>]` lists — one key per file field, one file per
+ * instance, order-matched to that group's instances (the legacy
+ * `groupFieldFiles[<groupId>]` key only maps to the group's FIRST file field,
+ * so it is deliberately not used; see VMSS_API's `docs/features/invitations.md`
+ * "Multiple file fields in one group"). The backend also rejects an instance
+ * outright (422) if a file field is still present as a JSON value, so each is
+ * stripped from every instance here. `sanitizedGroupValues` stays keyed by
+ * the group's `key` (internal wizard state); the returned `groupFieldFiles`
+ * map is keyed by the file field's `id` (the wire contract's part key).
  */
 export function extractGroupFieldFiles(
   steps: EffectiveFormStep[],
@@ -92,23 +84,25 @@ export function extractGroupFieldFiles(
 
   for (const step of steps) {
     for (const group of step.groups) {
-      const fileField = groupFileField(group, step.fields)
+      const fileFields = groupMemberFields(group, step.fields).filter((field) => field.fieldType === 'file_upload')
       const instances = groupValues[group.key]
-      if (!fileField || !instances || instances.length === 0) continue
+      if (fileFields.length === 0 || !instances || instances.length === 0) continue
 
-      const files: File[] = []
-      sanitizedGroupValues[group.key] = instances.map((instance) => {
-        if (!(fileField.key in instance)) return instance
-        const fileValue = instance[fileField.key]
-        if (fileValue !== undefined && typeof fileValue === 'object' && !Array.isArray(fileValue)) {
-          const file = fileRegistry.get(fileValue.fileRef)
-          if (file) files.push(file)
-        }
-        const sanitizedInstance: GroupInstance = { ...instance }
-        delete sanitizedInstance[fileField.key]
-        return sanitizedInstance
-      })
-      if (files.length > 0) groupFieldFiles[group.id] = files
+      for (const fileField of fileFields) {
+        const files: File[] = []
+        sanitizedGroupValues[group.key] = sanitizedGroupValues[group.key].map((instance) => {
+          if (!(fileField.key in instance)) return instance
+          const fileValue = instance[fileField.key]
+          if (fileValue !== undefined && typeof fileValue === 'object' && !Array.isArray(fileValue)) {
+            const file = fileRegistry.get(fileValue.fileRef)
+            if (file) files.push(file)
+          }
+          const sanitizedInstance: GroupInstance = { ...instance }
+          delete sanitizedInstance[fileField.key]
+          return sanitizedInstance
+        })
+        if (files.length > 0) groupFieldFiles[fileField.id] = files
+      }
     }
   }
 

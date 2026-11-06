@@ -25,9 +25,9 @@ export class HttpStaffVisitRequestRepository implements StaffVisitRequestReposit
     for (const file of files.visitorPhotoFiles) {
       formData.append('visitor_photo_files', file)
     }
-    for (const [groupId, groupFiles] of Object.entries(files.groupFieldFiles)) {
+    for (const [fieldId, groupFiles] of Object.entries(files.groupFieldFiles)) {
       for (const file of groupFiles) {
-        formData.append(`groupFieldFiles[${groupId}]`, file)
+        formData.append(`groupFieldFiles[${fieldId}]`, file)
       }
     }
     for (const [fieldId, file] of Object.entries(files.primaryContactCustomFieldFiles)) {
