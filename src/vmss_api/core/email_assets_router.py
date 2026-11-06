@@ -20,7 +20,7 @@ router = APIRouter(prefix="/public/email-assets", tags=["email-assets"])
 
 # Versioned by content, not URL: replacing the file means renaming
 # `LOGO_FILENAME`, which is what busts an `immutable` cache.
-_LOGO_PATH = Path(__file__).parent / "email_assets" / "guestify-logo-on-dark.png"
+_LOGO_PATH = Path(__file__).parent / "email_assets" / "visimio-logo-on-dark.png"
 
 
 # Generous: mail-client image proxies fetch for many recipients from few IPs.
@@ -36,8 +36,8 @@ async def get_email_logo(request: Request) -> FileResponse:
 
 # Retired logo URLs serve the current logo rather than 404, since sent
 # emails still point at them. Clients that cached the old bytes under the
-# `immutable` promise keep them; that's accepted (rebrand-to-guestify
-# design.md Decision 5). Not a redirect: some image proxies won't follow one.
+# `immutable` promise keep them; that's accepted (rebrand-back-to-visimio
+# design.md Decision 3). Not a redirect: some image proxies won't follow one.
 for _retired in RETIRED_LOGO_FILENAMES:
     router.add_api_route(
         f"/{_retired}",

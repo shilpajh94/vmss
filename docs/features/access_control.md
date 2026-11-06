@@ -16,6 +16,14 @@ environment variable for it.
   per-visitor-category defaults (`visitor_category_zones`) as a fallback. A
   visit's own list **replaces** the category default; with neither, every zone
   is **denied** (default deny).
+- **Default zone** — each branch may mark one active zone `isDefault`. It is
+  **always added** to a visit's allowed zones, whether or not reception assigned
+  anything, so a forgotten assignment never locks a visitor out of it (lobby,
+  cafeteria). It is not a bypass: gate link, check-in, approval, blacklist and
+  time-window checks still apply. Setting a new default clears the old one
+  (audited as `zone_default_changed`); the default zone cannot be deleted or
+  deactivated (409) until another is chosen or the flag is cleared. A branch with
+  no default zone behaves as before.
 - **Gate scan** — a Security user or guard app posts the badge QR token with the
   gate, zone and direction. Every scan is recorded in the append-only
   `zone_access_events` ledger.
@@ -24,9 +32,9 @@ environment variable for it.
 
 | Method | Path | Permission | Description |
 |---|---|---|---|
-| POST | `/zones` | `zones:manage` at the branch | Create a zone (`branchId`, `name`, `code`, optional `buildingId`, `floorId`, `gateIds`). |
-| GET | `/zones` | `zones:view` | Paginated list; `isActive`, `sortBy` (`name`/`created_at`), `sortOrder`; optional `X-Branch-ID`. |
-| GET / PUT / DELETE | `/zones/{zoneId}` | `zones:view` / `zones:manage` | Read, update (branch is immutable), soft delete. |
+| POST | `/zones` | `zones:manage` at the branch | Create a zone (`branchId`, `name`, `code`, optional `buildingId`, `floorId`, `gateIds`, `isDefault`). |
+| GET | `/zones` | `zones:view` | Paginated list; `isActive`, `isDefault`, `sortBy` (`name`/`created_at`), `sortOrder`; optional `X-Branch-ID`. |
+| GET / PUT / DELETE | `/zones/{zoneId}` | `zones:view` / `zones:manage` | Read, update (branch is immutable; `isDefault` sets/clears the branch default), soft delete. |
 | GET / PUT | `/visitor-categories/{id}/zones` | `zones:view` / `zones:manage` | Category default allowed zones. `PUT` replaces the whole set. |
 | GET / PUT | `/invitations/{id}/zones` | `zones:view` / `invitations:edit` | Zones reception allows for this visit. `PUT {"zoneIds": [...]}` replaces the set; `[]` clears it so category defaults apply. Every zone must be in the invitation's branch. |
 | POST | `/access/scan` | `access:scan` at the visit's branch | Body `{token, gateId, zoneId, direction}`; `direction` is `entry` or `exit`. Rate limited; accepts `Idempotency-Key`. |

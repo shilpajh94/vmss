@@ -33,11 +33,11 @@
             {% if logo_url %}
               <img src="{{ logo_url }}" alt="{{ company_name | default(brand_name, true) }}" height="32" style="display:block; height:32px; width:auto; border:0; outline:none;">
             {% elif logo_src %}
-              <img src="{{ logo_src }}" alt="{{ brand_name }}" width="100" height="32" style="display:block; width:100px; height:32px; border:0; outline:none; color:#ffffff; font-family:'Outfit','Segoe UI',Arial,sans-serif; font-size:20px; font-weight:800;">
+              <img src="{{ logo_src }}" alt="{{ brand_name }}" width="150" height="32" style="display:block; width:150px; height:32px; border:0; outline:none; color:#ffffff; font-family:'Outfit','Segoe UI',Arial,sans-serif; font-size:20px; font-weight:800;">
             {% else %}
               {# No public asset URL configured: a text wordmark rather than an
                  inline image part, so the message still carries no attachment. #}
-              <span style="display:block; font-family:'Outfit','Segoe UI',Arial,sans-serif; font-size:24px; line-height:32px; font-weight:800; letter-spacing:-0.3px; color:#ffffff;"><span style="color:#14b8c4;">Gu</span>estify</span>
+              <span style="display:block; font-family:'Outfit','Segoe UI',Arial,sans-serif; font-size:24px; line-height:32px; font-weight:800; letter-spacing:-0.3px; color:#ffffff;">Visi<span style="color:#22d3ee;">mio</span></span>
             {% endif %}
           </td>
         </tr>

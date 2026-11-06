@@ -1444,7 +1444,7 @@ Both send pre-approved templates (`registration_pending`,
 `openspec/changes/integrate-fast2sms-dlt-sms/design.md`. A blank setting or
 unusable phone number is not retried.
 
-**Every email is a branded Guestify HTML template**
+**Every email is a branded Visimio HTML template**
 (`role-based-invitation-workflow`, restyled by
 `redesign-notification-email-templates` and
 `refine-email-templates-and-visimio-brand`). `core/email_rendering.py::render_email`

@@ -889,3 +889,207 @@ async def test_repeat_qr_scan_does_not_log_a_second_entry(
     assert (await _check_in(client, qr, gate)).status_code == 200
     assert (await _check_in(client, qr, gate)).status_code == 200  # idempotent no-op
     assert len(await _events(db_session, visit.id)) == 1
+
+
+# --- default zone (add-default-zone-for-all-visitors) ---------------------------
+
+
+async def _default_zone(db: AsyncSession, branch: Branch, *gates: Device, code: str = "LOBBY"):
+    zone = await _zone(db, branch, *gates, code=code, is_default=True)
+    return zone
+
+
+async def test_default_zone_is_allowed_with_no_assignment(
+    zones_on, client, user, issue_token, db_session, tenant, branch
+) -> None:
+    headers = _auth(issue_token, user)
+    gate = await _gate(db_session, branch)
+    lobby = await _default_zone(db_session, branch, gate)
+    lab = await _zone(db_session, branch, gate, code="LAB")
+    visit, token = await _visit(db_session, tenant, branch)  # nothing mapped
+    assert (await _scan(client, headers, token, gate, lobby)).json()["data"]["allowed"] is True
+    denied = (await _scan(client, headers, token, gate, lab)).json()["data"]
+    assert denied["allowed"] is False and denied["reason"] == "zone_not_allowed"
+    assert len(await _events(db_session, visit.id)) == 2
+
+
+async def test_default_zone_stays_allowed_beside_explicit_assignment(
+    zones_on, db_session, tenant, branch
+) -> None:
+    from vmss_api.access_control.repository import ZoneMappingRepository
+
+    gate = await _gate(db_session, branch)
+    lobby = await _default_zone(db_session, branch, gate)
+    lab = await _zone(db_session, branch, gate, code="LAB")
+    visit, _ = await _visit(db_session, tenant, branch)
+    db_session.add(InvitationZone(invitation_id=visit.id, zone_id=lab.id))
+    await db_session.commit()
+    ids = await ZoneMappingRepository(db_session).effective_zone_ids(
+        visit.id, None, visit.branch_id
+    )
+    assert ids == {lab.id, lobby.id}
+
+
+async def test_inactive_deleted_or_other_branch_default_is_not_added(
+    zones_on, db_session, tenant, branch
+) -> None:
+    from vmss_api.access_control.repository import ZoneMappingRepository
+
+    visit, _ = await _visit(db_session, tenant, branch)
+    mapping = ZoneMappingRepository(db_session)
+    other_branch = Branch(
+        id=uuid.uuid4(), name="Other", code=f"OB{uuid.uuid4().hex[:4]}", is_active=True
+    )
+    db_session.add(other_branch)
+    await db_session.flush()
+    await _default_zone(db_session, other_branch, code="OTHER")
+    assert await mapping.effective_zone_ids(visit.id, None, branch.id) == set()
+    zone = await _default_zone(db_session, branch)
+    zone.is_active = False
+    await db_session.commit()
+    assert await mapping.effective_zone_ids(visit.id, None, branch.id) == set()
+    zone.is_active, zone.deleted_at = True, datetime.now(UTC)
+    await db_session.commit()
+    assert await mapping.effective_zone_ids(visit.id, None, branch.id) == set()
+
+
+async def test_default_zone_does_not_bypass_other_checks(
+    zones_on, client, user, issue_token, db_session, tenant, branch
+) -> None:
+    headers = _auth(issue_token, user)
+    gate = await _gate(db_session, branch)
+    unlinked_gate = await _gate(db_session, branch, "G2")
+    lobby = await _default_zone(db_session, branch, gate)
+    _, flagged = await _visit(db_session, tenant, branch, watchlist_flagged=True)
+    _, pending = await _visit(db_session, tenant, branch, status="pending")
+    _, fine = await _visit(db_session, tenant, branch)
+    assert (await _scan(client, headers, flagged, gate, lobby)).json()["data"]["reason"] == (
+        "blacklisted"
+    )
+    assert (await _scan(client, headers, pending, gate, lobby)).json()["data"]["reason"] == (
+        "not_approved"
+    )
+    assert (await _scan(client, headers, fine, unlinked_gate, lobby)).json()["data"]["reason"] == (
+        "gate_not_linked"
+    )
+
+
+async def test_qr_check_in_at_default_zone_device_is_allowed_without_assignment(
+    zones_on, client, db_session, tenant, branch
+) -> None:
+    gate = await _gate(db_session, branch)
+    lobby = await _default_zone(db_session, branch, gate)
+    visit, qr = await _qr_visit(db_session, branch)  # no assignment
+    response = await _check_in(client, qr, gate)
+    assert response.status_code == 200, response.text
+    events = await _events(db_session, visit.id)
+    assert [(e.zone_id, e.direction, e.decision) for e in events] == [
+        (lobby.id, "entry", "allowed")
+    ]
+
+
+async def test_set_clear_and_replace_default_zone(
+    zones_on, client, user, issue_token, db_session, branch
+) -> None:
+    headers = _auth(issue_token, user)
+    first = (
+        await client.post(
+            "/api/v1/zones",
+            json={"branchId": str(branch.id), "name": "Lobby", "code": "L1", "isDefault": True},
+            headers=headers,
+        )
+    ).json()["data"]
+    assert first["isDefault"] is True
+    second = (
+        await client.post(
+            "/api/v1/zones",
+            json={"branchId": str(branch.id), "name": "Cafe", "code": "C1"},
+            headers=headers,
+        )
+    ).json()["data"]
+    assert second["isDefault"] is False
+    swapped = await client.put(
+        f"/api/v1/zones/{second['id']}", json={"isDefault": True}, headers=headers
+    )
+    assert swapped.json()["data"]["isDefault"] is True
+    old = await client.get(f"/api/v1/zones/{first['id']}", headers=headers)
+    assert old.json()["data"]["isDefault"] is False
+    only = await client.get("/api/v1/zones?isDefault=true", headers=headers)
+    assert [z["id"] for z in only.json()["data"]] == [second["id"]]
+    audits = (
+        (
+            await db_session.execute(
+                select(AuditLog).where(AuditLog.action == "zone_default_changed")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(audits) == 2
+    cleared = await client.put(
+        f"/api/v1/zones/{second['id']}", json={"isDefault": False}, headers=headers
+    )
+    assert cleared.json()["data"]["isDefault"] is False
+    assert (await client.get("/api/v1/zones?isDefault=true", headers=headers)).json()["pagination"][
+        "total"
+    ] == 0
+
+
+async def test_default_zone_is_protected_and_must_be_active(
+    zones_on, client, user, issue_token, db_session, branch
+) -> None:
+    headers = _auth(issue_token, user)
+    lobby = await _default_zone(db_session, branch)
+    other = await _zone(db_session, branch, code="OTH")
+    assert (await client.delete(f"/api/v1/zones/{lobby.id}", headers=headers)).status_code == 409
+    assert (
+        await client.put(f"/api/v1/zones/{lobby.id}", json={"isActive": False}, headers=headers)
+    ).status_code == 409
+    other.is_active = False
+    await db_session.commit()
+    assert (
+        await client.put(f"/api/v1/zones/{other.id}", json={"isDefault": True}, headers=headers)
+    ).status_code == 422
+    await db_session.refresh(lobby)
+    assert lobby.is_default and lobby.deleted_at is None and lobby.is_active
+
+
+async def test_database_allows_only_one_default_zone_per_branch(
+    zones_on, db_session, branch
+) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    await _default_zone(db_session, branch, code="D1")
+    with pytest.raises(IntegrityError):
+        await _default_zone(db_session, branch, code="D2")
+    await db_session.rollback()
+
+
+async def test_default_zone_write_denied_without_permission(
+    zones_on, client, user_without_permissions, issue_token, branch, db_session
+) -> None:
+    headers = _auth(issue_token, user_without_permissions)
+    zone = await _zone(db_session, branch)
+    assert (
+        await client.put(f"/api/v1/zones/{zone.id}", json={"isDefault": True}, headers=headers)
+    ).status_code == 403
+    assert (
+        await client.post(
+            "/api/v1/zones",
+            json={"branchId": str(branch.id), "name": "X", "code": "X", "isDefault": True},
+            headers=headers,
+        )
+    ).status_code == 403
+    await db_session.refresh(zone)
+    assert zone.is_default is False
+
+
+async def test_default_zone_is_isolated_per_tenant_schema(
+    zones_on, db_session, branch, make_tenant_schema, open_tenant_session
+) -> None:
+    from vmss_api.access_control.repository import ZoneRepository
+
+    await make_tenant_schema("tenant_other_default_zone_test")
+    await _default_zone(db_session, branch, code="ISO")
+    async with open_tenant_session("tenant_other_default_zone_test") as other:
+        assert await ZoneRepository(other).get_default_for_branch(branch.id) is None

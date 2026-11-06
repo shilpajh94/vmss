@@ -1,9 +1,9 @@
 # SSO Authentication (Staff OIDC Login)
 
 Lets staff (Reception/Security/Host, and any tenant-defined custom role)
-sign into Guestify with their company's own OIDC identity provider
+sign into Visimio with their company's own OIDC identity provider
 (Google Workspace, Microsoft Entra ID, Okta, or any other OIDC-compliant
-IdP) instead of a Guestify password — API-19. Admin signs in via
+IdP) instead of a Visimio password — API-19. Admin signs in via
 password login only, never SSO — see "Admin accounts never complete SSO
 login" below. Visitor login (OTP/QR/email link, `identity_verification`)
 is completely separate and untouched by this feature. See

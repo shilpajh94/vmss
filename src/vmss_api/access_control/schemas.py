@@ -15,6 +15,7 @@ class ZoneCreate(CamelModel):
     code: str = Field(min_length=1, max_length=50, pattern=r"^[A-Za-z0-9_-]+$")
     description: str | None = Field(default=None, max_length=500)
     is_active: bool = True
+    is_default: bool = False
     gate_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)
 
 
@@ -27,6 +28,7 @@ class ZoneUpdate(CamelModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=500)
     is_active: bool | None = None
+    is_default: bool | None = None
     gate_ids: list[uuid.UUID] | None = Field(default=None, max_length=50)
 
 
@@ -39,6 +41,7 @@ class ZoneOut(CamelModel):
     code: str
     description: str | None
     is_active: bool
+    is_default: bool
     gate_ids: list[uuid.UUID] = Field(default_factory=list)
     created_at: datetime
 

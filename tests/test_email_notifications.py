@@ -1,6 +1,6 @@
 """Rendering and MIME-structure tests for every templated email
 (redesign-notification-email-templates, refine-email-templates-and-
-visimio-brand, rebranded by rebrand-to-guestify). Pure rendering — no
+visimio-brand, rebranded back by rebrand-back-to-visimio). Pure rendering — no
 database or SMTP — so they sit in the
 "unit-ish" tier (`testing-standards.md` §3); the real SMTP round trips live
 in `invitations/tests/`'s Mailpit tests.
@@ -36,7 +36,7 @@ from vmss_api.invitations import tasks as invitation_tasks
 
 # The value from the design mock that surfaced the greeting bug.
 # The text-wordmark fallback's "Gu" colour (base.html), close to the logo's teal.
-_WORDMARK_TEAL = "#14b8c4"
+_WORDMARK_TEAL = "#22d3ee"
 _OPAQUE_NAME = "ccbb9a1e304730e0512d912e18f6ce6591bee85c26e3cdb7b5d4b89a3549bb731a3a"
 
 # (template, tone, pill, heading) — email-notifications "Each Notification
@@ -192,36 +192,36 @@ def test_each_type_renders_its_tone_pill_and_heading_as_subject(
 
 
 @pytest.mark.parametrize("template_name", _ALL_TEMPLATES)
-def test_every_email_carries_guestify_branding(template_name: str) -> None:
+def test_every_email_carries_visimio_branding(template_name: str) -> None:
     rendered = render_email(template_name, _context())
     year = datetime.now(UTC).year
     for part in (rendered.html, rendered.text):
         assert "VisitorPass" not in part
-        assert "Visimio" not in part
+        assert "Guestify" not in part
     # No asset base URL in tests (conftest), so the header is the text
     # wordmark, in the logo's two colours — never an inline logo part.
-    assert f'<span style="color:{_WORDMARK_TEAL};">Gu</span>estify' in rendered.html
+    assert f'Visi<span style="color:{_WORDMARK_TEAL};">mio</span>' in rendered.html
     assert f"cid:{BRAND_LOGO_CID}" not in rendered.html
-    assert f"© {year} Guestify. All rights reserved." in _visible_text(rendered.html)
-    assert "Powered by Guestify" in _visible_text(rendered.html)
-    assert f"(c) {year} Guestify" in rendered.text
+    assert f"© {year} Visimio. All rights reserved." in _visible_text(rendered.html)
+    assert "Powered by Visimio" in _visible_text(rendered.html)
+    assert f"(c) {year} Visimio" in rendered.text
 
 
 @pytest.mark.parametrize("event", ["approval_reverted", "denied", "rescheduled"])
-def test_staff_lifecycle_update_carries_guestify_branding(event: str) -> None:
+def test_staff_lifecycle_update_carries_visimio_branding(event: str) -> None:
     # Not in `_ALL_TEMPLATES` (it renders per `event`), so branding gets its
-    # own case for each event (rebrand-to-guestify task 9.1).
+    # own case for each event.
     rendered = render_email(
         "staff_lifecycle_update", _context(event=event, actor="Ravi Menon", reason="Clash")
     )
     year = datetime.now(UTC).year
     for part in (rendered.html, rendered.text):
         assert "VisitorPass" not in part
-        assert "Visimio" not in part
-    assert f'<span style="color:{_WORDMARK_TEAL};">Gu</span>estify' in rendered.html
-    assert f"© {year} Guestify. All rights reserved." in _visible_text(rendered.html)
-    assert "Powered by Guestify" in _visible_text(rendered.html)
-    assert f"(c) {year} Guestify" in rendered.text
+        assert "Guestify" not in part
+    assert f'Visi<span style="color:{_WORDMARK_TEAL};">mio</span>' in rendered.html
+    assert f"© {year} Visimio. All rights reserved." in _visible_text(rendered.html)
+    assert "Powered by Visimio" in _visible_text(rendered.html)
+    assert f"(c) {year} Visimio" in rendered.text
 
 
 def test_fallback_wordmark_teal_is_legible_on_the_header_band() -> None:
@@ -233,12 +233,12 @@ def test_no_template_file_mentions_a_retired_brand() -> None:
     for path in templates.iterdir():
         text = path.read_text()
         assert "VisitorPass" not in text, path.name
-        # Case-sensitive: archived change names ("...-visimio-brand") in
-        # template comments are history, not copy.
-        assert "Visimio" not in text, path.name
+        # Case-sensitive: change names in template comments are history,
+        # not copy.
+        assert "Guestify" not in text, path.name
 
 
-def test_tenant_logo_replaces_the_guestify_logo() -> None:
+def test_tenant_logo_replaces_the_visimio_logo() -> None:
     html = render_email("tracking_only", _context(logo_url="https://cdn.example.com/acme.png")).html
     assert '<img src="https://cdn.example.com/acme.png" alt="Acme Corp"' in html
     assert f"cid:{BRAND_LOGO_CID}" not in html
@@ -458,9 +458,9 @@ def test_inline_images_and_logo_are_related_parts_of_the_html_body() -> None:
     )
 
 
-def test_from_header_carries_the_guestify_display_name() -> None:
+def test_from_header_carries_the_visimio_display_name() -> None:
     message = build_message(to="a@example.com", subject="s", body="text")
-    assert message["From"].startswith("Guestify <")
+    assert message["From"].startswith("Visimio <")
 
 
 def test_logo_is_not_attached_when_the_html_does_not_reference_it() -> None:
@@ -499,7 +499,7 @@ def test_configured_base_url_references_every_image_by_absolute_url(
 ) -> None:
     html = render_email(template_name, _context(qr_src=_SIGNED_QR)).html
     assert (
-        f'<img src="{_ASSET_BASE}/api/v1/public/email-assets/guestify-logo.png" alt="Guestify"'
+        f'<img src="{_ASSET_BASE}/api/v1/public/email-assets/visimio-logo.png" alt="Visimio"'
         in html
     )
     assert "cid:" not in html
@@ -507,14 +507,22 @@ def test_configured_base_url_references_every_image_by_absolute_url(
     assert srcs and all(src.startswith(f"{_ASSET_BASE}/") for src in srcs)
 
 
+@pytest.mark.parametrize("template_name", _ALL_TEMPLATES)
+def test_no_email_references_the_retired_guestify_logo_url(
+    _asset_base_url, template_name: str
+) -> None:
+    html = render_email(template_name, _context(qr_src=_SIGNED_QR)).html
+    assert "guestify" not in html.lower()
+
+
 def test_logo_img_dimensions_match_the_png_aspect_ratio(_asset_base_url) -> None:
     html = render_email("tracking_only", _context()).html
     match = re.search(
-        r'<img src="[^"]+/guestify-logo\.png" alt="Guestify" width="(\d+)" height="(\d+)"', html
+        r'<img src="[^"]+/visimio-logo\.png" alt="Visimio" width="(\d+)" height="(\d+)"', html
     )
     assert match is not None
     width, height = int(match.group(1)), int(match.group(2))
-    logo = Path(__file__).parents[1] / "src/vmss_api/core/email_assets/guestify-logo-on-dark.png"
+    logo = Path(__file__).parents[1] / "src/vmss_api/core/email_assets/visimio-logo-on-dark.png"
     with Image.open(logo) as png:
         expected = png.width * height / png.height
     assert abs(width - expected) <= 1, (width, expected)
@@ -536,7 +544,7 @@ def test_unconfigured_base_url_warns_once_and_uses_the_wordmark(monkeypatch) -> 
     assert len(warnings) == 1
     assert warnings[0]["log_level"] == "warning"
     assert warnings[0]["setting"] == "EMAIL_ASSET_BASE_URL"
-    assert f'<span style="color:{_WORDMARK_TEAL};">Gu</span>estify' in first.html
+    assert f'Visi<span style="color:{_WORDMARK_TEAL};">mio</span>' in first.html
     assert 'src="cid:visit-qr@vmss"' in first.html
 
 

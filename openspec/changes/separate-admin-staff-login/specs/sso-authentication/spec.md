@@ -3,7 +3,7 @@
 ### Requirement: IdP-Group-to-Role Mapping Decides a New User's Role
 The system SHALL let a caller with `sso-config:manage` maintain a per-tenant
 table mapping an IdP group identifier (as it appears in the ID token's
-group claim) to one existing Guestify role, except the Admin role, which
+group claim) to one existing Visimio role, except the Admin role, which
 SHALL NOT be a valid mapping target. When a new SSO user's token carries a
 group that matches an entry in this table, the system SHALL assign that
 role. When it carries no group that matches any entry, the system SHALL

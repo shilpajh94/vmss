@@ -43,6 +43,7 @@ class ZoneRepository(TenantScopedRepository[Zone]):
         *,
         branch_scope: BranchScope,
         is_active: bool | None,
+        is_default: bool | None = None,
         page: int,
         page_size: int,
         sort_by: str,
@@ -55,12 +56,21 @@ class ZoneRepository(TenantScopedRepository[Zone]):
             filters.append(scope)
         if is_active is not None:
             filters.append(Zone.is_active.is_(is_active))
+        if is_default is not None:
+            filters.append(Zone.is_default.is_(is_default))
         return await super().paginate(
             page=page,
             page_size=page_size,
             order_by=[order_clause(column, sort_order), Zone.id.asc()],
             filters=filters,
         )
+
+    async def get_default_for_branch(self, branch_id: uuid.UUID) -> Zone | None:
+        """The branch's live default zone, active or not (the service decides)."""
+        stmt = select(Zone).where(
+            Zone.branch_id == branch_id, Zone.is_default.is_(True), Zone.deleted_at.is_(None)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def gate_ids_by_zone(
         self, zone_ids: Sequence[uuid.UUID]
@@ -223,17 +233,29 @@ class ZoneMappingRepository:
                 )
             )
 
+    async def default_zone_id(self, branch_id: uuid.UUID) -> uuid.UUID | None:
+        stmt = select(Zone.id).where(
+            Zone.branch_id == branch_id,
+            Zone.is_default.is_(True),
+            Zone.is_active.is_(True),
+            Zone.deleted_at.is_(None),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def effective_zone_ids(
-        self, invitation_id: uuid.UUID, category_id: uuid.UUID | None
+        self, invitation_id: uuid.UUID, category_id: uuid.UUID | None, branch_id: uuid.UUID
     ) -> set[uuid.UUID]:
-        """Invitation's own zones replace the category defaults; neither means
-        an empty set (default deny). At most two queries, independent of zone count."""
-        own = await self.invitation_zone_ids(invitation_id)
-        if own:
-            return set(own)
-        if category_id is None:
-            return set()
-        return set(await self.category_zone_ids(category_id))
+        """Invitation's own zones replace the category defaults, and the branch's
+        default zone is always added on top, so a forgotten assignment never locks
+        a visitor out of it. No assignment and no default zone means an empty set
+        (default deny). At most three queries, independent of zone count."""
+        allowed = set(await self.invitation_zone_ids(invitation_id))
+        if not allowed and category_id is not None:
+            allowed = set(await self.category_zone_ids(category_id))
+        default_id = await self.default_zone_id(branch_id)
+        if default_id is not None:
+            allowed.add(default_id)
+        return allowed
 
 
 class ZoneEventRepository:

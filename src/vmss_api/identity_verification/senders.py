@@ -54,7 +54,7 @@ class EmailDispatchError(RuntimeError):
 class SmtpEmailSender:
     """Same `aiosmtplib`/`settings.smtp_*` approach as `core/emailing.py`,
     and builds its message with that module's `build_message` (so the
-    templated verification email gets the same From name and inline Guestify
+    templated verification email gets the same From name and inline Visimio
     logo as every other email — refine-email-templates-and-visimio-brand).
     Kept as its own sender rather than re-exporting the core one because
     this flow needs `EmailDispatchError` (never cached as an idempotent

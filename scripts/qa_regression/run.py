@@ -2010,7 +2010,7 @@ class Runner:
             t,
             "logo",
             "GET",
-            "/api/v1/public/email-assets/guestify-logo.png",
+            "/api/v1/public/email-assets/visimio-logo.png",
             None,
             200,
             branch=None,

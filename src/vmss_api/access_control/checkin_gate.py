@@ -61,7 +61,7 @@ async def enforce_checkin_zone(
         return
     zone = zones[0]
     allowed_ids = await ZoneMappingRepository(tenant_db).effective_zone_ids(
-        invitation.id, invitation.visitor_category_id
+        invitation.id, invitation.visitor_category_id, invitation.branch_id
     )
     # Judged as the visit will stand once this check-in succeeds, so the
     # "not checked in yet" rule (which only matters for door scans) cannot fire.

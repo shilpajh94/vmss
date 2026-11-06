@@ -19,6 +19,14 @@ class Zone(Base, TimestampMixin):
         Index(
             "uq_zone_branch_code", "branch_id", "code", unique=True, postgresql_where=_NOT_DELETED
         ),
+        # One default zone per branch is a database guarantee; the service clears
+        # the previous default first (add-default-zone-for-all-visitors, Decision 1).
+        Index(
+            "uq_zone_branch_default",
+            "branch_id",
+            unique=True,
+            postgresql_where=text("is_default AND deleted_at IS NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -29,6 +37,7 @@ class Zone(Base, TimestampMixin):
     code: Mapped[str] = mapped_column(String(50))
     description: Mapped[str | None] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
 class ZoneGate(Base):

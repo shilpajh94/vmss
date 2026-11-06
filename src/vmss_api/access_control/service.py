@@ -14,7 +14,7 @@ from vmss_api.access_control.repository import (
 )
 from vmss_api.access_control.schemas import ScanDirection, ScanRequest, ZoneCreate, ZoneUpdate
 from vmss_api.auth.models import User
-from vmss_api.auth.repository import RoleRepository
+from vmss_api.auth.repository import AuditLogWriter, RoleRepository
 from vmss_api.checkin import service as checkin_service
 from vmss_api.checkin.badge_token import verify_badge_token
 from vmss_api.core.config import settings
@@ -57,10 +57,45 @@ async def _validate_links(
         raise _unprocessable("Every gate must be a security device of the zone's branch")
 
 
-async def create_zone(tenant_db: AsyncSession, payload: ZoneCreate) -> tuple[Zone, list[uuid.UUID]]:
+def _conflict(message: str) -> HTTPException:
+    return HTTPException(status.HTTP_409_CONFLICT, detail=message)
+
+
+async def _make_default(
+    repo: ZoneRepository, tenant_db: AsyncSession, zone: Zone, user: User | None
+) -> None:
+    """Clear the branch's previous default and set this zone, in the caller's
+    transaction. The partial unique index is the backstop, so the old flag is
+    flushed off before the new one goes on."""
+    previous = await repo.get_default_for_branch(zone.branch_id)
+    if previous is not None and previous.id == zone.id:
+        return
+    if previous is not None:
+        previous.is_default = False
+        await tenant_db.flush()
+    zone.is_default = True
+    await tenant_db.flush()
+    AuditLogWriter(tenant_db).add(
+        actor_user_id=user.id if user else None,
+        action="zone_default_changed",
+        entity_type="Zone",
+        entity_id=zone.id,
+        diff={
+            "branch_id": str(zone.branch_id),
+            "previous_default_zone_id": str(previous.id) if previous else None,
+            "new_default_zone_id": str(zone.id),
+        },
+    )
+
+
+async def create_zone(
+    tenant_db: AsyncSession, payload: ZoneCreate, user: User | None = None
+) -> tuple[Zone, list[uuid.UUID]]:
     repo = ZoneRepository(tenant_db)
     if await repo.get_by_code(payload.branch_id, payload.code) is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="Zone code already exists")
+        raise _conflict("Zone code already exists")
+    if payload.is_default and not payload.is_active:
+        raise _unprocessable("An inactive zone cannot be the default zone")
     await _validate_links(
         repo,
         branch_id=payload.branch_id,
@@ -81,6 +116,8 @@ async def create_zone(tenant_db: AsyncSession, payload: ZoneCreate) -> tuple[Zon
     tenant_db.add(zone)
     await tenant_db.flush()
     await repo.replace_gates(zone.id, payload.gate_ids)
+    if payload.is_default:
+        await _make_default(repo, tenant_db, zone, user)
     await tenant_db.commit()
     await tenant_db.refresh(zone)
     return zone, sorted(set(payload.gate_ids))
@@ -102,6 +139,7 @@ async def list_zones_page(
     *,
     branch_scope: BranchScope,
     is_active: bool | None,
+    is_default: bool | None = None,
     page: int,
     page_size: int,
     sort_by: str,
@@ -111,6 +149,7 @@ async def list_zones_page(
     zones, total = await repo.list_page(
         branch_scope=branch_scope,
         is_active=is_active,
+        is_default=is_default,
         page=page,
         page_size=page_size,
         sort_by=sort_by,
@@ -130,6 +169,8 @@ async def update_zone(
     floor_id = payload.floor_id if "floor_id" in fields else zone.floor_id
     if "building_id" in fields and "floor_id" not in fields and building_id is None:
         floor_id = None
+    if zone.is_default and payload.is_active is False and payload.is_default is not False:
+        raise _conflict("Choose another default zone before deactivating this one")
     new_gates = payload.gate_ids if "gate_ids" in fields else None
     await _validate_links(
         repo,
@@ -149,6 +190,23 @@ async def update_zone(
     if new_gates is not None:
         await repo.replace_gates(zone.id, new_gates)
         gate_ids = sorted(set(new_gates))
+    if payload.is_default is True:
+        if not zone.is_active:
+            raise _unprocessable("An inactive zone cannot be the default zone")
+        await _make_default(repo, tenant_db, zone, user)
+    elif payload.is_default is False and zone.is_default:
+        zone.is_default = False
+        AuditLogWriter(tenant_db).add(
+            actor_user_id=user.id,
+            action="zone_default_changed",
+            entity_type="Zone",
+            entity_id=zone.id,
+            diff={
+                "branch_id": str(zone.branch_id),
+                "previous_default_zone_id": str(zone.id),
+                "new_default_zone_id": None,
+            },
+        )
     await tenant_db.commit()
     await tenant_db.refresh(zone)
     return zone, gate_ids
@@ -156,6 +214,8 @@ async def update_zone(
 
 async def delete_zone(tenant_db: AsyncSession, zone_id: uuid.UUID, user: User) -> Zone:
     zone, _ = await get_zone(tenant_db, zone_id, user, "zones:manage")
+    if zone.is_default:
+        raise _conflict("Choose another default zone before deleting this one")
     zone.deleted_at = datetime.now(UTC)
     await tenant_db.commit()
     return zone
@@ -269,7 +329,7 @@ async def scan(
         decision = AccessDecision(allowed=True)
     else:
         allowed_ids = await ZoneMappingRepository(tenant_db).effective_zone_ids(
-            visit.id, visit.visitor_category_id
+            visit.id, visit.visitor_category_id, visit.branch_id
         )
         decision = can_enter(
             visit,

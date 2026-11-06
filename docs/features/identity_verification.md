@@ -24,7 +24,7 @@ no durable audit/business value once it expires or is consumed.
 
 | Channel | Status | Provider |
 |---|---|---|
-| `email` | Real | SMTP, via the same `aiosmtplib`/`settings.smtp_*` config `invitations` uses. The email is rendered from the branded `verification_code` template: code box, expiry in minutes, "Keep it private" note, and the Guestify logo (`refine-email-templates-and-visimio-brand`, rebranded by `rebrand-to-guestify`). The message is built with `core/emailing.build_message`. If the template fails, the email falls back to the one-line text, and the code is never logged. |
+| `email` | Real | SMTP, via the same `aiosmtplib`/`settings.smtp_*` config `invitations` uses. The email is rendered from the branded `verification_code` template: code box, expiry in minutes, "Keep it private" note, and the Visimio logo (`refine-email-templates-and-visimio-brand`). The message is built with `core/emailing.build_message`. If the template fails, the email falls back to the one-line text, and the code is never logged. |
 | `sms` | Real, if configured | Fast2SMS DLT route (`core/sms.py`), using the DLT-approved OTP template with the code and expiry minutes as variables. Needs `FAST2SMS_API_KEY`, `FAST2SMS_SENDER_ID` and `FAST2SMS_TEMPLATE_OTP`; any blank is a loud "not configured" error — never a false success. |
 | `whatsapp` | Real, if configured | Fast2SMS WhatsApp template API (`core/whatsapp.py`), using the approved authentication template (code sent as the body and `url` button parameter). Needs `FAST2SMS_API_KEY`, `FAST2SMS_WHATSAPP_PHONE_NUMBER_ID` and `FAST2SMS_WHATSAPP_TEMPLATE_OTP`; otherwise 503. |
 

@@ -209,6 +209,7 @@ class SecurityGateFactory(SQLAlchemyFactory[SecurityGate]):
 class ZoneFactory(SQLAlchemyFactory[Zone]):
     __model__ = Zone
     is_active = True
+    is_default = False
     deleted_at = None
     building_id = None
     floor_id = None

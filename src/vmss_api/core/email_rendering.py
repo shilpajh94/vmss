@@ -4,7 +4,7 @@ existing `EmailSender` interface (`core/emailing.py`), not a parallel
 dispatch path, so a provider swap never has to touch template code.
 
 Templates live in `core/email_templates/` as a pair per notification type:
-`<name>.html` extends `base.html` (the shared Guestify layout) and
+`<name>.html` extends `base.html` (the shared Visimio layout) and
 defines `subject` + `content` blocks; `<name>.txt` extends `base.txt` and
 carries the same information as plain text
 (redesign-notification-email-templates/design.md Decision 3). Both are

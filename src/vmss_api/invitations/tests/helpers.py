@@ -980,7 +980,7 @@ async def _assert_url_images_and_fetch_qr(
     assert detail["Inline"] == []
     assert "cid:" not in detail["HTML"]
     srcs = _image_srcs(detail["HTML"])
-    assert f"{_MAILPIT_ASSET_BASE}/api/v1/public/email-assets/guestify-logo.png" in srcs
+    assert f"{_MAILPIT_ASSET_BASE}/api/v1/public/email-assets/visimio-logo.png" in srcs
     [qr_src] = [src for src in srcs if "/qr/" in src]
     assert qr_src.startswith(f"{_MAILPIT_ASSET_BASE}/api/v1/public/email-assets/")
     qr_response = await client.get(qr_src.removeprefix(_MAILPIT_ASSET_BASE))

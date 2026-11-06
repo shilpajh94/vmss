@@ -88,7 +88,7 @@ async def create_zone(
     user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
     await authorize_branch_id(tenant_db, user, "zones:manage", payload.branch_id)
-    zone, gate_ids = await service.create_zone(tenant_db, payload)
+    zone, gate_ids = await service.create_zone(tenant_db, payload, user)
     _queue_audit(
         background_tasks, tenant, user, action="zone_created", entity_type="Zone", entity_id=zone.id
     )
@@ -101,6 +101,7 @@ async def list_zones(
     tenant_db: Annotated[AsyncSession, Depends(get_tenant_db)],
     pagination: Annotated[tuple[int, int], Depends(get_pagination)],
     is_active: Annotated[bool | None, Query(alias="isActive")] = None,
+    is_default: Annotated[bool | None, Query(alias="isDefault")] = None,
     sort_by: Annotated[ZoneSortField, Query(alias="sortBy")] = ZoneSortField.name,
     sort_order: Annotated[SortOrder, Query(alias="sortOrder")] = SortOrder.asc,
 ) -> JSONResponse:
@@ -109,6 +110,7 @@ async def list_zones(
         tenant_db,
         branch_scope=branch_scope,
         is_active=is_active,
+        is_default=is_default,
         page=page,
         page_size=page_size,
         sort_by=sort_by.value,
