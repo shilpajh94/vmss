@@ -1460,6 +1460,68 @@ async def test_create_invitation_group_file_upload_stored_and_surfaced_on_read(
         assert visitor_out["idProofUrl"] is not None
 
 
+async def test_create_invitation_group_second_file_field_uploaded_by_field_id(
+    client: AsyncClient, user: User, branch: Branch
+) -> None:
+    """A group with two `file_upload` fields ("id upload" + "profile pic")
+    stores both when each is sent as `groupFieldFiles[<fieldId>]`; the
+    group-id key still maps to the first file field only (back-compat).
+    """
+    token = await _login(client, user.email)
+    headers = {"Authorization": f"Bearer {token}", "X-Branch-ID": str(branch.id)}
+    group = await _create_and_publish_additional_visitors_group(
+        client, headers, id_upload_required=False
+    )
+    steps_response = await client.get("/api/v1/form-builder/steps", headers=headers)
+    step = next(s for s in steps_response.json()["data"] if s["key"] == "visitor_info")
+    field_response = await client.post(
+        f"/api/v1/form-builder/steps/{step['id']}/fields",
+        json={
+            "key": "profile_pic",
+            "label": "Profile Pic",
+            "fieldType": "file_upload",
+            "isRequired": False,
+            "groupId": group["id"],
+        },
+        headers=headers,
+    )
+    assert field_response.status_code == 201, field_response.text
+    pic_field_id = field_response.json()["data"]["id"]
+    publish_response = await client.post("/api/v1/form-builder/publish", headers=headers)
+    assert publish_response.status_code == 200, publish_response.text
+
+    name_field_id = group["_field_ids"]["name"]
+    id_upload_field_id = group["_field_ids"]["id_upload"]
+    payload = _group_payload()
+    payload["visitors"] = []
+    payload["groups"] = [
+        {
+            "groupId": group["id"],
+            "instances": [[{"fieldId": name_field_id, "value": "Extra One"}]],
+        }
+    ]
+    response = await client.post(
+        "/api/v1/invitations",
+        data={"payload": json.dumps(await with_default_location(payload, branch.id))},
+        files=[
+            ("primary_contact_id_proof_file", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            ("primary_contact_photo_file", ("selfie.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"groupFieldFiles[{id_upload_field_id}]", ("id.jpg", _jpeg_bytes(), "image/jpeg")),
+            (f"groupFieldFiles[{pic_field_id}]", ("pic.jpg", _jpeg_bytes(), "image/jpeg")),
+        ],
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    invitation_id = response.json()["data"]["id"]
+
+    detail = await client.get(f"/api/v1/invitations/{invitation_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    [group_out] = detail.json()["data"]["groups"]
+    [instance] = group_out["instances"]
+    assert _custom_field_value(instance, id_upload_field_id) is not None
+    assert _custom_field_value(instance, pic_field_id) is not None
+
+
 async def test_get_invitation_detail_non_string_group_file_field_value_resolves_to_null(
     client: AsyncClient, user: User, branch: Branch, db_session: AsyncSession
 ) -> None:

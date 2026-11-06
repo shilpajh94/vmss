@@ -114,6 +114,30 @@ def _group_field_file_id(group: dict[str, Any]) -> str | None:
     )
 
 
+def _group_file_field_ids(group: dict[str, Any]) -> list[str]:
+    """Ids of *every* `file_upload`-typed field in `group`, in configured order
+    (a group may define several, e.g. "id upload" and "profile pic")."""
+    return [f["id"] for f in group.get("fields", []) if f["fieldType"] == "file_upload"]
+
+
+def _group_files_by_field(
+    group_id: str, group: dict[str, Any], contents: dict[str, list[bytes]]
+) -> dict[str, list[bytes]]:
+    """Resolves the `groupFieldFiles[<key>]` multipart parts for one group into
+    `{file_field_id: [bytes, ...]}`. `<key>` may be a file field's own id
+    (required once a group has more than one file field) or, for backward
+    compatibility, the group id — which maps to the group's *first* file
+    field only."""
+    field_ids = _group_file_field_ids(group)
+    resolved: dict[str, list[bytes]] = {}
+    for position, field_id in enumerate(field_ids):
+        files = contents.get(field_id)
+        if files is None and position == 0:
+            files = contents.get(group_id)
+        resolved[field_id] = files or []
+    return resolved
+
+
 async def _resolve_visit_detail_ids(
     tenant_db: AsyncSession, visit_details: VisitDetailsSubmit
 ) -> dict[str, Any]:
@@ -297,10 +321,8 @@ class _UploadContentTypes:
     visitor_id_proofs: list[str | None]
     primary_photo: str | None
     visitor_photos: list[str]
-    # Group id -> that group's `file_upload` field id, and the per-instance
-    # content types of its files.
-    group_file_field_ids: dict[str, str]
-    group_files: dict[str, list[str]]
+    # Group id -> file field id -> content types of that field's files.
+    group_files: dict[str, dict[str, list[str]]]
 
 
 @dataclass
@@ -363,37 +385,35 @@ def _validate_uploads(
     # `group_field_file_contents[group_key][index]` for the storage phase.
     # A group with no `file_upload` field, or with none of its instances'
     # files supplied, is skipped entirely.
-    group_field_ids: dict[str, str] = {}
-    group_field_content_types: dict[str, list[str]] = {}
+    group_field_content_types: dict[str, dict[str, list[str]]] = {}
     for group_id, group in custom_groups_by_id.items():
-        file_field_id = _group_field_file_id(group)
-        if file_field_id is None:
-            continue
-        group_field_ids[group_id] = file_field_id
         instances = payload.group_values.get(group_id, [])
-        files = group_field_file_contents.get(group_id, [])
-        field = next(f for f in group["fields"] if f["id"] == file_field_id)
-        is_required = bool(field["isRequired"]) and group_visibility[group_id]
-        if is_required and len(files) != len(instances):
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=(
-                    f"Field group '{group['name']}' requires an uploaded file for every instance"
-                ),
-            )
-        if not is_required and len(files) > len(instances):
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"More files were uploaded than instances of '{group['name']}'",
-            )
-        group_field_content_types[group_id] = [_validate_id_proof(f, max_size) for f in files]
+        files_by_field = _group_files_by_field(group_id, group, group_field_file_contents)
+        for file_field_id, files in files_by_field.items():
+            field = next(f for f in group["fields"] if f["id"] == file_field_id)
+            is_required = bool(field["isRequired"]) and group_visibility[group_id]
+            if is_required and len(files) != len(instances):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        f"Field group '{group['name']}' requires an uploaded file for "
+                        f"'{field['label']}' on every instance"
+                    ),
+                )
+            if not is_required and len(files) > len(instances):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=f"More files were uploaded than instances of '{group['name']}'",
+                )
+            group_field_content_types.setdefault(group_id, {})[file_field_id] = [
+                _validate_id_proof(f, max_size) for f in files
+            ]
 
     return _UploadContentTypes(
         primary_id_proof=primary_content_type,
         visitor_id_proofs=visitor_content_types,
         primary_photo=primary_photo_content_type,
         visitor_photos=visitor_photo_content_types,
-        group_file_field_ids=group_field_ids,
         group_files=group_field_content_types,
     )
 
@@ -406,7 +426,7 @@ async def _persist_uploads(
     visitor_id_proof_contents: list[bytes],
     primary_contact_photo_content: bytes | None,
     visitor_photo_contents: list[bytes],
-    group_field_file_contents: dict[str, list[bytes]],
+    group_field_file_contents: dict[str, dict[str, list[bytes]]],
     primary_contact_custom_field_file_contents: dict[str, list[bytes]],
     custom_field_file_contents: dict[str, list[bytes]],
     visitor_custom_field_file_contents: dict[str, list[bytes]],
@@ -445,16 +465,16 @@ async def _persist_uploads(
     # and merged in at persistence time, the same "validate/store, then merge
     # back" shape as `custom_field_storage`/`primary_contact_custom_field_storage`.
     group_field_storage: dict[str, dict[int, dict[str, str]]] = {}
-    for group_id, file_field_id in content_types.group_file_field_ids.items():
-        files = group_field_file_contents.get(group_id, [])
-        group_content_types = content_types.group_files[group_id]
-        for index, content in enumerate(files):
-            storage_key = await storage_save(
-                tenant.id, "invitations/group-files", content, group_content_types[index]
-            )
-            group_field_storage.setdefault(group_id, {}).setdefault(index, {})[file_field_id] = (
-                storage_key
-            )
+    for group_id, types_by_field in content_types.group_files.items():
+        for file_field_id, group_content_types in types_by_field.items():
+            files = group_field_file_contents.get(group_id, {}).get(file_field_id, [])
+            for index, content in enumerate(files):
+                storage_key = await storage_save(
+                    tenant.id, "invitations/group-files", content, group_content_types[index]
+                )
+                group_field_storage.setdefault(group_id, {}).setdefault(index, {})[
+                    file_field_id
+                ] = storage_key
 
     # Inline (non-grouped) custom-field file uploads
     # (add-inline-custom-field-file-upload): validated for presence/count
@@ -1245,8 +1265,8 @@ async def create_invitation(
     # never a JSON value in `customFields`, same rule
     # `_group_field_file_id`/the group-instance loop below already applies
     # to a group's own `file_upload` field. Unlike a group (where only the
-    # first `file_upload` field is read, since the group id alone can't
-    # disambiguate which field a file belongs to), each of these fields has
+    # first `file_upload` field is read via the group-id key; others need
+    # `groupFieldFiles[<fieldId>]`), each of these fields has
     # its own multipart part name (`customFieldFiles[<fieldId>]` etc. — see
     # `router.py::create_invitation`), so every `file_upload` field at a
     # given scope is supported, not just the first. Referenced by field id
@@ -1472,27 +1492,24 @@ async def create_invitation(
                 count=len(instances),
             )
             raise
-        file_field_id = _group_field_file_id(group)
+        file_field_ids = set(_group_file_field_ids(group))
         # A `file_upload` field's answer can only come from
         # `group_field_file_contents` below — never from the JSON instance
         # dict, which has no way to carry raw file bytes — so it's excluded
         # from the generic (JSON-value) validation pass here, and any value
         # a caller supplied for it anyway is rejected outright rather than
         # silently ignored (add-group-field-file-upload).
-        validated_fields = (
-            group["fields"]
-            if file_field_id is None
-            else [field for field in group["fields"] if field["id"] != file_field_id]
-        )
+        validated_fields = [field for field in group["fields"] if field["id"] not in file_field_ids]
         for index, instance in enumerate(instances):
-            if file_field_id is not None and instance.get(file_field_id) is not None:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=(
-                        f"'{file_field_id}' in '{group['name']}' instance {index + 1} must be "
-                        "uploaded as a file, not supplied as a value"
-                    ),
-                )
+            for file_field_id in file_field_ids:
+                if instance.get(file_field_id) is not None:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail=(
+                            f"'{file_field_id}' in '{group['name']}' instance {index + 1} must be "
+                            "uploaded as a file, not supplied as a value"
+                        ),
+                    )
             _validate_custom_fields(
                 validated_fields,
                 instance,
@@ -1545,7 +1562,11 @@ async def create_invitation(
     initial_status = "approved" if auto_approved else "submitted"
     approved_at = now if auto_approved else None
 
-    group_field_file_contents = group_field_file_contents or {}
+    raw_group_field_files = group_field_file_contents or {}
+    group_field_file_contents_by_field = {
+        group_id: _group_files_by_field(group_id, group, raw_group_field_files)
+        for group_id, group in custom_groups_by_id.items()
+    }
     content_types = _validate_uploads(
         payload,
         custom_groups_by_id=custom_groups_by_id,
@@ -1554,7 +1575,7 @@ async def create_invitation(
         visitor_id_proof_contents=visitor_id_proof_contents,
         primary_contact_photo_content=primary_contact_photo_content,
         visitor_photo_contents=visitor_photo_contents,
-        group_field_file_contents=group_field_file_contents,
+        group_field_file_contents=raw_group_field_files,
     )
 
     # Branch/building/department are resolved before the first storage
@@ -1578,7 +1599,7 @@ async def create_invitation(
         visitor_id_proof_contents=visitor_id_proof_contents,
         primary_contact_photo_content=primary_contact_photo_content,
         visitor_photo_contents=visitor_photo_contents,
-        group_field_file_contents=group_field_file_contents,
+        group_field_file_contents=group_field_file_contents_by_field,
         primary_contact_custom_field_file_contents=primary_contact_custom_field_file_contents,
         custom_field_file_contents=custom_field_file_contents,
         visitor_custom_field_file_contents=visitor_custom_field_file_contents,

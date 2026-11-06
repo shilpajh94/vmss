@@ -245,6 +245,12 @@ already uses for the fixed `visitors` list. There is no `instanceIndex` or
 field id encoded in the part name: file *n* in the list pairs with
 instance *n* of the `groups` entry whose `groupId` matches `<groupId>`.
 
+**Multiple file fields in one group**: when a group defines more than one
+`file_upload` field (e.g. "id upload" and "profile pic"), send each as
+`groupFieldFiles[<fieldId>]` (the file field's own id), order-matched to the
+instances. `groupFieldFiles[<groupId>]` is still accepted and maps to the
+group's *first* file field only, so existing clients keep working.
+
 - The instance's `customFields` array must **omit** that field id (or
   send `null` for its value) — supplying any other value for it is
   rejected with `422` (`"'<fieldId>' in '<groupName>' instance <n> must
