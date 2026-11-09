@@ -46,12 +46,19 @@ async def enforce_checkin_zone(
     device: Device | None,
     *,
     today_local: date,
+    record_allowed: bool = True,
 ) -> None:
     """Call after the ordinary eligibility checks and before the check-in is
     committed. Allowed: stages an `entry` event in the caller's transaction, so it
     commits (or rolls back) together with the check-in. Denied: commits a `denied`
     event and an audit row, alerts Security, and raises `ZoneEntryDenied` so the
-    visitor is not checked in."""
+    visitor is not checked in.
+
+    `record_allowed=False` is for a repeat check-in on a visit that is already
+    checked in: the zone is still re-judged against the current allowed zones, but
+    an allowed result writes no new `entry` event (the visitor already entered,
+    and a second one would double-count the inside-by-zone report). A denial is
+    always recorded."""
     if not tenant.zone_access_enabled or device is None or device.operating_mode != "security":
         return
     zones = await ZoneRepository(tenant_db).live_zones_for_gate(device.id)
@@ -83,6 +90,8 @@ async def enforce_checkin_zone(
         now=now,
         local_today=today_local,
     )
+    if decision.allowed and not record_allowed:
+        return
     events = ZoneEventRepository(tenant_db)
     events.add(
         invitation_id=invitation.id,

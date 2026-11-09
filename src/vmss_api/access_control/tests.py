@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1093,3 +1094,119 @@ async def test_default_zone_is_isolated_per_tenant_schema(
     await _default_zone(db_session, branch, code="ISO")
     async with open_tenant_session("tenant_other_default_zone_test") as other:
         assert await ZoneRepository(other).get_default_for_branch(branch.id) is None
+
+
+# --- recheck-zone-access-on-repeat-checkin ----------------------------------------------
+
+
+async def _checked_in_visit(
+    db: AsyncSession, branch: Branch, zone: Zone | None
+) -> tuple[Invitation, str]:
+    visit, qr = await _qr_visit(db, branch, status="checked_in", check_in_status="checked_in")
+    if zone is not None:
+        db.add(InvitationZone(invitation_id=visit.id, zone_id=zone.id))
+    await db.commit()
+    return visit, qr
+
+
+async def test_repeat_check_in_still_allowed_is_a_quiet_no_op(
+    zones_on, client, db_session, tenant, branch
+) -> None:
+    gate = await _gate(db_session, branch)
+    zone = await _zone(db_session, branch, gate)
+    visit, qr = await _checked_in_visit(db_session, branch, zone)
+
+    response = await _check_in(client, qr, gate)
+    assert response.status_code == 200, response.text
+    assert await _events(db_session, visit.id) == []  # no second entry
+
+
+async def test_repeat_check_in_is_denied_after_zone_access_is_removed(
+    zones_on, client, db_session, tenant, branch, monkeypatch
+) -> None:
+    async def _fake_notify(tenant_db, **kwargs):
+        return None
+
+    monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify)
+    gate = await _gate(db_session, branch)
+    zone = await _zone(db_session, branch, gate)
+    visit, qr = await _checked_in_visit(db_session, branch, zone)
+    assert (await _check_in(client, qr, gate)).status_code == 200
+
+    await db_session.execute(
+        InvitationZone.__table__.delete().where(InvitationZone.invitation_id == visit.id)
+    )
+    await db_session.commit()
+
+    response = await _check_in(client, qr, gate)
+    assert response.status_code == 403
+    await db_session.refresh(visit)
+    assert visit.check_in_status == "checked_in"  # refused, not checked out
+    assert [(e.decision, e.reason) for e in await _events(db_session, visit.id)] == [
+        ("denied", "zone_not_allowed")
+    ]
+
+
+async def test_repeat_check_in_is_allowed_after_zone_access_is_added(
+    zones_on, client, db_session, tenant, branch, monkeypatch
+) -> None:
+    async def _fake_notify(tenant_db, **kwargs):
+        return None
+
+    monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify)
+    gate = await _gate(db_session, branch)
+    zone = await _zone(db_session, branch, gate)
+    visit, qr = await _checked_in_visit(db_session, branch, None)
+    assert (await _check_in(client, qr, gate)).status_code == 403
+
+    db_session.add(InvitationZone(invitation_id=visit.id, zone_id=zone.id))
+    await db_session.commit()
+    assert (await _check_in(client, qr, gate)).status_code == 200
+
+
+async def test_repeat_check_in_by_code_is_denied_after_zone_access_is_removed(
+    zones_on, client, db_session, tenant, branch, monkeypatch
+) -> None:
+    async def _fake_notify(tenant_db, **kwargs):
+        return None
+
+    monkeypatch.setattr(notifications_service, "notify_role_at_branch", _fake_notify)
+    gate = await _gate(db_session, branch)
+    await _zone(db_session, branch, gate)
+    visit, _ = await _checked_in_visit(db_session, branch, None)  # no allowed zones
+    from vmss_api.invitations import checkin as checkin_module
+
+    with pytest.raises(HTTPException) as excinfo:
+        await checkin_module._check_in_resolved(db_session, visit, tenant=tenant, device=gate)
+    assert excinfo.value.status_code == 403
+
+
+async def test_repeat_check_in_is_unchanged_when_toggle_off(
+    client, db_session, tenant, branch
+) -> None:
+    gate = await _gate(db_session, branch)
+    await _zone(db_session, branch, gate)
+    visit, qr = await _checked_in_visit(db_session, branch, None)
+    assert (await _check_in(client, qr, gate)).status_code == 200
+    assert await _events(db_session, visit.id) == []
+
+
+@pytest.mark.parametrize("case", ["no_device", "kiosk_device", "no_zone", "two_zones"])
+async def test_repeat_check_in_untied_device_is_unchanged(
+    case, zones_on, client, db_session, tenant, branch
+) -> None:
+    gate = await _gate(db_session, branch)
+    device: Device | None = gate
+    if case == "no_device":
+        device = None
+        await _zone(db_session, branch, gate)
+    elif case == "kiosk_device":
+        gate.operating_mode = "kiosk"
+        await _zone(db_session, branch, gate)
+    elif case == "two_zones":
+        await _zone(db_session, branch, gate, code="A")
+        await _zone(db_session, branch, gate, code="B")
+    await db_session.commit()
+    visit, qr = await _checked_in_visit(db_session, branch, None)
+    assert (await _check_in(client, qr, device)).status_code == 200
+    assert await _events(db_session, visit.id) == []

@@ -78,8 +78,12 @@ to exactly one zone. The visit is judged as it will stand once checked in:
 
 A request with no device, a non-security device, or a device linked to no zone or
 to several zones behaves exactly as before and logs nothing. A repeat scan of an
-already checked-in visit logs nothing. Check-out and the tracking-ID check-in are
-unchanged.
+already checked-in visit is still an idempotent no-op, but the device's zone is
+re-judged against the visit's **current** allowed zones: allowed returns 200 and
+logs nothing; no longer allowed returns **403 `Zone entry denied`** (denial
+logged, audited and alerted) and the visit **stays checked in**. So a zone change
+made after entry shows on the next scan, without a check-out first. Check-out and
+the tracking-ID check-in are unchanged.
 
 ## Denied entry
 

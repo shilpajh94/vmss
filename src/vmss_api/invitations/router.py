@@ -960,7 +960,9 @@ async def check_in_by_qr_token(
     `unused`/`checked_out` (currently outside) to `checked_in`. This
     endpoint no longer toggles: calling it while already `checked_in`
     returns 200 as an idempotent no-op (unchanged data) rather than
-    performing a second transition — use
+    performing a second transition (when zone access is on and the device is
+    tied to one zone, that zone is still re-judged against the visit's current
+    allowed zones: 403 if no longer allowed, visit stays checked in) — use
     `PATCH /api/v2/invitations/qr/{token}/check-out` to actually exit.
     Expiry is enforced on every entry, including a re-entry. Shares its
     already-checked-in state (and therefore this idempotent-no-op behavior)

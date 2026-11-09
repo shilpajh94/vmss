@@ -68,6 +68,31 @@ def _enforce_id_verified_at_check_in(invitation: Invitation, tenant: Tenant) -> 
         )
 
 
+async def _recheck_zone_if_checked_in(
+    tenant_db: AsyncSession,
+    invitation: Invitation,
+    *,
+    tenant: Tenant,
+    device: Device | None,
+) -> None:
+    """recheck-zone-access-on-repeat-checkin: a repeat check-in on a visit that is
+    already `checked_in` is still an idempotent no-op, but when zone access is on
+    and the device is tied to one zone, that zone is re-judged against the visit's
+    *current* allowed zones, so an access change made after entry shows up on the
+    next scan. Raises `ZoneEntryDenied` (403); the visit stays `checked_in`.
+    """
+    if not tenant.zone_access_enabled:
+        return
+    from vmss_api.access_control.checkin_gate import enforce_checkin_zone
+
+    today_local = (
+        datetime.now(UTC).astimezone(await resolve_visit_timezone(tenant_db, tenant)).date()
+    )
+    await enforce_checkin_zone(
+        tenant_db, tenant, invitation, device, today_local=today_local, record_allowed=False
+    )
+
+
 async def _perform_check_in(
     tenant_db: AsyncSession,
     invitation: Invitation,
@@ -224,6 +249,7 @@ async def _check_in_resolved(
     # Before the idempotent early return — see `_perform_check_in`.
     await _enforce_device_location(tenant_db, device, invitation)
     if invitation.check_in_status == "checked_in":
+        await _recheck_zone_if_checked_in(tenant_db, invitation, tenant=tenant, device=device)
         return invitation, "Verification passed", False
     if invitation.status == "archived":
         raise HTTPException(status.HTTP_409_CONFLICT, detail=_ARCHIVED_CHECK_IN_DETAIL)
