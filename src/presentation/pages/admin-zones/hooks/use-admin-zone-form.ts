@@ -13,6 +13,12 @@ import { loadZoneReferenceData, type ZoneReferenceData } from '../zone-reference
 const EMPTY_DETAILS: ZoneInput = { branchId: '', name: '', code: '', buildingId: null, floorId: null, gateIds: [], isActive: true, isDefault: false }
 const EMPTY_REFERENCES: ZoneReferenceData = { branches: [], buildings: [], floors: [], gates: [] }
 
+/** Keeps only gate ids that are still security devices of the zone's branch; deleted or moved devices would be rejected by the backend. */
+function validGateIds(gateIds: string[], gates: ZoneReferenceData['gates'], branchId: string): string[] {
+  const valid = new Set(gates.filter((gate) => gate.operatingMode === 'security' && gate.branchId === branchId).map((gate) => gate.id))
+  return gateIds.filter((gateId) => valid.has(gateId))
+}
+
 type FieldErrors = Partial<Record<'branchId' | 'name' | 'code', string>>
 
 export function useAdminZoneForm() {
@@ -50,7 +56,7 @@ export function useAdminZoneForm() {
               code: zone.code,
               buildingId: zone.buildingId ?? null,
               floorId: zone.floorId ?? null,
-              gateIds: zone.gateIds,
+              gateIds: validGateIds(zone.gateIds, referenceData.gates, zone.branchId),
               isActive: zone.isActive,
               isDefault: zone.isDefault,
             }
@@ -128,7 +134,7 @@ export function useAdminZoneForm() {
     }
     setErrors({})
 
-    const payload: ZoneInput = { ...details, name: details.name.trim(), code: details.code.trim() }
+    const payload: ZoneInput = { ...details, gateIds: validGateIds(details.gateIds, references.gates, details.branchId), name: details.name.trim(), code: details.code.trim() }
     setIsSaving(true)
     try {
       if (isEditMode) {
@@ -149,7 +155,7 @@ export function useAdminZoneForm() {
     } finally {
       setIsSaving(false)
     }
-  }, [details, isEditMode, id, createZoneUseCase, updateZoneUseCase, navigate, toast, release])
+  }, [details, references.gates, isEditMode, id, createZoneUseCase, updateZoneUseCase, navigate, toast, release])
 
   const cancel = useCallback(() => navigate('/admin/zones'), [navigate])
 
